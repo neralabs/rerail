@@ -24,6 +24,8 @@ vi.mock("node:child_process", async () => {
 /** Tests that launch on Windows install a native spawn; every other call reaches the real binding. */
 const native = vi.hoisted(() => ({
   spawnDetached: undefined as ((program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string) => number) | undefined,
+  /** Absent, as in a binary built before it. */
+  detachedExitCode: undefined as ((pid: number) => number | null) | undefined,
 }));
 vi.mock("../../src/engine/native/native.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/engine/native/native.js")>("../../src/engine/native/native.js");
@@ -31,8 +33,8 @@ vi.mock("../../src/engine/native/native.js", async () => {
     ...actual,
     loadNativeBinding: () => native.spawnDetached === undefined
       ? actual.loadNativeBinding()
-      // Only spawnDetached is read on this path; the cast stands in for the rest of the binding.
-      : { spawnDetached: native.spawnDetached } as unknown as ReturnType<typeof actual.loadNativeBinding>,
+      // Only the detached spawn and its exit code are read on this path; the cast stands in for the rest of the binding.
+      : { spawnDetached: native.spawnDetached, detachedExitCode: native.detachedExitCode } as unknown as ReturnType<typeof actual.loadNativeBinding>,
   };
 });
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
@@ -606,7 +608,23 @@ describe("launching the daemon", () => {
   afterEach(async () => {
     opener.intercept = undefined;
     native.spawnDetached = undefined;
+    native.detachedExitCode = undefined;
     await rm(home, { recursive: true, force: true });
+  });
+
+  it("on Windows reads a launched process's exit code from the handle the native spawn kept, whoever has its pid now", () => {
+    // A live pid, as when Windows has given a dead daemon's pid to another process during the start wait.
+    native.spawnDetached = () => process.pid;
+    const codes: Array<number | null> = [null, 3];
+    const asked: number[] = [];
+    native.detachedExitCode = (pid) => {
+      asked.push(pid);
+      return codes.shift() ?? null;
+    };
+    const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, "win32");
+    expect(daemon.exitReason()).toBeUndefined();
+    expect(daemon.exitReason()).toBe("exited with code 3");
+    expect(asked).toEqual([process.pid, process.pid]);
   });
 
   it("goes through the native spawn on Windows, whose hidden console the daemon's Git and npm share, never Node's detached spawn", () => {

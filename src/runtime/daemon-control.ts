@@ -10,7 +10,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { renameWithRetry } from "../engine/file-replace.js";
 import { windowsSystemProgram } from "../engine/system-programs.js";
-import { loadNativeBinding } from "../engine/native/native.js";
+import { loadNativeBinding, type NativeBinding } from "../engine/native/native.js";
 import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
 import { keepFolderToOwner } from "../engine/storage/windows-acl.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
@@ -745,19 +745,31 @@ export interface DetachedLaunch {
 }
 
 /**
+ * Why a process the native spawn started is gone, or undefined while it runs: its exit code, from the handle the native
+ * module kept. A binary built before it had no such handle, and there only a pid that no process holds says so.
+ */
+function detachedExitReason(native: Pick<NativeBinding, "detachedExitCode">, pid: number): string | undefined {
+  if (native.detachedExitCode === undefined) return processAlive(pid) ? undefined : "exited";
+  const code = native.detachedExitCode(pid);
+  return code === null ? undefined : `exited with code ${code}`;
+}
+
+/**
  * Starts `launch` under {@link nodeExecutable}, detached from this process. On Windows it goes through the native spawn,
  * for two reasons. Node's `detached: true` there adds DETACHED_PROCESS, so the child has no console, and every console
  * program it starts (Git, node, npm) without windowsHide gets a console window of its own, which Windows 11 hands to
  * Windows Terminal; the native spawn uses CREATE_NO_WINDOW instead, a console with no window that those programs share.
  * And Node's spawn hands the child every inheritable handle in this process, not just its stdio: a Rust launcher such
  * as `just` leaves its own stdout inheritable, so a daemon started below it held the caller's output pipe open and a
- * captured `rerail setup | tee` never finished. The native spawn passes only NUL stdin and the log.
+ * captured `rerail setup | tee` never finished. The native spawn passes only NUL stdin and the log, and keeps the
+ * child's handle, which says when it exits and with what code even after Windows gives its pid to another process.
  */
 export function launchDetached(launch: DetachedLaunch, platform: NodeJS.Platform = process.platform): LaunchedDaemon {
   if (platform === "win32") {
     const definedEnv = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
-    const pid = loadNativeBinding().spawnDetached(nodeExecutable(), [...launch.args], launch.cwd ?? null, definedEnv, launch.logFile);
-    return { pid, exitReason: () => processAlive(pid) ? undefined : "exited" };
+    const native = loadNativeBinding();
+    const pid = native.spawnDetached(nodeExecutable(), [...launch.args], launch.cwd ?? null, definedEnv, launch.logFile);
+    return { pid, exitReason: () => detachedExitReason(native, pid) };
   }
   const log = openSync(launch.logFile, "a", 0o600);
   let child;

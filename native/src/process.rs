@@ -59,7 +59,8 @@ fn windows_command_line(program: &str, args: &[String]) -> String {
 }
 
 /// Start `program` detached, in a console with no window (`DAEMON_CONSOLE_FLAGS`), with NUL stdin, stdout and
-/// stderr appended to `log_path`, and no other inherited handle. Returns the child's process id.
+/// stderr appended to `log_path`, and no other inherited handle. Returns the child's process id. This process keeps
+/// the child's handle, so `detachedExitCode` sees it exit even once Windows has given its pid to another process.
 #[napi]
 pub fn spawn_detached(
     program: String,
@@ -82,6 +83,24 @@ pub fn spawn_detached(
     }
 }
 
+/// The exit code of a process `spawnDetached` started from this process, or null while it runs. Its handle is
+/// closed once the exit code is read. A pid this process did not start that way is an error.
+#[napi]
+pub fn detached_exit_code(pid: u32) -> Result<Option<u32>> {
+    #[cfg(windows)]
+    {
+        windows::detached_exit_code(pid)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        Err(Error::new(
+            Status::GenericFailure,
+            "detachedExitCode is only needed on Windows; child_process reports an exit elsewhere",
+        ))
+    }
+}
+
 #[cfg(windows)]
 mod windows {
     use super::{Error, HashMap, Result, Status, windows_command_line};
@@ -89,8 +108,9 @@ mod windows {
     use std::mem::{size_of, zeroed};
     use std::os::windows::ffi::OsStrExt;
     use std::ptr::{null, null_mut};
+    use std::sync::{Mutex, PoisonError};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+        CloseHandle, GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -99,11 +119,15 @@ mod windows {
     };
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
-        DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
+        DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
         InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
         PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
-        STARTUPINFOEXW, UpdateProcThreadAttribute,
+        STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
     };
+
+    /// The process handles of the children `spawn_detached` started, by pid. A handle keeps its process object, and
+    /// so its exit code, after the process ends and Windows gives its pid to another.
+    static LAUNCHED: Mutex<Vec<(u32, OwnedHandle)>> = Mutex::new(Vec::new());
 
     const _: () =
         assert!(super::DAEMON_CONSOLE_FLAGS == CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
@@ -126,6 +150,9 @@ mod windows {
 
     /// Closes the wrapped handle when dropped.
     struct OwnedHandle(HANDLE);
+
+    // SAFETY: a Win32 kernel handle names an object of the process, not of a thread; any thread may use or close it.
+    unsafe impl Send for OwnedHandle {}
 
     impl Drop for OwnedHandle {
         fn drop(&mut self) {
@@ -270,8 +297,36 @@ mod windows {
             return Err(os_error("CreateProcessW"));
         }
         drop(OwnedHandle(process.hThread));
-        drop(OwnedHandle(process.hProcess));
+        LAUNCHED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((process.dwProcessId, OwnedHandle(process.hProcess)));
         Ok(process.dwProcessId)
+    }
+
+    pub(super) fn detached_exit_code(pid: u32) -> Result<Option<u32>> {
+        let mut launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(index) = launched
+            .iter()
+            .position(|(launched_pid, _)| *launched_pid == pid)
+        else {
+            return Err(Error::new(
+                Status::InvalidArg,
+                format!("process {pid} was not started by spawnDetached in this process"),
+            ));
+        };
+        let handle = launched[index].1.0;
+        // SAFETY: `handle` is an open process handle this module owns; a zero timeout only asks whether it ended.
+        if unsafe { WaitForSingleObject(handle, 0) } != WAIT_OBJECT_0 {
+            return Ok(None);
+        }
+        let mut code = 0u32;
+        // SAFETY: as above, and `code` outlives the call.
+        if unsafe { GetExitCodeProcess(handle, &mut code) } == 0 {
+            return Err(os_error("GetExitCodeProcess"));
+        }
+        launched.swap_remove(index);
+        Ok(Some(code))
     }
 }
 
@@ -303,5 +358,41 @@ mod tests {
             windows_command_line(r"C:\Program Files\nodejs\node.exe", &args),
             r#""C:\Program Files\nodejs\node.exe" "C:\Users\A B\.rerail\dist\daemon.js" --database "C:\work\say \"hi\"\x" C:\trailing\ """#,
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reports_a_detached_childs_exit_code_from_the_handle_it_kept() {
+        use super::{detached_exit_code, spawn_detached};
+        use std::collections::HashMap;
+        use std::time::{Duration, Instant};
+
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
+        let cmd = format!(r"{system_root}\System32\cmd.exe");
+        let log = std::env::temp_dir().join(format!("rerail-detached-{}.log", std::process::id()));
+        let env = HashMap::from([("SystemRoot".to_owned(), system_root)]);
+        let args = ["/d".to_owned(), "/c".to_owned(), "exit 3".to_owned()];
+        let pid = spawn_detached(
+            cmd,
+            args.to_vec(),
+            None,
+            env,
+            log.to_string_lossy().into_owned(),
+        )
+        .unwrap_or_else(|error| panic!("spawnDetached failed: {error:?}"));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let code = loop {
+            match detached_exit_code(pid) {
+                Ok(Some(code)) => break code,
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                other => panic!("no exit code for {pid}: {other:?}"),
+            }
+        };
+        assert_eq!(code, 3);
+        // The handle is closed once its exit code is read; the pid is no longer this process's to ask about.
+        assert!(detached_exit_code(pid).is_err());
+        let _ = std::fs::remove_file(log);
     }
 }

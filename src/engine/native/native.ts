@@ -334,6 +334,11 @@ export interface NativeBinding {
   validateRegex(pattern: string): void;
   /** Windows only: start a detached process that inherits only NUL stdin and the appended log file; returns its pid. */
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
+  /**
+   * Windows only: the exit code of a process `spawnDetached` started from this process, or null while it runs, read from
+   * the handle it kept, so a pid Windows has given to another process is no answer. A binary built before it lacks it.
+   */
+  detachedExitCode?(pid: number): number | null;
   /** The content-store file name this binary's store schema owns (`content-v1.sqlite` at store floor 1). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
