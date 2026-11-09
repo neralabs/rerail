@@ -412,18 +412,19 @@ pub(super) fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
     )
 }
 
-/// The step's shape: tier 1's body branches only for its loop and its extracts' flattening;
-/// tier 2 loops only over tokens, and over 64-byte blocks inside a `check`; nothing calls.
+/// The step's shape: tier 1's body branches only for its loop, its extracts' flattening and, when
+/// it has values known on ASCII bytes, one all-ASCII test, and one branch per gated region;
+/// tier 2 loops only over tokens (a `check` is tier 1's masks); nothing calls.
 fn check_shape(name: &str, c: &Compiled) {
     let block = &c.native.block_programs[0];
     let body = super::block_tests::body_of(&c.parser.tier1.clif);
     let branches = body.iter().filter(|l| super::block_tests::opcode(l) == "brif").count();
-    assert_eq!(branches, 1 + 2 * block.extracts.len(), "{name}: tier 1 branches beyond its loop and its flattening");
-    let checks = c.stmts.iter().any(|s| matches!(s, Stmt::Tree { body, .. } if body.iter().any(|b| matches!(b, Stmt::Check { .. }))) || matches!(s, Stmt::Check { .. }));
+    let ascii = usize::from(c.parser.tier1.ascii_branch);
+    assert_eq!(branches, 1 + 2 * block.extracts.len() + ascii + c.parser.tier1.gate_branches, "{name}: tier 1 branches beyond its loop, its flattening, its ASCII test and its gates");
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
     for (b, step) in heads {
-        assert!(*step == Step::Token || (*step == Step::Block && checks), "{name}: tier 2 loops at {b} over {step:?}");
+        assert!(*step == Step::Token, "{name}: tier 2 loops at {b} over {step:?}");
     }
     for (tier, asm) in [("tier 1", &c.parser.tier1.disassembly), ("tier 2", &c.parser.tier2.disassembly)] {
         assert!(!asm.contains(" bl ") && !asm.contains("blr") && !asm.contains(" br "), "{name}: {tier} calls or jumps out");

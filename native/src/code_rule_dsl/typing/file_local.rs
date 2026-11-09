@@ -259,13 +259,15 @@ pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Prog
     }
 }
 
-/// The rule's `a = b` between two variables.
+/// The rule's `a = b` between two variables, and its `d = @doc(n)` (decision 0091's scope guards): d is n's
+/// document, so the two place one document, as a document column and a node of one atom do.
 fn var_equalities(rule: &crate::code_rule_dsl::logic::front::Rule) -> Vec<(String, String)> {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     rule.body
         .iter()
         .filter_map(|l| match l {
             Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => Some((a.clone(), b.clone())),
+            Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Call(f, xs) } if f == "doc" && let [Term::Var(b)] = xs.as_slice() => Some((a.clone(), b.clone())),
             _ => None,
         })
         .collect()
@@ -430,14 +432,20 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
         let width = prog.decls.get(*rel).map_or(0, Vec::len);
         locations.insert((*rel).to_owned(), (0..width).collect());
     }
+    // Each relation's rules, found once (a pack's program has tens of thousands).
+    let mut rules_of: BTreeMap<&str, Vec<&crate::code_rule_dsl::logic::front::Rule>> = BTreeMap::new();
+    for r in &prog.rules {
+        rules_of.entry(r.head.rel.as_str()).or_default().push(r);
+    }
     while changed {
         changed = false;
         for rel in &derived {
-            let rules: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == *rel).collect();
+            let rules = rules_of.get(*rel).map(Vec::as_slice).unwrap_or_default();
+            let vars: Vec<BTreeSet<String>> = rules.iter().map(|r| location_vars(r, &locations)).collect();
             let kept: Vec<usize> = locations[*rel]
                 .iter()
                 .copied()
-                .filter(|&c| rules.iter().all(|r| matches!(r.head.args.get(c), Some(Term::Var(v)) if location_vars(r, &locations).contains(v))))
+                .filter(|&c| rules.iter().zip(&vars).all(|(r, vs)| matches!(r.head.args.get(c), Some(Term::Var(v)) if vs.contains(v))))
                 .collect();
             if kept != locations[*rel] {
                 locations.insert((*rel).to_owned(), kept);

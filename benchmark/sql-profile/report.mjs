@@ -161,6 +161,10 @@ export function writeReport(report, outputDirectory) {
   report.actionableSummary = actionableSummary(report);
   if (!report.executionBudget.accepted) report.actionableSummary.nextStep = "Meet the complete-job 100-execution SQL budget and coverage requirements before accepting performance changes.";
   const hash = path => createHash("sha256").update(readFileSync(path)).digest("hex");
+  for (const q of report.queries) {
+    const analyses = (q.contextDetails ?? []).flatMap(c => [...(c.logicalAnalyses ?? []), ...(c.logicalAnalysis ? [c.logicalAnalysis] : [])]);
+    q.logicalAnalyses = [...new Map(analyses.map(a => [JSON.stringify(a), a])).values()];
+  }
   report.analysis = { version: 1, reporterSha256: hash(new URL(import.meta.url)),
     executionBudgetSha256: hash(new URL("./execution-budget.mjs", import.meta.url)),
     inventorySha256: hash(new URL("./inventory.mjs", import.meta.url)),
@@ -176,6 +180,7 @@ export function writeReport(report, outputDirectory) {
   for (const q of report.queries) {
     lines.push("", `## Q${q.id}`, "", `Contexts: ${q.contexts.join(", ")}.`, "", "```sql", q.sql, "```", "");
     for (const flag of q.flags) lines.push(`- **${flag.code} (${flag.certainty})**: ${JSON.stringify(flag.evidence)}. ${flag.action}`);
+    if (q.logicalAnalyses.length) lines.push("", "### Logical analyses and executor choices", "", "```json", JSON.stringify(q.logicalAnalyses, null, 2), "```");
     if (q.kind === "sql") lines.push("", "```json", JSON.stringify(q.plans.map(p => p.plan), null, 2), "```");
   }
   writeFileSync(join(outputDirectory, "profile.md"), lines.join("\n") + "\n");
@@ -192,8 +197,8 @@ function html(report) {
 const report=JSON.parse(document.getElementById('data').textContent);let sort='selfCpuNs',direction=-1,flagged=false;
 const el=id=>document.getElementById(id),ms=n=>(n/1e6).toFixed(3),text=(tag,value)=>{const e=document.createElement(tag);e.textContent=value;return e};
 el('summary').textContent=report.eventCount+' events · '+report.sessions+' sessions · '+ms(report.summary.selfCpuNs)+' ms accounted CPU · output parity: '+(report.workload.results?.parity??'unavailable');el('accounting').textContent=report.accounting;
-function detail(q){const d=el('detail');d.replaceChildren(text('h2','Q'+q.id+' · '+q.kind),text('p',q.contexts.join(', ')),text('pre',q.sql));for(const f of q.flags)d.append(text('p',f.code+' ('+f.certainty+'): '+JSON.stringify(f.evidence)+' '+f.action));d.append(text('h3','Metrics'),text('pre',JSON.stringify({...q,sql:undefined,plans:undefined,bytecode:undefined,plan:undefined},null,2)));if(q.kind==='sql')d.append(text('h3','EXPLAIN QUERY PLAN and bytecode'),text('pre',JSON.stringify(q.plans,null,2)));d.scrollIntoView({block:'start'});}
-function render(){const filter=el('filter').value.toLowerCase();el('rows').replaceChildren();for(const q of [...report.queries].filter(q=>(!flagged||q.flags.length)&&JSON.stringify([q.sql,q.contexts,q.flags]).toLowerCase().includes(filter)).sort((a,b)=>direction*(a[sort]-b[sort]))){const r=document.createElement('tr');for(const value of ['Q'+q.id+' '+q.kind,ms(q.selfCpuNs),q.runs,q.rows+q.changes,q.vmSteps,q.flags.map(f=>f.code).join(', ')])r.append(text('td',value));r.onclick=()=>detail(q);el('rows').append(r);}}
+function detail(q){const d=el('detail');d.replaceChildren(text('h2','Q'+q.id+' · '+q.kind),text('p',q.contexts.join(', ')),text('pre',q.sql));for(const f of q.flags)d.append(text('p',f.code+' ('+f.certainty+'): '+JSON.stringify(f.evidence)+' '+f.action));d.append(text('h3','Metrics'),text('pre',JSON.stringify({...q,sql:undefined,plans:undefined,bytecode:undefined,plan:undefined},null,2)));if(q.logicalAnalyses?.length)d.append(text('h3','Logical analyses and executor choices'),text('pre',JSON.stringify(q.logicalAnalyses,null,2)));if(q.kind==='sql')d.append(text('h3','EXPLAIN QUERY PLAN and bytecode'),text('pre',JSON.stringify(q.plans,null,2)));d.scrollIntoView({block:'start'});}
+function render(){const filter=el('filter').value.toLowerCase();el('rows').replaceChildren();for(const q of [...report.queries].filter(q=>(!flagged||q.flags.length)&&JSON.stringify([q.sql,q.contexts,q.flags,q.logicalAnalyses]).toLowerCase().includes(filter)).sort((a,b)=>direction*(a[sort]-b[sort]))){const r=document.createElement('tr');for(const value of ['Q'+q.id+' '+q.kind,ms(q.selfCpuNs),q.runs,q.rows+q.changes,q.vmSteps,q.flags.map(f=>f.code).join(', ')])r.append(text('td',value));r.onclick=()=>detail(q);el('rows').append(r);}}
 const a=report.actionableSummary,p=el('priorities'),fmt=n=>n.toLocaleString('en-US',{maximumFractionDigits:n>0&&n<1?3:1});
 p.append(text('p',a.nextStep),text('p',a.budget.interpretation),text('h2','Where recorded CPU goes'));
 const costs=document.createElement('table');for(const c of a.costBreakdown){const row=document.createElement('tr');for(const v of [c.label,fmt(c.cpuMs)+' ms',fmt(c.measuredCpuPercent)+'%',fmt(c.executions)+' executions'])row.append(text('td',v));costs.append(row);}p.append(costs,text('p',a.budget.frameIndexCpuMs===null?(a.budget.frameIndexBuilds?'Frame index construction was not timed in this capture.':'No lazy frame index builds were observed inside SQL. Prepared structural indexes and SQL CREATE INDEX statements have separate attribution.'):'Frame index construction: '+fmt(a.budget.frameIndexCpuMs)+' ms across '+fmt(a.budget.frameIndexTimedBuilds)+' timed builds ('+fmt(a.budget.frameIndexBuilds)+' total), including scan-order preparation on cache misses. Already included in SQL CPU.'),text('h2','Priority actions'),text('p',a.interpretation));

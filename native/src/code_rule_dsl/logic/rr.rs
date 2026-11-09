@@ -319,7 +319,19 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
     }
     let (statements, files) = program(path)?;
     check_names(&statements, false)?;
-    let program = lower::lower(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
+    // The relations an included file declares are the library's: canonical, one copy however many policies of a
+    // combined run include it (decision 0091). Printed as `.global library …`, so a program's text keeps that.
+    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let library: Vec<String> = statements
+        .iter()
+        .filter(|(file, _)| *file != core && *file != key)
+        .flat_map(|(_, statements)| statements)
+        .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name.clone()) } else { None })
+        .collect();
+    let mut program = lower::lower(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
+    if !library.is_empty() {
+        program.settings.push((super::front::GLOBAL.to_owned(), format!("{} {}", super::front::LIBRARY, library.join(", "))));
+    }
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
     Ok((program, files))
 }

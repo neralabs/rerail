@@ -284,6 +284,13 @@ fn fold_lattice(lease: &impl SqlOwner, rel: &str, arity: usize, keys: usize, top
 /// the readers of every relation that changed. Returns the number of waves.
 /// `empty`: the chunk has no documents, so a step reading its batch reads nothing and is skipped.
 fn waves(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_waves: u32, empty: bool) -> StoreResult<u32> {
+    waves_with(lease, program, token, max_waves, empty, &mut |_| Ok(None))
+}
+
+/// The frontier has completed every upstream stratum before asking for a step.
+/// An optional replacement may construct reusable state and supply equivalent SQL.
+fn waves_with(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_waves: u32, empty: bool,
+    before: &mut dyn FnMut(usize) -> StoreResult<Option<String>>) -> StoreResult<u32> {
     crate::code_rule_dsl::logic::profile::stratum(&format!("{}: cold execution",program.name),"SQL wave kernel",||"pending gates and SQL frontier folds".into());
     let derived: BTreeMap<&str, usize> = program.relations.iter().map(|(r, arity)| (r.as_str(), *arity)).collect();
     lease.execute_batch("DELETE FROM temp.wave_delta; DELETE FROM temp.wave_pending; INSERT INTO temp.wave_pending SELECT step FROM temp.wave_step")?;
@@ -314,6 +321,8 @@ fn waves(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_waves
         for (id, output, text) in &frontier {
             let _profile = lease.profile_scope(||serde_json::json!({"stage":"cold rule","executionPhase":"relationalEvaluation","wave":wave,"ruleStep":id,"relation":output,"stratum":program.steps[*id as usize].stratum}));
             let _cpu = crate::code_rule_dsl::logic::profile::span(||format!("cold rule {output}"));
+            let replacement = before(*id as usize)?;
+            let text = replacement.as_ref().unwrap_or(text);
             let mut statement = lease.prepare_step(text)?;
             if empty && token.is_none() && statement.parameter_index(":batch")?.is_some() {
                 continue;
@@ -376,6 +385,11 @@ pub(in crate::code_rule_dsl) fn declare_sql(db:&Database,program:&Program)->Stor
 }
 pub(in crate::code_rule_dsl) fn execute_declared(db:&Database,program:&Program,max_waves:u32)->StoreResult<u32> {
     waves(db,program,None,max_waves,false)
+}
+
+pub(in crate::code_rule_dsl) fn execute_declared_with(db:&Database, program:&Program, max_waves:u32,
+    mut before: impl FnMut(usize) -> StoreResult<Option<String>>) -> StoreResult<u32> {
+    waves_with(db,program,None,max_waves,false,&mut before)
 }
 
 pub(in crate::code_rule_dsl) fn execute_sql_with(db: &Database, program: &Program, max_waves: u32, setup: impl FnOnce() -> rusqlite::Result<()>) -> StoreResult<u32> {

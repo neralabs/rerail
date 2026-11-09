@@ -338,6 +338,59 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A negation with a wildcard, `!dep(a, _)`, over a relation that loses one of two rows: the negation still fails
+    /// (spike O125). Delete-and-rederive's insert rule must test it over the new rows, not take the lost row for it.
+    #[test]
+    fn a_session_keeps_a_negation_that_still_fails() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-lone-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("lone.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-unresolved-import" revision 1
+.description "An import of no file, in a file that imports none."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.violation LONE(at: node) code "LONE" "An import of no file, in a file that imports none."
+LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from b import x\nfrom c import y\nfrom zz import z\n"), ("b.py", "x = 1\n"), ("c.py", "y = 2\n"), ("d.py", "from zz import z\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let findings = || {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        };
+        let full = || {
+            full(run);
+            findings()
+        };
+        start(&base.join("session")).unwrap();
+        run();
+        assert_eq!(findings(), full());
+        let mut maintained = 0;
+        for (path, text) in [("a.py", "from c import y\nfrom zz import z\n"), ("a.py", "from zz import z\n"), ("a.py", "from b import x\nfrom zz import z\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+            let report = run();
+            assert_eq!(findings(), full(), "after editing {path} to {text:?}, the session's findings are a full run's");
+            maintained += report.cross_maintained.0;
+        }
+        assert!(maintained > 0, "the negation's stratum is maintained");
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// Where a session's run spends its CPU (decision 0090, step 1): each linear cost's span, for a one-file edit
     /// over `RERAIL_SESSION_COST_FILES` modules (default 400) in an import chain, with reachability and counts.
     /// A measurement, not a check: `cargo test … session_costs -- --ignored --nocapture`.

@@ -653,6 +653,7 @@ pub(super) struct Transaction<'a> {
     committed: bool,
 }
 impl Store {
+    pub fn current_scope(&self) -> usize { self.scope.get() }
     pub fn scope_mark(&self) -> usize {
         self.next_scope.get()
     }
