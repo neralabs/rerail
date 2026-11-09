@@ -2800,26 +2800,17 @@ fn run_observed(
             if !drain(process)? {
                 return Err(Error::Plan("the chunk builder ended before a load's documents".to_owned()));
             }
-            // The new documents' rows of the per-file relations the cone reads, from `x`, by their first location:
-            // one statement per relation for the whole batch, a range join on the key when that column leads it.
+            // The new documents' rows of the per-file relations the cone reads, from the exports held in memory
+            // (`exports`), by their first location.
             let new: std::collections::HashSet<i64> = keys.iter().copied().collect();
-            db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS rr_load_new(lo INTEGER, hi INTEGER); DELETE FROM temp.rr_load_new;")?;
-            super::insert_many(&db, "INSERT INTO temp.rr_load_new", keys.iter().map(|d| vec![SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect())?;
             for rel in &per_file {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied()).ok_or_else(|| Error::Plan(format!("{rel}: no location column")))?;
                 let width = lowered.program.decls[rel].len();
-                let table = crate::code_rule_dsl::logic::sql::ident(rel);
-                let row = |r: &rusqlite::Row| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vec<_>>>();
-                let rows: Vec<Vec<i64>> = if at == 0 {
-                    let cols = (0..width).map(|c| format!("t.c{c}")).collect::<Vec<_>>().join(", ");
-                    db.prepare(&format!("SELECT {cols} FROM temp.rr_load_new n JOIN x.{table} t ON t.c0 BETWEEN n.lo AND n.hi"))?
-                        .query_map([], row)?
-                        .collect::<rusqlite::Result<_>>()?
-                } else {
-                    let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                    let all: Vec<Vec<i64>> = db.prepare(&format!("SELECT {cols} FROM x.{table}"))?.query_map([], row)?.collect::<rusqlite::Result<_>>()?;
-                    all.into_iter().filter(|r| new.contains(&memo::document_of(r[at]))).collect()
-                };
+                let held = exports.borrow().snapshot(rel, width);
+                let rows: Vec<Vec<i64>> = (0..held.len())
+                    .filter(|&r| new.contains(&memo::document_of(held.value(r, at))))
+                    .map(|r| (0..width).map(|c| held.value(r, c)).collect())
+                    .collect();
                 out.push((rel.clone(), rows));
             }
             Ok(out)
