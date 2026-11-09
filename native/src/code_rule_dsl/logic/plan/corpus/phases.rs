@@ -46,6 +46,26 @@ thread_local! {
     static RUNNING: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+thread_local! {
+    /// While a phase runs, what it reads from earlier phases: worked out once to key it (`facts`), and taken as it is
+    /// by the phase's own run, which would otherwise check those phases again.
+    static HANDED_DOWN: std::cell::RefCell<Vec<(String, Facts, Deltas)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Hands phase `name`'s upstream facts to its run until dropped.
+struct HandedDown;
+impl HandedDown {
+    fn enter(name: &str, facts: Facts, deltas: Deltas) -> HandedDown {
+        HANDED_DOWN.with(|h| h.borrow_mut().push((name.to_owned(), facts, deltas)));
+        HandedDown
+    }
+}
+impl Drop for HandedDown {
+    fn drop(&mut self) {
+        HANDED_DOWN.with(|h| h.borrow_mut().pop());
+    }
+}
+
 /// Marks `name`'s run under way until dropped.
 struct Running;
 impl Running {
@@ -164,6 +184,12 @@ fn thread_cpu() -> f64 {
 /// version, or the one its delta is from, no row of it is read or handed on, only its version and delta.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, held: &dyn Fn(&str) -> Option<u64>) -> Result<(Facts, Vec<PhaseRun>, Deltas)> {
+    // A phase's own run: its upstream facts were worked out to key it, and its upstream runs are reported there.
+    if let Some(me) = declared(prog)
+        && let Some((f, d)) = HANDED_DOWN.with(|h| h.borrow().last().filter(|(n, _, _)| *n == me.name).map(|(_, f, d)| (f.clone(), d.clone())))
+    {
+        return Ok((f, Vec::new(), d));
+    }
     let (mut facts, mut runs, mut handed) = (Facts::new(), Vec::new(), Deltas::new());
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
     for (name, reads) in wanted(prog, dir.as_deref())? {
@@ -205,8 +231,15 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let text = format!("{src}\n.output {}\n", declared.exports.join(", "));
         // The earlier phases this one reads, run (or kept) first: their exports are part of what it consulted, so an
         // upstream change is a new key (types over struct: a changed struct export runs types again).
-        let (upstream, _, _) = self::facts(&program, root, scratch, modes, binding, chunk_nodes, typing, options, &|_| None)?;
+        // Their runs are listed with the reader's, in the order they ran (struct, types, …), each once.
+        let (upstream, upstream_runs, upstream_handed) = self::facts(&program, root, scratch, modes, binding, chunk_nodes, typing, options, &|_| None)?;
         let key = run_key(&format!("{text}\n{}", digest_facts(&upstream)), root, options);
+        for r in upstream_runs {
+            if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
+                runs.push(r);
+            }
+        }
+        let _down = HandedDown::enter(&name, upstream, upstream_handed);
         // Unchanged since its last run (everything it consulted as it was): its exports are the last run's, kept.
         let checking = super::thread_usage();
         if let Some(documents) = reuse(&name, &key, &text, root, typing, options)? {
@@ -840,8 +873,12 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
         let run = |text: &str| crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options);
         let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl p2__anc(s: symbol, a: symbol)\n.decl r(s: symbol, a: symbol)\nr(s, a) :- p2__anc(s, a).\n.output r\n").unwrap()).unwrap();
-        run(&reader).unwrap();
+        let report = run(&reader).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "B\tA\n");
+        // Both phases are listed flat, in the order they ran; p2's own run checked p1 once, not again.
+        let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["p1", "p2"]);
+        assert!(report.phase_runs[1].report.phase_runs.is_empty(), "p1 is not checked again inside p2's run");
         // p1 changed (its program: no class has a base now): p2, which reads it, is not kept.
         std::fs::write(phases.join("p1.rr"), p1.replace("text(e, b).", "text(e, b), b = \"none\".")).unwrap();
         run(&reader).unwrap();
