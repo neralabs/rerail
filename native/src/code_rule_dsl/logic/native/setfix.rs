@@ -616,8 +616,11 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let mut done = false;
     let mut paused = false;
     let mut seeded = comp.seeded;
-    // Per probe: seconds spent in its statement and rows it returned.
-    let mut per: Vec<(f64, u64)> = vec![(0.0, 0); comp.probes.len()];
+    // Per probe: seconds spent in its statement, rows it returned, and, while profiling, this thread's CPU seconds
+    // in it (the profile's `native.tsv`, per join plan).
+    let mut per: Vec<(f64, u64, f64)> = vec![(0.0, 0, 0.0); comp.probes.len()];
+    let cpu_timed = crate::code_rule_dsl::logic::profile::on();
+    let cpu_now = || if cpu_timed { crate::code_rule_dsl::logic::profile::now() } else { 0.0 };
     let mut row: Vec<i64> = Vec::new();
     let wave_trace = std::env::var_os("RDL_WAVE_TRACE").is_some();
     let mut gates = std::mem::take(&mut comp.gates);
@@ -632,12 +635,14 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             let empty = { let s = comp.store.read().unwrap(); s.rels[p.delta].lo == s.rels[p.delta].hi };
             if empty { skips += 1; continue; }
             runs += 1;
+            let c0 = cpu_now();
             let k = comp.store.read().unwrap().rels[p.head].types.len();
             let mut rows = st.query([])?;
             let mut got = Vec::new();
             while let Some(r) = rows.next()? { got.push((0..k).map(|i| r.get::<_, Value>(i)).collect::<Result<Vec<_>>>()?); }
             per[pi].0 += tp.elapsed().as_secs_f64();
             per[pi].1 += got.len() as u64;
+            per[pi].2 += cpu_now() - c0;
             raw.push((p.head, got));
         }
         let mut guard = comp.store.write().unwrap();
@@ -674,10 +679,12 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
                 eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {d}", store.rels[p.head].table);
             }
+            let c0 = cpu_now();
             let n = run_join(j, p.head, store, &mut syms, &mut fresh)?;
             visits += n;
             per[pi].0 += tp.elapsed().as_secs_f64();
             per[pi].1 += n;
+            per[pi].2 += cpu_now() - c0;
             // RDL_WAVE_TRACE: each probe of a wave as it runs (probe lines in spec order, seeds first).
             if wave_trace {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
@@ -768,7 +775,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     // A symbol a wave could not intern fails the run.
     symbols.write().unwrap().check()?;
     let solve = t0.elapsed();
-    let per: Vec<String> = per.iter().map(|(t, n)| format!("{:.1}:{n}", t * 1e3)).collect();
+    let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
     if paused {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 2", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }

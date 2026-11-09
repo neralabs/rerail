@@ -50,11 +50,11 @@ bcgp_line(p, l, sp) :- doc(d, p, _), src_line(d, l, sp).
 bcgp_top(p, l) :- bcgp_line(p, l, sp), match("(?:class |def |async def ).*", sp).
 // bcgp_symbol(p, x): a top-level class or def named x (_module_symbols).
 .decl bcgp_symbol(p: symbol, x: symbol)
-bcgp_symbol(p, x) :- bcgp_line(p, _, sp), match("(?:class|def|async def)\\s+(?<x>[A-Za-z_][A-Za-z0-9_]*).*", sp).
+bcgp_symbol(p, x) :- bcgp_line(p, _, sp), match("(?:class|def|async def)\\s+(?<xs>[A-Za-z_][A-Za-z0-9_]*).*", sp), text(xs, x).
 // bcgp_in(p, x, h, l): line l is in class x's block, whose header is line h (the first `class x…:` line).
 .decl bcgp_header(p: symbol, x: symbol, l: number)
 bcgp_header(p, x, l) :- bcgp_line(p, l, sp),
-    match("class (?<x>[A-Za-z_][A-Za-z0-9_]*)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:.*", sp).
+    match("class (?<xs>[A-Za-z_][A-Za-z0-9_]*)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:.*", sp), text(xs, x).
 .decl bcgp_first_header(p: symbol, x: symbol, h: number)
 bcgp_first_header(p, x, h) :- bcgp_header(p, x, _), h = min l : { bcgp_header(p, x, l) }.
 .decl bcgp_block(p: symbol, x: symbol, h: number, e: number)
@@ -67,10 +67,10 @@ bcgp_in(p, x, h, l) :- bcgp_block(p, x, h, e), bcgp_line(p, l, _), l >= h, l < e
 // bcgp_def(p, l, m): line l is `    def m(` / `    async def m(` (four spaces), m by name.
 .decl bcgp_def(p: symbol, l: number, m: symbol)
 bcgp_def(p, l, m) :- bcgp_line(p, l, sp),
-    match("    (?:async )?def (?<m>[A-Za-z_][A-Za-z0-9_]*)(?:\\[[^\\n]*\\])?\\s*\\(.*", sp).
+    match("    (?:async )?def (?<ms>[A-Za-z_][A-Za-z0-9_]*)(?:\\[[^\\n]*\\])?\\s*\\(.*", sp), text(ms, m).
 // bcgp_decorated(p, a, k, m): line a is `    @k` or `    @k(…)`, then only `    @…` lines, then the def of m.
 .decl bcgp_deco(p: symbol, a: number, k: symbol)
-bcgp_deco(p, a, k) :- bcgp_line(p, a, sp), match("    @(?<k>[A-Za-z_][A-Za-z0-9_]*)(?:\\([^\\n]*\\))?", sp).
+bcgp_deco(p, a, k) :- bcgp_line(p, a, sp), match("    @(?<ks>[A-Za-z_][A-Za-z0-9_]*)(?:\\([^\\n]*\\))?", sp), text(ks, k).
 .decl bcgp_at_line(p: symbol, l: number)
 bcgp_at_line(p, l) :- bcgp_line(p, l, sp), match("    @.+", sp).
 .decl bcgp_decorated(p: symbol, a: number, k: symbol, m: symbol)
@@ -82,7 +82,7 @@ bcgp_has_decorated(p, x, m, k) :- bcgp_in(p, x, _, a), bcgp_decorated(p, a, k, m
 // bcgp_field(p, x, f, l): the first line of class x's block declaring field f: `    f: annotation…`.
 .decl bcgp_field_at(p: symbol, x: symbol, f: symbol, l: number)
 bcgp_field_at(p, x, f, l) :- bcgp_in(p, x, _, l), bcgp_line(p, l, sp),
-    match("    (?<f>[A-Za-z_][A-Za-z0-9_]*)\\s*:\\s*[^\\n=]+.*", sp).
+    match("    (?<fs>[A-Za-z_][A-Za-z0-9_]*)\\s*:\\s*[^\\n=]+.*", sp), text(fs, f).
 .decl bcgp_field(p: symbol, x: symbol, f: symbol, l: number)
 bcgp_field(p, x, f, l) :- bcgp_field_at(p, x, f, _), l = min l2 : { bcgp_field_at(p, x, f, l2) }.
 
@@ -104,7 +104,7 @@ bcgp_banned("graph_query_builder"). bcgp_banned("graph_query_builder_async"). bc
 bcgp_banned("graph_traverse"). bcgp_banned("graph_traverse_async"). bcgp_banned("graph_traverse_lazy").
 .decl bcgp_endpoint(p: symbol, x: symbol, l: number)
 bcgp_endpoint(p, x, l) :- glob("l7200_versioned_transactions/versioned_{lazy_mixin,transactions}.py", p),
-    bcgp_line(p, l, sp), match("\\s*(?:async )?def (?<x>[A-Za-z_][A-Za-z0-9_]*)\\s*\\(.*", sp), bcgp_banned(x).
+    bcgp_line(p, l, sp), match("\\s*(?:async )?def (?<xs>[A-Za-z_][A-Za-z0-9_]*)\\s*\\(.*", sp), text(xs, x), bcgp_banned(x).
 .decl bcgp_blank(p: symbol, l: number)
 bcgp_blank(p, l) :- bcgp_line(p, l, sp), match("\\s*", sp).
 .decl bcgp_lead(p: symbol, x: symbol, l: number)  // l..k-1 are whitespace-only, k the def line
@@ -119,7 +119,7 @@ bcgp_shortcut("_try_build_sparse_recursive_bindings_grammar").
 bcgp_shortcut("_SqlSparseUnionRecursiveBindingGrammar"). bcgp_shortcut("_SqlSparseUnionRecursiveBindingFinalSelect").
 .decl bcgp_named(x: symbol, l: number)  // a whole word x on line l of the SQL graph builder
 bcgp_named(x, l) :- bcgp_line("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l, sp),
-    match(".*\\b(?<x>_try_build_sparse_union_recursive_bindings_grammar|_try_build_sparse_recursive_bindings_grammar|_SqlSparseUnionRecursiveBindingGrammar|_SqlSparseUnionRecursiveBindingFinalSelect)\\b.*", sp),
+    match(".*\\b(?<xs>_try_build_sparse_union_recursive_bindings_grammar|_try_build_sparse_recursive_bindings_grammar|_SqlSparseUnionRecursiveBindingGrammar|_SqlSparseUnionRecursiveBindingFinalSelect)\\b.*", sp), text(xs, x),
     bcgp_shortcut(x).
 BCGP(@place("impl/common/l9700_sql_graph_query/sql_graph_query_builder.py", l), "BCGP014",
     cat(x, " must not bypass the relation-algebra path")) :- bcgp_named(x, _), l = min k : { bcgp_named(x, k) }.
