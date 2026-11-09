@@ -1,7 +1,9 @@
 # 0096: Planner statistics are kept in the store as deletable sketches, maintained by the deltas that change the rows
 
-Status: accepted as the design (2026-11-09), settled by the spikes in §"Evidence". The sketch and the measurement
-aids are built (`logic/plan/sketch.rs`). The tables, their writers and their readers are not built yet.
+Status: accepted as the design (2026-11-09), settled by the spikes in §"Evidence". Amended the same day (§2–§4):
+statistics live in memory and are written with the wave SQLite commits, one blob per relation, never a row per
+value. The sketch, the measurement aids and the keeper (`logic/plan/statkeep.rs`) are built; see "Order of work"
+for what is wired.
 
 ## Intro
 
@@ -25,9 +27,10 @@ skipping an unchanged file's replay (the per-file cross store), because replay i
 Statistics are pure overhead: no finding depends on them, and no cache key includes them (`memo::plan_digest`
 hashes the build, the grammar, the node-id scheme and the program). They only have to rank join orders well.
 The spikes below show that the planner keeps its plans when every fanout and distinct count is off by up to 4×.
-So this record keeps them approximate, in a fixed size per column, in SQLite beside the rows they describe. The
-delta that changes the rows changes them too, in the same transaction. A run reads totals, and counts only the
-rows that changed.
+So this record keeps them approximate, in a fixed size per column, in memory beside the rows they describe. The
+delta that changes the rows patches them too. SQLite keeps them durable as it keeps the rows: it commits
+consistent waves as fast as it can, and a wave's statistics are part of it. A run reads totals, and counts only
+the rows that changed.
 
 ## Decision
 
@@ -40,7 +43,7 @@ rows that changed.
 | node column `ndv`, `sq` | counters: a node column's values never cross documents, so both are sums of per-document terms | exact |
 | value column `sq` | an AMS sketch: 3 rows × 64 signed counters | ≈, within 1.5× measured |
 | value column `ndv` | a levelled counting bitmap: 64 counters per occupied level | ≈, within 1.7× measured |
-| few-valued column (≤ 256 distinct) | each value's count (`stat_value`), as the planner's `dfreq` reads it | exact |
+| few-valued column (≤ 256 distinct) | each value's count, in memory and in the relation's blob | exact |
 | the program's constants (`Stats::memo`) | a watch list: each constant a rule compares a column with, counted exactly | exact |
 | tree: kinds, edges, documents | counters per kind and per edge | exact |
 
@@ -68,67 +71,63 @@ properties:
 
 A column moves between exact and sketched by its current distinct count: exact at most 256, sketched above. The
 sketch is kept always, because it is cheap. The exact map is kept while it is small. A column that grows past
-256 drops its map. Once it falls back to 128, its map is rebuilt from its rows by one SQL count. The hysteresis
-keeps a column on the boundary from flapping. Accuracy only differs between the two states, and plans held at 4×
+256 drops its map, and it comes back only when the relation is counted again from its rows (§4's backfill), so
+a column on the boundary does not flap. Accuracy only differs between the two states, and plans held at 4×
 (§"Evidence"), so this is history-dependent only where it does not matter.
 
-### 2. The tables, beside the rows
+A node column is told by its values, not its declaration: a column whose every value names its row's document
+(`value >> 32`, as `syntax::measured` reads a row's document) never shares a value across documents, so its
+`ndv` and `sq` are sums of per-document terms and exact. One document's value naming another moves the column to
+its sketch for as long as that document's rows are counted.
+
+### 2. Where they live: memory, and one blob per relation in the wave
+
+The general model holds: everything that must be fast is in memory, and SQLite keeps up as best it can by
+committing consistent, durable waves. **No statistic is ever written, read or counted per row in SQLite.**
+
+- **In memory** (`statkeep::RelStats`): per relation its row count, and per column the counters and sketch of §1
+  and the exact map while it is small. A session holds them beside the sources they describe; patching them is a
+  few nanoseconds per changed row per column (§"Cost").
+- **In SQLite**: one row per relation, `stat_blob(rel, v, blob)`, the whole `RelStats` encoded
+  (`RelStats::encode`, a few KB). It is written in the transaction that commits the wave of rows it describes,
+  so `v` names exactly those rows. A wave that lags lags both together. A changed relation costs one blob write
+  per wave, however many rows changed: about 3 µs, against 760 ns *per row* for an exact per-value table.
 
 ```sql
--- One row per (relation, column): the totals the planner reads, and the sketch, at the rows' version.
-CREATE TABLE stat_total(rel TEXT, col TEXT, v INTEGER,      -- v: the rows' version (export version, or epoch)
-    rows INTEGER, sqd INTEGER,
-    ndv INTEGER, sq INTEGER,                                -- exact for node columns; estimates otherwise
-    sketch BLOB,                                            -- AMS + occupied levels; NULL for node columns
-    PRIMARY KEY(rel, col)) WITHOUT ROWID;
-
--- Exact counts: few-valued columns (≤ 256 distinct), and the watch list's constants.
-CREATE TABLE stat_value(rel TEXT, col TEXT, val INTEGER, n INTEGER CHECK(n > 0),
-    PRIMARY KEY(rel, col, val)) WITHOUT ROWID;
-
--- Tree counts, by kind and by (parent kind, child kind).
-CREATE TABLE stat_tree(kind INTEGER, parent INTEGER, n INTEGER, PRIMARY KEY(kind, parent)) WITHOUT ROWID;
+-- One row per relation: its statistics as of the wave `v` that committed its rows.
+CREATE TABLE stat_blob(rel TEXT PRIMARY KEY, v INTEGER, blob BLOB) WITHOUT ROWID;
 ```
 
-No per-document statistics are stored. A changed document's minus is computed from its old rows, which are
-always at hand when it changes. The phase store holds them per granule (`export_rows`). A file's memo record
-holds the rows of its file-local part, and is read once, for the changed file only. Tree counts are the
-exception: the old tape may be gone. So each document's kind and edge counts are kept with its tape record. That
-is a list bounded by the grammar's kinds, not by the file.
+No per-document statistics are stored. A changed document's minus is computed from its old rows, which are at
+hand when it changes: the session's memo holds each file's rows (`memo::Entry`), and the phase store hands on an
+export's plus and minus. Where the old rows are not at hand (the memo dropped them), the relation is counted
+again from its rows once, which is the backfill path.
 
-### 3. Who writes them: the writer of the rows, in its transaction
+### 3. Who patches them: whoever has the delta
 
-| Where rows change | The delta | What is written |
+| Where rows change | The delta | What is patched |
 | --- | --- | --- |
-| Phase `keep` | plus/minus rows per export (SQL, already computed) | sketches and counters patched from the delta; `v` = the export's new version |
-| A file's file-local part, run again | its new rows (in hand), and its old rows (its memo record) | the same, as a minus then a plus |
-| A document leaving or entering the run | its rows (memo record, phase granules) and its tape record's tree counts | its terms subtracted or added |
+| A file's rows of a base relation (memo hit, or its file-local part run again) | its old rows (the entry the last run counted) and its new | its terms subtracted, then added (`RelStats::document`) |
+| Phase `keep` | plus/minus rows per export | the export's `RelStats`, patched; written in `keep`'s transaction |
+| A document leaving or entering the run | its rows (its memo entry) | its terms subtracted or added |
 
-The sketches are patched in memory, by the session, from the delta rows. The changed columns' `stat_total` rows
-are rewritten, one blob each, in the same transaction as the rows. The cost is O(changed rows × 4 hashes), plus
-one small row write per changed column.
+The session keeps, per relation, which content of each document its totals count, so an edit touches only the
+documents whose content changed.
 
 ### 4. Delayed readback: versions, not timing
 
-The decided model is that SQLite is durable, its writes may lag, and memory may be ahead. The statistics follow
-that model with no new rule:
-
-- **Same transaction.** A row delta and its statistics delta commit together, so `stat_total.v` names exactly
-  the rows it describes. A lagged write lags both together.
-- **Memory is ahead.** The session holds the totals and sketches in memory, as it holds the reader's sources
-  (`phased`: rel → version → source and statistics). It patches them with the delta it hands the reader, and
-  the planner reads memory. SQLite is read only by a cold session, or after a restart.
-- **The version decides.** If memory's version is newer, memory is used. If the store's is newer (another
-  process wrote), the store's totals are read. The reader's memo key already folds in the export versions.
-- **Missing means measured once.** A store without the tables, or a relation without a `stat_total` row, is
-  measured from its rows once, and the result is written. This is a backfill, as the anchor index's upgrade does.
+- **Memory is ahead.** The planner reads memory. SQLite's blob is read by a cold process, or after a restart.
+- **The version decides.** A blob whose `v` is the rows' version is used as it is. One that is older is stale:
+  the rows it describes were replaced in a later wave whose statistics did not commit (a crash between). It is
+  counted again from the rows once.
+- **Missing means counted once.** A store without the table, or a relation without a blob, is counted from its
+  rows once, and the result is written with the next wave. This is a backfill, as the anchor index's upgrade does.
 
 ### 5. Reading
 
-The planner already reads statistics from SQL (`Stats::read`, T's `stat_meta`/`stat_col`/`stat_val` schema).
-`stat_total`, `stat_value` and `stat_tree` are served under it as views. One statement reads a run's relations,
-as the spike's planning reads a batch (D S150, S241). The session's in-memory totals fill the same `Stats`
-fields through one conversion (`Totals::apply` today).
+The planner reads `Stats`, filled from memory: `RelStats::statistics` gives the same `(column, rows, ndv, sq,
+sqd)` that `syntax::measured` gives, so every reader of a measured relation reads a kept one unchanged. T's SQL
+statistics (`Stats::read`) stay for T's own relations.
 
 ### 6. What stays measured in the run
 
@@ -217,7 +216,8 @@ change if a workload ever needs it.
 | Distinct values | levelled counting bitmap, M=64 |
 | Deletes | linear sketches: exact and history-independent |
 | Per-document parts | none, but each document's tree counts kept with its tape record (§2) |
-| Delayed readback | version-tagged rows, written in the rows' transaction, memory ahead (§4) |
+| Where they live | in memory; one blob per relation per wave in SQLite, never a row per value (§2) |
+| Delayed readback | the blob is tagged with its wave's version and written in that wave's commit, memory ahead (§4) |
 
 ## What this agrees with, and departs from
 
@@ -226,8 +226,8 @@ change if a workload ever needs it.
   running aggregates kept by delta, persisted.
 - **Agrees with the lessons ledger #4 and #5.** There is no ANALYZE and no temp-table statistics. The numbers
   are ours, kept by delta.
-- **Agrees with the anchor index (D S241).** Its frequencies are kept in the rows' own transaction. Here the
-  writer patches them rather than a trigger, because the rows of a phase export are encoded per granule.
+- **Departs from the anchor index (D S241) in where counts are kept.** Its frequencies are rows patched in the
+  rows' own transaction. Here nothing is patched in SQLite: memory is patched, and a wave writes one blob.
 - **Departs from the anchor index's exactness.** The anchor index counts each term exactly, because it picks the
   rarest anchor by them. The rule planner needs exact counts only for constants, which the watch list keeps.
 - **Departs from today's code.** `Totals::add_rows` measuring replayed rows, `Own::measure` per chunk mix, and
@@ -248,15 +248,15 @@ the thread, best of 7, load 8). Columns of 200,000 rows; an edit takes 1,000 row
 | --- | --- |
 | Estimates read (`sq`, `ndv`) | 0.21–0.26 µs |
 | Blob encode and decode | 0.9–2.7 µs (2.0–5.6 KB) |
-| Blob written in the rows' transaction | 2.8 µs (4.4 µs as a commit of its own) |
+| Blob written in the wave's transaction | 2.8 µs (4.4 µs as a commit of its own) |
 | Today: a full re-measure (`syntax::measured`'s sort) | 2.1–7.4 ms, 10–37 ns per row of the relation |
 
 What an edit costs: say 1,000 rows changed in each of 30 sketched columns.
 
 | Mechanism | Per edit |
 | --- | --- |
-| Sketches | 30 × 2,000 × 3.2 ns + 30 × 2.8 µs ≈ 0.28 ms |
-| Exact counts in SQLite | 30 × 2,000 × 760 ns ≈ 46 ms |
+| Sketches in memory, one blob per relation per wave | 30 × 2,000 × 3.2 ns + 3 µs ≈ 0.2 ms |
+| Exact counts in SQLite (rejected: per row) | 30 × 2,000 × 760 ns ≈ 46 ms |
 | Today (each 200k-row column measured again) | 30 × 2–7 ms ≈ 60–220 ms, growing with the repository |
 
 The exact in-memory map is cheaper per row than the sketch: 1.3–3.1 ns against 3.2–4.9 ns, because its
