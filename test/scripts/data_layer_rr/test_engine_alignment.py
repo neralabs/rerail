@@ -72,6 +72,13 @@ class EngineAlignmentTests(unittest.TestCase):
             with patch.object(migration,'git',dirty),self.assertRaisesRegex(ValueError,'committed'):
                 migration.verify_engine_artifact(root,source,binary)
 
+    def test_native_artifact_rejects_a_changed_acceleration_crate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary,source=self.artifact(root)
+            source['cliArtifact']['sourceTrees']['accel']='outdated-acceleration-tree'
+            with patch.object(migration,'git',self.artifact_git),self.assertRaisesRegex(ValueError,'accel'):
+                migration.verify_engine_artifact(root,source,binary)
+
     def test_native_artifact_validates_bytes_and_invalidates_its_hash_cache_on_change(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);binary,source=self.artifact(root)
