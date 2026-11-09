@@ -2039,6 +2039,8 @@ fn run_observed(
         }
     };
     let mut base_rows: BTreeMap<String, (Vec<String>, Vec<Option<Vec<i64>>>)> = BTreeMap::new();
+    // The base rows as sources, once made (`columns_source`): measured and bound as one, so they keep their statistics.
+    let mut base_sources: BTreeMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = BTreeMap::new();
     // The base rows memo hits replayed, every column: measured once, after the chunks.
     let mut replayed: BTreeMap<String, (Vec<String>, Vec<Vec<i64>>)> = BTreeMap::new();
     let mut bound = BTreeSet::new();
@@ -3001,15 +3003,14 @@ fn run_observed(
                 base_rows.insert(rel.clone(), (have, values));
             }
         }
-        for (rel, (columns, values)) in &base_rows {
-            let (names, held): (Vec<String>, Vec<Option<Vec<i64>>>) = columns.iter().zip(values).filter(|(_, v)| v.is_some()).map(|(c, v)| (c.clone(), v.clone())).unzip();
-            let rows = held.first().and_then(Option::as_ref).map_or(0, Vec::len);
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(names, held);
-            let mut measured = syntax::statistics(source.as_ref());
-            // A column no cross-file rule names is not held: the planner still asks for it, so it is stated as keys.
-            let n = rows as i64;
-            measured.extend(columns.iter().zip(values).filter(|(_, v)| v.is_none()).map(|(c, _)| (c.clone(), n, n, n, n)));
-            totals.add(rel, rows, &measured);
+        // Measured through the source the cross-file part binds: it keeps its statistics, so a session's next run
+        // reads them for its `r__old` (0094 §4). A column no cross-file rule names is not held: the planner still
+        // asks for it, so it is stated as a key.
+        for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
+            let rows = values.iter().flatten().map(Vec::len).next().unwrap_or(0);
+            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+            totals.add(&rel, rows, &syntax::statistics(source.as_ref()));
+            base_sources.insert(rel, source);
         }
     }
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
@@ -3050,45 +3051,27 @@ fn run_observed(
 
     // The cross-file part reads every input in place from `main`: the base relations held in memory, and the
     // exports, read from `x` once each.
+    // Without the memo the base rows are still columns: sources now.
+    for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
+        base_sources.insert(rel, crate::code_rule_dsl::logic::native::component::columns_source(columns, values));
+    }
     crate::code_rule_dsl::logic::profile::decision("held for the cross-file part", || {
-        let mut held: Vec<(usize, String)> = base_rows
+        let mut held: Vec<(usize, String)> = base_sources
             .iter()
-            .map(|(rel, (columns, values))| {
-                let n: usize = values.iter().flatten().map(Vec::len).sum();
-                let named: Vec<&str> = columns.iter().zip(values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
-                (n, format!("{rel}({})", named.join(", ")))
-            })
+            .map(|(rel, source)| (source.len() * source.columns().len(), format!("{rel}({})", source.columns().join(", "))))
             .collect();
         held.sort_by(|a, b| b.0.cmp(&a.0));
         let total: usize = held.iter().map(|h| h.0).sum();
         let top: Vec<String> = held.iter().take(12).map(|(n, r)| format!("{r} {:.1} MB", *n as f64 * 8.0 / 1e6)).collect();
-        format!("{} base relations, {:.1} MB of values in memory: {}", held.len(), total as f64 * 8.0 / 1e6, top.join("; "))
+        format!("{} base relations, at most {:.1} MB of values in memory: {}", held.len(), total as f64 * 8.0 / 1e6, top.join("; "))
     });
-    for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
+    for (rel, source) in std::mem::take(&mut base_sources) {
         // A base relation the cross-file part reads that T's statistics do not cover (a simplified rule moved its read
-        // there, `parsed` after a filter was inlined): measured from the rows held. A column not held is read by no
-        // rule; it is taken as a key.
+        // there, `parsed` after a filter was inlined): measured from the rows held (kept with them). A column not held
+        // is read by no rule; it is taken as a key.
         if !cross_stats.knows(&rel) {
-            let n = values.iter().flatten().map(Vec::len).next().unwrap_or(0) as i64;
-            let measured: Vec<(String, [i64; 4])> = columns
-                .iter()
-                .zip(&values)
-                .map(|(c, v)| {
-                    let m = match v {
-                        Some(v) => {
-                            let mut per: HashMap<i64, i64> = HashMap::new();
-                            v.iter().for_each(|x| *per.entry(*x).or_default() += 1);
-                            let sq: i64 = per.values().map(|k| k * k).sum();
-                            [n, per.len() as i64, sq, sq]
-                        }
-                        None => [n, n, n, n],
-                    };
-                    (c.clone(), m)
-                })
-                .collect();
-            cross_stats.measured(&rel, measured, []);
+            cross_stats.measured(&rel, syntax::statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
         }
-        let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
         modules.bind(&db, &rel, source)?;
     }

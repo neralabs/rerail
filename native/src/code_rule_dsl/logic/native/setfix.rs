@@ -1333,7 +1333,9 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
     fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> { None }
     fn value(&self, row: usize, column: usize) -> i64 { self.0.at(self.2.as_ref().map_or(row, |l| l[row] as usize)).at(column) }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        let m = self.0.measured.get_or_init(|| crate::code_rule_dsl::facts::vtab::syntax::measured(self).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect());
+        let m = self.0.measured.get_or_init(|| {
+            self.0.posted().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::measured(self).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect())
+        });
         Some(self.columns().into_iter().zip(m).map(|(n, s)| (n, s[0], s[1], s[2], s[3])).collect())
     }
 }
@@ -1440,6 +1442,67 @@ impl InRel {
             .filter(|&(m, _, _)| m <= LEAD_MATCHES || v.src.made_on_lookup())
             .min()
             .map(|(_, j, sorted)| (j, sorted))
+    }
+    /// Each column's statistics as `syntax::measured` gives them (live rows, distinct values, the sum of squared
+    /// postings, and that sum by document `id >> 32` of the first column), read from the postings the engine kept
+    /// while it derived the rows (one index per column, `Rel::new`): a posting's length is its value's count, so
+    /// nothing is sorted. A posting of one live row counts once; a longer one, or one holding a dead row, is walked
+    /// for its rows' documents. `None` for a relation without those indexes (a view, or rows loaded flat).
+    fn posted(&self) -> Option<Vec<[i64; 4]>> {
+        if self.view.is_some() {
+            return None;
+        }
+        let k = self.k;
+        let data = &self.rows;
+        let doc = |id: u32| data[id as usize * k] >> 32;
+        let live = (self.n - self.ndead) as i64;
+        let dead: Vec<u32> = if self.ndead == 0 { Vec::new() } else { (0..self.n as u32).filter(|&id| is_dead(&self.dead, id)).collect() };
+        let mut out = Vec::with_capacity(k);
+        let mut docs: Vec<i64> = Vec::new();
+        for c in 0..k {
+            let ix = self.chains.iter().find(|ix| ix.cols == [c])?;
+            if ix.next.len() < self.n {
+                return None;
+            }
+            // The postings holding a dead row: their counts are walked.
+            let touched: rustc_hash::FxHashSet<u32> = dead.iter().filter_map(|&id| ix.get(data, k, &[data[id as usize * k + c]]).map(|p| p.head)).collect();
+            let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
+            for p in ix.table.iter() {
+                if p.len == 1 && !touched.contains(&p.head) {
+                    ndv += 1;
+                    sq += 1;
+                    sqd += 1;
+                    continue;
+                }
+                docs.clear();
+                let mut id = p.head;
+                for _ in 0..p.len {
+                    if !is_dead(&self.dead, id) {
+                        docs.push(doc(id));
+                    }
+                    id = ix.next[id as usize];
+                }
+                let l = docs.len() as i64;
+                if l == 0 {
+                    continue;
+                }
+                ndv += 1;
+                sq += l * l;
+                if docs.iter().all(|d| *d == docs[0]) {
+                    sqd += l * l;
+                } else {
+                    docs.sort_unstable();
+                    let mut at = 0;
+                    while at < docs.len() {
+                        let end = at + docs[at..].partition_point(|d| *d == docs[at]);
+                        sqd += ((end - at) * (end - at)) as i64;
+                        at = end;
+                    }
+                }
+            }
+            out.push([live, ndv, sq, sqd]);
+        }
+        Some(out)
     }
     fn index(&self, cols: &[usize]) -> Arc<Csr> {
         let mask = cols.iter().fold(0u64, |m, &c| m | 1 << c);
@@ -1616,11 +1679,55 @@ struct Stored {
     /// Lexicographic orders over several columns, built on a first `lookup_all` over them (4 bytes a row each;
     /// the table never changes, so an order costs no insert). One serves every search whose columns are its prefix.
     orders: Mutex<Vec<(Vec<usize>, Arc<Vec<u32>>)>>,
+    /// For rows held in memory (`columns_source`), the planner's statistics, read from the column indexes when first
+    /// asked and kept with the rows: a session's next run reads them for its `r__old` (0094 §4), not measured again.
+    /// `None` for a stored table, whose columns load on demand.
+    statistics: Option<std::sync::OnceLock<Vec<(String, i64, i64, i64, i64)>>>,
 }
 impl Stored {
     fn new(columns: Vec<String>, values: Vec<std::sync::OnceLock<Vec<i64>>>) -> Self {
         let k = columns.len();
-        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default() }
+        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default(), statistics: None }
+    }
+    /// `syntax::measured`'s statistics, from each column's sorted index (which joins read too): a value's rows are
+    /// one run of it, in row order, and their documents (`id >> 32` of the first column) are counted within it. A
+    /// column held nowhere (no rule reads it) is stated as a key.
+    fn measured(&self) -> Vec<(String, i64, i64, i64, i64)> {
+        let n = self.n.get().copied().unwrap_or(0);
+        let first = self.col(0);
+        let doc = |id: u32| first.get(id as usize).copied().unwrap_or(0) >> 32;
+        let mut docs: Vec<i64> = Vec::new();
+        (0..self.columns.len())
+            .map(|c| {
+                let name = self.columns[c].clone();
+                if self.values[c].get().is_none() || n == 0 {
+                    return (name, n as i64, n as i64, n as i64, n as i64);
+                }
+                let (ids, col) = (self.index(c), self.col(c));
+                let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
+                let mut at = 0;
+                while at < ids.len() {
+                    let v = col[ids[at] as usize];
+                    let end = at + ids[at..].partition_point(|&r| col[r as usize] == v);
+                    let l = (end - at) as i64;
+                    ndv += 1;
+                    sq += l * l;
+                    docs.clear();
+                    docs.extend(ids[at..end].iter().map(|&r| doc(r)));
+                    if !docs.is_sorted() {
+                        docs.sort_unstable();
+                    }
+                    let mut d = 0;
+                    while d < docs.len() {
+                        let de = d + docs[d..].partition_point(|x| *x == docs[d]);
+                        sqd += ((de - d) * (de - d)) as i64;
+                        d = de;
+                    }
+                    at = end;
+                }
+                (name, n as i64, ndv, sq, sqd)
+            })
+            .collect()
     }
     fn distinct(&self, c: usize) -> usize {
         *self.distinct[c].get_or_init(|| {
@@ -1687,6 +1794,9 @@ impl Stored {
 }
 impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     fn columns(&self) -> Vec<String> { self.columns.clone() }
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.statistics.as_ref().map(|s| s.get_or_init(|| self.measured()).clone())
+    }
     fn len(&self) -> usize { self.n.get().copied().unwrap_or(0) }
     fn estimated_matches(&self, c: usize, batch: bool) -> usize {
         let one = self.len().div_ceil(self.distinct(c).max(1));
@@ -1720,7 +1830,8 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
 /// probe on a column is a slice of its sorted index, built on first use.
 pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
     let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
-    let t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
+    let mut t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
+    t.statistics = Some(std::sync::OnceLock::new());
     let _ = t.n.set(n);
     Arc::new(t)
 }
@@ -2238,4 +2349,74 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
     go(&mut cx, 0, &mut slots);
     scalars::explain(&j.steps,store);
     match cx.error {Some(e)=>Err(e),None=>Ok(cx.n)}
+}
+
+#[cfg(test)]
+mod posted_tests {
+    use super::*;
+
+    /// Statistics read from a kept relation's postings are those measured from its rows, with dead rows left out.
+    #[test]
+    fn statistics_from_postings_are_the_measured_ones() {
+        let node = |d: i64, i: i64| (d << 32) | i;
+        let mut rel = Rel::new("t", b"iii");
+        // Column 0 a node (a key), column 1 a value shared within and across documents, column 2 another document's
+        // node (as a reference) or a small number.
+        for d in 1..4 {
+            for i in 0..20 {
+                rel.push(&[node(d, i), i % 3, if i % 2 == 0 { node(4 - d, i % 5) } else { i % 4 }]);
+            }
+        }
+        let old = InRel::moved(rel);
+        let mut gone = Rel::new("g", b"iii");
+        for (d, i) in [(1, 0), (1, 1), (2, 3), (3, 9), (3, 12)] {
+            gone.push(&[node(d, i), i % 3, if i % 2 == 0 { node(4 - d, i % 5) } else { i % 4 }]);
+        }
+        let gone = InRel::moved(gone);
+        for rel in [old.clone_rows(), InRel::moved(Rel::based("t", b"iii", &old, &gone).expect("few rows dead"))] {
+            let rel = Arc::new(rel);
+            let source = Derived::new(Arc::clone(&rel), None);
+            let measured: Vec<[i64; 4]> = crate::code_rule_dsl::facts::vtab::syntax::measured(source.as_ref()).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect();
+            assert_eq!(rel.posted().expect("a relation with its postings"), measured);
+        }
+    }
+
+    /// Rows held as columns measure from their sorted indexes what `syntax::measured` gives, a column held nowhere
+    /// as a key; and they keep them.
+    #[test]
+    fn held_columns_measure_from_their_indexes() {
+        let node = |d: i64, i: i64| (d << 32) | i;
+        let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
+        for i in 0..60 {
+            // Documents out of row order, values shared within and across them.
+            let d = [2, 1, 3][i as usize % 3];
+            a.push(node(d, i));
+            b.push(i % 7);
+            c.push(if i % 2 == 0 { node(1, i % 5) } else { 3 });
+        }
+        let names: Vec<String> = ["a", "b", "c", "x"].iter().map(|s| (*s).to_owned()).collect();
+        let held = columns_source(names.clone(), vec![Some(a.clone()), Some(b.clone()), Some(c.clone()), None]);
+        let plain = columns_source(names[..3].to_vec(), vec![Some(a), Some(b), Some(c)]);
+        let mut want = crate::code_rule_dsl::facts::vtab::syntax::measured(&Unknown(plain));
+        want.push(("x".to_owned(), 60, 60, 60, 60));
+        assert_eq!(held.statistics().expect("held rows keep statistics"), want);
+    }
+
+    /// A source with no statistics of its own, so `measured` measures it.
+    struct Unknown(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>);
+    impl crate::code_rule_dsl::facts::vtab::Source for Unknown {
+        fn columns(&self) -> Vec<String> { self.0.columns() }
+        fn len(&self) -> usize { self.0.len() }
+        fn estimated_matches(&self, c: usize, batch: bool) -> usize { self.0.estimated_matches(c, batch) }
+        fn indexed(&self, _: usize) -> bool { false }
+        fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> { None }
+        fn value(&self, row: usize, c: usize) -> i64 { self.0.value(row, c) }
+    }
+
+    impl InRel {
+        fn clone_rows(&self) -> InRel {
+            InRel { k: self.k, n: self.n, rows: self.rows.clone(), view: None, base: false, types: self.types.clone(), stored: self.stored, idx: Mutex::new(HashMap::default()), chains: self.chains.clone(),
+                    set: self.set.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default() }
+        }
+    }
 }
