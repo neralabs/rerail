@@ -497,7 +497,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9",
+      "sha256": "9b0cd1c053fbdd7062b6e75ba45baae04efdf0b9bb1ba170e44e2cb9b49359b4",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -631,6 +631,11 @@
           "before": "b8076696118de7b54db7b9351f1eecd33feb8520fd5925d6493efb715da123ab",
           "after": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9",
           "reason": "Merge Final 735bc4422 engine and library resolutions"
+        },
+        {
+          "before": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9",
+          "after": "9b0cd1c053fbdd7062b6e75ba45baae04efdf0b9bb1ba170e44e2cb9b49359b4",
+          "reason": "Native JSON coercion, parse diagnostics, and exact ratchet baseline actions"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -2372,13 +2377,18 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution-ratchet.rr",
-      "sha256": "e32438bc09fa1b466217e83aa6dfecaa82ae1c9532b7dfa8c1c6715b71fd176f",
+      "sha256": "e02cc93f1f1372e12b54eecbe81243cdfce2e4b2180272d9f4563250de59a7ce",
       "origin": "authored",
       "repairs": [
         {
           "before": "0a9111422b7d0048a0740330cdcc3c83672c2995b3835398e225333670006816",
           "after": "e32438bc09fa1b466217e83aa6dfecaa82ae1c9532b7dfa8c1c6715b71fd176f",
           "reason": "Implement native baseline serialization and signing requests; frontend performs only requested reads/writes, clock and git metadata transport."
+        },
+        {
+          "before": "e32438bc09fa1b466217e83aa6dfecaa82ae1c9532b7dfa8c1c6715b71fd176f",
+          "after": "e02cc93f1f1372e12b54eecbe81243cdfce2e4b2180272d9f4563250de59a7ce",
+          "reason": "Native JSON coercion, parse diagnostics, and exact ratchet baseline actions"
         }
       ]
     }
@@ -3543,7 +3553,7 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "7e77fa2ead6148b651731514be9670e15934a288",
+    "upstreamCommit": "07bba2f69102a09a7a66e0c0119905d7807d0af9",
     "status": "Final 7e77 root debug CLI rebuilt; private Boolean regression passes 24 variants, and both existing demand tests pass. Ratchet contract revalidation is in progress.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
@@ -3656,15 +3666,23 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
-        "sha256": "2f0bb1ff2de3a007c8d4da967984fa0341cc7d20dab23da3dcdc7efc1f1b5751"
+        "sha256": "1783fa15c8003f10d62cfbbc80c14aa9feb25cd053a9e7928324f5cdc7181ad6"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
         "sha256": "15c26a2b31ff7d66e2c0b1b0c0ef40559f173601b64b4b198e1a4d04700ea7ec"
       },
       {
+        "path": "native/src/code_rule_dsl/logic/plan/demand.rs",
+        "sha256": "9fa3272a833ea337a8b4579d2cfbdea802046dbc1907fcc965f83765849d991a"
+      },
+      {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
         "sha256": "1ebb18144283e8e03a6b9554522f3f8a3e246c220dd40a774979b9b5de99cbed"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/rr/check.rs",
+        "sha256": "4c9c48783f5e0d4decfbabb7f89c0ef86b959d3b27841fd50268eb2467a7bd22"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
@@ -3684,15 +3702,19 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "6c6205c2c9bb0fadaff0559ed1cff542ff58484d7bfd423db213b89101896552"
+        "sha256": "8f866a3a66b13fceffbb76723c94d995f8f132a4964593d3564eeab3d16e0be3"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "c1038aed2f89025d5b1e5dc4829b8f377dfa62fb3cb24c2188d5476890e99290"
+        "sha256": "607fa87e852b3666516939a67a5a0f351eb814b42440f1915486d9496d1d7831"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
-        "sha256": "6a3ca40885a3b4248483d2dc9d275d87da5a52ac41ecdd9fa5d4757441a96c81"
+        "sha256": "5ba484e53f2bdbaa52042143a3947dd66a07f32a00653f3523c083c3ab19b2bf"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/strings/python_json.rs",
+        "sha256": "2c8e036c556c1b1f44d0f81e7a0b9512e70fefbd4ba35b62fa2677fba3f76dd3"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/signature-errors.json",
@@ -3725,15 +3747,6 @@
       {
         "path": "native/src/content_store/observe.rs",
         "sha256": "95034aae016c04d45b016beff349c167c696767da0bb3dddd6564d69165aeeac"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/rr/check.rs",
-        "sha256": "4c9c48783f5e0d4decfbabb7f89c0ef86b959d3b27841fd50268eb2467a7bd22"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/plan/demand.rs",
-        "reason": "The ratchet Boolean regression proves an unconditional ground reader leaves its demanded producer unseeded. Add literal demand keys and require a nonzero measured scan for the automatic size heuristic.",
-        "sha256": "9fa3272a833ea337a8b4579d2cfbdea802046dbc1907fcc965f83765849d991a"
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
