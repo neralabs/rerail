@@ -21,7 +21,7 @@ impl Retained {
         }
         Decision::new(
             true,
-            "Independent bag maintenance and fenced context evaluation share one SQL support phase",
+            "Independent bag maintenance and fenced context evaluation share one SQL support phase; empty set operands are omitted and unique output differences use anti-joins",
         )
     }
     pub(super) fn scalar_phase_eligible(&self) -> bool {
@@ -61,24 +61,36 @@ pub(super) fn apply(
             .push(json!({"operation":"scalar consumer support","analysis":state.explain()}));
     }
     let mut pending = vec![];
-    let (keys, next) = fused::append_with(state, w, changes, &mut phase, &extra, &mut pending)?;
+    let (keys, next, difference) =
+        fused::append_with(state, w, changes, &mut phase, &extra, &mut pending)?;
     let width = state.width;
-    let old = phase.relation(
-        width,
-        &format!(
-            "SELECT r.* FROM {keys} k CROSS JOIN {} r WHERE {}",
-            quote(&state.output),
-            equal("r", "k", width)
-        ),
-    );
-    let plus_rows = phase.relation(
-        width,
-        &format!("SELECT * FROM {next} EXCEPT SELECT * FROM {old}"),
-    );
-    let minus_rows = phase.relation(
-        width,
-        &format!("SELECT * FROM {old} EXCEPT SELECT * FROM {next}"),
-    );
+    let (plus_rows, minus_rows) = if let Some(difference) = difference {
+        difference
+    } else {
+        let old = phase.relation(
+            width,
+            &format!(
+                "SELECT r.* FROM {keys} k CROSS JOIN {} r WHERE {}",
+                quote(&state.output),
+                equal("r", "k", width)
+            ),
+        );
+        let plus_rows = phase.relation(
+            width,
+            &format!(
+                "SELECT n.* FROM {next} n WHERE NOT EXISTS(SELECT 1 FROM {old} o WHERE {})",
+                equal("n", "o", width)
+            ),
+        );
+        let minus_rows = phase.relation(
+            width,
+            &format!(
+                "SELECT o.* FROM {old} o WHERE NOT EXISTS(SELECT 1 FROM {next} n WHERE {})",
+                equal("n", "o", width)
+            ),
+        );
+        (plus_rows, minus_rows)
+    };
     let plus = w.output_table(width)?;
     let minus = w.output_table(width)?;
     let store = w.versions.unwrap();

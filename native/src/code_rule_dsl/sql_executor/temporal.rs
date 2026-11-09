@@ -97,55 +97,28 @@ pub(super) fn delta(
         )
     });
     let _cpu = super::super::logic::profile::span(|| "native version difference".into());
-    let (plus, minus, visited) = old.difference(new);
-    w.version_nodes += visited;
-    let convert = |rows: Vec<Vec<Option<i64>>>| -> Result<Vec<Vec<i64>>> {
-        rows.into_iter()
-            .map(|r| {
-                r.into_iter()
-                    .map(|v| v.ok_or_else(|| error("null in temporal fact relation")))
-                    .collect()
-            })
-            .collect()
-    };
-    let plus = convert(plus)?;
-    let minus = convert(minus)?;
-    if let Some(operation) = operation {
-        operation.finish(plus.len() + minus.len());
+    // Empty and identical versions have an exact difference without a row walk.
+    // Share the immutable roots instead of decoding, hashing and indexing them again.
+    if old.len() == 0 || new.len() == 0 || old.same(new) {
+        let plus = w.output_table(old.columns().len())?;
+        let minus = w.output_table(old.columns().len())?;
+        let same = old.same(new);
+        let empty = old.empty_like();
+        let added = if same { &empty } else { new };
+        let removed = if same { &empty } else { old };
+        let store = w.versions.ok_or_else(|| error("temporal rows require native storage"))?;
+        if store.clone_scratch(&plus, added)? && store.clone_scratch(&minus, removed)? {
+            w.version_nodes += 1;
+            if let Some(operation) = operation { operation.finish(added.len()+removed.len()); }
+            return Ok(Delta {plus,minus,inserted:added.len() as u64,deleted:removed.len() as u64});
+        }
     }
-    let (inserted, deleted) = (plus.len() as u64, minus.len() as u64);
-    Ok(Delta {
-        plus: frozen_rows(w, old.columns().len(), plus)?,
-        minus: frozen_rows(w, old.columns().len(), minus)?,
-        inserted,
-        deleted,
-    })
-}
-
-fn frozen_rows(w: &mut Work<'_>, width: usize, rows: Vec<Vec<i64>>) -> Result<String> {
-    let name = w.output_table(width)?;
-    let n = rows.len();
-    let operation = w.profiler.map(|p| {
-        p.operation(
-            "bulk delta storage",
-            ("sql-extension", 0),
-            0,
-            vec![("rows".into(), n as i64)],
-        )
-    });
-    let _cpu = super::super::logic::profile::span(|| "bulk delta storage".into());
-    w.versions
-        .ok_or_else(|| error("temporal rows require native storage"))?
-        .load_scratch(
-            &name,
-            rows.into_iter()
-                .map(|r| r.into_iter().map(Some).collect())
-                .collect(),
-        )?;
-    if let Some(operation) = operation {
-        operation.finish(n);
-    }
-    Ok(name)
+    let plus=w.output_table(old.columns().len())?;
+    let minus=w.output_table(old.columns().len())?;
+    let (inserted,deleted,visited)=w.versions.ok_or_else(||error("temporal rows require native storage"))?.difference_scratch(&plus,&minus,old,new)?;
+    w.version_nodes+=visited;
+    if let Some(operation)=operation {operation.finish(inserted+deleted);}
+    Ok(Delta{plus,minus,inserted:inserted as u64,deleted:deleted as u64})
 }
 
 #[derive(Clone)]

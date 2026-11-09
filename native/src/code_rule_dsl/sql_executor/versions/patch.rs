@@ -33,6 +33,16 @@ impl Version {
         rows: Vec<Vec<Option<i64>>>,
         dense: bool,
     ) -> Result<Self> {
+        self.patched_rows_reusing(keys, rows, dense, &[])
+            .map(|(version, _)| version)
+    }
+    pub fn patched_rows_reusing(
+        &self,
+        keys: Vec<Vec<Option<i64>>>,
+        rows: Vec<Vec<Option<i64>>>,
+        dense: bool,
+        reusable: &[Self],
+    ) -> Result<(Self, bool)> {
         if keys
             .iter()
             .any(|k| k.len() != self.schema.keys || k.iter().any(Option::is_none))
@@ -49,12 +59,18 @@ impl Version {
             let mut unchanged = self.rows();
             unchanged.retain(|row| !selected.contains(&row[..self.schema.keys]));
             unchanged.extend(rows);
-            return self.loaded(unchanged, false, true);
+            return self.loaded(unchanged, false, true).map(|v| (v, false));
         }
         // Empty destinations already have the exact validated replacement. Re-inserting
         // every incoming row would rebuild all persistent paths a second time.
         if self.len() == 0 {
-            return self.loaded(rows, false, true);
+            if let Some(next) = reusable
+                .iter()
+                .find_map(|v| self.reuse_empty_rows(&rows, v))
+            {
+                return Ok((next, true));
+            }
+            return self.loaded(rows, false, true).map(|v| (v, false));
         }
         // `loaded` checks arity, nullability, counts, and duplicate primary keys.
         // It also reuses the original row ID when a key receives a different value.
@@ -71,7 +87,7 @@ impl Version {
             next.insert(row);
         }
         next.next = incoming.next;
-        Ok(next)
+        Ok((next, false))
     }
 }
 impl Store {

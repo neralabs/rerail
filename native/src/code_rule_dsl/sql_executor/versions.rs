@@ -5,6 +5,7 @@ use parking_lot::RwLock;
 use std::cell::RefCell;
 mod bindings;
 mod bulk;
+mod difference;
 pub(super) mod fork;
 mod patch;
 mod probes;

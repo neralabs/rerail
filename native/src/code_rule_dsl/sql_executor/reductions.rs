@@ -189,7 +189,7 @@ fn equal(a: &str, b: &str, width: usize) -> String {
         .join(" AND ")
 }
 fn execute(db: &rusqlite::Connection, sql: &str) -> Result<usize> {
-    db.execute(sql, []).map_err(error)
+    db.prepare_cached(sql).map_err(error)?.execute([]).map_err(error)
 }
 fn temporary(w: &mut Work<'_>, width: usize, extra: &str, keys: Option<usize>) -> Result<String> {
     let mut definition = schema(width);

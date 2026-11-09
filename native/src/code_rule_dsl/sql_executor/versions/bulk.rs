@@ -18,6 +18,51 @@ impl Drop for Reuse<'_> {
 }
 
 impl Version {
+    /// Reuse a validated output of this SQL phase when its ordered rows and new row IDs match.
+    /// A complete-tuple primary key can also read a narrower source's complete-row index.
+    pub fn reuse_empty_rows(&self, rows: &[Vec<Option<i64>>], source: &Self) -> Option<Self> {
+        if self.len() != 0
+            || self.next != 1
+            || rows.len() != source.len()
+            || source.next != rows.len() as i64 + 1
+            || self.schema.columns.len() != source.schema.columns.len()
+            || self.schema.nullable != source.schema.nullable
+            || self.schema.positive != source.schema.positive
+            || self.schema.keys != source.schema.keys
+                && self.schema.keys != self.schema.columns.len()
+        {
+            return None;
+        }
+        fn matches(root: &Link<Row>, rows: &[Vec<Option<i64>>], at: &mut usize) -> bool {
+            let Some(n) = root else { return true };
+            if !matches(&n.left, rows, at)
+                || n.value.id != *at as i64 + 1
+                || n.value.values.as_slice() != rows[*at]
+            {
+                return false;
+            }
+            *at += 1;
+            matches(&n.right, rows, at)
+        }
+        if !matches(&source.full, rows, &mut 0) {
+            return None;
+        }
+        let mut next = source.clone();
+        next.schema = self.schema.clone();
+        next.lazy = self.lazy;
+        if self.schema.keys == self.schema.columns.len() {
+            next.primary = next.full.clone();
+        }
+        next.restrict_indexes(
+            &self
+                .secondary
+                .iter()
+                .enumerate()
+                .filter_map(|(c, &yes)| yes.then_some(c))
+                .collect::<Vec<_>>(),
+        );
+        Some(next)
+    }
     pub(in crate::code_rule_dsl::sql_executor) fn loaded(
         &self,
         rows: Vec<Vec<Option<i64>>>,

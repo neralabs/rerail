@@ -1697,3 +1697,95 @@ The refreshed structure comparison retains 10 passing metrics and 15 existing fa
 Evidence is archived at `/Users/jeremy/orca/artifacts/rerail-cross-rule-storage-20261108.tar.gz`.
 It includes refreshed control and final captures, raw receipts, parity bundles, CPU trials, earlier candidates, source patches, and validation logs.
 Task build, control worktree, and temporary directories are removed after archival.
+
+### Native summaries and remaining CPU costs (2026-11-08)
+
+This follow-up uses `3cf3561ec` as its baseline. It addresses native summary execution, recursive CPU costs, and the scalar edit regression.
+
+#### Native execution
+
+The native join engine previously scanned each scalar bag independently. Sum also forced a SQL fallback.
+The physical adapter now uses the common bag analysis to select compatible count, sum, min, and max consumers.
+One native fold computes their exact state for each demanded group. Consumers in separate rules share that state.
+Each consumer keeps its own lookup slots. Repeated local value fields retain their equality filters in both executors. Count-only rules can adopt a registered value family before either rule executes.
+Count cannot connect families with different values. The common compatibility contract controls this decision.
+
+Immutable input objects own their caches. Rebound inputs own new objects, even when their row counts match.
+Component caches include the row count and visible delta range. New waves invalidate incompatible cached groups.
+Dependent consumers retain separate evaluation. Unsupported expressions and ordered strings retain their SQL fallback.
+Shared immutable bag descriptors avoid allocations for each cached lookup.
+
+Native sums retain wide values through alias copies. A filter can remove a row before a later operation observes the sum.
+Unused sum bindings retain no range check. Live predicates, lookup keys, functions, and emitted heads retain their checks.
+
+Native and SQL execution use the same final sum range check. The generated `rr_exact_sum` aggregate preserves cancellation before that check.
+This fixes an older fallback difference: SQLite's built-in sum can overflow before later input values cancel the intermediate total.
+Ordinary SQL queries still use SQLite's built-in `sum` unless they explicitly select the new intrinsic.
+
+Native explain records the logical families, rejected combinations, cache boundary, and sum contract.
+The native summary fold also records inspected values in the existing profiler.
+Runtime explain identifies cache instances, selected value projections, input versions, cached groups, folds, lookups, and unused bindings.
+
+#### Scalar edits
+
+The previous support phase used set operations for empty operands and unique output differences.
+SQLite selected merge plans for those operations. The representative scalar edit performed eight unnecessary sorts.
+
+The support phase now omits empty operands. Unique output differences use anti-joins.
+The phase retains materialization fences around checked evaluation.
+A shared witness proof also permits direct differences between unique old and new head sets.
+Those differences replace supports of one and supply publication deltas. They avoid support grouping and a second comparison with public outputs.
+Multiple producers and lattice paths retain their existing reconciliation. Explain and SQL receipts record the selected proof and strategy.
+Generated helper statements also reuse prepared statements across edits.
+
+The representative scalar edit decreases from 12 sorts to three, and VM work decreases from 1,820 instructions to 1,418.
+Cross-rule edits decrease from 16 sorts to four.
+
+#### Recursive storage
+
+Initial phase outputs sometimes contain the same ordered rows. Their previous publication built separate native trees.
+The phase now shares validated roots after checks for schemas, key strength, row IDs, and patch containment.
+Each output retains its required secondary indexes. All replacements remain prepared before publication.
+The SQL profiler reports the number of shared initial roots.
+
+Empty-to-full and identical versions share their delta roots directly.
+Other version comparisons use borrowed tree ranges. They no longer copy and hash tree paths merely to inspect differences.
+Delta construction retains existing immutable row cells and row IDs. It avoids repeated decoding, allocation, and hashing of complete rows.
+Explain describes both publication reuse and version differences.
+
+#### Final measurements and checks
+
+The final optimized binaries use the same Rust toolchain, features, and build profile as baseline `3cf3561ec`.
+CPU trials disable profiling and use fresh processes and stores. Alternating execution order reduces ordering bias.
+The scalar comparison uses 20 pairs. The recursive comparison uses five pairs. Both workloads contain 10,000 groups or regions.
+Each pair compares its query results. Other worktrees also ran jobs on the shared host.
+
+| Measurement | Baseline median | Final median |
+| --- | ---: | ---: |
+| Scalar first edit CPU | 1.542 ms | 1.312 ms |
+| Scalar second edit CPU | 1.043 ms | 0.911 ms |
+| Recursive initial CPU | 1.644 s | 1.498 s |
+| Recursive six-edit CPU total | 22.32 ms | 23.53 ms |
+| Recursive peak RSS | 525.30 MiB | 482.47 MiB |
+
+Both scalar edits improve, by 15% and 13%. Recursive initialization improves by 9% and uses about 43 MiB less memory.
+Every final recursive initialization pair improves. Sparse recursive edits remain variable across batches.
+Earlier five-pair and three-pair batches improved their edit totals. The final batch increases its median by 5%.
+These measurements establish an initialization improvement, but do not establish a sparse recursive edit speedup.
+Further edit tuning should measure tree comparison, delta publication, and secondary index maintenance separately.
+
+The final scalar edit retains 12 statements. Its three sorts and 1,418 VM instructions confirm the earlier work reduction.
+Six complete SQL sessions pass at 1,000 and 10,000 groups or regions.
+They compare every relation, output deltas, queries, failure rollback, and subsequent recovery against independent cold execution.
+Complete SQL counts remain 81 for scalar, 92 for cross-rule, and 100 for recursive sessions.
+Their capture connections close normally, and every SQL receipt has a known engine origin.
+
+The relevant Rust suite passes 283 tests, with three ignored tests. All 38 profiling and reporting tests pass.
+The library also compiles with `code-rule-profile` enabled.
+Native coverage includes 80,000 scalar uses sharing 1,000 folds, input rebinding, wave invalidation, and frozen input versions.
+Additional tests cover aliases, filtered overflow, exact cancellation, repeated local fields, and SQL/native output parity.
+The unique-support test forbids public writes when a changed scalar leaves its head unchanged.
+The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.
+
+Native sharing currently covers supported integer scalar bags. Dependent expressions and unsupported ordering retain their established evaluation paths.
+Multiple producers and lattice supports still need general reconciliation. Sharing across independent wave gates still requires matching versions and maintenance cursors.
