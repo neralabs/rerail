@@ -8,12 +8,12 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   `.github/workflows/docs-site.yml` publishes it).
 - `check/`: the checks `npm run check` and `check:*` run, including the layer boundary lint
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
-  enough and named so Windows can check it out), the child process check (`check-child-process.mjs`: code in `src/`
-  starts processes only through `src/engine/child-process.ts`, which hides their windows on Windows and starts a
-  program there only by its absolute path), the rename check (`check-file-replace.mjs`: code in `src/` renames files
-  only through `src/engine/file-replace.ts`, which retries a rename Windows refuses while another process holds the
-  file), the checkout path check (`check-checkout-paths.mjs`: the modules that key records by a checkout path resolve
-  it only through `src/engine/catalog/checkout-control.ts`, which spells a Windows path as Git does), the internal
+  enough and named so Windows can check it out), the owned built-ins check (`check-owned-builtins.mjs`: one table of
+  the Node built-ins only one module in `src/` may use, each in the module that makes it safe on Windows: child
+  processes through `src/engine/child-process.ts`, which hides their windows and starts a program only by its
+  absolute path; renames through `src/engine/file-replace.ts`, which retries a rename while another process holds the
+  file; and in the modules that key records by a checkout path, realpath through
+  `src/engine/catalog/checkout-control.ts`, which spells a Windows path as Git does), the internal
   reference check (`check-internal-refs.mjs`: no internal ticket ID, and no `nera-` identifier outside its list of
   public ones, in a tracked path or text), the CI path filter check (`check-ci-paths.mjs`: every file the jobs `ci.yml`'s path filters skip import, from the entry
   points it lists, matches their filter) and the licence allowlist.

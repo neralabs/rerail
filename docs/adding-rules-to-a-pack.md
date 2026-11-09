@@ -359,8 +359,8 @@ Run these checks, then say in the pull request what ran and what it covers.
 npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"   # checks 1 to 8, each rule's status
 npm run conformance:languages -- --check --pack <id>
 npm run check              # metric #3 is red by design while publish/ is tracked; the chain stops there, so also:
-npm run check:windows-paths && npm run check:child-process && npm run check:file-replace
-npm run check:checkout-paths && npm run check:internal-refs && npm run check:pins
+npm run check:windows-paths && npm run check:owned-builtins
+npm run check:internal-refs && npm run check:pins
 npm run check:native       # a shorter rules/ path in an include_str! needs cargo fmt
 cargo test --manifest-path Cargo.toml -p rerail-engine anchors::tests
 ```

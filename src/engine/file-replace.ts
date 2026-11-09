@@ -5,7 +5,7 @@
  * reader of `daemon.json`, an editor or language server with a source file open, or antivirus and the indexer scanning
  * a file just written. Removing a folder fails the same way while a file in it is held. Each hold lasts a moment, so
  * these helpers retry there; elsewhere the first failure stands, as a rename over a file never fails for that reason.
- * Every rename in `src/` goes through them: `npm run check:file-replace` fails on any other.
+ * Every rename in `src/` goes through them: `npm run check:owned-builtins` fails on any other.
  */
 import { chmodSync, renameSync as fsRenameSync, statSync } from "node:fs";
 import { chmod, rename as fsRename, rm as fsRm, stat } from "node:fs/promises";

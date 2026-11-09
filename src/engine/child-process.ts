@@ -5,7 +5,7 @@
  * process that has no console of its own, such as the daemon or the session-start autostart, then gets a new console
  * with a visible window, and Windows 11 hands each one to Windows Terminal, which takes focus. With `windowsHide: true`
  * libuv starts the child with SW_HIDE and, when no stdio is inherited, with CREATE_NO_WINDOW, so it opens no window.
- * The option does nothing on macOS and Linux. `npm run check:child-process` fails on any other `node:child_process`
+ * The option does nothing on macOS and Linux. `npm run check:owned-builtins` fails on any other `node:child_process`
  * import in `src/`.
  *
  * On Windows it also refuses a program named by anything but an absolute path (`assertProgramPath`).
