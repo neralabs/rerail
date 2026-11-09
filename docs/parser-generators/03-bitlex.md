@@ -100,7 +100,7 @@ directed acyclic graph of mask operations.
 | `'x'`, `NAME`, `f: X`, `A B`, `A \| B`, `[A]`, `A*`, `A+`, `(A)` | In a grammar: a keyword's kind; a token kind, node or choice; field `f` on the node `X` gives; sequence, alternative, optional, repetitions, grouping. |
 | `retag K A`, `merge 'K' A` | In a grammar: entering `A`, the innermost open node becomes a `K`; the token `A`'s leaf and the leaf before it become one leaf of kind `K` (extras between them are its text). |
 | `wrap K F [as M] REST`, `A as K` | In a grammar: a `K` around the last node made at this level, holding it and then `REST`; `K` takes that node's place and field, and the node takes field `F` (`_`: none) and kind `M`. The leaf of token `A` is a `K` (`24-rr-and-bitlex-plan.md` §2.1). |
-| `relabel F [as M] REST` | In a grammar: at the token `REST` starts with, the last node made at this level takes field `F` (`_`: keeps its own) and kind `M`. No node around it. |
+| `relabel F [as M] [inner G] REST` | In a grammar: at the token `REST` starts with, the last node made at this level takes field `F` (`_`: keeps its own) and kind `M`; with `inner`, the node it holds first (it must be a wrap's) takes field `G`. No node around it: `(wrap atom … ) [relabel _ as call inner function …]` turns an atom back into a call. |
 | `extra KIND …` | Nodes of these kinds carry the extra flag. |
 | `mark K = E [, end]`, `hidden K …` | A token of no width before the first grammar token at or after each bit of `E` (and after the last token, with `end`); a hidden mark is skipped where the grammar does not take it (`24-rr-and-bitlex-plan.md` §2.3). |
 

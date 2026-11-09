@@ -210,7 +210,7 @@ impl<'a> Parser<'a> {
                 self.out[me].kind = kind.clone();
                 Some(next)
             }
-            Gram::Relabel { field, moved, body } => {
+            Gram::Relabel { field, moved, inner, body } => {
                 // The node just made at this level, as a wrap finds it; relabelled, then `body`.
                 let o = *self.open.last()?;
                 let mut c = None;
@@ -221,6 +221,18 @@ impl<'a> Parser<'a> {
                 }
                 let c = c?;
                 let was = (self.out[c].field.clone(), self.out[c].kind.clone());
+                // `inner`: the node a wrap holds first, right after it; only a wrap has one.
+                let held = match inner {
+                    Some(g) => {
+                        if self.out[c].size < 2 {
+                            return None;
+                        }
+                        let w = self.out[c + 1].field.clone();
+                        self.out[c + 1].field = Some(g.clone());
+                        Some(w)
+                    }
+                    None => None,
+                };
                 if let Some(f) = field {
                     self.out[c].field = Some(f.clone());
                 }
@@ -234,6 +246,9 @@ impl<'a> Parser<'a> {
                         // Undone: the node as it was.
                         self.out.truncate(len);
                         (self.out[c].field, self.out[c].kind) = was;
+                        if let Some(w) = held {
+                            self.out[c + 1].field = w;
+                        }
                         None
                     }
                 }

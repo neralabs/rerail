@@ -937,6 +937,37 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     f.def_var(v.wraps, wraps);
                     f.ins().jump(fall, &[]);
                 }
+                Op::NodeField { field, on: On::Inner } => {
+                    // The node the node made last, a wrap, holds first: that frame's last base.
+                    let open = f.use_var(v.open);
+                    let (last, base) = {
+                        let a = slot(&mut f, wc(flast_c), open);
+                        let b = slot(&mut f, wc(flbase_c), open);
+                        (f.ins().uload32(flags, a, 0), f.ins().uload32(flags, b, 0))
+                    };
+                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+                    let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
+                    let bad = f.ins().bor(none, no_last);
+                    guard(&mut f, bad, pc);
+                    let r = f.ins().iadd_imm(last, -1);
+                    let mark = {
+                        let a = slot(&mut f, wc(head_c), r);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    let not_wrap = f.ins().icmp_imm(IntCC::NotEqual, mark, IS_WRAP);
+                    guard(&mut f, not_wrap, pc);
+                    // The node it moved is the record at its base unless it is a wrap too, which
+                    // an older wrap linked before this one shows.
+                    let older = {
+                        let a = slot(&mut f, wc(link_c), r);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    let nested = f.ins().icmp_imm(IntCC::NotEqual, older, 0);
+                    guard(&mut f, nested, pc);
+                    let x = f.ins().iconst(types::I64, i64::from(field));
+                    put(&mut f, field_c, base, x);
+                    f.ins().jump(fall, &[]);
+                }
                 Op::Retag { kind, on: On::Made } | Op::NodeField { field: kind, on: On::Made } => {
                     // The node made last at the innermost open node's level (`relabel`): its
                     // frame's last, one more than its record (0: none).
@@ -1123,7 +1154,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last
 /// at a level (`On::Made`).
 fn framed(words: &[super::native_ir::StructuralBlock]) -> bool {
-    words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made, .. }))
+    words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::Inner, .. }))
 }
 
 /// A mask's words for `CompiledStream::call`: word `i` is `words[i * stride]`, `count` of them.

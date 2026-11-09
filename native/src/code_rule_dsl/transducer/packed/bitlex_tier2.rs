@@ -208,8 +208,12 @@ impl Emit<'_> {
                     self.push("MERGE", 0, Arg::Kind(kind));
                     continue;
                 }
-                Act::Relabel { field, moved } => {
-                    // Mode 2: the node made last at this level.
+                Act::Relabel { field, moved, inner } => {
+                    // Mode 2: the node made last at this level; mode 3: the node its wrap holds
+                    // first.
+                    if inner != 0 {
+                        self.push("NODE_FIELD", 3, Arg::Field(inner));
+                    }
                     if field != 0 {
                         self.push("NODE_FIELD", 2, Arg::Field(field));
                     }

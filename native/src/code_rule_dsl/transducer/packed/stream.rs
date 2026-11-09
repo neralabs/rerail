@@ -55,9 +55,10 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
         MARK => mode < 64 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
-        // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`).
+        // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
+        // `m=3` (a field): the node that one, a wrap, holds first.
         RETAG => mode <= 2,
-        NODE_FIELD => mode <= 2 && operand != 0,
+        NODE_FIELD => mode <= 3 && operand != 0,
         MERGE | WRAP => mode == 0,
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
@@ -351,6 +352,15 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 }
             }
             RETAG if mode == 1 => nodes[moved].kind = operand,
+            NODE_FIELD if mode == 3 => {
+                // A wrap's frame base is the first record of the node it moved: that node, unless
+                // it is a wrap too (then an older wrap is linked before this one).
+                let Some(Some((r, base))) = lasts_made.last().copied() else { return refuse(pc - 1, "a relabel with no node before it") };
+                if !wraps.contains(&r) || link.contains_key(&r) {
+                    return refuse(pc - 1, "an inner field on a node that is no wrap of a plain node");
+                }
+                nodes[base].field = operand;
+            }
             RETAG | NODE_FIELD if mode == 2 => {
                 let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse(pc - 1, "a relabel with no node before it") };
                 if opcode == RETAG {

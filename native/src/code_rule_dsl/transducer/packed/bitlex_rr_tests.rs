@@ -118,9 +118,14 @@ const CASES: &[(&str, &str)] = &[
     ("r(- 1, - // c\n 2, -x, --1, -(1), - - x, -@f(1)).", "06"),
     ("r(x) :- x + 1 > y, -x < 2, @f(x, -2) = 1, 1 + 2 ~ `a`, !x * 2 ~ `b`.", "06"),
     ("r(k: v + 1, a * b: c) :- s(f(x) + g(y) * 2).", "06"),
-    // A call on a comparison's left, a `(` at a literal's start: later steps.
-    ("r(x) :- f(x) > 1.", "07"),
-    ("r(x) :- (x + 1) > 1.", "07"),
+    // Disjunctions and groups; an atom or a call, by the token after it.
+    ("r(x) :- s(x); t(x), u(x); v(x).", "07"),
+    ("r(x) :- s(x), (t(x); !(u(x), x > f(x) + 1)), !(v(x)).", "07"),
+    ("r(x) :- f(x) > 1, g(x) * 2 + 1 = h(y), k(x) ~ `a`, !m(x) ~ `b`, n(x).", "07"),
+    ("r(x) :- ((s(x); t(x)); (u(x))).", "07"),
+    // A parenthesized term at a literal's start: the engine tells it from a group by going
+    // back after its `)`. The file goes to the engine.
+    ("r(x) :- (x + 1) > 1.", "never"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.
@@ -221,6 +226,9 @@ fn rr_look() {
             eprintln!("  {:>4}..{:<4} {}{} {:?}", t.start, t.end, if t.mark { "mark " } else { "" }, t.kind, &doc[t.start..t.end]);
         }
         eprintln!("  reference: {:?}", super::bitlex_ladder_tests::refusal(&c, doc.as_bytes()));
+        if let Some(nodes) = super::bitlex_ladder_tests::reference(&c, doc.as_bytes()) {
+            eprintln!("  reference tree: {:?}", named(&c, &nodes));
+        }
         eprintln!("  engine: {:?}", engine(&doc).0);
     }
 }

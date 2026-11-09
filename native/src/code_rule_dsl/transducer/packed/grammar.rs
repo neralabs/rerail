@@ -52,9 +52,10 @@ pub(in crate::code_rule_dsl) enum Act {
     /// A node of `kind` around the node just made at this level, open (`wrap K F [as M]`): it
     /// takes that node's field, which takes `field` and, when `moved` is not 0, kind `moved`.
     Wrap { kind: u16, field: u16, moved: u16 },
-    /// The node just made at this level takes `field` and, when `moved` is not 0, kind `moved`
-    /// (`relabel F [as M]`).
-    Relabel { field: u16, moved: u16 },
+    /// The node just made at this level takes `field` and, when `moved` is not 0, kind `moved`;
+    /// when `inner` is not 0, the node its wrap holds first takes field `inner` (`relabel F [as M]
+    /// [inner G]`).
+    Relabel { field: u16, moved: u16, inner: u16 },
     /// The token's leaf joins the grammar's leaf before it, as one leaf of `kind`; the extras
     /// between are its text (`merge 'K' A`).
     Merge { kind: u16 },
@@ -107,8 +108,8 @@ pub(super) fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 Act::Wrap { kind, field, moved } => {
                     let _ = write!(acts, " wrap {kind} f {field} as {moved}");
                 }
-                Act::Relabel { field, moved } => {
-                    let _ = write!(acts, " relabel f {field} as {moved}");
+                Act::Relabel { field, moved, inner } => {
+                    let _ = write!(acts, " relabel f {field} as {moved} inner {inner}");
                 }
                 Act::Extra => acts.push_str(" extra"),
                 Act::ExtraNow => acts.push_str(" extra now"),
@@ -140,7 +141,7 @@ enum Wrap {
     Wrapped { kind: u16, field: u16, moved: u16 },
     /// `relabel F [as M]`: entered, the node just made at this level takes field `F` and kind
     /// `M`; no node, so nothing closes.
-    Relabel { field: u16, moved: u16 },
+    Relabel { field: u16, moved: u16, inner: u16 },
 }
 
 /// A level's expression, inlined; `Tok` and `Call` are positions.
@@ -263,10 +264,11 @@ impl Builder<'_> {
                 };
                 E::Wrap(w, Box::new(self.expand(level, body, inlining)?))
             }
-            Gram::Relabel { field, moved, body } => {
+            Gram::Relabel { field, moved, inner, body } => {
                 let w = Wrap::Relabel {
                     field: field.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
                     moved: moved.as_deref().map(|m| (self.ids.kind)(m)).transpose()?.unwrap_or(0),
+                    inner: inner.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
                 };
                 E::Wrap(w, Box::new(self.expand(level, body, inlining)?))
             }
@@ -410,7 +412,7 @@ impl Pending {
                 Wrap::Super(s) => self.supers.push(s),
                 Wrap::Retag(kind) => acts.push(Act::Retag { kind }),
                 Wrap::Wrapped { kind, field, moved } => acts.push(Act::Wrap { kind, field, moved }),
-                Wrap::Relabel { field, moved } => acts.push(Act::Relabel { field, moved }),
+                Wrap::Relabel { field, moved, inner } => acts.push(Act::Relabel { field, moved, inner }),
                 Wrap::Node(kind) => {
                     let p = std::mem::take(self);
                     acts.push(Act::Open { kind, field: p.field, supers: p.supers });

@@ -62,6 +62,8 @@ pub(super) enum On {
     Here = 0,
     Moved = 1,
     Made = 2,
+    /// A field's only: the node the node made last, a wrap, holds first.
+    Inner = 3,
 }
 
 impl On {
@@ -69,7 +71,8 @@ impl On {
         match mode {
             0 => On::Here,
             1 => On::Moved,
-            _ => On::Made,
+            2 => On::Made,
+            _ => On::Inner,
         }
     }
 }
