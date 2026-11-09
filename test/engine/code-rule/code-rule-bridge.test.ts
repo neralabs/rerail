@@ -1045,6 +1045,42 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
   });
 });
 
+describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
+  /** `twoBranches` with `core.autocrlf=true`, as Git for Windows' installer sets it, its files checked out again in CRLF. */
+  async function crlfBranches(): Promise<string> {
+    const root = await twoBranches();
+    git(root, "config", "core.autocrlf", "true");
+    await rm(join(root, "src", "a.py"));
+    await rm(join(root, "src", "gone.py"));
+    git(root, "checkout", "--", ".");
+    await awaitClockAfter(join(root, "src", "a.py"), join(root, "src", "gone.py"));
+    return root;
+  }
+
+  it("audits nothing a checkout wrote with CRLF line breaks", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other"))).resolves.toEqual([]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("audits nothing restored from another branch with CRLF line breaks", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await expect(shell(bridge, () => git(root, "checkout", "other", "--", "src/a.py"))).resolves.toEqual([]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("gives a shell write the preimage Git holds, in the CRLF line breaks the file held it in", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nmine\r\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nmine\r\n" }],
+    ]);
+  });
+});
+
 describe("CodeRuleBridge and Git's own writes", () => {
   it.each([
     ["checkout", ["checkout", "--quiet", "other"]],
