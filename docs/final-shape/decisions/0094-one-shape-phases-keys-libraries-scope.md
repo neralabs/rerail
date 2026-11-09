@@ -126,6 +126,29 @@ The id scheme is part of the per-file memo's plan key, so a change of scheme mis
   ids move (§2). DRed's over-deletion there is 1.23–1.27x the rows truly deleted. A fair verdict needs memoised
   rewrites and plans (0090 step 5) and per-definition input deltas (§2) first; then the mechanisms differ only in
   their joins and stored rows.
+- **Plans kept and inputs by definition (same day)**. A session's plans and derived join values now carry across
+  its runs, keyed by the session. Definition ids (`RERAIL_NODE_IDS=definition`) were built only in `core.rr`'s
+  shape. The replay reads T's shape and kept preorder ids. With them in T's shape too, the session still equals
+  a full run. Changed rows, preorder against definition ids:
+
+  | step | input delta rows | truly changed derived rows |
+  | --- | --- | --- |
+  | 13 | 735,517 → 136,980 | 290,520 → 51,322 |
+  | 14 | 79,349 → 17,092 | 28,649 → 5,598 |
+
+  Session CPU over steps 13–15 (load 40–170):
+
+  | | DRed | counting |
+  | --- | --- | --- |
+  | session | 4.0–6.2 s | 3.1–4.2 s |
+  | cross part | 3.2–5.3 s | 2.4–3.3 s |
+
+  A full run's cross part is about 1.0 s. On step 14, DRed's joins take 0.58 s and counting's 0.32 s. The rest
+  is work per run whose size follows the number of rules, not the delta: join specs (0.65 s DRed, 0.22 s
+  counting), planning (0.57 s, 0.16 s), statistics, key analysis, opening the engine and binding (about 0.2 s
+  each). The input delta that remains comes from `node`'s `start` and `end_` columns. They are positions, so
+  every node after an edit changes its row even when its id holds (§1: positions are facts of their own, read
+  only by findings).
 - **Statistics are maintained like data**: stored counts updated by deltas, not measured again on a warm run.
 - **Every keyed read from SQLite has a test of its plan** (`SEARCH … USING PRIMARY KEY`). SQLite falls back to a
   scan without saying so; one such read took 33 s.
