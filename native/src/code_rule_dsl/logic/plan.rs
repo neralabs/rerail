@@ -3122,17 +3122,23 @@ impl Run<'_, '_> {
                     let mut bycols = Vec::new();
                     for b in by.iter().filter(|b| !slots.contains_key(*b)) {
                         let c = column(b)?;
-                        bycols.push(format!("{c}:{}", sym(c)));
+                        bycols.push((c, sym(c)));
                     }
                     let mut a = a.clone();
                     for v in &local {
                         let c = column(v)?;
                         a.args[c] = Term::Wild;
                     }
-                    let (sc, toks, _) = atom(&a, None, &mut slots)?;
+                    let (sc, toks, columns) = atom(&a, None, &mut slots)?;
+                    // Table inputs remove constant-filtered columns. Both the
+                    // value and ordering keys address that projected row.
+                    let project = |c| columns.iter().position(|&original| original == c);
+                    let value_kind = sym(xc);
+                    let xc = project(xc)?;
+                    let bycols = bycols.into_iter().map(|(c, kind)| project(c).map(|c| format!("{c}:{kind}"))).collect::<Option<Vec<_>>>()?;
                     let sep = const_tok(&Term::Str(sep.clone()))?;
                     let bylist = if bycols.is_empty() { "-".to_owned() } else { bycols.join(",") };
-                    lines.push(format!("strjoin {sc} {} {xc}:{} {bylist} {sep} {}", toks.join(" "), sym(xc), tok(&Term::Var(var.clone()), &mut slots)?));
+                    lines.push(format!("strjoin {sc} {} {xc}:{value_kind} {bylist} {sep} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;
