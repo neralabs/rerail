@@ -304,6 +304,30 @@ All of it was checked exactly against the CPU reference. Times are from release 
     - W1: 12.0 ms on plain arrays (the old path), 5.3 ms on IOSurfaces; Core ML's share 3.3 ms, then 1.1 ms.
     - W5: 14.3 ms, then 8.8 ms; Core ML's share 2.5 ms, then 0.35 ms.
     - A shape past IOSurface's limits keeps the plain arrays.
+  - **The host's work overlaps the predictions.** On IOSurfaces a submission's tiles are a pipeline over two sets
+    of surfaces. While tile k is predicted on a predictor thread, the lane's thread decodes tile k−1's counts and
+    expands tile k+1 into the other set.
+    - Two bounded channels carry the tiles between the threads, and at most two are in flight. The lane's thread
+      waits only for a prediction it needs, and for at most 120 s.
+    - `RERAIL_ANE_OVERLAP=off` runs the tiles one after another.
+    - The lane reports its phases through `Backend::submit_timed`: `encode` (the expansion), `device` (the
+      prediction calls), `decode` (the counts read back and summed), and `worker_cpu` (CPU off the lane's thread:
+      the predictor's and Core ML's). With the overlap these run at the same time, so they sum to more than the
+      wall time.
+    - Measured by `price::bench::ane_overlap`, a release build at load 130–158. Each row is ms a submission: the
+      phases' medians, then the best wall and CPU (user + sys) of two rounds each way.
+
+      | workload | overlap | encode | predict | decode | wall | CPU |
+      |---|---|---|---|---|---|---|
+      | W1, 7 tiles | off | 0.69 | 2.05–2.10 | 3.1–3.2 | 5.6–5.8 | 4.5–4.6 |
+      | W1, 7 tiles | on | 0.67–0.68 | 2.1–2.2 | 3.2 | 4.1–4.2 | 5.0 |
+      | W5's constant × 8,192 rows, 4 tiles | off | 6.7–8.5 | 22–25 | 21–27 | 48–59 | 28–34 |
+      | W5's constant × 8,192 rows, 4 tiles | on | 9.6–11 | 23–24 | 57–83 | 37–58 | 30–35 |
+
+    - W1's wall fell by about a quarter, and its CPU rose by about 0.4 ms, the second thread's handoffs.
+    - On W5, the best wall fell too, but the decode's wall grew 3–6× while its CPU stayed at 24–27 ms. So the decode
+      is off the CPU, not locked: timing the surface locks found 3 slow ones in 1,012. At this load the median wall
+      is no better than serial. It wants a run on a quieter machine.
 - **In the engine:**
   - **`count only`, inferred.** A derived relation's column that no reader reads, positive or negated or in a count
     compared with 0 (the converter's "no such row"), is dropped: the relation's rows are their projection.
@@ -354,7 +378,9 @@ All of it was checked exactly against the CPU reference. Times are from release 
 
 - **Device waves for every kernel.** Count tables are built ahead. A closure's launch is known only once its walk
   has searched its nodes, so it is still submitted alone.
-- **Overlapping the Neural Engine's host work with its predictions**: the next tile's expansion while a tile runs.
+- **The Neural Engine's overlap at large tiles, measured quietly.** At W5's tile size, under heavy load, the overlapped
+  decode is descheduled. Its median gain is unproved until a run at low load. The plain-array path, for shapes past
+  IOSurface's limits, is not pipelined.
 
 ## Gates
 
