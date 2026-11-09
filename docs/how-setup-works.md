@@ -151,7 +151,7 @@ Set-up denies coding agents access to Rerail's data wherever the agent's user se
 
 - **Rerail home** (`~/.rerail`, or `RERAIL_HOME`): access token, every repository's history database, installed
   package.
-- **Content cache** (`~/.cache/rerail`): parsed files and results.
+- **Content cache** (`~/.cache/rerail`, on Windows `%LOCALAPPDATA%\rerail`): parsed files and results.
 
 Agents run commands as you, so only their own sandbox can keep them out.
 
@@ -471,8 +471,9 @@ database before the now-active version, to put back by hand (see [Database compa
 
 Policy evaluation caches parsed files and results in a content store; where the package lives, not a flag, picks which one.
 
-The managed installation uses `~/.cache/rerail/content-v1.sqlite`; a build from a Git checkout uses
-`<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
+The managed installation uses `~/.cache/rerail/content-v1.sqlite`, and on Windows `%LOCALAPPDATA%\rerail\content-v1.sqlite`, out of
+a roaming profile's reach (earlier releases kept it in `~/.cache/rerail` there too; the uninstall removes that copy); a
+build from a Git checkout uses `<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
 
 <details>
 <summary>Which store a build uses</summary>

@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep, win32 } from "node:path";
 import { loadNativeBinding } from "./native.js";
 import { defaultRerailHome } from "../storage/rerail-home.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
@@ -65,9 +65,19 @@ export function isMainRerailBuild(): boolean {
   return managedBuild(realpathSync(PACKAGE_ROOT), process.env) !== undefined;
 }
 
-/** The directory holding the machine-wide content store that only the main build opens. */
-export function mainContentStoreDirectory(): string {
-  return join(homedir(), ".cache", "rerail");
+/**
+ * The directory holding the machine-wide content store that only the main build opens: `~/.cache/rerail`, and on
+ * Windows `AppData\Localerail` in the profile. A roaming profile copies everything under the profile folder but
+ * `AppData\Local` at each sign-in and sign-out, so a store at `~/.cache` there slowed every sign-in, and of two
+ * machines signed in at once, the last to sign out overwrote the other's SQLite files.
+ */
+export function mainContentStoreDirectory(home: string = homedir(), platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? win32.join(home, "AppData", "Local", "rerail") : join(home, ".cache", "rerail");
+}
+
+/** Where releases before `mainContentStoreDirectory` moved it kept the Windows content store; the uninstall removes it. */
+export function legacyWindowsContentStoreDirectory(home: string = homedir()): string {
+  return win32.join(home, ".cache", "rerail");
 }
 
 /** The content store `RERAIL_CONTENT_STORE_PATH` names, absolute, or undefined when it names none. */

@@ -14,7 +14,9 @@ import {
 
 /** This binary's store file (`STORE_FILE_NAME`, raised with the store schema floor). */
 const STORE_FILE = "content-v1.sqlite";
-const MAIN_STORE = join(homedir(), ".cache", "rerail", STORE_FILE);
+const MAIN_STORE = process.platform === "win32"
+  ? join(homedir(), "AppData", "Local", "rerail", STORE_FILE)
+  : join(homedir(), ".cache", "rerail", STORE_FILE);
 
 let root: string;
 let storeOverride: string | undefined;
@@ -39,6 +41,13 @@ function managedHome(version: string): { home: string; packageRoot: string } {
   symlinkSync(packageRoot, join(home, "current"), "junction");
   return { home, packageRoot };
 }
+
+describe("mainContentStoreDirectory", () => {
+  test("keeps the machine-wide store out of a roaming profile on Windows, in AppData\\Local", () => {
+    expect(mainContentStoreDirectory(String.raw`C:\Users\me`, "win32")).toBe(String.raw`C:\Users\me\AppData\Local\rerail`);
+    expect(mainContentStoreDirectory("/home/me", "linux")).toBe(join("/home/me", ".cache", "rerail"));
+  });
+});
 
 describe("resolveRerailBuild", () => {
   test("the managed installation loaded through `current` is main and owns the machine-wide store", () => {

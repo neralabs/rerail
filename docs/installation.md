@@ -91,7 +91,8 @@ Set-up writes to three places outside the repository, and to nothing before you 
 <summary>Exact files and entries</summary>
 
 - **`~/.rerail`** (or `RERAIL_HOME`): the package, the `rerail` launcher in `~/.rerail/bin`, the database of your rules
-  and session history (`rerail.sqlite`), and the daemon's files. The cache is `~/.cache/rerail`.
+  and session history (`rerail.sqlite`), and the daemon's files. The cache is `~/.cache/rerail`, on Windows
+  `%LOCALAPPDATA%\rerail`.
 - **Shell startup file**: a block between `# >>> rerail >>>` and `# <<< rerail <<<` on macOS and Linux, or the user
   `Path` on Windows. `RERAIL_MODIFY_PATH=0` leaves `PATH` to you.
 - **Coding agent settings** in `~/.claude`, `~/.codex`, `~/.cursor`, `~/.omp/agent` and `~/.pi/agent`. The denies keep

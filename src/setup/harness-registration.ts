@@ -32,6 +32,7 @@ import { andList, powershellLiteral, shellQuote } from "../harness/setup-screens
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
 import { renameWithRetry } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
@@ -858,7 +859,7 @@ interface RerailDataDirectories {
 
 function rerailDataDirectories(context: Context): RerailDataDirectories {
   const rerailHome = rerailHomeDirectory(context);
-  return { rerailHome, cache: join(context.home, ".cache", "rerail"), isolateHome: !contains(rerailHome, context.home) };
+  return { rerailHome, cache: mainContentStoreDirectory(context.home, context.platform), isolateHome: !contains(rerailHome, context.home) };
 }
 
 /**

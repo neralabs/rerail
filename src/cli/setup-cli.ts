@@ -2,7 +2,8 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import Database from "better-sqlite3";
+import { createRequire } from "node:module";
+import type * as Sqlite from "node:sqlite";
 import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
 import {
@@ -20,7 +21,7 @@ import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
-import { contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
+import { contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
@@ -221,15 +222,18 @@ function isRealDirectory(path: string): boolean {
 /**
  * Every checkout the database at `path` records, read before the database is deleted, or why they could not be read.
  * The connection is a writer's so that, as the last one, its close removes the `-wal` and `-shm` its open needed: a dry
- * run leaves the files as it found them. Nothing else in this process has the file open.
+ * run leaves the files as it found them. Nothing else in this process has the file open. It reads through Node's own
+ * `node:sqlite`, which loads no file: better-sqlite3 would load its addon from `versions/<v>/node_modules` into this
+ * process, Node never unloads an addon, and Windows refuses to delete a loaded DLL, so the uninstall could never remove
+ * the versions folder and told the person to close their coding agents.
  */
-function recordedCheckouts(path: string): { checkouts: string[]; problem?: string } {
+export function recordedCheckouts(path: string): { checkouts: string[]; problem?: string } {
   if (!existsSync(path)) return { checkouts: [] };
-  let client: Database.Database | undefined;
+  let client: Sqlite.DatabaseSync | undefined;
   try {
-    client = new Database(path, { fileMustExist: true });
-    client.pragma("busy_timeout = 5000");
-    const rows = client.prepare("SELECT checkout_path AS path FROM checkouts ORDER BY checkout_path").all() as Array<{ path: unknown }>;
+    const sqlite: typeof Sqlite = createRequire(import.meta.url)("node:sqlite");
+    client = new sqlite.DatabaseSync(path, { timeout: 5000 });
+    const rows = client.prepare("SELECT checkout_path AS path FROM checkouts ORDER BY checkout_path").all();
     return { checkouts: rows.flatMap(row => (typeof row.path === "string" ? [row.path] : [])) };
   } catch (error) {
     return { checkouts: [], problem: error instanceof Error ? error.message : String(error) };
@@ -351,7 +355,13 @@ function installedFiles(context: SetupContext): Array<{ path: string; what: stri
     { path: updater.statePath, what: "the record of them" },
     { path: installedPacksPrefix(context.home), what: "the installed rule packs", ours: name => RULE_PACK_PREFIX_ENTRIES.has(name) },
     { path: mainContentStoreDirectory(), what: "the cache" },
+    ...(process.platform === "win32" ? [{ path: legacyWindowsContentStoreDirectory(), what: "the cache an earlier release kept" }] : []),
   ];
+}
+
+/** Whether `path` is a content cache folder a Rerail daemon of another home may still hold. */
+function isContentCache(path: string): boolean {
+  return path === mainContentStoreDirectory() || (process.platform === "win32" && path === legacyWindowsContentStoreDirectory());
 }
 
 /** What npm and the rule pack store put in the packs prefix, with the lock a pack change holds. */
@@ -445,7 +455,7 @@ function planRemoval(context: SetupContext): { remove: Array<{ path: string; wha
   const keep: Array<{ path: string; what: string; why: string }> = [];
   for (const { path, what, ours } of installedFiles(context)) {
     if (!pathExists(path)) continue;
-    const holder = path === mainContentStoreDirectory() ? cacheHolder(path) : undefined;
+    const holder = isContentCache(path) ? cacheHolder(path) : undefined;
     if (holder !== undefined) {
       keep.push({ path, what, why: `another Rerail daemon, pid ${holder}, still uses it` });
       continue;
