@@ -713,13 +713,30 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     }
 }
 
-fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Prepared>> {
-    static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Prepared>>> = std::sync::OnceLock::new();
+/// The prepared programs kept in the process, by program key: a few of each, one per store whose atoms it holds
+/// (`interned`), so a process serving two stores (a session's and another run's) does not prepare again on each
+/// switch.
+fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Vec<Prepared>>> {
+    static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Vec<Prepared>>>> = std::sync::OnceLock::new();
     PREPARED.get_or_init(Default::default)
 }
 
 /// A few prepared programs at a time are kept.
 const PREPARED_KEPT: usize = 16;
+/// And a few stores' of each.
+const PREPARED_STORES: usize = 4;
+
+/// Keeps `p`, prepared under `key`, first among that key's.
+fn keep_prepared(key: [u8; 32], p: Prepared) {
+    let mut kept = prepared_cache().lock().expect("the prepared programs");
+    if !kept.contains_key(&key) && kept.len() >= PREPARED_KEPT {
+        kept.clear();
+    }
+    let all = kept.entry(key).or_default();
+    all.retain(|q| q.interned != p.interned);
+    all.insert(0, p);
+    all.truncate(PREPARED_STORES);
+}
 
 fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
@@ -1718,7 +1735,7 @@ fn run_observed(
         })
     };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the prepared program, kept or stored".into()));
-    let kept = prepared_cache().lock().expect("the prepared programs").get(&prepared_key).cloned().filter(holds);
+    let kept = prepared_cache().lock().expect("the prepared programs").get(&prepared_key).and_then(|all| all.iter().find(|p| holds(p)).cloned());
     // Kept across processes in the persistent store, under the programs' text (decision 0073); a session's or T's run
     // keeps it in memory only.
     let durable = if tapes.is_some() && t.is_none() && session.is_none() {
@@ -1757,11 +1774,7 @@ fn run_observed(
         Some(p) => {
             crate::code_rule_dsl::prof::count("corpus.prepared_reused", 1);
             if from == "store" {
-                let mut kept = prepared_cache().lock().expect("the prepared programs");
-                if kept.len() >= PREPARED_KEPT {
-                    kept.clear();
-                }
-                kept.insert(prepared_key, p.clone());
+                keep_prepared(prepared_key, p.clone());
             }
             p
         }
@@ -1808,12 +1821,7 @@ fn run_observed(
                 dump_split(std::path::Path::new(&path), &split);
             }
             let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, demanded, pushed, located, merged, split, interned };
-            let mut kept = prepared_cache().lock().expect("the prepared programs");
-            if kept.len() >= PREPARED_KEPT {
-                kept.clear();
-            }
-            kept.insert(prepared_key, prepared.clone());
-            drop(kept);
+            keep_prepared(prepared_key, prepared.clone());
             if let Some(source) = durable {
                 // A document whose tape does not give back its facts is a bug of `program_facts`: said, not stored.
                 match prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))? {
@@ -3934,6 +3942,9 @@ fn run_observed(
                     let clean = cell.as_ref().map(|kept| cut.sources(kept, &part.program)).unwrap_or_default();
                     let constants = constants_tested(&part.program);
                     let mut measured_kept = cell.as_ref().map(retain::Retained::measured_all).unwrap_or_default();
+                    // Each kept relation bound as `r__old`, and its statistics kept by delta if a run kept them: this
+                    // run's `r`, maintained from it, has them patched by its delta (decision 0096 step 4).
+                    let mut bound_old: HashMap<String, (Arc<crate::code_rule_dsl::logic::native::component::InRel>, Option<retain::Patched>)> = HashMap::new();
                     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
                         let _bind = crate::code_rule_dsl::logic::profile::span(|| format!("bind {}", if held.is_some() { "kept" } else { "source" }));
                         // A kept relation's statistics, measured when it was first bound so, while it is kept as it is.
@@ -3951,7 +3962,14 @@ fn run_observed(
                             let names: Vec<String> = (0..cols.len()).map(|c| super::sql_col(&rel, c)).collect();
                             stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)));
                         } else {
-                            let known = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested).cloned());
+                            let patched = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.patched(&rel, h)).filter(|p| p.tested == tested).cloned());
+                            if let (Some(h), Some(of)) = (&held, rel.strip_suffix("__old")) {
+                                bound_old.insert(of.to_owned(), (Arc::clone(h), patched.clone()));
+                            }
+                            let known = match patched {
+                                Some(p) => Some((p.stats.statistics(&|_| true), p.counts, tested.clone())),
+                                None => held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested).cloned()),
+                            };
                             let (measured, counts) = match known {
                                 Some((measured, counts, _)) => (measured, counts),
                                 None => {
@@ -4170,8 +4188,33 @@ fn run_observed(
                         eprintln!("O125_VERIFY done: {shown} relations differ (first 6)");
                     }
                     drop(s);
+                    // A maintained relation's statistics as next run binds it (`r__old`): those of the relation it
+                    // started as, patched by its delta; counted from its rows once, the first run it is maintained.
+                    let s = span("patch the maintained relations' statistics");
+                    let mut patched: HashMap<String, retain::Patched> = HashMap::new();
+                    for (rel, width, new) in &rows {
+                        let Some((old, kept)) = bound_old.get(rel) else { continue };
+                        let name = format!("{rel}__old");
+                        let next = match kept {
+                            Some(p) => p.after(old, new, *width),
+                            None if new.delta_since(old).is_some() => new.live_rows().map(|live| {
+                                let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
+                                let names: Vec<String> = (0..*width).map(|c| super::sql_col(&name, c)).collect();
+                                let mut stats = super::statkeep::RelStats::paired(names.clone());
+                                stats.documents(&live, *width, 1);
+                                let tested = constants.get(name.as_str()).cloned().unwrap_or_default();
+                                let counts = constant_counts(Some(&tested), new.source(names).as_ref());
+                                retain::Patched { at: Arc::as_ptr(new) as *const u8 as usize, stats, counts, tested }
+                            }),
+                            None => None,
+                        };
+                        if let Some(p) = next {
+                            patched.insert(name, p);
+                        }
+                    }
+                    drop(s);
                     let s = span("retain");
-                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_program));
+                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_program), patched);
                     drop(s);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
                         format!(
