@@ -226,17 +226,17 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     for &(at, .., scan) in &state.parts {
         out.push_str(&if scan { format!("  uint cy{at} = 0u;\n") } else { format!("  ulong s{at} = 0ul;\n") });
     }
-    // A first run's `prev`s before lane 0 read what the groups' states give (`halo_states`).
+    // A first run's `prev`s before lane 0 read what its exact carries there give (`halos`).
     if let Some(lv) = levels {
-        let halos = halo_states(native, lv);
-        let mut set = group_states(lv, "cw", &[]);
+        let h = halos(native, lv, "cw", usize::MAX, &[]);
+        let mut set = String::new();
         for &(at, _, _, _, scan) in &state.parts {
-            if !scan && halos.contains_key(&at) {
-                set.push_str(&format!("  s{at} = {};\n", halo_word(&halos, at)));
+            if !scan && h.word(at) != "0ul" {
+                set.push_str(&format!("  s{at} = {};\n", h.word(at)));
             }
         }
         if !set.is_empty() {
-            out.push_str(&format!("  if (!again) {{\n{set}  }}\n"));
+            out.push_str(&format!("  if (!again) {{\n{}{set}  }}\n", h.decls));
         }
     }
     out.push_str(&format!("  if (again) {{ {} if (l == 0u) {{ {} }} }}\n", state.unpack(native, "given"), state.pack(native, "rec")));
@@ -376,10 +376,10 @@ fn lanes_cone_function(p: usize, native: &BlockNative, levels: &Levels, lv: usiz
          \x20 const uint len = f.len;\n"
     );
     let mut out = out;
-    out.push_str(&group_states(levels, "from", &[]));
-    let halos = halo_states(native, levels);
+    let h = halos(native, levels, "from", lv, &[]);
+    out.push_str(&h.decls);
     let carried = |at: usize, inst: &BlockInst, out: &mut String| match *inst {
-        BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, {}));\n", halo_word(&halos, usize::from(a)))),
+        BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, {}));\n", h.word(usize::from(a)))),
         _ => {
             let i = levels.bit(at);
             let from = if levels.level[i] > 0 { format!("uint((from >> {i}u) & 1ul)") } else { "0u".to_owned() };
@@ -402,103 +402,138 @@ fn lanes_cone_function(p: usize, native: &BlockNative, levels: &Levels, lv: usiz
     out
 }
 
-/// What a `prev` of each value reads before a segment's first lane, by the leveled groups'
-/// states: `(group, states)` where the value's word there is all ones in the states of
-/// `states` (a bit a state). By a three-valued reading of the program: a group's scan is all
-/// ones in its own state and zero in the others, a carry is its next, a `prev` its operand (the
-/// state holds over the block before), what reads the bytes unknown; unknown reads as zero, as
-/// a warm-up's `prev`s do. Without it a segment inside a string reads its first byte as code.
-fn halo_states(native: &BlockNative, levels: &Levels) -> std::collections::HashMap<usize, Vec<(usize, u32)>> {
-    #[derive(Clone, Copy, PartialEq)]
-    enum Tri {
-        Zero,
-        Ones,
-        Unknown,
+/// What each `prev` reads before a segment's first lane, from the carries known there: a scan's
+/// word ends in its carry out (a toggle's parity, a fill's open region), a group's scan in its
+/// state, a carry in its next, a `prev` in its operand's end (the block before is taken as the
+/// same to its end: a multi-byte `prev` reads that bit `k` times); what reads the bytes is
+/// unknown, and an unknown word reads as zero, as a warm-up's `prev`s do. Each value's end is
+/// a pair of MSL booleans, known and value (`hk`, `hv`), folded where constant. Without it a
+/// segment inside a string reads its first byte as code. `from`: the carries at the first lane;
+/// the scans known there are those of a level below `limit`, and a group's of `own` from its
+/// state `c`.
+struct Halos {
+    decls: String,
+    words: std::collections::HashMap<usize, String>,
+}
+
+#[derive(Clone, PartialEq)]
+enum HBit {
+    F,
+    T,
+    E(String),
+}
+
+fn h_not(x: &HBit) -> HBit {
+    match x {
+        HBit::F => HBit::T,
+        HBit::T => HBit::F,
+        HBit::E(e) => HBit::E(format!("!{e}")),
     }
-    fn eval(native: &BlockNative, g: &Leveled, k: usize, at: usize, memo: &mut Vec<Option<Tri>>) -> Tri {
-        if let Some(t) = memo[at] {
-            return t;
+}
+
+fn h_and(x: &HBit, y: &HBit) -> HBit {
+    match (x, y) {
+        (HBit::F, _) | (_, HBit::F) => HBit::F,
+        (HBit::T, o) | (o, HBit::T) => o.clone(),
+        (HBit::E(a), HBit::E(b)) => HBit::E(format!("({a} && {b})")),
+    }
+}
+
+fn h_or(x: &HBit, y: &HBit) -> HBit {
+    match (x, y) {
+        (HBit::T, _) | (_, HBit::T) => HBit::T,
+        (HBit::F, o) | (o, HBit::F) => o.clone(),
+        (HBit::E(a), HBit::E(b)) => HBit::E(format!("({a} || {b})")),
+    }
+}
+
+fn halos(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &[usize]) -> Halos {
+    let n = native.insts.len();
+    let mut memo: Vec<Option<(HBit, HBit)>> = vec![None; n];
+    let mut decls = String::new();
+    fn go(native: &BlockNative, levels: &Levels, from: &str, limit: usize, own: &[usize], at: usize, memo: &mut Vec<Option<(HBit, HBit)>>, decls: &mut String) -> (HBit, HBit) {
+        if let Some(x) = &memo[at] {
+            return x.clone();
         }
-        memo[at] = Some(Tri::Unknown);
-        let mut e = |x: u16| eval(native, g, k, usize::from(x), memo);
-        let t = match native.insts[at] {
-            _ if g.scans.contains(&at) => if g.scans.iter().position(|&x| x == at).map(|j| j + 1) == Some(k) { Tri::Ones } else { Tri::Zero },
-            BlockInst::Carry(_) => match native.groups.iter().flat_map(|gr| gr.carries.iter()).find(|&&(c, _)| c == at) {
-                Some(&(_, x)) => eval(native, g, k, x, memo),
-                None => Tri::Unknown,
+        // A way back to itself (through a carry) is unknown.
+        memo[at] = Some((HBit::F, HBit::F));
+        let mut e = |x: u16, memo: &mut Vec<Option<(HBit, HBit)>>, decls: &mut String| go(native, levels, from, limit, own, usize::from(x), memo, decls);
+        let unknown = (HBit::F, HBit::F);
+        let owner = levels.groups.iter().enumerate().find(|(_, g)| g.scans.contains(&at));
+        let (k, v) = match native.insts[at] {
+            BlockInst::Toggle(_) | BlockInst::Fill(..) => match owner {
+                Some((gi, g)) if own.contains(&gi) => (HBit::T, HBit::E(format!("(c == {}u)", g.scans.iter().position(|&x| x == at).expect("a member") + 1))),
+                _ => {
+                    let i = levels.bit(at);
+                    if levels.level[i] > 0 && levels.level[i] < limit { (HBit::T, HBit::E(format!("((({from} >> {i}u) & 1ul) != 0ul)"))) } else { unknown }
+                }
             },
-            BlockInst::Prev(a, _) => e(a),
-            BlockInst::Const(0) => Tri::Zero,
-            BlockInst::Const(u64::MAX) => Tri::Ones,
-            BlockInst::Not(a) => match e(a) {
-                Tri::Zero => Tri::Ones,
-                Tri::Ones => Tri::Zero,
-                Tri::Unknown => Tri::Unknown,
+            BlockInst::Carry(_) => match native.groups.iter().flat_map(|g| g.carries.iter()).find(|&&(c, _)| c == at) {
+                Some(&(_, x)) => go(native, levels, from, limit, own, x, memo, decls),
+                None => unknown,
             },
+            BlockInst::Prev(a, _) => e(a, memo, decls),
+            BlockInst::Const(0) => (HBit::T, HBit::F),
+            BlockInst::Const(u64::MAX) => (HBit::T, HBit::T),
+            BlockInst::Not(a) => {
+                let (k, v) = e(a, memo, decls);
+                (k, h_not(&v))
+            }
             BlockInst::And(a, b) | BlockInst::AndNot(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) => {
-                let (x, y0) = (e(a), e(b));
-                let y = match (native.insts[at], y0) {
-                    (BlockInst::AndNot(..), Tri::Zero) => Tri::Ones,
-                    (BlockInst::AndNot(..), Tri::Ones) => Tri::Zero,
-                    _ => y0,
-                };
+                let (ka, va) = e(a, memo, decls);
+                let (kb, mut vb) = e(b, memo, decls);
+                if matches!(native.insts[at], BlockInst::AndNot(..)) {
+                    vb = h_not(&vb);
+                }
                 match native.insts[at] {
-                    BlockInst::Or(..) if x == Tri::Ones || y == Tri::Ones => Tri::Ones,
-                    BlockInst::Or(..) if x == Tri::Zero && y == Tri::Zero => Tri::Zero,
-                    BlockInst::And(..) | BlockInst::AndNot(..) if x == Tri::Zero || y == Tri::Zero => Tri::Zero,
-                    BlockInst::And(..) | BlockInst::AndNot(..) if x == Tri::Ones && y == Tri::Ones => Tri::Ones,
-                    BlockInst::Xor(..) if x != Tri::Unknown && y != Tri::Unknown => if x == y { Tri::Zero } else { Tri::Ones },
-                    _ => Tri::Unknown,
+                    BlockInst::Or(..) => (h_or(&h_or(&h_and(&ka, &kb), &h_and(&ka, &va)), &h_and(&kb, &vb)), h_or(&va, &vb)),
+                    BlockInst::Xor(..) => (h_and(&ka, &kb), match (&va, &vb) {
+                        (HBit::E(x), HBit::E(y)) => HBit::E(format!("({x} != {y})")),
+                        (HBit::E(x), HBit::T) | (HBit::T, HBit::E(x)) => HBit::E(format!("!{x}")),
+                        (HBit::E(x), HBit::F) | (HBit::F, HBit::E(x)) => HBit::E(x.clone()),
+                        (x, y) => if x == y { HBit::F } else { HBit::T },
+                    }),
+                    _ => (h_or(&h_or(&h_and(&ka, &kb), &h_and(&ka, &h_not(&va))), &h_and(&kb, &h_not(&vb))), h_and(&va, &vb)),
                 }
             }
-            _ => Tri::Unknown,
+            _ => unknown,
         };
-        memo[at] = Some(t);
-        t
-    }
-    let mut out: std::collections::HashMap<usize, Vec<(usize, u32)>> = Default::default();
-    let prevs: std::collections::BTreeSet<usize> = native.insts.iter().filter_map(|i| if let BlockInst::Prev(a, _) = *i { Some(usize::from(a)) } else { None }).collect();
-    for (gi, g) in levels.groups.iter().enumerate() {
-        let memos: Vec<Vec<Option<Tri>>> = (0..=g.scans.len()).map(|_| vec![None; native.insts.len()]).collect();
-        let mut memos = memos;
-        for &a in &prevs {
-            let states = (0..=g.scans.len()).filter(|&k| eval(native, g, k, a, &mut memos[k]) == Tri::Ones).fold(0u32, |m, k| m | 1 << k);
-            if states != 0 {
-                out.entry(a).or_default().push((gi, states));
+        // A named pair: the expressions are used again by what reads the value.
+        let mut name = |b: HBit, p: &str| match b {
+            HBit::E(x) => {
+                decls.push_str(&format!("  const bool {p}{at} = {x};\n"));
+                HBit::E(format!("{p}{at}"))
             }
+            other => other,
+        };
+        let k = name(k, "hk");
+        let v = if k == HBit::F { HBit::F } else { name(v, "hv") };
+        memo[at] = Some((k.clone(), v.clone()));
+        (k, v)
+    }
+    let mut words = std::collections::HashMap::new();
+    for inst in &native.insts {
+        if let BlockInst::Prev(a, _) = *inst {
+            let a = usize::from(a);
+            if words.contains_key(&a) {
+                continue;
+            }
+            let (k, v) = go(native, levels, from, limit, own, a, &mut memo, &mut decls);
+            let word = match h_and(&k, &v) {
+                HBit::F => "0ul".to_owned(),
+                HBit::T => "~0ul".to_owned(),
+                HBit::E(x) => format!("(0ul - ulong({x}))"),
+            };
+            words.insert(a, word);
         }
     }
-    out
+    Halos { decls, words }
 }
 
-/// The MSL of `prev` operand `a`'s word before the first lane (`halo_states`), the groups'
-/// states in `gs{gi}`; `0ul` when no state makes it known.
-fn halo_word(halos: &std::collections::HashMap<usize, Vec<(usize, u32)>>, a: usize) -> String {
-    match halos.get(&a) {
-        None => "0ul".to_owned(),
-        Some(list) => {
-            let any: Vec<String> = list.iter().map(|&(gi, states)| format!("(({states:#x}u >> gs{gi}) & 1u)")).collect();
-            format!("(0ul - ulong({}))", any.join(" | "))
-        }
+impl Halos {
+    fn word(&self, a: usize) -> String {
+        self.words.get(&a).cloned().unwrap_or_else(|| "0ul".to_owned())
     }
-}
-
-/// The MSL that sets `gs{gi}`, each leveled group's state, from carries `from` (its scans'
-/// bits, one-hot); the groups of `own` from `c` instead.
-fn group_states(levels: &Levels, from: &str, own: &[usize]) -> String {
-    levels
-        .groups
-        .iter()
-        .enumerate()
-        .map(|(gi, g)| {
-            if own.contains(&gi) {
-                format!("  const uint gs{gi} = min(c, {NONE}u);\n")
-            } else {
-                let sum: Vec<String> = g.scans.iter().enumerate().map(|(k, &x)| format!("uint(({from} >> {}u) & 1ul) * {}u", levels.bit(x), k + 1)).collect();
-                format!("  const uint gs{gi} = min({}, {NONE}u);\n", sum.join(" + "))
-            }
-        })
-        .collect()
 }
 
 /// The values `seeds` read, through anything, themselves included: a fixed point's members all
@@ -548,10 +583,10 @@ fn lanes_group_function(p: usize, native: &BlockNative, levels: &Levels, lv: usi
          \x20 const uint len = f.len;\n"
     );
     let own_ids: Vec<usize> = own.iter().map(|(gi, _)| *gi).collect();
-    out.push_str(&group_states(levels, "from", &own_ids));
-    let halos = halo_states(native, levels);
+    let h = halos(native, levels, "from", lv, &own_ids);
+    out.push_str(&h.decls);
     let carried = |at: usize, inst: &BlockInst, out: &mut String| match *inst {
-        BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, {}));\n", halo_word(&halos, usize::from(a)))),
+        BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, {}));\n", h.word(usize::from(a)))),
         _ => {
             let from = match own.iter().find_map(|(_, g)| g.scans.iter().position(|&x| x == at)) {
                 Some(k) => format!("uint(c == {}u)", k + 1),
