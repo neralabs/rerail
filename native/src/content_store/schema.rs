@@ -311,6 +311,16 @@ CREATE TABLE IF NOT EXISTS cross_rows (
     c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER,
     PRIMARY KEY (source_id, rel, seq)
 ) STRICT, WITHOUT ROWID;
+-- The rows as blocks (cross_rows.rs): a component's rows of one relation, its columns delta-coded, one row each.
+-- `cross_rows` is what older binaries write and read; components stored as blocks are named apart from theirs.
+CREATE TABLE IF NOT EXISTS cross_blocks (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    rel TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    rows INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY (source_id, rel)
+) STRICT, WITHOUT ROWID;
 
 -- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read
 -- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose

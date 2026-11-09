@@ -1328,8 +1328,15 @@ fn run_observed(
     };
     // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
     // profiling on may have turned it off meanwhile.
-    // Phase 0's own run, nested in a run's preparing, neither holds nor resets it: the outer run does.
-    let _profile = (crate::code_rule_dsl::logic::profile::on() && !phase0::active()).then(crate::code_rule_dsl::logic::profile::one_run);
+    // Phase 0's own run holds it only when no run does (phase 0 alone, as its benchmark runs it): nested in a run's
+    // preparing, it is the outer run's, and neither resets nor writes it.
+    let _profile = if !crate::code_rule_dsl::logic::profile::on() {
+        None
+    } else if phase0::active() {
+        crate::code_rule_dsl::logic::profile::one_run_if_free()
+    } else {
+        Some(crate::code_rule_dsl::logic::profile::one_run())
+    };
     let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
@@ -3610,7 +3617,7 @@ fn run_observed(
         });
     }
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
-    if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {
+    if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory().map(|d| if phase0::active() { d.join("phase-0") } else { d }) {
         let mut header = format!(
             "Profile of a corpus run: {} files, {nodes} nodes, {chunks} chunks; text tests {} relations, {tested} strings, {text_cpu:.3} s CPU\n\n== Phases (CPU = user + system; worker phases run beside the main thread)\n",
             docs.len(),
