@@ -609,9 +609,10 @@ mod tests;
 /// is the dialect the store's tag names. Leases are not kept: the label run takes its own.
 fn prepare(store: &ContentStore, docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> StoreResult<()> {
     use crate::code_rule_dsl::{language, residency::slabs, tape::Grammar};
-    // RER-131 Stage A: a named-only tape is stored folded and restored whole, so the device
-    // takes the restored image from the host rather than the stored bytes in place.
-    if crate::code_rule_dsl::tape::tokens::named_only() {
+    // RER-131: a tree-sitter tape is stored named-only and restored whole, so the device takes
+    // the restored image from the host; the stored bytes are read in place only where they are
+    // the full tree (a dialect with its own parser).
+    if docs.iter().any(|doc| doc.restored_from_named_only()) {
         return slabs::admit_docs(docs).map(drop).map_err(invalid);
     }
     let digests = docs.iter().map(|doc| doc.resident_key().map_err(StoreError::Invalid)).collect::<StoreResult<Vec<_>>>()?;

@@ -118,6 +118,20 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2024 Amaan Qureshi", "2014 Max Brunsfeld"]
 SPDX-License-Identifier = "MIT"
 
+# tree-sitter-rust 0.24.2 and tree-sitter-php 0.24.2 grammar.json, byte-identical to the crates': the
+# named-only tapes' token automata are built from them (RER-131).
+[[annotations]]
+path = "native/grammars/token-grammars/rust/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2017 Maxim Sokolov"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "native/grammars/token-grammars/php/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2017 Josh Vera, GitHub", "2019 Max Brunsfeld, Amaan Qureshi, Christian Frøystad, Caleb White"]
+SPDX-License-Identifier = "MIT"
+
 # DerekStride/tree-sitter-sql 0.3.11 with Rerail's patches (native/grammars/tree-sitter-sql/PATCHES.md):
 # grammar.json regenerated from the patched grammar.js, scanner.c patched, rerail.patch the diff.
 [[annotations]]

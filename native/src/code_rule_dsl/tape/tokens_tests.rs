@@ -72,7 +72,7 @@ fn run(lang: GrammarDialect, files: &[PathBuf], verbose: bool) -> Totals {
     let grammar = Grammar::new(lang).unwrap();
     let language = grammar.kinds.grammar().unwrap().clone();
     let start = cpu();
-    let tokens = TokenGrammar::from_json(&grammar_json(lang).expect("grammar.json"), &language).unwrap();
+    let tokens = TokenGrammar::from_json(grammar_json(lang).expect("grammar.json"), &language).unwrap();
     if verbose {
         eprintln!("{lang:?}: {} kinds, built in {:.3}s CPU; unsupported {:?}", tokens.kind_count(), cpu() - start, tokens.unsupported);
     }

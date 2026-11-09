@@ -25,12 +25,34 @@ use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
 /// memberships folded into the codes.
-pub(super) const TAPE_FORMAT_VERSION: u32 = 11;
+pub(super) const TAPE_FORMAT_VERSION: u32 = 12;
 const TAPE_MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// The image header: magic, language, the three column widths, version, source length and
 /// digest, and five table lengths: nodes, codes, the code table's bytes, aliases, the alias
 /// table's bytes.
-const HEADER_BYTES: usize = 56 + 5 * 8;
+const HEADER_BYTES: usize = header::ALIAS_BYTES + 8;
+
+/// Where an image's header fields are, as byte offsets: the one place a reader of stored bytes
+/// (`resident`, tests) learns the layout, so a format change moves them here.
+pub(super) mod header {
+    /// The magic, 8 bytes.
+    pub(in crate::code_rule_dsl) const MAGIC: usize = 0;
+    /// The language's tape tag, one byte.
+    pub(in crate::code_rule_dsl) const LANGUAGE: usize = 8;
+    /// The `size`, `off` and `tail` widths, a byte each (with `NAMED_ONLY` and `TAIL_FROM_START`).
+    pub(in crate::code_rule_dsl) const WIDTHS: usize = 9;
+    /// `TAPE_FORMAT_VERSION`, u32.
+    pub(in crate::code_rule_dsl) const VERSION: usize = 12;
+    /// The source's length in bytes, u64.
+    pub(in crate::code_rule_dsl) const SOURCE_LEN: usize = 16;
+    /// The node count, u64; then the code count, the code table's bytes, the alias count and
+    /// the alias table's bytes.
+    pub(in crate::code_rule_dsl) const NODES: usize = 24;
+    pub(in crate::code_rule_dsl) const CODES: usize = 32;
+    pub(in crate::code_rule_dsl) const CODE_BYTES: usize = 40;
+    pub(in crate::code_rule_dsl) const ALIASES: usize = 48;
+    pub(in crate::code_rule_dsl) const ALIAS_BYTES: usize = 56;
+}
 /// Each column starts at this alignment from the image's start (format 11), so a reader of the
 /// image in place, as the device reads a resident tape (PIAT §20.2.3), reads aligned columns.
 pub(super) const COLUMN_ALIGN: usize = 16;
@@ -271,7 +293,9 @@ pub(super) struct TapeImage {
     kind_aliases: Vec<(String, bool)>,
     language: GrammarDialect,
     source_len: usize,
-    source_digest: [u8; 32],
+    /// The source's SHA-256 where the image was encoded from it; not stored (v12), so `None` for
+    /// an image read from bytes, whose store pairs it with its source.
+    source_digest: Option<[u8; 32]>,
 }
 
 /// A folded code: kind (10 bits, ERROR's is `ERROR_CODE`) and field (6 bits) as v8's `kf`, the
@@ -1036,7 +1060,6 @@ impl TapeImage {
         bytes.extend_from_slice(&self.widths);
         bytes.extend_from_slice(&TAPE_FORMAT_VERSION.to_le_bytes());
         bytes.extend_from_slice(&(self.source_len as u64).to_le_bytes());
-        bytes.extend_from_slice(&self.source_digest);
         for length in lengths {
             bytes.extend_from_slice(&(length as u64).to_le_bytes());
         }
@@ -1084,7 +1107,6 @@ impl TapeImage {
             return Err("tape image grammar mismatch".into());
         }
         let source_len = usize::try_from(reader.u64()?).map_err(|_| "source length overflow")?;
-        let source_digest: [u8; 32] = reader.take(32)?.try_into().expect("digest width");
         let nodes = reader.length()?;
         let code_count = reader.length()?;
         let code_bytes = reader.length()?;
@@ -1177,7 +1199,7 @@ impl TapeImage {
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
         }
-        Ok(Self { code, size, base, off, tail, widths, codes, kind_aliases, language, source_len, source_digest })
+        Ok(Self { code, size, base, off, tail, widths, codes, kind_aliases, language, source_len, source_digest: None })
     }
 
     /// Parses `source` as `grammar`'s dialect and encodes its documents: with tree-sitter (a PHP
@@ -1286,8 +1308,7 @@ impl TapeImage {
         let mut nodes = Vec::<Pending>::new();
         let mut supertypes = Vec::new();
         encode_tree(&mut nodes, &mut supertypes, root, language, omitted, budget)?;
-        if tokens::named_only()
-            && let Some(automata) = tokens::TokenGrammar::of(grammar.lang, language)
+        if let Some(automata) = tokens::TokenGrammar::of(grammar.lang, language)
         {
             let (folded, classes, _) = tokens::fold(&nodes, &supertypes, &automata, language, source);
             let mut image = Self::finish(folded, classes, grammar, source, budget)?;
@@ -1518,7 +1539,7 @@ impl TapeImage {
             kind_aliases,
             language: grammar.lang,
             source_len: source.len(),
-            source_digest: source_digest(source, budget)?,
+            source_digest: Some(source_digest(source, budget)?),
         })
     }
 
@@ -1672,6 +1693,9 @@ pub(super) struct TapeDoc {
     /// (`residency::slabs::admit_docs`, decision 0032): what the device reads in place.
     image: Arc<TapeImage>,
     digest: Arc<std::sync::OnceLock<[u8; 32]>>,
+    /// Restored from a named-only image (RER-131): `image` is the full tree re-packed, not the
+    /// bytes the store holds, so the device takes it from the host.
+    named_only: bool,
 }
 
 #[derive(Clone)]
@@ -1868,8 +1892,8 @@ impl TapeDoc {
     ) -> Result<Self, String> {
         checked(budget)?;
         if image.widths[0] & NAMED_ONLY != 0 {
-            // Stage A of RER-131: stored named-only, restored whole, so every reader (and the
-            // device, which reads `image`) sees the full tree.
+            // RER-131: stored named-only, restored whole (option A), so every reader, and the
+            // device, which reads `image`, sees the full tree.
             let mut plain = image.clone();
             plain.widths[0] &= !NAMED_ONLY;
             let named = Self::restore_tree(Arc::clone(&source), Arc::clone(&grammar), &plain, Arc::clone(&lines), budget)?;
@@ -1878,12 +1902,12 @@ impl TapeDoc {
             let (nodes, classes) = named.pending(&plain);
             let (full, classes) = tokens::unfold(&nodes, &classes, &automata, language, &source)?;
             let full = TapeImage::finish(full, classes, &grammar, &source, budget)?;
-            return Self::restore_tree(source, grammar, &full, lines, budget);
+            let mut doc = Self::restore_tree(source, grammar, &full, lines, budget)?;
+            doc.named_only = true;
+            return Ok(doc);
         }
-        if image.language != grammar.lang
-            || image.source_len != source.len()
-            || image.source_digest != source_digest(&source, budget)?
-        {
+        let digest = source_digest(&source, budget)?;
+        if image.language != grammar.lang || image.source_len != source.len() || image.source_digest.is_some_and(|stored| stored != digest) {
             return Err("tape grammar or source revision mismatch".into());
         }
         let count = image.node_count();
@@ -2026,7 +2050,7 @@ impl TapeDoc {
         }
         checked(budget)?;
         Ok(Self {
-            source_digest: image.source_digest,
+            source_digest: digest,
             points: Arc::new(Points {
                 source: Arc::clone(&source),
                 rows: std::sync::OnceLock::new(),
@@ -2044,6 +2068,7 @@ impl TapeDoc {
             host: None,
             image: Arc::new(image.clone()),
             digest: Arc::default(),
+            named_only: false,
         })
     }
 
@@ -2209,6 +2234,12 @@ impl TapeDoc {
     /// The SHA-256 of this document's stored bytes, the residency's key (decision 0032).
     pub(crate) fn resident_key(&self) -> Result<[u8; 32], String> {
         self.tape_digest()
+    }
+
+    /// Whether this document was restored from a named-only image (its `image` is not the
+    /// stored bytes).
+    pub(crate) fn restored_from_named_only(&self) -> bool {
+        self.named_only
     }
 
     /// This document's image as stored, its source and its grammar: what residency admits.

@@ -18,7 +18,6 @@
 
 use super::Pending;
 use crate::code_rule_dsl::language::GrammarDialect;
-use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 use rustc_hash::FxHashMap;
 use serde_json::Value;
@@ -488,34 +487,26 @@ impl TokenGrammar {
     }
 }
 
-/// The `grammar.json` a dialect's parser was generated from: vendored, or in the crate's source.
-pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<String> {
-    let vendored = |dir: &str| Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("grammars").join(dir).join("src/grammar.json"));
-    let registry = |dir: &str| -> Option<PathBuf> {
-        let home = std::env::var("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap()).join(".cargo"));
-        let src = home.join("registry/src");
-        std::fs::read_dir(&src).ok()?.filter_map(|entry| Some(entry.ok()?.path().join(dir).join("src/grammar.json"))).find(|path| path.exists())
-    };
-    let path = match lang {
-        GrammarDialect::Python => vendored("tree-sitter-python"),
-        GrammarDialect::JavaScript => vendored("tree-sitter-javascript"),
-        GrammarDialect::TypeScript => vendored("tree-sitter-typescript/typescript"),
-        GrammarDialect::Tsx => vendored("tree-sitter-typescript/tsx"),
-        GrammarDialect::Sql => vendored("tree-sitter-sql"),
-        GrammarDialect::Vue => vendored("tree-sitter-vue"),
-        GrammarDialect::Rust => registry("tree-sitter-rust-0.24.2"),
-        GrammarDialect::Php => registry("tree-sitter-php-0.24.2/php"),
-        _ => None,
-    }?;
-    std::fs::read_to_string(&path).ok()
-}
-
-
-/// Whether the encoder writes named-only tapes: `RERAIL_NAMED_ONLY_TAPES=1` (the RER-131
-/// experiment; the format is not switched yet).
-pub(in crate::code_rule_dsl) fn named_only() -> bool {
-    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_NAMED_ONLY_TAPES").is_some_and(|v| v == "1"));
-    *ON
+/// The `grammar.json` a dialect's parser was generated from, built into the engine (the vendored
+/// grammars, and byte-identical copies of the Rust and PHP crates' under `grammars/token-grammars`);
+/// `None` for a dialect whose tapes keep all their tokens.
+pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
+    macro_rules! grammar {
+        ($path:literal) => {
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/grammars/", $path, "/grammar.json"))
+        };
+    }
+    Some(match lang {
+        GrammarDialect::Python => grammar!("tree-sitter-python/src"),
+        GrammarDialect::JavaScript => grammar!("tree-sitter-javascript/src"),
+        GrammarDialect::TypeScript => grammar!("tree-sitter-typescript/typescript/src"),
+        GrammarDialect::Tsx => grammar!("tree-sitter-typescript/tsx/src"),
+        GrammarDialect::Sql => grammar!("tree-sitter-sql/src"),
+        GrammarDialect::Vue => grammar!("tree-sitter-vue/src"),
+        GrammarDialect::Rust => grammar!("token-grammars/rust"),
+        GrammarDialect::Php => grammar!("token-grammars/php"),
+        _ => return None,
+    })
 }
 
 impl TokenGrammar {
@@ -526,7 +517,7 @@ impl TokenGrammar {
         let mut built = BUILT.lock().ok()?;
         built
             .entry(lang)
-            .or_insert_with(|| grammar_json(lang).and_then(|json| Self::from_json(&json, language).ok()).map(Arc::new))
+            .or_insert_with(|| grammar_json(lang).and_then(|json| Self::from_json(json, language).ok()).map(Arc::new))
             .clone()
     }
 }

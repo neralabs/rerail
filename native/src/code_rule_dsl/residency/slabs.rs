@@ -589,7 +589,6 @@ fn place(
     if layout.source_len != source.len()
         || layout.nodes as usize != plan.nodes
         || layout.code_count != plan.codes
-        || <[u8; 32]>::from(Sha256::digest(source)) != layout.source_digest
         || std::str::from_utf8(source).is_err()
     {
         return Err(invalid("a tape and its source disagree"));

@@ -474,6 +474,11 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     // A `.rr` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
     view_sources.push(manifest.join("src/code_rule_dsl/logic/rr/syntax.rs"));
     view_sources.push(manifest.join("src/code_rule_dsl/logic/rr/tape.rs"));
+    // A named-only tape (RER-131) leaves out the tokens its grammar's automata recognize: the
+    // automata, and the grammars they are built from, decide what a stored tape means.
+    view_sources.push(manifest.join("src/code_rule_dsl/tape/tokens.rs"));
+    view_sources.push(manifest.join("grammars/token-grammars/rust/grammar.json"));
+    view_sources.push(manifest.join("grammars/token-grammars/php/grammar.json"));
     view_sources.retain(|path| {
         !path
             .file_name()

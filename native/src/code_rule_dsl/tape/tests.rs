@@ -10,7 +10,7 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
     assert_eq!(&bytes[..8], b"TMPTAP9N");
-    assert_eq!(TAPE_FORMAT_VERSION, 11);
+    assert_eq!(TAPE_FORMAT_VERSION, 12);
 
     let memberships = tape.transducer_supertypes().collect::<Vec<_>>();
     assert!(!memberships.is_empty());
@@ -56,8 +56,9 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &broken, &|| false).is_err());
     // A code table whose stated length disagrees with its codes.
     let mut corrupt = bytes.clone();
-    let stated = u64::from_le_bytes(corrupt[72..80].try_into().unwrap());
-    corrupt[72..80].copy_from_slice(&(stated + 2).to_le_bytes());
+    let slot = header::CODE_BYTES..header::CODE_BYTES + 8;
+    let stated = u64::from_le_bytes(corrupt[slot.clone()].try_into().unwrap());
+    corrupt[slot].copy_from_slice(&(stated + 2).to_le_bytes());
     assert!(TapeImage::from_bytes(&corrupt, &grammar).is_err());
 }
 
@@ -234,11 +235,11 @@ fn persisted_image_round_trips_without_parsing() {
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`,
     // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape format (7: one
     // document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes; 11: columns at 16 bytes,
-    // decision 0032) changes
+    // decision 0032; 12: named-only, no source digest, RER-131) changes
     // the bytes.
     assert_eq!(
         digest,
-        "bc05feccadd8b7779a4c39a2e056f2cd821fdadf580cbf4e1ffcd4d2e60d526c"
+        "d1a0eb2ead797113aa9e1cb653789de5581e4a0fa0d4e1e9ad696093638421e0"
     );
 }
 
@@ -407,18 +408,20 @@ fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
     trailing.push(0);
     assert!(TapeImage::from_bytes(&trailing, &grammar).is_err());
 
-    let mut header = bytes.clone();
-    header[9] = 1;
-    assert!(TapeImage::from_bytes(&header, &grammar).is_err());
+    let mut widths = bytes.clone();
+    widths[header::WIDTHS] = 1;
+    assert!(TapeImage::from_bytes(&widths, &grammar).is_err());
 
     let mut noncanonical = image.clone();
     noncanonical.codes[0].flags = 0x40;
     assert!(TapeImage::from_bytes(&noncanonical.to_bytes().unwrap(), &grammar).is_err());
 
+    // v12 stores no source digest (the store pairs a tape with its source), so a source of
+    // another length is what restore can tell apart.
     let decoded = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     assert!(
         TapeDoc::restore(
-            Arc::new("x = 2 # extra\n".to_owned()),
+            Arc::new("x = 22 # extra\n".to_owned()),
             grammar,
             &decoded,
             &|| false,
@@ -433,15 +436,14 @@ fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
 fn persisted_image_rejects_oversized_alias_counts_without_allocating() {
     let (_native, _tape, image, grammar) = fixture("x = 1\n", GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
-    // Header count slots (v9np): codes at 64, code bytes at 72, aliases at 80, alias bytes at 88.
     for (offset, count) in [
-        (80, u64::MAX >> 1),
-        (80, 1 << 20),
-        (80, 1 << 16 | 1),
-        (64, u64::MAX >> 1),
-        (64, 1 << 20),
-        (72, u64::MAX >> 1),
-        (88, u64::MAX >> 1),
+        (header::ALIASES, u64::MAX >> 1),
+        (header::ALIASES, 1 << 20),
+        (header::ALIASES, 1 << 16 | 1),
+        (header::CODES, u64::MAX >> 1),
+        (header::CODES, 1 << 20),
+        (header::CODE_BYTES, u64::MAX >> 1),
+        (header::ALIAS_BYTES, u64::MAX >> 1),
     ] {
         let mut corrupt = bytes.clone();
         corrupt[offset..offset + 8].copy_from_slice(&count.to_le_bytes());
@@ -1041,13 +1043,10 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
         "encode must poll before the final source digest"
     );
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    assert_eq!(
-        TapeDoc::restore(Arc::new(source), grammar, &image, &|| false)
-            .unwrap()
-            .data
-            .len(),
-        image.primary.node_count()
-    );
+    // A named-only image restores the whole tree (RER-131).
+    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    assert_eq!(doc.data.len(), doc.image.node_count());
+    assert!(image.primary.node_count() < doc.data.len());
 }
 
 #[test]
@@ -1070,13 +1069,8 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
         .is_err()
     );
     assert_eq!(calls.get(), 5, "restore must poll after the source digest");
-    assert_eq!(
-        TapeDoc::restore(Arc::new(source), grammar, &image, &|| false)
-            .unwrap()
-            .data
-            .len(),
-        image.node_count()
-    );
+    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    assert_eq!(doc.data.len(), doc.image.node_count());
 }
 
 #[test]
@@ -1093,7 +1087,9 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
         (16, format!("{}#é\n", "x\n".repeat(7))),
         (17, "x\n".repeat(8)),
     ] {
-        let (native, tape, image, _) = fixture(&source, GrammarDialect::Python);
+        let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
+        // The document's tree image: the stored one is named-only (RER-131).
+        let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
         let native_nodes = left.root().dfs().collect::<Vec<_>>();
@@ -1136,7 +1132,9 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
 fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
     for (length, expected_width) in [(127, 1), (128, 2), (16_383, 2), (16_384, 3)] {
         let source = format!("#é{}\nfoo(1)\n", "a".repeat(length - 3));
-        let (native, tape, image, _) = fixture(&source, GrammarDialect::Python);
+        let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
+        // The document's tree image: the stored one is named-only (RER-131).
+        let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
         let native_nodes = left.root().dfs().collect::<Vec<_>>();
