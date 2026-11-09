@@ -137,7 +137,10 @@ rre_cli_root("data_layer",1) :- pfd_root("data_layer").
 rre_cli_root("_internal",2) :- pfd_root("_internal").
 rre_cli_root(root,3) :- pfd_root(root), root != "impl", root != "data_layer", root != "_internal".
 .decl rre_cli_excluded(path: symbol)
+.decl workspace_root(path: symbol)
+.input workspace_root
 rre_cli_excluded(path) :- pfd_file(path), rre_excluded_part(part), contains(cat("/",part,"/"),cat("/",path,"/")).
+rre_cli_excluded(path) :- pfd_file(path), workspace_root(root), rre_excluded_part(part), contains(cat("/",part,"/"),cat("/",root,"/")).
 rre_cli_excluded(path) :- pfd_file(path), rre_excluded_prefix(prefix), prefix(prefix,path).
 rre_cli_excluded(path) :- pfd_file(path), match_all("(?:\\A|/)(?:browser_build|conform)(?:/|\\z)",path).
 .decl rre_cli_key(root: number, key: symbol)

@@ -1884,7 +1884,7 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
       "origin": "authored",
-      "sha256": "14c3eab9b06d592544f5f17d6b420e1bf6dd6256807df0df128eae574995cb9e",
+      "sha256": "cb8b9142df7fca72dba7542177b67c5c3a3fc22224eeeaa001818f710723c4f0",
       "importedSha256": "69c287f6eb74fdfeab7e6fa15ef57ec6a8d46d87663933e8535da6c149a37c69",
       "repairs": [
         {
@@ -1921,6 +1921,11 @@
           "before": "57a998913165c0372c0b3bcbab62fe84052d8a30fef5d7d1640e5bf7718b4ca7",
           "after": "14c3eab9b06d592544f5f17d6b420e1bf6dd6256807df0df128eae574995cb9e",
           "reason": "Preserve source layer-root newline restriction in explicit discovery and native CLI"
+        },
+        {
+          "before": "14c3eab9b06d592544f5f17d6b420e1bf6dd6256807df0df128eae574995cb9e",
+          "after": "cb8b9142df7fca72dba7542177b67c5c3a3fc22224eeeaa001818f710723c4f0",
+          "reason": "Preserve CLI exclusion of absolute ancestor components, proven by an excluded-workspace source case"
         }
       ]
     },
@@ -2452,7 +2457,7 @@
       "legacySha256": "a6f3834fc9a74b85e5df4706b13efb0943b6bb0ae82e5e0f59a80f048df53c04",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
-      "ruleSha256": "14c3eab9b06d592544f5f17d6b420e1bf6dd6256807df0df128eae574995cb9e"
+      "ruleSha256": "cb8b9142df7fca72dba7542177b67c5c3a3fc22224eeeaa001818f710723c4f0"
     },
     {
       "check": "legacy_execution_surfaces",

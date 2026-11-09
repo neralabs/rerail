@@ -30,14 +30,21 @@ CASES.extend([
     dict(id='cli-discovery-exclusions',check=True,files=[dict(path=p,source='c.raw_execute()\n') for p in [
         'impl/browser_build/a.py','impl/conform/a.py','impl/.ruff_cache/a.py',
         'impl/.mypy_cache/a.py','impl/.pytest_cache/a.py','impl/node_modules/a.py','impl/keep/a.py']]),
+    dict(id='cli-excluded-workspace-ancestor',check=True,workspaceName='tests',files=[dict(path='impl/a.py',source='c.raw_execute()\n')]),
+    dict(id='cli-bare-dot-py',check=True,files=[dict(path='impl/.py',source='c.raw_execute()\n')]),
+    dict(id='cli-file-alias',check=True,files=[dict(path='impl/a.py',source='c.raw_execute()\n'),dict(path='impl/b.py',symlink='a.py')]),
+    dict(id='cli-root-directory-link',check=True,files=[dict(path='other/a.py',source='c.raw_execute()\n'),dict(path='impl',symlink='other')]),
+    dict(id='cli-nested-directory-link',check=True,files=[dict(path='impl/data/a.py',source='c.raw_execute()\n'),dict(path='impl/alias',symlink='data')]),
+    dict(id='cli-layer-with-later-newline',check=True,files=[dict(path='l1234_a\nb/a.py',source='c.raw_execute()\n')]),
 ])
+for case in CASES:case.setdefault('workspaceName','corpus')
 
 
 def source_case(source,case):
     sys.path[:0]=[str(source),str(source/'scripts')]
     module=importlib.import_module('scripts.lint_raw_execute_regression')
     with tempfile.TemporaryDirectory(prefix='rerail-offline-raw-cli-') as directory:
-        root=Path(directory).resolve();write_fixture(root,case['files'])
+        root=Path(directory).resolve()/case['workspaceName'];root.mkdir();write_fixture(root,case['files'])
         output=io.StringIO();errors=io.StringIO()
         with patch.object(module,'REPO_ROOT',root),patch.object(sys,'argv',['lint_raw_execute_regression.py',*(['--check'] if case['check'] else [])]):
             paths=[p.relative_to(root).as_posix() for p in module._iter_python_files()]
@@ -100,7 +107,7 @@ def main():
         result.update(engineSha256=sha(args.engine.read_bytes()),baselineSha256=sha(args.baseline.read_bytes()),caseSelection=dict(part=args.part,parts=args.parts,total=len(CASES)))
         write_json(args.output,result)
         for case in baseline['cases'][args.part::args.parts]:
-            native=execute_workspace(args.engine,args.rule,case['files'],dict(entryPoint='cli_main',cliCheck=case['check']))
+            native=execute_workspace(args.engine,args.rule,case['files'],dict(entryPoint='cli_main',cliCheck=case['check']),workspace_name=case['workspaceName'])
             actual=native_value(native)
             result['cases'].append(dict(id=case['id'],expected=case['expected'],actual=actual,passed=actual==case['expected'],programInputs=native['programInputs']))
             write_json(args.output,result)
