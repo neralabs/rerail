@@ -7,6 +7,7 @@ pub(in crate::code_rule_dsl::sql_executor::reductions) mod publication;
 #[derive(Clone)]
 pub(super) struct Shared {
     pub owner: bool,
+    pub joined: bool,
     pub layout: scalars::Layout,
     pub members: Vec<usize>,
 }
@@ -65,7 +66,7 @@ pub(in crate::code_rule_dsl::sql_executor::reductions) fn plan(
         .collect();
     let analysis = scalars::analyze(inputs);
     for family in &analysis.families {
-        if family.members.len() < 2 {
+        if !family.lookup.proven {
             continue;
         }
         let owner = family.members[0];
@@ -81,6 +82,7 @@ pub(in crate::code_rule_dsl::sql_executor::reductions) fn plan(
         for &i in &family.members {
             reducers[i].combined = Some(Shared {
                 owner: i == owner,
+                joined: family.lookup.proven,
                 layout: family.layout.clone(),
                 members: family.members.clone(),
             });
@@ -92,15 +94,14 @@ pub(in crate::code_rule_dsl::sql_executor::reductions) fn plan(
     analysis
 }
 
-pub(in crate::code_rule_dsl::sql_executor::reductions) fn already_shared(r: &Reducer) -> bool { r.combined.is_some() }
 pub(in crate::code_rule_dsl::sql_executor::reductions) fn storage(r: &Reducer) -> (String, String, Query, bool) {
     (r.groups.clone(), r.values.clone(), r.projection.clone(), r.combined.is_some())
 }
 pub(in crate::code_rule_dsl::sql_executor::reductions) fn share(
     r: &mut Reducer, groups: &str, values: &str, projection: &Query,
-    layout: &scalars::Layout, members: &[usize], owner: bool, consumers: usize,
+    layout: &scalars::Layout, members: &[usize], owner: bool, joined: bool, consumers: usize,
 ) {
-    r.combined = Some(Shared { owner, layout: layout.clone(), members: members.to_vec() });
+    r.combined = Some(Shared { owner, joined, layout: layout.clone(), members: members.to_vec() });
     r.groups = groups.into(); r.values = values.into(); r.projection = projection.clone();
     r.pool_consumers = consumers;
 }

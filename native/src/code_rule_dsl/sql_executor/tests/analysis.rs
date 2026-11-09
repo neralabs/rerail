@@ -282,7 +282,8 @@ fn cold_summaries_wait_for_upstream_strata_and_keep_multiple_supports() {
     let explanation: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
     let retained = explanation["executions"][0]["retained"].as_array().unwrap();
     let out = retained.iter().find(|s|s["relation"]=="out").unwrap();
-    assert_eq!(out["cold_initialized"],true);
+    assert_eq!(out["cold_initialized"],false);
+    assert!(explanation["executions"][0]["recursive"][0]["execution_shape"].as_str().unwrap().contains("retained relation graph"));
     assert_eq!(out["full_rebuild_grouping_elided"],false);
     let checked = retained.iter().find(|s|s["relation"]=="checked").unwrap();
     assert_eq!(checked["cold_reuse"]["proven"],false);

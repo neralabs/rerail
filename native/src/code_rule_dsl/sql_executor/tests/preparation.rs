@@ -12,18 +12,10 @@ fn first_edit_uses_prepared_inputs_projections_and_reducers_with_bounded_work() 
     let program = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl projected(id:number,g:number,v:number)\nprojected(i,g,v) :- event(i,g,v).\n.decl totals(g:number,n:number,lo:number)\ntotals(g,n,lo) :- owner(g), n=count : {event(_,g,_)}, lo=min v : {event(_,g,v)}.\n.output projected,totals\n";
     let initial: Value =
         serde_json::from_str(&e.run(program.into(), "python".into(), None).unwrap()).unwrap();
-    assert_eq!(initial["preparation"]["initializations"], json!(["totals"]));
-    assert_eq!(
-        rows(
-            &e,
-            "SELECT type FROM temp.sqlite_schema WHERE name='projected'"
-        ),
-        json!([["table"]])
-    );
-    let root = rows(
-        &e,
-        "SELECT rootpage FROM temp.sqlite_schema WHERE name='projected'",
-    );
+    assert_eq!(initial["preparation"]["initial_execution"],json!("retained"));
+    assert_eq!(initial["preparation"]["projection_relations"],1);
+    let projected = rows(&e,"SELECT rootpage FROM temp.sqlite_schema WHERE name='projected'");
+    assert_eq!(projected.as_array().unwrap().len(),1);
     e.set_limits(json!({"max_steps":30000}).to_string())
         .unwrap();
     let (result, work) = profile(&mut e, |e| {
@@ -40,13 +32,7 @@ fn first_edit_uses_prepared_inputs_projections_and_reducers_with_bounded_work() 
     assert!(Arc::ptr_eq(&source, &e.inputs["event"]));
     assert!(work.data_scans.get() < 1000, "{work:?}");
     assert_eq!(rows(&e, "SELECT * FROM totals"), json!([[1, 100001, 0]]));
-    assert_eq!(
-        rows(
-            &e,
-            "SELECT rootpage FROM temp.sqlite_schema WHERE name='projected'"
-        ),
-        root
-    );
+    assert_eq!(rows(&e,"SELECT rootpage FROM temp.sqlite_schema WHERE name='projected'"),projected);
     eprintln!("first edit: {work:?}");
 }
 

@@ -321,6 +321,13 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
 
+impl SourceId {
+    /// An id a record of this store kept (`raw`; a kept statistics blob, decision 0096 §2). A source collected since reads as absent: a lookup finds nothing.
+    pub fn from_raw(id: i64) -> Self {
+        SourceId(id)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
 
