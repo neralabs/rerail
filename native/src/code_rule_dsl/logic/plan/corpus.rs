@@ -2494,10 +2494,13 @@ fn run_observed(
                         let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
                         held.1[to].get_or_insert_with(Vec::new).extend(values.iter().skip(from).step_by(*width).copied());
                     }
-                    // Kept whole, to be measured once after the chunks, so the cross-file part's statistics count them.
-                    let full = replayed.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![Vec::new(); *width]));
-                    for (c, col) in full.1.iter_mut().enumerate() {
-                        col.extend(values.iter().skip(c).step_by(*width).copied());
+                    // Kept whole, to be measured once after the chunks, so the cross-file part's statistics count them;
+                    // not when the keeper counts them (decision 0096 §3).
+                    if keeper.is_none() {
+                        let full = replayed.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![Vec::new(); *width]));
+                        for (c, col) in full.1.iter_mut().enumerate() {
+                            col.extend(values.iter().skip(c).step_by(*width).copied());
+                        }
                     }
                 }
                 // Gathered by relation across the batch's hits: one statement per relation below, not one per row.

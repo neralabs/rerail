@@ -1,9 +1,8 @@
 # 0096: Planner statistics are kept in the store as deletable sketches, maintained by the deltas that change the rows
 
 Status: accepted as the design (2026-11-09), settled by the spikes in §"Evidence". Amended the same day (§2–§4):
-statistics live in memory and are written with the wave SQLite commits, one blob per relation, never a row per
-value. The sketch, the measurement aids and the keeper (`logic/plan/statkeep.rs`) are built; see "Order of work"
-for what is wired.
+statistics live in memory and are written with the wave SQLite commits, as blobs, never a row per value. Steps 1
+and 2 are built (`logic/plan/statkeep.rs`, `corpus/keptstats.rs`); steps 3 and 4 are open ("Order of work").
 
 ## Intro
 
@@ -80,7 +79,7 @@ A node column is told by its values, not its declaration: a column whose every v
 `ndv` and `sq` are sums of per-document terms and exact. One document's value naming another moves the column to
 its sketch for as long as that document's rows are counted.
 
-### 2. Where they live: memory, and one blob per relation in the wave
+### 2. Where they live: memory, and one blob per memo plan in SQLite
 
 The general model holds: everything that must be fast is in memory, and SQLite keeps up as best it can by
 committing consistent, durable waves. **No statistic is ever written, read or counted per row in SQLite.**
@@ -88,15 +87,20 @@ committing consistent, durable waves. **No statistic is ever written, read or co
 - **In memory** (`statkeep::RelStats`): per relation its row count, and per column the counters and sketch of §1
   and the exact map while it is small. A session holds them beside the sources they describe; patching them is a
   few nanoseconds per changed row per column (§"Cost").
-- **In SQLite**: one row per relation, `stat_blob(rel, v, blob)`, the whole `RelStats` encoded
-  (`RelStats::encode`, a few KB). It is written in the transaction that commits the wave of rows it describes,
-  so `v` names exactly those rows. A wave that lags lags both together. A changed relation costs one blob write
-  per wave, however many rows changed: about 3 µs, against 760 ns *per row* for an exact per-value table.
+- **In SQLite**: one blob per memo plan, `stat_blob(plan, blob)` in the content store: the files' contents it
+  counts (path, stored source, document key) and each base relation's `RelStats` (`Keeper::encode`). A run
+  writes it once, when it counted a file in or out; nothing is written per row or per value. The blob names the
+  memo entries it counts by their content, so it agrees with the entries whatever the timing of the writes, and
+  a later process patches it by the files whose content changed.
 
 ```sql
--- One row per relation: its statistics as of the wave `v` that committed its rows.
-CREATE TABLE stat_blob(rel TEXT PRIMARY KEY, v INTEGER, blob BLOB) WITHOUT ROWID;
+-- One row per memo plan: the base relations' statistics, and the files' contents they count.
+CREATE TABLE stat_blob(plan BLOB PRIMARY KEY, blob BLOB NOT NULL) WITHOUT ROWID;
 ```
+
+  A phase export's statistics are held in memory only. A process without them loads the export's rows from the
+  phase store whole anyway, and counts them as it interns them; keeping them durable pays once the export's
+  source is itself kept (step 3).
 
 No per-document statistics are stored. A changed document's minus is computed from its old rows, which are at
 hand when it changes: the session's memo holds each file's rows (`memo::Entry`), and the phase store hands on an
@@ -114,14 +118,15 @@ again from its rows once, which is the backfill path.
 The session keeps, per relation, which content of each document its totals count, so an edit touches only the
 documents whose content changed.
 
-### 4. Delayed readback: versions, not timing
+### 4. Delayed readback: contents, not timing
 
-- **Memory is ahead.** The planner reads memory. SQLite's blob is read by a cold process, or after a restart.
-- **The version decides.** A blob whose `v` is the rows' version is used as it is. One that is older is stale:
-  the rows it describes were replaced in a later wave whose statistics did not commit (a crash between). It is
-  counted again from the rows once.
-- **Missing means counted once.** A store without the table, or a relation without a blob, is counted from its
-  rows once, and the result is written with the next wave. This is a backfill, as the anchor index's upgrade does.
+- **Memory is ahead.** The planner reads memory. The blob is read by a process without a session.
+- **The contents decide.** The blob counts named contents. A file whose content is the one counted is not
+  counted again; one whose content changed is counted out by the old content's memo entry and in by the new.
+  A blob written before a crash still names what it counts, so it is never wrong about it, only behind.
+- **Missing means counted once.** A store without the table, a blob that does not decode, or an old entry the
+  memo no longer holds: every file is counted in again from the rows the run reads anyway, and the result is
+  written. This is the backfill, as the anchor index's upgrade does.
 
 ### 5. Reading
 
@@ -216,8 +221,8 @@ change if a workload ever needs it.
 | Distinct values | levelled counting bitmap, M=64 |
 | Deletes | linear sketches: exact and history-independent |
 | Per-document parts | none, but each document's tree counts kept with its tape record (§2) |
-| Where they live | in memory; one blob per relation per wave in SQLite, never a row per value (§2) |
-| Delayed readback | the blob is tagged with its wave's version and written in that wave's commit, memory ahead (§4) |
+| Where they live | in memory; one blob per memo plan in SQLite, written with the run, never a row per value (§2) |
+| Delayed readback | the blob names the contents it counts, so it is behind at worst, never wrong; memory ahead (§4) |
 
 ## What this agrees with, and departs from
 
@@ -270,13 +275,35 @@ Node columns are exact (§1) and are not sketched.
 
 ## Order of work
 
-1. Write `stat_total` (with sketches) and `stat_value` in phase `keep` from its plus/minus. Serve the reader's
-   bound exports from them, with no `syntax::measured` on an export.
-2. Patch them from a file's old and new local rows when its file-local part runs again. Keep each document's tree
-   counts with its tape record. Stop counting replayed rows.
-3. Build the per-file cross store (rows in SQLite, keyed by file and program). An unchanged file is neither
-   replayed nor counted.
-4. Derived relations, once the core has relations with deletes.
+| Step | What | State (2026-11-09) |
+| --- | --- | --- |
+| 1 | A phase export's statistics counted once, then patched by each version's plus and minus | built (`8da5e1b01`): `PhasedSource` keeps its `RelStats` |
+| 2 | A base relation's statistics patched by file: a file's old rows out (by the content counted), its new in; replayed rows not counted again | built for memoised runs, in a session (`e388adcc3`) and over the tape cache, durable as one blob per memo plan (`5f7def8b8`) |
+| 3 | An unchanged file is neither replayed nor counted: the session keeps the base sources and exports, and patches a changed file's rows in | open |
+| 4 | Derived relations: a maintained relation's statistics patched by its delta rather than read from its postings | open |
+
+Measured on the O125 replay (calls.rr over real history, a session, load 65–140), per one-to-four-file step:
+
+| Cost | Before | After steps 1–2 |
+| --- | --- | --- |
+| Base relations measured (`measure the base rows held`) | 0.56 s | 0.08–0.09 s (making the sources) |
+| Memo hits' rows measured again (`measure <rel> (memo)`) | about 0.6 s | none |
+| Kept relations' `r__old` (`bind and measure kept`, step 4) | 0.58–0.88 s | the same |
+| The memo replay (`local/memo replay`, step 3) | 1.3–1.5 s | the same |
+| The step | 27–40 s, nearly all of it the cross-file evaluation | the same within the load's noise |
+
+The gate's replay over commits patches 1–3 files a step from the kept blob; its CPU is the same with the keeper on
+and off (alternated, load 90–117), as its statistics were a small share. Every step compared with a full run
+gave the same outputs (O125 steps 1–2; the struct phase spike, E1–E3).
+
+What steps 3 and 4 need:
+
+- **Step 3** keeps last run's base sources, exports and file-local lines in the session and replaces a changed
+  file's rows in each, rather than rebuilding them from every file's memo entry. The statistics need nothing
+  more: the keeper already counts only the files whose content changed.
+- **Step 4** takes a maintained relation's delta from the engine (the rows it truly inserted and deleted) and
+  patches the `RelStats` kept with the last run's relation, rather than walking its postings
+  (`InRel::posted`, O(rows) for a few-valued column, whose postings are all long).
 
 The measurement aids stay: `RERAIL_STATS_SKEW`, `RERAIL_STATS_SKEW_LOG` and `RERAIL_STATS_SHADOW`. Each step's
 claim is checked by running them again.
