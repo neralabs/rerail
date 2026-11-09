@@ -2325,3 +2325,10 @@ The remaining detector functions are:
 
 All seven scanner, signature, and CLI entry points remain open, followed by production and update acceptance.
 The seven absent rules and earlier migration gaps remain open.
+
+Final `8bd924c72` is now merged. All 31 detector functions are authored.
+The seven new functions pass their 27 original tests after recorded failures before translation.
+All 45 supplemental source/native cases and 171 tooling tests pass.
+The [detector TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-seven-detectors-tdd.json.gz) retains complete results.
+Two broader regression shards time out at 115 seconds; that regression is not accepted.
+The last assembled checkpoint remains 102 original tests. Scanner, signature, CLI, and production acceptance remain unfinished.

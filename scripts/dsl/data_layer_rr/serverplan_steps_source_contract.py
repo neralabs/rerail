@@ -110,14 +110,113 @@ def build():
     return CompiledStep(runtime_ref_ids=("ref",), closed_post_op={factory(runtime_ref_ids=("ref",)): None})
 '''),
 ]
+MATERIALIZER_CASES = [
+    ('duplicate-materializer-definitions', 'check_row_materializer_raw_row_shaping_guardrail', '''class M:
+    def materialize(self, raw): return list(raw)
+class M:
+    def materialize(self, rows): return tuple(rows)
+value = ResultMaterializationSpec(row_materializer=M())
+'''),
+    ('raw-annotation-string', 'check_row_materializer_raw_row_shaping_guardrail', '''def project(value: "pkg.RawResult | None"):
+    return [x for x in value]
+class M:
+    def materialize(self, value): return project(value)
+value = ResultMaterializationSpec(row_materializer=M())
+'''),
+    ('helper-chain-without-raw-parameter', 'check_row_materializer_raw_row_shaping_guardrail', '''def project(raw): return list(raw)
+def forward(value): return project(value)
+class M:
+    def materialize(self, value): return forward(value)
+value = ResultMaterializationSpec(row_materializer=M())
+'''),
+    ('literal-dictionary-stops-at-values', 'check_literal_payload_materializer_dispatch_guardrail', '''class M:
+    def materialize(self, raw): return list(raw)
+value = ResultMaterializationSpec(literal_payload={"nested": {"materializer": M()}})
+'''),
+    ('literal-dictionary-direct-value', 'check_literal_payload_materializer_dispatch_guardrail', '''class M:
+    def materialize(self, raw): return list(raw)
+value = ResultMaterializationSpec(literal_payload={"materializer": M()})
+'''),
+    ('literal-call-recurses', 'check_literal_payload_materializer_dispatch_guardrail', '''class M:
+    def materialize(self, raw): return list(raw)
+value = ResultMaterializationSpec(literal_payload=marker((M(),)))
+'''),
+    ('async-for-is-not-plain-for', 'check_row_materializer_raw_row_shaping_guardrail', '''class M:
+    async def materialize(self, raw):
+        async for row in raw:
+            pass
+value = ResultMaterializationSpec(row_materializer=M())
+'''),
+]
+ROLE_CASES = [
+    ('all-role-findings-in-source-order', 'check_step_role_contract_guardrails', '''class Bad(ServerPlanStep):
+    def step_tags(self): return {"query", "delete", "query"}
+    def execution_role(self): return StepExecutionRole.VIRTUAL
+    def tables_written(self): return frozenset({"written"})
+    def tables_read(self): return frozenset({"read"})
+    def compile(self, ctx): return CompiledStep(grammar=sql)
+    def publication_contract(self): return contract
+    def execute_runtime(self): pass
+    def emits_sql_for_accounting(self): return False
+'''),
+    ('wildcard-table-fallback', 'check_step_role_contract_guardrails', '''class Bad(ServerPlanStep):
+    def execution_role(self): return "virtual"
+    def tables_read(self): return frozenset({"*"})
+'''),
+    ('wildcard-with-empty-return', 'check_step_role_contract_guardrails', '''class Good(ServerPlanStep):
+    def execution_role(self): return "virtual"
+    def tables_read(self):
+        if enabled: return frozenset({"*"})
+        return frozenset()
+'''),
+    ('integer-is-not-bool-contract', 'check_step_role_contract_guardrails', '''class Good(ServerPlanStep):
+    def supports_sql_batch_transport(self): return 1
+'''),
+]
+ESCAPE_CASES = [
+    ('literal-callable-reason-order', 'check_closed_post_op_runtime_builder_no_callable_escape_hatches', '''def actual(): pass
+value = RuntimeBuilderSpec(literal_kwargs=(("callback", actual),))
+'''),
+    ('opaque-keyword-reason-priority', 'check_closed_post_op_runtime_builder_no_callable_escape_hatches', '''value = RuntimeBuilderSpec(builder=lambda: callback())
+'''),
+    ('string-kind-is-not-a-node-name', 'check_closed_post_op_runtime_builder_no_callable_escape_hatches', '''value = RuntimeBuilderSpec(kind="CALLBACK", builder_name="safe")
+'''),
+    ('legacy-two-loop-order', 'check_legacy_postop_user_callable_escape_hatches', '''CLOSED_POST_OP_STRICT = True
+def worker():
+    return supplied_callback()
+value = CompiledStep(post_op=worker, post_op_with_refs=partial(supplied_callback))
+'''),
+    ('legacy-strict-gate', 'check_legacy_postop_user_callable_escape_hatches', '''def worker():
+    return supplied_callback()
+value = CompiledStep(post_op=worker)
+'''),
+    ('static-assert-unknown-spec', 'check_compiled_result_builders_do_not_fail_closed', '''def fail():
+    return CompiledPostOp.assert_result(unrelated())
+def build():
+    return CompiledStep(closed_post_op=fail())
+'''),
+    ('nested-raise-remains-visible', 'check_compiled_result_builders_do_not_fail_closed', '''def build():
+    def nested():
+        raise TypeError("shape")
+    return CompiledStep(closed_post_op=terminal())
+'''),
+    ('named-builder-is-audit-debt', 'check_runtime_refs_without_sql_grammar_guardrail', '''value = CompiledStep(runtime_ref_ids=("x",), closed_post_op=RuntimeBuilderSpec(kind=RuntimeBuilderKind.DEBT, builder_name=RuntimeBuilderName.DEBT))
+'''),
+    ('unknown-builder-has-no-audit-symbol', 'check_runtime_refs_without_sql_grammar_guardrail', '''value = CompiledStep(runtime_ref_ids=("x",), closed_post_op=terminal())
+'''),
+]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['source','native'])
+    parser.add_argument('--part',type=int,default=0)
+    parser.add_argument('--parts',type=int,default=1)
     for name in ['source','engine','baseline','out']:
         parser.add_argument('--'+name,type=Path,required=name in ['source','out'])
     args = parser.parse_args()
+    if not 0 <= args.part < args.parts:parser.error('Invalid shard')
+    if args.command == 'source' and (args.part,args.parts) != (0,1):parser.error('Record the complete source corpus')
     assert git(args.source,'rev-parse','HEAD') == PIN
     name = 'scripts/lint_serverplan_steps.py'
     compare(subprocess.check_output(['git','-C',str(args.source),'show',PIN+':'+name]), (args.source/name).read_bytes())
@@ -130,6 +229,9 @@ def main():
     cases += [(identity,source,'check_virtual_execute_runtime_scalar_value_guardrail') for identity,source in GRAMMAR_CASES]
     cases += [(identity,source,'check_closed_post_op_migration_guardrail') for identity,source in MIGRATION_CASES]
     cases += [(identity,source,entry) for identity,entry,source in REFERENCE_CASES]
+    cases += [(identity,source,entry) for identity,entry,source in MATERIALIZER_CASES+ROLE_CASES]
+    cases += [(identity,source,entry) for identity,entry,source in ESCAPE_CASES]
+    result.update(part=args.part,parts=args.parts,selectedCases=[c[0] for c in cases[args.part::args.parts]])
     baseline = read_json(args.baseline) if args.command == 'native' else None
     if baseline:
         if not baseline['passed'] or baseline['sourcePin'] != PIN:raise ValueError('A passing source recording is required')
@@ -139,7 +241,7 @@ def main():
         sys.path.insert(0,str(args.source.absolute()))
         from scripts import lint_serverplan_steps as linter
     rule = ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr'
-    for index,(identity,source,entry) in enumerate(cases):
+    for index,(identity,source,entry) in list(enumerate(cases))[args.part::args.parts]:
         if baseline:
             expected = baseline['cases'][index]['expected']
             native = execute_native(args.engine.absolute(),rule,[dict(path='input.py',source=source)],

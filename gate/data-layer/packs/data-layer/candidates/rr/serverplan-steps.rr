@@ -365,3 +365,227 @@ ssp_call_label(c,"<call>") :- kind(c,"call"), !ssp_named_call(c,_).
 .decl ssp_declared_runtime_refs(c: node)
 ssp_declared_runtime_refs(c) :- ssp_last_kw(c,"runtime_ref_ids",v), ssp_nonempty(v).
 ssp_problem_hit("check_helper_anchored_runtime_ref_post_op_guardrail",m,f,c,v,0,"STEP-035",cat(name," carries a runtime-ref-consuming closed_post_op without declaring runtime_ref_ids on the same compiled step; helper CTE anchors must publish SQL-visible transport rows with static columns and SqlColumnTypeHints instead of hiding runtime-ref materialization from the linter")) :- ssp_module(d,m), ssp_fn(d,f), ssp_under(c,f), kind(c,"call"), ssp_last_kw(c,"closed_post_op",v), ssp_consumes(f,v), !ssp_declared_runtime_refs(c), ssp_call_label(c,name).
+
+ssp_entry("check_row_materializer_raw_row_shaping_guardrail").
+ssp_entry("check_literal_payload_materializer_dispatch_guardrail").
+ssp_entry("check_step_role_contract_guardrails").
+
+// The source class dictionary includes every class, including duplicate names.
+.decl ssp_class(d: number, c: node, name: symbol)
+ssp_class(d,c,@nfkc(name)) :- ssp_doc(d,_), docof(c,d), kind(c,"class_definition"), def_name(c,name).
+.decl ssp_class_method(c: node, f: node, name: symbol)
+ssp_class_method(c,f,@nfkc(name)) :- kind(c,"class_definition"), ssp_body(c,f,_), kind(f,"function_definition"), def_name(f,name).
+.decl ssp_class_first(c: node, f: node, name: symbol)
+ssp_class_first(c,f,name) :- ssp_class_method(c,f,name), visit_index(f,i), i = min j : { ssp_class_method(c,g,name), visit_index(g,j) }.
+.decl ssp_raw_parameter(f: node, name: symbol)
+ssp_raw_parameter(f,@nfkc(name)) :- ssp_fn(_,f), sig_param(f,_,nm,_,pk,_,_), (pk = "posonly" ; pk = "pos" ; pk = "kwonly"), text(nm,name), (@nfkc(name) = "raw" ; @nfkc(name) = "raw_rows" ; @nfkc(name) = "rows").
+ssp_raw_parameter(f,@nfkc(name)) :- ssp_fn(_,f), sig_param(f,_,nm,_,pk,ann,_), (pk = "posonly" ; pk = "pos" ; pk = "kwonly"), text(nm,name), ssp_annotation_name(ann,"RawResult").
+ssp_raw_parameter(f,@nfkc(name)) :- ssp_fn(_,f), sig_param(f,_,nm,_,pk,ann,_), (pk = "posonly" ; pk = "pos" ; pk = "kwonly"), text(nm,name), within(n,ann), str_const(n,value), contains("RawResult",value).
+ssp_raw_parameter(f,@nfkc(name)) :- ssp_fn(_,f), sig_param(f,_,nm,_,pk,ann,_), (pk = "posonly" ; pk = "pos" ; pk = "kwonly"), text(nm,name), str_part(_,_,value,n,_), within(n,ann), contains("RawResult",value).
+.decl ssp_raw_reference(f: node, expression: node)
+ssp_raw_reference(f,expression) :- ssp_raw_parameter(f,name), ssp_name(n,name), ssp_under(n,expression).
+.decl ssp_raw_shapes(f: node)
+// Skipping a nested def node in _walk_nodes does not prune its descendants.
+ssp_raw_shapes(f) :- ssp_fn(_,f), ssp_under(n,f), kind(n,"for_statement"), !op(n,"async"), field(n,"right",iter), ssp_raw_reference(f,iter).
+ssp_raw_shapes(f) :- ssp_fn(_,f), ssp_under(n,f), kind(n,"for_in_clause"), field(n,"right",iter), ssp_raw_reference(f,iter).
+ssp_raw_shapes(f) :- ssp_fn(_,f), ssp_under(n,f), ssp_named_call(n,name), (name = "list" ; name = "tuple" ; name = "dict" ; name = "set" ; name = "sorted"), ssp_pos(n,0,arg), ssp_raw_reference(f,arg).
+ssp_raw_shapes(f) :- ssp_fn(d,f), ssp_raw_parameter(f,_), ssp_under(n,f), ssp_named_call(n,name), ssp_raw_summary(d,name).
+.decl ssp_raw_summary(d: number, name: symbol)
+ssp_raw_summary(d,@nfkc(name)) :- ssp_fn(d,f), def_name(f,name), ssp_raw_shapes(f).
+.decl ssp_materializes_rows(f: node)
+ssp_materializes_rows(f) :- ssp_raw_shapes(f).
+ssp_materializes_rows(f) :- ssp_fn(d,f), ssp_under(n,f), ssp_named_call(n,name), ssp_raw_summary(d,name).
+.decl ssp_materializer(expr: node, name: symbol)
+ssp_materializer(expr,name) :- ssp_name(expr,name).
+ssp_materializer(expr,name) :- ssp_call_name(expr,name).
+ssp_problem_hit("check_row_materializer_raw_row_shaping_guardrail",m,m,call,value,ci,"STEP-039","row_materializer performs Python raw-row shaping or delegates to a raw-row shaping helper; SQL-chainable transformations must be represented as SQL-visible relations before terminal materialization, not hidden inside typed materializers") :- ssp_module(d,m), docof(call,d), kind(call,"call"), ssp_first_kw(call,"row_materializer",value), ssp_materializer(value,name), ssp_class(d,c,name), ssp_class_first(c,f,"materialize"), ssp_materializes_rows(f), visit_index(c,ci).
+
+.decl ssp_payload_visit(root: node, value: node)
+ssp_payload_visit(root,root) :- ssp_first_kw(call,"literal_payload",root), ssp_named_call(call,name), (name = "ResultMaterializationSpec" ; suffix(".ResultMaterializationSpec",name)).
+ssp_payload_visit(root,root) :- !ssp_first_kw(call,"literal_payload",_), ssp_first_kw(call,"terminal_literal",root), ssp_named_call(call,name), (name = "ResultMaterializationSpec" ; suffix(".ResultMaterializationSpec",name)).
+ssp_payload_visit(root,value) :- ssp_payload_visit(root,n), ssp_element(n,value).
+ssp_payload_visit(root,value) :- ssp_payload_visit(root,n), ssp_pos(n,_,value).
+ssp_payload_visit(root,value) :- ssp_payload_visit(root,n), ssp_kw(n,_,value).
+.decl ssp_payload_value(root: node, value: node)
+ssp_payload_value(root,n) :- ssp_payload_visit(root,n), !ssp_collection(n), !kind(n,"dictionary").
+ssp_payload_value(root,value) :- ssp_payload_visit(root,n), ssp_dict_value(n,value).
+.decl ssp_payload_root(call: node, root: node)
+ssp_payload_root(call,root) :- ssp_first_kw(call,"literal_payload",root).
+ssp_payload_root(call,root) :- !ssp_first_kw(call,"literal_payload",_), ssp_first_kw(call,"terminal_literal",root).
+.decl ssp_literal_materializer(call: node, value: node, class: node)
+ssp_literal_materializer(call,value,c) :- ssp_payload_root(call,root), ssp_named_call(call,name), (name = "ResultMaterializationSpec" ; suffix(".ResultMaterializationSpec",name)), ssp_payload_value(root,value), ssp_materializer(value,cls), docof(call,d), ssp_class(d,c,cls), ssp_class_first(c,f,"materialize"), ssp_materializes_rows(f).
+.decl ssp_literal_problem(message: symbol)
+ssp_problem("literal_payload embeds a materializer that performs Python raw-row shaping; moving a materializer from row_materializer into a marker payload is still row shaping that belongs in SQL-visible relations or executor result routing").
+ssp_literal_problem(message) :- ssp_explain("literal_payload embeds a materializer that performs Python raw-row shaping; moving a materializer from row_materializer into a marker payload is still row shaping that belongs in SQL-visible relations or executor result routing",message).
+SSPRow(@place(path,l),"STEP-039",message,mi,calli,vi,ci,0,"check_literal_payload_materializer_dispatch_guardrail") :- ssp_run("check_literal_payload_materializer_dispatch_guardrail"), ssp_module(d,m), ssp_doc(d,path), docof(call,d), ssp_literal_materializer(call,value,c), ssp_literal_problem(message), line(value,l), visit_index(m,mi), visit_index(call,calli), visit_index(value,vi), visit_index(c,ci).
+
+.decl ssp_bool_method(c: node, f: node, method: symbol, value: number)
+ssp_bool_method(c,f,method,1) :- ssp_first(c,f,method), ssp_walk(f,r), ssp_ret(r,v), ssp_true(v).
+ssp_bool_method(c,f,method,0) :- ssp_first(c,f,method), ssp_walk(f,r), ssp_ret(r,v), ssp_false(v).
+.decl ssp_sql_surface(f: node)
+ssp_sql_surface(f) :- kind(f,"function_definition"), ssp_under(call,f), ssp_compiled(call), !ssp_missing_grammar(call).
+ssp_sql_surface(f) :- kind(f,"function_definition"), ssp_under(call,f), ssp_compiled(call), ssp_last_kw(call,name,value), (name = "auxiliary_ctes" ; name = "runtime_ref_ids" ; name = "source_refs"), ssp_nonempty(value).
+.decl ssp_table_return(f: node, r: node)
+ssp_table_return(f,r) :- kind(f,"function_definition"), ssp_walk(f,r), ssp_ret(r,call), ssp_func(call,func), ssp_name(func,"frozenset"), ssp_pos(call,0,arg), !ssp_collection(arg).
+ssp_table_return(f,r) :- kind(f,"function_definition"), ssp_walk(f,r), ssp_ret(r,call), ssp_func(call,func), ssp_name(func,"frozenset"), ssp_pos(call,0,arg), ssp_element(arg,value), str_const(value,name), name != "*".
+.decl ssp_table_violation(c: node, method: symbol, at: node)
+ssp_table_violation(c,method,r) :- ssp_first(c,f,method), (method = "tables_read" ; method = "tables_written"), ssp_table_return(f,r), visit_index(r,i), i = min j : { ssp_table_return(f,other), visit_index(other,j) }.
+ssp_table_violation(c,method,f) :- ssp_first(c,f,method), (method = "tables_read" ; method = "tables_written"), !ssp_table_return(f,_), !ssp_empty_frozenset(f).
+.decl ssp_preferred_table(c: node, method: symbol, at: node)
+ssp_preferred_table(c,"tables_read",at) :- ssp_table_violation(c,"tables_read",at).
+ssp_preferred_table(c,"tables_written",at) :- !ssp_table_violation(c,"tables_read",_), ssp_table_violation(c,"tables_written",at).
+.decl ssp_sqlish_tag(c: node, tag: symbol)
+ssp_sqlish_tag(c,tag) :- ssp_first(c,f,"step_tags"), ssp_under(n,f), str_const(n,tag), (tag = "__exists" ; tag = "delete" ; tag = "grammar" ; tag = "insert" ; tag = "query" ; tag = "read" ; tag = "update" ; tag = "validation").
+ssp_extra("check_step_role_contract_guardrails",c,c,c,at,0,"STEP-045",cat(name,".execution_role() returns VIRTUAL but ",method,"() can report concrete DB tables.")) :- ssp_step(c,name), ssp_role(c,"VIRTUAL"), ssp_preferred_table(c,method,at).
+ssp_extra("check_step_role_contract_guardrails",c,c,c,f,1,"STEP-046",cat(name,".execution_role() returns VIRTUAL but compile() declares SQL grammar, auxiliary CTEs, or runtime/source refs.")) :- ssp_step(c,name), ssp_role(c,"VIRTUAL"), ssp_first(c,f,"compile"), ssp_sql_surface(f).
+ssp_extra("check_step_role_contract_guardrails",c,c,c,c,2,"STEP-046",cat(name,".execution_role() returns VIRTUAL but declares a SQL-visible publication contract.")) :- ssp_step(c,name), ssp_role(c,"VIRTUAL"), (ssp_first(c,_,"cte_publication_contract") ; ssp_first(c,_,"publication_contract")).
+ssp_extra("check_step_role_contract_guardrails",c,c,c,c,3,"STEP-047",cat(name,".execution_role() returns VIRTUAL but exposes runtime execution authority.")) :- ssp_step(c,name), ssp_role(c,"VIRTUAL"), (ssp_first(c,_,"execute_runtime") ; ssp_first(c,_,"execute_runtime_async") ; ssp_bool_method(c,_,"is_executor_owned_runtime_step",1)).
+ssp_extra("check_step_role_contract_guardrails",c,c,c,f,4,"STEP-048",cat(name,".execution_role() returns VIRTUAL but step_tags() contains SQL-ish tags [",tags,"].")) :- ssp_step(c,name), ssp_role(c,"VIRTUAL"), ssp_first(c,f,"step_tags"), ssp_sqlish_tag(c,_), tags = join quoted by tag sep ", " : { ssp_sqlish_tag(c,tag), quoted = @python_repr(tag) }.
+ssp_extra("check_step_role_contract_guardrails",c,c,c,f,5,"STEP-049",cat(name,".supports_sql_batch_transport() returns True without SQL role or a SQL/assertion publication surface.")) :- ssp_step(c,name), !ssp_role(c,"SQL"), ssp_bool_method(c,f,"supports_sql_batch_transport",1), !ssp_first(c,_,"cte_publication_contract"), count : { ssp_first(c,compile,"compile"), ssp_sql_surface(compile) } = 0.
+ssp_extra("check_step_role_contract_guardrails",c,c,c,f,6,"STEP-050",cat(name,".compile() declares SQL but emits_sql_for_accounting() returns False.")) :- ssp_step(c,name), ssp_first(c,compile,"compile"), ssp_sql_surface(compile), ssp_bool_method(c,f,"emits_sql_for_accounting",0).
+
+ssp_entry("check_closed_post_op_runtime_builder_no_callable_escape_hatches").
+ssp_entry("check_runtime_refs_without_sql_grammar_guardrail").
+ssp_entry("check_compiled_result_builders_do_not_fail_closed").
+ssp_entry("check_legacy_postop_user_callable_escape_hatches").
+
+.decl ssp_user_token(s: symbol)
+ssp_user_token("callback"). ssp_user_token("callable"). ssp_user_token("decoder"). ssp_user_token("fn").
+ssp_user_token("function"). ssp_user_token("hook"). ssp_user_token("mapper"). ssp_user_token("picker").
+ssp_user_token("processor"). ssp_user_token("projector"). ssp_user_token("row_decoder"). ssp_user_token("transform").
+.decl ssp_builder_token(s: symbol)
+ssp_builder_token("callback"). ssp_builder_token("callable"). ssp_builder_token("closure").
+ssp_builder_token("function"). ssp_builder_token("lambda"). ssp_builder_token("partial").
+.decl ssp_indirect_token(s: symbol)
+ssp_indirect_token("callback_id"). ssp_indirect_token("callable_id"). ssp_indirect_token("effect_id").
+ssp_indirect_token("function_id"). ssp_indirect_token("hook_id"). ssp_indirect_token("processor_id").
+ssp_indirect_token("registry_id"). ssp_indirect_token("transform_id").
+.decl ssp_user_name(s: symbol)
+ssp_user_name(s) :- ssp_user_token(t), (ssp_name(_,s) ; ssp_attr(_,_,s) ; ssp_kw(_,s,_)), contains(t,@lower(s)).
+.decl ssp_builder_escape(s: symbol)
+ssp_builder_escape(s) :- ssp_builder_token(t), (ssp_dotted(_,s) ; str_const(_,s) ; ssp_name(_,s) ; ssp_kw(_,s,_)), contains(t,@lower(s)).
+.decl ssp_kw_escape(s: symbol)
+ssp_kw_escape(s) :- ssp_kw(_,s,_), (ssp_user_token(t) ; ssp_builder_token(t) ; ssp_indirect_token(t)), contains(t,@lower(s)).
+.decl ssp_user_shape(n: node)
+ssp_user_shape(n) :- kind(n,"lambda").
+ssp_user_shape(n) :- ssp_name(n,name), ssp_user_name(name).
+ssp_user_shape(n) :- ssp_attr(n,_,name), ssp_user_name(name).
+ssp_user_shape(n) :- ssp_attr(n,v,_), ssp_user_shape(v).
+ssp_user_shape(n) :- ssp_func(n,f), ssp_user_shape(f).
+ssp_user_shape(n) :- ssp_arg(n,v), ssp_user_shape(v).
+ssp_user_shape(n) :- kind(n,"subscript"), field(n,"value",raw), unparen(raw,v), ssp_user_shape(v).
+.decl ssp_callable_binding(d: number, name: symbol)
+ssp_callable_binding(d,@nfkc(name)) :- ssp_fn(d,f), def_name(f,name).
+ssp_callable_binding(d,name) :- docof(a,d), assign_target(a,t), ssp_name(t,name), assign_value(a,raw), unparen(raw,v), kind(v,"lambda").
+.decl ssp_direct_callable(n: node)
+ssp_direct_callable(n) :- kind(n,"lambda").
+ssp_direct_callable(n) :- ssp_name(n,name), docof(n,d), ssp_callable_binding(d,name).
+ssp_direct_callable(n) :- ssp_named_call(n,name), (name = "partial" ; name = "functools.partial").
+ssp_direct_callable(n) :- ssp_expr_child(n,v), ssp_direct_callable(v).
+.decl ssp_mutable(n: node)
+ssp_mutable(n) :- kind(n,k), (k = "list" ; k = "dictionary" ; k = "set" ; k = "list_comprehension" ; k = "dictionary_comprehension" ; k = "set_comprehension").
+ssp_mutable(n) :- kind(n,k), (k = "tuple" ; k = "expression_list"), ssp_element(n,v), ssp_mutable(v).
+.decl ssp_builder_call(c: node)
+ssp_builder_call(c) :- ssp_call_name(c,name), (name = "runtime_builder_post_op" ; name = "runtime_op_post_op" ; name = "RuntimeBuilderSpec").
+.decl ssp_builder_kind(c: node, value: node)
+ssp_builder_kind(c,v) :- ssp_call_name(c,"runtime_builder_post_op"), ssp_pos(c,0,v).
+ssp_builder_kind(c,v) :- ssp_call_name(c,"runtime_builder_post_op"), !ssp_pos(c,0,_), ssp_first_kw(c,"kind",v).
+ssp_builder_kind(c,v) :- ssp_call_name(c,"RuntimeBuilderSpec"), ssp_first_kw(c,"kind",v).
+.decl ssp_runtime_builder_name(c: node, value: node)
+ssp_runtime_builder_name(c,v) :- ssp_builder_name(c,v).
+ssp_runtime_builder_name(c,v) :- ssp_call_name(c,"runtime_op_post_op"), ssp_pos(c,0,v).
+ssp_runtime_builder_name(c,v) :- ssp_call_name(c,"runtime_op_post_op"), !ssp_pos(c,0,_), ssp_first_kw(c,"op",v).
+.decl ssp_kw_ordinal(c: node, name: symbol, value: node, ordinal: number)
+ssp_kw_ordinal(c,name,v,rank) :- ssp_kw(c,name,v), visit_index(v,i), rank = count : { ssp_kw(c,_,other), visit_index(other,j), j < i }.
+.decl ssp_kw_count(c: node, count: number)
+ssp_kw_count(c,count) :- ssp_builder_call(c), count = count : { ssp_kw(c,_,_) }.
+.decl ssp_literal_kwargs(c: node, value: node)
+ssp_literal_kwargs(c,v) :- ssp_call_name(c,"RuntimeBuilderSpec"), ssp_first_kw(c,"literal_kwargs",v).
+.decl ssp_literal_pair(n: node, key: node, value: node)
+ssp_literal_pair(n,k,v) :- kind(n,t), (t = "tuple" ; t = "expression_list" ; t = "list"), ssp_element(n,p), kind(p,pt), (pt = "tuple" ; pt = "expression_list" ; pt = "list"), count : { ssp_element(p,_) } = 2, ssp_element(p,k), ssp_element(p,v), visit_index(k,ki), visit_index(v,vi), ki < vi.
+ssp_literal_pair(n,k,v) :- kind(n,"dictionary"), child(n,p,_), kind(p,"pair"), field(p,"key",rk), unparen(rk,k), field(p,"value",rv), unparen(rv,v).
+.decl ssp_literal_escape(n: node)
+ssp_literal_escape(n) :- ssp_user_shape(n).
+ssp_literal_escape(n) :- ssp_literal_pair(n,k,_), str_const(k,key), (ssp_builder_escape(key) ; @lower(key) = "builder").
+ssp_literal_escape(n) :- ssp_literal_pair(n,_,v), ssp_user_shape(v).
+ssp_literal_escape(n) :- kind(n,"dictionary"), ssp_dict_value(n,v), ssp_user_shape(v).
+.decl ssp_kw_reason(c: node, value: node, priority: number, message: symbol)
+ssp_kw_reason(c,v,0,"runtime_builder_post_op literal kwargs must not carry opaque behavior carriers") :- ssp_builder_call(c), ssp_kw(c,name,v), @lower(name) = "builder".
+ssp_kw_reason(c,v,1,"runtime_builder_post_op literal kwargs must not carry callback-shaped fields") :- ssp_builder_call(c), ssp_kw(c,name,v), ssp_kw_escape(name).
+ssp_kw_reason(c,v,2,"runtime_builder_post_op literal kwargs must not carry callable-shaped values") :- ssp_builder_call(c), ssp_kw(c,_,v), ssp_user_shape(v).
+ssp_kw_reason(c,v,3,"runtime_builder_post_op literal kwargs must not carry function or lambda values") :- ssp_builder_call(c), ssp_kw(c,_,v), ssp_direct_callable(v).
+ssp_kw_reason(c,v,4,"runtime_builder_post_op literal kwargs must not carry mutable literal values") :- ssp_builder_call(c), ssp_kw(c,name,v), name != "literal_kwargs", ssp_mutable(v).
+
+ssp_extra("check_closed_post_op_runtime_builder_no_callable_escape_hatches",m,m,a,a,ti,"STEP-029","runtime-builder code must not keep module-level callable/effect registries") :- ssp_module(d,m), docof(a,d), assign_target(a,t), ssp_dotted(t,name), contains("runtime",@lower(name)), (contains("callback",@lower(name)) ; contains("callable",@lower(name)) ; contains("effect",@lower(name)) ; contains("function",@lower(name)) ; contains("hook",@lower(name))), visit_index(t,ti).
+.decl ssp_kind_item(c: node, item: node)
+ssp_kind_item(c,item) :- kind(c,"class_definition"), def_name(c,name), @nfkc(name) = "RuntimeBuilderKind", ssp_body(c,item,_), assign_target(item,t), visit_index(t,i), i = min j : { assign_target(item,other), visit_index(other,j) }, ssp_name(t,target), ssp_builder_escape(target).
+ssp_kind_item(c,item) :- kind(c,"class_definition"), def_name(c,name), @nfkc(name) = "RuntimeBuilderKind", ssp_body(c,item,_), assign_value(item,v), str_const(v,value), ssp_builder_escape(value).
+ssp_extra("check_closed_post_op_runtime_builder_no_callable_escape_hatches",m,m,c,item,i,"STEP-029","RuntimeBuilderKind must not define generic callback/callable escape hatches") :- ssp_module(d,m), docof(c,d), ssp_kind_item(c,item), visit_index(item,i).
+ssp_extra("check_closed_post_op_runtime_builder_no_callable_escape_hatches",m,m,n,n,0,"STEP-029","runtime_builder_post_op inputs must not be indirect callable registry ids") :- ssp_module(d,m), docof(n,d), ssp_named_call(n,name), contains("runtime",@lower(name)), contains("register",@lower(name)), (contains("callback",@lower(name)) ; contains("callable",@lower(name)) ; contains("effect",@lower(name)) ; contains("function",@lower(name)) ; contains("hook",@lower(name)) ; contains("processor",@lower(name)) ; contains("transform",@lower(name))).
+.decl ssp_builder_bad_name(c: node)
+ssp_builder_bad_name(c) :- ssp_builder_call(c), ssp_builder_kind(c,v), ssp_dotted(v,name), ssp_builder_escape(name).
+ssp_builder_bad_name(c) :- ssp_builder_call(c), ssp_runtime_builder_name(c,v), str_const(v,name), ssp_builder_escape(name).
+ssp_extra("check_closed_post_op_runtime_builder_no_callable_escape_hatches",m,m,c,c,1,"STEP-029","Closed runtime builders must not be named as generic callback/callable escape hatches") :- ssp_module(d,m), docof(c,d), ssp_builder_bad_name(c).
+ssp_extra("check_closed_post_op_runtime_builder_no_callable_escape_hatches",m,m,c,v,index+2,"STEP-029",message) :- ssp_module(d,m), docof(c,d), ssp_kw_ordinal(c,_,v,index), ssp_kw_reason(c,v,p,message), p = min q : { ssp_kw_reason(c,v,q,_) }.
+ssp_extra("check_closed_post_op_runtime_builder_no_callable_escape_hatches",m,m,c,v,k+2,"STEP-029","RuntimeBuilderSpec.literal_kwargs must not carry callback-shaped fields or values") :- ssp_module(d,m), docof(c,d), ssp_literal_kwargs(c,v), ssp_literal_escape(v), ssp_kw_count(c,k).
+ssp_extra("check_closed_post_op_runtime_builder_no_callable_escape_hatches",m,m,c,v,k+3,"STEP-029","RuntimeBuilderSpec.literal_kwargs must not carry function or lambda values") :- ssp_module(d,m), docof(c,d), ssp_literal_kwargs(c,v), ssp_direct_callable(v), ssp_kw_count(c,k).
+ssp_extra("check_closed_post_op_runtime_builder_no_callable_escape_hatches",m,m,c,v,k+4,"STEP-029","RuntimeBuilderSpec.literal_kwargs must not carry mutable literal values") :- ssp_module(d,m), docof(c,d), ssp_literal_kwargs(c,v), ssp_mutable(v), ssp_kw_count(c,k).
+
+// RuntimeBuilder symbols have audit debt by default in the pinned policy.
+.decl ssp_builder_symbol(root: node, name: symbol)
+ssp_builder_symbol(root,cat("RuntimeBuilderKind.",name)) :- ssp_under(c,root), ssp_builder_kind(c,v), ssp_attr(v,parent,name), ssp_dotted(parent,"RuntimeBuilderKind").
+ssp_builder_symbol(root,cat("RuntimeBuilderName.",name)) :- ssp_under(c,root), ssp_builder_name(c,v), ssp_attr(v,parent,name), ssp_dotted(parent,"RuntimeBuilderName").
+.decl ssp_ref_symbol(c: node, name: symbol)
+ssp_ref_symbol(c,name) :- ssp_last_kw(c,"closed_post_op",root), ssp_builder_symbol(root,name).
+.decl ssp_non_audit_ref(c: node)
+ssp_non_audit_ref(c) :- ssp_ref_symbol(c,name), option_item("fateNames",i,name), option_item("fateValues",i,value), value != "audit_required".
+.decl ssp_ref_symbols(c: node, names: symbol)
+ssp_ref_symbols(c,names) :- ssp_compiled(c), ssp_ref_symbol(c,_), names = join name by name sep ", " : { ssp_ref_symbol(c,name) }.
+ssp_ref_symbols(c,"unknown post-op") :- ssp_compiled(c), !ssp_ref_symbol(c,_).
+ssp_problem_hit("check_runtime_refs_without_sql_grammar_guardrail",m,m,c,v,0,"STEP-033",cat("CompiledStep(runtime_ref_ids=...) without SQL grammar must remain audit debt, not approved terminal post-op behavior (",names,")")) :- ssp_module(d,m), docof(c,d), ssp_missing_grammar(c), ssp_last_kw(c,"runtime_ref_ids",v), ssp_nonempty(v), ssp_ref_symbols(c,names), (!ssp_ref_symbol(c,_) ; ssp_non_audit_ref(c)).
+
+.decl ssp_exception(name: symbol)
+ssp_exception("RuntimeError"). ssp_exception("TypeError"). ssp_exception("NotImplementedError").
+.decl ssp_assertion_call(c: node)
+ssp_assertion_call(c) :- ssp_named_call(c,name), (name = "ResultAssertionSpec" ; suffix(".ResultAssertionSpec",name)).
+.decl ssp_assertion_exception(c: node, name: symbol)
+ssp_assertion_exception(c,name) :- ssp_assertion_call(c), ssp_first_kw(c,"static_exception",v), ssp_dotted(v,name).
+.decl ssp_assert_spec(c: node, value: node)
+ssp_assert_spec(c,v) :- ssp_named_call(c,name), suffix("CompiledPostOp.assert_result",name), ssp_pos(c,0,v).
+ssp_assert_spec(c,v) :- ssp_named_call(c,name), suffix("CompiledPostOp.assert_result",name), !ssp_pos(c,0,_), ssp_first_kw(c,"spec",v).
+.decl ssp_static_exception(n: node)
+ssp_static_exception(n) :- ssp_call_name(n,name), docof(n,d), ssp_static_summary(d,name).
+ssp_static_exception(n) :- ssp_named_call(n,name), suffix("static_exception_post_op",name), ssp_pos(n,0,v), ssp_dotted(v,exc), ssp_exception(exc).
+ssp_static_exception(n) :- ssp_assert_spec(n,v), kind(v,"call"), !ssp_assertion_exception(v,_).
+ssp_static_exception(n) :- ssp_assert_spec(n,v), kind(v,"call"), ssp_assertion_exception(v,exc), ssp_exception(exc).
+.decl ssp_static_summary(d: number, name: symbol)
+ssp_static_summary(d,@nfkc(name)) :- ssp_fn(d,f), def_name(f,name), ssp_under(r,f), ssp_ret(r,v), ssp_static_exception(v).
+ssp_static_summary(d,@nfkc(name)) :- ssp_fn(d,f), def_name(f,name), ssp_under(c,f), ssp_assertion_call(c), ssp_first_kw(c,"static_exception",v), ssp_name(v,param), sig_param(f,_,nm,_,pk,_,_), (pk = "posonly" ; pk = "pos" ; pk = "kwonly"), text(nm,raw), @nfkc(raw) = param.
+.decl ssp_constructs_result(f: node)
+ssp_constructs_result(f) :- ssp_fn(_,f), ssp_under(c,f), ssp_named_call(c,name), (name = "ResultMaterializationSpec" ; suffix(".ResultMaterializationSpec",name) ; name = "CompiledPostOp.materialize" ; suffix(".CompiledPostOp.materialize",name)).
+ssp_constructs_result(f) :- ssp_fn(_,f), ssp_under(c,f), ssp_named_call(c,name), (name = "CompiledStep" ; suffix(".CompiledStep",name)), ssp_kw(c,key,_), (key = "post_op" ; key = "closed_post_op" ; key = "post_op_with_refs").
+.decl ssp_raised_exception(n: node, name: symbol)
+ssp_raised_exception(n,name) :- kind(n,"raise_statement"), child(n,v,0), ssp_name(v,name).
+ssp_raised_exception(n,name) :- kind(n,"raise_statement"), child(n,v,0), ssp_named_call(v,name).
+ssp_problem_hit("check_compiled_result_builders_do_not_fail_closed",m,f,n,n,0,"STEP-041","compiled result builders must not replace runtime-ref/Python-shaping debt with fail-closed RuntimeError/TypeError/NotImplementedError guards; emit a SQL-visible result contract or route to an existing compliant strategy") :- ssp_module(d,m), ssp_fn(d,f), ssp_constructs_result(f), ssp_under(n,f), ssp_raised_exception(n,name), ssp_exception(name).
+ssp_problem_hit("check_compiled_result_builders_do_not_fail_closed",m,f,c,v,0,"STEP-041","compiled result builders must not hide unsupported plan shapes behind static exception closed post-ops; validate before selecting this builder or emit a declared SQL-visible result contract") :- ssp_module(d,m), ssp_fn(d,f), ssp_constructs_result(f), ssp_under(c,f), ssp_compiled(c), ssp_last_kw(c,"closed_post_op",v), ssp_static_exception(v).
+
+.decl ssp_legacy_gate(d: number)
+ssp_legacy_gate(d) :- ssp_strict(d).
+ssp_legacy_gate(d) :- ssp_doc(d,_), option("strictModulesOnly","0").
+.decl ssp_legacy_value(call: node, kind: symbol, value: node)
+ssp_legacy_value(call,key,v) :- ssp_compiled(call), ssp_kw(call,key,v), (key = "post_op" ; key = "post_op_with_refs").
+.decl ssp_bare_partial(c: node)
+ssp_bare_partial(c) :- ssp_func(c,f), ssp_name(f,"partial").
+.decl ssp_call_user(c: node)
+ssp_call_user(c) :- ssp_func(c,f), ssp_user_shape(f).
+ssp_call_user(c) :- ssp_arg(c,v), ssp_user_shape(v).
+.decl ssp_last_function(d: number, name: symbol, f: node)
+ssp_last_function(d,@nfkc(name),f) :- ssp_fn(d,f), def_name(f,name), visit_index(f,i), i = max j : { ssp_fn(d,g), def_name(g,other), @nfkc(other) = @nfkc(name), visit_index(g,j) }.
+.decl ssp_legacy_hit(call: node, value: node, phase: number, at: node, problem: symbol)
+ssp_legacy_hit(call,v,0,v,cat("CompiledStep(",key,"=partial(...)) binds a likely user-provided callable")) :- ssp_legacy_value(call,key,v), ssp_bare_partial(v), ssp_call_user(v).
+ssp_legacy_hit(call,v,0,v,"CompiledStep(post_op_with_refs=...) receives a callable object") :- ssp_legacy_value(call,"post_op_with_refs",v), kind(v,"call"), !ssp_bare_partial(v).
+ssp_legacy_hit(call,v,0,v,cat("CompiledStep(",key,"=...) references a likely user-provided callable")) :- ssp_legacy_value(call,key,v), !kind(v,"call"), ssp_user_shape(v).
+ssp_legacy_hit(call,v,1,n,cat("legacy ",key," callback '",name,"' invokes or forwards a likely user-provided callable")) :- ssp_legacy_value(call,key,v), ssp_name(v,name), docof(call,d), ssp_last_function(d,name,f), ssp_under(n,f), ssp_call_user(n).
+ssp_problem(problem) :- ssp_legacy_hit(_,_,_,_,problem).
+SSPRow(@place(path,l),"STEP-028",message,mi,phase,calli,vi,ni,"check_legacy_postop_user_callable_escape_hatches") :- ssp_run("check_legacy_postop_user_callable_escape_hatches"), ssp_module(d,m), ssp_doc(d,path), ssp_legacy_gate(d), docof(call,d), ssp_legacy_hit(call,v,phase,n,problem), ssp_explain(problem,message), line(n,l), visit_index(m,mi), visit_index(call,calli), visit_index(v,vi), visit_index(n,ni).

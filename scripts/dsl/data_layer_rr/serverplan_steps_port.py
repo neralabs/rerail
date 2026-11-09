@@ -29,15 +29,18 @@ def install(suite, module):
         return dict(canBatchAllowlist=list(module.CAN_BATCH_FALSE_ALLOWLIST),
                     runtimeStateAllowlist=list(module.LIFECYCLE_RUNTIME_STATE_ALLOWLIST),
                     sideEffectAllowlist=list(module.LEGACY_SIDE_EFFECT_TAG_ALLOWLIST),
-                    signature=module.ALLOWLIST_SIGNATURE)
+                    signature=module.ALLOWLIST_SIGNATURE,
+                    fateNames=list(module.POST_OP_FATE_OVERRIDES),
+                    fateValues=[value.value for value in module.POST_OP_FATE_OVERRIDES.values()])
 
-    def check(entry, file, tree):
+    def check(entry, file, tree, **kwargs):
         if tree not in sources.origins:
             raise NotImplementedError('Constructed AST arguments need structured transport')
         origin = sources.origins[tree]
         if tree is not origin.tree or ast.dump(tree, include_attributes=True) != origin.snapshot:
             raise NotImplementedError('Changed AST arguments need structured transport')
-        settings = dict(options(), argumentPath=str(file))
+        settings = dict(options(), argumentPath=str(file),
+                        strictModulesOnly=str(int(kwargs.get("strict_modules_only", True))))
         key = (origin.source, json.dumps(settings, sort_keys=True))
         if key not in batches:
             batches[key] = suite.native('serverplan_steps', '_all_checks',
@@ -71,11 +74,18 @@ def install(suite, module):
                    'check_compile_callbacks_no_runtime_authority',
                    'check_runtime_refs_post_op_requires_runtime_refs_guardrail',
                    'check_runtime_ref_closed_post_op_consumption_guardrail',
-                   'check_helper_anchored_runtime_ref_post_op_guardrail'}
+                   'check_helper_anchored_runtime_ref_post_op_guardrail',
+                   'check_row_materializer_raw_row_shaping_guardrail',
+                   'check_literal_payload_materializer_dispatch_guardrail',
+                   'check_step_role_contract_guardrails',
+                   'check_closed_post_op_runtime_builder_no_callable_escape_hatches',
+                   'check_runtime_refs_without_sql_grammar_guardrail',
+                   'check_compiled_result_builders_do_not_fail_closed',
+                   'check_legacy_postop_user_callable_escape_hatches'}
     for name in FUNCTIONS:
         if name in implemented:
             def bind(entry):
-                return lambda file, tree: check(entry, file, tree)
+                return lambda file, tree, **kwargs: check(entry, file, tree, **kwargs)
             suite.replace(module, name, bind(name))
         else:
             def bind_missing(entry):

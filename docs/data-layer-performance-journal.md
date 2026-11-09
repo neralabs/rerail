@@ -9542,3 +9542,19 @@ The [new checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverp
 Seven detector functions and seven scanner, signature, or CLI entry points remain untranslated.
 Production reporting, discovery, complete controls, update acceptance, and global migration acceptance remain open.
 The inventory still contains seven absent translations. The new draft is not a completed port.
+
+### 2026-11-09 — Seven remaining detector functions
+
+Final `8bd924c72` is merged. Root CLI and unit builds take 28.802 and 84.861 seconds, respectively.
+The draft now defines all 31 detector functions. Seven scanner, signature, and CLI entry points remain open.
+
+The seven new functions fail 27 original tests before translation and pass all 27 afterward.
+They cover materializer shaping, literal dispatch, role contracts, callable registries, grammar-less refs, static exceptions, and legacy callbacks.
+An additional duplicate-materializer case fails before its repair and preserves both identical findings afterward.
+All 45 supplemental source/native cases pass. Comparisons retain complete findings, order, and duplicates.
+All 171 tooling tests pass.
+
+The broader detector regression is not accepted: ten shards pass, but two exceed the 115-second command limit.
+Those timeouts remain unresolved. The earlier 102-test checkpoint remains the last assembled original-suite checkpoint.
+The [TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-seven-detectors-tdd.json.gz) records the direct red/green results and timed-out regression commands.
+No repository cold run occurs. The full migration remains incomplete.

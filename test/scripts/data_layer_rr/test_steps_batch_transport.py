@@ -19,7 +19,7 @@ class StepsBatchTransportTests(unittest.TestCase):
                 raise AssertionError('Use the native formatter')
         module = types.SimpleNamespace(Violation=Violation, ROOT=Path('/source'),
             CAN_BATCH_FALSE_ALLOWLIST=frozenset(), LIFECYCLE_RUNTIME_STATE_ALLOWLIST=frozenset(),
-            LEGACY_SIDE_EFFECT_TAG_ALLOWLIST=frozenset(), ALLOWLIST_SIGNATURE='signature')
+            LEGACY_SIDE_EFFECT_TAG_ALLOWLIST=frozenset(), ALLOWLIST_SIGNATURE='signature', POST_OP_FATE_OVERRIDES={})
         for name in FUNCTIONS:
             setattr(module, name, lambda *a, **k: self.fail('Source detector invoked'))
         class Backend:

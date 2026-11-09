@@ -2119,7 +2119,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "a1b61bec5730b11d80def232e1b94ab79807987830453c125cb6413cc46593fc",
+      "sha256": "647c79bc00f977a98006e17a8f56ee9042d7fcc00ec66851bfc15176c39605e3",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2172,6 +2172,16 @@
           "before": "0daa26633a3c267efe5ffd4fe187548b902f38786eed8d8b94d05836a20a55c1",
           "after": "a1b61bec5730b11d80def232e1b94ab79807987830453c125cb6413cc46593fc",
           "reason": "Make expression-state progress provable with a finite domain derived from local bindings"
+        },
+        {
+          "before": "a1b61bec5730b11d80def232e1b94ab79807987830453c125cb6413cc46593fc",
+          "after": "6f03fd78209a9be6d985596a3981134a9a2127f933f4e88cb1ac6abe11ab27f9",
+          "reason": "Translate raw-row materialization, literal payload dispatch, and source-ordered role contracts"
+        },
+        {
+          "before": "6f03fd78209a9be6d985596a3981134a9a2127f933f4e88cb1ac6abe11ab27f9",
+          "after": "647c79bc00f977a98006e17a8f56ee9042d7fcc00ec66851bfc15176c39605e3",
+          "reason": "Translate callable registries, grammar-less refs, static exceptions, and strict legacy callbacks"
         }
       ]
     }
@@ -2643,7 +2653,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "a1b61bec5730b11d80def232e1b94ab79807987830453c125cb6413cc46593fc"
+      "ruleSha256": "647c79bc00f977a98006e17a8f56ee9042d7fcc00ec66851bfc15176c39605e3"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3341,7 +3351,30 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b"
+    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b",
+    "cliArtifact": {
+      "engineCommit": "f2ffcc3803c5c633f2df408029e6ea6f64dc21c5",
+      "upstreamCommit": "8bd924c7220ac21e79b02b25ff1ac8fef1766b7e",
+      "sourceTrees": {
+        "native": "67e7d349ea1f2d051d74174658d775e357a1c0c5",
+        "tools/bitlex": "4abd73b7e2f3bcb7f7f90d9cf3183abbd8edbec1",
+        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
+        "Cargo.lock": "36d03ae745ce0a93a9c95b7f57d15c49f1635bff"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-2d425683e90a2c81",
+      "sha256": "2d425683e90a2c81b345df028fddccde553565207643d077fb77eafa0a3be741",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "rerail-engine",
+        "--features",
+        "headless",
+        "--bin",
+        "rerail-engine"
+      ],
+      "seconds": 28.802
+    }
   },
   "engineSourceSnapshots": [
     {
