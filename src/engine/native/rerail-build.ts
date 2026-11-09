@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadNativeBinding } from "./native.js";
-import { defaultRerailHome } from "../storage/rerail-home.js";
+import { defaultRerailHome, VERSIONS_DIR } from "../storage/rerail-home.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 
 /**
@@ -21,7 +21,7 @@ function managedBuild(
   environment: NodeJS.ProcessEnv,
 ): Extract<RerailBuild, { kind: "main" }> | undefined {
   const home = defaultRerailHome(environment);
-  const versionsRoot = join(home, "versions");
+  const versionsRoot = join(home, VERSIONS_DIR);
   if (!existsSync(versionsRoot)) return undefined;
   const [version, ...packagePath] = relative(realpathSync(versionsRoot), realPackageRoot).split(sep);
   // A dot prefix is a staging directory (`.<version>.<uuid>.staging`) or a path outside `versions/`.
@@ -45,7 +45,7 @@ export function resolveRerailBuild(packageRoot: string, environment: NodeJS.Proc
   }
   throw new Error(
     `Rerail at ${realPackageRoot} is neither the managed installation under ` +
-      `${join(defaultRerailHome(environment), "versions")} nor in a Git checkout, so it has no content store`,
+      `${join(defaultRerailHome(environment), VERSIONS_DIR)} nor in a Git checkout, so it has no content store`,
   );
 }
 

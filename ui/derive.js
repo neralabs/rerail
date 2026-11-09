@@ -1,5 +1,5 @@
 /**
- * Page-side derivations from a rule as `poll.js` maps it from `GET /api/repository/rules`. Nothing
+ * Page-side derivations from a rule as `toStoredRules` maps it from `GET /api/repository/rules`. Nothing
  * here is persisted; the rule document, its effective `mode`, `origin`, `source` and per-folder states are the inputs.
  */
 import { collapse } from "./format.js";
@@ -173,3 +173,70 @@ export function messageText(stored) {
   if (stored.kind === "conversation") return stored.rule.action.content;
   return stored.rule.clauses[0]?.violation?.message ?? "";
 }
+
+/**
+ * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
+ * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode,
+ * suppressions and what decided them (`folderStates`; `mixed` when on or mode differ). `configError` is why the rule's
+ * options don't apply, from any folder: the rule then runs nowhere, whatever its switch says. A change from the row is
+ * written at every folder.
+ */
+export function toStoredRules(entries) {
+  const rules = new Map();
+  for (const entry of entries) {
+    const id = entry.rule.id;
+    const known = rules.get(id);
+    if (known === undefined) rules.set(id, storedRule(entry));
+    else addFolder(known, entry);
+  }
+  return rules;
+}
+
+/** Adds `entry`'s folder to `known`, the row of the same rule from an earlier folder; once per folder. */
+function addFolder(known, entry) {
+  if (known.folders.includes(entry.folder)) return;
+  known.folders.push(entry.folder);
+  known.folderStates.push(folderState(entry));
+  known.enabled = known.enabled && entry.on;
+  known.configError ??= entry.configError ?? null;
+  known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
+  known.addedAt = earliest(known.addedAt, entry.addedAt ?? null);
+  known.updatedAt = latest(known.updatedAt, entry.updatedAt ?? null);
+}
+
+/** The row of a rule from the first folder `entry` adds it at. */
+function storedRule(entry) {
+  return {
+    kind: entry.kind,
+    rule: { ...entry.rule, mode: entry.mode },
+    enabled: entry.on,
+    origin: entry.source.kind === "library_rule" ? "user" : "pack",
+    source: entry.source,
+    folders: [entry.folder],
+    folderStates: [folderState(entry)],
+    mixed: false,
+    onSource: entry.onSource,
+    modeSource: entry.modeSource,
+    suppressions: entry.suppressions,
+    suppressionsSource: entry.suppressionsSource,
+    config: entry.config,
+    configSource: entry.configSource,
+    configError: entry.configError ?? null,
+    revision: entry.revision,
+    addedAt: entry.addedAt ?? null,
+    // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
+    approval: entry.approval ?? null,
+    updatedAt: entry.updatedAt ?? null,
+  };
+}
+
+/** When a rule present in several folders was first added: the earliest folder's; `null` where none says. */
+const earliest = (a, b) => (a === null ? b : b === null ? a : Math.min(a, b));
+/** When its settings last changed: the latest folder's. */
+const latest = (a, b) => (a === null ? b : b === null ? a : Math.max(a, b));
+
+/** One folder's own on, mode and suppressions of a rule, what decided its suppressions, and what added it there. */
+const folderState = entry => ({
+  folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
+  source: entry.source,
+});

@@ -20,8 +20,6 @@ const result = (toolCallId: string, output: unknown, extra: { failed?: boolean; 
   ({ kind: "result", payload: { toolCallId, toolName: "x", output, ...(extra.failed === undefined ? {} : { failed: extra.failed }) }, ...(extra.at === undefined ? {} : { at: extra.at }) });
 const turnEnd = (text = "") => ({ kind: "turn-end", payload: { text } });
 
-const correction = (key: string, path: string | null): Correction => ({ key, finding: { path }, rule: {} });
-
 describe("sessionTurns", () => {
   it("pairs a tool result with its call and measures the round trip", () => {
     const turns = sessionTurns(events([
@@ -36,7 +34,7 @@ describe("sessionTurns", () => {
     expect(t!.tools).toHaveLength(1);
     expect(t!.tools[0]).toMatchObject({
       verb: "run", level: "execute", kind: "tests", target: "npx vitest run",
-      callSeq: 2, resSeq: 3, output: "a\nb\nc", failed: false, dur: 3, lines: 3, correction: null,
+      callSeq: 2, resSeq: 3, output: "a\nb\nc", failed: false, dur: 3, lines: 3, corrections: [],
     });
   });
 
@@ -92,7 +90,7 @@ describe("sessionTurns", () => {
 });
 
 describe("placeCorrections", () => {
-  /** Turn 0 only observes `src/a.ts`; turn 1 runs a command on it, then edits it. */
+  /** Turn 0 only observes `src/a.ts`; turn 1 runs a command on it, then edits it. Events are 1s apart from T0. */
   const fixture = () => sessionTurns(events([
     prompt("Look first"),
     call("r1", "Read", { file_path: "src/a.ts" }),
@@ -105,26 +103,43 @@ describe("placeCorrections", () => {
     result("e1", "ok"),
     turnEnd("Fixed."),
   ]));
+  /** The time of the fixture's `n`th event (1-based), plus `offset` ms. */
+  const at = (n: number, offset = 0) => T0 + n * 1_000 + offset;
+  /** A violation an audit started at `time` reported, at `line` (1-based) of `path`. */
+  const correction = (key: string, path: string | null, time: number, line?: number): Correction =>
+    ({ key, finding: { path, at: time, span: line === undefined ? null : { startLine: line - 1 } }, rule: {} });
+  const cardsOf = (turns: ReturnType<typeof fixture>) => Object.fromEntries(turns.flatMap(t => t.tools).map(ev => [ev.toolName, ev.corrections.map(c => c.key)]));
 
-  it("prefers the first unclaimed change or command targeting the path, then any call mentioning it", () => {
+  it("places a card under the latest tool call before the violation, not the first call that mentions its file", () => {
     const turns = fixture();
-    const [first, second, third] = [correction("k1", "src/a.ts:12"), correction("k2", "src/a.ts:30"), correction("k3", "src/a.ts")];
-    placeCorrections(turns, [first, second, third]);
-    const byId = Object.fromEntries(turns.flatMap(t => t.tools).map(ev => [ev.toolName, ev.correction?.key ?? null]));
-    expect(byId).toEqual({ Bash: "k1", Edit: "k2", Read: "k3" });
+    // The audit started after the Bash command's result (event 7) and before the Edit call (event 8).
+    placeCorrections(turns, [correction("k1", "src/a.ts", at(7, 500), 12)]);
+    expect(cardsOf(turns)).toEqual({ Read: [], Bash: ["k1"], Edit: [] });
     expect(turns.flatMap(t => t.orphans)).toEqual([]);
   });
 
-  it("orphans a violation no call touches onto the second turn, or the only turn", () => {
+  it("places a card whose file no call mentions, and a pathless one, by time all the same", () => {
     const turns = fixture();
-    const missing = correction("k1", "src/elsewhere.ts:1");
-    const pathless = correction("k2", null);
-    placeCorrections(turns, [missing, pathless]);
-    expect(turns[0]!.orphans).toEqual([]);
-    expect(turns[1]!.orphans.map(c => c.key)).toEqual(["k1", "k2"]);
+    placeCorrections(turns, [correction("k1", "src/elsewhere.ts", at(9, 200), 1), correction("k2", null, at(3, 100))]);
+    expect(cardsOf(turns)).toEqual({ Read: ["k2"], Bash: [], Edit: ["k1"] });
+    expect(turns.flatMap(t => t.orphans)).toEqual([]);
+  });
+
+  it("lets every finding of one audit share the call it followed, oldest audit first, then by file and line", () => {
+    const turns = fixture();
+    // Newest first, as the API lists them: a later audit's finding, then one audit's findings at lines 30 and 12.
+    placeCorrections(turns, [correction("k3", "src/b.ts", at(7, 900), 4), correction("k2", "src/a.ts", at(7, 500), 30), correction("k1", "src/a.ts", at(7, 500), 12)]);
+    expect(cardsOf(turns)).toEqual({ Read: [], Bash: ["k1", "k2", "k3"], Edit: [] });
+  });
+
+  it("orphans a violation older than every loaded call onto the first turn, and onto the only turn", () => {
+    const turns = fixture();
+    placeCorrections(turns, [correction("k1", "src/a.ts", at(1, 500), 1)]);
+    expect(turns[0]!.orphans.map(c => c.key)).toEqual(["k1"]);
+    expect(turns[1]!.orphans).toEqual([]);
 
     const single = sessionTurns(events([prompt("Hi"), turnEnd("Hello")]));
-    placeCorrections(single, [missing]);
+    placeCorrections(single, [correction("k1", null, at(1))]);
     expect(single[0]!.orphans.map(c => c.key)).toEqual(["k1"]);
   });
 });

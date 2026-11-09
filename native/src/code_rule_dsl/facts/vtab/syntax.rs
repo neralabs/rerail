@@ -1248,7 +1248,7 @@ impl Extra {
         let span = |k: u32| key << 32 | i64::from(SPAN | k);
         let source = f.source.as_str();
         if self.comment && let Some(dialect) = dialect {
-            use crate::code_rule_dsl::matcher::is_comment_kind;
+            use crate::code_rule_dsl::language::adapter::is_comment_kind;
             let mut k = 0;
             for id in 0..f.len() as u32 {
                 // A comment kind's node, not inside another (Rust's doc comment parts are not comments).

@@ -32,7 +32,8 @@ import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rul
 import { readGitBlobs, runGit } from "../engine/git.js";
 import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { repositories } from "../engine/storage/schema.js";
-import { setRepositoryStarted } from "../runtime/repository-start.js";
+import { tableColumns } from "../engine/storage/table-probe.js";
+import { setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
 
 export const SCAN_SCHEMA = "rerail.scan/1";
 
@@ -234,8 +235,7 @@ function openHomeDatabase(databasePath: string): RerailDatabase | undefined {
 function homeIsEligible(home: RerailDatabase, root: string): boolean {
   const checkout = lookupCheckout(home, root);
   if (checkout === undefined) return false;
-  const status = checkoutStatus(home, checkout);
-  return status.started && status.setUp;
+  return stateOf(checkoutStatus(home, checkout)) === "started";
 }
 
 /**
@@ -249,14 +249,12 @@ const CONFIGURATION_TABLES = ["rules", "rule_catalog_identities", "repositories"
  * the scan's database seeded: the scan then runs on the home's configuration without ever writing the home's file.
  */
 function copyTables(home: RerailDatabase, scratch: RerailDatabase, tables: readonly string[]): void {
-  const columnsOf = (database: RerailDatabase, table: string): string[] =>
-    (database.$client.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name);
   scratch.$client.pragma("foreign_keys = OFF");
   try {
     scratch.$client.transaction(() => {
       for (const table of tables) {
-        const theirs = new Set(columnsOf(home, table));
-        const columns = columnsOf(scratch, table).filter(column => theirs.has(column));
+        const theirs = new Set(tableColumns(home.$client, table));
+        const columns = tableColumns(scratch.$client, table).filter(column => theirs.has(column));
         if (columns.length === 0) continue;
         const list = columns.map(column => `"${column}"`).join(", ");
         const insert = scratch.$client.prepare(`INSERT OR REPLACE INTO ${table} (${list}) VALUES (${columns.map(() => "?").join(", ")})`);

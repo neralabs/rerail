@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadRepoRuleCounts, repoLine, repoRuleCounts, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
+import { loadRepoRuleCounts, repoRuleCounts } from "../../ui/repo-rule-counts.js";
+import { repoLine, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
 import { agentStatus, installedLabel } from "../../ui/settings-model.js";
 
 type DataAccess = "kept-out" | "file-tools" | "open";

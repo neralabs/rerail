@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-air302-airflow3-moved-to-provider",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Import Airflow hooks, operators and other names that moved into provider packages in Airflow 3.0 from their provider modules; the old core import paths are gone.",
   "scope": { "include": ["**/*"], "exclude": [] },
@@ -2033,7 +2033,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2076,7 +2075,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2119,7 +2117,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-GoogleApiToS3Operator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2162,7 +2159,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-RedshiftToS3Operator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2205,7 +2201,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2248,7 +2243,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-S3ToRedshiftOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2291,7 +2285,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2334,7 +2327,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2377,7 +2369,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2420,7 +2411,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2463,7 +2453,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2506,7 +2495,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2549,7 +2537,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2592,7 +2579,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLCheckOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2643,7 +2629,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLIntervalCheckOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2693,7 +2678,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLThresholdCheckOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2740,7 +2724,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLValueCheckOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2790,7 +2773,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2833,7 +2815,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2876,7 +2857,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-SQLExecuteQueryOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2926,7 +2906,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -2969,7 +2948,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3012,7 +2990,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3055,7 +3032,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3098,7 +3074,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-HiveToDruidOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3141,7 +3116,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-in-1" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3191,7 +3165,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-in-2" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3243,7 +3216,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3286,7 +3258,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3336,7 +3307,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3379,7 +3349,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3422,7 +3391,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3471,7 +3439,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3514,7 +3481,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3557,7 +3523,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3600,7 +3565,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-HiveToMySqlOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3643,7 +3607,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3686,7 +3649,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-MsSqlToHiveOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3729,7 +3691,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-MySqlToHiveOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3772,7 +3733,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-S3ToHiveOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3815,7 +3775,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3858,7 +3817,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3901,7 +3859,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3944,7 +3901,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -3987,7 +3943,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-HttpOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4030,7 +3985,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4073,7 +4027,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4116,7 +4069,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4159,7 +4111,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4202,7 +4153,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4252,7 +4202,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-add_unique_suffix" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4295,7 +4244,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-create_unique_id" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4338,7 +4286,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4388,7 +4335,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1ContainerPort" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4431,7 +4377,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1ResourceRequirements" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4474,7 +4419,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1EnvVar" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4517,7 +4461,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1Volume" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4560,7 +4503,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-V1VolumeMount" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4603,7 +4545,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4654,7 +4595,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-PodGenerator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4701,7 +4641,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4748,7 +4687,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-PodManager" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4791,7 +4729,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-bare" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4834,7 +4771,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4877,7 +4813,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4920,7 +4855,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -4963,7 +4897,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-PrestoToMySqlOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5006,7 +4939,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5049,7 +4981,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5092,7 +5023,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5135,7 +5065,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5178,7 +5107,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5221,7 +5149,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5264,7 +5191,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5307,7 +5233,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5350,7 +5275,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5393,7 +5317,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5436,7 +5359,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5479,7 +5401,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5522,7 +5443,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5565,7 +5485,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5608,7 +5527,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5655,7 +5573,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5698,7 +5615,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-EmptyOperator" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5747,7 +5663,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5790,7 +5705,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5840,7 +5754,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-to-ExternalDagLink" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5883,7 +5796,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -5926,7 +5838,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },

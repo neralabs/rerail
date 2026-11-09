@@ -8,6 +8,7 @@ pub(crate) mod closure;
 pub(crate) mod contracts;
 pub(crate) mod names;
 pub(crate) mod php;
+pub(crate) mod python;
 pub(crate) mod rust;
 pub(crate) mod summary;
 

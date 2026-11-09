@@ -1,10 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type {
+  ProjectionSpec,
+  RelationSpec,
+  SelectionSpec,
+  WatermarkChange,
+} from "../../engine/native/semantic-types.js";
 import { internalTesting } from "../../engine/internal-testing.js";
-import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "../../engine/native/semantic-types.js";
 import { semanticToolResult, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
 
-/** Internal testing: the semantic tools, as `registerOmpSemanticTools` registers them in OMP. */
+/** Internal testing: the semantic tools `rerail_mark`, `rerail_select`, `rerail_project` and `rerail_relate`. */
 export function registerPiSemanticTools(pi: ExtensionAPI, runtime: NativeSemanticToolRuntime): void {
   pi.registerTool({
     name: "rerail_mark",

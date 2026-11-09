@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-air311-airflow3-suggested-update",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Replace Airflow APIs that Airflow 3 deprecated but still supports with their newer equivalents, and stop passing the sla arguments; the old ones are expected to be removed.",
   "scope": { "include": ["**/*"], "exclude": [] },
@@ -758,7 +758,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-1" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -810,7 +809,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-2" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -853,7 +851,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-3" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -896,7 +893,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-4" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -939,7 +935,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-5" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -982,7 +977,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-6" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1032,7 +1026,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-7" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1075,7 +1068,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-8" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1118,7 +1110,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-9" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1161,7 +1152,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-10" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1204,7 +1194,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-11" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1249,7 +1238,6 @@
           "rule": {
             "all": [
               { "any": [{ "matches": "old", "all": [{ "matches": "moved-bare" }] }, { "matches": "quoted" }] },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1301,7 +1289,6 @@
                   "inside": { "stopBy": "neighbor", "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" } }
                 }
               },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1337,7 +1324,6 @@
                   "inside": { "stopBy": "neighbor", "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" } }
                 }
               },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1375,7 +1361,6 @@
                   "inside": { "stopBy": "neighbor", "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" } }
                 }
               },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },
@@ -1414,7 +1399,6 @@
                   "inside": { "stopBy": "neighbor", "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "callee" } }
                 }
               },
-              { "inside": { "stopBy": "end", "kind": "module", "has": { "stopBy": "end", "matches": "airflow-name" } } },
               { "matches": "seen-airflow" }
             ]
           },

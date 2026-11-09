@@ -18,6 +18,7 @@ import { parseArguments } from "../daemon/daemon.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import type { AuditRecord } from "../engine/audit/audit.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
+import type { CheckoutContext, RuleCatalog } from "../engine/catalog/repository-model.js";
 import {
   listRepositories,
   lookupCheckout,
@@ -29,7 +30,7 @@ import { activeCoreVersion, loadRuleCatalog } from "../engine/catalog/rule-catal
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { sensitiveByName } from "../engine/path-boundary.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { events, policySessionOwners, sessions } from "../engine/storage/schema.js";
 import {
   DAEMON_ACCESS_PARAM,
@@ -513,40 +514,8 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
   const catalog = attempt("packs", () => loadRuleCatalog(home), undefined);
 
   if (existsSync(databasePath)) {
-    const database = attempt("database", () => openRerailDatabase(databasePath, { readonly: true }), undefined);
-    if (database !== undefined) {
-      try {
-        const repositories = attempt("repositories", () => listRepositories(database), []);
-        knownValues.push(...repositories.flatMap(repositoryLiterals));
-        knownValues.push(...attempt("session owners", () => database.select({ token: policySessionOwners.token }).from(policySessionOwners).all(), [])
-          .map(row => ({ value: row.token, label: REDACTED })));
-        const checkout = attempt("checkout", () => lookupCheckout(database, repo), undefined);
-        const listing = checkout === undefined ? undefined : repositories.find(candidate => candidate.repositoryKey === checkout.repositoryKey);
-        if (checkout !== undefined) {
-          repository = attempt("rules", () => {
-            if (catalog === undefined) return repository;
-            const view = listRepositoryRules(database, catalog, checkout.repositoryKey, {
-              checkoutPath: checkout.checkoutPath,
-              parentCheckoutPaths: parentCheckouts(database, checkout).map(row => row.checkoutPath),
-            });
-            ownRules.push(...view.rules.filter(rule => rule.source.packId === null).map(rule => rule.document.rule.id));
-            return {
-              ...repository,
-              rules: view.rules.map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, mode: rule.mode, on: rule.on, pack: rule.source.packId })),
-              unavailableRules: view.unavailable.length,
-            };
-          }, repository);
-        }
-        const historyIds = listing === undefined ? [] : repositoryHistoryIds(listing);
-        const selected = attempt("session", () => selectSession(database, historyIds, sessionId), undefined);
-        if (selected !== undefined) {
-          knownValues.push({ value: selected.sessionId, label: "<session>" }, { value: selected.cwd, label: "<checkout>" });
-          session = attempt("session", () => readSession(database, databasePath, selected, workspaceRoot, problems), null);
-        }
-      } finally {
-        database.$client.close();
-      }
-    }
+    const context = { attempt, repo, databasePath, sessionId, workspaceRoot, catalog, problems, knownValues, ownRules };
+    ({ repository, session } = readDatabaseSections(context, repository));
   } else if (sessionId !== undefined) {
     throw new SupportBundleError(SESSION_NOT_FOUND(sessionId));
   }
@@ -563,7 +532,7 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
     rerail: {
       version: packageVersion,
       activeVersion: attempt("active version", () => activeCoreVersion(home), null),
-      managedInstall: existsSync(join(home, "current")),
+      managedInstall: existsSync(join(home, CURRENT_LINK)),
       installedPacks: [...(catalog?.packs.values() ?? [])].map(pack => ({ id: pack.id, version: pack.version })),
       skippedPacks: (catalog?.skipped ?? []).map(pack => ({ package: pack.packageName, version: pack.version, reason: pack.reason })),
     },
@@ -577,6 +546,78 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
     problems,
   };
   return { bundle: scrubValue(bundle, knownValues), ownRules: scrubValue(ownRules, knownValues) };
+}
+
+/** Reads one section of the bundle; a section that throws gives `fallback` and says why in `problems`. */
+type SectionAttempt = <T>(section: string, read: () => T, fallback: T) => T;
+
+/** What `collectSupportBundle` reads the database with, and the lists its reads add to. */
+interface DatabaseReadContext {
+  attempt: SectionAttempt;
+  repo: string;
+  databasePath: string;
+  sessionId: string | undefined;
+  workspaceRoot: string;
+  catalog: RuleCatalog | undefined;
+  problems: string[];
+  knownValues: KnownValue[];
+  ownRules: string[];
+}
+
+/** The bundle's sections from the database: the checkout's repository with its rules, and the session. */
+interface DatabaseSections {
+  repository: SupportBundle["repository"];
+  session: SupportBundleSession | null;
+}
+
+function readDatabaseSections(context: DatabaseReadContext, repository: SupportBundle["repository"]): DatabaseSections {
+  const database = context.attempt("database", () => openRerailDatabase(context.databasePath, { readonly: true }), undefined);
+  if (database === undefined) return { repository, session: null };
+  try {
+    return readOpenDatabase(database, context, repository);
+  } finally {
+    database.$client.close();
+  }
+}
+
+function readOpenDatabase(database: RerailDatabase, context: DatabaseReadContext, repository: SupportBundle["repository"]): DatabaseSections {
+  const { attempt, knownValues } = context;
+  const repositories = attempt("repositories", () => listRepositories(database), []);
+  knownValues.push(...repositories.flatMap(repositoryLiterals));
+  knownValues.push(...attempt("session owners", () => database.select({ token: policySessionOwners.token }).from(policySessionOwners).all(), [])
+    .map(row => ({ value: row.token, label: REDACTED })));
+  const checkout = attempt("checkout", () => lookupCheckout(database, context.repo), undefined);
+  const listing = checkout === undefined ? undefined : repositories.find(candidate => candidate.repositoryKey === checkout.repositoryKey);
+  const withRules = checkout === undefined ? repository : readRules(database, context, checkout, repository);
+  const historyIds = listing === undefined ? [] : repositoryHistoryIds(listing);
+  return { repository: withRules, session: readSelectedSession(database, context, historyIds) };
+}
+
+/** `repository` with `checkout`'s rules, and its own rules' ids added to `context.ownRules`. */
+function readRules(database: RerailDatabase, context: DatabaseReadContext, checkout: CheckoutContext, repository: SupportBundle["repository"]): SupportBundle["repository"] {
+  const { catalog, ownRules } = context;
+  return context.attempt("rules", () => {
+    if (catalog === undefined) return repository;
+    const view = listRepositoryRules(database, catalog, checkout.repositoryKey, {
+      checkoutPath: checkout.checkoutPath,
+      parentCheckoutPaths: parentCheckouts(database, checkout).map(row => row.checkoutPath),
+    });
+    ownRules.push(...view.rules.filter(rule => rule.source.packId === null).map(rule => rule.document.rule.id));
+    return {
+      ...repository,
+      rules: view.rules.map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, mode: rule.mode, on: rule.on, pack: rule.source.packId })),
+      unavailableRules: view.unavailable.length,
+    };
+  }, repository);
+}
+
+/** The session the bundle is for, if one is found, with its id and folder added to `context.knownValues`. */
+function readSelectedSession(database: RerailDatabase, context: DatabaseReadContext, historyIds: readonly string[]): SupportBundleSession | null {
+  const { attempt, databasePath, workspaceRoot, problems } = context;
+  const selected = attempt("session", () => selectSession(database, historyIds, context.sessionId), undefined);
+  if (selected === undefined) return null;
+  context.knownValues.push({ value: selected.sessionId, label: "<session>" }, { value: selected.cwd, label: "<checkout>" });
+  return attempt("session", () => readSession(database, databasePath, selected, workspaceRoot, problems), null);
 }
 
 function summaryOf(path: string, bundle: SupportBundle, ownRules: readonly string[]): SupportBundleSummary {

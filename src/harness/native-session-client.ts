@@ -663,12 +663,27 @@ function errorText(error: unknown): string {
 /** The daemon answered with a failure status; its message keeps the status and body for the checks that read them. */
 class NativeRequestError extends Error {
   readonly status: number;
+  /** The `error` code of the daemon's JSON answer, when it gave one. */
+  readonly code: string | undefined;
 
   constructor(status: number, body: string) {
     super(`Rerail native request failed (${status}): ${body}`);
     this.status = status;
+    this.code = failureCode(body);
   }
 }
+
+function failureCode(body: string): string | undefined {
+  try {
+    const answer: unknown = JSON.parse(body);
+    return answer !== null && typeof answer === "object" && "error" in answer && typeof answer.error === "string" ? answer.error : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The daemon's refusals of this client's token or workspace. */
+const REFUSALS_THAT_NEVER_HEAL: readonly (string | undefined)[] = ["native-authorization-invalid", "native-workspace-mismatch"];
 
 /**
  * A refusal no retry changes: the daemon read the request and rejected it (an older daemon without `record-gap`, a payload its
@@ -686,10 +701,9 @@ function sessionMissing(error: unknown): boolean {
 
 /** Authorization, workspace, and ownership faults never heal on their own; everything else is worth another poll. */
 function unrecoverable(error: unknown): boolean {
+  if (error instanceof NativeRequestError && REFUSALS_THAT_NEVER_HEAL.includes(error.code)) return true;
   const message = errorText(error);
-  return message.includes("native-authorization-invalid")
-    || message.includes("native-workspace-mismatch")
-    || message.includes("native session owner mismatch");
+  return message.includes("native session owner mismatch");
 }
 
 function isReply(value: unknown): value is NativeSessionReply {
