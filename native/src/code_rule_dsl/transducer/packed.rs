@@ -282,6 +282,8 @@ mod bitlex_corpus_tests;
 #[cfg(test)]
 mod bitlex_ladder_tests;
 #[cfg(test)]
+mod bitlex_rr_tests;
+#[cfg(test)]
 mod bitlex_json_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
 mod block_monoid;

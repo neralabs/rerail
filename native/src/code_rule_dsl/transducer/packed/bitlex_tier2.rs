@@ -462,8 +462,9 @@ pub(super) const STARTS: u16 = 0;
 pub(super) const LASTS: u16 = 0;
 
 /// The words, after `empties` words `EMPTY t` (`t` in `0..empties`): tier 1's fallback totals,
-/// each of which must be zero before the first token is taken.
-pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], empties: u16) -> Result<Lowered, String> {
+/// each of which must be zero before the first token is taken. With a `whole` root, an `OPEN` of
+/// the root follows them: no token is taken yet, so it opens at byte 0.
+pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], empties: u16, whole: bool) -> Result<Lowered, String> {
     let mut e = Emit {
         states,
         arms,
@@ -478,6 +479,10 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], empties:
     };
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));
+    }
+    if whole {
+        let root = e.root;
+        e.push("OPEN", 0, Arg::Kind(root));
     }
     for s in 0..states.len() {
         e.state(s)?;

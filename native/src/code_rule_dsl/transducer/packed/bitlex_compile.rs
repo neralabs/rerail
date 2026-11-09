@@ -208,7 +208,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         let required: Vec<String> = low.keywords.iter().filter(|k| k.2).map(|k| k.0.clone()).collect();
         // The grammar's state machine (doc 18 §2). A token kind is a token row's that is not all
         // keywords, or a keyword's.
-        let (states, arms) = {
+        let (states, arms, whole) = {
             let is_token = |name: &str| token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0)) || is_keyword_kind(&low.keywords, name);
             let kind = |name: &str| id(name);
             let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token };
@@ -265,9 +265,9 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 (Some(x), Some(y)) => (0..4).all(|i| x[i] & y[i] == 0),
                 _ => false,
             };
-            grammar::with_extras(states, arms, &extras, &apart)?
+            grammar::with_extras(states, arms, &extras, &apart, whole)?
         };
-        let guards = bitlex_tier2::lower(&states, &arms, &rows, 0)?.guards;
+        let guards = bitlex_tier2::lower(&states, &arms, &rows, 0, whole)?.guards;
         // A guard: a row beginning with a byte the switch gives another row.
         for &(r, set) in &guards {
             let bytes = low.class_set(set);
@@ -276,7 +276,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         }
         // The words again, now that the fallback's totals are known: each must be zero.
         let empties = low.fallback()?.len() as u16;
-        let lowered = bitlex_tier2::lower(&states, &arms, &rows, empties)?;
+        let lowered = bitlex_tier2::lower(&states, &arms, &rows, empties, whole)?;
         let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
         tier2 = Some((grammar::text(&states, &arms), lowered.text, takes_last));
     }

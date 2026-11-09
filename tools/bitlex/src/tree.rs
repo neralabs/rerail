@@ -14,6 +14,9 @@
 //!   nodes that end before it and before those that start after it; at either end of the file,
 //!   in the root (which then starts at the first extra).
 //!
+//! - **A whole root** (`node K whole`) spans the file from byte 0 to its end, and may hold no
+//!   token: an empty file, or one of extras alone, is its root.
+//!
 //! A file with no parse goes to tree-sitter.
 
 use crate::eval::{Token, TreeDecl};
@@ -150,17 +153,29 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
             plain.push(t.clone());
         }
     }
-    if plain.is_empty() {
+    if plain.is_empty() && !decl.whole {
         return Err("no tokens: the root would be zero-width".into());
     }
     let mut p = Parser { decl, tokens: &plain, out: Vec::new() };
-    let mut out = match p.matches(&Gram::Sym(root), 0) {
+    // A whole root is opened at byte 0 and matched by its content, which may be empty.
+    let matched = if decl.whole {
+        let body = decl.rules[0].2.clone();
+        p.out.push(Node { kind: root.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0 });
+        p.matches(&body, 0)
+    } else {
+        p.matches(&Gram::Sym(root), 0)
+    };
+    let mut out = match matched {
         Some(next) if next == plain.len() => p.out,
         Some(next) => return Err(format!("the token at byte {} is past the grammar's end", plain[next].start)),
         None => return Err("no parse: the tokens do not match the grammar".into()),
     };
-    // The root runs from its first token to the end of the file, as tree-sitter's.
+    // The root runs from its first token (or byte 0, when whole) to the end of the file.
     out[0].end = n;
+    if decl.whole {
+        out[0].start = 0;
+        out[0].size = out.len();
+    }
     if extras.is_empty() {
         return Ok(out);
     }

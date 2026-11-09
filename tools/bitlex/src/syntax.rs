@@ -109,7 +109,8 @@ pub enum Stmt {
     Tree { name: String, body: Vec<Stmt> },
     /// `node KIND [nested] = G`: a node of the kind spans what `G` matches; the first is the
     /// root. `nested`: it may contain itself, and runs on a stack frame (doc 18 §1).
-    Node { kind: String, nested: bool, body: Gram },
+    /// `whole`: the root spans the whole file, from byte 0, and may hold no token.
+    Node { kind: String, nested: bool, whole: bool, body: Gram },
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
     Choice { name: String, supertype: Option<String>, body: Gram },
@@ -688,8 +689,9 @@ impl P {
             "node" => {
                 let kind = self.kind()?;
                 let nested = self.eat_kw("nested");
+                let whole = self.eat_kw("whole");
                 self.want_p("=")?;
-                Stmt::Node { kind, nested, body: self.gram()? }
+                Stmt::Node { kind, nested, whole, body: self.gram()? }
             }
             "choice" => {
                 let name = self.ident()?;
@@ -860,7 +862,7 @@ tree json {
         let Some(Stmt::Tree { body, .. }) = stmts.iter().find(|s| matches!(s, Stmt::Tree { .. })) else { panic!("a tree") };
         let lit = |s: &str| Gram::Lit(s.to_owned());
         let sym = |s: &str| Gram::Sym(s.to_owned());
-        assert!(matches!(&body[0], Stmt::Node { kind, nested: false, body: Gram::Sym(v) } if kind == "document" && v == "value"));
+        assert!(matches!(&body[0], Stmt::Node { kind, nested: false, body: Gram::Sym(v), .. } if kind == "document" && v == "value"));
         let Stmt::Node { nested: true, body: object, .. } = &body[1] else { panic!("object: {:?}", body[1]) };
         let pairs = Gram::Seq(vec![sym("pair"), Gram::Star(Box::new(Gram::Seq(vec![lit(","), sym("pair")])))]);
         assert_eq!(object, &Gram::Seq(vec![lit("{"), Gram::Opt(Box::new(pairs)), lit("}")]));

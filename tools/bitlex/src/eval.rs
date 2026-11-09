@@ -44,6 +44,8 @@ pub struct TreeDecl {
     /// Each `choice`: name, supertype, alternatives.
     pub choices: Vec<(String, Option<String>, crate::syntax::Gram)>,
     pub extra: Vec<String>,
+    /// The root spans the whole file (`node K whole`): from byte 0, and it may hold no token.
+    pub whole: bool,
 }
 
 pub struct Output {
@@ -336,7 +338,13 @@ impl<'a> Ev<'a> {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
             }
-            Stmt::Node { kind, nested, body } => self.tree.get_or_insert_with(TreeDecl::default).rules.push((kind.clone(), *nested, body.clone())),
+            Stmt::Node { kind, nested, whole, body } => {
+                let tree = self.tree.get_or_insert_with(TreeDecl::default);
+                if tree.rules.is_empty() {
+                    tree.whole = *whole;
+                }
+                tree.rules.push((kind.clone(), *nested, body.clone()));
+            }
             Stmt::Choice { name, supertype, body } => self.tree.get_or_insert_with(TreeDecl::default).choices.push((name.clone(), supertype.clone(), body.clone())),
             Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),

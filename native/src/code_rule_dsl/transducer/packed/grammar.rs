@@ -121,6 +121,7 @@ enum Pos {
 struct Rule {
     kind: String,
     nested: bool,
+    whole: bool,
     body: Gram,
 }
 
@@ -347,12 +348,15 @@ struct Raw {
 }
 
 /// The state machine of the tree section's rules in `stmts`.
-pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow>), String> {
+/// With a whole root (`node K whole`), the root is open before the first token (the words open
+/// it at byte 0, `bitlex_tier2::lower`): state 0's arms do not open it, and state 0 ends the file
+/// when the root may be empty. The third value says so.
+pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow>, bool), String> {
     let mut rules = Vec::new();
     let mut choices = Vec::new();
     for s in stmts {
         match s {
-            Stmt::Node { kind, nested, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, body: body.clone() }),
+            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: body.clone() }),
             Stmt::Choice { name, supertype, body } => choices.push((name.clone(), supertype.clone(), body.clone())),
             _ => {}
         }
@@ -360,6 +364,11 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
     if rules.is_empty() {
         return Err("the tree section has no rule".into());
     }
+    if rules.iter().skip(1).any(|r| r.whole) || (rules[0].whole && rules[0].nested) {
+        return Err("only the root may be whole, and it is not nested".into());
+    }
+    let whole = rules[0].whole;
+    let mut root_empty = false;
     let mut b = Builder { rules, choices, ids, positions: Vec::new() };
     // The levels: the root (rule 0) and each nested rule.
     let level_rules: Vec<usize> = (0..b.rules.len()).filter(|&r| r == 0 || b.rules[r].nested).collect();
@@ -379,6 +388,9 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
         // no end), as the reference's root is never zero-width. A nested node may not.
         if l != 0 && nullable(&e) {
             return Err(format!("node {} may be empty", b.rules[r].kind));
+        }
+        if l == 0 {
+            root_empty = nullable(&e);
         }
         levels.push(Level { kind: (ids.kind)(&b.rules[r].kind)?, edges });
     }
@@ -433,11 +445,12 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
         let level = from.map_or(0, |p| positions[p].0);
         let mut arms = Vec::new();
         // The root's start opens the root node first.
-        let prefix = if from.is_none() { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![] }] } else { vec![] };
+        let prefix = if from.is_none() && !whole { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![] }] } else { vec![] };
         arms_from(&levels, &positions, &level_of_rule, level, from, prefix, Pending::default(), None, 0, &mut arms)?;
         let arms: Vec<_> = arms.into_iter().map(|(t, a, q, push)| (t, a, state_of(q), push.map(state_of))).collect();
         let end = match from {
-            None => None,
+            // A whole root that may be empty ends at its start: the file has no token.
+            None => (whole && root_empty).then_some(0),
             Some(p) => levels[level].edges.iter().find(|e| e.from == Some(p) && e.to.is_none()).map(|e| {
                 let mut acts = Vec::new();
                 closes(&e.exits, &mut acts);
@@ -514,7 +527,7 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
             arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.map(|p| number[&class[p]]) });
         }
     }
-    Ok((states, arms))
+    Ok((states, arms, whole))
 }
 
 /// The extras (`extra K`): tokens the grammar does not name, which may come between any two
@@ -537,6 +550,7 @@ pub(super) fn with_extras(
     mut arms: Vec<ArmRow>,
     extras: &[u16],
     apart: &dyn Fn(u16, u16) -> bool,
+    whole: bool,
 ) -> Result<(Vec<StateRow>, Vec<ArmRow>), String> {
     if extras.is_empty() {
         return Ok((states, arms));
@@ -551,6 +565,9 @@ pub(super) fn with_extras(
     let closes = |acts: &[Act]| acts.iter().take_while(|a| **a == Act::Close).count();
     let leaf = Act::Leaf { field: 0, supers: vec![] };
     let mut new_arms: Vec<ArmRow> = Vec::new();
+    // With a whole root, state 0 is like any other: the root is open already.
+    let mut s = if whole { 0u16 } else { 1u16 };
+    if !whole {
     // State 0: its arms all open the root first.
     let first: Vec<&ArmRow> = arms.iter().filter(|a| a.from == 0).collect();
     let open_root = match first.first().and_then(|a| a.acts.first()) {
@@ -568,9 +585,9 @@ pub(super) fn with_extras(
             new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), leaf.clone()], to: opened, push: None });
         }
     }
+    }
     // Every other state, and the copies made on the way.
     let mut copies: HashMap<(u16, usize), u16> = HashMap::new();
-    let mut s = 1u16;
     while usize::from(s) < states.len() {
         let mine: Vec<ArmRow> = arms.iter().filter(|a| a.from == s).cloned().collect();
         let nested = states[usize::from(s)].level != root;
