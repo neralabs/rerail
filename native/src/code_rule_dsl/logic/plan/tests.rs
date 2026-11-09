@@ -727,3 +727,37 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     assert_eq!(result.outputs["captured"].len(), 1000);
     assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
 }
+
+/// An equality of a bound variable with an unbound one, `$s = $a` with `$s` bound, assigns `$a` (decision 0097 item
+/// 4): the second atom is read by it, not crossed with the first and narrowed after (`fl4317_typing_root`: 14 k rows,
+/// then 2.86 M, then 603). The rule runs to the same rows either way round.
+#[test]
+fn an_equality_binds_its_right_side_before_the_next_join() {
+    let p = parse(
+        ".decl p(s: number)\n.decl q(a: number)\n.decl o(s: number)\n.decl o2(s: number)\n\
+         p(1). p(2). p(3). q(2). q(3). q(4).\n\
+         o(s) :- p(s), q(a), s = a.\no2(s) :- p(s), q(a), 3 = a, s = a.\n.output o\n.output o2\n",
+    )
+    .unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut stats = Stats::empty(&p);
+    stats.card.insert("p".into(), 14_000.0);
+    stats.card.insert("q".into(), 14_000.0);
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(stats);
+    let model = make_plan(&p, &db, inputs).unwrap();
+    let r = &p.rules.iter().find(|r| r.head.rel == "o").unwrap();
+    let (order, work, _) = model.plan_rule(&p, &r.head, &r.body, None).unwrap();
+    let shown: Vec<String> = order.iter().map(|s| s.lit.to_string()).collect();
+    assert_eq!(shown[1], "$s = $a", "the equality between the joins: {shown:?}, work {work}");
+    assert!(work < 100_000.0, "a cross product priced: {work}");
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
+    let mut o: Vec<String> = out.outputs["o"].iter().map(|r| format!("{r:?}")).collect();
+    o.sort();
+    assert_eq!(o.len(), 2, "{o:?}");
+    assert_eq!(out.outputs["o2"].len(), 1);
+}

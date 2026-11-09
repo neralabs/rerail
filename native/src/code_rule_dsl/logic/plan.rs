@@ -548,16 +548,35 @@ fn survivors(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -
         .then_some((old, gone))
 }
 
+/// The variable `l = r` assigns from its right side: `r` an unbound variable and `l` a bound variable or a constant
+/// (`$s = $a` with `$s` bound reads as `$a = $s`). Without it, `p($s), q($a), $s = $a` could only be ordered as a
+/// cross product of `p` and `q` narrowed after by the test (decision 0097 item 4: `fl4317_typing_root`, 14 k rows,
+/// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
+fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) -> Option<&'t String> {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != "=" {
+        return None;
+    }
+    let Term::Var(y) = r else { return None };
+    let ready = match l {
+        Term::Var(x) => bound.contains(x),
+        Term::Int(_) | Term::Str(_) => true,
+        _ => false,
+    };
+    (ready && !bound.contains(y)).then_some(y)
+}
+
 fn is_join(l: &Literal) -> bool {
     matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. })
 }
 
 /// Whether a filter can run: `$x = e` assigns $x if it is unbound when `e`'s variables are bound (SQL and the native
-/// `cat`/`eq` steps bind an unbound left side); otherwise it is a test.
+/// `cat`/`eq` steps bind an unbound left side); otherwise it is a test. An equality of a bound variable or constant
+/// with an unbound variable, `$s = $a`, assigns the right side as `$a = $s` would (`binds_right`).
 fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
     match l {
         Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
-        Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some(),
+        Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some() || binds_right(l, op, r, bound).is_some(),
         Literal::Agg { var, over, atom, op } => {
             let mut need = atom.vars();
             need.remove(var);
@@ -657,6 +676,7 @@ impl KeepPlans {
     pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
         PLANS.with(|p| *p.borrow_mut() = Some(kept.unwrap_or_default()));
+        keeps::observing(true);
         KeepPlans(across)
     }
 }
@@ -664,6 +684,7 @@ impl KeepPlans {
 impl Drop for KeepPlans {
     fn drop(&mut self) {
         let plans = PLANS.with(|p| p.borrow_mut().take());
+        keeps::observing(false);
         if let (Some(g), Some(plans)) = (self.0, plans) {
             SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans)));
         }
@@ -2080,6 +2101,9 @@ impl Model {
                     if *op == "=" && lv.is_some_and(|v| !env.contains_key(v)) {
                         let e = sql_term(r, &env, atoms)?;
                         env.insert(lv.expect("a variable").clone(), e);
+                    } else if let Some(y) = binds_right(l, op, r, &env.keys().cloned().collect()) {
+                        let e = sql_term(l, &env, atoms)?;
+                        env.insert(y.clone(), e);
                     } else if *op == "="
                         && let Some(lv) = lv
                         && r.is_cat()
@@ -3848,6 +3872,13 @@ impl Run<'_, '_> {
                 probes[k].2 = new;
             }
             chunk *= 2;
+        }
+        // What each rule's steps produced and each relation holds, for a later chunk's choice of what a relation
+        // keeps (decision 0097, `keeps::observe`).
+        {
+            let ruled: Vec<(u64, &[(u64, u64)])> = order_rules.iter().zip(&counted).map(|(&r, c)| (r, c.as_slice())).collect();
+            let sizes: Vec<(&str, f64)> = rels.iter().filter_map(|r| Some((r.as_str(), *self.model.stats.card.get(*r)?))).collect();
+            keeps::observe(&ruled, &sizes, self.model.stats.nodes);
         }
         if profiling {
             let (u, s) = corpus::thread_usage();

@@ -13,8 +13,13 @@
 //!   (`plan_rule` on every reader copy, less the reader as it is).
 //!
 //! A relation is inlined when the added work is under `ALPHA` times its cost stored, and it has at most `K` rules,
-//! and inlining makes at most `COPIES` reader copies. A relation of observed rows (an earlier chunk measured it) is
-//! priced from them. Stored always: outputs, inputs, lattices, relations with facts, natives and what they read,
+//! and inlining makes at most `COPIES` reader copies.
+//!
+//! **Observed in place of estimated.** The native strata record what each rule's steps produced and each relation
+//! held (`observe`, kept for the corpus run beside its plans): a later chunk or part prices a relation's rows and
+//! build, and each reader term (the reader as it is, each copy), from what an earlier one observed, per node of the
+//! corpus. A term not observed is the plan's estimate scaled by observed over estimated for the reader's terms that
+//! were. `RERAIL_OBSERVED_STEPS=off` prices from estimates alone. Stored always: outputs, inputs, lattices, relations with facts, natives and what they read,
 //! demanded relations, gates, answers, recursive relations, relations read inside an aggregate (a count, a sum or a
 //! string join reads the distinct rows), and relations read by a negation whose unfolding is not a negation of plain
 //! literals (below).
@@ -36,6 +41,7 @@
 
 use super::super::front::{Atom, Literal, Program, Rule, Term, strata};
 use super::Model;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Inlined when the readers' added work is under this share of the relation's cost stored (decision 0097, "Built":
@@ -134,32 +140,57 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
             continue;
         }
         // The work the readers add: each copy's plan, less the reader's own.
+        // Each term observed where an earlier chunk or part ran that rule (`Observed`), else the plan's estimate
+        // calibrated by the reader's: scaled by observed over estimated for the reader's terms that were observed
+        // (its own rule when the relation was stored, its copies when it was inlined). Unscaled, an observed reader
+        // stored (every wave's reads) set against its copies' first estimates read as a saving it was not.
+        let nodes = model.stats.nodes;
+        let (mut terms, mut seen) = (0usize, 0usize);
         let mut added = 0.0;
         let mut priced = true;
         for &(ri, i) in &reads {
             let reader = &prog.rules[ri];
-            let Ok((_, own, _)) = model.plan_rule(prog, &reader.head, &reader.body, None) else {
+            let Ok((_, own_est, _)) = model.plan_rule(prog, &reader.head, &reader.body, None) else {
                 priced = false;
                 break;
             };
+            let mut copies: Vec<(f64, Option<f64>)> = Vec::new();
             for copy in unfold(reader, i, rules, 0).unwrap_or_default() {
                 match model.plan_rule(prog, &copy.head, &copy.body, None) {
-                    Ok((_, w, _)) => added += w,
+                    Ok((_, w, _)) => copies.push((w, observed_rule(&copy, nodes))),
                     Err(_) => priced = false,
                 }
             }
-            added -= own;
+            let own_obs = observed_rule(reader, nodes);
+            let (o, e) = own_obs.map_or((0.0, 0.0), |w| (w, own_est.max(1.0)));
+            let (o, e) = copies.iter().filter_map(|(e, w)| Some((*w)?).map(|w| (w, e.max(1.0)))).fold((o, e), |(a, b), (w, e)| (a + w, b + e));
+            let scale = if e > 0.0 { o / e } else { 1.0 };
+            terms += 1 + copies.len();
+            seen += usize::from(own_obs.is_some()) + copies.iter().filter(|c| c.1.is_some()).count();
+            added += copies.iter().map(|(e, w)| w.unwrap_or(scale * e)).sum::<f64>() - own_obs.unwrap_or(scale * own_est);
         }
+        let built_seen = rules.iter().all(|r| observed_rule(r, nodes).is_some());
+        let rows_seen = observed_rows(rel, nodes).is_some();
+        let observed = if seen + usize::from(built_seen) + usize::from(rows_seen) == 0 {
+            String::new()
+        } else {
+            format!(" (observed: {seen} of {terms} reader terms{}{})", if built_seen { ", build" } else { "" }, if rows_seen { ", rows" } else { "" })
+        };
         if !priced {
             lines.push(format!("{rel}: stored, a reader copy does not plan"));
             continue;
         }
         let stored = work + M * rows;
         if added < ALPHA * stored {
-            lines.push(format!("{rel}: inlined, readers add {added:.0} work < {ALPHA} x (build {work:.0} + {M} x {rows:.0} rows)"));
+            lines.push(format!("{rel}: inlined, readers add {added:.0} work < {ALPHA} x (build {work:.0} + {M} x {rows:.0} rows){observed}"));
             inline.insert(rel.to_owned());
         } else {
-            lines.push(format!("{rel}: stored, readers would add {added:.0} work >= {ALPHA} x (build {work:.0} + {M} x {rows:.0} rows)"));
+            lines.push(format!("{rel}: stored, readers would add {added:.0} work >= {ALPHA} x (build {work:.0} + {M} x {rows:.0} rows){observed}"));
+        }
+    }
+    if super::super::profile::on() {
+        for line in factorizable(prog, &rules_of, &estimates, model) {
+            super::super::profile::decision("factorized store (decision 0097)", || line);
         }
     }
     unestimate(model, inserted);
@@ -176,22 +207,22 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     // another is unfolded first, readers after, so a pass takes one level. A chain deeper than the passes stores
     // the rest.
     let mut rules: Vec<Rule> = prog.rules.clone();
-    for _ in 0..8 {
+    // A copy's variables are named apart by the pass (each rule unfolds one read a pass), so a first-level copy is
+    // the one priced above, and an earlier chunk's observation of it is found by its text.
+    for pass in 0..8 {
         let bodies: BTreeMap<String, Vec<Rule>> = inline
             .iter()
             .map(|r| (r.clone(), rules.iter().filter(|x| x.head.rel == *r).cloned().collect()))
             .collect();
         let mut changed = false;
         let mut next = Vec::with_capacity(rules.len());
-        let mut fresh = 0usize;
         for rule in rules {
             let at = rule.body.iter().position(|l| l.atom().is_some_and(|a| inline.contains(&a.rel)));
             match at {
                 Some(i) => {
                     let rel = rule.body[i].atom().map(|a| a.rel.clone()).unwrap_or_default();
                     let defs: Vec<&Rule> = bodies[&rel].iter().collect();
-                    fresh += 1;
-                    match unfold(&rule, i, &defs, fresh) {
+                    match unfold(&rule, i, &defs, pass) {
                         Some(copies) => {
                             next.extend(copies);
                             changed = true;
@@ -283,6 +314,101 @@ fn refusals(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTree
         }
     }
     why
+}
+
+/// The relations that cross the chunk boundary (the local part's outputs: its exports and findings) stored as the
+/// flat join of parts that meet only at a variable they project away: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p),
+/// bound_in(p, x)` holds 777 k rows, its two parts about 100 k. Stored factorized, the parts and their key, a reader
+/// would join them where it binds its own columns. Not built (decision 0097, "Factorized store"): this names each
+/// such relation with its flat rows (observed where an earlier chunk measured them) and its parts' estimated rows,
+/// where the flat rows are over twice the parts'.
+fn factorizable(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, estimates: &BTreeMap<String, (f64, f64)>, model: &Model) -> Vec<String> {
+    let mut out = Vec::new();
+    for rel in &prog.outputs {
+        let Some(rules) = rules_of.get(rel.as_str()) else { continue };
+        let nodes = model.stats.nodes;
+        let (flat, how) = match observed_rows(rel, nodes) {
+            Some(n) => (n, "observed"),
+            None => (estimates.get(rel.as_str()).map_or(0.0, |e| e.0), "estimated"),
+        };
+        if flat < SMALL {
+            continue;
+        }
+        let mut parts_rows = 0.0;
+        let mut shown: Vec<String> = Vec::new();
+        let mut every = true;
+        for rule in rules {
+            match factors(rule) {
+                Some((key, parts)) => {
+                    let mut texts = Vec::new();
+                    for part in &parts {
+                        let mut vars: BTreeSet<String> = BTreeSet::new();
+                        part.iter().for_each(|l| vars.extend(l.vars()));
+                        let head = Atom { rel: format!("{rel}_part"), args: vars.into_iter().map(Term::Var).collect(), neg: false, gated: false };
+                        let rows = model.plan_rule(prog, &head, part, None).map_or(f64::INFINITY, |p| p.2);
+                        parts_rows += rows;
+                        texts.push(format!("{} [{rows:.0}]", part.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")));
+                    }
+                    shown.push(format!("by ${key}: {}", texts.join(" | ")));
+                }
+                None => every = false,
+            }
+        }
+        if every && !shown.is_empty() && flat > 2.0 * parts_rows {
+            out.push(format!("{rel}: {flat:.0} rows stored flat ({how}), {parts_rows:.0} as parts (estimated); {}", shown.join("; ")));
+        }
+    }
+    out
+}
+
+/// `rule`'s body split at a variable `key` the head does not name: the parts that meet only at `key`, each naming a
+/// head variable, with each comparison and negation in the part whose variables it reads. `None` where no variable
+/// splits it so, or it holds anything but atoms and comparisons.
+fn factors(rule: &Rule) -> Option<(String, Vec<Vec<Literal>>)> {
+    if !rule.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. })) {
+        return None;
+    }
+    let mut head: BTreeSet<String> = BTreeSet::new();
+    rule.head.args.iter().for_each(|t| t.vars(&mut head));
+    let positive: Vec<usize> = (0..rule.body.len()).filter(|&i| matches!(&rule.body[i], Literal::Atom(a) if !a.neg)).collect();
+    let mut keys: BTreeSet<String> = BTreeSet::new();
+    for &i in &positive {
+        for v in rule.body[i].vars() {
+            if !head.contains(&v) && positive.iter().filter(|&&j| rule.body[j].vars().contains(&v)).count() >= 2 {
+                keys.insert(v);
+            }
+        }
+    }
+    for key in keys {
+        // Components over every literal, joined by the variables they share other than the key.
+        let mut comps: Vec<(Vec<usize>, BTreeSet<String>)> = Vec::new();
+        for (i, l) in rule.body.iter().enumerate() {
+            let mut vars = l.vars();
+            vars.remove(&key);
+            let (joined, rest): (Vec<_>, Vec<_>) = comps.into_iter().partition(|(_, v)| !v.is_disjoint(&vars));
+            let mut all = (vec![i], vars);
+            for (ls, vs) in joined {
+                all.0.extend(ls);
+                all.1.extend(vs);
+            }
+            comps = rest;
+            comps.push(all);
+        }
+        // A literal of the key alone (`$p < …`) goes with the first part that reads the key.
+        let (lone, mut parts): (Vec<_>, Vec<_>) = comps.into_iter().partition(|(_, v)| v.is_empty());
+        if parts.len() < 2 || !parts.iter().all(|(ls, v)| !v.is_disjoint(&head) && ls.iter().any(|&i| positive.contains(&i))) {
+            continue;
+        }
+        for (ls, _) in lone {
+            parts[0].0.extend(ls);
+        }
+        let parts = parts.into_iter().map(|(mut ls, _)| {
+            ls.sort_unstable();
+            ls.into_iter().map(|i| rule.body[i].clone()).collect()
+        }).collect();
+        return Some((key, parts));
+    }
+    None
 }
 
 /// `reader` with its read at `at` of a relation whose rules are `defs` unfolded (the module's "Unfolding"): the
@@ -438,6 +564,61 @@ fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
     }
 }
 
+thread_local! {
+    /// What the native strata observed on this thread during a corpus run (`observing`): kept across its chunks and
+    /// parts, so a later chunk's choice prices each relation from the rows its join steps produced.
+    static OBSERVED: RefCell<Option<Observed>> = const { RefCell::new(None) };
+}
+
+/// Observed join work and rows, each with the corpus nodes of the runs that observed it (summed), so a later chunk
+/// reads a rate per node: per rule (`obs_rule`: its head and body), the rows into and out of every step of every probe
+/// of it (the planner's units of work: `native.tsv`'s `steps_in_out`); per relation, its rows when its stratum ended.
+#[derive(Default)]
+struct Observed {
+    rules: rustc_hash::FxHashMap<u64, (f64, f64)>,
+    rels: rustc_hash::FxHashMap<String, (f64, f64)>,
+}
+
+/// Observations kept while held (a corpus run, `KeepPlans`); none outside one, and none under
+/// `RERAIL_OBSERVED_STEPS=off` (every choice from the plan's estimates, for comparison).
+pub(super) fn observing(on: bool) {
+    let on = on && !std::env::var("RERAIL_OBSERVED_STEPS").is_ok_and(|v| v == "off");
+    OBSERVED.with(|o| *o.borrow_mut() = on.then(Observed::default));
+}
+
+/// A stratum's native run: per rule, the (in, out) rows of each step of each of its probes, over a corpus of `nodes`.
+pub(super) fn observe(rules: &[(u64, &[(u64, u64)])], rels: &[(&str, f64)], nodes: f64) {
+    OBSERVED.with(|o| {
+        let mut o = o.borrow_mut();
+        let Some(o) = o.as_mut() else { return };
+        let mut per: BTreeMap<u64, f64> = BTreeMap::new();
+        for (rule, steps) in rules {
+            *per.entry(*rule).or_default() += steps.iter().map(|(a, b)| (a + b) as f64).sum::<f64>();
+        }
+        for (rule, work) in per {
+            let e = o.rules.entry(rule).or_default();
+            e.0 += work;
+            e.1 += nodes.max(1.0);
+        }
+        for (rel, rows) in rels {
+            let e = o.rels.entry((*rel).to_owned()).or_default();
+            e.0 += rows;
+            e.1 += nodes.max(1.0);
+        }
+    });
+}
+
+/// `rule`'s observed work, scaled to a corpus of `nodes`.
+fn observed_rule(rule: &Rule, nodes: f64) -> Option<f64> {
+    let key = super::obs_rule(&rule.head, &rule.body);
+    OBSERVED.with(|o| o.borrow().as_ref()?.rules.get(&key).map(|(w, n)| w / n * nodes.max(1.0)))
+}
+
+/// `rel`'s observed rows, scaled to a corpus of `nodes`.
+fn observed_rows(rel: &str, nodes: f64) -> Option<f64> {
+    OBSERVED.with(|o| o.borrow().as_ref()?.rels.get(rel).map(|(r, n)| r / n * nodes.max(1.0)))
+}
+
 /// What `estimate` put into the planner's statistics, to take back.
 struct Inserted {
     card: Vec<String>,
@@ -460,10 +641,15 @@ fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Ru
                     work += w;
                 }
             }
-            let measured = model.stats.card.get(rel).copied();
+            // Observed on an earlier chunk or part of this run (`Observed`), per node of the corpus: its rows when
+            // it was stored, and its build's work when every rule of it ran.
+            let nodes = model.stats.nodes;
+            let seen_work: Option<f64> = rules.iter().map(|r| observed_rule(r, nodes)).sum();
+            let work = seen_work.unwrap_or(work);
+            let measured = model.stats.card.get(rel).copied().or_else(|| observed_rows(rel, nodes));
             let rows = measured.unwrap_or(rows);
             out.insert(rel.clone(), (rows, work));
-            if measured.is_none() {
+            if !model.stats.card.contains_key(rel) {
                 model.stats.card.insert(rel.clone(), rows.max(1.0));
                 inserted.card.push(rel.clone());
                 // A column's distinct values: at most the rows, and at most those of the body column that binds it.
@@ -532,6 +718,22 @@ mod tests {
         let two: Vec<String> = unfold(&negated, 1, &[&over_head], 1).unwrap().iter().map(|r| r.to_string()).collect();
         assert_eq!(two, vec!["o($x) :- a($x), !a($x)", "o($x) :- a($x), $x = 3"]);
         assert!(unfold(&negated, 1, &[&def], 1).is_none());
+    }
+
+    /// A body that meets only at a variable the head projects away splits there; a join through a head variable does
+    /// not.
+    #[test]
+    fn products_split_at_their_key() {
+        let r = rule("o(x) :- a(x), b(x, y), b(y, z), a(z), y != 3.");
+        assert!(factors(&r).is_none(), "the head names only x");
+        let prog = super::super::super::rr::parse(
+            ".decl a(x: node)\n.decl b(x: node, y: node)\n.decl o(x: node, z: node)\n.input a\n.input b\n.output o\no(x, z) :- b(x, p), p != 3, b(p, z), a(z).\n",
+        )
+        .unwrap();
+        let (key, parts) = factors(&prog.rules[0]).unwrap();
+        assert_eq!(key, "p");
+        let shown: Vec<String> = parts.iter().map(|p| p.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")).collect();
+        assert_eq!(shown, ["b($x, $p), $p != 3", "b($p, $z), a($z)"]);
     }
 
     /// `.decl r(…) inline` and its kin are read as Soufflé spells them; two that disagree are an error.
