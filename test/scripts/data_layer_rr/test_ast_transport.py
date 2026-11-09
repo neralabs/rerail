@@ -46,3 +46,16 @@ class AstTransportTests(unittest.TestCase):
         constant = rows['astKinds'].index('Constant')
         self.assertEqual('\ud800ReadTransaction', json.loads(rows['astStringJson'][constant]))
         rows['astStringJson'][constant].encode('utf-8')
+
+    def test_type_alias_name_is_a_child_node_not_a_scalar_name(self):
+        import json
+        tree=ast.parse('type Alias = list[str]\n')
+        rows=columns(tree)
+        json.dumps(rows)
+        owner=rows['astKinds'].index('TypeAlias')
+        self.assertEqual('',rows['astNames'][owner])
+        aliases=[i for i,name in enumerate(rows['astIds']) if name=='Alias']
+        self.assertEqual(1,len(aliases))
+        child=aliases[0]
+        self.assertEqual(str(owner),rows['astParents'][child])
+        self.assertEqual('name',rows['astFields'][child])

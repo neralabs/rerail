@@ -11,8 +11,12 @@ def columns(tree):
     while pending:
         parent, field, ordinal, node = pending.pop()
         index = len(result['astKinds'])
+        # TypeAlias.name is an AST child, not a scalar definition name. Its
+        # occurrence remains in the ordinary iter_fields child traversal below.
+        scalar_name=getattr(node,'name','')
+        if not isinstance(scalar_name,str):scalar_name=''
         values = [type(node).__name__, getattr(node, 'id', ''), getattr(node, 'attr', ''),
-                  getattr(node, 'name', ''), str(getattr(node, 'lineno', 0)), str(parent), field,
+                  scalar_name, str(getattr(node, 'lineno', 0)), str(parent), field,
                   str(ordinal), type(getattr(node, 'value', missing)).__name__]
         for name, value in zip(result, values):
             result[name].append(value)

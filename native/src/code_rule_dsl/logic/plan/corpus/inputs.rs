@@ -651,7 +651,7 @@ mod tests {
 "#).unwrap();
         let source = r#"{"categories":{"Z":["f"],"A":[]},"number":18446744073709551617}"#;
         let mut reads = 0;
-        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.to_owned()) }).unwrap();
+        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.to_owned()) }, &mut |_| panic!("unexpected artifact read"), &mut |_| panic!("unexpected base read")).unwrap();
         assert_eq!(reads, 1);
         assert_eq!(program.facts["kind"], vec![vec![Value::Str("object".into())]]);
         assert_eq!(program.facts["category_kind"], vec![vec![Value::Str("object".into())]]);
@@ -666,7 +666,7 @@ mod tests {
 .decl input_error(path: symbol, kind: symbol, detail: symbol)
 .input input_error
 "#).unwrap();
-        populate_with(&mut program, Path::new("."), &mut |_| Ok(r#"{"n":7}"#.to_owned())).unwrap();
+        populate_with(&mut program, Path::new("."), &mut |_| Ok(r#"{"n":7}"#.to_owned()), &mut |_| panic!("unexpected artifact read"), &mut |_| panic!("unexpected base read")).unwrap();
         assert!(!program.inputs.iter().any(|name| name == "input_error"));
         assert_eq!(program.facts.get("input_error"), Some(&Vec::new()));
     }
