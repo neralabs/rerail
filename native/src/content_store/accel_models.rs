@@ -1,4 +1,4 @@
-//! Compiled Neural Engine models as facts of the store (decision 0096 §3): `accel_models`, one archive per model key.
+//! Compiled Neural Engine models as facts of the store (decision 0098 §3): `accel_models`, one archive per model key.
 //!
 //! The lane (`rerail_accel::ane`) compiles a model once for a fixed relation and keeps the compiled archive here, so
 //! a later run, in this process or another, loads it instead of compiling (about 0.4–6 s a model). A store opened on

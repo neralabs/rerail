@@ -1,4 +1,4 @@
-//! The `closure` form (decision 0096 §1): a linear recursion that walks one column along an edge, run as the edge's
+//! The `closure` form (decision 0098 §1): a linear recursion that walks one column along an edge, run as the edge's
 //! closure over distinct nodes instead of semi-naive rounds over rows.
 //!
 //! The shape. A component of one relation `r`, whose seeds are native joins, and whose one recursive probe reads
@@ -43,7 +43,7 @@ fn step_slots(s: &Step, out: &mut Vec<usize>) {
             keys.extend(ks.iter().map(|(_, x)| *x));
             out.extend(binds.iter().map(|&(_, s)| s));
         }
-        Step::Count { keys: ks, out: o, .. } | Step::Extreme { keys: ks, out: o, .. } | Step::StrJoin { keys: ks, out: o, .. } => {
+        Step::Scalar { keys: ks, out: o, .. } | Step::StrJoin { keys: ks, out: o, .. } => {
             keys.extend(ks.iter().map(|(_, x)| *x));
             out.push(*o);
         }
@@ -70,6 +70,7 @@ fn step_slots(s: &Step, out: &mut Vec<usize>) {
         }
         Step::Test { s, p, .. } => keys.extend([*s, *p]),
         Step::In { a, .. } => keys.push(*a),
+        Step::Unused { .. } => {}
     }
     out.extend(keys.into_iter().filter_map(|k| if let Key::Slot(s) = k { Some(s) } else { None }));
 }
@@ -77,7 +78,7 @@ fn step_slots(s: &Step, out: &mut Vec<usize>) {
 /// Whether a step reads the component's relation `r` (a second recursive read).
 fn reads(s: &Step, r: usize) -> bool {
     let src = match s {
-        Step::Atom { src, .. } | Step::Count { src, .. } | Step::Extreme { src, .. } | Step::StrJoin { src, .. } => src,
+        Step::Atom { src, .. } | Step::Scalar { src, .. } | Step::StrJoin { src, .. } => src,
         _ => return false,
     };
     matches!(src, Src::Delta(x) | Src::Full(x) | Src::FullMulti(x, _) if *x == r)
@@ -150,6 +151,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         nslots: j.nslots,
         multi: Vec::new(),
         counts: (0..rest.len()).map(|_| Default::default()).collect(),
+        fused: (0..rest.len()).map(|_| None).collect(),
         forms: (0..rest.len()).map(|_| Default::default()).collect(),
     };
     Some(Closure { col, rest, y })
@@ -184,7 +186,7 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
     let mut out = Vec::new();
     while at < nodes.len() {
         out.clear();
-        run_join_collect(&cl.rest, store, syms, &[(cl.y, nodes[at])], &mut out);
+        run_join_collect(&cl.rest, store, syms, &[(cl.y, nodes[at])], &mut out).ok()?;
         out.sort_unstable();
         out.dedup();
         let mut next = Vec::with_capacity(out.len());

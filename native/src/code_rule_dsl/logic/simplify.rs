@@ -73,7 +73,7 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) similar: usize,
     pub(in crate::code_rule_dsl) similar_groups: usize,
     pub(in crate::code_rule_dsl) similar_examples: Vec<String>,
-    /// Derived relations made their projection on the columns some reader reads (decision 0096 §1, `count only`
+    /// Derived relations made their projection on the columns some reader reads (decision 0098 §1, `count only`
     /// inferred): each with the columns it lost.
     pub(in crate::code_rule_dsl) projected: Vec<(String, Vec<usize>)>,
     /// Existence counts read as the atom they count (`count : { r(…) } = 0` as `!r(…)`, `> 0` as `r(…)`; decision 0097).
@@ -134,7 +134,7 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         }
         if !report.projected.is_empty() {
             let cols: usize = report.projected.iter().map(|(_, c)| c.len()).sum();
-            super::profile::decision("columns no reader reads dropped (decision 0096, count only)", || {
+            super::profile::decision("columns no reader reads dropped (decision 0098, count only)", || {
                 let some: Vec<String> = report.projected.iter().take(8).map(|(r, c)| format!("{r} {c:?}")).collect();
                 format!("{} relations lost {cols} columns no reader reads, so their rows are their projection: {}", report.projected.len(), some.join(", "))
             });
@@ -1058,7 +1058,7 @@ fn drop_unread(prog: &mut Program) -> Vec<String> {
     unread
 }
 
-/// **Columns no reader reads go** (decision 0096 §1: `count only`, inferred). A derived relation whose column is `_` in
+/// **Columns no reader reads go** (decision 0098 §1: `count only`, inferred). A derived relation whose column is `_` in
 /// every atom that reads it, positive or negated, keeps only its other columns: its rows become their projection, so
 /// a reader that asks only whether a row exists (`!r($x, _)`, `r($x, _)`) reads one row per key, not every row the
 /// rules make. The rows the readers see are the same: the column decides nothing they test.

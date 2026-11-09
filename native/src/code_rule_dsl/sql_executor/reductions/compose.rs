@@ -2,6 +2,10 @@
 use super::*;
 
 impl Retained {
+    pub(in crate::code_rule_dsl::sql_executor) fn phase_context_rows(&self, counts: &BTreeMap<String,phase::Counts>) -> u64 {
+        self.rules.iter().filter_map(|r|counts.get(&r.contexts)).map(|c|c.keys as u64).sum()
+    }
+
     pub(in crate::code_rule_dsl::sql_executor) fn phase_arms(&self) -> usize {
         self.rules
             .iter()
@@ -27,7 +31,7 @@ impl Retained {
             Some(store),
             true,
         )?;
-        for rule in &self.rules {
+        for rule in self.rules.iter() {
             owned_phase(
                 db,
                 objects,
@@ -98,7 +102,7 @@ impl Retained {
         }
         let store = w.versions.unwrap();
         let mut contributions = vec![];
-        for rule in &self.rules {
+        for rule in self.rules.iter() {
             let contexts = phase.relation(rule.width, &rule.context_query.render());
             let evaluated = phase.relation(
                 rule.width + self.width,

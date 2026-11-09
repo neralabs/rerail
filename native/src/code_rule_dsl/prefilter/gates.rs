@@ -122,7 +122,7 @@ impl Gate {
     }
 }
 
-/// Each gate's files, as `Gate::files` gives them, by the `bit product` form (decision 0096 §1): the batch's files as
+/// Each gate's files, as `Gate::files` gives them, by the `bit product` form (decision 0098 §1): the batch's files as
 /// rows of bits over the gates' terms, against the gates' conjunctions as rows of bits, each pair kept when the file
 /// has all of the conjunction's terms (`min`, the conjunction's size). One launch for every plan of the batch, placed
 /// by the run's executor; the conjunctions are a fixed relation (the pack's rules), which the Neural Engine holds as

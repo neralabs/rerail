@@ -3,7 +3,7 @@ name = "rerail-accel"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Relational kernels on every compute lane (CPU, SME, GPU, Neural Engine) and the executor that batches their launches (decision 0096)."
+description = "Relational kernels on every compute lane (CPU, SME, GPU, Neural Engine) and the executor that batches their launches (decision 0098)."
 
 [features]
 # Each lane can be built alone (`--no-default-features --features gpu`), so work on one lane never waits on another.

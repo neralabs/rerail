@@ -503,7 +503,9 @@ kv(2, "b"). kv(1, "a"). kv(3, "c"). kv(4, "a").
 .decl agg(s: symbol, t: number, l: number, e: symbol)
 agg(s, t, l, e) :- kv(4, _), s = join v by k sep "," : { kv(k, v) }, t = sum k : { kv(k, _) },
     l = sum strlen(v) * 2 : { kv(_, v) }, e = join v by k sep "," : { kv(k, v), k > 9 }.
-.output joined, num, fl, neg, assigns, agg
+.decl prod(p: number, none: number)
+prod(p, e) :- kv(4, _), p = product k : { kv(k, _) }, e = product k : { kv(k, _), k > 9 }.
+.output joined, num, fl, neg, assigns, agg, prod
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -514,6 +516,7 @@ agg(s, t, l, e) :- kv(4, _), s = join v by k sep "," : { kv(k, v) }, t = sum k :
     assert_eq!(read("neg"), "-2.25\n");
     assert!(read("assigns").ends_with("\t3\n"), "{}", read("assigns"));
     assert_eq!(read("agg"), "a,b,c,a\t10\t6\t\n");
+    assert_eq!(read("prod"), "24\t1\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

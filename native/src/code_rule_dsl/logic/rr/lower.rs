@@ -1890,7 +1890,14 @@ impl Lowerer {
                 return Ok(Literal::Atom(Atom { rel: format!("{axis}{set}"), args, neg, gated: false }));
             }
             ("split_dot", [q, m, x]) if !neg => {
-                return Ok(Literal::Cmp { l: self.term(q)?, op: "=", r: Term::Call("cat".to_owned(), vec![self.term(m)?, self.term(x)?]) });
+                // A part not wanted (`split_dot(q, m, _)`) is a variable of its own, so the split is placed only once
+                // q is bound, or both parts are: a wildcard part would read as bound.
+                let mut part = |t: &STerm| -> Result<Term, Error> {
+                    let t = self.term(t)?;
+                    Ok(if matches!(t, Term::Wild) { Term::Var(self.fresh("part")) } else { t })
+                };
+                let (m, x) = (part(m)?, part(x)?);
+                return Ok(Literal::Cmp { l: self.term(q)?, op: "=", r: Term::Call("cat".to_owned(), vec![m, x]) });
             }
             ("ast", _) if !neg => return self.ast(args),
             ("precedes_stop", [a, b, set]) => {
@@ -2185,6 +2192,7 @@ impl Lowerer {
             "min" => AggOp::Min,
             "max" => AggOp::Max,
             "sum" => AggOp::Sum,
+            "product" => AggOp::Product,
             "join" => AggOp::Join { by: by.clone(), sep: sep.clone().unwrap_or_default() },
             other => return not_yet(format!("the aggregate {other}")),
         };
@@ -2228,7 +2236,7 @@ impl Lowerer {
                 inner.extend(groups(re));
             }
         }
-        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum) || own(v) || outer.contains(*v)).cloned().collect();
+        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum | AggOp::Product) || own(v) || outer.contains(*v)).cloned().collect();
         let name = self.fresh("agg");
         let mut bodies = self.conjunction(body, outer)?;
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by

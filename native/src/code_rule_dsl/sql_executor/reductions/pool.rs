@@ -65,13 +65,6 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
         if !family.lookup.proven {
             continue;
         }
-        let had_shared = family.members.iter().any(|&i| {
-            let (out, rule, site) = &paths[i];
-            reducer::combined::already_shared(&plans.states[out].rules[*rule].reducers[*site])
-        });
-        if family.members.len() == 1 && !had_shared {
-            continue;
-        }
         let mut locals = BTreeMap::<(String, usize), Vec<usize>>::new();
         for &i in &family.members {
             let (out, rule, _) = &paths[i];
@@ -105,13 +98,14 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
                     .collect::<Vec<_>>();
                 for &site in &members {
                     reducer::combined::share(
-                        &mut plans.states.get_mut(&output).unwrap().rules[rule].reducers[site],
+                        &mut Arc::make_mut(&mut plans.states.get_mut(&output).unwrap().rules)[rule].reducers[site],
                         &group,
                         &values,
                         &projection,
                         &family.layout,
                         &members,
                         site == members[0],
+                        lookup.lookup.proven,
                         consumers,
                     );
                 }
@@ -119,11 +113,11 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
         }
     }
     for state in plans.states.values_mut() {
-        for rule in &mut state.rules {
+        for rule in Arc::make_mut(&mut state.rules) {
             rule.rewrite(queries[rule.step].as_ref().unwrap());
         }
     }
-    plans.storage.push(Report { analysis, groups, evaluation_boundary: "One checked execution and initialization generation; wave gates keep independent source histories" });
+    plans.storage.push(Report { analysis, groups, evaluation_boundary: "Bag storage ignores outer lookup dependencies; each consumer keeps its own lookup and dependency index. Cross-gate transitions require equal input snapshots and maintenance cursors" });
 }
 
 /// A maintenance pass keeps immutable dirty-key snapshots across scratch rewinds.

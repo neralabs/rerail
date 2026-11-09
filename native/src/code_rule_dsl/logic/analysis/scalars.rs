@@ -1,6 +1,17 @@
 //! Compatibility of retained scalar summaries, independent of their storage and evaluator.
 use super::Decision;
 
+pub(in crate::code_rule_dsl) fn unused_sum(bound: bool, observed: bool) -> Decision {
+    Decision::new(
+        !bound && !observed,
+        if !bound && !observed {
+            "An unbound, unobserved sum needs no final range check"
+        } else {
+            "A bound or observed sum retains its range check at the use"
+        },
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub(in crate::code_rule_dsl) enum Expression {
     Column(usize),
@@ -33,15 +44,22 @@ impl Expression {
             _ => true,
         }
     }
-    fn value(&self) -> bool {
-        matches!(self, Self::Column(_) | Self::Integer(_) | Self::Text(_))
+    pub fn non_null(&self) -> bool {
+        match self {
+            Self::Column(_) | Self::Integer(_) | Self::Text(_) => true,
+            Self::Apply(_,args) => self.stable() && args.iter().all(Self::non_null),
+            Self::Opaque(_) => false,
+        }
     }
+    fn value(&self) -> bool { self.non_null() }
+
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub(in crate::code_rule_dsl) enum Kind {
     Count,
     Sum,
+    Product,
     Min,
     Max,
     OrderedJoin,
@@ -67,11 +85,11 @@ impl Scalar {
         self.compatibility(other, false)
     }
     fn compatibility(&self, other: &Self, lookup: bool) -> Decision {
-        let reason = if matches!(self.kind, Kind::OrderedJoin | Kind::Exists)
-            || matches!(other.kind, Kind::OrderedJoin | Kind::Exists)
+        let reason = if matches!(self.kind, Kind::OrderedJoin | Kind::Exists | Kind::Product)
+            || matches!(other.kind, Kind::OrderedJoin | Kind::Exists | Kind::Product)
         {
-            Some("Ordering, string, or existence semantics require a separate summary")
-        } else if self.dependent || other.dependent {
+            Some("Ordering, string, existence, or product semantics require a separate summary")
+        } else if lookup && (self.dependent || other.dependent) {
             Some(
                 "Aggregate-dependent or computed correlation keys require separate dependency maintenance",
             )
@@ -87,13 +105,13 @@ impl Scalar {
             .keys
             .iter()
             .chain(&self.predicates)
-            .chain(&self.lookup)
+            .chain(self.lookup.iter().filter(|_| lookup))
             .any(|e| !e.stable())
             || other
                 .keys
                 .iter()
                 .chain(&other.predicates)
-                .chain(&other.lookup)
+                .chain(other.lookup.iter().filter(|_| lookup))
                 .any(|e| !e.stable())
         {
             Some("An opaque expression has no evaluation-sharing proof")
@@ -228,4 +246,15 @@ impl Analysis {
             "Pure outer expressions and independent summaries preserve evaluation order and range checks at scalar uses",
         ))
     }
+}
+
+/// Equal input snapshots and applied journals permit reuse across scheduler gates.
+pub(in crate::code_rule_dsl) fn maintenance_equivalent(inputs: bool, cursors: bool) -> Decision {
+    Decision::new(inputs && cursors, if !inputs {
+        "Input versions differ; wave gates keep independent summaries"
+    } else if !cursors {
+        "Applied summary roots or pending delta journals differ"
+    } else {
+        "Equal input versions, summary roots, and pending journals synchronize the maintenance cursors"
+    })
 }

@@ -313,11 +313,110 @@ Before a stratum opens, the planner has priced each of its rules: an estimate of
      tables, which the run reads in place.
 1. **Row programs.** The side program, with rir, validate, digest, interpreter and Cranelift. The CPU native engine
    runs filters and computed terms through it. Gate: identical findings.
+   - **Built.** Block programs have a row stream: `cmp` (a column against a column or a parameter, at 16, 32 or 64
+     bits) and `bit` (a column's value in a set). They go through rir, the verifier and the digest; the verifier
+     refuses byte operations in a row program and row operations in a byte program. The CPU interpreter
+     (`BlockProgram::interpret_rows`) and a Cranelift executor (`native_cpu_rows`) run them, and both are checked
+     against a row-by-row reference.
+   - The native engine fuses an atom with the `lt`/`le`/`eq`/`ne`/`in`/`deq`/`dne`/`docof`/`let` steps after it
+     (`setfix::rowcode`). It gathers the candidates 1,024 at a time and computes `@doc(x)` from them (the plan's own
+     expression list). The filters run as one row program, and only the rows that pass go on. The observed fanouts
+     stay exact, because each fused step's running mask is an output. `RERAIL_NO_ROW_PROGRAMS` turns this off.
+   - Cold Python pack: findings identical. CPU time was 60.2 + 4.7 s with row programs and 61.3 + 4.6 s without
+     (load 45–98), so the CPU form costs nothing. Its value is that a filter now has one meaning, which Metal runs
+     too.
+   - Not yet: text tests as `bit` over verdict sets (they stay host steps), and Cranelift for the engine's filters
+     (the interpreter runs them; a JIT per rule would cost more than most strata take).
 2. **Residency and `scan`/`count`/`scatter`.** The chunk's relations as stratified columns on the device (a
    chunk's high part once, 16 bits a row: §6), and plain joins by index and hash.
+   - **Built: the layout and `scan`** (`metal_rows`). `Resident` groups a relation's rows by its lead column's
+     chunk (`v >> 16`) and keeps each column as narrow as its values allow, exactly. A column is `Low16` when every
+     value is in its row's chunk; otherwise it is `I32` or `I64`. Groups are cut into tiles of 256 rows.
+   - One generator lowers a row program to the kernel's predicate. Two `Low16` columns compare as `ushort`s; a
+     `Low16` column against a parameter compares the chunk first, then the low bits; `@doc(x)` of a `Low16` column
+     is the chunk's, the same for the whole tile.
+   - `rows_count`, `rows_scan` and `rows_scatter` give the passing rows in order, with no atomic append. They use
+     eight words of threadgroup memory, and every loop has a bound.
+   - **The lab check** (`setfix::scans`, in the `relational_lab` replay): each fused filter over an input relation
+     whose keys and parameters are constants runs on Metal and on the CPU. In the Python pack's 144 captures,
+     51 of 51 give the CPU's rows: 1,073,764 rows in, 495,550 passed.
+     - The CPU took 3.1 ms and the GPU 4.5 ms; these scans are small, and the submission dominates.
+     - The columns take 12.8 MB in the layout against 19.4 MB as `i64`. Of 88 columns, 71 are `Low16`, 6 `I32`
+       and 11 `I64`.
+   - Not yet: residency across a chunk's strata (each scan uploads its relation), 16-bit symbol codes, and joins by
+     index and hash.
 3. **`tile`.** Brute force per document, priced by the planner. First targets: `up_once`, `p511_restores`,
    `q6_c4_shadow`.
-4. **Negation, then aggregates (`sort`, `group`).**
+   - **Built: `tile_join`** (`metal_rows`). It is an equi-join of two resident relations whose first key is a node
+     column in the 16-bit layout on both sides, so equal keys are in one chunk.
+     - A threadgroup takes 256 left rows of a chunk. The chunk's right rows come through threadgroup memory 256 at
+       a time: 16 bits for the first key and 64 for each other, at most 4.6 KB.
+     - Each thread compares its row with each staged right row.
+     - Count, scan and scatter give the pairs in order, sized exactly.
+   - **The lab check** (`setfix::tiles`): a rule's first two atoms over input relations, the second's keys bound
+     by the first. In the 144 captures, 110 of 110 give a CPU hash join's pairs: 5,565,059 pairs from 387 million
+     compared. The CPU hash join took 474 ms and the GPU's brute force 173 ms.
+     - 122 joins are not on the device: their keys are symbols, which wait for 16-bit symbol codes (§6), or they
+       have more than three keys.
+   - Not yet: the planner pricing `tile` (Σ |left| × |right| per chunk, which the lab now measures), and running it
+     from the engine. The replay's numbers are the first measured GPU price: about 0.45 ns per pair compared.
+   - **Equi-joins by sort and probe** (`metal_sort`). This replaces an earlier key-run form whose sort ran on the
+     host and cost as much CPU as the CPU hash join.
+     - **Upload:** a column goes to the device as each value's offset from its least, in 16, 32 or 64 bits, as
+       narrow as its span allows and exact. The host makes one pass for the span and one that writes the offsets
+       straight into the device buffer (`Column`).
+     - **Sort:** the right side is sorted by key 0 on the device with a stable LSD radix sort. Tiles of 1,024 rows;
+       an 8-bit digit per pass, only as many passes as the key's span needs. A row's place is its digit's offset for
+       the tile, plus the rows of its digit earlier in the tile (a rank among its simdgroup's lanes from 32 bounded
+       shuffles). No atomic decides an order. Then the key's runs (heads, a scan, compaction) and the other columns
+       gathered into the sorted order. 10 kB of threadgroup memory at most.
+     - **Residency:** a `Keyed` (the sorted relation) stays on the device while the host holds it. Every probe of
+       that relation by the same keys uses one sort.
+     - **Probe:** a thread per left row (unsorted) finds its key's run by a bounded binary search and loops over the
+       run, testing the other keys. Count, scan and scatter run in one command buffer, into space for the pairs the
+       planner expects; a second scatter runs only when there are more. The pairs come out in left-row order.
+     - **The host's part, made small.** Pipelines are kept per variant. One encoder runs a command buffer's
+       dispatches in order. Intermediates live in per-thread scratch. Buffers come from a per-thread pool, since a
+       new buffer costs about 6 µs to make and again when Metal first maps it; a pooled one costs 0.1 µs. A sort is
+       committed without waiting; its probe follows it on the same queue. The columns a running sort reads stay
+       held until it completes, because Metal does not order a host write to a reused buffer after a GPU read.
+       (Releasing them early broke 9 of 232 joins in the lab; holding them fixed it.)
+   - **On the CPU: a radix sort join** (`rows_sort`). The same sort on the host: LSD radix over the offsets and row
+     numbers packed into one word (`u64`, or `u128` past 32 bits), every digit's histogram in one pass, and a digit
+     every row shares skipped. The runs are merged.
+   - **The lab check** (all 232 two-atom joins of the 144 captures; 5,632,341 pairs). Every form gives the CPU
+     hash join's pairs. CPU time is the process's (Metal's threads too), at load 65–75:
+
+     | Form | CPU | GPU |
+     |---|---|---|
+     | CPU hash join | 234 ms | |
+     | CPU radix sort join, each right side sorted once a capture | 96 ms | |
+     | GPU sort and probe: 138 sorts (94 joins found theirs resident), 431 submissions | 128 ms | 63 ms |
+     | GPU chunk tile, the 110 joins it fits (387 M pairs compared) | 163 ms | 156 ms |
+
+     - The device's own work is small: 43 ms sorting and 20 ms probing. What the host still pays is per
+       submission, about 20 µs of process CPU for an empty one and about 1.5 µs per dispatch. A sort costs about
+       100 µs of host CPU whatever its size, and a probe about 55 µs (`host_costs`). At 200,000 rows the device's
+       host cost is about a seventh of the CPU radix sort's (168 µs against 1,139 µs); at 1,000 rows the CPU wins.
+     - So joins one at a time do not pay on the device: the strata's joins are small. The device pays once a
+       stratum's device work is batched into few submissions and its relations stay resident across the chunk's
+       strata. That is §5's device waves, and the order of work below.
+   - **Priced in the planner** (`placement::price_join`). Each join step is priced on each form from the planner's
+     own estimates (its recorded plan: rows in, the relation's rows, rows out, keys, and whether it reads a range
+     inside a document). The forms are the CPU index, the GPU sort and probe (a relation sorted once a stratum per
+     relation and keys), and the GPU tile (for a range inside a document). The device's prices are the lab's
+     measures. The cheapest form, by `MARGIN`, is the step's choice, and the stratum's GPU estimate is its joins on
+     their device forms.
+     - The profile's placement section counts join steps by the form chosen. Python pack: 45,160 stay on the CPU
+       index and 5,260 would take the sort and probe; 166 have estimates over 1,000 s (cross products), which are
+       counted but not summed.
+     - The stratum still runs on the CPU (`DEVICE_FORMS` is empty): the engine does not yet run a join on the
+       device.
+   - The chunk tile stays for what equality does not cover: pairs within a document under `within`, `@doc`
+     equality and order comparisons (the brute force per document that §4 meant).
+4. **Negation, then aggregates (`sort`, `group`).** `sort` is built (step 3). Next: a stratum's joins run on
+   the device from the engine, as the placement chooses, in one command buffer per stratum, its relations resident
+   across the chunk's strata.
 5. **Device waves (§5)**, once enough strata run to make whole levels.
 6. **Recursion:** the queue for file-local fixpoints, waves for the rest.
 7. **Text tests** on the device (O66).

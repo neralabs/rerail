@@ -42,7 +42,7 @@ fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &st
     h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
     h.update([u8::from(crate::code_rule_dsl::facts::vtab::syntax::definition_ids())]);
     // What changes the outputs from outside the text: a sample of the corpus, decision 0091's guards.
-    for var in ["RERAIL_SAMPLE_EVERY", "RERAIL_SCOPE_GUARDS"] {
+    for var in ["RERAIL_SAMPLE_EVERY", "RERAIL_SCOPE_GUARDS", "RERAIL_LIBRARIES", "RERAIL_REQUESTS"] {
         h.update(std::env::var(var).unwrap_or_default().as_bytes());
         h.update([0]);
     }
@@ -84,18 +84,12 @@ fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
 }
 
 /// The outputs a run wrote: each `<rel>.csv` in `out`, as (name, bytes).
-fn outputs_of(out: &Path) -> Vec<(String, Vec<u8>)> {
-    let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(out)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            name.ends_with(".csv").then(|| std::fs::read(e.path()).ok().map(|b| (name, b))).flatten()
-        })
-        .collect();
-    files.sort();
-    files
+fn outputs_of<'a>(out: &Path, names: impl Iterator<Item=&'a str>) -> Vec<(String,Vec<u8>)> {
+    let mut files=names.filter_map(|name| {
+        let name=format!("{name}.csv");
+        std::fs::read(out.join(&name)).ok().map(|bytes|(name,bytes))
+    }).collect::<Vec<_>>();
+    files.sort(); files
 }
 
 fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
@@ -162,7 +156,7 @@ pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
     let key = key(&texts, root, options, modes, typing);
     let mut consulted = rule_files(&texts)?;
     consulted.extend(report.consulted.iter().cloned());
-    let outputs = encode_outputs(&outputs_of(out));
+    let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
     observe(|o| o.put_run_record(&key, &encode_consulted(&consulted), &outputs));
     Ok(())
 }
@@ -218,12 +212,52 @@ mod tests {
         // Each library file a text includes is in the record, with its digest (a flattened text includes none).
         let rules = super::rule_files(&["#include \"core.rr\"\n.decl x(s: symbol)\n".to_owned()]).unwrap();
         assert!(rules.iter().any(|r| r.1.ends_with("core.rr") && !r.2.is_empty()) && rules.iter().any(|r| r.1.ends_with("components.rr")), "{rules:?}");
+        // A policy file the program reads (`.input … filename=`) is consulted: its edit runs it again.
+        std::fs::write(src.join("allow.txt"), "a\n").unwrap();
+        let reads = "#include \"core.rr\"\n.decl entry(n: number, e: symbol)\n.input entry(IO=lines, filename=\"allow.txt\")\n.decl listed(e: symbol)\nlisted(e) :- entry(_, e).\n.output listed\n";
+        let reads = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reads).unwrap()).unwrap();
+        run(&reads);
+        assert!(kept(&run(&reads)));
+        std::fs::write(src.join("allow.txt"), "a\nb\n").unwrap();
+        assert!(!kept(&run(&reads)), "an edited input file");
+        assert_eq!(std::fs::read_to_string(out.join("listed.csv")).unwrap(), "a\nb\n");
+        assert!(kept(&run(&reads)));
         // Off: derived every time.
         let off = serde_json::json!({});
         let r = super::super::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &off).unwrap();
         assert!(!kept(&r), "not asked");
         super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unchanged_cross_file_outputs_skip_derivation_and_changed_members_invalidate() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("cross-reuse");
+        let src = dir.join("src"); std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("a.py"),"x = 1\n").unwrap();
+        std::fs::write(src.join("b.py"),"y = 2\n").unwrap();
+        let _guard = super::super::SESSION_TESTS.lock().unwrap_or_else(|e|e.into_inner());
+        super::super::TEST_TAPE_CACHE.with(|p|*p.borrow_mut()=Some(dir.join("store.sqlite")));
+        let p = "#include \"core.rr\"\n.decl pairs(a:symbol,b:symbol)\npairs(a,b) :- doc(d,a,_),doc(e,b,_),d!=e.\n.output pairs\n";
+        let out=dir.join("out");
+        let run=||super::super::run_with_options(&[p],&src,None,&out,"program",Binding::Cpu,1<<18,&Default::default(),&serde_json::json!({"reuse":true})).unwrap();
+        let first=run();
+        let original=std::fs::read(out.join("pairs.csv")).unwrap();
+        assert_eq!(first.rows["pairs"],2);
+        std::fs::remove_file(out.join("pairs.csv")).unwrap();
+        let kept=run();
+        assert!(kept.phases.iter().any(|p|p.0.starts_with("unchanged")),"{:?}",kept.phases);
+        assert_eq!(std::fs::read(out.join("pairs.csv")).unwrap(),original);
+        assert_eq!(kept.cross,(0,0)); assert_eq!(kept.chunks,0);
+        std::fs::write(src.join("c.py"),"z = 3\n").unwrap();
+        std::fs::write(out.join("stale.csv"),"old\n").unwrap();
+        assert_eq!(run().rows["pairs"],6);
+        let kept=run();
+        assert!(!kept.rows.contains_key("stale"),"an older program's output is not part of this run");
+        std::fs::remove_file(src.join("b.py")).unwrap();
+        assert_eq!(run().rows["pairs"],2);
+        super::super::TEST_TAPE_CACHE.with(|p|*p.borrow_mut()=None);
+        let _=std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -68,7 +68,7 @@ and the relational lab's 144 captures. No inlining experiment was run.
 | **Store it** (today) | Many readers, or many probes per key; recursive; read unbound; an output | Rows written, indexed, kept per chunk and maintained across edits |
 | **Recompute in the reader** (inline) | Not recursive; every reader binds a key from which the relation's body is cheap; probes × that cost ≪ its size. Existence reads gain most: they stop at the first match. | The reader is copied once per rule of the relation. Work repeats if many probes hit one key. A count, sum or string join needs the distinct rows, so only existence aggregates inline freely. |
 | **Restrict by demand** (magic sets, 0048) | Many probes share few keys | Extra strata. A demand relation can itself be wide. Unsound in a session unless demand is maintained too. |
-| **Project it** (`count only`, 0096 §1) | Readers ignore some columns | None: the rows are fewer and the same to every reader |
+| **Project it** (`count only`, 0098 §1) | Readers ignore some columns | None: the rows are fewer and the same to every reader |
 | **Store it factorized** | It must cross the chunk boundary, or is read only by key or to count: `rr_agg77`'s two inputs (66 k rows) instead of their join (617 k) | A second layout for readers and kernels |
 | **Better join order** | The blow-up is inside one rule | Nothing for a relation whose own output is large; only the reader's binding narrows that |
 
@@ -77,7 +77,7 @@ Two consequences beyond CPU:
 - **Maintenance across edits (0090, 0092).** A kept relation is paid for per row on every run, and a wide one widens
   over-deletion. An inlined relation is maintained through its inputs, which are maintained anyway. So inlining
   shrinks the kept state and stays exact.
-- **Device waves (0095 §5, 0096).** Inlining is kernel fusion: no intermediate to size, keep resident or spill.
+- **Device waves (0095 §5, 0098).** Inlining is kernel fusion: no intermediate to size, keep resident or spill.
   Storing pays on the device only when several waves read the rows.
 
 Memory matters as much as CPU: the pack's peak is 1.39 GB against the 1 GB budget, and the chunk size is set by
@@ -101,7 +101,7 @@ memory.
    The estimates are the plan's on the first run, and the observed step counts afterwards (`native.tsv` has both).
    The profile names every choice and why, as demand's do.
 2. **An existence count is a negation.** `count {R(…)} = 0` is read as `!R(…)` by demand and by inlining, as the
-   projection already does (0096). That alone brings in the 13 M rows read only inside such counts.
+   projection already does (0098). That alone brings in the 13 M rows read only inside such counts.
 3. **The program may override.** `.decl r(…) inline` and `no_inline`, `magic` and `no_magic`, as Soufflé spells
    them. The converter writes `inline` on the helpers it makes when the analysis would, so the choice is visible in
    the program.
@@ -110,7 +110,7 @@ memory.
 
 ## Built
 
-- **Projection (`count only`), 0096 §1:** the cheapest of the options, and the first.
+- **Projection (`count only`), 0098 §1:** the cheapest of the options, and the first.
 - **An existence count is a negation (item 2).** Before anything else in `simplify`, a count compared only with 0 is
   the atom it counts: `count : { r(…) } = 0` is `!r(…)`, and `> 0` is `r(…)`. The count's own variables are `_`
   already, so the atom is a plain read. Demand, inlining and projection then treat it as any other read.

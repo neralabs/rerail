@@ -83,13 +83,16 @@ fn plan(program: &[u8; 32]) -> FactsPlanSet {
     FactsPlanSet::new(vec![plan_digest(program)])
 }
 
-/// A digest of a program part: its rules, declarations, inputs and outputs as lowered, and every fact, those the
-/// engine reads (a guest policy) as well as those its rules read.
+/// A digest of a program part: its rules, declarations, inputs and outputs as lowered, every fact, those the engine
+/// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it.
 pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
     let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-program/v3\0");
     hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
+    // What the batch makes for the part besides its rules' reads: the regex spans and AST patterns it matches
+    // (O-stored-patterns).
+    hash.update(format!("\n{:?}\n{:?}", program.rx_spans, program.ast_patterns).as_bytes());
     hash.finalize().into()
 }
 
@@ -99,6 +102,25 @@ pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8
     hash.update(b"rerail.corpus-local-options/v1\0");
     hash.update(digest);
     hash.update(options.to_string().as_bytes());
+    hash.finalize().into()
+}
+
+/// `digest` with rows folded in, by relation: the key of a file-local part that reads relations whose rows are not in
+/// its text (a phase's exports). The rows' order is not part of it.
+pub(super) fn with_rows<'a>(digest: [u8; 32], rels: impl Iterator<Item = (&'a str, &'a Vec<Vec<crate::code_rule_dsl::logic::front::Value>>)>) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-rows/v1\0");
+    hash.update(digest);
+    for (rel, rows) in rels {
+        let mut lines: Vec<String> = rows.iter().map(|r| format!("{r:?}")).collect();
+        lines.sort_unstable();
+        hash.update(rel.as_bytes());
+        hash.update([0]);
+        for l in &lines {
+            hash.update(l.as_bytes());
+            hash.update([0]);
+        }
+    }
     hash.finalize().into()
 }
 
@@ -161,6 +183,20 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: 
     Ok(())
 }
 
+/// Memoises many documents' entries at once, each `(source, path, key, entry)` under `program`: one transaction of
+/// a few statements (`put_facts_results`), not one per document.
+pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: &[(SourceId, &str, i64, &Entry)]) -> StoreResult<()> {
+    off();
+    let set = plan(program);
+    let results: Vec<(SourceId, &str, FactsResult)> = entries
+        .iter()
+        .map(|(source, path, key, entry)| (*source, *path, FactsResult { plan: set.plans[0], path_dependent: true, entry: encode(&Entry { key: *key, ..(*entry).clone() }) }))
+        .collect();
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, results.iter().map(|r| r.2.entry.len() as u64).sum());
+    store.put_facts_results(SCHEMA, &set, &results)?;
+    Ok(())
+}
+
 /// Where a run's memo is: the tape cache's store (decision 0052), or a session's memory (`session::Session`), whose
 /// rows are under the session store's atoms and live as long as the session.
 #[derive(Clone, Copy)]
@@ -173,7 +209,7 @@ pub(super) enum Memo<'a> {
 pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
 
 /// A file's content as the memo knows it: its stored source, or (held) its digest.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Content {
     Stored(SourceId),
     Held([u8; 32]),
@@ -208,6 +244,22 @@ impl Memo<'_> {
                 Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), *program)).filter(|e| e.key == key).cloned())
             }
             _ => Ok(None),
+        }
+    }
+
+    /// `remember` of many documents, stored ones written as one wave (`remember_all`).
+    pub(super) fn remember_all(self, program: &[u8; 32], entries: &[(Content, &str, i64, &Entry)]) -> StoreResult<()> {
+        match self {
+            Memo::Stored(store) => {
+                let stored: Vec<(SourceId, &str, i64, &Entry)> = entries.iter().filter_map(|(c, p, k, e)| c.stored().map(|id| (id, *p, *k, *e))).collect();
+                remember_all(store, program, &stored)
+            }
+            Memo::Held(_) => {
+                for (content, path, key, entry) in entries {
+                    self.remember(*content, path, *key, program, entry)?;
+                }
+                Ok(())
+            }
         }
     }
 

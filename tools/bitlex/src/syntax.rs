@@ -35,6 +35,22 @@ pub enum Expr {
     Test { target: String, method: String, from: Vec<String>, to: Vec<String>, k: Option<u64>, other: Option<String>, arg: Option<Box<Expr>> },
 }
 
+/// A number's definition (`number N = …`): each byte's value, an unsigned 32-bit number kept
+/// mod 2^32 (docs/parser-generators/03-bitlex.md §2.8).
+#[derive(Clone, Debug)]
+pub enum NExpr {
+    /// The byte's place in the file, from 0.
+    Position,
+    /// Another number.
+    Name(String),
+    /// `fill(s, e, v)` (`back: false`) or `back_fill(s, e, v)`: on the bytes of the mask's fill,
+    /// `v` at the byte of `s` the fill came from (the nearest, as each byte of `s` starts a fill
+    /// of its own); 0 elsewhere.
+    Fill { s: Expr, e: Expr, v: Box<NExpr>, back: bool },
+    /// `a - b`, mod 2^32.
+    Sub(Box<NExpr>, Box<NExpr>),
+}
+
 #[derive(Clone, Debug)]
 pub enum UClass {
     Table(String, String),
@@ -134,6 +150,8 @@ pub enum Stmt {
     /// A count with a floor at 0 and a declared bound: above `max`, an error (a rejection
     /// inside `hypotheses`), and the count stays at `max + 1`.
     Count { name: String, up: Expr, down: Expr, reset: Option<Expr>, max: u32 },
+    /// `number N = …`: a value per byte (`NExpr`).
+    Number(String, NExpr),
     Machine(String, MachineDef),
     Block { name: String, params: Vec<String>, body: Vec<Stmt> },
     Inst { name: String, template: String, args: Vec<Expr> },
@@ -202,7 +220,7 @@ impl Stmt {
     pub fn defines(&self, out: &mut Vec<String>) {
         match self {
             Stmt::Class(n, _) | Stmt::Mask(n, _) | Stmt::Machine(n, _) | Stmt::Carry(n, _) => out.push(n.clone()),
-            Stmt::Reflect { name, .. } | Stmt::Count { name, .. } => out.push(name.clone()),
+            Stmt::Reflect { name, .. } | Stmt::Count { name, .. } | Stmt::Number(name, _) => out.push(name.clone()),
             Stmt::Rounds { body, .. } | Stmt::Hyp { body, .. } => body.iter().for_each(|s| s.defines(out)),
             Stmt::Ucode { classes, .. } => classes.iter().for_each(|c| out.push(c.0.clone())),
             _ => {}
@@ -210,7 +228,7 @@ impl Stmt {
     }
 }
 
-const PUNCT: [&str; 18] = ["->", "..", "(", ")", "[", "]", "{", "}", ",", "=", "|", "&", "^", "~", ".", "*", ":", "+"];
+const PUNCT: [&str; 19] = ["->", "-", "..", "(", ")", "[", "]", "{", "}", ",", "=", "|", "&", "^", "~", ".", "*", ":", "+"];
 
 fn lex(src: &str) -> Result<Vec<Tok>, String> {
     let b = src.as_bytes();
@@ -631,6 +649,35 @@ impl P {
         self.want_p(")")?;
         Ok(Expr::Call(last, args))
     }
+    /// A number: terms joined by `-`, left to right.
+    fn nexpr(&mut self) -> R<NExpr> {
+        let mut l = self.nterm()?;
+        while self.eat_p("-") {
+            l = NExpr::Sub(Box::new(l), Box::new(self.nterm()?));
+        }
+        Ok(l)
+    }
+    fn nterm(&mut self) -> R<NExpr> {
+        if self.eat_p("(") {
+            let e = self.nexpr()?;
+            self.want_p(")")?;
+            return Ok(e);
+        }
+        if self.eat_kw("position") {
+            return Ok(NExpr::Position);
+        }
+        let name = self.ident()?;
+        if (name == "fill" || name == "back_fill") && self.eat_p("(") {
+            let s = self.expr()?;
+            self.want_p(",")?;
+            let e = self.expr()?;
+            self.want_p(",")?;
+            let v = self.nexpr()?;
+            self.want_p(")")?;
+            return Ok(NExpr::Fill { s, e, v: Box::new(v), back: name == "back_fill" });
+        }
+        Ok(NExpr::Name(name))
+    }
     fn states(&mut self) -> R<Vec<String>> {
         let mut v = vec![self.ident()?];
         while self.eat_p("|") {
@@ -709,6 +756,11 @@ impl P {
                 let n = self.ident()?;
                 self.want_p("=")?;
                 Stmt::Mask(n, self.expr()?)
+            }
+            "number" => {
+                let n = self.ident()?;
+                self.want_p("=")?;
+                Stmt::Number(n, self.nexpr()?)
             }
             "carry" | "next" => {
                 let n = self.ident()?;
@@ -1102,6 +1154,41 @@ tree json {
 
     /// `check KIND = G`, a grammar over a token's bytes; the evaluator refuses a token it does
     /// not match (doc 18 §4).
+    /// Numbers: a byte's place, carried back from a run's last byte, a difference, a fill
+    /// that restarts at each of its starts, and the compares, with a constant too.
+    #[test]
+    fn numbers_evaluate_per_byte() {
+        let src = "lexer t\nclass tick = '`'\nmask last = tick & ~next(tick)\nnumber end = back_fill(last, ~tick, position)\nnumber rem = end - position\nmask long = tick & at_least(rem, 3)\nnumber n = fill(long, long, rem)\nmask close = tick & at_least(rem, n) & ~long\nmask over = above(n, rem)\n";
+        let stmts = parse(src).expect("parses");
+        let tables = std::collections::HashMap::new();
+        let text = b"a````b``c`````d";
+        let out = crate::eval::Ev::run(&stmts, text, &tables).expect("runs");
+        let num = |k: &str| match &out.vars[k] {
+            crate::eval::Val::N(v) => v.clone(),
+            _ => panic!("{k}: not a number"),
+        };
+        let ones = |k: &str| match &out.vars[k] {
+            crate::eval::Val::M(m) => m.ones_iter().collect::<Vec<usize>>(),
+            _ => panic!("{k}: not a mask"),
+        };
+        assert_eq!(num("end"), [0, 4, 4, 4, 4, 0, 7, 7, 0, 13, 13, 13, 13, 13, 0]);
+        // Off the runs, `end` is 0: the difference wraps, mod 2^32.
+        let w = |k: u32| 0u32.wrapping_sub(k);
+        assert_eq!(num("rem"), [0, 3, 2, 1, 0, w(5), 1, 0, w(8), 4, 3, 2, 1, 0, w(14)]);
+        assert_eq!(ones("long"), [1, 9, 10]);
+        assert_eq!(num("n"), [0, 3, 3, 3, 3, 3, 3, 3, 3, 4, 3, 3, 3, 3, 3]);
+        assert_eq!(ones("close"), Vec::<usize>::new(), "no run after a long one as long as it");
+        assert!(stmts.iter().any(|s| matches!(s, Stmt::Number(n, NExpr::Sub(..)) if n == "rem")));
+        assert_eq!(ones("over"), [2, 3, 4, 6, 7, 11, 12, 13]);
+        let bad = "lexer t\nclass q = '\"'\nrounds until settled {\n  carry h = empty\n  number x = back_fill(q, h, position)\n  next h = prev(at_least(x, 1))\n}\n";
+        let stmts = parse(bad).expect("parses");
+        assert!(strictly_causal(match &stmts[2] {
+            Stmt::Rounds { body, .. } => body,
+            _ => panic!("rounds"),
+        })
+        .is_err());
+    }
+
     #[test]
     fn check_matches_a_tokens_bytes() {
         let src = "lexer t\nclass digit = '0'..'9'\nclass nonzero = '1'..'9'\nclass ws = ' '\nmask word = ~ws\ntoken number = start starts(word) last lasts(word)\nskip ws\ncheck number = ['-'] ('0' | nonzero digit*) ['.' digit*]\n";
@@ -1172,6 +1259,35 @@ pub fn strictly_causal(body: &[Stmt]) -> Result<(), String> {
                 let (l, a) = walk(e, &carries, &loose, &any)?;
                 loose.insert(n.clone(), l);
                 any.insert(n.clone(), a);
+            }
+            Stmt::Number(name, e) => {
+                type Reach = (HashSet<String>, HashSet<String>);
+                fn nwalk(e: &NExpr, w: &dyn Fn(&Expr) -> Result<Reach, String>, loose: &HashMap<String, HashSet<String>>, any: &HashMap<String, HashSet<String>>) -> Result<Reach, String> {
+                    Ok(match e {
+                        NExpr::Position => (HashSet::new(), HashSet::new()),
+                        NExpr::Name(n) => (loose.get(n).cloned().unwrap_or_default(), any.get(n).cloned().unwrap_or_default()),
+                        NExpr::Fill { back: true, .. } => return Err("a `back_fill` in `rounds until settled`: it reads the bytes after".into()),
+                        NExpr::Fill { s, e, v, .. } => {
+                            let mut out = nwalk(v, w, loose, any)?;
+                            for x in [s, e] {
+                                let (l, a) = w(x)?;
+                                out.0.extend(l);
+                                out.1.extend(a);
+                            }
+                            out
+                        }
+                        NExpr::Sub(a, b) => {
+                            let (mut l, mut x) = nwalk(a, w, loose, any)?;
+                            let (l2, x2) = nwalk(b, w, loose, any)?;
+                            l.extend(l2);
+                            x.extend(x2);
+                            (l, x)
+                        }
+                    })
+                }
+                let (l, a) = nwalk(e, &|x| walk(x, &carries, &loose, &any), &loose, &any)?;
+                loose.insert(name.clone(), l);
+                any.insert(name.clone(), a);
             }
             Stmt::Reflect { name, a, b, reset, .. } => {
                 let mut l = HashSet::new();

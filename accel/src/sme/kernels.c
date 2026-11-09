@@ -1,4 +1,4 @@
-// The SME lane's kernels: the bit product on BMOPA (decision 0096 §4), from the matrix-offload spike
+// The SME lane's kernels: the bit product on BMOPA (decision 0098 §4), from the matrix-offload spike
 // (tools/matrix-offload/cpu/c4_bitmatmul.c, w5_cooc.c).
 //
 // BMOPA accumulates XNOR popcounts: ZA[i][j] += popcount(~(a_i ^ b_j)) per 32-bit word. Over K words,

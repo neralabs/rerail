@@ -1,4 +1,4 @@
-//! The engine's compute lanes (decision 0096 §2): one executor per binding, shared by every stratum of the process.
+//! The engine's compute lanes (decision 0098 §2): one executor per binding, shared by every stratum of the process.
 //!
 //! - Under the **CPU binding**, the CPU's lanes: the cores and, where the CPU has one, its matrix unit (SME2). The
 //!   CPU is a target in its own right (0095 §7), and SME is part of it.

@@ -1,4 +1,4 @@
-//! The kernels: each physical form of decision 0096 §1 as a function of plain columns, with one meaning.
+//! The kernels: each physical form of decision 0098 §1 as a function of plain columns, with one meaning.
 //!
 //! Inputs are shared (`Arc`), so a batch can hold them without copying and a lane can read them in place (the GPU
 //! wraps them as no-copy buffers when they are page-aligned, and copies them otherwise).

@@ -10,10 +10,14 @@ const setupCreate = query => query.kind === "sql" && /^\s*CREATE\s+(?:TEMP\s+)?T
 
 function expectedSchemaExplanation(query) {
   if (query.kind !== "sql" || !query.plans?.length) return false;
+  const replacedCounter = query.sql.match(/^\s*DROP\s+TABLE\s+temp\."(__sql_changes_\w+)"\s*;?\s*$/i);
   return query.plans.every(plan => {
     const error = plan.plan?.error ?? plan.bytecode?.error ?? "";
     return /^\s*CREATE\b/i.test(query.sql) && /already exists/i.test(error)
       || /^\s*DROP\b/i.test(query.sql) && /no such (?:table|view|index)/i.test(error)
+      || /^\s*DROP\s+TABLE\b/i.test(query.sql) && /use DROP VIEW to delete view/i.test(error)
+      || /^\s*DROP\s+VIEW\b/i.test(query.sql) && /use DROP TABLE to delete table/i.test(error)
+      || replacedCounter && error.toLowerCase() === `table ${replacedCounter[1]} may not be dropped`.toLowerCase()
       || /^\s*ALTER\s+TABLE\b/i.test(query.sql) && /duplicate column name/i.test(error);
   });
 }
@@ -34,6 +38,13 @@ export function sqlShape(sql) {
 
 function recommendation(query) {
   const flags = names(query);
+  if (query.kind === "operator" && query.sql === "SQL phase preparation") return {
+    key: "sql-phase-preparation", title: "Reduce fused SQL preparation", certainty: "measured cost",
+    reason: "The recorded span measures statement preparation and cache lookup separately from SQL execution.",
+    change: "Reduce repeated result arms, CTE size, or unstable statement shapes while preserving materialization fences.",
+    source: "native/src/code_rule_dsl/sql_executor/phase.rs; native/src/code_rule_dsl/sql_executor/phase/reads.rs",
+    verify: "Compare preparation CPU and unprofiled first edits. Preserve complete relation parity, rollback, and execution limits.",
+  };
   if (query.contextDetails?.some(context => context.scope === "relational")) {
     const source = "native/src/code_rule_dsl/relational.rs: Session::advance/publish; use the recorded clause and stage to locate the authored policy";
     const verify = "Compare the same workload without SQL profiling. Preserve complete diagnostic parity, source gates, cancellation, and work limits.";
@@ -124,6 +135,7 @@ function recommendation(query) {
 }
 
 function bucket(query) {
+  if (query.kind === "operator" && query.sql === "SQL phase preparation") return "SQL statement preparation";
   if (/^\s*CREATE\s+(?:TEMP\s+)?TABLE\b[\s\S]*\bAS\s+(?:SELECT|WITH)\b/i.test(query.sql)) return "Relation materialization SQL";
   if (/^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(query.sql)) return "SQL index construction";
   if (rootInsert(query.sql)) return "Selected-root input inserts";

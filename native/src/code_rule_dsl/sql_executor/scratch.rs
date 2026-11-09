@@ -18,6 +18,11 @@ pub(super) struct Work<'a> {
     pub version_nodes: usize,
     pub preparing: bool,
     pub summaries: reductions::pool::Cache,
+    pub summary_transitions: Vec<reductions::Transition>,
+    pub summary_reuses: usize,
+    pub reducer_groups: u64,
+    pub context_rows: u64,
+    pub summary_initializations: Vec<reductions::Initial>,
 }
 pub(super) struct Mark {
     used: usize,
@@ -79,6 +84,11 @@ impl<'a> Work<'a> {
             version_nodes: 0,
             preparing: false,
             summaries: BTreeMap::new(),
+            summary_transitions: vec![],
+            summary_reuses: 0,
+            reducer_groups: 0,
+            context_rows: 0,
+            summary_initializations: vec![],
         }
     }
     pub fn allocate(&mut self, definition: String, without_rowid: bool) -> Result<String> {

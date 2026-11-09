@@ -24,9 +24,11 @@
 #include "python/conditions.rr"
 
 .phase struct
-.export unit, def, binds, base, member, param, ret, module_file, at
+.export unit, def, binds, base, member, param, ret, vann, alias, module_file, at
 // Where a definition is: kept, and handed on to the findings that cite it, but not part of its granule's digest.
 .positions at
+// Which document each definition is in: the store replaces a changed document's granules on their own.
+.owner at
 
 // ---- the scopes P1 reads: a module, and the classes defined at module level or in such a class ----------------
 .decl scope(kind: symbol)
@@ -78,6 +80,8 @@ binds(q, t, "import", t) :- kind(i, "import_statement"), field(i, "name", n), ki
     nearest(i, s, scope), modname(s, q), !py_dead_at(i).
 binds(q, a, "import", m) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, m),
     field(x, "alias", al), text(al, a), nearest(i, s, scope), modname(s, q), !py_dead_at(i).
+// `from m import *`: module q binds m's public names (`*`, how "star", t the module m).
+binds(q, "*", "star", m) :- impmod(i, m), child(i, w, _), kind(w, "wildcard_import"), nearest(i, s, scope), modname(s, q).
 // The module an import-from names: absolute, or relative to the document's package.
 .decl impmod(i: node, m: symbol)
 impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m), !py_dead_at(i).
@@ -102,6 +106,16 @@ param(q, i, x, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "parameters"
 // ret(f, a): function f's return annotation as written.
 .decl ret(f: symbol, a: symbol)
 ret(q, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "return_type", r), text(r, w), a = @replace_all(w, "\\s+", " ").
+// vann(s, a): the annotation a module- or class-level name s is declared with, as written (`x: int = 0`, `x: int`).
+// A library's values are typed by these (O128: most of the workspace's values that point into a library).
+.decl vann(s: symbol, a: symbol)
+vann(@dot(q, x), a) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "type", t), text(t, w),
+    nearest(g, s, scope), pscope(s), sym(s, q), !py_dead_at(g), a = @replace_all(w, "\\s+", " ").
+// alias(s, e): a module- or class-level name s assigned a name or a dotted name, as written (`local = _thread._local`
+// in a stub): s is what e names.
+.decl alias(s: symbol, e: symbol)
+alias(@dot(q, x), e) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "right", r), text(r, e),
+    match("^[A-Za-z_][A-Za-z_0-9.]*$", e), nearest(g, s, scope), pscope(s), sym(s, q), !py_dead_at(g).
 // module_file(m, p): the file module m was read from, a workspace file or the library file its import resolved to.
 .decl module_file(m: symbol, p: symbol)
 module_file(q, p) :- modnode(d, m), modname(m, q), doc(d, p, _).

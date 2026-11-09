@@ -34,7 +34,7 @@ pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_b
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
     pub(in crate::code_rule_dsl) use super::setfix::lab;
-    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, adopt, adopted, close, columns_source, derived, forget_derived, forget_inputs_of, held, live, materialize, open, pending, prefetch_tables, release, reprobe, run, step_counts, table_source, tables_built, unindex};
+    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_empty, live, materialize, open, pending, prefetch_tables, release, reprobe, run, step_counts, table_source, tables_built, unindex};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -379,6 +379,7 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
         Ok(flat_bin(&o, ctx.get(1)?, ctx.get(2)?))
     })?;
     db.create_aggregate_function(c"flat_join", 1, det, FlatJoin)?;
+    aggregation::register_sum(db)?;
     // lattice_fixpoint(p[, target[, lattice[, widen[, binding]]]]): the lattice by declared name (`flat` by
     // default), the changes after which a node widens, and where it solves (`cpu`, the default, or `metal`). A NULL
     // target is the default `<p>_out`.

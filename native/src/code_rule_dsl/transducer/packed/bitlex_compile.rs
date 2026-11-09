@@ -13,6 +13,8 @@
 //! - **Masks** over `~ & | ^`, `empty`, `prev`, `next`, `starts`, `lasts`, `after`, `span`,
 //!   `aligned`, `toggle`, `after_odd_run` and `fill`.
 //! - **Counts** as bit-planes, and `C.frame(a)` (below).
+//! - **Numbers** (`number`) as bit-planes too: `NUMBER_BITS` of them, a byte's value mod 2^32
+//!   (below).
 //! - **Tokens**, `keywords` and `skip`: each token kind's start and last-byte masks, and the
 //!   coverage and overlap checks.
 //! - **The tree section** (`docs/parser-generators/18-tree-as-grammar.md`): the grammar's state
@@ -37,6 +39,20 @@
 //! openers at level `L` in `a` to the next opener at level `L` not in `a`, kept where the count
 //! before the byte is `L`.
 //!
+//! # Numbers
+//!
+//! A number is `NUMBER_BITS` planes, plane `k` the bytes whose value has bit `k`. A file is
+//! shorter than 2^32 bytes, so a place in it, or a distance, is exact.
+//!
+//! - `position`: plane `k` a pattern of the word below bit 6 (`const`), the block's place
+//!   from bit 6 on (`position k`, a new leaf with no carry).
+//! - `fill(s, e, v)`: plane `k` is `fill(s & v_k, e | s)`, a fill that restarts at every byte
+//!   of `s` and runs where `v` had bit `k` there; `back_fill` likewise.
+//! - `a - b`: a ripple of borrows over the planes, three operations a plane.
+//! - `at_least(a, b)`: no borrow out of `a - b`; `above(a, b)` is `~at_least(b, a)`.
+//!
+//! No new operation but `position`: every plane is a mask, every step a word operation.
+//!
 //! # Delays: `next` without lookahead
 //!
 //! Every value is computed some bytes late: its bit `p` is byte `p - d`'s, for its delay `d`.
@@ -56,8 +72,11 @@
 
 use super::block::{BlockOp, BlockProgram, ClassTable};
 use super::{bitlex_prove, bitlex_tier2, grammar};
-use ::bitlex::syntax::{Arg, Expr, Stmt};
+use ::bitlex::syntax::{Arg, Expr, NExpr, Stmt};
 use std::collections::HashMap;
+
+/// A number's planes: a byte's value mod 2^32, exact for a place in a file or a distance.
+const NUMBER_BITS: u8 = 32;
 
 /// A compiled program: its `rir` rows (`block 0 …`), whose outputs are the requested masks in
 /// order.
@@ -75,6 +94,17 @@ pub(in crate::code_rule_dsl) struct Compiled {
     /// The fallback's outputs (`FALLBACK`): one per delay its masks have, none brought to
     /// another delay; the file goes to tree-sitter when any has a bit.
     pub(super) fallbacks: Vec<u16>,
+    /// Tier 1's cost by source: each statement (its kind and name) or lowering step, with the
+    /// block operations it added and how many of them are `back_fill`'s (each a backward pass).
+    pub(super) costs: Vec<Cost>,
+}
+
+/// A statement's share of tier 1 (`Compiled::costs`).
+#[derive(Clone, Debug)]
+pub(in crate::code_rule_dsl) struct Cost {
+    pub(super) what: String,
+    pub(super) ops: u32,
+    pub(super) back_fills: u32,
 }
 
 impl Compiled {
@@ -134,6 +164,8 @@ struct Lowering {
     /// The masks any of whose bits sends the file to tree-sitter: errors and escapes.
     fallbacks: Vec<Val>,
     counts: HashMap<String, Count>,
+    /// Each number's planes, bit 0 first (`NUMBER_BITS`).
+    numbers: HashMap<String, Vec<Val>>,
     tokens: Vec<(String, Val, Option<TokenEnd>)>,
     keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
@@ -151,6 +183,8 @@ struct Lowering {
     /// Each `toggle(x)`: its value and `x`'s, the modes tier 2's states are read in
     /// (`row_modes`).
     toggles: Vec<(Val, Val)>,
+    /// Each cost's source and its operations' range (`Compiled::costs`).
+    costs: Vec<(String, usize, usize)>,
 }
 
 /// Whether a keyword gives kind `name`.
@@ -189,6 +223,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         names: HashMap::new(),
         fallbacks: Vec::new(),
         counts: HashMap::new(),
+        numbers: HashMap::new(),
         tokens: Vec::new(),
         keywords: Vec::new(),
         skip: None,
@@ -199,6 +234,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         checks: Vec::new(),
         toggles: Vec::new(),
         soft: Vec::new(),
+        costs: Vec::new(),
     };
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
@@ -210,7 +246,10 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         }
     }
     low.stmts(stmts)?;
+    let from = low.program.ops.len();
     let token_rows = low.tokens()?;
+    low.cost("the token rows".into(), from);
+    let from = low.program.ops.len();
     // The tree section: its state machine, its checks and tier 2's words (decision 0087), before
     // the outputs, since the words' guards join the fallback.
     let has_tree = !low.tree.is_empty();
@@ -420,6 +459,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         }
         // The words, once the fallback's totals are known: each must be zero.
         let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, &meets, empties, whole, false)?;
+        // The extras' kinds: the node table flags their nodes (comments).
+        readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;
         super::rir::reading_rows(&mut lowered.text, &readings);
         let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
         tier2 = Some((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks));
@@ -507,14 +548,47 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         machine = text;
     }
     low.program.delay = delay;
+    low.cost("the tree section's checks and the outputs".into(), from);
+    // Only the operations kept count: a rounds group's first tries are dead.
+    let keep = kept(&low.program);
+    let costs = low
+        .costs
+        .iter()
+        .map(|(what, from, to)| {
+            let live = (*from..*to).filter(|&k| keep[k]);
+            let back_fills = live.clone().filter(|&k| matches!(low.program.ops[k], BlockOp::BackFill(..))).count() as u32;
+            Cost { what: what.clone(), ops: live.count() as u32, back_fills }
+        })
+        .collect();
     let program = live(&low.program);
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
-    Ok(Compiled { rows: rows(&program), words, machine, labels, fallbacks })
+    Ok(Compiled { rows: rows(&program), words, machine, labels, fallbacks, costs })
 }
 
 impl Lowering {
+    /// The operations added since `from`, as a cost of `what` (`Compiled::costs`).
+    fn cost(&mut self, what: String, from: usize) {
+        let to = self.program.ops.len();
+        if to > from {
+            self.costs.push((what, from, to));
+        }
+    }
+
     fn stmts(&mut self, stmts: &[Stmt]) -> Result<(), String> {
         for stmt in stmts {
+            let from = self.program.ops.len();
+            // A tree and its rounds are costed by their statements.
+            let nested = matches!(stmt, Stmt::Tree { .. } | Stmt::Rounds { .. });
+            self.stmt(stmt)?;
+            if !nested {
+                self.cost(cost_name(stmt), from);
+            }
+        }
+        Ok(())
+    }
+
+    fn stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        {
             match stmt {
                 Stmt::Lexer(_) | Stmt::Class(..) => {}
                 Stmt::Mask(name, expr) => {
@@ -525,6 +599,10 @@ impl Lowering {
                 Stmt::Error(_, expr) | Stmt::Escape(_, expr) => {
                     let value = self.expr(expr)?;
                     self.fallbacks.push(value);
+                }
+                Stmt::Number(name, e) => {
+                    let planes = self.number(e)?;
+                    self.numbers.insert(name.clone(), planes);
                 }
                 Stmt::Count { name, up, down, reset, max } => {
                     if reset.is_some() {
@@ -570,7 +648,11 @@ impl Lowering {
                 }
                 Stmt::Rounds { n: None, body, .. } => {
                     ::bitlex::syntax::strictly_causal(body)?;
+                    // One cost for the group: its body is lowered once per try.
+                    let (from, costs) = (self.program.ops.len(), self.costs.len());
                     self.rounds(body)?;
+                    self.costs.truncate(costs);
+                    self.cost("rounds until settled (every try)".into(), from);
                 }
                 Stmt::Rounds { n: Some(n), .. } => return Err(format!("`rounds {n}` is not compiled: only `rounds until settled`, whose fixed point is exact")),
                 other => return Err(format!("not compiled yet: {}", statement(other))),
@@ -1029,8 +1111,87 @@ impl Lowering {
                 let (start, end) = (mask(self, 0)?, mask(self, 1)?);
                 self.back_fill(start, end)
             }
+            "at_least" | "above" => {
+                let mut operand = |me: &mut Self, i: usize| -> Result<Vec<Val>, String> {
+                    match args.get(i) {
+                        Some(Arg::E(Expr::Name(n))) if n == "position" => me.number(&NExpr::Position),
+                        Some(Arg::E(Expr::Name(n))) => me.numbers.get(n).cloned().ok_or_else(|| format!("{f}: {n} is not a number")),
+                        Some(Arg::N(k)) if *k <= u64::from(u32::MAX) => Ok(me.constant(*k as u32)),
+                        _ => Err(format!("{f}: argument {i} must be a number's name or a constant below 2^32")),
+                    }
+                };
+                let (a, b) = (operand(self, 0)?, operand(self, 1)?);
+                if f == "at_least" {
+                    self.at_least(&a, &b)
+                } else {
+                    let ge = self.at_least(&b, &a)?;
+                    self.not(ge)
+                }
+            }
             _ => Err(format!("not compiled yet: {f}")),
         }
+    }
+
+    /// A number's planes (the module's notes).
+    fn number(&mut self, e: &NExpr) -> Result<Vec<Val>, String> {
+        match e {
+            NExpr::Position => Ok((0..NUMBER_BITS)
+                .map(|j| if j < 6 { self.pattern(super::block::position(0, j)) } else { self.leaf(BlockOp::Position(j), true) })
+                .collect()),
+            NExpr::Name(n) => self.numbers.get(n).cloned().ok_or_else(|| format!("{n} is not a number")),
+            NExpr::Fill { s, e, v, back } => {
+                let (s, e, v) = (self.expr(s)?, self.expr(e)?, self.number(v)?);
+                let stop = self.or(e, s)?;
+                let mut out = Vec::new();
+                for p in v {
+                    let from = self.and(s, p)?;
+                    out.push(match () {
+                        _ if self.is_zero(from) => from,
+                        _ if *back => self.back_fill(from, stop)?,
+                        _ => self.fill(from, stop)?,
+                    });
+                }
+                Ok(out)
+            }
+            NExpr::Sub(a, b) => {
+                let (a, b) = (self.number(a)?, self.number(b)?);
+                let mut borrow: Option<Val> = None;
+                let mut out = Vec::new();
+                for (&x, &y) in a.iter().zip(&b) {
+                    let differ = self.xor(x, y)?;
+                    let under = self.andnot(y, x)?;
+                    match borrow {
+                        None => {
+                            out.push(differ);
+                            borrow = Some(under);
+                        }
+                        Some(br) => {
+                            out.push(self.xor(differ, br)?);
+                            let kept = self.andnot(br, differ)?;
+                            borrow = Some(self.or(under, kept)?);
+                        }
+                    }
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    /// A constant's planes: `within` where its bit is 1.
+    fn constant(&mut self, k: u32) -> Vec<Val> {
+        (0..NUMBER_BITS).map(|j| if k >> j & 1 == 1 { self.within_val(0).expect("delay 0") } else { self.leaf(BlockOp::Const(0), false) }).collect()
+    }
+
+    /// The bytes where `a >= b`: no borrow out of `a - b`, the borrows alone.
+    fn at_least(&mut self, a: &[Val], b: &[Val]) -> Result<Val, String> {
+        let mut borrow = self.leaf(BlockOp::Const(0), false);
+        for (&x, &y) in a.iter().zip(b) {
+            let under = self.andnot(y, x)?;
+            let differ = self.xor(x, y)?;
+            let kept = self.andnot(borrow, differ)?;
+            borrow = self.or(under, kept)?;
+        }
+        self.not(borrow)
     }
 
     /// A count's planes (see the module's notes), and its range check as a fallback.
@@ -1545,6 +1706,12 @@ fn row_modes(
 
 /// The program with only the operations its outputs read, renumbered in order.
 fn live(program: &BlockProgram) -> BlockProgram {
+    let keep = kept(program);
+    live_of(program, &keep)
+}
+
+/// Whether each operation reaches an output (`live`).
+fn kept(program: &BlockProgram) -> Vec<bool> {
     let mut keep = vec![false; program.ops.len()];
     for &v in &program.outputs {
         keep[usize::from(v)] = true;
@@ -1573,6 +1740,10 @@ fn live(program: &BlockProgram) -> BlockProgram {
             break;
         }
     }
+    keep
+}
+
+fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
     let mut number = vec![u16::MAX; program.ops.len()];
     let mut out = BlockProgram { tables: program.tables.clone(), delay: program.delay, ..BlockProgram::default() };
     for (at, op) in program.ops.iter().enumerate() {
@@ -1595,6 +1766,17 @@ fn rows(program: &BlockProgram) -> String {
     let mut out = String::new();
     super::rir::block_rows(&mut out, 0, program);
     out
+}
+
+/// A statement's kind and name, for `Compiled::costs`.
+fn cost_name(stmt: &Stmt) -> String {
+    let name = match stmt {
+        Stmt::Mask(n, _) | Stmt::Number(n, _) | Stmt::Error(n, _) | Stmt::Escape(n, _) => n.clone(),
+        Stmt::Count { name, .. } => name.clone(),
+        Stmt::Token { kind, .. } | Stmt::Mark { kind, .. } => kind.clone(),
+        _ => String::new(),
+    };
+    format!("{} {name}", statement(stmt).to_lowercase())
 }
 
 fn statement(stmt: &Stmt) -> String {

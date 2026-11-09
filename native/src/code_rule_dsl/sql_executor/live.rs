@@ -4,6 +4,7 @@ use parking_lot::RwLock;
 
 #[derive(Default)]
 struct Rows {
+    revision:u64,
     values: Vec<Vec<i64>>,
     positions: BTreeMap<Vec<i64>, usize>,
     indexes: Vec<BTreeMap<i64, BTreeSet<usize>>>,
@@ -98,9 +99,11 @@ impl Live {
         for r in insert {
             rows.insert(r.clone());
         }
+        rows.revision=rows.revision.wrapping_add(1);
     }
 }
 impl Source for Live {
+    fn revision(&self)->Option<u64> {Some(self.rows.read().revision)}
     fn columns(&self) -> Vec<String> {
         self.columns.clone()
     }

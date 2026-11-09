@@ -261,7 +261,7 @@ fn a_fixpoint_pauses_for_requests_and_resumes_with_their_answers() {
     super::setfix::close(&db, "asks").unwrap();
 }
 
-/// The closure form (decision 0096 §1): a linear recursion that walks one column along an edge gives the rows
+/// The closure form (decision 0098 §1): a linear recursion that walks one column along an edge gives the rows
 /// semi-naive gives, by chains (one successor per node) and by bit rows (a node with two successors, a cycle).
 #[test]
 fn a_walk_along_an_edge_runs_as_its_closure() {
@@ -305,7 +305,7 @@ fn a_walk_along_an_edge_runs_as_its_closure() {
     }
 }
 
-/// A count step that many bindings reach is answered from a count table (decision 0096 §1), exactly as walking counts:
+/// A count step that many bindings reach is answered from a count table (decision 0098 §1), exactly as walking counts:
 /// per row of the join's first scan when the key comes from it, else from the relation's histogram by its key.
 #[test]
 fn a_count_many_bindings_reach_reads_its_count_table() {
@@ -321,6 +321,9 @@ fn a_count_many_bindings_reach_reads_its_count_table() {
     .unwrap();
     let src = |t: &str, cols: &str, types: &str| format!("t:b:{}:{}:{types}", hex(t), hex(cols));
     let (l, b, k) = (src("l", "c0, c1", "ii"), src("b", "c0, c1, c2", "iii"), src("k", "c0", "i"));
+    // Integration's per-key memo makes a repeated key's walk free, so here the walks never cost a table's build: the
+    // tables are built at the first probe, to check that what they count is what walking counts.
+    super::setfix::count_tables_at_once(true);
     let before = super::setfix::tables_built();
     // The key from the first step, a scan: counts per row.
     let per_row = format!("pos {l} v0 v1\ncount {b} v0 v1 _ v2\nhead v0 v1 v2");
@@ -340,4 +343,5 @@ fn a_count_many_bindings_reach_reads_its_count_table() {
     let after = super::setfix::tables_built();
     assert!(after.1 > before.1, "counts per row were built");
     assert!(after.0 > before.0, "a histogram was built");
+    super::setfix::count_tables_at_once(false);
 }

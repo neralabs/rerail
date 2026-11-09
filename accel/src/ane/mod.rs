@@ -1,4 +1,4 @@
-//! The Neural Engine lane (decision 0096 §3): bit products against a **fixed relation**, compiled into a Core ML
+//! The Neural Engine lane (decision 0098 §3): bit products against a **fixed relation**, compiled into a Core ML
 //! model as a 1-bit constant.
 //!
 //! **What it runs.** Only [`Kernel::BitProduct`] whose `b` is fixed (`b.fixed` is set: the same rows across many
@@ -92,7 +92,7 @@ fn hex(k: &[u8; 32]) -> String {
 }
 
 /// The process's model store, when its host has one (the engine's content store: compiled models are facts there,
-/// decision 0096 §3); `None` keeps them in memory.
+/// decision 0098 §3); `None` keeps them in memory.
 static STORE: std::sync::RwLock<Option<Arc<dyn ModelStore>>> = std::sync::RwLock::new(None);
 
 /// Makes `store` where this process's Neural Engine models are kept from now on: JIT-compiled models are written

@@ -280,7 +280,7 @@ CREATE TABLE IF NOT EXISTS facts_results (
     frame BLOB NOT NULL,
     PRIMARY KEY (source_id, fact_schema, path, plan_digest)
 ) STRICT, WITHOUT ROWID;
--- Neural Engine models compiled on this machine (decision 0096 §3): a compiled model's archive under the digest of
+-- Neural Engine models compiled on this machine (decision 0098 §3): a compiled model's archive under the digest of
 -- its template and its fixed relation. A JIT-compiled model is a fact of the store, read back by later runs; an AOT
 -- one is part of the executable. Additive and referencing nothing, so the floor stays.
 CREATE TABLE IF NOT EXISTS accel_models (
@@ -317,6 +317,16 @@ CREATE TABLE IF NOT EXISTS cross_rows (
     seq INTEGER NOT NULL,
     c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER,
     PRIMARY KEY (source_id, rel, seq)
+) STRICT, WITHOUT ROWID;
+-- The rows as blocks (cross_rows.rs): a component's rows of one relation, its columns delta-coded, one row each.
+-- `cross_rows` is what older binaries write and read; components stored as blocks are named apart from theirs.
+CREATE TABLE IF NOT EXISTS cross_blocks (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    rel TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    rows INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY (source_id, rel)
 ) STRICT, WITHOUT ROWID;
 
 -- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read

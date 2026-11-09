@@ -145,7 +145,7 @@ Where it fits:
 - **Near parity is a win.** The ANE runs W1 at SME's speed (0.71 ms against 0.69 ms) and W5 within 2.2× of it. Work
   it takes moves to a lower-power unit (reported 2–14× better energy than the GPU) and leaves the CPU and GPU free for
   other work. So it is a third concurrent lane, chosen when its price is within a band of the best lane's, not only
-  when it is the fastest (decision 0096 §2).
+  when it is the fastest (decision 0098 §2).
 - **Fixed relations become 1-bit constants**, against a batched per-run input. Candidates are a pack's rule
   vocabularies, library facts held once (0089), and the documents of a long-lived session. W1 with the documents as
   the constant took 0.25 ms (3.2× the GPU). Each constant costs about 0.7 s to compile, and the limit is about 119

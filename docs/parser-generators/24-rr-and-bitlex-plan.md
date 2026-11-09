@@ -311,6 +311,8 @@ reference on the corpus.
 | rr-16 | a column in braces that is no single name, `code {at.code}`, `tag { }`: one `raw_text` leaf through the matching `}`; `{c}` the name, told by a hidden mark where a name and a `}` follow the `{` | A8, A21 |
 | rr-17 | a `` `` `` with none after it in the file's bytes (a comment's and a string's too): the empty literal, the bytes after it read on; known by a `back_fill` with no end, before the fixed point over the regions | A2, A21 |
 | rr-18 | `min (a + b) : { … }`: after an aggregate's word a `(` makes a call; at a `:` after its `)`, an aggregate is wrapped around it and the call read again into it (`root gone`), its arguments the value in parentheses; two terms, none (a mark at `()`) or a named argument refuse, as the engine | A20 |
+| rr-19 | an aggregate as another's value (`sum min x : {…} : {…}`), its word read as in any term; `min (x) : {…}` at a literal's start, the atom read again into the aggregate; `min()` and a `:`, which the engine refuses, refused anywhere by a mark the grammar takes nowhere | A20 |
+| rr-20 | a count of the code's `{` `[` less `}` `]`, at most 127: a `.policy` document as deep as serde_json refuses (128) goes to the engine, which refuses it; a run of four backticks or more still goes to the engine. The parser for other worktrees: `packed::rr_parser::tape`, the engine's tape from this step, the engine's parser for what it refuses | — |
 
 At rr-11:
 - every corpus file is parsed by both parsers;
@@ -342,6 +344,37 @@ runs:
 
 The machine's load is given with every table. Tier 1 is also timed on Metal. Each step's shape
 is pinned, as JSON's is: the operations per block, the CLIF body, the words by opcode.
+
+### 5.1 Tier 1's code on the CPU
+
+The rr grammar's tier 1 runs in 9 passes: 5 forward over the blocks and 4 back for the
+`back_fill`s. A pass reads the values of earlier passes from slot words, a few a block.
+Two changes to how a pass's body is made shrank its code:
+
+- **A slot word is loaded at its first reader.** Before, every slot word was loaded at the
+  body's start and spilled. The block's row of slots is also made once: a load is one `ldr`
+  at its slot's offset, not five instructions.
+- **Values in the order they are needed.** Each value is emitted just before the first value
+  that reads it, not in the grammar's order. Each slot word is stored where it is made.
+- **The last pass's masks stored where they are made**, cut and shifted there; only a
+  delayed output's held word crosses to the next block. The counted outputs (extracts and
+  totals) are still stored after the body: their bit loop reads the word there.
+- **The block's row of slots is a loop pointer**, as the byte and output pointers are: a
+  slot's load or store is one `[row, #offset]`, with no multiply and no add.
+
+| | instructions | spills |
+|---|---|---|
+| before | 11,568 | 1,831 |
+| loads at their readers | 10,960 | 1,800 |
+| values on demand | 10,180 | 1,011 |
+| last pass's stores at their values; the slot row a loop pointer | 9,549 | 988 |
+
+Tier 1 went from about 500 to about 330 ns a 64-byte block, at a load of 20 to 30.
+
+Two other ideas did not pay. Reordering each `and` chain, so that a keyword's letters meet on
+the vectors before any mask, gave more code: the chain's last `and` is in a later pass, so
+each letter is still a slot word. Making `within` a vector value too moved more values onto
+the vectors, and each one then needed its own mask.
 
 ## 6. Process
 

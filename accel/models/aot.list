@@ -1,4 +1,4 @@
-# Ahead-of-time Neural Engine models (decision 0096 §3): one constant file a line, relative to this directory.
+# Ahead-of-time Neural Engine models (decision 0098 §3): one constant file a line, relative to this directory.
 #
 # Each file is a fixed relation's rows in the RRBITS01 layout (accel/src/ane/package.rs: the magic, rows and words
 # as u64, then the rows' words, little-endian). The build step (accel/build/ane.rs) writes and compiles its bit

@@ -1,4 +1,4 @@
-//! Relational kernels on every compute lane, and the executor that batches their launches (decision 0096).
+//! Relational kernels on every compute lane, and the executor that batches their launches (decision 0098).
 //!
 //! The logic engine's planner recognizes a few physical forms in a stratum's joins: a counting table per document,
 //! a histogram per document, a bit product (overlap counts of set-valued rows), and a transitive closure. Each form

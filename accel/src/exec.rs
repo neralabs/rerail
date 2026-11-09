@@ -62,7 +62,7 @@ pub struct Done {
     pub fastest: f64,
 }
 
-/// What a batch did on each lane: for the profile's per-lane report (decision 0096 §2).
+/// What a batch did on each lane: for the profile's per-lane report (decision 0098 §2).
 #[derive(Clone, Debug, Default)]
 pub struct Report {
     /// Per lane: launches, submissions, wall seconds of its submission.

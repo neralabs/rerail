@@ -1,4 +1,4 @@
-# 0096: Accelerating relational work: forms first, then four lanes (CPU, SME, GPU, Neural Engine)
+# 0098: Accelerating relational work: forms first, then four lanes (CPU, SME, GPU, Neural Engine)
 
 Status: draft (2026-11-09). It extends 0095. The executor, the four lanes and the first engine forms are built ("Built", below).
 

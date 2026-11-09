@@ -76,7 +76,8 @@ impl GuestRows {
         }
         let Ok(h) = docs.binary_search_by_key(&g.host, |q| q.key) else { return };
         let host = &docs[h];
-        let at = (g.at & 0xffff_ffff) as u32;
+        // A node id's low bits are its local id only under preorder ids.
+        let Some(at) = host.local_of((g.at & 0xffff_ffff) as u32) else { return };
         if at >= host.len() {
             return;
         }

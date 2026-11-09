@@ -111,6 +111,11 @@ impl<'a> Executors<'a> {
                     keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&self.native, bytes, width, strategy).map(|(got, _)| got));
                 }
             }
+            // The forward carry (`metal_block_serial`): segments of three blocks, so that a file of
+            // a few blocks has segments that speculate their start and run again.
+            use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+            let file = [block::BatchFile { bytes, program: 0 }];
+            keep("metal forward carry, segments of 3".to_owned(), run_serial_split(&[&self.native], &file, Segments { blocks: 3, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
         }
         #[cfg(not(target_os = "macos"))]
         let _ = metal;
@@ -855,10 +860,11 @@ fn back_fill_reference(s: &[bool], e: &[bool]) -> Vec<bool> {
     out
 }
 
-/// A program with `back_fill`s at two levels, run by the interpreter and by Cranelift (which
-/// runs it in passes): each output equals its reference, over every input and in one batch.
+/// A program with `back_fill`s at two levels, run by the interpreter, by Cranelift and by
+/// Metal's forward carry (both in passes): each output equals its reference, over every input
+/// and in one batch.
 #[test]
-fn back_fill_equals_reference_on_the_cpu_executors() {
+fn back_fill_equals_reference_on_the_cpu_and_the_forward_carry() {
     // Level 1: back from quotes to backslashes; from quotes, each its own end; with no end.
     // Then level 2: from a back fill's bytes that are `a`, back to quotes; a `prev` and a
     // `toggle` of it (carried values of a later pass); and an output of level 0.
@@ -915,9 +921,24 @@ fn back_fill_equals_reference_on_the_cpu_executors() {
     }
     let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
     assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
+    // On Metal, the forward carry in passes: the batch, with a file of many segments whose
+    // fills cross them, at segments of three blocks.
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        let long: Vec<u8> = (0..9000u32).map(|i| match i % 701 { 0 => b'"', k if k % 97 == 0 => b'\\', k if k % 5 == 0 => b'a', _ => b'b' }).collect();
+        let mut refs = refs;
+        refs.push(&long);
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let got = run_serial_split(&[&native], &batch, Segments { blocks: 3, warm: 1 }).expect("Metal runs the passes");
+        for (k, (got, want)) in got.run.files.iter().zip(block.run_files(&refs)).enumerate() {
+            assert_eq!(got.outputs, want.outputs, "Metal: file {k}, {} bytes", refs[k].len());
+        }
+    }
 }
 
-/// `back_fill` prints and reassembles; one in a fixed point is refused; Metal refuses one.
+/// `back_fill` prints and reassembles; one in a fixed point is refused; Metal's look-back
+/// kernel refuses one (the forward carry runs it in passes).
 #[test]
 fn back_fill_round_trips_and_refusals() {
     let p = program("  block 0 %0 = eq 0x22
@@ -945,6 +966,49 @@ fn back_fill_round_trips_and_refusals() {
         let got = run_generated_with(&native, b"a\"b", LaneWidth::ALL[0], ClassStrategy::ALL[0]).map(|_| ());
         assert!(matches!(got, Err(Error::UnsupportedBackend)), "Metal: {got:?}");
     }
+}
+
+/// `position j`: bit `j` of each byte's place in its file, on every CPU executor and in a batch
+/// (each file from 0), and on Metal; a `prev` of one; it prints and reassembles.
+#[test]
+fn position_planes_equal_the_positions_on_every_executor() {
+    let planes = [0u8, 3, 5, 6, 7, 9, 10];
+    let mut rows = String::from("  block 0 %0 = within\n");
+    for (k, j) in planes.iter().enumerate() {
+        rows += &format!("  block 0 %{} = position {j}\n  block 0 %{} = and %{}, %0\n", 2 * k + 1, 2 * k + 2, 2 * k + 1);
+    }
+    let n = 2 * planes.len() + 1;
+    rows += &format!("  block 0 %{n} = prev %{}, 3\n", 2 * planes.len() - 2);
+    rows += &format!("  block 0 %{} = eq 0x61\n  block 0 %{} = and %{n}, %{}\n", n + 1, n + 2, n + 1);
+    for k in 0..planes.len() {
+        rows += &format!("  block 0 output %{}\n", 2 * k + 2);
+    }
+    rows += &format!("  block 0 output %{}\n", n + 2);
+    let p = program(&rows);
+    let text = rir::disassemble(&p, None);
+    assert!(text.contains("= position 9"), "{text}");
+    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    let block = &p.block_programs()[0];
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let want = |bytes: &[u8]| {
+        let plane = |j: u8| (0..bytes.len()).map(|i| i >> j & 1 == 1).collect::<Vec<bool>>();
+        let mut out: Vec<Vec<u64>> = planes.iter().map(|&j| words_of(&plane(j))).collect();
+        let a = bits(bytes, |x| x == b'a');
+        let late: Vec<bool> = prev_reference(&plane(planes[planes.len() - 2]), 3).iter().zip(&a).map(|(&x, &y)| x && y).collect();
+        out.push(words_of(&late));
+        out
+    };
+    let mut files = inputs();
+    files.extend([b"".to_vec(), b"a".to_vec(), vec![b'a'; 63], vec![b'a'; 64], vec![b'a'; 2100], [vec![b'b'; 700], vec![b'a'; 700]].concat()]);
+    for bytes in &files {
+        let (got, _) = Executors::new(&p).run(bytes, true);
+        for (name, got) in got {
+            assert_eq!(got, want(bytes), "{name}, {} bytes", bytes.len());
+        }
+    }
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
 }
 
 /// Carried operations in a chain, each round's carry depending on the one before: the escaped
@@ -1560,4 +1624,27 @@ fn rounds_equal_the_interpreter() {
     }
     let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
     assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
+    // On Metal, the forward carry: each lane a block, the group's rounds over all its lanes at
+    // once, in segments of three blocks that speculate their start; and a long file of many
+    // segments.
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let long: Vec<u8> = (0..20_000)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                alphabet[(seed % 5) as usize]
+            })
+            .collect();
+        let mut refs = refs;
+        refs.push(&long);
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let got = run_serial_split(&[&native], &batch, Segments { blocks: 3, warm: 1 }).expect("Metal runs the rounds");
+        for (k, (got, want)) in got.run.files.iter().zip(block.run_files(&refs)).enumerate() {
+            assert_eq!(got.outputs, want.outputs, "Metal: {:?}", String::from_utf8_lossy(refs[k]));
+        }
+    }
 }

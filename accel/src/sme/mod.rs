@@ -1,4 +1,4 @@
-//! The SME lane (decision 0096 §4): the bit product on the CPU's matrix unit, BMOPA in C (`kernels.c`).
+//! The SME lane (decision 0098 §4): the bit product on the CPU's matrix unit, BMOPA in C (`kernels.c`).
 //!
 //! **One submission is the whole batch.** Every launch's operands are packed into 32-row panels (each distinct
 //! `Bits` once: a self-product `a == b` packs one side), the work is cut into tiles (a few A panels against a group

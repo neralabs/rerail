@@ -1,4 +1,4 @@
-//! The `count table` form (decision 0096 §1): a count step answered from a table of counts per key, not by walking
+//! The `count table` form (decision 0098 §1): a count step answered from a table of counts per key, not by walking
 //! the matching rows at every probe.
 //!
 //! A count step (`$c = count { r(k1, …, kn, _) }`) walks, at each binding that reaches it, the rows of `r` that
@@ -22,7 +22,7 @@
 //!
 //! Both forms are exact: the count of a key is the number of live rows with that key, as the walk counts them.
 
-use super::{InRel, Key, Src, Step, is_dead};
+use super::{InRel, Key, ScalarKind, Src, Step, is_dead};
 use rerail_accel::{Batch, Kernel, Launch, Output};
 use rustc_hash::{FxHashMap as HashMap, FxHasher};
 use std::cell::{Cell, OnceCell};
@@ -82,6 +82,16 @@ fn hash(key: &[i64]) -> u64 {
     }
     h.finish()
 }
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: build a step's table at its first probe, whatever its walks cost.
+    pub(super) static AT_ONCE: Cell<bool> = const { Cell::new(false) };
+}
+#[cfg(not(test))]
+fn at_once() -> bool { false }
+#[cfg(test)]
+fn at_once() -> bool { AT_ONCE.with(Cell::get) }
 
 fn off_on() -> bool {
     std::env::var("RERAIL_COUNT_TABLE").is_ok_and(|v| v == "off")
@@ -231,7 +241,7 @@ pub(super) fn spent(form: &StepForm, steps: &[Step], i: usize, walked: u64) {
     if form.tried.get() {
         return;
     }
-    let Step::Count { src, keys, tests, .. } = &steps[i] else { return };
+    let Step::Scalar { src, keys, tests, kind: ScalarKind::Count, col: None, .. } = &steps[i] else { return };
     let Some((rel, cols)) = cols_of(src, keys, tests) else {
         form.tried.set(true);
         return;
@@ -240,7 +250,7 @@ pub(super) fn spent(form: &StepForm, steps: &[Step], i: usize, walked: u64) {
     form.spent.set(spent);
     let left = per_row_left(steps, i);
     let cost = rel.len() as u64 + left.as_ref().map_or(0, |(l, _)| l.len() as u64) + FLOOR;
-    if spent < cost {
+    if spent < cost && !at_once() {
         return;
     }
     form.tried.set(true);
@@ -254,13 +264,13 @@ pub(super) fn spent(form: &StepForm, steps: &[Step], i: usize, walked: u64) {
     }
     let built = match left {
         Some((l, of_key)) => per_row(&rel, &cols, &l, &of_key, keys).map(|per| {
-            crate::code_rule_dsl::logic::profile::decision("count table (decision 0096 §1)", || {
+            crate::code_rule_dsl::logic::profile::decision("count table (decision 0098 §1)", || {
                 format!("{} by columns {cols:?}: counts per row of the join's first scan", rel.name.get().map_or("an input", String::as_str))
             });
             let _ = form.per_row.set(per);
         }),
         None => table(&rel, &cols).map(|t| {
-            crate::code_rule_dsl::logic::profile::decision("count table (decision 0096 §1)", || {
+            crate::code_rule_dsl::logic::profile::decision("count table (decision 0098 §1)", || {
                 format!("{} by columns {cols:?}: a histogram, once its count's walks read as many rows", rel.name.get().map_or("an input", String::as_str))
             });
             let _ = form.table.set(t);
@@ -272,7 +282,7 @@ pub(super) fn spent(form: &StepForm, steps: &[Step], i: usize, walked: u64) {
     // A lane's failure is an error of the run's executor; the walk is exact without the table, so the step walks on
     // and the failure is in the profile.
     if let Err(e) = built {
-        crate::code_rule_dsl::logic::profile::decision("count table (decision 0096)", || format!("not built: {e}"));
+        crate::code_rule_dsl::logic::profile::decision("count table (decision 0098)", || format!("not built: {e}"));
     }
 }
 
@@ -283,7 +293,7 @@ fn per_row_left(steps: &[Step], i: usize) -> Option<(Arc<InRel>, Vec<Option<usiz
     if !k0.is_empty() || i == 0 {
         return None;
     }
-    let Step::Count { keys, .. } = &steps[i] else { return None };
+    let Step::Scalar { keys, .. } = &steps[i] else { return None };
     let mut of_key = Vec::with_capacity(keys.len());
     for &(_, k) in keys {
         match k {
