@@ -194,6 +194,21 @@ describe("gitExcludeFiles", () => {
     expect((await gitConfigFiles(root)).slice(2)).toEqual([join(home, "global")]);
     expect(await gitConfigFiles(home)).toEqual([]);
   });
+
+  it("finds the global files in Git's own home, which on Windows without HOME is HOMEDRIVE and HOMEPATH", async () => {
+    const { root, home } = await isolatedRepository();
+    vi.stubEnv("GIT_CONFIG_GLOBAL", "");
+    const share = join(home, "share");
+    await mkdir(share);
+    const globals = [join(share, ".gitconfig"), join(share, ".config", "git", "config")];
+    // Git's home, not the account's: HOME here names another folder than the one homedir() answers.
+    expect((await gitConfigFiles(root, { ...process.env, HOME: share })).slice(2)).toEqual(globals);
+    if (process.platform === "win32") {
+      const { HOME: _home, ...withoutHome } = process.env;
+      const drive = share.slice(0, 2);
+      expect((await gitConfigFiles(root, { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, "win32")).slice(2)).toEqual(globals);
+    }
+  });
 });
 
 describe("gitCrlfPaths", () => {

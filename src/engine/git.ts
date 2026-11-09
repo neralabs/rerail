@@ -317,24 +317,28 @@ function folderExists(path: string): boolean {
   }
 }
 
-/** The file Git reads as `core.excludesFile` when that names none: `git/ignore` in `XDG_CONFIG_HOME`, else in `~/.config`. */
-function defaultExcludesFile(): string {
-  const xdg = process.env.XDG_CONFIG_HOME;
-  return join(xdg === undefined || xdg === "" ? join(gitHome(), ".config") : xdg, "git", "ignore");
+/**
+ * The file Git reads as `core.excludesFile` when that names none: `git/ignore` in `XDG_CONFIG_HOME`, else in `.config`
+ * in Git's home ({@link gitHome}).
+ */
+function defaultExcludesFile(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
+  const xdg = env.XDG_CONFIG_HOME;
+  return join(xdg === undefined || xdg === "" ? join(gitHome(env, platform), ".config") : xdg, "git", "ignore");
 }
 
 /**
  * The configuration files that can name the excludes file of the Git checkout at `cwd`, absolute: its repository's
- * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `~/.gitconfig`
- * and `git/config` in `XDG_CONFIG_HOME` or `~/.config`. The system file, which only an administrator writes, and files
- * `include.path` pulls in are left out. Empty outside a Git checkout, or without Git.
+ * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `.gitconfig`
+ * in Git's home ({@link gitHome}, from `env` on `platform`) and `git/config` in `XDG_CONFIG_HOME` or that home's
+ * `.config`. The system file, which only an administrator writes, and files `include.path` pulls in are left out. Empty
+ * outside a Git checkout, or without Git.
  */
-export async function gitConfigFiles(cwd: string): Promise<string[]> {
+export async function gitConfigFiles(cwd: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<string[]> {
   const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"]);
   if (local === undefined || local === "") return [];
-  const global = process.env.GIT_CONFIG_GLOBAL;
+  const global = env.GIT_CONFIG_GLOBAL;
   const globals = global === undefined || global === ""
-    ? [join(gitHome(), ".gitconfig"), join(dirname(defaultExcludesFile()), "config")]
+    ? [join(gitHome(env, platform), ".gitconfig"), join(dirname(defaultExcludesFile(env, platform)), "config")]
     : [global];
   return [...local.split("\n").map(path => resolve(cwd, path)), ...globals.map(path => resolve(cwd, path))];
 }
