@@ -78,6 +78,7 @@ Python needs too.
 | A18 | a choice cannot use itself | a term inside a named argument's value | every expression | **nested choices**: `choice N nested`, a level with no node of its own (§2.5). **Done** |
 | A19 | a token's leaf has its token's kind | a word that is a variable, or a call's function, by the token after | names, attributes | **`A as K`**: the leaf of `A` is a `K`; a wrap gives the moved leaf its final kind. **Done** |
 | A20 | a node made is never read again | `(o - n) * 10 > o`: the engine tells a group from a term in parentheses only by going back after the `)`, and `((a(x)))` is a group or a term by what follows, however deep | `[a, (b, c)] = x`: a list is a `list_pattern` once the `=` comes | **cover grammars**: `reread R`, the node made last and the nodes inside it read again by a declared reading (kinds kept, renamed, gone, or kept unread; fields renamed; any other kind refuses), word `RETAG m=3`, a loop over the node's records; `provisional F`, a field no finished tree holds, checked at `ACCEPT`. **Done** |
+| A21 | tier 1 looks ahead a fixed number of bytes (`next`) | `fix` continues a `.violation` only before a name, past any blanks and comments: `fix(x) :- s(x).` after one is a clause | `match` and `case` are keywords only on a line that ends in `:` | **`back_fill`**: a fill from each start back to the end before it, in a backward pass over the blocks (03 §3.1); a hidden mark before the word where the bytes after it are what the engine reads. **Done** on the CPU (interpreter, Cranelift in passes); Metal refuses it for now |
 | A16 | which rows a state can meet is not known | — (it keeps `ROW` off JSON's strings) | string prefixes, f-strings | **proofs over the block program and modes from toggles** (§2.4). **Done** |
 
 ### 2.1 Wrap, retag and merge
@@ -306,6 +307,8 @@ reference on the corpus.
 | rr-12 | a parenthesized term at a literal's start, `(o - n) * 10 > o`: read as a group, then read again as a term when an operator or a `~` follows its `)` (`reread`, `provisional`) | A20 |
 | rr-13 | floats: `1.5`, `-2.5`; a `.` after a fraction is no float's (`1.2.3` is `1.2`, `.`, `3`), found by a carry in tier 1; the fraction a token merged into its number | A2, A7 |
 | rr-14 | `\u` escapes: `\u212a`, `\u{1F600}`; the forms that are code points by their bytes (no surrogate, at most `10FFFF`), tested by masks over a window; any other `\u` goes to the engine; in JSON, a `\u` with no four hex digits is refused | A2 |
+| rr-15 | a `.violation`'s `fix`, `suppress`, `options` and a `suppress` line's `over`, read only before what the engine reads after them (a name; a name and a string; a `{`), past blanks and comments; elsewhere the word starts the next statement | A21 |
+| rr-16 | a column in braces that is no single name, `code {at.code}`, `tag { }`: one `raw_text` leaf through the matching `}`; `{c}` the name, told by a hidden mark where a name and a `}` follow the `{` | A8, A21 |
 
 At rr-11:
 - every corpus file is parsed by both parsers;

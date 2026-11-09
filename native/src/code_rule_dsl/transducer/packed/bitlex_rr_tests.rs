@@ -141,8 +141,19 @@ const CASES: &[(&str, &str)] = &[
     (".violation v(at: loc) code \"X1\" \"m\"\n.violation w(at: loc) \"n\" fix safe \"d\" fix f \"e\"\n.decl code(fix: number, tag: t)", "09"),
     ("r(code, tag, fix, safe, suppress, over, options, in, violation) :- code(x), fix = 1.", "09"),
     (".violation\nv(at: loc) tag { t } code { c } \"m\" // c\n/* d */ suppress t \"r\"", "09"),
-    // `fix` starting a clause right after a `.violation`: the engine's clause; to it.
-    (".violation v(at: loc) \"m\"\nfix(x) :- s(x).", "never"),
+    // `fix`, `suppress`, `options` starting a clause right after a `.violation`, and `over` a
+    // fact after a `suppress` line: the engine reads the word only before what follows it.
+    (".violation v(at: loc) \"m\"\nfix(x) :- s(x).", "15"),
+    (".violation v(at: loc) \"m\"\nsuppress(x) :- s(x).\n.violation w(at: loc) \"m\"\noptions(x).", "15"),
+    (".violation v(at: loc) \"m\"\nsuppress t(x) :- s(x).", "never"),
+    (".violation v(at: loc) \"m\"\nsuppress t \"r\"\nover(x).\nfix(1).", "15"),
+    (".violation v(at: loc) \"m\" fix /* c */ f // d\n \"e\" suppress t /* c */ \"r\" over /* c */ {at}\noptions // c\n{}\nfix(y).", "15"),
+    (".violation v(at: loc) \"m\"\nfix safe \"d\"\nfix safe s \"e\"\nfix \"x\".", "never"),
+    (".violation v(at: loc) \"m\"\noptions = 1.", "never"),
+    // A column in braces that is no single name: one `raw_text` leaf, nested braces counted.
+    (".violation v(at: loc) code {at.code} tag { } \"m\"", "16"),
+    (".violation v(at: loc) code { /* c */ at } tag {a {b} c} \"m\" suppress t \"r\" over {x y}\n.violation w(at: loc) code {at} \"m\" suppress t \"r\" over { at }", "16"),
+    (".violation v(at: loc) code {at \"m\"", "never"),
     // JSON objects: terms, setting arguments; edits.
     ("r({\"a\": {\"b\": [1, 2]}}) :- s(x, {}), {\"c\": 1} = x => e(x, \"y\"), f({}).", "09"),
     (".budget * by code { \"A\": 3, \"B\": 4 }\n.budget * {\n  \"total\": 0\n}\nr(x).", "09"),
