@@ -89,6 +89,11 @@ impl ScopeRules for Rr {
     const REDEFINES_SHADOWED: bool = false;
     const REFERENCE_KINDS: &'static [&'static str] = &[];
     const ANNOTATION_STRING_KINDS: &'static [&'static str] = &[];
+    // Main's scope kinds (#462): `.rr` has no scope, so none.
+    const PAREN_KINDS: &'static [&'static str] = &[];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    const ATTRIBUTE_KINDS: &'static [&'static str] = &[];
+    const THIS_KINDS: &'static [&'static str] = &[];
     const NAME_KINDS: &'static [&'static str] = &[];
     const PRIVATE_NAME_KINDS: &'static [&'static str] = &[];
     const FORMS: &'static [(&'static str, Form)] = &[];
