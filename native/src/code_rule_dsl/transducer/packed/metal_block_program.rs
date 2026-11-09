@@ -1391,7 +1391,19 @@ fn schedule(native: &BlockNative, chosen: &[usize]) -> Vec<Step> {
             break;
         }
     }
-    assert!(chosen.iter().all(|&at| done[at]), "every chosen value is made: a group's members are chosen together");
+    if let Some(&at) = chosen.iter().find(|&&at| !done[at]) {
+        let why: Vec<String> = native.insts[at].operands().iter().filter(|&&o| !done[o]).map(|&o| format!("%{o} {:?} (group {:?}, chosen {})", native.insts[o], group_of[o], wanted.contains(&o))).collect();
+        let blocked: Vec<String> = native
+            .groups
+            .iter()
+            .enumerate()
+            .filter(|&(g, _)| !ran[g])
+            .flat_map(|(g, group)| group.members.iter().flat_map(move |&m| native.insts[m].operands().into_iter().map(move |o| (g, m, o))).collect::<Vec<_>>())
+            .filter(|&(g, _, o)| !done[o] && group_of[o] != Some(g))
+            .map(|(g, m, o)| format!("group {g}: %{m} {:?} reads %{o} {:?} (group {:?}, chosen {})", native.insts[m], native.insts[o], group_of[o], wanted.contains(&o)))
+            .collect();
+        panic!("%{at} {:?} (group {:?}) is never made: waits on {why:?}; {blocked:?}", native.insts[at], group_of[at]);
+    }
     out
 }
 

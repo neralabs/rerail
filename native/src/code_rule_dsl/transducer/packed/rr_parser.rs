@@ -28,6 +28,8 @@ pub(super) struct Compiled {
     pub(super) parser: native_cpu_stream::Parser,
     /// Tier 1's cost by grammar statement, for the profile.
     pub(super) costs: Vec<bitlex_compile::Cost>,
+    /// Tier 1's program as lowered, for its other executors (Metal).
+    pub(super) native: super::native_ir::BlockNative,
     /// Tier 1's block program as text, for the profile's operation mix.
     pub(super) rows: String,
     /// Tier 2's words and its state machine as text, for the profile.
@@ -67,7 +69,7 @@ fn compile() -> Result<Compiled, String> {
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program).map_err(|e| format!("lowers: {e:?}"))?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, costs: compiled.costs.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
 }
 
 /// `src`'s node table, as tier 2 writes it: from the compiled grammar, or, for a file the grammar
@@ -187,6 +189,37 @@ mod tests {
                 assert!(loops_allowed.iter().any(|a| b[k..].starts_with(a)), "{file} `{head}`: a loop on the parse path: {}", &b[k..(k + 40).min(b.len())]);
             }
         }
+    }
+
+    /// Tier 1 of the grammar on Metal (the forward carry: its fixed points, its passes for the
+    /// `back_fill`s, its position planes) equals Cranelift's over the corpus as one batch: every
+    /// output word, every position, every total. Prints the GPU time.
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[ignore = "the corpus on Metal: run by hand"]
+    fn tier1_on_metal_equals_cranelift() {
+        use super::super::block;
+        use super::super::metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        let c = super::compiled().expect("compiles");
+        let files = corpus();
+        let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
+        let want = c.parser.tier1.run_files(&refs);
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let native = &c.native;
+        let got = run_serial_split(&[native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+        let mut differ = 0;
+        for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
+            if g.outputs != w.outputs || g.positions != w.positions || g.totals != w.totals {
+                differ += 1;
+                if differ < 4 {
+                    let o = (0..w.outputs.len()).find(|&o| g.outputs.get(o) != w.outputs.get(o));
+                    eprintln!("file {k} ({} bytes) differs: output {o:?}, positions equal {}, totals {:?} / {:?}", refs[k].len(), g.positions == w.positions, g.totals, w.totals);
+                }
+            }
+        }
+        let bytes: usize = refs.iter().map(|b| b.len()).sum();
+        eprintln!("{} files, {bytes} bytes: {differ} differ; GPU {:.2} ms ({:.2} GB/s), {} launches, {} segments, {} reruns", files.len(), got.run.seconds * 1e3, bytes as f64 / got.run.seconds / 1e9, got.run.launches, got.segments, got.reruns);
+        assert_eq!(differ, 0);
     }
 
     /// The process's CPU time so far, user and sys: the one thread runs alone.
