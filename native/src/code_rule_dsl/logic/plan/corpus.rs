@@ -2304,49 +2304,82 @@ fn run_observed(
         // without the base rows this run's cross-file part reads is a miss.
         let has_base = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS) && stored.iter().all(|(rel, _)| e.rows.contains_key(&memo::base_key(rel)));
         let mut stats_read = Vec::new();
-        let mut build = |d: &i64, path: &String, module: Option<Arc<str>>| -> Result<(Option<memo::Content>, std::result::Result<memo::Entry, syntax::Document>)> {
+        // A window's files resolved together (`resolve`): stat each, look the ones the stat index knows up in one
+        // statement, read and hash the others, find their contents in one statement and look those up in one more.
+        // What is left is built (`build`). A few statements a window, not several a file.
+        let mut resolve = |window: &[(i64, String, Option<Arc<str>>)]| -> Result<Vec<(Option<memo::Content>, std::result::Result<memo::Entry, (String, Option<memo::Content>)>)>> {
             worker_doing.set("parse");
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
             // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
             // source, and on a memo hit is neither read nor hashed.
-            let stat = if memoised || recording {
-                let _stat = crate::code_rule_dsl::logic::profile::span(|| "stat".into());
-                crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::FileStat, 1);
-                std::fs::metadata(root.join(path)).ok().map(|m| crate::content_store::FileStat::of(&m))
-            } else {
-                None
-            };
-            let known = stat.and_then(|now| stat_index.source(world::store_path(path), now));
-            if let (true, Some(id), Some(memo)) = (memoised, known, memo) {
+            let stats: Vec<Option<crate::content_store::FileStat>> = window
+                .iter()
+                .map(|(_, path, _)| {
+                    if !(memoised || recording) {
+                        return None;
+                    }
+                    let _stat = crate::code_rule_dsl::logic::profile::span(|| "stat".into());
+                    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::FileStat, 1);
+                    std::fs::metadata(root.join(path)).ok().map(|m| crate::content_store::FileStat::of(&m))
+                })
+                .collect();
+            let known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
+            let mut out: Vec<Option<(Option<memo::Content>, std::result::Result<memo::Entry, (String, Option<memo::Content>)>)>> = (0..window.len()).map(|_| None).collect();
+            if let (true, Some(memo)) = (memoised, memo) {
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
-                if let Some(entry) = memo.lookup(memo::Content::Stored(id), world::store_path(path), *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| has_base(e)) {
-                    return Ok((known.map(memo::Content::Stored), Ok(entry)));
+                let asked: Vec<usize> = (0..window.len()).filter(|i| known[*i].is_some()).collect();
+                let keys: Vec<(memo::Content, &str, i64)> = asked.iter().map(|i| (memo::Content::Stored(known[*i].expect("known")), world::store_path(&window[*i].1), window[*i].0)).collect();
+                for (i, entry) in asked.into_iter().zip(memo.lookup_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?) {
+                    if let Some(entry) = entry.filter(|e| has_base(e)) {
+                        out[i] = Some((known[i].map(memo::Content::Stored), Ok(entry)));
+                    }
                 }
             }
-            let read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
-            let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
-            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
-            drop(read);
-            let mut source_id = None;
-            if let (true, Some(memo)) = (memoised || recording, memo) {
-                // Read, the file is hashed whatever the index said: it may have changed since its stat.
-                let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
+            let rest: Vec<usize> = (0..window.len()).filter(|i| out[*i].is_none()).collect();
+            let mut texts: Vec<String> = Vec::with_capacity(rest.len());
+            for i in &rest {
+                let path = &window[*i].1;
+                let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
+                let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
-                let content = memo.content(&source).map_err(|e| Error::Plan(e.to_string()))?;
-                source_id = Some(content);
-                if let (Some(stat), Some(id)) = (stat, content.stored())
-                    && known != Some(id)
+                texts.push(source);
+            }
+            // Read, a file is hashed whatever the index said: it may have changed since its stat.
+            let contents: Vec<Option<memo::Content>> = match (memoised || recording, memo) {
+                (true, Some(memo)) => {
+                    let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
+                    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, texts.iter().map(|t| t.len() as u64).sum());
+                    memo.contents(&texts.iter().map(String::as_str).collect::<Vec<_>>()).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(Some).collect()
+                }
+                _ => vec![None; rest.len()],
+            };
+            for (i, content) in rest.iter().zip(&contents) {
+                if let (Some(stat), Some(id)) = (stats[*i], content.and_then(memo::Content::stored))
+                    && known[*i] != Some(id)
                 {
-                    stats_read.push((world::store_path(path).to_owned(), stat, id));
+                    stats_read.push((world::store_path(&window[*i].1).to_owned(), stat, id));
                 }
             }
-            let looked_up = known.is_some() && known == source_id.and_then(memo::Content::stored);
-            if let (true, Some(id), Some(memo), false) = (memoised, source_id, memo, looked_up) {
+            // A file the index knew, read again because its entry was missing, is not looked up a second time.
+            let mut entries: Vec<Option<memo::Entry>> = vec![None; rest.len()];
+            if let (true, Some(memo)) = (memoised, memo) {
                 let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
-                if let Some(entry) = memo.lookup(id, world::store_path(path), *d, &memo_program).map_err(|e| Error::Plan(e.to_string()))?.filter(|e| has_base(e)) {
-                    return Ok((source_id, Ok(entry)));
+                let asked: Vec<usize> = (0..rest.len()).filter(|r| contents[*r].is_some() && !(known[rest[*r]].is_some() && known[rest[*r]] == contents[*r].and_then(memo::Content::stored))).collect();
+                let keys: Vec<(memo::Content, &str, i64)> = asked.iter().map(|r| (contents[*r].expect("a content"), world::store_path(&window[rest[*r]].1), window[rest[*r]].0)).collect();
+                for (r, entry) in asked.into_iter().zip(memo.lookup_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?) {
+                    entries[r] = entry.filter(|e| has_base(e));
                 }
             }
+            for ((r, text), (i, content)) in texts.into_iter().enumerate().zip(rest.iter().zip(contents)) {
+                out[*i] = Some(match entries[r].take() {
+                    Some(entry) => (content, Ok(entry)),
+                    None => (content, Err((text, content))),
+                });
+            }
+            Ok(out.into_iter().map(|o| o.expect("every file resolved")).collect())
+        };
+        // A file's document, built from its source.
+        let build = |d: &i64, path: &String, module: Option<Arc<str>>, source: String, mut source_id: Option<memo::Content>| -> Result<(Option<memo::Content>, syntax::Document)> {
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             // Its own work: the file's input made from its source (the build's parts charge their own).
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
@@ -2354,7 +2387,7 @@ fn run_observed(
             if crate::code_rule_dsl::language::label_of_path(path).is_none() {
                 let facts = Arc::new(core::text_only(Arc::new(source)));
                 let digest = core::digest(&facts);
-                return Ok((source_id, Err(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module })));
+                return Ok((source_id, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module }));
             }
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
             let built = match &tapes {
@@ -2377,12 +2410,32 @@ fn run_observed(
             let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
             let digest = core::digest(&facts);
             drop(digest_span);
-            Ok((source_id, Err(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module })))
+            Ok((source_id, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module }))
         };
+        // Files resolved a window at a time (`resolve`), so a window's sources are all a worker holds unparsed.
+        const WINDOW: usize = 256;
         'batches: for asked in docs_in {
+        let mut resolved = std::collections::VecDeque::new();
+        let mut next = 0;
         let mut at = asked.iter().peekable();
         while let Some((d, path, module)) = at.next() {
-            match build(d, path, module.clone()) {
+            if resolved.is_empty() {
+                let end = (next + WINDOW).min(asked.len());
+                match resolve(&asked[next..end]) {
+                    Ok(r) => resolved.extend(r),
+                    Err(e) => {
+                        let _ = send.send(Err(e));
+                        break 'batches;
+                    }
+                }
+                next = end;
+            }
+            let (content, outcome) = resolved.pop_front().expect("a window resolves each of its files");
+            let result = match outcome {
+                Ok(entry) => Ok((content, Ok(entry))),
+                Err((source, source_id)) => build(d, path, module.clone(), source, source_id).map(|(c, doc)| (c, Err(doc))),
+            };
+            match result {
                 Ok((source_id, Ok(entry))) => {
                     read_sources.extend(source_id.and_then(memo::Content::stored));
                     if let Some(c) = source_id {

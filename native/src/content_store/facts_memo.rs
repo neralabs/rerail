@@ -169,6 +169,41 @@ impl ContentStore {
         Ok(out)
     }
 
+    /// The result under `plan` at `fact_schema` of each `(source, path)` of `keys`, decompressed, in their order:
+    /// its path's, else its content-pure one, else `None` (a frame that does not decode is `None` too, as
+    /// `facts_memo` counts it damaged). One statement whatever the keys' number.
+    pub fn facts_results_for(&self, fact_schema: u32, plan: [u8; 32], keys: &[(SourceId, &str)]) -> StoreResult<Vec<Option<Vec<u8>>>> {
+        let mut out: Vec<Option<Vec<u8>>> = vec![None; keys.len()];
+        if keys.is_empty() {
+            return Ok(out);
+        }
+        let list = serde_json::to_string(&keys.iter().map(|(s, p)| serde_json::json!([s.0, p])).collect::<Vec<_>>()).expect("keys");
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT j.key, r.path, r.codec_id, r.raw_length, r.frame FROM json_each(?3) j \
+             JOIN facts_results r ON r.source_id=json_extract(j.value,'$[0]') AND r.fact_schema=?1 \
+             AND r.path IN (json_extract(j.value,'$[1]'), ?4) AND r.plan_digest=?2",
+        )?;
+        let rows = statement.query_map(params![i64::from(fact_schema), &plan[..], list, CONTENT_PURE], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, Vec<u8>>(4)?))
+        })?;
+        let mut at_path = vec![false; keys.len()];
+        for row in rows {
+            let (at, path, codec, raw_length, frame) = row?;
+            let at = at as usize;
+            let own = path != CONTENT_PURE;
+            // A path's own result over the content-pure one, as `facts_memo` keys them by plan.
+            if at_path[at] && !own {
+                continue;
+            }
+            if let Ok(entry) = decode(codec, raw_length, &frame) {
+                out[at] = Some(entry);
+                at_path[at] = own;
+            }
+        }
+        Ok(out)
+    }
+
     /// Every memo row of `key`'s content, content-pure and at `key.path`, for `key.fact_schema`.
     pub fn facts_memo(&self, key: FactsMemoKey<'_>) -> StoreResult<FactsMemo> {
         let connection = self
