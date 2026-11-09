@@ -1735,34 +1735,6 @@ pub(crate) fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)>
         .collect()
 }
 
-/// `measured` over columns held as slices (each `rows` long; a row's document is the first column's high half): no
-/// copy of the rows and no call per value.
-pub(crate) fn measured_columns(columns: &[(&str, &[i64])]) -> Vec<(String, i64, i64, i64, i64)> {
-    let Some((_, first)) = columns.first() else { return Vec::new() };
-    let rows = first.len();
-    let mut values: Vec<(i64, i64)> = Vec::with_capacity(rows);
-    columns
-        .iter()
-        .map(|(name, column)| {
-            if column.windows(2).all(|w| w[0] < w[1]) {
-                return ((*name).to_owned(), rows as i64, rows as i64, rows as i64, rows as i64);
-            }
-            values.clear();
-            values.extend(column.iter().zip(first.iter()).map(|(v, d)| (*v, d >> 32)));
-            values.sort_unstable();
-            let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
-            for run in values.chunk_by(|a, b| a.0 == b.0) {
-                ndv += 1;
-                sq += (run.len() * run.len()) as i64;
-                for per in run.chunk_by(|a, b| a.1 == b.1) {
-                    sqd += (per.len() * per.len()) as i64;
-                }
-            }
-            ((*name).to_owned(), rows as i64, ndv, sq, sqd)
-        })
-        .collect()
-}
-
 /// Fails if a document's facts are not those its `#core:` name binds now (§4).
 pub(crate) fn fresh(graph: &(impl Graph + ?Sized), documents: &[Document]) -> StoreResult<()> {
     for d in documents {
