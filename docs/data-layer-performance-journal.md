@@ -9846,3 +9846,15 @@ A single physical directory path carries recursive traversal; logical paths deri
 No engine feature or optional execution algorithm is added.
 Original-suite replay in both execution modes, persistent updates, mutation controls, and the full migration gate remain open.
 Default registry input errors also need explicit acceptance. The rule remains a draft.
+
+### 2026-11-09 — Authority acceptance and Final synchronization
+
+The [authority receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-authority-final004-checkpoint.json.gz) independently validates all 14 acceptance commands.
+It retains seven original assertions through each native API, 81 API cases, 26 production cases, and 26 frontend cases.
+It also records twelve mutation controls, eight blocking input errors, and fifteen persistent updates.
+All 577 recorded native executions consume the checked programs on optimized CLI `3b770a2b3d625130`.
+Each acceptance command finishes within 30 seconds; none is a repository cold benchmark.
+The unchanged update preserves timestamps and data. No native rebuild or engine change was required.
+
+The full migration gate remains open; these are rule-specific acceptance results.
+Fetched remote Final `004df7e75`; that tip is already an ancestor of this branch.

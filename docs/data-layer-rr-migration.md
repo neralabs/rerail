@@ -2430,3 +2430,22 @@ All 146 focused engine tests and 186 tooling tests pass. Two existing engine hel
 The source recording reference matches the full corpus embedded in the committed Final 735 receipt.
 The rule remains a draft. Two traversal tests, 44 readiness tests, and the full migration gate remain open.
 Six absent translations, authority production contracts, and earlier migration gaps remain open.
+
+### 2026-11-09 — Authority production, both native APIs, and lifecycle acceptance
+
+The [authority acceptance checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-authority-final004-checkpoint.json.gz) retains the full source recordings, native results, commands, and its independent validator.
+All seven original tests pass through snapshot and workspace execution separately.
+The same optimized Final `004df7e75` engine passes 81 API cases, 26 production cases, and 26 installed CLI cases.
+Twelve successful native mutation controls reject incorrect rules. Eight malformed registry inputs block execution.
+Fifteen persistent workspace steps pass, including an unchanged repeat that preserves file timestamps.
+The validator checks 577 native executions, consumed program hashes, complete values, and original assertion phases.
+
+This work fixed two demonstrated defects: workspace API arguments were omitted, and path suffix shortcuts mishandled `.py` and `..py`.
+Native component relations now implement the required POSIX path behavior.
+Registry source is parsed as data. Native rule execution does not invoke Python.
+Only whole file-completion groups may permute in the source's concurrent CLI results.
+Registry order, per-file order, duplicates, production order, messages, and output bytes remain checked.
+
+The checkpoint does not certify the global migration gate. Authority remains a draft until its aggregate evidence is registered there.
+Six rule translations and the previously recorded acceptance gaps remain open.
+The remote Final branch was fetched before continuing; its latest `004df7e75` is already merged.
