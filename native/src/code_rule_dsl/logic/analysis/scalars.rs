@@ -53,6 +53,7 @@ impl Expression {
 pub(in crate::code_rule_dsl) enum Kind {
     Count,
     Sum,
+    Product,
     Min,
     Max,
     OrderedJoin,

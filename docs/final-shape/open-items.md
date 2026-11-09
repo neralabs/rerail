@@ -4,6 +4,11 @@ Status: live, started 2026-10-27. Each item says what is open, why it matters, h
 closed or validated, and where it stands. Items are added at the phase they are found and are
 never deleted: a closed item keeps its row with the commit that closed it.
 
+**Ids.** From 2026-11-08, a new item takes a mnemonic id, `O-<area>-<topic>` (`O-artifact-store`,
+`O-git-merge-base`), not the next number. Branches drift apart in numbers (on 2026-11-08 one was at O146 and the
+others at O143) and collided three times in a day (0094 §9); a name says what the item is and two branches
+choosing the same one are writing about the same thing. Numbered items keep their numbers.
+
 | Id | Found | Item | Status |
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
@@ -3163,3 +3168,87 @@ already. A process keeps each seed's graph while its modules' stats hold.
 
 **Closure:** every caller that resolves more than one program batches its seeds, or a run's fixed cost (planning
 `bootstrap.rr`, opening the store) is below 50 ms.
+
+## O-artifact-entries. An artifact is one digest, so one edit makes all of it stale
+
+Decision 0095 §2. `test_collection`'s inputs are `**/*.py`: after any edit the artifact is stale everywhere, and
+locally it is never fresh again. **Closure:** the v2 envelope with entries, each with its own digest and status;
+`facts-stamp` writing entries; a stale entry withholding and making Unknown only its rows' places; a test where one
+edited key file stales one entry.
+
+## O-artifact-digest-p0. Artifact digests walk and hash the tree beside phase 0
+
+Decision 0095 §3. `inputs_digest` walks the root and hashes every matching file on every run and in every cutoff
+check, and it hashes git blob ids where phase 0 keys content by sha256. **Closure:** digests over phase 0's
+content sources, no read of an unchanged file on a warm run (counted by the observer), and stamp and run agreeing.
+
+## O-artifact-store. One stamp per artifact, lost on a branch switch
+
+Decision 0095 §4. **Closure:** stamped entries in the store by `(artifact, key, digest)`, absorbed from the facts
+directory; a revert finds its old stamp; least recently used entries removed within the disk budget.
+
+## O-artifact-imports. An entry's inputs are globs, not its imports
+
+Decision 0095 §2. **Closure:** an entry's digest as a join over its import closure, once phase 0's module graph is
+a phase output (t24, "not built").
+
+## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
+
+Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+
+**Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
+model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
+tree; `test-budget` counting with it, the artifact optional, `collect_disabled` reported as `collection_disabled`.
+**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json`).**
+
+| Scope | Files exact | Total (pytest 14,449; model 13,610) | CPU |
+|---|---:|---:|---:|
+| `conform/` and the root's files (1,418 files) | 1,120 of 1,143 | 13,515 | 327 s user + sys, load 12–17 |
+| the same plus `data_layer_testing/`, on the five directories that differed (394 files) | 143 of 145 (the model: 145) | | 63 s |
+
+With `conform/` alone, all eleven files where the rules and the model differ read a name from outside it: a case
+list (`READ_PERMISSION_SCENARIO_KEYS`), a decorator that replaces a class with a function (`requires_capabilities`),
+or an enum. `data_layer_testing/` holds the first two; `test-budget` reads it. The two files left read enums of
+`data_layer` itself (`DelegationCapability`, `BranchTipMaterialization`), which the scope leaves open.
+
+**Left.** A run of `test-budget`'s scope over the whole of `conform/` (expected near the model's 1,131); enums
+outside the scope (O-names-cost). Known
+differences from the model: a nested Test class reached through two parents counts once (the owner is a node, not
+a path).
+
+## O-names-cost. Name resolution costs about 75 ms of CPU per file
+
+**Seen (2026-11-08).** `python/pytest-collect.rr` over the 9,010-file data layer ran past 9 min of CPU and 1.8 GB,
+and was stopped. On the 133-file sample, `resolve_export` alone costs 15 s of the run's 28 s (debug build), and
+nearly all of that is `qn`, which reads `look`: the LEGB walk of every name reference (`type_checking_block` reads
+`qn`, and `import_time` negates it). Every check that reads `sym_of` pays this.
+
+The run over `conform/` (1,418 files) also peaked at 3.8 GB RSS, in the parse workers and the cross-file part,
+against the 1 GB budget.
+
+**Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
+imported from outside is then open, counted as 1.
+
+**Closure:** the walk computed only for the references a rule asks about (demand), or `qn` without the walk for
+names no import binds; a run of `sym_of` over the data layer within the run and memory budgets.
+
+## O-git-tracked. `git_tracked` is declared and never made
+
+**Status:** closed (2026-11-08, `3cb7d0d0a`). `@git_tracked(path)` is a functor over the index phase 0's Git
+provider reads (`strings/git.rs`), read again when the index file's digest moves; the test stages an add and reads
+it again. Decision 0095 §6.
+
+## O-git-merge-base. `git_rev` is declared and never made; `--base` is the caller's
+
+**Status:** closed (2026-11-08, `3cb7d0d0a`). `git_rev("head", …)` and `git_rev("base", …)`, the merge base of
+`HEAD` and `--base` by gix's `merge_base`, are made when a rule reads `git_rev`; `at="base"` reads at the merge base;
+the whole-run cutoff records both as a read (`git_rev`, with the index as `git_index`) and checks them again. A bad
+`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0095 §6.
+
+## O-replay-intermittent. The replay gate gave 3988 248 243 once
+
+**Seen (2026-11-08).** `converted_rules_give_the_recorded_findings` gave `3988 248 243 0` once and `3988 303 298 0`
+on the next run, with the same code. Suspect: the shared default tape cache (O146), which other sessions write.
+After the merges of 2026-11-08 (`0078ba091`, with the collection rules), 2026-11-09 00:15: `3988 303 298 0`, 55.6 s
+CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
+**Closure:** the cause found, or twenty runs on an isolated store all `3988 303 298 0`.

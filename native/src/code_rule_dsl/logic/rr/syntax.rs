@@ -1286,10 +1286,10 @@ impl<'s> Parser<'s> {
             Tok::Id(s) if s == "_" => (Term::Wild, Kind::Wildcard),
             Tok::Id(s) if s == "count" && self.is_p_at(1, ":") => return self.aggregate(s),
             // `min (a, b)`: a call, unless a `:` follows the parentheses (`min (a + b) : { … }`).
-            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && self.is_p_at(1, "(") => return self.call_or_aggregate(s),
+            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "product" | "mean" | "join") && self.is_p_at(1, "(") => return self.call_or_aggregate(s),
             // `sum x : {…}`, `sum strlen(x) - strlen(a) : {…}`, `join x by k sep "," : {…}`: an aggregate over a term,
             // when a `:`, `by` or `sep` follows it; otherwise a variable named like an aggregate.
-            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && !matches!(self.peek_at(1), Tok::P("," | ")" | "=" | "!=" | "<" | ">" | "<=" | ">=" | "+" | "-" | "*" | "/" | "%" | "." | ";" | "}")) => {
+            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "product" | "mean" | "join") && !matches!(self.peek_at(1), Tok::P("," | ")" | "=" | "!=" | "<" | ">" | "<=" | ">=" | "+" | "-" | "*" | "/" | "%" | "." | ";" | "}")) => {
                 let save = self.save();
                 self.i += 1;
                 let aggregate = self.agg_part().is_ok() && (self.is_p(":") || self.is_id("by") || self.is_id("sep"));

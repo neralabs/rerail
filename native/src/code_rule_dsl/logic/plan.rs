@@ -1917,6 +1917,8 @@ impl Model {
                         (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o).0]),
                         // Soufflé's sum is 0 over no rows.
                         (AggOp::Sum, Some(o)) => call("coalesce", vec![call("rr_exact_sum", vec![column(o).0]), integer(0)]),
+                        // 1 over no rows (`strings::functions::Product`).
+                        (AggOp::Product, Some(o)) => call("coalesce", vec![call("rr_product", vec![column(o).0]), integer(1)]),
                         // `rr_join(sep, value, key, …)` (`strings::functions`) orders and joins text; symbols in as text.
                         (AggOp::Join { by, sep }, Some(o)) => {
                             let text = |(e, symbol): (Expr, bool)| if symbol { self.inputs.text_of(&e) } else { e };
@@ -2602,6 +2604,7 @@ fn decline_class(lit: &Literal, prog: &Program, native: &BTreeSet<String>) -> St
             super::front::AggOp::Min => "min",
             super::front::AggOp::Max => "max",
             super::front::AggOp::Sum => "sum",
+            super::front::AggOp::Product => "product",
             super::front::AggOp::Join { .. } => "join (string concatenation)",
         }),
         Literal::Atom(a) if prog.inputs.iter().any(|i| *i == a.rel) => format!("{}read of input {}", if a.neg { "negated " } else { "" }, a.rel),
@@ -2888,7 +2891,7 @@ impl Run<'_, '_> {
                         .iter()
                         .position(|x| matches!(x, Term::Var(v) if v == n))
                         .and_then(|c| Some(prog.decls.get(&l.rel)?.get(c)?.1.clone())),
-                    Literal::Agg { var, op: AggOp::Count | AggOp::Sum, .. } if var == n => Some("int".to_owned()),
+                    Literal::Agg { var, op: AggOp::Count | AggOp::Sum | AggOp::Product, .. } if var == n => Some("int".to_owned()),
                     Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } if v == n && numeric_call(r) => Some("int".to_owned()),
                     _ => None,
                 }),

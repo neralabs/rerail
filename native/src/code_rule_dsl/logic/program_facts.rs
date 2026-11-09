@@ -171,6 +171,7 @@ impl Writer<'_> {
                     AggOp::Min => "min",
                     AggOp::Max => "max",
                     AggOp::Sum => "sum",
+                    AggOp::Product => "product",
                     AggOp::Join { .. } => "join",
                 };
                 self.row("lit_agg", vec![n(l), s(var), s(name), n(a)]);
@@ -458,6 +459,7 @@ impl<'a> Reader<'a> {
                 "min" => AggOp::Min,
                 "max" => AggOp::Max,
                 "sum" => AggOp::Sum,
+                "product" => AggOp::Product,
                 "join" => {
                     let sep = join.get(&l).and_then(|r| r.first()).ok_or_else(|| bad(format!("join {l} without its separator")))?;
                     let by = ordered(by.get(&l).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
