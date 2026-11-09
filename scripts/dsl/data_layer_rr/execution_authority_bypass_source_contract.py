@@ -84,6 +84,10 @@ CASES += [
     case('tree-monkeypatch-string','pass\n',treeSource='patcher.setattr("execution_boundary._caller_token", value)\n'),
 ]
 
+CASES += [case('dot-extension-module','def helper(): explicit_execution_authority()\n',path='impl/.py',signed=[['impl..py','helper']]),
+    case('invalid-module-stem','_explicit_authority_var\n',path='impl/..py')]
+CASES += [case('module-path-'+str(i),path=value,entry='_module_for_path') for i,value in enumerate(['.py','..py','...a','..','a.','a..py','a..','a.b.c','impl//a.py','/impl/a.py','//impl/a.py','impl/./a.py','','.','a/..','a/...','a/.','impl/a/a.py'])]
+
 
 def tree_argument(item):
     tree=ast.parse(item['treeSource'])
@@ -100,8 +104,13 @@ def source_case(module,item):
     # Each fixture starts cold: source cache keys do not include monkeypatched registry values.
     with tempfile.TemporaryDirectory(prefix='authority-source-') as temporary, patch.object(module,'REPO_ROOT',Path(temporary)), (patch.multiple(module,**changes) if changes else patch.dict({},{})):
         options=configuration(module)
-        values=module._registry_violations() if item.get('entry')=='_registry_violations' else module.scan_source(item['source'],rel_path=item['path'],**(dict(tree=tree_argument(item)) if 'treeSource' in item else {}))
-        return dict(options=options,expected=[asdict(v) for v in values])
+        try:
+            if item.get('entry')=='_module_for_path':expected=module._module_for_path(Path(item['path']))
+            else:
+                values=module._registry_violations() if item.get('entry')=='_registry_violations' else module.scan_source(item['source'],rel_path=item['path'],**(dict(tree=tree_argument(item)) if 'treeSource' in item else {}))
+                expected=[asdict(v) for v in values]
+        except ValueError as error:expected=dict(error=dict(type='builtins.ValueError',args=list(error.args)))
+        return dict(options=options,expected=expected)
 
 
 def native_case(engine,item):
@@ -110,9 +119,13 @@ def native_case(engine,item):
         graph=argument_columns(tree_argument(item))
     else:graph={}
     entry=item.get('entry','scan_source')
-    result=execute_native(engine,RULE,[] if entry=='_registry_violations' else [dict(path='input.py',source=item['source'])],
+    result=execute_native(engine,RULE,[] if entry in {'_registry_violations','_module_for_path'} else [dict(path='input.py',source=item['source'])],
         dict(item['options'],entryPoint=entry,argumentPath=item['path'],**graph))
     rows=result['diagnostics']
+    if len(rows)==1 and rows[0]['code']=='AUTH_PATH_ERROR':return dict(error=dict(type='builtins.ValueError',args=[rows[0]['parameters']['detail']])),result
+    if entry=='_module_for_path':
+        if len(rows)!=1 or rows[0]['code']!='AUTH_MODULE':raise ValueError('One native module name required')
+        return rows[0]['parameters']['value'],result
     if any(r['code']!='AUTH_ROW' for r in rows):raise ValueError('Unexpected authority diagnostic')
     return [{k:v for k,v in r['parameters'].items() if k!='ordinal'} for r in sorted(rows,key=lambda r:r['parameters']['ordinal'])],result
 
