@@ -225,7 +225,40 @@ pub(in crate::code_rule_dsl) fn after(
     Retained { key, inputs, rels, input_srcs }
 }
 
+/// `source` (input `rel`), or the last run's source of the same rows: same name, columns and digest, in any kept
+/// part. Read in place of the copy, so its column indexes and statistics are kept with it, not built again (0094
+/// §4). Its digest goes to `digests`, which the session's cut reads. An unheld column reads as 0 in both, so the
+/// rows read alike whatever the program.
+pub(in crate::code_rule_dsl) fn kept_source(
+    parts: Option<&HashMap<[u8; 32], Retained>>,
+    rel: &str,
+    source: Arc<dyn Source>,
+    digests: &mut HashMap<String, u64>,
+) -> Arc<dyn Source> {
+    let Some(parts) = parts else { return source };
+    let d = digest(source.as_ref());
+    digests.insert(rel.to_owned(), d);
+    let columns = source.columns();
+    parts
+        .values()
+        .find_map(|p| p.input_srcs.get(rel).filter(|s| p.inputs.get(rel) == Some(&d) && s.columns() == columns).cloned())
+        .unwrap_or(source)
+}
+
 impl Retained {
+    /// The inputs of program `key` whose rows are as the last run had them (`inputs`, each input's digest): the
+    /// last run's sources of them, read again in place of this run's copies, so their column indexes and
+    /// statistics are kept with them (0094 §4), not built again.
+    pub(in crate::code_rule_dsl) fn same_inputs(&self, key: [u8; 32], inputs: &HashMap<String, u64>) -> Vec<(String, Arc<dyn Source>)> {
+        if self.key != key {
+            return Vec::new();
+        }
+        inputs
+            .iter()
+            .filter(|(rel, d)| self.inputs.get(*rel) == Some(*d))
+            .filter_map(|(rel, _)| self.input_srcs.get(rel).map(|s| (rel.clone(), Arc::clone(s))))
+            .collect()
+    }
     /// Whether the last run's rows of a relation or an input are kept.
     pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
         self.rels.contains_key(rel) || self.input_srcs.contains_key(rel)
