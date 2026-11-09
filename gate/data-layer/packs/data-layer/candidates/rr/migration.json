@@ -2295,6 +2295,16 @@
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-settings.rr",
       "sha256": "b1817dc6501c20032898897131416bc02dee84bb90f70139741ec68636f2a693",
       "origin": "Share native step settings and ordered producer rows across exact API, production selection and signed reporting contracts"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+      "sha256": "eae0ab4168e65b361f80644447053b03d8b2f0cd62800976ebaffa6de43b4850",
+      "origin": "Authored native rules from pinned data-layer source; acceptance status remains separate"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-signing.rr",
+      "sha256": "f31d712c527c51d6044f0281cd1d01ef414a8a22563e41fd3362a56e6766012f",
+      "origin": "Authored native rules from pinned data-layer source; acceptance status remains separate"
     }
   ],
   "rules": [
@@ -2803,8 +2813,9 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-execution-authority-bypass.json",
       "legacySha256": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+      "ruleSha256": "eae0ab4168e65b361f80644447053b03d8b2f0cd62800976ebaffa6de43b4850"
     },
     {
       "check": "impl_direct_execution",

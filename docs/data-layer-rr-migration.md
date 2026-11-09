@@ -2391,3 +2391,18 @@ Final `b73d28aab` is merged into the root engine. All 145 focused engine tests a
 The broad inventory still requires two traversal tests and 44 readiness tests.
 The full migration gate and the combined step-suite replay on this engine remain open.
 Seven absent translations and earlier acceptance gaps remain open.
+
+### 2026-11-09 — Authority scanner and registry translation
+
+The [authority checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-authority-scanner-registry-checkpoint.json.gz) records six failing original tests before implementation.
+All seven original tests and 50 supplemental cases now match complete findings, including ordering and duplicates.
+The source oracle uses a fresh cache for each registry fixture. Its cache key omits patched registry values.
+Native rules preserve raw-text triggers and the collector's nested function-depth behavior.
+No native engine change supports this translation. The rule remains a draft.
+Caller-supplied ASTs, production, helpers, CLI, and update acceptance remain open.
+The inventory now contains 94 authored drafts and six absent translations.
+
+The broader step replay on Final b73 passes 163 of 164 tests.
+Its STEP039 positive fails, as do two supplemental detector shards.
+Disabling the engine's existing empty-join optimization restores the positive in a diagnostic run.
+That control identifies the next engine investigation. It does not provide acceptance or change the production defaults.

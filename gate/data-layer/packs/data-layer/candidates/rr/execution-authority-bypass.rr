@@ -5,3 +5,75 @@
 .scope include "**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_execution_authority_bypass.py
 .violation AuthRow(at: span, ordinal: number, path: symbol, line: number, code: symbol, message: symbol) code "AUTH_ROW" "{message}"
+#include "python/ast.rr"
+
+.decl auth_signed(i: number, module: symbol, function: symbol)
+auth_signed(i,m,f) :- option_item("signedModules",i,m), option_item("signedFunctions",i,f).
+.decl auth_curated(module: symbol, function: symbol)
+auth_curated(m,f) :- option_item("curatedModules",i,m), option_item("curatedFunctions",i,f).
+.decl auth_private_exception(path: symbol, function: symbol)
+auth_private_exception(p,f) :- option_item("privateExceptionModules",i,p), option_item("privateExceptionFunctions",i,f).
+.decl auth_explicit_exception(path: symbol, function: symbol)
+auth_explicit_exception(p,f) :- option_item("explicitExceptionModules",i,p), option_item("explicitExceptionFunctions",i,f).
+.decl auth_private(symbol: symbol)
+auth_private(s) :- option_item("privateSymbols",_,s).
+.decl auth_marker(value: symbol)
+auth_marker(s) :- option_item("monkeypatchMarkers",_,s).
+
+// The source preserves signed registry order and duplicate entries; missing entries sort by both fields.
+AuthRow(@place("",0),i,"l2050_transaction/execution_authority_tokens.py",0,"AUTH004",cat("signed explicit execution authority callsite is not in the curated set: ",m,":",f)) :-
+    option("entryPoint","_registry_violations"), auth_signed(i,m,f), !auth_curated(m,f).
+.decl auth_missing(module: symbol, function: symbol)
+auth_missing(m,f) :- auth_curated(m,f), !auth_signed(_,m,f).
+AuthRow(@place("",0),n+i,"l2050_transaction/execution_authority_tokens.py",0,"AUTH005",cat("curated explicit execution authority callsite is unsigned: ",m,":",f)) :-
+    option("entryPoint","_registry_violations"), auth_missing(m,f), n = count : { auth_signed(_,_,_) },
+    i = count : { auth_missing(a,b), (a < m ; a = m, b < f) }.
+
+.decl auth_trigger(value: symbol)
+auth_trigger("explicit_execution_authority"). auth_trigger("_explicit_authority_var"). auth_trigger("_legacy_boundary_var").
+auth_trigger("verify_callsite_authorization"). auth_trigger("_caller_token").
+.decl auth_triggered(d: number)
+auth_triggered(d) :- source(d,span), text(span,raw), auth_trigger(value), contains(value,raw).
+.decl auth_doc(d: number, path: symbol, module: symbol)
+auth_doc(d,p,@replace_all(@replace_all(p,"\\.[^./]*\\z",""),"/",".")) :-
+    option("entryPoint","scan_source"), option("argumentPath",p), option_item("inputFiles",_,input), doc(d,input,_), doc_role(d,"primary"), !syntax_error(d,_,_), auth_triggered(d).
+
+// The collector enters definitions before every AST child, including decorators and defaults.
+// Its function-depth counter survives a nested class; its spelling differs from Python __qualname__ there.
+.decl auth_scope(n: node, qualname: symbol, depth: number)
+auth_scope(n,"",0) :- auth_doc(d,_,_), docof(n,d), kind(n,"module").
+auth_scope(n,q,depth) :- auth_scope(p,q,depth), ast_parent(n,p), !kind(n,"class_definition"), !kind(n,"function_definition").
+auth_scope(n,@dot(q,@nfkc(name)),depth) :- auth_scope(p,q,depth), ast_parent(n,p), kind(n,"class_definition"), def_name(n,name).
+auth_scope(n,@dot(q,@nfkc(name)),1) :- auth_scope(p,q,0), ast_parent(n,p), kind(n,"function_definition"), def_name(n,name).
+auth_scope(n,@dot(@dot(q,"<locals>"),@nfkc(name)),depth+1) :- auth_scope(p,q,depth), depth > 0, ast_parent(n,p), kind(n,"function_definition"), def_name(n,name).
+.decl auth_qual(n: node, qualname: symbol)
+auth_qual(n,q) :- auth_scope(n,q,_), q != "".
+auth_qual(n,"<module>") :- auth_scope(n,"",_).
+
+// CPython Call.args includes starred positionals and excludes keyword arguments.
+.decl auth_arg_slot(list: node, index: number)
+auth_arg_slot(l,i) :- kind(l,"argument_list"), child(l,n,i), !kind(n,"keyword_argument"), !kind(n,"dictionary_splat"), !kind(n,"comment").
+.decl auth_arg(call: node, index: number, value: node)
+auth_arg(c,i,v) :- kind(c,"call"), field(c,"arguments",l), auth_arg_slot(l,j), child(l,raw,j), unparen(raw,v), i = count : { auth_arg_slot(l,k), k < j }.
+.decl auth_leaf(n: node, name: symbol)
+auth_leaf(n,@nfkc(s)) :- kind(n,"identifier"), text(n,s).
+auth_leaf(n,@nfkc(s)) :- kind(n,"attribute"), field(n,"attribute",a), text(a,s).
+.decl auth_callee(c: node, func: node, name: symbol)
+auth_callee(c,f,s) :- kind(c,"call"), field(c,"function",raw), unparen(raw,f), auth_leaf(f,s).
+.decl auth_symbol(n: node, symbol: symbol)
+auth_symbol(n,@nfkc(s)) :- ast_name(n,s), auth_private(@nfkc(s)).
+auth_symbol(n,s) :- kind(n,"attribute"), auth_leaf(n,s), auth_private(s).
+
+.decl auth_monkeypatch(c: node)
+auth_monkeypatch(c) :- auth_callee(c,f,"setattr"), kind(f,"attribute"), auth_arg(c,0,a), str_const(a,s), auth_marker(marker), contains(marker,s).
+auth_monkeypatch(c) :- auth_callee(c,f,"setattr"), kind(f,"attribute"), auth_arg(c,0,a), !str_const(a,_), auth_arg(c,1,b), str_const(b,s),
+    (auth_private(s) ; s = "_caller_token" ; s = "verify_callsite_authorization"), auth_leaf(a,"execution_boundary").
+
+.decl auth_event(n: node, code: symbol, message: symbol)
+auth_event(n,"AUTH001",cat("direct access to private execution authority ContextVar ",s)) :-
+    auth_symbol(n,s), docof(n,d), auth_doc(d,p,_), p != "l2050_transaction/execution_boundary.py", auth_qual(n,q), !auth_private_exception(p,q).
+auth_event(c,"AUTH002","explicit_execution_authority() may only be called from signed callsites; route through explicit_plan_execution_scope or update the signed token registry") :-
+    auth_callee(c,_,"explicit_execution_authority"), docof(c,d), auth_doc(d,p,m), auth_qual(c,q), !auth_signed(_,m,q), !auth_explicit_exception(p,q).
+auth_event(c,"AUTH003","monkeypatching execution authority internals is forbidden") :-
+    auth_monkeypatch(c), docof(c,d), auth_doc(d,p,_), auth_qual(c,q), !auth_private_exception(p,q).
+AuthRow(@place("",0),i,p,l,code,message) :- auth_event(n,code,message), docof(n,d), auth_doc(d,p,_), line(n,l), visit_index(n,i).
