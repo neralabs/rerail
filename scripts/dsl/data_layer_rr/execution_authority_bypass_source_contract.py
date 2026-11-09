@@ -1,5 +1,6 @@
 """Record complete authority scanner and registry values; replay without importing Python detectors."""
 import argparse
+import ast
 from dataclasses import asdict
 import importlib
 from pathlib import Path
@@ -70,6 +71,28 @@ CASES=[case('empty'),case('strings-and-comments','"_explicit_authority_var"\n# e
 ]
 
 
+CASES += [
+    case('tree-overrides-clean-source','pass\n',treeSource='_explicit_authority_var\n'),
+    case('tree-overrides-invalid-source','def broken(:\n',treeSource='explicit_execution_authority()\n'),
+    case('tree-can-be-clean','_explicit_authority_var\n',treeSource='pass\n'),
+    case('tree-no-text-trigger','pass\n',treeSource='obj._legacy_boundary_var\n'),
+    case('tree-preserves-assigned-locations','pass\n',treeSource='explicit_execution_authority()\n',lineIncrement=40),
+    case('tree-preserves-duplicate-occurrences','pass\n',treeSource='_explicit_authority_var\n',duplicate=True),
+    case('tree-does-not-normalize-constructed-names','pass\n',treeSource='_explicit_authority_var\n',rename='_explicit_authority_ｖar'),
+    case('tree-nested-class','pass\n',treeSource='def f():\n class C:\n  def g(self): explicit_execution_authority()\n',signed=[['impl.fake.authority_sample','f.C.<locals>.g']]),
+    case('tree-monkeypatch','pass\n',treeSource='patcher.setattr(execution_boundary, "_caller_token", value)\n'),
+    case('tree-monkeypatch-string','pass\n',treeSource='patcher.setattr("execution_boundary._caller_token", value)\n'),
+]
+
+
+def tree_argument(item):
+    tree=ast.parse(item['treeSource'])
+    if item.get('lineIncrement'):ast.increment_lineno(tree,item['lineIncrement'])
+    if item.get('duplicate'):tree.body.append(tree.body[0])
+    if 'rename' in item:tree.body[0].value.id=item['rename']
+    return tree
+
+
 def source_case(module,item):
     changes={}
     if 'signed' in item:changes['EXPLICIT_EXECUTION_AUTHORITY_CALLSITES']=tuple(SimpleNamespace(module=m,function=f) for m,f in item['signed'])
@@ -77,14 +100,18 @@ def source_case(module,item):
     # Each fixture starts cold: source cache keys do not include monkeypatched registry values.
     with tempfile.TemporaryDirectory(prefix='authority-source-') as temporary, patch.object(module,'REPO_ROOT',Path(temporary)), (patch.multiple(module,**changes) if changes else patch.dict({},{})):
         options=configuration(module)
-        values=module._registry_violations() if item.get('entry')=='_registry_violations' else module.scan_source(item['source'],rel_path=item['path'])
+        values=module._registry_violations() if item.get('entry')=='_registry_violations' else module.scan_source(item['source'],rel_path=item['path'],**(dict(tree=tree_argument(item)) if 'treeSource' in item else {}))
         return dict(options=options,expected=[asdict(v) for v in values])
 
 
 def native_case(engine,item):
+    if 'treeSource' in item:
+        from execution_authority_bypass_port import argument_columns
+        graph=argument_columns(tree_argument(item))
+    else:graph={}
     entry=item.get('entry','scan_source')
     result=execute_native(engine,RULE,[] if entry=='_registry_violations' else [dict(path='input.py',source=item['source'])],
-        dict(item['options'],entryPoint=entry,argumentPath=item['path']))
+        dict(item['options'],entryPoint=entry,argumentPath=item['path'],**graph))
     rows=result['diagnostics']
     if any(r['code']!='AUTH_ROW' for r in rows):raise ValueError('Unexpected authority diagnostic')
     return [{k:v for k,v in r['parameters'].items() if k!='ordinal'} for r in sorted(rows,key=lambda r:r['parameters']['ordinal'])],result

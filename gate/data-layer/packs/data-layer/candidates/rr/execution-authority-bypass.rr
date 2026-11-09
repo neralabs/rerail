@@ -29,6 +29,44 @@ AuthRow(@place("",0),n+i,"l2050_transaction/execution_authority_tokens.py",0,"AU
     option("entryPoint","_registry_violations"), auth_missing(m,f), n = count : { auth_signed(_,_,_) },
     i = count : { auth_missing(a,b), (a < m ; a = m, b < f) }.
 
+// External caller ASTs use raw structural columns. Production still reads native parser facts.
+.decl auth_graph()
+auth_graph() :- option_item("astKinds",0,_).
+.decl auth_kind(n: node, k: symbol)
+auth_kind(n,k) :- !auth_graph(), kind(n,k).
+.decl auth_kind_name(py: symbol, core: symbol)
+auth_kind_name("Module","module"). auth_kind_name("ClassDef","class_definition").
+auth_kind_name("FunctionDef","function_definition"). auth_kind_name("AsyncFunctionDef","function_definition").
+auth_kind_name("Name","identifier"). auth_kind_name("Attribute","attribute"). auth_kind_name("Call","call").
+auth_kind(n,k) :- option_item("astKinds",n,py), auth_kind_name(py,k).
+.decl auth_docof(n: node, d: number)
+auth_docof(n,d) :- !auth_graph(), docof(n,d).
+auth_docof(n,0) :- option_item("astKinds",n,_).
+.decl auth_parent(n: node, p: node)
+auth_parent(n,p) :- !auth_graph(), ast_parent(n,p).
+auth_parent(n,to_number(p)) :- option_item("astParents",n,p), p != "-1".
+.decl auth_field(n: node, f: symbol, v: node)
+auth_field(n,f,v) :- !auth_graph(), field(n,f,v).
+auth_field(n,"function",v) :- option_item("astParents",v,p), n = to_number(p), option_item("astFields",v,"func").
+.decl auth_unparen(n: node, v: node)
+auth_unparen(n,v) :- !auth_graph(), unparen(n,v).
+auth_unparen(n,n) :- option_item("astKinds",n,_).
+.decl auth_def(n: node, name: symbol)
+auth_def(n,@nfkc(name)) :- !auth_graph(), def_name(n,name).
+auth_def(n,name) :- option_item("astNames",n,name), (auth_kind(n,"class_definition") ; auth_kind(n,"function_definition")).
+.decl auth_name(n: node, name: symbol)
+auth_name(n,@nfkc(name)) :- !auth_graph(), ast_name(n,name).
+auth_name(n,name) :- option_item("astKinds",n,"Name"), option_item("astIds",n,name).
+.decl auth_string(n: node, value: symbol)
+auth_string(n,value) :- !auth_graph(), str_const(n,value).
+auth_string(n,value) :- option_item("astKinds",n,"Constant"), option_item("astValueTypes",n,"str"), option_item("astStrings",n,value).
+.decl auth_line(n: node, l: number)
+auth_line(n,l) :- !auth_graph(), line(n,l).
+auth_line(n,to_number(l)) :- option_item("astLines",n,l).
+.decl auth_visit(n: node, i: number)
+auth_visit(n,i) :- !auth_graph(), visit_index(n,i).
+auth_visit(n,n) :- option_item("astKinds",n,_).
+
 .decl auth_trigger(value: symbol)
 auth_trigger("explicit_execution_authority"). auth_trigger("_explicit_authority_var"). auth_trigger("_legacy_boundary_var").
 auth_trigger("verify_callsite_authorization"). auth_trigger("_caller_token").
@@ -36,44 +74,54 @@ auth_trigger("verify_callsite_authorization"). auth_trigger("_caller_token").
 auth_triggered(d) :- source(d,span), text(span,raw), auth_trigger(value), contains(value,raw).
 .decl auth_doc(d: number, path: symbol, module: symbol)
 auth_doc(d,p,@replace_all(@replace_all(p,"\\.[^./]*\\z",""),"/",".")) :-
-    option("entryPoint","scan_source"), option("argumentPath",p), option_item("inputFiles",_,input), doc(d,input,_), doc_role(d,"primary"), !syntax_error(d,_,_), auth_triggered(d).
+    option("entryPoint","scan_source"), option("argumentPath",p), option_item("inputFiles",_,input), doc(d,input,_), doc_role(d,"primary"), !syntax_error(d,_,_), !auth_graph(), auth_triggered(d).
 
-// The collector enters definitions before every AST child, including decorators and defaults.
-// Its function-depth counter survives a nested class; its spelling differs from Python __qualname__ there.
-.decl auth_scope(n: node, qualname: symbol, depth: number)
-auth_scope(n,"",0) :- auth_doc(d,_,_), docof(n,d), kind(n,"module").
-auth_scope(n,q,depth) :- auth_scope(p,q,depth), ast_parent(n,p), !kind(n,"class_definition"), !kind(n,"function_definition").
-auth_scope(n,@dot(q,@nfkc(name)),depth) :- auth_scope(p,q,depth), ast_parent(n,p), kind(n,"class_definition"), def_name(n,name).
-auth_scope(n,@dot(q,@nfkc(name)),1) :- auth_scope(p,q,0), ast_parent(n,p), kind(n,"function_definition"), def_name(n,name).
-auth_scope(n,@dot(@dot(q,"<locals>"),@nfkc(name)),depth+1) :- auth_scope(p,q,depth), depth > 0, ast_parent(n,p), kind(n,"function_definition"), def_name(n,name).
+auth_doc(0,p,@replace_all(@replace_all(p,"\\.[^./]*\\z",""),"/",".")) :- auth_graph(), option("argumentPath",p).
+
+// The collector's scope includes definition decorators, defaults, and annotations.
+// A function inside a class nested in a function still gains <locals>; a class itself does not.
+.decl auth_ancestor(n: node, p: node)
+auth_ancestor(n,p) :- auth_parent(n,p).
+auth_ancestor(n,p) :- auth_ancestor(n,q), auth_parent(q,p).
+.decl auth_frame(n: node, f: node)
+auth_frame(n,n) :- auth_def(n,_).
+auth_frame(n,f) :- auth_ancestor(n,f), auth_def(f,_).
+.decl auth_function_parent(f: node)
+auth_function_parent(f) :- auth_ancestor(f,p), auth_kind(p,"function_definition").
+.decl auth_piece(f: node, name: symbol)
+auth_piece(f,name) :- auth_kind(f,"class_definition"), auth_def(f,name).
+auth_piece(f,name) :- auth_kind(f,"function_definition"), auth_def(f,name), !auth_function_parent(f).
+auth_piece(f,cat("<locals>.",name)) :- auth_kind(f,"function_definition"), auth_def(f,name), auth_function_parent(f).
 .decl auth_qual(n: node, qualname: symbol)
-auth_qual(n,q) :- auth_scope(n,q,_), q != "".
-auth_qual(n,"<module>") :- auth_scope(n,"",_).
+auth_qual(n,q) :- auth_docof(n,d), auth_doc(d,_,_), auth_frame(n,_), q = join name by i sep "." : { auth_frame(n,f), auth_piece(f,name), auth_visit(f,i) }.
+auth_qual(n,"<module>") :- auth_docof(n,d), auth_doc(d,_,_), !auth_frame(n,_).
 
 // CPython Call.args includes starred positionals and excludes keyword arguments.
 .decl auth_arg_slot(list: node, index: number)
-auth_arg_slot(l,i) :- kind(l,"argument_list"), child(l,n,i), !kind(n,"keyword_argument"), !kind(n,"dictionary_splat"), !kind(n,"comment").
+auth_arg_slot(l,i) :- auth_kind(l,"argument_list"), child(l,n,i), !auth_kind(n,"keyword_argument"), !auth_kind(n,"dictionary_splat"), !auth_kind(n,"comment").
 .decl auth_arg(call: node, index: number, value: node)
-auth_arg(c,i,v) :- kind(c,"call"), field(c,"arguments",l), auth_arg_slot(l,j), child(l,raw,j), unparen(raw,v), i = count : { auth_arg_slot(l,k), k < j }.
+auth_arg(c,i,v) :- auth_kind(c,"call"), auth_field(c,"arguments",l), auth_arg_slot(l,j), child(l,raw,j), auth_unparen(raw,v), i = count : { auth_arg_slot(l,k), k < j }.
+auth_arg(c,to_number(i),v) :- auth_kind(c,"call"), option_item("astParents",v,parent), c = to_number(parent), option_item("astFields",v,"args"), option_item("astOrdinals",v,i).
 .decl auth_leaf(n: node, name: symbol)
-auth_leaf(n,@nfkc(s)) :- kind(n,"identifier"), text(n,s).
-auth_leaf(n,@nfkc(s)) :- kind(n,"attribute"), field(n,"attribute",a), text(a,s).
+auth_leaf(n,s) :- auth_name(n,s).
+auth_leaf(n,@nfkc(s)) :- !auth_graph(), kind(n,"attribute"), field(n,"attribute",a), text(a,s).
+auth_leaf(n,s) :- option_item("astKinds",n,"Attribute"), option_item("astAttrs",n,s).
 .decl auth_callee(c: node, func: node, name: symbol)
-auth_callee(c,f,s) :- kind(c,"call"), field(c,"function",raw), unparen(raw,f), auth_leaf(f,s).
+auth_callee(c,f,s) :- auth_kind(c,"call"), auth_field(c,"function",raw), auth_unparen(raw,f), auth_leaf(f,s).
 .decl auth_symbol(n: node, symbol: symbol)
-auth_symbol(n,@nfkc(s)) :- ast_name(n,s), auth_private(@nfkc(s)).
-auth_symbol(n,s) :- kind(n,"attribute"), auth_leaf(n,s), auth_private(s).
+auth_symbol(n,s) :- auth_name(n,s), auth_private(s).
+auth_symbol(n,s) :- auth_kind(n,"attribute"), auth_leaf(n,s), auth_private(s).
 
 .decl auth_monkeypatch(c: node)
-auth_monkeypatch(c) :- auth_callee(c,f,"setattr"), kind(f,"attribute"), auth_arg(c,0,a), str_const(a,s), auth_marker(marker), contains(marker,s).
-auth_monkeypatch(c) :- auth_callee(c,f,"setattr"), kind(f,"attribute"), auth_arg(c,0,a), !str_const(a,_), auth_arg(c,1,b), str_const(b,s),
+auth_monkeypatch(c) :- auth_callee(c,f,"setattr"), auth_kind(f,"attribute"), auth_arg(c,0,a), auth_string(a,s), auth_marker(marker), contains(marker,s).
+auth_monkeypatch(c) :- auth_callee(c,f,"setattr"), auth_kind(f,"attribute"), auth_arg(c,0,a), !auth_string(a,_), auth_arg(c,1,b), auth_string(b,s),
     (auth_private(s) ; s = "_caller_token" ; s = "verify_callsite_authorization"), auth_leaf(a,"execution_boundary").
 
 .decl auth_event(n: node, code: symbol, message: symbol)
 auth_event(n,"AUTH001",cat("direct access to private execution authority ContextVar ",s)) :-
-    auth_symbol(n,s), docof(n,d), auth_doc(d,p,_), p != "l2050_transaction/execution_boundary.py", auth_qual(n,q), !auth_private_exception(p,q).
+    auth_symbol(n,s), auth_docof(n,d), auth_doc(d,p,_), p != "l2050_transaction/execution_boundary.py", auth_qual(n,q), !auth_private_exception(p,q).
 auth_event(c,"AUTH002","explicit_execution_authority() may only be called from signed callsites; route through explicit_plan_execution_scope or update the signed token registry") :-
-    auth_callee(c,_,"explicit_execution_authority"), docof(c,d), auth_doc(d,p,m), auth_qual(c,q), !auth_signed(_,m,q), !auth_explicit_exception(p,q).
+    auth_callee(c,_,"explicit_execution_authority"), auth_docof(c,d), auth_doc(d,p,m), auth_qual(c,q), !auth_signed(_,m,q), !auth_explicit_exception(p,q).
 auth_event(c,"AUTH003","monkeypatching execution authority internals is forbidden") :-
-    auth_monkeypatch(c), docof(c,d), auth_doc(d,p,_), auth_qual(c,q), !auth_private_exception(p,q).
-AuthRow(@place("",0),i,p,l,code,message) :- auth_event(n,code,message), docof(n,d), auth_doc(d,p,_), line(n,l), visit_index(n,i).
+    auth_monkeypatch(c), auth_docof(c,d), auth_doc(d,p,_), auth_qual(c,q), !auth_private_exception(p,q).
+AuthRow(@place("",0),i,p,l,code,message) :- auth_event(n,code,message), auth_docof(n,d), auth_doc(d,p,_), auth_line(n,l), auth_visit(n,i).

@@ -2406,3 +2406,10 @@ The broader step replay on Final b73 passes 163 of 164 tests.
 Its STEP039 positive fails, as do two supplemental detector shards.
 Disabling the engine's existing empty-join optimization restores the positive in a diagnostic run.
 That control identifies the next engine investigation. It does not provide acceptance or change the production defaults.
+
+The [expanded authority checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-authority-scanner-registry-checkpoint-v2.json.gz) supersedes the scanner coverage count above.
+All seven original tests and sixty supplemental cases pass on repaired Final `004df7e75`.
+Ten cases supply AST arguments independently from source text.
+They preserve changed source locations, repeated node occurrences, constructed identifier spellings, nested classes, and monkeypatch targets.
+The native rule receives structural columns and computes scope names and findings itself.
+Production, remaining helper and CLI contracts, workspace updates, and the full migration gate remain open.

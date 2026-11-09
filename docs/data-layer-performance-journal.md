@@ -9760,3 +9760,33 @@ The broad inventory includes 48 tests beyond the dedicated 164-test step suite.
 The two publication tests now pass. Two traversal tests and 44 readiness tests still require explicit acceptance.
 The step rule remains a draft. Seven absent translations and earlier migration gaps remain open.
 No full-repository cold run occurs.
+
+### 2026-11-09 — New authority translation and an engine regression from broader acceptance
+
+Commit `46771e787` preserves the native signing checkpoint. The fetched Final tip initially equals the merged `b73d28aab`.
+The optimized step-suite replay passes 163 of 164 original tests. Two supplemental detector shards also fail.
+An early progress message incorrectly calls the replay complete before the exit-status audit. The next message corrects that statement.
+The failed recordings remain available for comparison.
+
+The STEP039 positive finds a materializer inside a renamed payload marker but emits no finding.
+A fresh native cache reproduces the failure. Probes retain the materializer match, source location, and traversal order.
+The missing relation contains the fixed explanation text.
+The existing `RERAIL_KEEP_EMPTY_JOINS` diagnostic control restores the finding. Production defaults stay unchanged.
+
+A small program reproduces the defect without data-layer code.
+An empty recursive relation feeds another relation that also contains a literal fact.
+The empty-stratum shortcut discards that literal fact after it removes the inactive derivation rule.
+Commit `b35ffe401` adds the regression test and retains the failing native recording.
+Commit `4367e310b` prevents the shortcut from discarding strata that contain literal facts.
+The normal component path admits these initial rows. The reduced program now passes without diagnostic flags.
+
+Final advances to `004df7e75` during this investigation. Merge `219657a9a` adopts its Metal join changes before the new builds.
+The new debug build takes 46.928 seconds. Broader acceptance on this exact source cohort is still in progress.
+
+The [authority checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-authority-scanner-registry-checkpoint.json.gz) records the next rule translation.
+Its scaffold fails six original tests. Its native implementation passes all seven original tests and 50 complete supplemental comparisons.
+A source cache reuses facts across different patched registry values. Fresh source fixtures remove that contamination from the oracle.
+The native policy also preserves the raw-text trigger gate and the collector's function-depth behavior inside nested classes.
+Registry results retain duplicate unsigned entries and the sorted order of missing entries.
+This rule remains a draft. Caller-supplied ASTs, production, helpers, CLI, and workspace updates remain open.
+The inventory contains 94 authored drafts and six absent translations. These counts do not certify full migration acceptance.

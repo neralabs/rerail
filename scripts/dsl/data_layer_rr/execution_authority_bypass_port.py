@@ -21,8 +21,20 @@ def install(suite,module):
         return [module.AuthorityViolation(**{k:v for k,v in row['parameters'].items() if k!='ordinal'})
                 for row in sorted(rows,key=lambda r:r['parameters']['ordinal'])]
     def scan_source(source,*,rel_path,tree=None):
-        if tree is not None:raise NotImplementedError('Structured AST authority arguments remain outside this scanner checkpoint')
-        return result('scan_source',[dict(path='input.py',source=source)],dict(argumentPath=rel_path))
+        return result('scan_source',[dict(path='input.py',source=source)],dict(argumentPath=rel_path,**(argument_columns(tree) if tree is not None else {})))
     def registry():return result('_registry_violations')
     suite.replace(module,'scan_source',scan_source)
     suite.replace(module,'_registry_violations',registry)
+
+
+def argument_columns(tree):
+    import ast
+    from ast_transport import columns
+    result=columns(tree)
+    result['astStrings']=[]
+    pending=[tree]
+    while pending:
+        node=pending.pop()
+        result['astStrings'].append(node.value if isinstance(node,ast.Constant) and isinstance(node.value,str) else '')
+        pending.extend(reversed(list(ast.iter_child_nodes(node))))
+    return result
