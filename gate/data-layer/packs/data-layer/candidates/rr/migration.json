@@ -2106,7 +2106,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "10946603864803c63e72ec4940bcc61e11a1b10a2ec73e14ea915c54a504b36c",
+      "sha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "origin": "authored native translation; partial original-suite coverage"
     }
   ],
@@ -2577,7 +2577,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "10946603864803c63e72ec4940bcc61e11a1b10a2ec73e14ea915c54a504b36c"
+      "ruleSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3227,7 +3227,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "fe8c7721da7de1bd7e9e0535459338bfcba8be3515dfc141e57f704af25da517"
+        "sha256": "ed4e1c592ecf667dff4806fa2849e7e0e2a58bab7cb1bb40c7144bc1b4400b73"
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",

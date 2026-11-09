@@ -10,6 +10,19 @@ def install(suite, module):
     sources = Sources(ast.parse)
     suite.replace(ast, 'parse', sources.parse)
 
+    def initialize(value, code, file, line, message):
+        value.code, value.file, value.line, value.message = code, file, line, message
+    suite.replace(module.Violation, '__init__', initialize)
+
+    def render(value):
+        rows = suite.native('serverplan_steps', 'Violation.__str__', [],
+                            dict(argumentPath=str(value.file), rootPath=str(module.ROOT),
+                                 violationCode=value.code, violationLine=str(value.line), detail=value.message))
+        if len(rows) != 1 or rows[0]['code'] != 'SSP_VALUE':
+            raise ValueError('One native formatted violation required')
+        return rows[0]['parameters']['value']
+    suite.replace(module.Violation, '__str__', render)
+
     def options():
         return dict(canBatchAllowlist=list(module.CAN_BATCH_FALSE_ALLOWLIST),
                     runtimeStateAllowlist=list(module.LIFECYCLE_RUNTIME_STATE_ALLOWLIST),

@@ -6,6 +6,13 @@
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_steps.py
 #include "python/ast.rr"
 
+.decl ssp_display(path: symbol)
+ssp_display(".") :- option("entryPoint","Violation.__str__"), option("argumentPath",path), option("rootPath",path).
+ssp_display(@slice(path,strlen(root)+1,strlen(path))) :- option("entryPoint","Violation.__str__"), option("argumentPath",path), option("rootPath",root), prefix(cat(root,"/"),path).
+ssp_display(path) :- option("entryPoint","Violation.__str__"), option("argumentPath",path), option("rootPath",root), path != root, !prefix(cat(root,"/"),path).
+.violation SSPValue(at: span, value: symbol) code "SSP_VALUE" "{value}"
+SSPValue(@place("",0),cat(code,": ",path,":",line,": ",detail)) :- option("entryPoint","Violation.__str__"), ssp_display(path), option("violationCode",code), option("violationLine",line), option("detail",detail).
+
 // Direct API calls use their supplied AST's original source. Production calls
 // use the same relations over selected documents, without a Python callback.
 .decl ssp_doc(d: number, path: symbol)
