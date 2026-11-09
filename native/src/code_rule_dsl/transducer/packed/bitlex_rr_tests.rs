@@ -127,6 +127,21 @@ const CASES: &[(&str, &str)] = &[
     ("r(n) :- n = min (a, b) : { s(a, b) }.", "never"),
     ("r(n) :- n = min() : { s(a) }.", "never"),
     ("r(n) :- n = min(x: 1) : { s(a) }.", "never"),
+    // An aggregate as another's value: the inner one takes its `:` first. At a literal's start,
+    // `min (…) : {…}`: the atom read again as the aggregate's value.
+    ("r(n) :- n = sum min x : { s(x) } : { t(n) }, m = max sum x : { s(x) } + 1 : { t(m) }.", "19"),
+    ("r(n) :- n = sum min (x) : { s(x) } : { t(n) }, m = min min x by k : { s(x, k) } : { t(m) }.", "19"),
+    ("r(n) :- n = sum min min x : { a(x) } : { b(n) } : { c(n) }, k = sum join x sep \",\" : { s(x) } : { t(k) }.", "19"),
+    ("r(n) :- n = sum min(x) + 1 : { t(x) }, m = sum min() + 1 : { t(m) }, k = sum min - 1 : { t(k) }.", "19"),
+    ("r(n) :- min (x) : { s(x) } = n, max(y) : { s(y) } * 2 < n; mean (x + 1) : { s(x) } >= n, min(n).", "19"),
+    ("r(n) :- n = count : { mean (x) : { s(x) } > 1 }.", "19"),
+    // `min()` and a `:`: an aggregate with no value, which the engine refuses, wherever it is.
+    ("r(n) :- n = sum min() : { t(n) }.", "never"),
+    ("r(n) :- n = sum min /* c */ ( ) // d\n : { t(n) }.", "never"),
+    ("r(n) :- min() : { s(x) } = n.", "never"),
+    ("r(n) :- min(a: x) : { s(x) } = n.", "never"),
+    ("r(n) :- !min (x) : { s(x) } = n.", "never"),
+    ("r(n) :- min (x) : { s(x) }.", "never"),
     ("r(-1).", "06"),
     // Arithmetic: precedence, left to right; `-` and a number one leaf, across an extra too;
     // unary minus over a primary; parentheses; functor calls.
