@@ -285,6 +285,40 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
 mod tests {
     use super::*;
     #[test]
+    fn string_join_observes_deferred_sum_lookup_keys() {
+        let db = connection();
+        let shared = symbols(&db).unwrap();
+        let mut syms = Interner::for_loading(&shared);
+        let mut input = Rel::new("input", b"i");
+        input.push(&[i64::MAX]);
+        input.push(&[1]);
+        let mut values = Rel::new("values", b"ii");
+        values.push(&[i64::MAX, 7]);
+        let mut store = Store {
+            rels: vec![input, values, Rel::new("output", b"i")],
+            syms: shared,
+        };
+        let rule = parse_join(
+            &db,
+            "sum c0 _ 0 v0\nstrjoin c1 v0 _ 1:0 - x:2c v1\nhead v1",
+            &mut syms,
+        )
+        .unwrap();
+        let mut fresh = vec![Fresh::default(); 3];
+        assert!(
+            run_join(&rule, 2, &store, &mut syms, &mut fresh)
+                .unwrap_err()
+                .to_string()
+                .contains("overflow")
+        );
+        store.rels[0].push(&[-1]);
+        assert_eq!(
+            run_join(&rule, 2, &store, &mut syms, &mut fresh).unwrap(),
+            1
+        );
+        assert_eq!(syms.name(fresh[2].data[0]), "7");
+    }
+    #[test]
     fn native_sum_range_checks_follow_observation_after_aliases_and_filters() {
         let db = connection();
         let shared = symbols(&db).unwrap();
