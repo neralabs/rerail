@@ -1771,7 +1771,9 @@ struct HostLink {
 /// from its first leaf to its last. A node's span may run past those leaves: a root's holds the
 /// white space after its last statement, and a statement ending in a `;` its embedder wrote over
 /// no bytes holds the white space before it, which stands for nothing of the node's.
-fn node_extents(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
+/// On a named-only document a node's tokens are leaves too, recognized from the source (RER-131).
+fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
+    let nodes = &doc.data[..];
     const NONE_YET: (u32, u32) = (u32::MAX, 0);
     let join = |into: &mut (u32, u32), (start, end): (u32, u32)| {
         *into = (into.0.min(start), into.1.max(end));
@@ -1781,7 +1783,15 @@ fn node_extents(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
     let mut all = vec![NONE_YET; nodes.len()];
     for index in (0..nodes.len()).rev() {
         let rec = &nodes[index];
-        if rec.children == 0 {
+        let tokens = if doc.is_named_only_in_memory() { doc.transducer_tokens(index as u32) } else { Vec::new() };
+        for (_, _, span) in &tokens {
+            let (start, end) = (span.start as u32, span.end as u32);
+            join(&mut all[index], (start, end));
+            if segments.stands_for(span.clone()) {
+                join(&mut standing[index], (start, end));
+            }
+        }
+        if rec.children == 0 && tokens.is_empty() {
             all[index] = (rec.start, rec.end);
             if segments.stands_for(rec.start as usize..rec.end as usize) {
                 standing[index] = (rec.start, rec.end);
@@ -1920,7 +1930,7 @@ impl TapeDoc {
             segments: Arc::clone(&guest.source_map),
             host_errors: Arc::clone(&guest.host_errors),
             host: host.clone(),
-            extents: node_extents(&doc.data, &guest.source_map),
+            extents: node_extents(&doc, &guest.source_map),
         }));
         Ok(doc)
     }
@@ -3006,7 +3016,8 @@ impl crate::code_rule_dsl::origin::Origin for TapeDoc {
         Some(match &self.host {
             None => FileRanges::one(range),
             Some(link) => {
-                let (start, end) = *link.extents.get(id)?;
+                // A recognized token has no record (`TOKEN_ID_BIT`): a leaf, its extent is its span.
+                let (start, end) = if id & TOKEN_ID_BIT != 0 { (range.start as u32, range.end as u32) } else { *link.extents.get(id)? };
                 link.segments
                     .file_ranges(start as usize..end as usize)
                     .bridged(&link.host.source)
@@ -3025,7 +3036,8 @@ impl crate::code_rule_dsl::origin::Origin for TapeDoc {
         Some(match &self.host {
             None => range,
             Some(link) => {
-                let (start, end) = *link.extents.get(id)?;
+                // A recognized token has no record (`TOKEN_ID_BIT`): a leaf, its extent is its span.
+                let (start, end) = if id & TOKEN_ID_BIT != 0 { (range.start as u32, range.end as u32) } else { *link.extents.get(id)? };
                 link.segments.bounds(start as usize..end as usize)
             }
         })
