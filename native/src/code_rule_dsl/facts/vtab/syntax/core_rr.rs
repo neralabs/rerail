@@ -144,6 +144,20 @@ pub(super) fn is_punct(t: &str) -> bool {
     matches!(t, "(" | ")" | "[" | "]" | "{" | "}" | "," | ";" | ":" | "." | "\"" | "'" | "`")
 }
 
+/// Whether a node of `kind` is a definition unit (decision 0083 §0): the unit of identity and change, whose own code
+/// `def_digest` hashes. A document's root is one too.
+pub(super) fn is_unit(family: Family, kind: &str) -> bool {
+    match family {
+        Family::Python => matches!(kind, "function_definition" | "class_definition"),
+        _ => false,
+    }
+}
+
+/// A unit's name: the text of its first named child that is an identifier (Python's `def f`, `class C`).
+pub(super) fn unit_name<'a>(f: &'a Facts, dialect: &Dialect, id: u32) -> Option<&'a str> {
+    f.children(id).iter().copied().find(|&c| f.named(c) && dialect.name(f, c) == "identifier").map(|c| f.text(c))
+}
+
 pub(super) fn is_comment(kind: &str) -> bool {
     kind.contains("comment")
 }
@@ -514,7 +528,34 @@ pub(super) struct CoreRows {
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
+    /// `def_digest(n, h)`: each definition unit's own-content hash (`digests`).
+    def_digest: Vec<[i64; 2]>,
+    ast_match: Vec<[i64; 4]>,
 }
+
+/// Every match of `re` in `text`, each named group (and the whole match, group 0) that takes part: (match, group,
+/// start, end), byte offsets in `text`. `rx_span`'s scan (`Extra::document`).
+pub(super) fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std::sync::Arc<[(u32, u32, u32, u32)]> {
+    let mut out = Vec::new();
+    for (j, caps) in re.captures_iter(text).enumerate() {
+        for (g, name) in names.iter().enumerate() {
+            if name.is_none() {
+                continue;
+            }
+            if let Some(m) = caps.get(g) {
+                out.push((j as u32, g as u32, m.start() as u32, m.end() as u32));
+            }
+        }
+    }
+    out.into()
+}
+
+/// A pattern `rx_span` runs: over which spans, its text, its regex, and over a document's source or lines its
+/// block program (`transducer::packed::regex_block`), which marks where a match can end.
+pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::SpanIn, &'a str, regex::Regex, Option<crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter>);
+
+/// Texts past this are scanned where they are, not kept in `Extra::rx_memo`.
+pub(super) const RX_MEMO_TEXT: usize = 4096;
 
 impl CoreRows {
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
@@ -624,6 +665,7 @@ impl CoreRows {
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
     /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
@@ -691,16 +733,65 @@ impl CoreRows {
         }
     }
 
+    /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
+    /// `g` captured node `c`; capture "" is `n` itself. ast-grep matches each pattern over the document's tree once;
+    /// a match is the projected node of its kind and byte range (the outermost, when nodes share both).
+    pub(super) fn patterns(&mut self, p: &Projected, dialect: &Dialect, lang: crate::code_rule_dsl::language::GrammarDialect, patterns: &[(&str, ast_grep_core::matcher::Pattern)], string: &mut dyn FnMut(&str) -> usize) {
+        if patterns.is_empty() {
+            return;
+        }
+        let f = &*p.facts;
+        let mut at: std::collections::HashMap<(u32, u32, &str), u32> = std::collections::HashMap::new();
+        for local in 0..p.len() {
+            let id = p.core[local as usize];
+            at.entry((f.start[id as usize], f.end[id as usize], dialect.name(f, id))).or_insert(local);
+        }
+        let tree = crate::code_rule_dsl::language::adapter::ast_grep(lang, &f.source);
+        let node_of = |n: &ast_grep_core::Node<'_, _>| {
+            let r = n.range();
+            at.get(&(r.start as u32, r.end as u32, &*n.kind())).map(|&local| p.global(local))
+        };
+        let empty = string("") as i64;
+        for (text, pattern) in patterns {
+            let pat = string(text) as i64;
+            let names = crate::code_rule_dsl::logic::rr::single_metavars(text);
+            for m in tree.root().find_all(pattern) {
+                let Some(n) = node_of(&m) else { continue };
+                let captures: Option<Vec<(i64, i64)>> = names
+                    .iter()
+                    .map(|name| m.get_env().get_match(name).and_then(|c| node_of(c)).map(|c| (string(name) as i64, c)))
+                    .collect();
+                let Some(captures) = captures else { continue };
+                self.ast_match.push([pat, n, empty, n]);
+                self.ast_match.extend(captures.into_iter().map(|(g, c)| [pat, n, g, c]));
+            }
+        }
+    }
     /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
     /// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
     /// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
     /// the expression inside, so `(a)` and `a`, `'x'` and `"x"`, or `0x10` and `16`, hash the same. Made when a
     /// program reads it: every node's hash is a 64-character symbol.
-    pub(super) fn digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
+    ///
+    /// `def_digest(n, h)` (decision 0083 §0): one row per definition unit, the document's root and each node `is_unit`
+    /// names, hashing the unit's own code. It is `tree_digest`'s hash with each nested unit replaced by its kind and
+    /// name, so editing a method's body changes the method's digest and not its class's or its module's.
+    pub(super) fn digests(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, trees: bool, units: bool) {
         use sha2::{Digest, Sha256};
         let f = &*p.facts;
         // Children have greater ids than their parent (preorder), so one pass from the end sees them first.
         let mut hash: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+        // The same hash, each nested unit standing for its kind and name.
+        let mut own: Vec<[u8; 32]> = vec![[0; 32]; f.len()];
+        let unit = |id: u32| is_unit(dialect.family, dialect.name(f, id));
+        let placeholder = |id: u32| -> [u8; 32] {
+            let mut h = Sha256::new();
+            h.update(b"unit\0");
+            h.update(dialect.name(f, id).as_bytes());
+            h.update([0]);
+            h.update(unit_name(f, dialect, id).unwrap_or_default().as_bytes());
+            h.finalize().into()
+        };
         for id in (0..f.len() as u32).rev() {
             let kind = dialect.name(f, id);
             let kept: Vec<u32> = f
@@ -714,36 +805,52 @@ impl CoreRows {
                 .collect();
             if kind == "parenthesized_expression" && kept.len() == 1 {
                 hash[id as usize] = hash[kept[0] as usize];
+                own[id as usize] = own[kept[0] as usize];
                 continue;
             }
             let interpolated = dialect.family == Family::Python
                 && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
-            let mut h = Sha256::new();
-            h.update(kind.as_bytes());
-            h.update([0]);
+            let (mut h, mut o) = (Sha256::new(), Sha256::new());
+            for x in [&mut h, &mut o] {
+                x.update(kind.as_bytes());
+                x.update([0]);
+            }
             match literal(dialect.family, kind, f.text(id), interpolated).value {
                 Some((value, ty)) => {
-                    h.update(b"=");
-                    h.update(ty.as_bytes());
-                    h.update([0]);
-                    h.update(value.as_bytes());
+                    for x in [&mut h, &mut o] {
+                        x.update(b"=");
+                        x.update(ty.as_bytes());
+                        x.update([0]);
+                        x.update(value.as_bytes());
+                    }
                 }
                 None if kept.is_empty() => {
-                    h.update(b"'");
-                    h.update(f.text(id).as_bytes());
+                    for x in [&mut h, &mut o] {
+                        x.update(b"'");
+                        x.update(f.text(id).as_bytes());
+                    }
                 }
                 None => {
                     for &c in &kept {
                         h.update(f.field[c as usize].to_le_bytes());
                         h.update(hash[c as usize]);
+                        o.update(f.field[c as usize].to_le_bytes());
+                        o.update(if units && unit(c) { placeholder(c) } else { own[c as usize] });
                     }
                 }
             }
             hash[id as usize] = h.finalize().into();
+            own[id as usize] = o.finalize().into();
         }
+        let hex = |h: &[u8; 32]| -> String { h.iter().map(|b| format!("{b:02x}")).collect() };
         for local in 0..p.len() {
-            let digest: String = hash[p.core[local as usize] as usize].iter().map(|b| format!("{b:02x}")).collect();
-            self.tree_digest.push([p.global(local), string(&digest) as i64]);
+            let id = p.core[local as usize];
+            if trees {
+                self.tree_digest.push([p.global(local), string(&hex(&hash[id as usize])) as i64]);
+            }
+            if units && (local == 0 || unit(id)) {
+                self.def_digest.push([p.global(local), string(&hex(&own[id as usize])) as i64]);
+            }
         }
     }
 
@@ -805,6 +912,8 @@ impl CoreRows {
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
+            ("def_digest", node_sym(&self.def_digest)),
+            ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),
         ]
     }
 }

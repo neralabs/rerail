@@ -67,7 +67,23 @@ struct Entry {
     suppressions: Vec<String>,
     #[serde(default)]
     embeds: Vec<Embed>,
+    /// Grammars of a part of a dialect: a fragment is parsed from a start symbol (decision 0082).
+    #[serde(default)]
+    fragments: Vec<Fragment>,
 }
+
+/// A fragment grammar: `name`, as a rule's `embed`, `sub_tape` or `parsed` names it, is `dialect` parsed from
+/// `start`. `expression`: the text inside a written `( … )`, whose root is the expression.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Fragment {
+    name: String,
+    dialect: String,
+    start: String,
+}
+
+/// The start symbols a fragment may name.
+const FRAGMENT_STARTS: &[&str] = &["expression"];
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -377,6 +393,21 @@ fn validate_entry(name: &str, stem: &str, entry: &Entry, vendored: &[&str]) {
         suppressions.len() == entry.suppressions.len(),
         "{name}: suppressions repeat"
     );
+    for fragment in &entry.fragments {
+        assert!(is_name(&fragment.name), "{name}: fragment `{}` is not lowercase letters, digits and dashes", fragment.name);
+        assert!(
+            entry.dialects.iter().any(|d| d.label == fragment.dialect),
+            "{name}: fragment {} names dialect {}, which is not one of the entry's",
+            fragment.name,
+            fragment.dialect
+        );
+        assert!(
+            FRAGMENT_STARTS.contains(&fragment.start.as_str()),
+            "{name}: fragment {} starts at `{}`, which is not one of {FRAGMENT_STARTS:?}",
+            fragment.name,
+            fragment.start
+        );
+    }
     for embed in &entry.embeds {
         assert!(
             is_name(&embed.via),
@@ -427,6 +458,15 @@ fn validate_registry(entries: &[(String, Entry)]) {
                 && let Some(other) = tags.insert(tag, name)
             {
                 panic!("{name}: tape tag {tag} is also {other}'s; a tape tag is never reused");
+            }
+        }
+    }
+    // A fragment's name is a grammar name beside the dialects' labels: unique among both.
+    let mut grammars: BTreeMap<&str, &str> = labels.iter().map(|(label, (name, _))| (*label, name.as_str())).collect();
+    for (name, entry) in entries {
+        for fragment in &entry.fragments {
+            if let Some(other) = grammars.insert(fragment.name.as_str(), name.as_str()) {
+                panic!("{name}: fragment {} is also {other}'s dialect label or fragment", fragment.name);
             }
         }
         for embed in &entry.embeds {
@@ -664,6 +704,15 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
                 dialect.suffixes,
                 dialect.tape_tag.expect("validated"),
             );
+        }
+    }
+    out.push_str("];\n\n");
+
+    out.push_str("/// The registry's fragment grammars (decision 0082): name, dialect, start symbol.\n");
+    out.push_str("const FRAGMENTS: &[(&str, GrammarDialect, &str)] = &[\n");
+    for entry in &supported {
+        for fragment in &entry.fragments {
+            let _ = writeln!(out, "    ({:?}, {}, {:?}),", fragment.name, variant(&fragment.dialect), fragment.start);
         }
     }
     out.push_str("];\n\n");

@@ -10,6 +10,7 @@ pub(in crate::code_rule_dsl) mod typed_boundary;
 
 pub(in crate::code_rule_dsl) mod program;
 pub(in crate::code_rule_dsl) mod lattices;
+pub(in crate::code_rule_dsl) mod properties;
 
 /// SQLite's keywords (sqlite.org/lang_keywords.html, 147 of them), sorted.
 const SQLITE_KEYWORDS: [&str; 147] = [

@@ -42,6 +42,9 @@ pub(super) const PARSE: &str = "rr_parse_req";
 pub(super) const SPLICE: &str = "rr_splice_req";
 /// The demands rules make.
 pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
+/// The relations a rule reads guests and values through (`rr::lower`'s guest relations): a program none of whose
+/// needed rules reads one makes no guest.
+pub(super) const READS: [&str; 10] = ["parsed", "sub_tape", "guest", "doc_root", "doc_role", "tape_of", "host_node", "parse_of", "unparse_of", "splice_of"];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
 pub(in crate::code_rule_dsl) const REQUESTS: [&str; 5] = ["embed", "embed_value", DEMAND, PARSE, SPLICE];
 /// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's): the
@@ -107,10 +110,11 @@ pub(super) fn requests(outputs: &BTreeMap<String, Vec<String>>) -> Vec<Request> 
     out
 }
 
-/// A grammar name's dialect label, and whether its text is parsed in a wrapper (an expression's `( … )`).
+/// A grammar name's dialect label, and whether its text is parsed in a wrapper (an expression's `( … )`): a
+/// fragment the registry declares (decision 0082), or a dialect's label.
 fn grammar(name: &str) -> Option<(&'static str, bool)> {
-    if name == "annotation" {
-        return Some(("python", true));
+    if let Some((dialect, start)) = crate::code_rule_dsl::language::fragment(name) {
+        return crate::code_rule_dsl::language::label(dialect).map(|label| (label, start == "expression"));
     }
     let dialect = crate::code_rule_dsl::language::dialect_by_label(name)?;
     crate::code_rule_dsl::language::label(dialect).map(|label| (label, false))

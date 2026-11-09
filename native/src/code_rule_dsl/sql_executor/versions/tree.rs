@@ -1,6 +1,7 @@
 //! Canonical persistent indexes. Equal row sets have equal Merkle roots independent of insertion order.
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+mod bulk;
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct Cells {
     values: Vec<Option<i64>>,
@@ -37,32 +38,39 @@ pub(super) struct Node<V> {
     pub left: Link<V>,
     pub right: Link<V>,
     pub size: usize,
-    priority: [u8; 32],
     pub digest: [u8; 32],
+    hashed: bool,
 }
 pub(super) fn size<V>(n: &Link<V>) -> usize {
     n.as_ref().map_or(0, |n| n.size)
 }
 impl<V: Clone> Node<V> {
-    fn make(key: Key, value: V, left: Link<V>, right: Link<V>) -> Arc<Self> {
+    fn make(key: Key, value: V, left: Link<V>, right: Link<V>, hashed: bool) -> Arc<Self> {
         let priority = key.hash;
-        let mut h = Sha256::new();
-        h.update([0x73]);
-        h.update(left.as_ref().map_or([0; 32], |n| n.digest));
-        h.update(priority);
-        h.update(right.as_ref().map_or([0; 32], |n| n.digest));
+        // Only the complete-row index participates in version comparisons. Secondary
+        // indexes share their paths but need no Merkle hash at every copied node.
+        let digest = if hashed {
+            let mut h = Sha256::new();
+            h.update([0x73]);
+            h.update(left.as_ref().map_or([0; 32], |n| n.digest));
+            h.update(priority);
+            h.update(right.as_ref().map_or([0; 32], |n| n.digest));
+            h.finalize().into()
+        } else {
+            [0; 32]
+        };
         Arc::new(Self {
             key,
             value,
             size: 1 + size(&left) + size(&right),
             left,
             right,
-            priority,
-            digest: h.finalize().into(),
+            digest,
+            hashed,
         })
     }
     fn before(a: &Self, b: &Self) -> bool {
-        (a.priority, &a.key) < (b.priority, &b.key)
+        (a.key.hash, &a.key) < (b.key.hash, &b.key)
     }
     pub fn split(root: &Link<V>, key: &Key) -> (Link<V>, Option<V>, Link<V>) {
         Self::split_counted(root, key, &mut 0)
@@ -86,6 +94,7 @@ impl<V: Clone> Node<V> {
                         n.value.clone(),
                         n.left.clone(),
                         left,
+                        n.hashed,
                     )),
                     found,
                     right,
@@ -101,6 +110,7 @@ impl<V: Clone> Node<V> {
                         n.value.clone(),
                         right,
                         n.right.clone(),
+                        n.hashed,
                     )),
                 )
             }
@@ -117,6 +127,7 @@ impl<V: Clone> Node<V> {
                         l.value.clone(),
                         l.left.clone(),
                         Self::merge(&l.right, right),
+                        l.hashed,
                     ))
                 } else {
                     Some(Self::make(
@@ -124,41 +135,51 @@ impl<V: Clone> Node<V> {
                         r.value.clone(),
                         Self::merge(left, &r.left),
                         r.right.clone(),
+                        r.hashed,
                     ))
                 }
             }
         }
     }
     pub fn set(root: &Link<V>, key: Key, value: Option<V>) -> Link<V> {
+        Self::set_inner(root, key, value, true)
+    }
+    pub fn set_index(root: &Link<V>, key: Key, value: Option<V>) -> Link<V> {
+        Self::set_inner(root, key, value, false)
+    }
+    fn set_inner(root: &Link<V>, key: Key, value: Option<V>, hashed: bool) -> Link<V> {
         let Some(n) = root else {
-            return value.map(|v| Self::make(key, v, None, None));
+            return value.map(|v| Self::make(key, v, None, None, hashed));
         };
+        debug_assert_eq!(hashed, n.hashed);
         if key == n.key {
             return value.map_or_else(
                 || Self::merge(&n.left, &n.right),
-                |v| Some(Self::make(key, v, n.left.clone(), n.right.clone())),
+                |v| Some(Self::make(key, v, n.left.clone(), n.right.clone(), hashed)),
             );
         }
         if let Some(value) = value.as_ref() {
             let priority = key.hash;
-            if (priority, &key) < (n.priority, &n.key) {
+            if (priority, &key) < (n.key.hash, &n.key) {
                 let (left, _, right) = Self::split(root, &key);
-                return Some(Self::make(key, value.clone(), left, right));
+                return Some(Self::make(key, value.clone(), left, right, hashed));
             }
         }
         if key < n.key {
             Some(Self::make(
                 n.key.clone(),
                 n.value.clone(),
-                Self::set(&n.left, key, value),
+                Self::set_inner(&n.left, key, value, hashed),
                 n.right.clone(),
+                hashed,
             ))
         } else {
             Some(Self::make(
                 n.key.clone(),
                 n.value.clone(),
                 n.left.clone(),
-                Self::set(&n.right, key, value),
+                Self::set_inner(&n.right, key, value, hashed),
+                hashed,
             ))
         }
     }
@@ -275,6 +296,10 @@ impl<V: Clone> Node<V> {
                 minus.push(v.clone());
             }),
             (Some(a), Some(b)) => {
+                assert!(
+                    a.hashed && b.hashed,
+                    "version differences require complete-row indexes"
+                );
                 if a.size == b.size && a.digest == b.digest {
                     return;
                 }

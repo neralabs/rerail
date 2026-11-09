@@ -21,6 +21,9 @@ const testsForPsAddon = [
   // and 1; batch 04: 6 and 2), so it is P's open parity, not this engine's (O84).
   "test/conformance/data-layer/ports.test.ts",
 ];
+// `npm test` runs `vitest run --dir test`, which matches exclusions against paths relative to test/: each is excluded
+// as `**/<path under test/>`, so it holds with and without `--dir`.
+const psAddonExclusions = testsForPsAddon.map((file) => `**/${file.replace(/^test\//, "")}`);
 
 export default defineConfig({
   test: {
@@ -45,8 +48,9 @@ export default defineConfig({
       "packs/*/candidates/**",
       "**/scripts/ensure-sqlite.test.mjs",
       "**/scripts/sql-profile.test.mjs",
+      "**/scripts/sql-profile/**",
       "**/scripts/sql-execution-budget.test.mjs",
-      ...(process.env.RERAIL_RELATIONAL_TESTS === "1" ? [] : testsForPsAddon),
+      ...(process.env.RERAIL_RELATIONAL_TESTS === "1" ? [] : psAddonExclusions),
     ],
   },
 });

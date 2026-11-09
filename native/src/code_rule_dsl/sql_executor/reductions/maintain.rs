@@ -6,7 +6,8 @@ pub(super) fn apply(
     w: &mut Work<'_>,
     changes: &BTreeMap<String, Delta>,
 ) -> Result<(Delta, u64, u64)> {
-    let weights = temporary(w, state.width, "weight INTEGER NOT NULL", None)?;
+    let _context = w.profile_scope(|| json!({"logicalAnalysis":state.explain()}));
+    let mut weights: Option<String> = None;
     let (mut contexts, mut groups) = (0u64, 0u64);
     for rule in &state.rules {
         let dirty = w.table(rule.width)?;
@@ -45,13 +46,7 @@ pub(super) fn apply(
             };
             let mut q = rule.context_query.clone();
             q.body.from[atom.at].relation = source(&delta.plus, &atom.columns);
-            let anchor = q.body.from.remove(atom.at);
-            q.body.from.insert(0, anchor);
-            for item in &mut q.body.from {
-                if let Join::On(on) = std::mem::replace(&mut item.join, Join::Cross) {
-                    q.body.predicates.extend(on);
-                }
-            }
+            maintenance::anchor(&mut q, atom.at);
             let added = w.table(rule.width)?;
             execute(
                 w.db,
@@ -75,11 +70,29 @@ pub(super) fn apply(
                 reducer.mark_contexts(w, rule, &keys, &dirty)?;
             }
         }
-        contexts +=
+        let dirty_count = if let Some(n) = w
+            .versions
+            .and_then(|s| s.available(&dirty))
+            .map(|v| v.len() as u64)
+        {
+            n
+        } else {
             w.db.query_row(&format!("SELECT count(*) FROM {dirty}"), [], |r| {
                 r.get::<_, i64>(0)
             })
-            .map_err(error)? as u64;
+            .map_err(error)? as u64
+        };
+        contexts += dirty_count;
+        if dirty_count == 0 {
+            continue;
+        }
+        let weights = if let Some(name) = &weights {
+            name.clone()
+        } else {
+            let name = temporary(w, state.width, "weight INTEGER NOT NULL", None)?;
+            weights = Some(name.clone());
+            name
+        };
         let heads = (0..state.width)
             .map(|i| format!("c.h{i}"))
             .collect::<Vec<_>>()
@@ -129,6 +142,18 @@ pub(super) fn apply(
         )?;
     }
     let width = state.width;
+    let Some(weights) = weights else {
+        return Ok((
+            Delta {
+                plus: w.rows(width, &[])?,
+                minus: w.rows(width, &[])?,
+                inserted: 0,
+                deleted: 0,
+            },
+            contexts,
+            groups,
+        ));
+    };
     let cols = names("", width);
     let totals = temporary(
         w,

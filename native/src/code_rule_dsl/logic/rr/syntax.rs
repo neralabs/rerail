@@ -230,6 +230,21 @@ pub(super) fn line_of(src: &str, pos: usize) -> usize {
     src[..pos.min(src.len())].bytes().filter(|&b| b == b'\n').count() + 1
 }
 
+/// Where each line of a text starts, so a position's line is a binary search, not a count from the start: a parser
+/// asks the line of every statement, and a count from the start made a long file quadratic.
+pub(super) struct Lines(Vec<usize>);
+
+impl Lines {
+    pub(super) fn of(src: &str) -> Self {
+        Lines(src.bytes().enumerate().filter(|&(_, b)| b == b'\n').map(|(i, _)| i).collect())
+    }
+
+    /// The line of byte `pos`, from 1, as `line_of` gives it.
+    pub(super) fn line(&self, pos: usize) -> usize {
+        self.0.partition_point(|&newline| newline < pos) + 1
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Term {
     Var(String),
@@ -332,6 +347,7 @@ pub(super) type Statement = (Item, usize);
 /// tree step does nothing.
 pub(super) struct Parser<'s> {
     src: &'s str,
+    lines: Lines,
     toks: Vec<Spanned>,
     i: usize,
     /// Inside an aggregate's value or key, where `x :` ends the term (`agg_part`).
@@ -352,7 +368,7 @@ struct Save {
 
 impl<'s> Parser<'s> {
     pub(super) fn new(src: &'s str) -> Result<Self, Error> {
-        Ok(Self { src, toks: tokens(src)?, i: 0, no_named: false, tree: None, comments: Vec::new(), failed_at: Cell::new(0), error: None })
+        Ok(Self { src, lines: Lines::of(src), toks: tokens(src)?, i: 0, no_named: false, tree: None, comments: Vec::new(), failed_at: Cell::new(0), error: None })
     }
 
     /// A parser that builds the file's tree, and reads on past a statement that does not parse (`recover`).
@@ -360,6 +376,7 @@ impl<'s> Parser<'s> {
         let lexed = lex(src);
         Self {
             src,
+            lines: Lines::of(src),
             toks: lexed.toks,
             i: 0,
             no_named: false,
@@ -401,19 +418,19 @@ impl<'s> Parser<'s> {
     }
 
     fn line(&self) -> usize {
-        line_of(self.src, self.start())
+        self.lines.line(self.start())
     }
 
     /// The line of the token before the next one.
     fn last_line(&self) -> usize {
-        self.i.checked_sub(1).and_then(|i| self.toks.get(i)).map_or(0, |t| line_of(self.src, t.2.saturating_sub(1)))
+        self.i.checked_sub(1).and_then(|i| self.toks.get(i)).map_or(0, |t| self.lines.line(t.2.saturating_sub(1)))
     }
 
     fn fail<T>(&self, what: &str) -> Result<T, Error> {
         let at = self.start();
         self.failed_at.set(at);
         let near: String = self.src[at..].chars().take(40).collect();
-        Err(Error::Syntax(format!("line {}: expected {what}, got {:?} near {near:?}", line_of(self.src, at), self.peek())))
+        Err(Error::Syntax(format!("line {}: expected {what}, got {:?} near {near:?}", self.lines.line(at), self.peek())))
     }
 
     // The tree's steps.

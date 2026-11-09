@@ -133,6 +133,18 @@ thread_local! {
     static COMPILED: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<crate::code_rule_dsl::model::CompiledCodeRule>>> = Default::default();
 }
 
+/// The suffixes of the files of no grammar W reads as text (its documentation and configuration; never a run's own
+/// `.csv` or `.sqlite` outputs, nor binaries).
+const W_TEXT_SUFFIXES: [&str; 9] = ["md", "markdown", "rst", "txt", "toml", "cfg", "ini", "yaml", "yml"];
+
+/// The `.scope text` setting of a converted program: W's text documents (`W_TEXT_SUFFIXES`, in any case), read
+/// as text only by the corpus runner (`front::Program::text_globs`).
+fn w_text_scope() -> String {
+    let any_case = |s: &str| s.chars().map(|c| format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase())).collect::<String>();
+    let globs = W_TEXT_SUFFIXES.iter().map(|s| format!("\"**/*.{}\"", any_case(s))).collect::<Vec<_>>();
+    format!("text {}", globs.join(", "))
+}
+
 /// One rule file as a program: its scope as path globs and each forbid clause's matcher as rules deriving
 /// `violation(rule, clause, code, path, line)`, under the rule's authored file (`authored()`) where it has one. An
 /// error is the authored file's.
@@ -341,6 +353,8 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
     let text = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let mut prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
+    // W reads its documentation and configuration files as text: the `.scope text` setting (`w_text_scope`).
+    prog.settings.push(("scope".into(), w_text_scope()));
     // The `.references` setting: the graph's configuration over the run's scope.
     if let Some(mut graph) = graphs.into_iter().next() {
         graph.insert("scope".into(), serde_json::json!({"include": include, "exclude": exclude}));
@@ -411,37 +425,42 @@ fn hand_dir() -> PathBuf {
 /// layer-violations, missing-async-pairs, post-op-no-internal-dispatch, public-api-triples and swallowed-exceptions
 /// it gives 107 of 107 events, the hand-written rules 97 of 98 and none of the 9 configured).
 /// `RERAIL_REPLAY_HAND_WRITTEN` runs the hand-written rule over an authored file; `RERAIL_REPLAY_CONVERTED` replays
-/// the converted JSON (and its authored file) instead.
-fn hand_written(check: &str) -> Option<String> {
+/// the converted JSON (and its authored file) instead. `given`: the files are a test's own (`hand_written_once`).
+fn hand_written(check: &str, given: bool) -> Option<String> {
     let overlay = authored().join(format!("data-layer-{}.rr", check.replace('_', "-")));
     if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() || (overlay.exists() && std::env::var_os("RERAIL_REPLAY_HAND_WRITTEN").is_none()) {
         return None;
     }
     // Read and printed once per check: the replay asks for each of the check's events.
     thread_local! {
-        static PRINTED: std::cell::RefCell<std::collections::HashMap<String, Option<String>>> = Default::default();
+        static PRINTED: std::cell::RefCell<std::collections::HashMap<(String, bool), Option<String>>> = Default::default();
     }
-    if let Some(text) = PRINTED.with(|p| p.borrow().get(check).cloned()) {
+    let key = (check.to_owned(), given);
+    if let Some(text) = PRINTED.with(|p| p.borrow().get(&key).cloned()) {
         return text;
     }
-    let text = hand_written_once(check);
-    PRINTED.with(|p| p.borrow_mut().insert(check.to_owned(), text.clone()));
+    let text = hand_written_once(check, given);
+    PRINTED.with(|p| p.borrow_mut().insert(key, text.clone()));
     text
 }
 
-fn hand_written_once(check: &str) -> Option<String> {
+fn hand_written_once(check: &str, given: bool) -> Option<String> {
     let path = hand_dir().join(format!("{}.rr", check.replace('_', "-")));
     if !path.exists() {
         return None;
     }
     // A rule that does not lower falls back to the converted JSON; say why, so a broken rule is not silent.
-    let program = match crate::code_rule_dsl::logic::rr::parse_file(&path) {
+    let mut program = match crate::code_rule_dsl::logic::rr::parse_file(&path) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{check}: the hand-written rule does not lower: {e}");
             return None;
         }
     };
+    // `given`: the files are a test's own (`scan_files`, a recorded event's), with no discovery.
+    if given {
+        crate::code_rule_dsl::logic::rr::files_given(&mut program);
+    }
     let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap_or_else(|e| panic!("{check}: {e}"));
     // `RERAIL_REPLAY_DUMP=<dir>`: the program as replayed, `<dir>/<check>.rr`.
     if let Some(dir) = std::env::var_os("RERAIL_REPLAY_DUMP") {
@@ -1076,7 +1095,7 @@ fn replay_program(event: &Event) -> Result<Replayed, Outcome> {
     }
     // A hand-written `.rr` that lowers wins over the converted JSON. It has no options, so it replays the events
     // the oracle ran unconfigured (`Event::plain`).
-    match hand_written(&event.check) {
+    match hand_written(&event.check, true) {
         Some(_) if !event.plain => Err(Outcome::Skipped("configured (the hand-written rule has no options)".into())),
         Some(text) => Ok(Replayed { text, hand: true, config_authored: false }),
         None => {
@@ -1103,6 +1122,9 @@ fn replay_run(k: usize, event: &Event, program: &Replayed, root: &Path) -> Outco
     let Replayed { text: program, hand, config_authored } = program.clone();
     let dir = root.join(format!("e{k}"));
     write_files(&dir, event.files.iter().map(|(p, s)| (p.as_str(), s.as_str())));
+    // The script scans the files a test gives it (`scan_files`), with no discovery: a rule's `.scope` selects
+    // a repository's files, so here the files are given (`.scope given`).
+    let program = format!("{program}\n.scope given\n");
     // `RERAIL_REPLAY_SHOW=a,b`: relations a and b are outputs too, and their rows are printed.
     let show: Vec<String> = std::env::var("RERAIL_REPLAY_SHOW").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default();
     let program = show.iter().fold(program, |p, r| format!("{p}\n.output {r}\n"));
@@ -1885,7 +1907,7 @@ fn measure_all(corpus: &Path, rules: &str) {
             // `RERAIL_HAND_SKIP`: checks (comma-separated, as `layer-violations`) whose hand-written rule is left out.
             let skip = std::env::var("RERAIL_HAND_SKIP").unwrap_or_default();
             let skipped = |c: &str| skip.split(',').any(|s| s.trim() == c);
-            let written = id.strip_prefix("data-layer-").filter(|c| hand && !skipped(c)).and_then(|c| hand_written(&c.replace('-', "_")));
+            let written = id.strip_prefix("data-layer-").filter(|c| hand && !skipped(c)).and_then(|c| hand_written(&c.replace('-', "_"), false));
             if written.is_some() {
                 println!("HAND {id}");
             }
@@ -1910,7 +1932,7 @@ fn measure_all(corpus: &Path, rules: &str) {
         extra.sort();
         for c in extra {
             // Repository inputs are read (`corpus::inputs`), `input_error` rows included.
-            match hand_written(&c.replace('-', "_")) {
+            match hand_written(&c.replace('-', "_"), false) {
                 Some(t) => {
                     println!("HAND {c} (no converted rule)");
                     texts.push(t);
@@ -1933,6 +1955,10 @@ fn measure_all(corpus: &Path, rules: &str) {
     );
     for (name, user, sys, rss, statements) in &r.phases {
         println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
+    }
+    // `RERAIL_MEASURE_KEEP`: a file to copy the findings to, for comparing them with a script's.
+    if let Some(keep) = std::env::var_os("RERAIL_MEASURE_KEEP") {
+        std::fs::copy(out.join("violation.csv"), keep).unwrap();
     }
     // Violations per rule: the first column of `violation.csv` is the rule's id.
     let mut per: BTreeMap<String, usize> = BTreeMap::new();

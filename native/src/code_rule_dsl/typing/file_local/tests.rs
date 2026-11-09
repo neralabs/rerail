@@ -267,3 +267,119 @@ triangle(a, b, c) :- chosen(a), chosen(b), chosen(c),
     let actual = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap();
     assert_eq!(actual, &original, "do not materialize all document-local node triples before chosen() filters them");
 }
+
+/// `v = v0` carries a location: a disjunction's branch (`(kind(v0, "as_pattern"), child(v0, v, 0) ; v = v0)`, as
+/// lowering leaves it) keeps the head's node column a location, so its readers stay file-local. And a relation made
+/// from constants alone (`side(x) :- table("k", x)`) is a constant to the split: reading it joins no document, and
+/// both parts derive it.
+#[test]
+fn equalities_and_constant_relations_keep_rules_file_local() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let program = parse(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl table(k: symbol, x: symbol)
+table("k", "a"). table("k", "b").
+.decl side(x: symbol)
+side(x) :- table("k", x).
+.decl root(s: node, v: node)
+root(s, v) :- node(_, s, "with", _, _), child(s, v0, 0), (node(_, v0, "as", _, _), child(v0, v, 0) ; !node(_, v0, "as", _, _), v = v0).
+.decl under(s: node, n: node)
+under(s, n) :- root(s, r), child(r, n, _).
+.decl named(n: node)
+named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
+.output under, named
+"#).unwrap();
+    let (local, locations, _) = split_located(&program);
+    assert_eq!(locations["root"], [0, 1], "{locations:?}");
+    assert!(local.contains("under") && local.contains("named"), "{local:?}");
+    assert!(constant_relations(&program).contains("side"));
+    let parts = programs(&program);
+    assert!(parts.local.rules.iter().any(|r| r.head.rel == "side"), "the chunks derive side for named");
+    assert!(cross_causes(&program).get("under").is_none(), "{:?}", cross_causes(&program));
+}
+
+#[test]
+fn the_cross_part_takes_node_attributes_as_a_semi_join_only_when_each_lookup_is_of_a_held_node() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    let source = |extra: &str| format!(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.input node, child, text, line
+.decl names(x: symbol)
+names(x) :- node(_, n, "string", _, _), text(n, x).
+.decl ident(n: node, x: symbol)
+ident(n, x) :- node(_, n, "identifier", _, _), text(n, x).
+.decl pick(n: node)
+pick(n) :- ident(n, x), names(x).
+.decl hit(n: node, l: number)
+hit(n, l) :- pick(n), line(n, l).
+{extra}
+.output hit
+"#);
+    // As the corpus run splits: after the file-local joins are pushed into the chunks.
+    let split = |text: &str| {
+        let mut program = parse(text).unwrap();
+        push_local_joins(&mut program);
+        programs(&program)
+    };
+    let parts = split(&source(""));
+    assert!(parts.base.iter().any(|b| b == "line"), "{:?}", parts.base);
+    let held = semijoin_bases(&parts.cross, &parts.base).expect("every lookup is of a node an export holds");
+    assert!(held.contains("line"), "{held:?}");
+    // `child(p, c, _)` reaches nodes no export holds: their lines would be missing. So would a cross-file rule's
+    // own enumeration of nodes (`node(_, n, "identifier", _, _), text(n, x), names(x)`).
+    let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), line(c, l).\n.output kid"));
+    assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
+    assert!(!semijoin_bases(&parts.cross, &parts.base).unwrap().contains("line"));
+    let parts = programs(&parse(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen")).unwrap());
+    let held = semijoin_bases(&parts.cross, &parts.base).unwrap();
+    assert!(!held.contains("line") && !held.contains("node") && !held.contains("text"), "{held:?}");
+    // Per relation: a walk of `child` that looks up no attribute leaves `line` a semi-join for the other rules.
+    let parts = split(&source(".decl kid(c: node, i: number)\nkid(c, i) :- pick(p), child(p, c, i).\n.decl kidline(p: node, l: number)\nkidline(p, l) :- kid(c, _), pick(p), child(p, c, _), line(p, l).\n.output kid, kidline"));
+    assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
+    let held = semijoin_bases(&parts.cross, &parts.base).unwrap();
+    assert!(held.contains("line"), "{held:?}");
+    // A tainted output's findings are decoded through `node`: kept whole.
+    assert!(!held.contains("node"), "{held:?}");
+    // `tape(n, par, ..)`'s parent is a node though a number: a walk up it reaches nodes no export holds.
+    let parts = split(&source(".decl tape(n: node, par: number, size: number, depth: number)\n.input tape\n.decl up(n: node, p: number)\nup(n, p) :- hit(n, _), names(_), tape(n, p, _, _).\nup(n, q) :- up(n, p), names(_), tape(p, q, _, _).\n.output up"));
+    if parts.base.iter().any(|b| b == "tape") {
+        assert!(!semijoin_bases(&parts.cross, &parts.base).unwrap().contains("tape"));
+    }
+}
+
+/// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
+/// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
+/// and left their join to the cross-file part (decision 0093 §4, O140).
+#[test]
+fn an_equality_between_two_pieces_joins_them_in_the_chunks() {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input node, field, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text(c, s).
+.decl finding(f: node, x: symbol)
+.output finding
+finding(f, x) :- node(_, f, "decorated_definition", _, _), field(f, "decorator", d), e = d, field(e, "name", c), text(c, x), !defined(x).
+"#;
+    let mut prog = parse(text).unwrap();
+    let made = push_local_joins(&mut prog);
+    let local = split(&prog);
+    assert!(made.iter().all(|m| local.contains(m)), "{made:?}");
+    let finding: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "finding").collect();
+    assert_eq!(finding.len(), 1);
+    let body = &finding[0].body;
+    let equal = body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(_), op: "=", r: Term::Var(_) }));
+    assert!(!equal, "the equality stays in the cross-file rule: {}", finding[0]);
+    let pushed: Vec<&str> = body.iter().filter_map(|l| l.atom()).filter(|a| made.contains(&a.rel)).map(|a| a.rel.as_str()).collect();
+    assert_eq!(pushed.len(), 1, "one pushed join, not one per piece: {}", finding[0]);
+}

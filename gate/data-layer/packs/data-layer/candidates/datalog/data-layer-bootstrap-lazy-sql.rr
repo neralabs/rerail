@@ -1,3 +1,4 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl bootstrap_sql_arg0(c: node, x: node)
 .decl bootstrap_sql_ast(n: node, e: node)
 .decl bootstrap_sql_call(c: node, kind: symbol, callee: symbol)

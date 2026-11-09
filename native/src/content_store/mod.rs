@@ -12,12 +12,14 @@ mod collection_guard;
 pub(crate) use collection_guard::CollectionLease;
 mod connection;
 mod corpus_runs;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, StatIndex};
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub(crate) use connection::sqlite_on_jemalloc;
+mod cross_rows;
 mod derivation;
 mod facts_memo;
 mod objects;
+pub(crate) mod observe;
 pub(crate) use objects::ResidentFrames;
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
@@ -35,7 +37,6 @@ mod private_files;
 mod publication;
 mod read_cache;
 mod reclamation;
-pub use reclamation::CorpusRunLease;
 mod relationships;
 mod results;
 mod rows;
@@ -58,7 +59,7 @@ pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
 pub use atoms::Sym;
 pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
-pub use facts_memo::{FactsCompletion, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
+pub use facts_memo::{FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
 pub use tree_diff::{TreeChange, TreeDiff};
 pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
@@ -204,7 +205,7 @@ impl HashKey {
         Self::from_sha256_digest(digest)
     }
 
-    pub(crate) fn from_sha256_digest(digest: [u8; 32]) -> Self {
+    pub fn from_sha256_digest(digest: [u8; 32]) -> Self {
         Self::from_padded(HASH_SHA256, digest)
     }
 
@@ -223,6 +224,16 @@ impl HashKey {
             }
             bytes[..20].try_into().expect("twenty bytes")
         })
+    }
+
+    /// The key as bytes: its algorithm, then its lanes (an alias table's key).
+    pub(crate) fn key_bytes(self) -> [u8; 40] {
+        let mut out = [0_u8; 40];
+        out[..8].copy_from_slice(&self.algorithm.to_be_bytes());
+        for (chunk, lane) in out[8..].chunks_exact_mut(8).zip(self.lanes) {
+            chunk.copy_from_slice(&lane.to_be_bytes());
+        }
+        out
     }
 
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
@@ -309,6 +320,7 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
 
@@ -598,6 +610,8 @@ pub struct ContentStore {
     working_set: working_set::WorkingSet,
     /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
     holder: parking_lot::Mutex<Option<(String, i64)>>,
+    /// This handle's shared collection lease (`hold_collection`).
+    lease: std::sync::Arc<collection_guard::SharedLease>,
     #[cfg(test)]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(test)]
@@ -655,6 +669,7 @@ impl ContentStore {
             atoms: atoms::Atoms::for_database(path, Some(identity)),
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
+            lease: Default::default(),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
             #[cfg(test)]

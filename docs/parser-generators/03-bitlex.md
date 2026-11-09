@@ -83,21 +83,32 @@ directed acyclic graph of mask operations.
 | `scan NAME = count(UP, DOWN) [reset R] max D` | A count that never goes below 0 and is bounded by `D` (§2.7). |
 | `hypotheses NAME split E lanes L … { … }` | Statements evaluated once per lane on every segment; the segment ends pick the lane (§2.7). |
 | `rounds N [until settled] { carry X = E … next X = E … }` | A fixed point, unrolled at most `N` times (§2.7). |
+| `rounds until settled { … }` | The fixed point of a strictly causal body, exact for any input (§2.7). |
 | `block NAME(P, …) { … }`, `block NAME = TEMPLATE(E, …)` | A family of statements with mask parameters, and an instance of it (§2.5). |
 | `machine NAME(P, …) { … }`, `machine NAME = TEMPLATE(EXPR, …)` | A machine with mask parameters, and an instance of it (§2.5). |
 | `ucode over EXPR { class NAME = … }` | Classes of Unicode characters, decoded only where `EXPR` is set (§2.6). |
 | `token KIND = start EXPR [through EXPR]` | Tokens of one kind (§2.4). |
 | `munch KIND over EXPR { "…" … }` | Longest-match operator tokens over a run of operator bytes (§2.4). |
-| `keywords KIND { "…" … } [soft { "…" … }] [required]` | Retypes tokens of `KIND` whose text is a keyword. With `required`, a token of `KIND` that is none of them is an error. |
-| `check KIND matches "REGEX"` | Every token of `KIND` (after `keywords`) must match `REGEX` in full, or the file goes to tree-sitter. Lowered as masks when it can be (§3.3); the lexers here write those masks out instead. |
+| `keywords KIND { "…" … } [soft { "…" … }] [required]` | Retypes tokens of `KIND` whose text is a keyword. A soft keyword keeps the token's kind: the tree takes it as the keyword where its grammar can (a quoted `'w'`), and as `KIND` elsewhere. With `required`, a token of `KIND` that is none of them is an error. |
+| `check KIND = G` | Every token of `KIND` (after `keywords`) must match `G` in full, a grammar over its bytes in the tree section's notation (names are byte classes, literals bytes), or the file goes to tree-sitter. Tier 2 runs it in the token's arm, as simdjson's `parse_number` (decision 0086). |
 | `skip EXPR` | Bytes that may belong to no token, such as whitespace. |
 | `error "MESSAGE" when EXPR` | If any bit of `EXPR` is set, the file goes to tree-sitter. |
 | `escape "WHY" when E` | A construct the lexer does not handle: a file with a bit of `E` goes to tree-sitter (§2.5). |
-| `tree NAME { … }` | The tree section: where each node starts and ends, for the tape (`13-tape-on-the-gpu.md`). It holds the statements below, and masks and scans of its own. |
-| `node KIND start S end E [level L]` | A node at each bit of `S`. It ends at the first bit of `E` at or after its start where count `L` after the byte equals `L` before the start; without a level, at the first bit. Listed order is rank: outermost first at one byte. |
-| `field NAME of KIND … = EXPR`, `supertype NAME of KIND … = EXPR` | A node of those kinds starting at a bit of `EXPR` has the field, or is in the supertype. |
+| `tree NAME { … }` | The tree section: the grammar of the tokens, for the tape (`18-tree-as-grammar.md`). It holds the statements below. |
+| `node KIND [nested] = G` | A node of `KIND` spans what grammar `G` matches. The first is the root. `nested`: it may contain itself, and runs on a stack frame. |
+| `choice NAME [supertype S] [nested] = A \| B …` | No node of its own; each alternative's node is in supertype `S`. `nested`: it may use itself, and runs on a stack frame that opens no node. |
+| `'x'`, `NAME`, `f: X`, `A B`, `A \| B`, `[A]`, `A*`, `A+`, `(A)` | In a grammar: a keyword's kind; a token kind, node or choice; field `f` on the node `X` gives; sequence, alternative, optional, repetitions, grouping. |
+| `retag K A`, `merge 'K' A` | In a grammar: entering `A`, the innermost open node becomes a `K`; the token `A`'s leaf and the leaf before it become one leaf of kind `K` (extras between them are its text). |
+| `wrap K F [as M] REST`, `A as K` | In a grammar: a `K` around the last node made at this level, holding it and then `REST`; `K` takes that node's place and field, and the node takes field `F` (`_`: none) and kind `M`. The leaf of token `A` is a `K` (`24-rr-and-bitlex-plan.md` §2.1). |
+| `relabel F [as M] [inner G] REST` | In a grammar: at the token `REST` starts with, the last node made at this level takes field `F` (`_`: keeps its own) and kind `M`; with `inner`, the node it holds first (it must be a wrap's) takes field `G`. No node around it: `(wrap atom … ) [relabel _ as call inner function …]` turns an atom back into a call. |
+| `fold K REST` | In a grammar: at the token `REST` starts with, the node open at this level holds two leaves and nothing else; they become one leaf of kind `K`. A token decides what the two before it were: `.policy {` folds the setting's `.` and `policy` into one `.policy` leaf. With an extra between them, the file is refused. |
+| `reread R REST`, `reading R = …` | In a grammar: at the token `REST` starts with, the last node made at this level and every node inside it are read again by reading `R`. A reading names kinds: `K` or `K as M` (the node stays, as `M`, and the nodes inside are read too), `K gone` (the node goes and its children take its place), `keep K …` (the node stays, with everything inside it, unread), and `field F as G` (a node read, but not the first, with field `F` takes `G`). Any other kind refuses the file, but an extra's leaf stays as it is. `root gone` or `root as M` is what the node read itself becomes, whatever its kind; the kinds then name only the nodes inside it. A node read that goes leaves its children in its place, and nothing is made last at its level until the next node. Inside a `wrap` around the node, a reread dissolves it into the wrap. This is how a cover grammar decides: `.rr` reads `(a - b)` at a literal's start as a group, and an operator after its `)` turns the group into a `parenthesized_expression` (`reread parenthesized`). |
+| `provisional F …` | A field that a node holds only until a later token decides what the node is. A node that still holds it at the file's end refuses the file. In `.rr`, a term where a literal goes holds `bare` until a comparison makes it one side of a literal, or until its group turns out to be a term. |
+| `any [except 'A' …]` | In a grammar: a token of any kind but those listed (marks and extras aside), for raw text: `any as raw_text (merge raw_text any)* line` reads the rest of a line as one leaf. The compiler makes one alternative per token kind. |
+| `balanced K OPEN CLOSE` | In a grammar: one leaf of kind `K`, from an `OPEN` token through its matching `CLOSE`, pairs inside counted; every token between is its text. `balanced json_object '{' '}'` reads `{"a": {"b": 1}}` as one leaf. The compiler lowers it to a level of its own that merges each token into the leaf. |
 | `extra KIND …` | Nodes of these kinds carry the extra flag. |
-| `untoken KIND …` | Tokens of these kinds are not nodes; a `node` statement makes those nodes instead. |
+| `mark K = E [, end]`, `hidden K …` | A token of no width before the first grammar token at or after each bit of `E` (and after the last token, with `end`); a hidden mark is skipped where the grammar does not take it (`24-rr-and-bitlex-plan.md` §2.3). |
+| `refuse K in L …` | A hidden mark `K` between the first token of a nested level `L` and its last refuses the file. A JSON document's levels refuse what JSON refuses inside a token, such as a raw line break in a string, and elsewhere the same bytes are fine. The compiler checks that `L` ends at its last token and calls only levels that refuse `K` too. |
 
 ### 2.2 Mask expressions
 
@@ -323,6 +334,33 @@ The lexers use rounds only where the fixed point is unique: every role is decide
 before it, so by induction from the left there is one self-consistent answer
 (`08-without-automata.md` §3.3, §5.1).
 
+**`rounds until settled { … }`**, with no `N`, makes that rule a check. The body must be
+*strictly causal*:
+
+- every way from a carry to a `next` passes a `prev`, so a byte's next value reads the carries
+  only at bytes before it;
+- no `next(…)` reads a value that depends on a carry (a `next` of raw bytes is fine);
+- the body holds only `mask`, `carry` and `next`.
+
+Then the fixed point is unique, and rounds reach it from the left. Each round makes one more
+bit of a 64-bit block right, so a block settles within 65 rounds, the confirming one included.
+The result does not depend on how the input is cut into blocks. The compiler lowers the body
+to one group of the block program. On the CPU each block runs the group in a loop until no
+carry changes. Most blocks take one or two rounds.
+
+```
+# Strings and `//` comments, each hiding the other's openers.
+mask q0 = quote & ~escaped(backslash)
+rounds until settled {
+  carry hidden = empty
+  mask o_str   = q0 & ~hidden
+  mask o_line  = slash & next(slash) & ~hidden    # next() of raw bytes only
+  mask f_str   = fill(o_str, q0)                  # opener up to its closer
+  mask f_line  = fill(o_line, lf)
+  next hidden  = prev(f_str | f_line)             # after each opener, through its closer
+}
+```
+
 ## 3. Lowering
 
 ### 3.1 Masks
@@ -349,6 +387,23 @@ Every carry is a single bit, and every carry combines associatively:
 
 So on Metal a block's carry comes from a prefix scan over the blocks before it, and every block
 runs at once. On the CPU the carry passes from one block to the next in a register.
+
+A `back_fill` carries the other way: a block's word needs the blocks after it. It looks ahead
+past any number of bytes, where `next` looks ahead a fixed number. Examples are the name after
+blanks and comments, or a `:` at the end of a line. The CPU runs a program that has them in
+passes over each file:
+
+- Each value has a level: the most `back_fill`s on a way to it. A fixed point's values all take
+  the highest level among them.
+- Level 0 runs in a forward pass, as a program without `back_fill`. Then each level's
+  `back_fill`s run in a backward pass, the blocks last to first. Then the level's other values
+  run in another forward pass.
+- A value read in a later pass is stored, one word per block, in a slot. The later pass loads
+  it as it was made.
+
+Each pass is a function of its own, with the same loops and checks. One file pass and one
+block pass; the body has no other loop. Metal refuses such a program for now. Its scan would
+run backward over the groups, as its fixed points' rounds are still to come.
 
 ### 3.2 Machines
 

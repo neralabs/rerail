@@ -112,7 +112,7 @@ impl Partitioned {
         if queries.is_empty() {
             return Ok(());
         }
-        let mut overlays = overlay::Overlays::new(w.db);
+        let mut overlays = overlay::Overlays::new(w.db,w.profiler);
         let mut bindings = BTreeMap::new();
         let mut restored = Vec::new();
         if old {

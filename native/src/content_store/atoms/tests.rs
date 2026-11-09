@@ -151,7 +151,7 @@ fn a_store_created_again_at_its_path_has_its_own_atoms() {
         assert_eq!(other.intern_atoms(&["new", "old"]).unwrap(), [1, 2]);
     }
     for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(super::sidecar(&at, suffix));
+        let _ = std::fs::remove_file(super::suffixed(&at, suffix));
     }
     rusqlite::Connection::open(&elsewhere).unwrap().execute("VACUUM INTO ?1", [at.to_str().unwrap()]).unwrap();
     let store = ContentStore::open(&at).unwrap();

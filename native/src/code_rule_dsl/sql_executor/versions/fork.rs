@@ -95,6 +95,8 @@ pub fn execution(
     run.outputs = run.outputs.iter().map(|r| rename(r)).collect();
     run.objects = run.objects.iter().map(|(r, t)| (rename(r), *t)).collect();
     run.counts = run.counts.iter().map(|(r, n)| (rename(r), *n)).collect();
-    reductions::fork_plan(db, &mut run)?;
+    if old.reductions.is_some() {
+        reductions::fork_plan(db, &mut run)?;
+    }
     Ok(run)
 }

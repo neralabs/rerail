@@ -12,6 +12,58 @@ pub(super) struct Delta {
 }
 pub(super) use super::scratch::Work;
 impl Work<'_> {
+    pub fn insert(&self, table: &str, query: &str, ignore: bool) -> Result<usize> {
+        if let Some(store) = self.versions
+            && let Some(old) = store.available(table)
+        {
+            if old.len() == 0 {
+                let op = self.profiler.map(|p| {
+                    p.operation(
+                        "bulk relational storage",
+                        ("sql-extension", 0),
+                        0,
+                        vec![("old".into(), 0)],
+                    )
+                });
+                let n = store.select_available(self.db, table, query, ignore, false)?;
+                if let Some(op) = op {
+                    op.finish(n);
+                }
+                return Ok(n);
+            }
+            if self.preparing && ignore && old.len() >= 512 {
+                let op = self.profiler.map(|p| {
+                    p.operation(
+                        "bulk relational storage",
+                        ("sql-extension", 0),
+                        0,
+                        vec![("old".into(), old.len() as i64)],
+                    )
+                });
+                let n = store.select_available(
+                    self.db,
+                    table,
+                    &format!("SELECT * FROM {} UNION ALL {query}", quote(table)),
+                    true,
+                    true,
+                )?;
+                if let Some(op) = op {
+                    op.finish(n);
+                }
+                return Ok(n - old.len());
+            }
+        }
+        self.db
+            .execute(
+                &format!(
+                    "INSERT {}INTO {} {query}",
+                    if ignore { "OR IGNORE " } else { "" },
+                    quote(table)
+                ),
+                [],
+            )
+            .map_err(error)
+    }
     pub fn table(&mut self, width: usize) -> Result<String> {
         let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
         self.allocate(
@@ -26,8 +78,63 @@ impl Work<'_> {
             true,
         )
     }
+    pub fn output_table(&mut self, width: usize) -> Result<String> {
+        let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
+        self.allocate_readonly(format!(
+            "{},PRIMARY KEY({})",
+            cols.iter()
+                .map(|c| format!("{c} INTEGER NOT NULL"))
+                .collect::<Vec<_>>()
+                .join(","),
+            cols.join(",")
+        ))
+    }
+    pub fn readonly_rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
+        let Some(store) = self.versions else {
+            return self.rows(width, rows);
+        };
+        let name = self.output_table(width)?;
+        let op = self.profiler.map(|p| {
+            p.operation(
+                "bulk delta storage",
+                ("sql-extension", 0),
+                0,
+                vec![("rows".into(), rows.len() as i64)],
+            )
+        });
+        store.load_scratch(
+            &name,
+            rows.iter()
+                .map(|r| r.iter().copied().map(Some).collect())
+                .collect(),
+        )?;
+        if let Some(op) = op {
+            op.finish(rows.len());
+        }
+        Ok(name)
+    }
     pub fn rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
         let name = self.table(width)?;
+        if let Some(store) = self.versions.filter(|s| s.owns(&name)) {
+            let op = self.profiler.map(|p| {
+                p.operation(
+                    "bulk delta storage",
+                    ("sql-extension", 0),
+                    0,
+                    vec![("rows".into(), rows.len() as i64)],
+                )
+            });
+            store.load_scratch(
+                &name,
+                rows.iter()
+                    .map(|r| r.iter().copied().map(Some).collect())
+                    .collect(),
+            )?;
+            if let Some(op) = op {
+                op.finish(rows.len());
+            }
+            return Ok(name);
+        }
         plan::insert_many(
             self.db,
             &format!("INSERT OR IGNORE INTO {}", quote(&name)),
@@ -39,6 +146,11 @@ impl Work<'_> {
         Ok(name)
     }
     pub fn difference(&mut self, now: &str, old: &str, width: usize) -> Result<Delta> {
+        if let Some(store) = self.versions
+            && let Some((old, new)) = store.available(old).zip(store.available(now))
+        {
+            return temporal::delta(self, &old, &new);
+        }
         let plus = self.table(width)?;
         let minus = self.table(width)?;
         let inserted = self
@@ -72,6 +184,13 @@ impl Work<'_> {
     }
     pub fn snapshot(&mut self, rel: &str, width: usize) -> Result<(String, u64)> {
         let old = self.table(width)?;
+        if let Some(store) = self.versions
+            && let Some(source) = store.available(rel)
+        {
+            if store.clone_scratch(&old, &source)? {
+                return Ok((old, source.len() as u64));
+            }
+        }
         let n = self
             .db
             .execute(
@@ -86,6 +205,9 @@ impl Work<'_> {
 pub(super) fn track_views(w: &mut Work<'_>, run: &mut session::Execution) -> Result<usize> {
     let e = Arc::make_mut(&mut run.emitted);
     let views = std::mem::take(&mut e.views);
+    if views.is_empty() {
+        return Ok(0);
+    }
     let mut names = BTreeSet::new();
     for (name, q) in &views {
         let width = q.body.columns.len();
@@ -201,7 +323,7 @@ fn insert_query(db: &rusqlite::Connection, table: &str, q: &Query) -> Result<usi
     )
     .map_err(error)
 }
-fn anchor(q: &mut Query, at: usize) {
+pub(super) fn anchor(q: &mut Query, at: usize) {
     let mut delta = q.body.from.remove(at);
     if let Join::On(conditions) = std::mem::replace(&mut delta.join, Join::Cross) {
         q.body.predicates.extend(conditions);
@@ -319,6 +441,16 @@ pub(super) fn maintain(
     changes: &mut BTreeMap<String, Delta>,
     limit: u32,
 ) -> Result<Value> {
+    let previous = std::mem::take(&mut w.summaries);
+    let result = maintain_pass(w, run, changes, limit);
+    w.summaries = previous;
+    result
+}
+fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
+    changes: &mut BTreeMap<String, Delta>, limit: u32) -> Result<Value> {
+    if run.temporal.contains_key(&0) {
+        return temporal::initial::apply(w, run, changes, limit);
+    }
     let e = Arc::clone(&run.emitted);
     let arities: BTreeMap<_, _> = e.program.relations.iter().cloned().collect();
     let mut positions = BTreeMap::<String, u32>::new();
@@ -339,6 +471,7 @@ pub(super) fn maintain(
     let mut refreshed = Vec::new();
     let mut incremental = Vec::new();
     let mut recursive_partitions = 0u64;
+    let mut recursive_frames = 0u64;
     let (mut reducer_groups, mut context_rows) = (0u64, 0u64);
     let mut outputs = BTreeMap::new();
     for (_, group) in groups {
@@ -373,14 +506,22 @@ pub(super) fn maintain(
                     !group.contains(r) && changes.get(r).is_some_and(|d| d.inserted + d.deleted > 0)
                 })
         });
-        if !affected && !indirect {
+        // A SQL producer's query is opaque: what it reads is its step's resolved reads and the
+        // session inputs it names (`producers`), and its stratum is recomputed whole.
+        let produced = group.iter().any(|r| run.producers.contains_key(r));
+        let feeds = produced
+            && steps.iter().flat_map(|(s, _)| s.reads.iter()).chain(group.iter().filter_map(|r| run.producers.get(r)).flatten()).any(|r| {
+                !group.contains(r) && changes.get(r).is_some_and(|d| d.inserted + d.deleted > 0)
+            });
+        if !affected && !indirect && !feeds {
             continue;
         }
-        let nonmonotone = group
-            .iter()
-            .any(|r| e.program.lattices.iter().any(|(n, _, _)| n == r))
+        let nonmonotone = produced
+            || group.iter().any(|r| e.program.lattices.iter().any(|(n, _, _)| n == r))
             || steps.iter().filter_map(|(_, q)| q.as_ref()).any(barrier);
-        if nonmonotone
+        // A producer's stratum is recomputed whole: the retained reductions, temporal waves and
+        // recursive partitions maintain rules' own queries, which a producer's is not.
+        if !produced
             && group.len() == 1
             && let Some(r) = group.first()
             && let Some(state) = run
@@ -405,7 +546,45 @@ pub(super) fn maintain(
             continue;
         }
         if nonmonotone {
-            if let Some(state) = group
+            let stratum = e
+                .program
+                .steps
+                .iter()
+                .filter(|s| group.contains(&s.output))
+                .map(|s| s.stratum)
+                .max()
+                .unwrap_or(0);
+            if !produced && let Some(state) = run.temporal.get_mut(&stratum) {
+                let store = w
+                    .versions
+                    .ok_or_else(|| error("temporal execution requires versioned storage"))?;
+                let (deltas, waves) = state.apply(w, store, changes, limit)?;
+                positives += u64::from(waves);
+                recursive_frames += u64::from(waves);
+                let objects = state.objects().collect::<Vec<_>>();
+                let owned = run
+                    .objects
+                    .iter()
+                    .map(|(n, _)| n.clone())
+                    .collect::<BTreeSet<_>>();
+                run.objects
+                    .extend(objects.into_iter().filter(|(n, _)| !owned.contains(n)));
+                for (r, d) in deltas {
+                    let count = run.counts.get(&r).copied().unwrap_or(0) + d.inserted - d.deleted;
+                    run.counts.insert(r.clone(), count);
+                    if run.outputs.contains(&r) {
+                        outputs.insert(
+                            r.clone(),
+                            json!({"inserted":d.inserted,"deleted":d.deleted}),
+                        );
+                    }
+                    incremental.push(r.clone());
+                    changes.insert(r, d);
+                }
+                continue;
+            }
+            if !produced
+                && let Some(state) = group
                 .first()
                 .and_then(|r| {
                     run.emitted
@@ -475,7 +654,7 @@ pub(super) fn maintain(
         // Native inputs keep their indexed overlays. SQL results temporarily restore their
         // old membership inside the batch savepoint, using only row deltas and existing indexes.
         // This costs only the deletion set, without distributing joins over 2^N alternatives.
-        let mut overlays = overlay::Overlays::new(w.db);
+        let mut overlays = overlay::Overlays::new(w.db, w.profiler);
         let mut old_inputs = BTreeMap::new();
         let mut sql_deleted = BTreeMap::new();
         for (_, q) in &steps {
@@ -748,6 +927,6 @@ pub(super) fn maintain(
         }
     }
     Ok(
-        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"recursive_partitions":recursive_partitions,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
+        json!({"positive_waves":positives,"overdelete_waves":deletions,"refreshed_strata":refreshed,"incremental_strata":incremental,"recursive_partitions":recursive_partitions,"recursive_frames":recursive_frames,"reducer_groups":reducer_groups,"context_rows":context_rows,"outputs":outputs}),
     )
 }

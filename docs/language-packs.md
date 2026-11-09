@@ -241,6 +241,7 @@ Each language is one file, `languages/<id>.json`, so changing one language touch
 | `capabilities` | yes | Per capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (no such thing or no plan; a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`, `clippy`, `sqlfluff`) |
 | `embeds` | no | Embedded languages and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks. A rule runs on the program with `ast.embedded: "<via>"` and reaches it from the file's tree with `embedded` ([DSL reference](code-rule-dsl-reference.html#embedded)) |
+| `fragments` | no | Grammars of a part of one of its dialects, which `.rr` rules name in `embed`, `sub_tape` and `parsed`: `{ "name": "annotation", "dialect": "python", "start": "expression" }` is a Python expression, parsed inside a written `( … )`. A name is unique among every dialect label and fragment ([decision 0082](final-shape/decisions/0082-embedded-grammar-names-sql-and-global-guests.md)) |
 
 Each dialect has:
 

@@ -378,7 +378,7 @@ pub(in crate::code_rule_dsl) fn file_values(
     file: &crate::code_rule_dsl::model::FileInput,
     plain: bool,
     follow: bool,
-    each: &mut dyn FnMut(bool, u32, Option<String>, &[&'static str]),
+    each: &mut ValueSink<'_>,
 ) {
     let language = tape.file_dialect();
     let root = ast_grep_core::AstGrep::doc(tape.clone());
@@ -420,6 +420,9 @@ pub(in crate::code_rule_dsl) fn file_values(
     super::resolve::CURRENT_CLAUSE.set(0);
     UTIL_EXCEEDED.set(None);
 }
+
+/// [`file_values`]' `each(followed, ordinal, text, types)`.
+pub(in crate::code_rule_dsl) type ValueSink<'a> = dyn FnMut(bool, u32, Option<String>, &[&'static str]) + 'a;
 
 #[cfg(test)]
 mod tests {

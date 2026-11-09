@@ -135,7 +135,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "str_part_start" => &["lit", "i", "l", "c"],
         "first_token" | "last_token" => &["n", "t"],
         "token_before" | "token_after" => &["x", "t"],
-        "tree_digest" => &["n", "s"],
+        "tree_digest" | "def_digest" => &["n", "s"],
         // core.rr's tokens (`facts::vtab::syntax::tree`).
         "prev_token" => &["n", "s"],
         "token" => &["p", "i", "s", "start", "end_"],
@@ -143,6 +143,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "reference_edge" => &["src", "dst", "via"],
         "reference_open" => &["n"],
         "rx_span" => &["p", "c", "j", "g", "m"],
+        "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).
         "guest" => &["g", "host", "at", "grammar"],
         "doc_role" => &["d", "r"],

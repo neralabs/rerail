@@ -120,7 +120,7 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         | "lf_line" | "line_count" | "syntax_error" | "doc_role" | "tape_of" => (&[], &[0]),
         "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "intval"
         | "op" | "op_t" | "op_at" | "line" | "end_line" | "col" | "visit_index" | "ast_depth"
-        | "tree_digest" | "spread" | "str_part_start" => (&[0], &[]),
+        | "tree_digest" | "def_digest" | "spread" | "str_part_start" => (&[0], &[]),
         "first_token" | "last_token" | "token_before" | "token_after" => (&[0, 1], &[]),
         _ => (&[], &[]),
     }

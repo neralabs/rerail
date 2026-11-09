@@ -7,12 +7,13 @@
 //! does (`super::string_value`), a backtick literal loses its fences (`super::code_body`).
 
 use super::Error;
-use super::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, Term, line_of};
+use super::syntax::{Code, Fix, Head, Item, Lines, Lit, Statement, Suppress, Term};
 use super::tape::{ERROR, Field, Kind, Node};
 
 /// The tape of `src` as a tree: each node's children in order, extras (comments) left out.
 struct Tree<'a> {
     src: &'a str,
+    lines: Lines,
     nodes: &'a [Node],
     children: Vec<Vec<u32>>,
 }
@@ -37,7 +38,7 @@ impl<'a> Tree<'a> {
                 children[p as usize].push(i as u32);
             }
         }
-        Self { src, nodes, children }
+        Self { src, lines: Lines::of(src), nodes, children }
     }
 
     fn kind(&self, n: u32) -> u16 {
@@ -54,7 +55,7 @@ impl<'a> Tree<'a> {
     }
 
     fn line(&self, n: u32) -> usize {
-        line_of(self.src, self.nodes[n as usize].start as usize)
+        self.lines.line(self.nodes[n as usize].start as usize)
     }
 
     fn all(&self, n: u32, field: Field) -> impl Iterator<Item = u32> + '_ {

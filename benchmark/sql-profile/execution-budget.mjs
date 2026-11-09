@@ -1,5 +1,6 @@
 // Restored from sql-capture-demand-spikes c109a915. One fixed allowance per complete job.
 export const JOB_SQL_EXECUTION_LIMIT = 100;
+import { completeSessionParity } from "./session-parity.mjs";
 
 export function sqlCategory(sql) {
   const text = sql.replace(/^(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+/, "");
@@ -12,6 +13,7 @@ const integer = n => Number.isSafeInteger(n) && n >= 0;
 const empty = n => Array.isArray(n) && n.length === 0;
 const digest = n => typeof n === "string" && /^[a-f0-9]{64}$/.test(n);
 function completeParity(workload) {
+  if (workload?.executor === "sql-extension") return completeSessionParity(workload);
   const result = workload?.results;
   if (result?.parity !== true) return false;
   // Preserve the original sibling-branch native-versus-SQL comparison contract.

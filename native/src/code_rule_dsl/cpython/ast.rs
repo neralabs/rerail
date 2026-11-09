@@ -79,27 +79,6 @@ impl Node {
             _ => &[],
         }
     }
-
-    /// Field `name`'s str.
-    pub(crate) fn ident(&self, name: &str) -> Option<&str> {
-        match self.get(name) {
-            F::Ident(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Every node of the tree, this one first, then each field's in order (preorder).
-    pub(crate) fn walk<'n>(&'n self, out: &mut Vec<&'n Node>) {
-        fn field<'n>(f: &'n F, out: &mut Vec<&'n Node>) {
-            match f {
-                F::Node(n) => n.walk(out),
-                F::List(items) => items.iter().for_each(|i| field(i, out)),
-                _ => {}
-            }
-        }
-        out.push(self);
-        self.fields.iter().for_each(|(_, f)| field(f, out));
-    }
 }
 
 fn node(n: Node) -> F {

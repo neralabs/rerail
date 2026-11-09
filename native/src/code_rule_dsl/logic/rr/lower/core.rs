@@ -130,10 +130,7 @@ impl Lowerer {
                 let mut own = BTreeSet::new();
                 body.iter().for_each(|l| literal_vars(l, &mut own));
                 for v in own {
-                    if !map.contains_key(&v) {
-                        let fresh = self.fresh(rel);
-                        map.insert(v, Term::Var(fresh));
-                    }
+                    map.entry(v).or_insert_with(|| Term::Var(self.fresh(rel)));
                 }
                 body.iter().map(|l| substitute_literal(l, &map)).collect()
             }
@@ -185,6 +182,7 @@ impl Lowerer {
 /// Takes out core.rr's relations `prog` neither reads, derives nor outputs, declared as core.rr declares them: the
 /// prelude's declarations and inputs, which are no relations of the program. The converter's overlay reads an
 /// authored file so (`logic::convert::overlay`), its declarations checked against the converter's.
+#[cfg(test)]
 pub(in crate::code_rule_dsl) fn drop_unread_core(prog: &mut crate::code_rule_dsl::logic::front::Program) {
     let used: BTreeSet<String> = prog
         .rules

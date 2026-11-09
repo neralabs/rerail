@@ -46,6 +46,9 @@ mod prof;
 #[cfg(feature = "code-rule-profile")]
 #[allow(dead_code)]
 mod profile;
+// The same SQL diagnostics serve standalone execution and the workspace profiler.
+#[path = "profile/sql.rs"]
+pub(in crate::code_rule_dsl) mod sql_profile;
 mod query;
 // Admission reads these once the batch budget is wired; until then only tests call it.
 #[allow(dead_code)]

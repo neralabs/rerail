@@ -128,13 +128,16 @@ pub(crate) fn build_cached_source(file: &FileInput, cache: &crate::content_store
     Ok((built.map_or(Built::Unparsed, |(facts, _)| Built::Facts(facts)), id))
 }
 
+/// What [`build_cached_with_tape`] gives: the facts and their tape (`None`: the file did not parse), and the source's id.
+type CachedTape = (Option<(Facts, TapeDoc)>, Option<crate::content_store::SourceId>);
+
 /// [`build_cached_source`], with the tape the facts were read off (`None`: the parser stopped at a limit), as
 /// [`build_with_tape`] gives it.
 pub(crate) fn build_cached_with_tape(
     file: &FileInput,
     cache: &crate::content_store::ContentStore,
     known: Option<crate::content_store::SourceId>,
-) -> Result<(Option<(Facts, TapeDoc)>, Option<crate::content_store::SourceId>), String> {
+) -> Result<CachedTape, String> {
     // A standalone cache build has the same lookup/parse/publication window as a corpus run.
     let _reading = cache.hold_collection().map_err(|e| e.to_string())?;
     use crate::code_rule_dsl::lines::Terminators;

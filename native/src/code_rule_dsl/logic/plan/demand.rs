@@ -58,9 +58,30 @@
 use super::super::front::{Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
+thread_local! {
+    /// Set while a session evaluates its cross-file part (decision 0077): the rows it keeps are each relation's whole
+    /// rows, which delete-and-rederive maintains, so no relation is computed only for the keys its readers reach. A
+    /// relation kept for some keys would miss a key demanded later whose derivation no delta touches (spike O125).
+    static WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// While the guard lives, `split_negations` splits nothing (`WHOLE`).
+pub(in crate::code_rule_dsl) fn whole_relations() -> impl Drop {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WHOLE.with(|w| w.set(self.0));
+        }
+    }
+    Reset(WHOLE.with(|w| w.replace(true)))
+}
+
 /// `prog` with each demandable relation computed for the keys its readers reach (the module's split), and what was
 /// demanded; `None` where nothing is, or where the split would not stratify or type.
 pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(Program, Vec<String>)> {
+    if WHOLE.with(|w| w.get()) {
+        return None;
+    }
     let kept = |rel: &str| {
         prog.outputs.iter().any(|o| o == rel)
             || prog.inputs.iter().any(|i| i == rel)
@@ -69,6 +90,9 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
             || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
             || prog.demand.iter().any(|d| d == rel)
             || prog.gates.iter().any(|(g, _)| g == rel)
+            // A relation memoised per import component (decision 0076, its copy from `<rel>__cross`): its stored rows
+            // must be all of a document's, not those a reader outside the closure asked for.
+            || prog.rules.iter().any(|r| r.head.rel == rel && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with("__cross"))))
     };
     let mut by_rel: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
     for rule in &prog.rules {
@@ -87,17 +111,27 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
             _ => false,
         })
     };
-    // A scan of the corpus: the fewest rows of a base atom that binds the rule's key (measured counts of the base
-    // relations and of the program's constants, not estimates of derived relations); `None` when no base atom does.
+    // A scan of the corpus: per head variable, the fewest rows of a base atom that binds it (measured counts of the
+    // base relations and of the program's constants, not estimates of derived relations), and the most of those over
+    // the head's variables; `None` when no base atom binds one. Not the key's alone: in
+    // `restores(s, x, a) :- binding(s, x, site, _), site != a, earlier(site, a)` a derived atom binds the key `s`,
+    // and `earlier`'s `docof(a, d)` makes a row for every node after each site (1.6 M rows on the Python pack's
+    // fixtures, for a reader that asks about 483).
     let scan = |rule: &Rule| -> Option<f64> {
-        let Some(key @ Term::Var(_)) = rule.head.args.first() else { return None };
-        rule.body
+        rule.head
+            .args
             .iter()
-            .filter_map(|l| match l {
-                Literal::Atom(a) if !a.neg && base(prog, &a.rel) && a.args.contains(key) => Some(base_rows(prog, model, a)),
-                _ => None,
+            .filter(|t| matches!(t, Term::Var(_)))
+            .filter_map(|v| {
+                rule.body
+                    .iter()
+                    .filter_map(|l| match l {
+                        Literal::Atom(a) if !a.neg && base(prog, &a.rel) && a.args.contains(v) => Some(base_rows(prog, model, a)),
+                        _ => None,
+                    })
+                    .reduce(f64::min)
             })
-            .reduce(f64::min)
+            .reduce(f64::max)
     };
     // A scan is worth demanding when it reaches at least this many rows: the rows not built must outweigh the strata
     // the split adds (`pre_<i>` and `demand_<r>`, opened in every chunk).
@@ -151,6 +185,24 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
 /// Whether the positive atoms `cut` leaves fall apart: two of them share no variable through the others (or
 /// through an equality).
 fn disconnected(rule: &Rule, cut: impl Fn(usize) -> bool) -> bool {
+    // A document variable does not connect: a document has a row for each of its nodes, so atoms joined only by
+    // their documents (`docof($s, $e9), rr_cx_reach($d9, $e9)` and a row of `$d9`'s) are a product per pair of
+    // documents. 4,719 `anc` rows times the annotations of every document they reach made 24M rows (O136).
+    let documents: BTreeSet<String> = rule
+        .body
+        .iter()
+        .filter_map(Literal::atom)
+        .filter(|a| !a.neg)
+        .flat_map(|a| match a.rel.as_str() {
+            "docof" => a.args.get(1).into_iter().collect::<Vec<_>>(),
+            r if r.starts_with("rr_cx_") => a.args.iter().collect(),
+            _ => Vec::new(),
+        })
+        .filter_map(|t| match t {
+            Term::Var(v) => Some(v.clone()),
+            _ => None,
+        })
+        .collect();
     let mut groups: Vec<BTreeSet<String>> = Vec::new();
     for (j, l) in rule.body.iter().enumerate() {
         let joins = match l {
@@ -158,7 +210,7 @@ fn disconnected(rule: &Rule, cut: impl Fn(usize) -> bool) -> bool {
             Literal::Cmp { op: "=", .. } => true,
             _ => false,
         };
-        let vars = l.vars();
+        let vars: BTreeSet<String> = l.vars().into_iter().filter(|v| !documents.contains(v)).collect();
         if !joins || vars.is_empty() {
             continue;
         }
@@ -240,6 +292,12 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         if let Some(own) = &own {
             kept.insert(0, own);
         }
+        // Nothing left to bind the demand (every literal is a negated read): a `pre_<i>` of an empty body is no
+        // relation any engine makes, so the rule stays as it is.
+        if kept.is_empty() {
+            rules.push(rule.clone());
+            continue;
+        }
         let mut bound = BTreeSet::new();
         for l in &kept {
             bound.extend(l.vars());
@@ -257,14 +315,15 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             return Err(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect());
         };
         let pre = format!("pre_{ri}");
-        // A reader that passes no variable on (its reads are of constants) makes `pre_<i>` nullary: in the physical
-        // form the split runs on (`sql::program::physical`), one presence column holding 1.
-        let (cols, args): (Vec<(String, String)>, Vec<Term>) = if vars.is_empty() {
+        let mut cols: Vec<(String, String)> = vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect();
+        let mut args: Vec<Term> = vars.iter().map(|v| Term::Var(v.clone())).collect();
+        // A split sharing no variable with its reads is a flag, encoded as every nullary relation is: one unit column
+        // (`rr::lower::lower_boolean_relations`).
+        if vars.is_empty() {
             out.nullary.insert(pre.clone());
-            (vec![("__presence".to_owned(), "int".to_owned())], vec![Term::Int(1)])
-        } else {
-            (vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect(), vars.iter().map(|v| Term::Var(v.clone())).collect())
-        };
+            cols.push(("rr_unit".to_owned(), "int".to_owned()));
+            args.push(Term::Int(1));
+        }
         out.decls.insert(pre.clone(), cols);
         let pre_atom = Atom { rel: pre, args, neg: false, gated: false };
         rules.push(Rule { head: pre_atom.clone(), body: kept.into_iter().cloned().collect() });
@@ -435,5 +494,29 @@ mod tests {
             let cut = |j: usize| matches!(&r.body[j], super::Literal::Atom(a) if a.rel == "d");
             assert_eq!(super::disconnected(r, cut), apart, "{r}");
         }
+    }
+
+    /// Atoms joined only through their documents are apart (O136): cutting `uinst` would leave every annotation of
+    /// every reached document against every `anc` row.
+    #[test]
+    fn atoms_joined_only_by_their_documents_are_disconnected() {
+        let p = super::super::super::front::parse(
+            r#"
+            .decl ann(f: node, x: number, t: node)
+            .decl uinst(t: node, c: node)
+            .decl anc(s: node, c: node)
+            .decl docof(n: node, d: number)
+            .decl rr_cx_reach(d: number, e: number)
+            .decl bv(f: node, x: number, s: node)
+            .input ann, uinst, anc, docof, rr_cx_reach
+            .output bv
+            bv($f, $x, $s) :- ann($f, $x, $t), uinst($t, $c), anc($s, $c), docof($f, $d9), docof($s, $e9), rr_cx_reach($d9, $e9).
+            "#,
+        )
+        .unwrap();
+        let r = &p.rules[0];
+        let at = |rel: &'static str| move |j: usize| matches!(&r.body[j], super::Literal::Atom(a) if a.rel == rel);
+        assert!(super::disconnected(r, at("uinst")), "cutting uinst leaves a product by documents");
+        assert!(!super::disconnected(r, at("rr_cx_reach")), "the rest still joins by t and c");
     }
 }

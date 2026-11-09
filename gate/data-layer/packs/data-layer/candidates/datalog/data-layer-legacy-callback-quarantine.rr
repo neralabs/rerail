@@ -1,3 +1,4 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl callback_call_quarantine_kind(kind: symbol)
 callback_call_quarantine_kind("decorated_definition").
 .decl k0(kind: symbol)
@@ -19,9 +20,6 @@ k1("class_definition").
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
-.decl m100(n: node)
-.decl m101(n: node)
-.decl m102(n: node)
 .decl m13(n: node)
 .decl m17(n: node)
 .decl m27(n: node)
@@ -29,25 +27,26 @@ k1("class_definition").
 .decl m33(n: node)
 .decl m42(n: node)
 .decl m45(n: node)
-.decl m54(n: node)
-.decl m55(n: node)
-.decl m66(n: node)
-.decl m67(n: node)
-.decl m68(n: node)
-.decl m79(n: node)
-.decl m80(n: node)
-.decl m81(n: node)
+.decl m49(n: node)
+.decl m60(n: node)
+.decl m61(n: node)
+.decl m62(n: node)
+.decl m73(n: node)
+.decl m74(n: node)
+.decl m75(n: node)
+.decl m94(n: node)
+.decl m95(n: node)
+.decl m96(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
 .decl t3(s: symbol)
 .decl t36(s: symbol)
-.decl t84(s: symbol)
+.decl t78(s: symbol)
 .decl tape_syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl u22(n: node)
-.decl u49(n: node)
 .decl u8(n: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .input doc, node, child, field, text, line, syntax_error
@@ -110,33 +109,29 @@ m42(n) :- node(_, n, "typed_parameter", _, _).
 m42(n) :- node(_, n, "typed_default_parameter", _, _).
 m45(n) :- node(_, n, "identifier", _, _), text(n, v41), v41 = "fn".
 m45(n) :- m42(n), child(n, v43, _), node(_, v43, "identifier", _, _), text(v43, v44), v44 = "fn", child(_, v43, 0).
-m54(n) :- node(_, n, "identifier", _, _), text(n, v50), (v50 = "direct_legacy_async" ; v50 = "direct_legacy_module_async" ; v50 = "direct_legacy_module_sync" ; v50 = "direct_legacy_sync" ; v50 = "legacy_async" ; v50 = "legacy_module_async" ; v50 = "legacy_module_sync" ; v50 = "legacy_sync").
-m54(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v51), node(_, v51, "identifier", _, _), text(v51, v52), (v52 = "direct_legacy_async" ; v52 = "direct_legacy_module_async" ; v52 = "direct_legacy_module_sync" ; v52 = "direct_legacy_sync" ; v52 = "legacy_async" ; v52 = "legacy_module_async" ; v52 = "legacy_module_sync" ; v52 = "legacy_sync").
-m54(n) :- node(_, n, "call", _, _), field(n, "function", v53), u49(v53).
-u49(n) :- m54(n).
-m55(n) :- node(_, n, "function_definition", _, _), child(v46, n, _), node(_, v46, "decorated_definition", _, _), child(v46, v47, _), node(_, v47, "decorator", _, _), child(v47, v48, _), u49(v48).
-m66(n) :- node(_, n, "identifier", _, _), text(n, v63), v63 = "overload".
-m66(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v64), node(_, v64, "identifier", _, _), text(v64, v65), v65 = "overload".
-m67(n) :- node(_, n, "identifier", _, _), text(n, v59), v59 = "overload".
-m67(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v60), node(_, v60, "identifier", _, _), text(v60, v61), v61 = "overload".
-m67(n) :- node(_, n, "call", _, _), field(n, "function", v62), m66(v62).
-m68(n) :- child(v56, n, _), node(_, v56, "decorated_definition", _, _), child(v56, v57, _), node(_, v57, "decorator", _, _), child(v57, v58, _), m67(v58).
-m79(n) :- node(_, n, "identifier", _, _), text(n, v76), v76 = "Protocol".
-m79(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v77), node(_, v77, "identifier", _, _), text(v77, v78), v78 = "Protocol".
-m80(n) :- node(_, n, "identifier", _, _), text(n, v72), v72 = "Protocol".
-m80(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v73), node(_, v73, "identifier", _, _), text(v73, v74), v74 = "Protocol".
-m80(n) :- node(_, n, "call", _, _), field(n, "function", v75), m79(v75).
-m81(n) :- inside(n, v69, k1), node(_, v69, "class_definition", _, _), field(v69, "superclasses", v70), child(v70, v71, _), m80(v71).
-violation("data-layer-legacy-callback-quarantine", "callback-definition", "LCB-010", p, l) :- node(v34, n, _, _, _), doc(v34, v35, _), !t36(v35), node(_, n, "function_definition", _, _), field(n, "name", v37), node(_, v37, "identifier", _, _), text(v37, v38), (v38 = "read" ; v38 = "read_async" ; v38 = "read_version" ; v38 = "read_version_async" ; v38 = "write" ; v38 = "write_async" ; v38 = "write_version" ; v38 = "write_version_async"), field(n, "parameters", v39), child(v39, v40, _), m45(v40), !m55(n), !m68(n), !m81(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-t84(s) :- doc(_, s, _), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
-t84(s) :- doc(_, _, s), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
-m100(n) :- node(_, n, "identifier", _, _), text(n, v97), v97 = "Protocol".
-m100(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v98), node(_, v98, "identifier", _, _), text(v98, v99), v99 = "Protocol".
-m101(n) :- node(_, n, "identifier", _, _), text(n, v93), v93 = "Protocol".
-m101(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v94), node(_, v94, "identifier", _, _), text(v94, v95), v95 = "Protocol".
-m101(n) :- node(_, n, "call", _, _), field(n, "function", v96), m100(v96).
-m102(n) :- inside(n, v90, k1), node(_, v90, "class_definition", _, _), field(v90, "superclasses", v91), child(v91, v92, _), m101(v92).
-violation("data-layer-legacy-callback-quarantine", "connection-definition", "LCB-030", p, l) :- node(v82, n, _, _, _), doc(v82, v83, _), !t84(v83), node(_, n, "function_definition", _, _), field(n, "name", v85), node(_, v85, "identifier", _, _), text(v85, v86), (v86 = "commit_branch" ; v86 = "commit_branch_async"), nearest(n, v87, k1), node(_, v87, "class_definition", _, _), field(v87, "name", v88), node(_, v88, "identifier", _, _), text(v88, v89), (suffix("Connection", v89) ; suffix("ConnectionCore", v89) ; suffix("DatabaseConnection", v89)), !m102(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m49(n) :- node(_, n, "function_definition", _, _), child(v46, n, _), node(_, v46, "decorated_definition", _, _), child(v46, v47, _), node(_, v47, "decorator", _, _), child(v47, v48, _), u22(v48).
+m60(n) :- node(_, n, "identifier", _, _), text(n, v57), v57 = "overload".
+m60(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v58), node(_, v58, "identifier", _, _), text(v58, v59), v59 = "overload".
+m61(n) :- node(_, n, "identifier", _, _), text(n, v53), v53 = "overload".
+m61(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v54), node(_, v54, "identifier", _, _), text(v54, v55), v55 = "overload".
+m61(n) :- node(_, n, "call", _, _), field(n, "function", v56), m60(v56).
+m62(n) :- child(v50, n, _), node(_, v50, "decorated_definition", _, _), child(v50, v51, _), node(_, v51, "decorator", _, _), child(v51, v52, _), m61(v52).
+m73(n) :- node(_, n, "identifier", _, _), text(n, v70), v70 = "Protocol".
+m73(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v71), node(_, v71, "identifier", _, _), text(v71, v72), v72 = "Protocol".
+m74(n) :- node(_, n, "identifier", _, _), text(n, v66), v66 = "Protocol".
+m74(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v67), node(_, v67, "identifier", _, _), text(v67, v68), v68 = "Protocol".
+m74(n) :- node(_, n, "call", _, _), field(n, "function", v69), m73(v69).
+m75(n) :- inside(n, v63, k1), node(_, v63, "class_definition", _, _), field(v63, "superclasses", v64), child(v64, v65, _), m74(v65).
+violation("data-layer-legacy-callback-quarantine", "callback-definition", "LCB-010", p, l) :- node(v34, n, _, _, _), doc(v34, v35, _), !t36(v35), node(_, n, "function_definition", _, _), field(n, "name", v37), node(_, v37, "identifier", _, _), text(v37, v38), (v38 = "read" ; v38 = "read_async" ; v38 = "read_version" ; v38 = "read_version_async" ; v38 = "write" ; v38 = "write_async" ; v38 = "write_version" ; v38 = "write_version_async"), field(n, "parameters", v39), child(v39, v40, _), m45(v40), !m49(n), !m62(n), !m75(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t78(s) :- doc(_, s, _), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
+t78(s) :- doc(_, _, s), (glob("**/.git", s) ; glob("**/.git/**", s) ; glob("**/.mypy_cache", s) ; glob("**/.mypy_cache/**", s) ; glob("**/.pytest_cache", s) ; glob("**/.pytest_cache/**", s) ; glob("**/.ruff_cache", s) ; glob("**/.ruff_cache/**", s) ; glob("**/.venv", s) ; glob("**/.venv/**", s) ; glob("**/__pycache__", s) ; glob("**/__pycache__/**", s) ; glob("**/tmp", s) ; glob("**/tmp/**", s)).
+m94(n) :- node(_, n, "identifier", _, _), text(n, v91), v91 = "Protocol".
+m94(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v92), node(_, v92, "identifier", _, _), text(v92, v93), v93 = "Protocol".
+m95(n) :- node(_, n, "identifier", _, _), text(n, v87), v87 = "Protocol".
+m95(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v88), node(_, v88, "identifier", _, _), text(v88, v89), v89 = "Protocol".
+m95(n) :- node(_, n, "call", _, _), field(n, "function", v90), m94(v90).
+m96(n) :- inside(n, v84, k1), node(_, v84, "class_definition", _, _), field(v84, "superclasses", v85), child(v85, v86, _), m95(v86).
+violation("data-layer-legacy-callback-quarantine", "connection-definition", "LCB-030", p, l) :- node(v76, n, _, _, _), doc(v76, v77, _), !t78(v77), node(_, n, "function_definition", _, _), field(n, "name", v79), node(_, v79, "identifier", _, _), text(v79, v80), (v80 = "commit_branch" ; v80 = "commit_branch_async"), nearest(n, v81, k1), node(_, v81, "class_definition", _, _), field(v81, "name", v82), node(_, v82, "identifier", _, _), text(v82, v83), (suffix("Connection", v83) ; suffix("ConnectionCore", v83) ; suffix("DatabaseConnection", v83)), !m96(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 callback_call_receiver_name(n) :- node(_, n, "identifier", _, _), text(n, s), (iglob("conn", s) ; iglob("session_handle", s) ; iglob("version_handle", s) ; iglob("*session", s) ; iglob("*connection", s) ; iglob("*version", s)).
 callback_call_receiver(n) :- callback_call_receiver_name(n).
 callback_call_receiver(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), callback_call_receiver_name(a).

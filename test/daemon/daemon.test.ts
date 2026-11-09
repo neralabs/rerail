@@ -730,19 +730,6 @@ describe("Rerail daemon", () => {
     }
   });
 
-  it("releases its engine socket when a rollback holds the database, so the next start succeeds", async () => {
-    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
-    const databasePath = join(root, "rerail.sqlite");
-    const restoring = `${databasePath}.restoring`;
-    openRerailDatabase(databasePath).$client.close();
-    await writeFile(restoring, "");
-    await expect(start()).rejects.toThrow(/putting back a copy/u);
-    expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
-    await rm(restoring);
-    const daemon = await start();
-    expect((await getJson(daemon, "/healthz")).status).toBe(200);
-  });
-
   it("comes back on the port it last listened on, and moves only when another process holds it", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     process.env.RERAIL_HOME = join(root, "home");

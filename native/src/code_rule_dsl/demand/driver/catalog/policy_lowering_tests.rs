@@ -2221,14 +2221,18 @@ fn sql_outcome_with_failure(
         .map(|node| tape.transducer_span(node))
         .collect::<Vec<_>>();
     let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    // Every producer runs and completes, but a terminal of another dialect than the file's visits
+    // no node: the tape's kind ids are another grammar's, which the catalog driver never gives it.
     let anchors = plan
         .terminals()
         .iter()
         .map(|terminal| {
-            if matches!(
-                terminal.kind(),
-                TerminalKind::File | TerminalKind::Transform
-            ) {
+            if terminal.dialect() != dialect
+                || matches!(
+                    terminal.kind(),
+                    TerminalKind::File | TerminalKind::Transform
+                )
+            {
                 Vec::new()
             } else if terminal.kind() == TerminalKind::Navigation {
                 vec![0]
