@@ -276,15 +276,13 @@ describe("CodeRuleBridge", () => {
     }));
   });
 
-  it("gives a shell write the preimage Git or the session holds only when its digest is the file's before the write", async () => {
+  it("gives a shell write the preimage the session or Git holds, including its first sight of a file Git does not hold", async () => {
     const root = await workspace();
     const clean = join(root, "src", "clean.py");
     const dirty = join(root, "src", "dirty.py");
     await writeFile(clean, "one\n");
     await writeFile(dirty, "committed\n");
-    execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
-    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+    commitAll(root);
     // Changed before the session and never staged: neither the index nor HEAD holds what the session first saw.
     await writeFile(dirty, "uncommitted\n");
     await awaitClockAfter(clean, dirty);
@@ -316,9 +314,7 @@ describe("CodeRuleBridge", () => {
     const root = await workspace();
     const untracked = join(root, "src", "untracked.py");
     await writeFile(join(root, "src", "kept.py"), "kept\n");
-    execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
-    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+    commitAll(root);
     await writeFile(untracked, "draft\n");
     await awaitClockAfter(untracked);
     const { bridge, auditGeneratedEdits } = await opened(root);
@@ -328,17 +324,33 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
+  it("measures a shell edit from the text a later walk first saw in a folder the baseline could not read", async () => {
+    const root = await realpath(await workspace());
+    const draft = join(root, "deep", "draft.py");
+    await writeFile(join(root, "src", "kept.py"), "kept\n");
+    commitAll(root);
+    await mkdir(join(root, "deep"));
+    await writeFile(draft, "draft\n");
+    await awaitClockAfter(draft);
+    discovery.directories.set(join(root, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // The next walk reads the folder: its first sight of the file.
+    await bridge.checkpoint("turn");
+    await shell(bridge, () => writeFile(draft, "draft\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]);
+  });
+
   it("audits nothing Git wrote over a file changed before the session, and measures the next shell edit from Git's text", async () => {
     const root = await workspace();
     const dirty = join(root, "src", "dirty.py");
     await writeFile(dirty, "committed\n");
-    execFileSync("git", ["init", "--quiet"], { cwd: root });
-    execFileSync("git", ["add", "."], { cwd: root });
-    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+    commitAll(root);
     await writeFile(dirty, "uncommitted\n");
     await awaitClockAfter(dirty);
     const { bridge, auditGeneratedEdits } = await opened(root);
-    // A Git write the session is not credited with leaves text the session never saw: the next write has no preimage.
+    // The session's first sight of the file is no change of its own, and no longer the file's text once Git wrote over it.
     await shell(bridge, () => git(root, "stash", "--quiet"));
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
     await shell(bridge, () => writeFile(dirty, "committed\nmine\n"));
@@ -822,6 +834,12 @@ describe("ledgerPreimage", () => {
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
+}
+/** Makes `root` a repository whose one commit holds every file in it. */
+function commitAll(root: string): void {
+  git(root, "init", "--quiet");
+  git(root, "add", ".");
+  git(root, "commit", "--quiet", "-m", "seed");
 }
 /** A repository on `main`, with a branch `other` ahead of it: it changes `src/a.py`, adds `src/new.py` and removes `src/gone.py`. */
 async function twoBranches(): Promise<string> {
