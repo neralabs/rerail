@@ -82,7 +82,18 @@ pub(super) struct Ctx {
     output_stride: u64,
     totals_stride: u64,
     totals_mask: u64,
+    /// The tape's room: its node, supertype and return slots (`Tape`'s lengths). A token word
+    /// stops the run (`OVERFLOW`) when the path it starts could pass them.
+    room_nodes: u64,
+    room_supers: u64,
+    room_pushes: u64,
 }
+
+/// The run stopped for the tape's room: the host runs it again with the bound's room.
+pub(super) const OVERFLOW: u64 = u64::MAX;
+
+/// Runs again on the bound's tape (`CompiledStream::call`), for the profile.
+pub(super) static ROOM_RETRIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The field offsets of `Ctx`.
 const BYTES: i32 = 0;
@@ -120,6 +131,9 @@ const EXTRA: i32 = 248;
 const OUTPUT_STRIDE: i32 = 256;
 const TOTALS_STRIDE: i32 = 264;
 const TOTALS_MASK: i32 = 272;
+const ROOM_NODES: i32 = 280;
+const ROOM_SUPERS: i32 = 288;
+const ROOM_PUSHES: i32 = 296;
 
 /// The root's parent in the table's `parent` column.
 pub(super) const NO_PARENT: u32 = u32::MAX;
@@ -137,6 +151,11 @@ pub(super) struct Bounds {
     pub(super) pushes: u64,
     /// Returns chain: a cycle passes a `RETURN` and no `TOKEN`.
     pub(super) chains: bool,
+    /// Where returns chain, the most a call popped writes: a token's path writes at most the
+    /// bound above and this for each call still open (the bound is per token over a file, the
+    /// pops paid by the pushes; a path alone pops the calls open when it starts).
+    pub(super) pop_nodes: u64,
+    pub(super) pop_supers: u64,
 }
 
 /// A compiled tier-2 program.
@@ -198,8 +217,8 @@ pub(super) fn bounds(native: &NativeModule) -> Bounds {
         Op::Push { .. } => Bounds { pushes: 1, ..Bounds::default() },
         _ => Bounds::default(),
     };
-    let max = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes.max(b.nodes), supers: a.supers.max(b.supers), pushes: a.pushes.max(b.pushes), chains: false };
-    let add = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes + b.nodes, supers: a.supers + b.supers, pushes: a.pushes + b.pushes, chains: false };
+    let max = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes.max(b.nodes), supers: a.supers.max(b.supers), pushes: a.pushes.max(b.pushes), ..Bounds::default() };
+    let add = |a: Bounds, b: Bounds| Bounds { nodes: a.nodes + b.nodes, supers: a.supers + b.supers, pushes: a.pushes + b.pushes, ..Bounds::default() };
     let cut = |pc: usize, cut_return: bool| -> Vec<usize> {
         if cut_return && matches!(native.structural[pc].operation, Op::Return { .. }) {
             return vec![];
@@ -283,7 +302,7 @@ pub(super) fn bounds(native: &NativeModule) -> Bounds {
     let chain = over(&landings, &|p| p.1.unwrap_or_default());
     let calls = first.pushes + last.pushes;
     let times = |x: u64, k: u64| x * k;
-    Bounds { nodes: first.nodes + last.nodes + times(chain.nodes, calls), supers: first.supers + last.supers + times(chain.supers, calls), pushes: calls, chains: true }
+    Bounds { nodes: first.nodes + last.nodes + times(chain.nodes, calls), supers: first.supers + last.supers + times(chain.supers, calls), pushes: calls, chains: true, pop_nodes: chain.nodes, pop_supers: chain.supers }
 }
 
 /// The places `PUSH` names, sorted: where a `RETURN` can go.
@@ -729,7 +748,8 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
             dead: f.declare_var(types::I64),
         };
         // Where returns chain, each `RETURN` is a loop's head: a turn pops a call.
-        let chains = bounds(native).chains;
+        let bound = bounds(native);
+        let chains = bound.chains;
         // Programs without `WRAP` or a `relabel` pay nothing for them: no frames, no chains, no
         // reorder (which runs only once a wrap was made).
         let wrapping = framed(words);
@@ -747,6 +767,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         let lasts_stride = load(&mut f, LASTS_STRIDE);
         let totals_p = load(&mut f, TOTALS);
         let (output_stride, totals_stride, totals_mask) = (load(&mut f, OUTPUT_STRIDE), load(&mut f, TOTALS_STRIDE), load(&mut f, TOTALS_MASK));
+        let rooms = [load(&mut f, ROOM_NODES), load(&mut f, ROOM_SUPERS), load(&mut f, ROOM_PUSHES)];
         let outputs_p = load(&mut f, OUTPUTS);
         let cols: Vec<Value> = [KIND, FIELD, START, END, SIZE, SUPER_NODE, SUPER_KIND, OPEN, RETURNS, COUNTS].iter().map(|&at| load(&mut f, at)).collect();
         let (kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c) =
@@ -802,6 +823,27 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
             match w.operation {
                 Op::Token { .. } => {
                     heads.push((wb[pc], Step::Token));
+                    // The path from here to the next token word writes at most `bound`'s nodes,
+                    // supertypes and returns: past the tape's room, the run stops for a bigger
+                    // tape. Three compares a token, not one a write.
+                    let mut over = f.ins().iconst(types::I8, 0);
+                    let open_calls = f.use_var(v.ret);
+                    for (var, (room, (most, per_call))) in [v.nodes, v.supers, v.ret].into_iter().zip(rooms.into_iter().zip([(bound.nodes, bound.pop_nodes), (bound.supers, bound.pop_supers), (bound.pushes, 0)])) {
+                        let at = f.use_var(var);
+                        let at = if per_call > 0 {
+                            let popped = f.ins().imul_imm(open_calls, per_call as i64);
+                            f.ins().iadd(at, popped)
+                        } else {
+                            at
+                        };
+                        let reach = f.ins().iadd_imm(at, most as i64);
+                        let past = f.ins().icmp(IntCC::UnsignedGreaterThan, reach, room);
+                        over = f.ins().bor(over, past);
+                    }
+                    let fits = f.create_block();
+                    let overflow = f.ins().iconst(types::I64, OVERFLOW as i64);
+                    f.ins().brif(over, refuse, &[BlockArg::from(overflow)], fits, &[]);
+                    f.switch_to_block(fits);
                     // A token whose bytes are not taken yet (after a mark's arm) is kept.
                     let take = f.create_block();
                     let need = f.use_var(v.need);
@@ -1616,11 +1658,22 @@ pub(super) struct Tape {
 impl CompiledStream {
     /// Room for a stream of `n` starts.
     pub(super) fn tape(&self, n: usize) -> Tape {
+        // Room for what files write (on the `.rr` corpus, a node a token and fewer supertypes
+        // and open calls), and a token's path past it; a run that could pass it stops at a
+        // token word (`OVERFLOW`) and `call` runs it again on `full_tape`.
+        let b = &self.bounds;
+        let tokens = n as u64 + 2;
+        self.sized((2 * tokens + b.nodes + 1) as usize, (tokens + b.supers + 1) as usize, (tokens / 4 + b.pushes + 64) as usize)
+    }
+
+    /// A tape with the program's bound's room for `n` starts: no run passes it.
+    fn full_tape(&self, n: usize) -> Tape {
         // A token is switched on once, and once more after each mark's arm.
         let paths = (n as u64 + 2) * (1 + self.marks);
-        let nodes = (self.bounds.nodes * paths + 1) as usize;
-        let supers = (self.bounds.supers * paths + 1) as usize;
-        let pushes = (self.bounds.pushes * paths + 1) as usize;
+        self.sized((self.bounds.nodes * paths + 1) as usize, (self.bounds.supers * paths + 1) as usize, (self.bounds.pushes * paths + 1) as usize)
+    }
+
+    fn sized(&self, nodes: usize, supers: usize, pushes: usize) -> Tape {
         Tape {
             kind: vec![0; nodes],
             field: vec![0; nodes],
@@ -1646,6 +1699,29 @@ impl CompiledStream {
     /// # Safety
     /// The pointers must be as stated, and `tape` from `self.tape(tier1.nstarts)`.
     pub(super) unsafe fn call(&self, bytes: *const u8, len: usize, tier1: Tier1View, tape: &mut Tape) -> u64 {
+        // SAFETY: the caller's contract.
+        let r = unsafe { self.call_once(bytes, len, tier1, tape) };
+        if r != OVERFLOW {
+            return r;
+        }
+        ROOM_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *tape = self.full_tape(tier1.nstarts);
+        // SAFETY: as above, on the bound's tape.
+        let r = unsafe { self.call_once(bytes, len, tier1, tape) };
+        if r == OVERFLOW { self.overflow_pc() } else { r }
+    }
+
+    /// A run that passed even the bound's room (a conservative check where returns chain):
+    /// refused at the program's end, the file goes to the fallback.
+    fn overflow_pc(&self) -> u64 {
+        u64::MAX - 1
+    }
+
+    /// `call` on the tape as given.
+    ///
+    /// # Safety
+    /// As `call`.
+    unsafe fn call_once(&self, bytes: *const u8, len: usize, tier1: Tier1View, tape: &mut Tape) -> u64 {
         let ctx = Ctx {
             bytes,
             len: len as u64,
@@ -1682,6 +1758,9 @@ impl CompiledStream {
             output_stride: tier1.output_stride as u64,
             totals_stride: tier1.totals_stride as u64,
             totals_mask: tier1.totals_mask,
+            room_nodes: tape.kind.len() as u64,
+            room_supers: tape.super_node.len() as u64,
+            room_pushes: tape.returns.len() as u64,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers.
         unsafe { (self.entry)(&ctx) }

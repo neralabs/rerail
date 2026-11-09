@@ -641,6 +641,16 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &
         e.push("RETURN", 1, Arg::None);
         returns.insert(p, at);
     }
+    // Every target as a word's place, then the words that behave alike shared (`merge_words`).
+    let place = |a: Arg| match a {
+        Arg::State(s) => Arg::Pc(e.entry[usize::from(s)]),
+        Arg::Return(s) => Arg::Pc(returns.get(&s).copied().unwrap_or(e.entry[usize::from(s)])),
+        a => a,
+    };
+    let placed: Vec<(&'static str, u8, Arg)> = e.words.iter().map(|&(op, mode, arg)| (op, mode, place(arg))).collect();
+    let (words, switches) = merge_words(&placed, &e.switches);
+    e.words = words;
+    e.switches = switches;
     let mut text = String::new();
     use std::fmt::Write as _;
     for (at, s) in e.strings.iter().enumerate() {
@@ -667,4 +677,178 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &
         text.push('\n');
     }
     Ok(Lowered { text, tested: e.tested.into_iter().collect() })
+}
+
+/// A word's operand without its target, for the first partition (`merge_words`).
+fn operand_key(arg: Arg) -> (u8, u16) {
+    match arg {
+        Arg::None => (0, 0),
+        Arg::Num(n) => (1, n),
+        Arg::Kind(k) => (2, k),
+        Arg::Field(f) => (3, f),
+        Arg::Str(s) => (4, s),
+        Arg::Table(_) | Arg::State(_) | Arg::Return(_) | Arg::Pc(_) => (5, 0),
+    }
+}
+
+/// How a word goes on, as `stream::validate` reads it: its targets, and the places after it it
+/// goes to by position (the next, and for a test the one after).
+fn ways(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], pc: usize) -> (Vec<u16>, usize) {
+    let (op, mode, arg) = words[pc];
+    let target = |a: Arg| match a {
+        Arg::Pc(t) => t,
+        _ => REFUSE,
+    };
+    match op {
+        "STOP" | "ACCEPT" | "RETURN" => (vec![], 0),
+        "GOTO" => (vec![target(arg)], 0),
+        "SWITCH" => {
+            let Arg::Table(t) = arg else { return (vec![], 0) };
+            let s = &switches[usize::from(t)];
+            (s.targets.iter().copied().chain([s.end]).collect(), 0)
+        }
+        // A call's landings: the state (`RETURN m=0`) and the word after it (`m=1`).
+        "PUSH" => {
+            let p = target(arg);
+            (vec![p, p.wrapping_add(1)], 1)
+        }
+        "WORD" if mode != 0 => (vec![], 2),
+        "MARK" | "ROW" => (vec![], 2),
+        _ => (vec![], 1),
+    }
+}
+
+/// The words with those that behave alike shared: words are alike when their operation and
+/// operands are, and so are the words they go to, by target and by position (the coarsest such
+/// partition, found by refining one by operation until it holds: cycles included). One word of
+/// each kind is kept; a place a kept word reaches by position that holds another of its kind
+/// becomes a `GOTO` to it, and words nothing reaches go. The places of a state a call returns to
+/// stay whole (`TOKEN`, its `MARK`s and their ways, `SWITCH`: `stream::validate`'s shape).
+fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch]) -> (Vec<(&'static str, u8, Arg)>, Vec<ByteSwitch>) {
+    let n = words.len();
+    const NONE: u32 = u32::MAX;
+    let class_of = |class: &[u32], t: u16| if t == REFUSE || usize::from(t) >= n { NONE } else { class[usize::from(t)] };
+    // The first partition: operation, mode, operand (a switch's offset too).
+    let mut class: Vec<u32> = {
+        let mut ids: HashMap<(&str, u8, (u8, u16), u8), u32> = HashMap::new();
+        words
+            .iter()
+            .map(|&(op, mode, arg)| {
+                let offset = if let Arg::Table(t) = arg { switches[usize::from(t)].offset } else { 0 };
+                let next = ids.len() as u32;
+                *ids.entry((op, mode, operand_key(arg), offset)).or_insert(next)
+            })
+            .collect()
+    };
+    let mut count = class.iter().copied().max().map_or(0, |m| m as usize + 1);
+    loop {
+        let mut ids: HashMap<Vec<u32>, u32> = HashMap::new();
+        let next: Vec<u32> = (0..n)
+            .map(|pc| {
+                let (targets, by_place) = ways(words, switches, pc);
+                let mut key = Vec::with_capacity(1 + targets.len() + by_place);
+                key.push(class[pc]);
+                key.extend(targets.iter().map(|&t| class_of(&class, t)));
+                key.extend((1..=by_place).map(|d| if pc + d < n { class[pc + d] } else { NONE }));
+                let id = ids.len() as u32;
+                *ids.entry(key).or_insert(id)
+            })
+            .collect();
+        let refined = ids.len();
+        class = next;
+        if refined == count {
+            break;
+        }
+        count = refined;
+    }
+    let mut rep = vec![usize::MAX; count];
+    for pc in (0..n).rev() {
+        rep[class[pc] as usize] = pc;
+    }
+    // What each place holds: nothing, its own word, or a `GOTO` to its kind's kept word.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Hold {
+        Gone,
+        Own,
+        Stub(usize),
+    }
+    let mut hold = vec![Hold::Gone; n];
+    // A call's landing for each `PUSH`: its state's kept word where the word after is alike.
+    let mut landing = vec![0u16; n];
+    let mut todo: Vec<(usize, bool)> = vec![(0, false)];
+    while let Some((pc, own)) = todo.pop() {
+        let r = rep[class[pc] as usize];
+        if !own && r != pc {
+            if hold[pc] == Hold::Gone {
+                hold[pc] = Hold::Stub(r);
+                todo.push((r, false));
+            }
+            continue;
+        }
+        if hold[pc] == Hold::Own {
+            continue;
+        }
+        hold[pc] = Hold::Own;
+        let (op, _, arg) = words[pc];
+        let (targets, by_place) = ways(words, switches, pc);
+        if op == "PUSH" {
+            let Arg::Pc(p) = arg else { continue };
+            let (p, r) = (usize::from(p), rep[class[usize::from(p)] as usize]);
+            let to = if r + 1 < n && p + 1 < n && class[r + 1] == class[p + 1] { r } else { p };
+            landing[pc] = to as u16;
+            todo.push((to, true));
+            todo.push((to + 1, false));
+        } else {
+            for t in targets {
+                if t != REFUSE && usize::from(t) < n {
+                    todo.push((rep[class[usize::from(t)] as usize], true));
+                }
+            }
+        }
+        // A state's places by position stay its own: after `TOKEN` its `MARK` or `SWITCH`, after
+        // a `MARK` its way, then the next `MARK` or the `SWITCH`.
+        for d in 1..=by_place {
+            if pc + d < n {
+                let whole = matches!((op, d), ("TOKEN", 1) | ("MARK", 2));
+                todo.push((pc + d, whole));
+            }
+        }
+    }
+    // The kept places in order, renumbered: places kept stay next to each other.
+    let mut new_at = vec![REFUSE; n];
+    let mut k = 0u16;
+    for pc in 0..n {
+        if hold[pc] != Hold::Gone {
+            new_at[pc] = k;
+            k += 1;
+        }
+    }
+    let to = |t: u16| if t == REFUSE || usize::from(t) >= n { REFUSE } else { new_at[rep[class[usize::from(t)] as usize]] };
+    let mut tables: HashMap<u16, u16> = HashMap::new();
+    let mut out_switches = Vec::new();
+    let mut out = Vec::with_capacity(usize::from(k));
+    for pc in 0..n {
+        match hold[pc] {
+            Hold::Gone => {}
+            Hold::Stub(r) => out.push(("GOTO", 0, Arg::Pc(new_at[r]))),
+            Hold::Own => {
+                let (op, mode, arg) = words[pc];
+                let arg = match (op, arg) {
+                    ("PUSH", Arg::Pc(_)) => Arg::Pc(new_at[usize::from(landing[pc])]),
+                    ("SWITCH", Arg::Table(t)) => {
+                        let at = *tables.entry(t).or_insert_with(|| {
+                            let s = &switches[usize::from(t)];
+                            out_switches.push(ByteSwitch { offset: s.offset, targets: s.targets.iter().map(|&x| to(x)).collect(), end: to(s.end) });
+                            (out_switches.len() - 1) as u16
+                        });
+                        Arg::Table(at)
+                    }
+                    (_, Arg::Pc(t)) => Arg::Pc(to(t)),
+                    (_, a) => a,
+                };
+                out.push((op, mode, arg));
+            }
+        }
+    }
+    (out, out_switches)
 }
