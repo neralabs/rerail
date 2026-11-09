@@ -1260,6 +1260,14 @@ pub(crate) fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    // Whether the native strata may be placed on the device (`plan::placement`, decision 0095), for this run.
+    struct Device(bool);
+    impl Drop for Device {
+        fn drop(&mut self) {
+            super::placement::set_device(self.0);
+        }
+    }
+    let _device = Device(super::placement::set_device(binding == Binding::Metal));
     let before = observe(|o| {
         o.begin();
         o.counts
