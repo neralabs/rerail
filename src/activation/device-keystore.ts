@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { spawn } from "../engine/child-process.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
 export interface DeviceSecretStore {

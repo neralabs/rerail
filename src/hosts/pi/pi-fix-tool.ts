@@ -1,9 +1,9 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { z } from "zod/v4";
+import { spawn } from "../../engine/child-process.js";
 import { internalTesting } from "../../engine/internal-testing.js";
 
 /** The tool a `subagent` steer names on Pi; Rerail registers it with the first such steer. */

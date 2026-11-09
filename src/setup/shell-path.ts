@@ -11,11 +11,11 @@
  * Set-up records in the Rerail home that it handled PATH (`launcherPathMarker`). `rerail update` adds the entry only
  * where no set-up ever did, so a block the person took out by hand stays out; `rerail setup` run again adds it back.
  */
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { delimiter, join, resolve, win32 } from "node:path";
+import { spawnSync } from "../engine/child-process.js";
 import { shellQuote } from "../harness/setup-screens.js";
 import { writeTextFile } from "./harness-registration.js";
 

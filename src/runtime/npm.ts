@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { spawn } from "../engine/child-process.js";
 
 export interface CommandResult {
   stdout: string;

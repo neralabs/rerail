@@ -8,11 +8,11 @@
  *   database (support bundles and `rerail scrub` read the database) and never printed.
  * - `<home>/machine-id` (`0600`): a random UUID made once, which names this machine to every remote.
  */
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "../engine/child-process.js";
 import { keepPrivate, makeRerailHome } from "../engine/storage/private-files.js";
 import { defaultRerailHome, MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_TOKENS_FOLDER } from "../engine/storage/rerail-home.js";
 

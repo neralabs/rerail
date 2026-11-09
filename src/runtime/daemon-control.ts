@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -7,6 +6,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Readable, type Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
+import { spawn, spawnShown } from "../engine/child-process.js";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
@@ -781,7 +781,7 @@ const BROWSER_OPENERS: Readonly<Record<string, (url: string) => [string, string[
 /** Hands the URL to the desktop's default browser. Returns once the opener has been spawned. */
 export function openInBrowser(url: string): void {
   const [command, args] = (BROWSER_OPENERS[process.platform] ?? (target => ["xdg-open", [target]]))(url);
-  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  const child = spawnShown(command, args, { detached: true, stdio: "ignore" });
   child.once("error", () => {
     process.stderr.write(`rerail: could not open a browser; visit ${url}\n`);
   });

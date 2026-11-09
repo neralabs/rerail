@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   chmod,
@@ -21,6 +20,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { execFile, spawn } from "../engine/child-process.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";

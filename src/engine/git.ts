@@ -1,7 +1,8 @@
-import { execFile, spawn, spawnSync } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
+import { execFile, spawn, spawnSync } from "./child-process.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -345,8 +346,7 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[]):
   });
   const chunks: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-  child.on("error", () => settle());
-  child.on("close", () => settle());
+  settleWhenDone(child, settle);
   child.stdin.on("error", () => undefined);
   child.stdin.end(asked.map(revision => `${revision}\n`).join(""));
   await promise;
@@ -358,6 +358,28 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[]):
     if (id !== undefined) ids.set(revision, id);
   });
   return ids;
+}
+
+/** How long a batch read waits for Git's output once the timeout has killed the process it started. */
+const EXIT_DRAIN_MS = 500;
+
+/**
+ * Calls `settle` once `child` fails to start, its output closes, or {@link EXIT_DRAIN_MS} after the timeout kills it,
+ * whichever comes first. On Windows the process Rerail starts is Git for Windows' `cmd\git.exe` launcher, which runs the
+ * real Git as its own child. A timeout kills only the launcher, and the real Git keeps the stdout pipe open until it
+ * ends on its own, so waiting for `close` alone would hold the answer past the timeout. A Git that exits by itself is
+ * read to the end of its output.
+ */
+function settleWhenDone(child: ChildProcess, settle: () => void): void {
+  child.on("error", () => settle());
+  child.on("close", () => settle());
+  child.on("exit", (_code, signal) => {
+    if (signal === null) return;
+    setTimeout(() => {
+      child.stdout?.destroy();
+      settle();
+    }, EXIT_DRAIN_MS).unref();
+  });
 }
 
 /** One object body of `git cat-file --batch` output being read: kept, or skipped as it streams past. */
@@ -431,8 +453,7 @@ export async function readGitBlobs(
       body = { revision, size, kept, remaining: size + 1 };
     }
   });
-  child.on("error", () => settle());
-  child.on("close", () => settle());
+  settleWhenDone(child, settle);
   // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
   child.stdin.on("error", () => undefined);
   child.stdin.end(asked.map(revision => `${revision}\n`).join(""));

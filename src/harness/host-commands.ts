@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { spawn } from "../engine/child-process.js";
 import { ENTRY_POINTS } from "../engine/package-root.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
