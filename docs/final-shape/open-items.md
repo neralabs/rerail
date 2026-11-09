@@ -3357,3 +3357,11 @@ on the next run, with the same code. Suspect: the shared default tape cache (O14
 After the merges of 2026-11-08 (`0078ba091`, with the collection rules), 2026-11-09 00:15: `3988 303 298 0`, 55.6 s
 CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 **Closure:** the cause found, or twenty runs on an isolated store all `3988 303 298 0`.
+
+## O-parse-single-splat. A list of one `*` element loses its `list_splat` node
+
+**Seen (2026-11-09).** In `A = [*range(4)]` the list's one child is a `call` whose text is `*range(4)`: no
+`list_splat` node. `[1, *range(2, 5)]` has its `list_splat`. `python/lengths` then counts `[*range(4)]` as one
+element. Not yet traced (parser or tape); the `values` fixture uses `[0, *range(4)]`.
+
+**Closure:** `[*x]` and `(*x,)` keep their `list_splat` node, with a test.
