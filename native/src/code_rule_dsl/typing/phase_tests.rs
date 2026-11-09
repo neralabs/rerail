@@ -12,7 +12,7 @@ fn types_resolves_names_bases_members_and_annotations_by_symbol() {
     let src = dir.join("src");
     std::fs::create_dir_all(src.join("pkg")).unwrap();
     std::fs::write(src.join("pkg/__init__.py"), "from pkg.m import C as Exported\n").unwrap();
-    std::fs::write(src.join("pkg/m.py"), "class B:\n    def run(self) -> int:\n        return 1\n    size: int = 0\n\nclass C(B):\n    def own(self) -> 'B':\n        return self\n").unwrap();
+    std::fs::write(src.join("pkg/m.py"), "class B:\n    def run(self) -> int:\n        return 1\n    size: int = 0\n    again = run\n\nclass C(B):\n    def own(self) -> 'B':\n        return self\n\nAlias = C\nDotted = pkg.m.B\nimport pkg.m\n").unwrap();
     std::fs::write(src.join("pkg/star.py"), "from pkg.m import *\n").unwrap();
     std::fs::write(src.join("n.py"), "from pkg import Exported\nimport pkg.m\nfrom pkg.star import B\n\nlimit: int = 3\n\ndef f(c: Exported, d: pkg.m.B) -> None:\n    pass\n\ndef g(u: B | None) -> list[B] | None:\n    pass\n").unwrap();
     let out = dir.join("out");
@@ -58,6 +58,10 @@ v(s, d) :- types__vtype(s, _, d).
     assert_eq!(rows("k"), ["pkg.m.C\t0\tpkg.m.B"]);
     let a = rows("a");
     assert!(a.contains(&"pkg.m.C\trun\tpkg.m.B.run\tpkg.m.B".to_owned()), "inherited: {a:?}");
+    // Aliases followed: a module's name assigned a name or a dotted name, and a class's member assigned another.
+    assert!(b.contains(&"pkg.m\tAlias\tpkg.m.C".to_owned()), "{b:?}");
+    assert!(b.contains(&"pkg.m\tDotted\tpkg.m.B".to_owned()), "{b:?}");
+    assert!(a.contains(&"pkg.m.C\tagain\tpkg.m.B.run\tpkg.m.B".to_owned()), "a member's alias, inherited: {a:?}");
     assert!(a.contains(&"pkg.m.C\town\tpkg.m.C.own\tpkg.m.C".to_owned()), "{a:?}");
     assert!(a.contains(&"pkg.m.C\tsize\t\tpkg.m.B".to_owned()), "a value in a base's body: {a:?}");
     let s = rows("s");

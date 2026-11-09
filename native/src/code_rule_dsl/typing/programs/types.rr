@@ -26,7 +26,7 @@
 #include "core.rr"
 
 .phase types
-.export binds, bases, anc, attr, sig, rtype, vtype, owner
+.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret
 
 .decl struct__def(s: symbol, k: symbol)
 .decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
@@ -35,6 +35,7 @@
 .decl struct__param(f: symbol, i: number, x: symbol, a: symbol)
 .decl struct__ret(f: symbol, a: symbol)
 .decl struct__vann(s: symbol, a: symbol)
+.decl struct__alias(s: symbol, e: symbol)
 
 // ---- where a symbol is: the module it is defined in ------------------------------------------------------------
 .decl owner(s: symbol, m: symbol)
@@ -52,6 +53,14 @@ parent(s, p) :- struct__vann(s, _), split_dot(s, p, _).
 binds(m, x, d) :- struct__binds(m, x, "def", d).
 binds(m, x, @dot(m, x)) :- struct__binds(m, x, "assign", "").
 binds(m, x, d) :- struct__binds(m, x, "import", t), res(t, d).
+// A name assigned another name (`local = _thread._local`): also what that one names, in the module. The aliases
+// are made first, keyed by the name they read (y), so a new binding of y joins only its own aliases.
+.decl malias(m: symbol, x: symbol, y: symbol, r: symbol)
+malias(m, x, e, "") :- struct__binds(m, x, "assign", ""), struct__alias(@dot(m, x), e), !contains(".", e), e != x.
+malias(m, x, y, r) :- struct__binds(m, x, "assign", ""), struct__alias(@dot(m, x), e), contains(".", e), y = @head(e),
+    r = substr(e, strlen(y) + 1, strlen(e) - strlen(y) - 1).
+binds(m, x, d) :- malias(m, x, y, ""), binds(m, y, d).
+binds(m, x, d) :- malias(m, x, y, r), r != "", binds(m, y, d0), t = @dot(d0, r), res(t, d).
 // `from n import *`: n's names that are not private, and not bound in m itself.
 binds(m, x, d) :- struct__binds(m, "*", "star", n), binds(n, x, d), x != "*", !prefix("_", x), !own_name(m, x).
 .decl own_name(m: symbol, x: symbol)
@@ -63,6 +72,7 @@ mbound(m, x) :- binds(m, x, _).
 // followed through re-exports.
 .decl want(t: symbol)
 want(t) :- struct__binds(_, _, "import", t).
+want(t) :- malias(m, _, y, r), r != "", binds(m, y, d0), t = @dot(d0, r).
 want(t) :- head_of(m, _, h), contains(".", h), x = @head(h), binds(m, x, d0), r = substr(h, strlen(x) + 1, strlen(h) - strlen(x) - 1),
     t = @dot(d0, r).
 .decl res(t: symbol, d: symbol)
@@ -117,6 +127,8 @@ shadowing(c, i, x) :- bases(c, i, _), bases(c, j, b), j < i, reaches(b, x).
 // in class k.
 .decl attr(c: symbol, x: symbol, d: symbol, k: symbol)
 attr(c, x, d, c) :- struct__member(c, x, d).
+// A class-level alias of another member (`__ror__ = __or__`): that member.
+attr(c, x, d, c) :- struct__member(c, x, ""), struct__alias(@dot(c, x), e), e != x, struct__member(c, e, d), d != "".
 attr(c, x, d, k) :- bases(c, i, b), attr(b, x, d, k), !defines(c, x), !shadowing(c, i, x).
 
 // ---- signatures and declared types: as written, and the symbol the head names ("" when none resolves) ------------
@@ -130,3 +142,10 @@ rtype(f, a, "") :- struct__ret(f, a), owner(f, m), !resolved(m, a).
 .decl vtype(s: symbol, a: symbol, d: symbol)
 vtype(s, a, d) :- struct__vann(s, a), owner(s, m), rexpr(m, a, d).
 vtype(s, a, "") :- struct__vann(s, a), owner(s, m), !resolved(m, a).
+// callret(f, b, d): f is declared to return a callable whose own return is b, b's head d: a decorator that wraps
+// what it decorates (`contextmanager(func: Callable[_P, Iterator[_T]]) -> Callable[_P, _GeneratorContextManager[_T]]`).
+.decl cbody(f: symbol, b: symbol)
+cbody(f, b) :- struct__ret(f, a), match("^([A-Za-z_.]*\\.)?Callable\\[[A-Za-z_0-9]+, (?<b>.*)\\]$", a).
+written(m, b) :- cbody(f, b), owner(f, m).
+.decl callret(f: symbol, b: symbol, d: symbol)
+callret(f, b, d) :- cbody(f, b), owner(f, m), rexpr(m, b, d).
