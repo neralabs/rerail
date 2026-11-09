@@ -760,6 +760,15 @@ async function patientLookup(home: string, first?: DaemonLookup): Promise<Daemon
   return lookup.status === "unresponsive" ? await lookupDaemon(home, THIS_MACHINE, BUSY_DAEMON_WAIT_MS) : lookup;
 }
 
+/**
+ * Starts a daemon process with `args` (its entry script first) the way `rerail daemon start` does, in the Rerail home and
+ * through the native spawn on Windows (`launchDaemonProcess`), and returns its pid without waiting for it: a daemon
+ * restarting itself hands over this way.
+ */
+export function relaunchDaemon(args: string[], logFile: string): number | undefined {
+  return launchDaemonProcess({ home: defaultRerailHome(), packageRoot: PACKAGE_ROOT }, args, process.env, logFile).pid;
+}
+
 export interface LaunchedDaemon {
   pid: number | undefined;
   /** Why the launched process is gone, or undefined while it runs. */

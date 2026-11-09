@@ -12,7 +12,8 @@ import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { renameWithRetry } from "../engine/file-replace.js";
 import { searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
@@ -925,4 +926,21 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
+  watchHeap({
+    onCeiling: ({ used, limit }) => {
+      process.stderr.write(`rerail daemon: heap at ${Math.round(used / 1e6)} MB of its ${Math.round(limit / 1e6)} MB limit; restarting before it runs out\n`);
+      daemon.close().then(
+        () => {
+          mainInstance?.release();
+          // The same arguments and the same launch as `rerail daemon start`, once this daemon's port, socket and state are free.
+          relaunchDaemon(process.argv.slice(1), join(defaultRerailHome(), DAEMON_LOG_FILE));
+          process.exit(0);
+        },
+        (error) => {
+          process.stderr.write(`rerail daemon: restart failed: ${(error as Error).message}\n`);
+          process.exit(1);
+        },
+      );
+    },
+  });
 }
