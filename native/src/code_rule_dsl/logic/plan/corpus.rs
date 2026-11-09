@@ -323,11 +323,9 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
     for (i, rel) in per_file.iter().enumerate() {
         let Some(at) = locations.get(rel).and_then(|l| l.first().copied()) else { continue };
         let width = program.decls.get(rel).map_or(0, Vec::len);
-        let rows = exports.snapshot(rel, width);
-        for r in 0..rows.len() {
-            let row: Vec<i64> = (0..width).map(|c| rows.value(r, c)).collect();
-            by_doc.entry(memo::document_of(row[at])).or_default().push((i, row));
-        }
+        exports.visit(rel,width,|row| {
+            by_doc.entry(memo::document_of(row[at])).or_default().push((i,row.to_vec()));
+        });
     }
     let mut out = BTreeMap::new();
     for (d, path) in docs {

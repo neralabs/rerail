@@ -127,3 +127,56 @@ test("SQL acceptance rejects malformed conformance metadata", () => {
     assert.equal(completeSessionParity(w),false);
   }
 });
+
+test("snapshot and file publication compare semantic cells and complete documents", () => {
+  const f=fixture(), request=JSON.parse(f.request);
+  const a={path:"a.py",language:"python",source:"x = 1\n"}, b={path:"b.py",language:"python",source:"y = 2\n"};
+  const c={path:"c.py",language:"python",source:"z = 3\n"};
+  request.snapshot={files:[a,b]};
+  request.steps[0]={snapshot:{files:[c]},limits:{max_steps:0},expected_error:"execution-limit"};
+  request.steps[1]={file_changes:{delete:["b.py"],upsert:[c]}};
+  f.request=Buffer.from(JSON.stringify(request));
+  for (const observed of [f.actual,f.oracle]) {
+    observed.requestSha256=sha256(f.request);
+    observed.inputs={native:["n","s"]};
+    for (const [id,check] of observed.checks.entries()) {
+      check.documents=id<2?[a,b]:[a,c];
+      check.state.native={columns:["n","s"],rows:[[{node:["a.py","0"]},{symbol:"x"}]]};
+    }
+    observed.checks[1].outcome="execution-limit";
+  }
+  const p=compare(f);
+  assert.deepEqual(p.problems,[]);assert.deepEqual(p.failures,[]);
+  assert.deepEqual(p.publications,["bindSnapshot","applySnapshot","applyFileChanges"]);
+  assert.equal(completeSessionParity(workload(p)),true);
+  f.actual.checks[2].documents=[a,b];
+  assert.ok(compare(f).failures.some(f=>f.errors.includes("Complete document contents differ")));
+});
+
+test("document verification rejects missing native inputs, malformed cells and ambiguous actions", () => {
+  for (const corrupt of [
+    r=>r.steps[0].snapshot={files:[]},
+    r=>r.steps[0].file_changes={delete:[]},
+  ]) {
+    const f=fixture(),request=JSON.parse(f.request);corrupt(request);f.request=Buffer.from(JSON.stringify(request));
+    for(const o of [f.actual,f.oracle])o.requestSha256=sha256(f.request);
+    assert.equal(completeSessionParity(workload(compare(f))),false);
+  }
+  const f=fixture();f.actual.checks[0].state.seed.rows=[[{symbol:"x",extra:1}]];
+  assert.ok(compare(f).failures.length>0);
+});
+
+
+test("document comparison starts when a later step introduces the first snapshot", () => {
+  const f=fixture(),request=JSON.parse(f.request);
+  const a={path:"a.py",language:"python",source:"x = 1\n"};
+  request.steps[1]={snapshot:{files:[a]}};
+  f.request=Buffer.from(JSON.stringify(request));
+  for (const o of [f.actual,f.oracle]) {
+    o.requestSha256=sha256(f.request);
+    o.checks[2].documents=[a];
+  }
+  assert.deepEqual(compare(f).failures,[]);
+  f.actual.checks[2].documents=[];
+  assert.ok(compare(f).failures.some(f=>f.errors.includes("Complete document contents differ")));
+});

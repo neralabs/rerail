@@ -305,3 +305,27 @@ fn cold_summaries_wait_for_upstream_strata_and_keep_multiple_supports() {
         }
     }
 }
+
+#[test]
+fn disjoint_producers_elide_support_grouping_and_keep_every_dirty_arm() {
+    let (_d,mut e)=executor();
+    bind(&mut e,"event",&["x"],json!([[1],[2],[3]]));
+    let p=".decl event(x:number)\n.input event\n.decl out(tag:number,x:number)\nout(1,x) :- event(x).\nout(2,x) :- event(x).\n.output out\n";
+    e.run(p.into(),"python".into(),None).unwrap();
+    let mut states=super::super::reductions::planned(&e.db,&e.executions[0],true).unwrap();
+    let state=states.get_mut("out").unwrap();
+    assert_eq!(state.explain()["support_uniqueness"]["proven"],true);
+    e.db.execute_batch("DROP TABLE out").unwrap();
+    e.versions.create_readonly(&e.db,"out",versions::Schema::integers(2,2)).unwrap();
+    state.declare_phase(&e.db,&mut e.executions[0].objects,&e.versions).unwrap();
+    let mut work=maintenance::Work::new(&e.db,&e.scratch);
+    work.versions=Some(&e.versions);work.preparing=true;
+    let mut phase=phase::Phase::default();
+    state.append_phase(&mut work,&BTreeMap::new(),&mut phase,true).unwrap();
+    phase.execute(&work).unwrap();
+    work.cleanup().unwrap();
+    state.ready=true;
+    e.executions[0].reductions=Some(states);
+    e.apply_changes(json!([{"name":"event","delete":[[1]],"insert":[[4]]}]).to_string(),None).unwrap();
+    assert_eq!(rows(&e,"SELECT * FROM out ORDER BY c0,c1"),json!([[1,2],[1,3],[1,4],[2,2],[2,3],[2,4]]));
+}

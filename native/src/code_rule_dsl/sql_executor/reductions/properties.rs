@@ -2,13 +2,7 @@
 use super::*;
 impl Retained {
     pub(super) fn support_uniqueness(&self) -> crate::code_rule_dsl::logic::analysis::Decision {
-        if self.rules.len() != 1 {
-            return crate::code_rule_dsl::logic::analysis::Decision::new(
-                false,
-                "Multiple rules can support the same head; disjointness is not proven",
-            );
-        }
-        self.rules[0].uniqueness.decision.clone()
+        self.support_uniqueness.clone()
     }
     pub(super) fn head_query(&self, columns: &str, source: &str) -> String {
         if self.support_uniqueness().proven {
