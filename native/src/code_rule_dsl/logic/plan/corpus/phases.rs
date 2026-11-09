@@ -172,6 +172,71 @@ pub(super) fn store_path() -> Option<PathBuf> {
     super::tape_cache_path().map(|p| PathBuf::from(format!("{}.phases", p.display())))
 }
 
+/// The phase store, open, in its current form. Its facts are kept a granule at a time, never a row per fact: memory
+/// holds what is fast, and SQLite takes each run's changes as one wave of few statements.
+///
+/// - `phase_granules`: one row per granule, its rows of every export as one text (`granule_text`), and the document
+///   its `.owner` row names. Written, read and deleted by granule lists (`json_each`), one statement a wave.
+/// - `phase_cones`: one row per phase, each document's cone digest (`Report::cone_inputs`) as one JSON text.
+///
+/// A store in the earlier form (a row per export row, per definition, per document) is emptied once: its phases
+/// run in full again.
+fn open_store(path: &Path) -> Result<Connection> {
+    let db = Connection::open(path)?;
+    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=OFF;")?;
+    let old: i64 = db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='export_rows'", [], |r| r.get(0))?;
+    if old > 0 {
+        db.execute_batch(
+            "DROP TABLE IF EXISTS export_rows; DROP TABLE IF EXISTS phase_units; DROP TABLE IF EXISTS phase_documents;
+             DROP TABLE IF EXISTS phase_record; DROP TABLE IF EXISTS export_versions; DROP TABLE IF EXISTS store_epoch;",
+        )?;
+    }
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS phase_granules(phase TEXT, granule TEXT, doc TEXT, rows TEXT NOT NULL, PRIMARY KEY(phase, granule)) WITHOUT ROWID;
+         CREATE INDEX IF NOT EXISTS phase_granules_doc ON phase_granules(phase, doc);
+         CREATE TABLE IF NOT EXISTS phase_cones(phase TEXT PRIMARY KEY, cones TEXT NOT NULL) WITHOUT ROWID;",
+    )?;
+    records(&db)?;
+    versions_table(&db)?;
+    Ok(db)
+}
+
+/// One granule's rows, by export: what `phase_granules.rows` holds.
+type Granule = BTreeMap<String, Vec<Vec<String>>>;
+
+/// A granule's rows as stored: JSON, exports in order and each export's rows sorted, so equal rows are equal text.
+fn granule_text(g: &Granule) -> String {
+    let sorted: BTreeMap<&String, Vec<&Vec<String>>> = g.iter().map(|(rel, rs)| {
+        let mut rs: Vec<&Vec<String>> = rs.iter().collect();
+        rs.sort();
+        rs.dedup();
+        (rel, rs)
+    }).collect();
+    serde_json::to_string(&sorted).expect("rows of text")
+}
+
+fn granule_of(text: &str) -> Result<Granule> {
+    serde_json::from_str(text).map_err(|e| Error::Plan(format!("phase store: a granule's rows: {e}")))
+}
+
+/// The stored granules of `phase`: those named (`Some`), or all of them; each with its rows.
+fn read_granules(db: &Connection, phase: &str, named: Option<&BTreeSet<String>>) -> Result<BTreeMap<String, (String, Granule)>> {
+    let mut out = BTreeMap::new();
+    let mut take = |r: &rusqlite::Row| -> rusqlite::Result<(String, String)> { Ok((r.get(0)?, r.get(1)?)) };
+    let got: Vec<(String, String)> = match named {
+        Some(names) => {
+            let list = serde_json::to_string(names).expect("names");
+            db.prepare("SELECT granule, rows FROM phase_granules WHERE phase=?1 AND granule IN (SELECT value FROM json_each(?2))")?.query_map(params![phase, list], &mut take)?.collect::<rusqlite::Result<_>>()?
+        }
+        None => db.prepare("SELECT granule, rows FROM phase_granules WHERE phase=?1")?.query_map([phase], &mut take)?.collect::<rusqlite::Result<_>>()?,
+    };
+    for (g, text) in got {
+        let rows = granule_of(&text)?;
+        out.insert(g, (text, rows));
+    }
+    Ok(out)
+}
+
 fn thread_cpu() -> f64 {
     let (u, s) = super::thread_usage();
     u + s
@@ -277,7 +342,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let report = super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, options)?;
         let began = thread_cpu();
         let rows = read_exports(&name, &program, &declared, &out)?;
-        let ((exports, units, granules), versions) = keep(&name, &rows, &declared.positions, producer, None)?;
+        let ((exports, units, granules), versions) = keep(&name, &rows, &declared.positions, declared.owner.as_deref(), producer, None)?;
         // Once its exports are kept: what it consulted, so an unchanged next run takes them as they are, and each
         // document's cone inputs, so a run of changed documents can tell whether the rest stands.
         record(&name, &key, &report.consulted)?;
@@ -391,7 +456,7 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
     let started = super::thread_usage();
     let Some(owner) = &job.declared.owner else { return Ok(Err("no `.owner` export".to_owned())) };
     let Some(path) = store_path().filter(|p| p.exists()) else { return Ok(Err("no phase store".to_owned())) };
-    let db = Connection::open(&path)?;
+    let db = open_store(&path)?;
     records(&db)?;
     let Some((last, consulted)): Option<(String, String)> = db.query_row("SELECT key, consulted FROM phase_record WHERE phase=?1", [job.name], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(Err("no last run recorded".to_owned())) };
     if last != job.key {
@@ -402,10 +467,7 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
     if changed.is_empty() {
         return Ok(Err("nothing changed, yet the record was not taken".to_owned()));
     }
-    let stored: BTreeMap<String, String> = {
-        let mut read = db.prepare("SELECT path, cone FROM phase_documents WHERE phase=?1")?;
-        read.query_map([job.name], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?
-    };
+    let stored = cones(&db, job.name)?;
     if let Some(p) = changed.iter().find(|p| !stored.contains_key(*p)) {
         return Ok(Err(format!("{p}: no cone inputs recorded")));
     }
@@ -443,16 +505,15 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
     // The changed documents' granules before, by the stored `.owner` rows.
     let mut only: BTreeSet<String> = owned.keys().map(|g| (*g).to_owned()).collect();
     {
-        let mut read = db.prepare("SELECT granule, row FROM export_rows WHERE phase=?1 AND rel=?2")?;
-        for got in read.query_map(params![job.name, owner], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
-            let (g, row) = got?;
-            if row.split('\t').nth(1).is_some_and(|p| changed_set.contains(p)) {
-                only.insert(g);
-            }
+        // By the document each stored granule's `.owner` row names, kept with it: one statement.
+        let list = serde_json::to_string(&changed_set).expect("paths");
+        let mut read = db.prepare("SELECT granule FROM phase_granules WHERE phase=?1 AND doc IN (SELECT value FROM json_each(?2))")?;
+        for g in read.query_map(params![job.name, list], |r| r.get::<_, String>(0))? {
+            only.insert(g?);
         }
     }
     drop(db);
-    let ((exports, units, granules), versions) = keep(job.name, &rows, &job.declared.positions, job.producer, Some(&only))?;
+    let ((exports, units, granules), versions) = keep(job.name, &rows, &job.declared.positions, job.declared.owner.as_deref(), job.producer, Some(&only))?;
     let kept = super::thread_usage();
     // The record: the changed documents' bytes as now, the rest as consulted.
     let now: BTreeMap<&str, &str> = report.consulted.iter().filter(|c| c.0 == "doc").map(|c| (c.1.as_str(), c.2.as_str())).collect();
@@ -493,34 +554,31 @@ fn parse_consulted(text: &str) -> Vec<(String, String, String)> {
 fn stored_rows(phase: &str, exports: &[String]) -> Result<BTreeMap<String, Vec<Vec<String>>>> {
     let mut rows: BTreeMap<String, Vec<Vec<String>>> = exports.iter().map(|e| (e.clone(), Vec::new())).collect();
     let Some(path) = store_path().filter(|_| !exports.is_empty()) else { return Ok(rows) };
-    let db = Connection::open(&path)?;
-    // By the key's prefix: an export's rows, and no other's.
-    let mut read = db.prepare("SELECT row FROM export_rows WHERE phase=?1 AND rel=?2")?;
-    for (rel, rs) in &mut rows {
-        for row in read.query_map(params![phase, rel], |r| r.get::<_, String>(0))? {
-            rs.push(row?.split('\t').map(str::to_owned).collect());
+    let db = open_store(&path)?;
+    for (_, (_, granule)) in read_granules(&db, phase, None)? {
+        for (rel, rs) in granule {
+            if let Some(out) = rows.get_mut(&rel) {
+                out.extend(rs);
+            }
         }
     }
     Ok(rows)
 }
 
-/// Each document's cone digest (`Report::cone_inputs`), all of them anew (`all`) or those given.
+/// Each document's cone digest (`Report::cone_inputs`), all of them anew (`all`) or those given: one row per phase.
 fn record_documents(phase: &str, cone: &BTreeMap<String, String>, all: bool) -> Result<()> {
     let Some(path) = store_path() else { return Ok(()) };
-    let db = Connection::open(&path)?;
-    db.execute_batch("CREATE TABLE IF NOT EXISTS phase_documents(phase TEXT, path TEXT, cone TEXT, PRIMARY KEY(phase, path)) WITHOUT ROWID;")?;
-    let tx = db.unchecked_transaction()?;
-    if all {
-        tx.execute("DELETE FROM phase_documents WHERE phase=?1", [phase])?;
-    }
-    {
-        let mut put = tx.prepare_cached("INSERT OR REPLACE INTO phase_documents VALUES (?1, ?2, ?3)")?;
-        for (p, d) in cone {
-            put.execute(params![phase, p, d])?;
-        }
-    }
-    tx.commit()?;
+    let db = open_store(&path)?;
+    let mut cones = if all { BTreeMap::new() } else { cones(&db, phase)? };
+    cones.extend(cone.iter().map(|(p, d)| (p.clone(), d.clone())));
+    db.execute("INSERT OR REPLACE INTO phase_cones VALUES (?1, ?2)", params![phase, serde_json::to_string(&cones).expect("text")])?;
     Ok(())
+}
+
+/// Each document's cone digest as the store holds it for `phase`.
+fn cones(db: &Connection, phase: &str) -> Result<BTreeMap<String, String>> {
+    let text: Option<String> = db.query_row("SELECT cones FROM phase_cones WHERE phase=?1", [phase], |r| r.get(0)).ok();
+    text.map_or(Ok(BTreeMap::new()), |t| serde_json::from_str(&t).map_err(|e| Error::Plan(format!("phase store: cones: {e}"))))
 }
 
 /// The exports `reads` names, as the reader's facts.
@@ -585,7 +643,7 @@ fn records(db: &Connection) -> Result<()> {
 /// (no workspace files read) is not recorded.
 fn record(phase: &str, key: &str, consulted: &[(String, String, String)]) -> Result<()> {
     let Some(path) = store_path() else { return Ok(()) };
-    let db = Connection::open(&path)?;
+    let db = open_store(&path)?;
     records(&db)?;
     if consulted.is_empty() {
         db.execute("DELETE FROM phase_record WHERE phase=?1", [phase])?;
@@ -601,7 +659,7 @@ fn record(phase: &str, key: &str, consulted: &[(String, String, String)]) -> Res
 #[allow(clippy::too_many_arguments)]
 fn reuse(phase: &str, key: &str, text: &str, root: &Path, typing: &Typing, options: &serde_json::Value) -> Result<Option<usize>> {
     let Some(path) = store_path().filter(|p| p.exists()) else { return Ok(None) };
-    let db = Connection::open(&path)?;
+    let db = open_store(&path)?;
     records(&db)?;
     let Some((last, consulted)): Option<(String, String)> = db.query_row("SELECT key, consulted FROM phase_record WHERE phase=?1", [phase], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(None) };
     // `RERAIL_PHASE_WHY`: why a phase was not kept, on stderr.
@@ -662,7 +720,7 @@ fn version_digest(epoch: i64, rel: &str, v: u64) -> u64 {
 /// Each export's version as the store holds it, with no delta (a run that took the kept rows).
 fn current_versions(phase: &str, exports: &[String]) -> Result<Deltas> {
     let Some(path) = store_path() else { return Ok(Deltas::new()) };
-    let db = Connection::open(&path)?;
+    let db = open_store(&path)?;
     versions_table(&db)?;
     exports.iter().map(|rel| Ok((rel.clone(), { let (e, v, n) = version(&db, phase, rel)?; Versioned { now: version_digest(e, rel, v), rows: n, delta: Some((version_digest(e, rel, v), Vec::new(), Vec::new())) } }))).collect()
 }
@@ -671,53 +729,35 @@ type Kept = (Vec<(String, usize, usize, usize)>, (usize, usize, usize), (usize, 
 
 /// Keeps a phase's exports in the phase store and its freshness in the derivation graph; the deltas against the last
 /// run. With `only`, `rows` are those of these granules, and the rest of the store stands.
-fn keep(phase: &str, rows: &BTreeMap<String, Vec<Vec<String>>>, positions: &[String], producer: [u8; 32], only: Option<&BTreeSet<String>>) -> Result<(Kept, Deltas)> {
+fn keep(phase: &str, rows: &BTreeMap<String, Vec<Vec<String>>>, positions: &[String], owner: Option<&str>, producer: [u8; 32], only: Option<&BTreeSet<String>>) -> Result<(Kept, Deltas)> {
     use crate::content_store::{ABSENT, Binding as Bound, DerivationInput, DerivationRecord};
     let store_err = |e: crate::content_store::StoreError| Error::Plan(e.to_string());
     let Some(path) = store_path() else {
         let counts = rows.iter().map(|(rel, r)| (rel.clone(), r.len(), r.len(), 0)).collect();
         return Ok(((counts, (0, 0, 0), (0, 0, 0, 0)), Deltas::new()));
     };
-    // The exports by granule, and the delta against the last run's.
-    let db = Connection::open(&path)?;
-    db.execute_batch(
-        "PRAGMA journal_mode=WAL; PRAGMA synchronous=OFF;
-         CREATE TABLE IF NOT EXISTS export_rows(phase TEXT, rel TEXT, granule TEXT, row TEXT, PRIMARY KEY(phase, rel, granule, row)) WITHOUT ROWID;
-         CREATE TABLE IF NOT EXISTS phase_units(phase TEXT, unit TEXT, digest TEXT, PRIMARY KEY(phase, unit)) WITHOUT ROWID;",
-    )?;
-    versions_table(&db)?;
+    // The exports by granule, and the delta against the last run's: worked out in memory from the stored granules in
+    // scope (`only`'s, or all of them), and written back as one wave.
+    let db = open_store(&path)?;
     let tx = db.unchecked_transaction()?;
-    tx.execute_batch("DROP TABLE IF EXISTS temp.scoped_granules; CREATE TEMP TABLE scoped_granules(g TEXT PRIMARY KEY) WITHOUT ROWID;")?;
-    {
-        let mut put = tx.prepare_cached("INSERT INTO temp.scoped_granules VALUES (?1)")?;
-        for g in only.into_iter().flatten() {
-            put.execute([g])?;
+    let old = read_granules(&tx, phase, only)?;
+    // The last run's granules, so a granule whose rows are all gone is a change too.
+    let granules_before: BTreeSet<String> = old.iter().filter(|(_, (_, g))| g.keys().any(|rel| rel != UNITS && !positions.contains(rel))).map(|(g, _)| g.clone()).collect();
+    // This run's, by granule.
+    let mut now: BTreeMap<&str, Granule> = BTreeMap::new();
+    for (rel, rs) in rows {
+        for r in rs {
+            now.entry(r[0].as_str()).or_default().entry(rel.clone()).or_default().push(r.clone());
         }
     }
-    // Within `only`, when given: the granule column's condition.
-    let within = |col: &str| if only.is_some() { format!(" AND {col} IN (SELECT g FROM temp.scoped_granules)") } else { String::new() };
-    // The last run's granules, so a granule whose rows are all gone is a change too.
-    let granules_before: BTreeSet<String> = tx
-        .prepare(&format!("SELECT DISTINCT rel, granule FROM export_rows WHERE phase=?1 AND rel<>?2{}", within("granule")))?
-        .query_map(params![phase, UNITS], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-        .collect::<rusqlite::Result<Vec<_>>>()?
-        .into_iter()
-        .filter(|(rel, _)| !positions.contains(rel))
-        .map(|(_, g)| g)
-        .collect();
     let mut exports = Vec::new();
     let mut deltas = Deltas::new();
     for (rel, rs) in rows {
-        tx.execute_batch("DROP TABLE IF EXISTS temp.now; CREATE TEMP TABLE now(granule TEXT, row TEXT, PRIMARY KEY(granule, row)) WITHOUT ROWID;")?;
-        {
-            let mut put = tx.prepare_cached("INSERT OR IGNORE INTO temp.now VALUES (?1, ?2)")?;
-            for r in rs {
-                put.execute(params![r[0], r.join("\t")])?;
-            }
-        }
-        let lines = |sql: &str| -> Result<Vec<String>> { Ok(tx.prepare(sql)?.query_map(params![phase, rel], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?) };
-        let plus = lines("SELECT n.row FROM temp.now n WHERE NOT EXISTS (SELECT 1 FROM export_rows e WHERE e.phase=?1 AND e.rel=?2 AND e.granule=n.granule AND e.row=n.row)")?;
-        let minus = lines(&format!("SELECT e.row FROM export_rows e WHERE e.phase=?1 AND e.rel=?2{} AND NOT EXISTS (SELECT 1 FROM temp.now n WHERE n.granule=e.granule AND n.row=e.row)", within("e.granule")))?;
+        let was: std::collections::HashSet<&Vec<String>> = old.values().flat_map(|(_, g)| g.get(rel).into_iter().flatten()).collect();
+        let is: std::collections::HashSet<&Vec<String>> = rs.iter().collect();
+        let mut seen = std::collections::HashSet::new();
+        let plus: Vec<Vec<String>> = rs.iter().filter(|r| !was.contains(r) && seen.insert(*r)).cloned().collect();
+        let minus: Vec<Vec<String>> = old.values().flat_map(|(_, g)| g.get(rel).into_iter().flatten()).filter(|r| !is.contains(r)).cloned().collect();
         let (added, gone) = (plus.len(), minus.len());
         // The export's version: the next when its rows changed, and the delta from the one before.
         let before = version(&tx, phase, rel)?;
@@ -725,25 +765,32 @@ fn keep(phase: &str, rows: &BTreeMap<String, Vec<Vec<String>>>, positions: &[Str
         let n = if only.is_some() { (before.2 + added).saturating_sub(gone) } else { rs.len() };
         let v = if added + gone > 0 { before.1 + 1 } else { before.1 };
         tx.execute("INSERT OR REPLACE INTO export_versions VALUES (?1, ?2, ?3, ?4)", params![phase, rel, v as i64, n as i64])?;
-        let split = |ls: Vec<String>| ls.into_iter().map(|l| l.split('\t').map(str::to_owned).collect()).collect();
-        deltas.insert(rel.clone(), Versioned { now: version_digest(before.0, rel, v), rows: n, delta: Some((version_digest(before.0, rel, before.1), split(plus), split(minus))) });
-        tx.execute(&format!("DELETE FROM export_rows WHERE phase=?1 AND rel=?2{} AND NOT EXISTS (SELECT 1 FROM temp.now n WHERE n.granule=export_rows.granule AND n.row=export_rows.row)", within("export_rows.granule")), params![phase, rel])?;
-        tx.execute("INSERT OR IGNORE INTO export_rows SELECT ?1, ?2, granule, row FROM temp.now", params![phase, rel])?;
+        deltas.insert(rel.clone(), Versioned { now: version_digest(before.0, rel, v), rows: n, delta: Some((version_digest(before.0, rel, before.1), plus, minus)) });
         exports.push((rel.clone(), rs.len(), added, gone));
     }
-    tx.execute_batch("DROP TABLE IF EXISTS temp.now")?;
-        // The definitions: each bound to its digest; the changed ones are the freshness delta.
-    let units: BTreeMap<&str, &str> = rows.get(UNITS).into_iter().flatten().filter(|r| r.len() >= 2).map(|r| (r[0].as_str(), r[1].as_str())).collect();
-    let before: BTreeSet<String> = tx.prepare(&format!("SELECT unit FROM phase_units WHERE phase=?1{}", within("unit")))?.query_map([phase], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
-    let gone_units = before.iter().filter(|u| !units.contains_key(u.as_str())).count();
-    tx.execute(&format!("DELETE FROM phase_units WHERE phase=?1{}", within("unit")), [phase])?;
-    {
-        let mut put = tx.prepare_cached("INSERT INTO phase_units VALUES (?1, ?2, ?3)")?;
-        for (u, d) in &units {
-            put.execute(params![phase, u, d])?;
-        }
+    // The granules written: those whose rows changed; gone: those in scope with no rows now. One statement each.
+    let owner_of = |g: &Granule| owner.and_then(|o| g.get(o)).and_then(|rs| rs.first()).and_then(|r| r.get(1)).cloned();
+    let written: Vec<serde_json::Value> = now
+        .iter()
+        .filter_map(|(g, rows)| {
+            let text = granule_text(rows);
+            (old.get(*g).map(|(t, _)| t) != Some(&text)).then(|| serde_json::json!([g, owner_of(rows), text]))
+        })
+        .collect();
+    let gone: Vec<&String> = old.keys().filter(|g| !now.contains_key(g.as_str())).collect();
+    if !gone.is_empty() {
+        tx.execute("DELETE FROM phase_granules WHERE phase=?1 AND granule IN (SELECT value FROM json_each(?2))", params![phase, serde_json::to_string(&gone).expect("names")])?;
     }
-    tx.execute_batch("DROP TABLE IF EXISTS temp.scoped_granules")?;
+    if !written.is_empty() {
+        tx.execute(
+            "INSERT OR REPLACE INTO phase_granules(phase, granule, doc, rows) SELECT ?1, json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?2)",
+            params![phase, serde_json::Value::Array(written).to_string()],
+        )?;
+    }
+    // The definitions: each bound to its digest; the changed ones are the freshness delta.
+    let units: BTreeMap<&str, &str> = rows.get(UNITS).into_iter().flatten().filter(|r| r.len() >= 2).map(|r| (r[0].as_str(), r[1].as_str())).collect();
+    let before: BTreeSet<String> = old.values().flat_map(|(_, g)| g.get(UNITS).into_iter().flatten()).map(|r| r[0].clone()).collect();
+    let gone_units = before.iter().filter(|u| !units.contains_key(u.as_str())).count();
     tx.commit()?;
     let store = super::tape_cache().map_err(store_err)?.expect("a content store beside the phase store");
     let unit_name = |u: &str| format!("unit:{phase}:{u}");
