@@ -3019,3 +3019,18 @@ s50, 43 files, the same 32 violations:
 
 The fix leaves the pack slightly cheaper than before the merges. The analysis, planner, corpus and SQL executor
 tests pass, and so does the replay gate (`converted_rules_give_the_recorded_findings`).
+
+## O143. The Python pack's annotation stratum read every annotation guest once per binding
+
+**Status:** fix in progress (2026-11-08); this entry reserves the number.
+
+**What.** On the Python pack (534 programs), the `ann_input/ann_strip/type_app` stratum cost 39 s of about 89 s of
+CPU. The cause was not a collision of guest ids. In every chunk, each `ann_strip` row has its own `t`: the rows equal
+their distinct first columns, about 480 to 800 per chunk. The cause was join order.
+
+- **Stale postings.** The first chunk of a mix measures the program's constants' postings before the guest rounds
+  make any guest. So `parsed($s, "annotation", $r)` was priced at no rows.
+- **Stale observations.** An atom that shares no bound variable kept its fanout observed in one wave or chunk. That
+  number is the relation's size at that moment, not a property of the join.
+- **The result.** Between chunks the replanner moved `parsed` straight after the delta, as a filter. Every delta row
+  then read every annotation guest: 10,857 bindings gave 5.4M rows for RUF013 alone.
