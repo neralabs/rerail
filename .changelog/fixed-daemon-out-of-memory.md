@@ -1,0 +1,1 @@
+The daemon no longer runs out of memory after a few hours on a large repository with many worktrees. It frees a checkout's file records when the checkout's last session ends, keeps each record in a fifth of the space, and restarts itself before its heap runs out.

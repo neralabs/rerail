@@ -371,6 +371,17 @@ After moving `RERAIL_HOME` or Node, run `rerail setup` again so the entries name
 Agents load hooks and commands when a session starts. Open a new session after set-up, `rerail install`,
 `rerail update` and `rerail install --remove`.
 
+### `rerail status` says `Hooks run but nothing was recorded`
+
+A coding agent ran Rerail's hooks, and Rerail could not record their events. The line names the last event that
+failed, the coding agent and its version, the Rerail version and the reason, such as `no Rerail daemon answered`
+(the daemon was down; the next hook starts it) or a payload field the coding agent sent in a shape Rerail did not
+expect. The failures are kept in `hook-failures.jsonl` in the Rerail home. Update Rerail with `rerail update`; if the
+line stays, report it with `rerail support-bundle`.
+
+If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
+that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.
+
 ## Daemon and dashboard
 
 The daemon is the background process every checkout and coding agent on the computer shares; it serves the dashboard.
