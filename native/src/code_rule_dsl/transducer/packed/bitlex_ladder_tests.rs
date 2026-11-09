@@ -140,7 +140,7 @@ impl Lang {
             Gram::Alt(gs) => gs.iter().map(|g| self.cost(g)).min().unwrap_or(FAR),
             Gram::Opt(_) | Gram::Star(_) => 0,
             Gram::Plus(g) | Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.cost(g),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.cost(body),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.cost(body),
             Gram::Balanced { .. } => 2,
             Gram::Any(_) => 1,
         }
@@ -173,7 +173,7 @@ impl Lang {
                 }
             }
             Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.derive(rng, g, depth, out),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.derive(rng, body, depth, out),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.derive(rng, body, depth, out),
             // A word: a token of most kinds.
             Gram::Any(_) => out.push(self.token(rng, "identifier")),
             // The opener, maybe a few tokens and a nested pair, the closer.
@@ -256,7 +256,7 @@ impl Lang {
                 }
             }
             Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.bytes(rng, g, long, out),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.bytes(rng, body, long, out),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.bytes(rng, body, long, out),
             Gram::Balanced { .. } | Gram::Any(_) => {}
         }
     }

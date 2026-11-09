@@ -216,6 +216,11 @@ impl Emit<'_> {
                     self.push("MERGE", 1, Arg::Kind(kind));
                     continue;
                 }
+                // Mode 3: the node made last at this level, and the nodes inside it, read.
+                Act::Reread { reading } => {
+                    self.push("RETAG", 3, Arg::Num(reading));
+                    continue;
+                }
                 Act::Relabel { field, moved, inner } => {
                     // Mode 2: the node made last at this level; mode 3: the node its wrap holds
                     // first.

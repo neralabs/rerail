@@ -61,6 +61,10 @@ pub struct TreeDecl {
     pub refuse: Vec<(String, Vec<String>)>,
     /// The nested choices' names (`choice C nested`): levels of their own, as nested nodes.
     pub nested: Vec<String>,
+    /// Each `reading NAME = …`, by name (`reread`).
+    pub readings: Vec<(String, crate::syntax::Reading)>,
+    /// The `provisional` fields: none may be left in a finished tree.
+    pub provisional: Vec<String>,
 }
 
 pub struct Output {
@@ -384,6 +388,8 @@ impl<'a> Ev<'a> {
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
             Stmt::Hidden(kinds) => self.tree.get_or_insert_with(TreeDecl::default).hidden.extend(kinds.iter().cloned()),
             Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
+            Stmt::Reading { name, reading } => self.tree.get_or_insert_with(TreeDecl::default).readings.push((name.clone(), reading.clone())),
+            Stmt::Provisional(fields) => self.tree.get_or_insert_with(TreeDecl::default).provisional.extend(fields.iter().cloned()),
             Stmt::Mark { kind, at, end } => {
                 let m = self.mask(at)?;
                 self.marks.push((kind.clone(), m, *end));
@@ -1187,7 +1193,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
     })
 }
 

@@ -108,8 +108,10 @@ enum Operand {
     Switch,
 }
 
-fn operand(opcode: u8) -> Operand {
+/// An operand's shape by opcode and mode: `RETAG m=3`'s is a reading's index.
+fn operand(opcode: u8, mode: u8) -> Operand {
     match opcode {
+        RETAG if mode == 3 => Operand::Number,
         FORK | GOTO | PUSH => Operand::Target,
         WORD_IS => Operand::String,
         SWITCH => Operand::Switch,
@@ -328,6 +330,7 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
     for (at, s) in program.switches.iter().enumerate() {
         switch_rows(&mut out, at, s);
     }
+    reading_rows(&mut out, &program.readings);
     for (at, predicate) in program.predicates.iter().enumerate() {
         let (kind, source) = match predicate {
             TextPredicate::Equal(source) => ("equal", source),
@@ -393,7 +396,7 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         if mode != 0 {
             let _ = write!(out, " m={mode}");
         }
-        let _ = match operand(opcode) {
+        let _ = match operand(opcode, mode) {
             Operand::Target => write!(out, " @{arg:04}"),
             Operand::Label => write!(out, " L{arg}"),
             Operand::Predicate => write!(out, " P{arg}"),
@@ -404,7 +407,7 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
             Operand::String => write!(out, " s{arg}"),
             Operand::Switch => write!(out, " T{arg}"),
         };
-        if operand(opcode) == Operand::Label
+        if operand(opcode, mode) == Operand::Label
             && let Some(name) = program.label_name(arg)
         {
             let _ = write!(out, "  ; {name}");
@@ -664,6 +667,7 @@ struct Parts {
     pattern: Option<PackedPattern>,
     block_programs: Vec<block::BlockProgram>,
     switches: Vec<stream::ByteSwitch>,
+    readings: stream::Readings,
     words: Vec<u32>,
 }
 
@@ -692,6 +696,11 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             parts.labels.push(line.number("s")?);
         }
         "switch" => switch_row(parts, line)?,
+        "reading" => reading_row(parts, line)?,
+        "provisional" => {
+            let f: u16 = line.number("#")?;
+            parts.readings.provisional.push(f);
+        }
         "long" => {
             index(line, parts.longs.len(), "long")?;
             parts.longs.push(line.number("")?);
@@ -854,7 +863,7 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 line.next()?;
             }
             let prefixed = |line: &mut Line<'_>, prefix: &str| line.number::<u16>(prefix);
-            let arg = match operand(opcode) {
+            let arg = match operand(opcode, mode) {
                 Operand::Target => prefixed(line, "@")?,
                 Operand::Label => prefixed(line, "L")?,
                 Operand::Predicate => prefixed(line, "P")?,
@@ -995,6 +1004,7 @@ fn build(parts: Parts) -> Result<Program, String> {
         ast_pattern: parts.pattern,
         block_programs: parts.block_programs,
         switches: parts.switches,
+        readings: parts.readings,
         digest: DigestMemo::default(),
     };
     program.validate().map_err(verifier)?;
@@ -1096,6 +1106,57 @@ pub(super) fn switch_rows(out: &mut String, at: usize, s: &stream::ByteSwitch) {
         }
         b = e + 1;
     }
+}
+
+/// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,
+/// `reading N field #F as #G`; then `provisional #F`.
+pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
+    use std::fmt::Write as _;
+    for (at, r) in readings.maps.iter().enumerate() {
+        // A reading with no row would be lost: a kind row each has one (the compiler's).
+        for &(k, m) in &r.kinds {
+            let _ = match m {
+                stream::KEEP => writeln!(out, "  reading {at} #{k} keep"),
+                stream::GONE => writeln!(out, "  reading {at} #{k} gone"),
+                m => writeln!(out, "  reading {at} #{k} as #{m}"),
+            };
+        }
+        for &(f, g) in &r.fields {
+            let _ = writeln!(out, "  reading {at} field #{f} as #{g}");
+        }
+    }
+    for f in &readings.provisional {
+        let _ = writeln!(out, "  provisional #{f}");
+    }
+}
+
+fn reading_row(parts: &mut Parts, line: &mut Line<'_>) -> Result<(), String> {
+    let at: usize = line.number("")?;
+    let maps = &mut parts.readings.maps;
+    if at == maps.len() {
+        maps.push(stream::Reading::default());
+    } else if at + 1 != maps.len() {
+        return Err(format!("reading {at} out of order (expected {})", maps.len()));
+    }
+    let r = &mut maps[at];
+    if line.peek_word().as_deref() == Some("field") {
+        line.next()?;
+        let f: u16 = line.number("#")?;
+        if line.word()? != "as" {
+            return Err("a reading's field row is `reading N field #F as #G`".into());
+        }
+        r.fields.push((f, line.number("#")?));
+        return Ok(());
+    }
+    let k: u16 = line.number("#")?;
+    let m = match line.word()?.as_str() {
+        "keep" => stream::KEEP,
+        "gone" => stream::GONE,
+        "as" => line.number("#")?,
+        w => return Err(format!("a reading's row is `#K as #M`, `#K gone` or `#K keep`, not `{w}`")),
+    };
+    r.kinds.push((k, m));
+    Ok(())
 }
 
 fn switch_row(parts: &mut Parts, line: &mut Line<'_>) -> Result<(), String> {

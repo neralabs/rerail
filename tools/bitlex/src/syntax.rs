@@ -95,6 +95,31 @@ pub enum Gram {
     Fold { kind: String, body: Box<Gram> },
     /// `A as K`, `A` a token: its leaf has kind `K` (`identifier as variable`).
     As(String, Box<Gram>),
+    /// `reread R REST`: at the token `REST` starts with, the node just made at this level and
+    /// every node inside it are read by reading `R` (a `reading` statement), as the tree of
+    /// another rule: a cover grammar's node, once the token after it says which it is.
+    Reread { reading: String, body: Box<Gram> },
+}
+
+/// What a `reading` does with a node of a kind it names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReadKind {
+    /// `K` or `K as M`: the node stays, of kind `M` (its own, for `K`); the nodes inside it are
+    /// read too.
+    As(String),
+    /// `K gone`: the node goes, and the nodes inside it take its place; they are read too.
+    Gone,
+    /// `keep K`: the node stays as it is, with every node inside it, unread.
+    Keep,
+}
+
+/// `reading NAME = ITEM, …`: how `reread` reads a node and the nodes inside it. A node of a
+/// kind no item names refuses the file (an extra's leaf aside, which stays as it is). A node
+/// read, not the first, with a field that `field F as G` names takes field `G`.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Reading {
+    pub kinds: Vec<(String, ReadKind)>,
+    pub fields: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -161,6 +186,11 @@ pub enum Stmt {
     /// `refuse MARK in LEVEL …` (in a tree): a hidden mark that refuses the file between a
     /// nested level's first token and its last (`json_bad` in a JSON document's levels).
     Refuse { mark: String, levels: Vec<String> },
+    /// `reading NAME = ITEM, …` (in a tree): a way to read a made node (`reread`).
+    Reading { name: String, reading: Reading },
+    /// `provisional FIELD …` (in a tree): fields a node holds only until a later token decides
+    /// what it is; a node that holds one at the file's end refuses the file.
+    Provisional(Vec<String>),
 }
 
 impl Stmt {
@@ -423,6 +453,14 @@ impl P {
                 let inner = if self.eat_kw("inner") { Some(self.ident()?) } else { None };
                 let body = Box::new(self.gram_seq()?);
                 items.push(Gram::Relabel { field, moved, inner, body });
+                break;
+            }
+            // `reread R`: the rest of the sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "reread") {
+                self.i += 1;
+                let reading = self.ident()?;
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Reread { reading, body });
                 break;
             }
             // `fold K`: the rest of the sequence is its body.
@@ -821,6 +859,51 @@ impl P {
                     return self.err("refuse MARK in LEVEL …");
                 }
                 Stmt::Refuse { mark, levels }
+            }
+            "reading" => {
+                let name = self.ident()?;
+                self.want_p("=")?;
+                let mut reading = Reading::default();
+                loop {
+                    if self.eat_kw("field") {
+                        let f = self.ident()?;
+                        self.want_kw("as")?;
+                        reading.fields.push((f, self.ident()?));
+                    } else if self.eat_kw("keep") {
+                        let mut any = false;
+                        while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
+                            reading.kinds.push((self.kind()?, ReadKind::Keep));
+                            any = true;
+                        }
+                        if !any {
+                            return self.err("keep K …");
+                        }
+                    } else {
+                        let k = self.kind()?;
+                        let what = if self.eat_kw("gone") {
+                            ReadKind::Gone
+                        } else if self.eat_kw("as") {
+                            ReadKind::As(self.kind()?)
+                        } else {
+                            ReadKind::As(k.clone())
+                        };
+                        reading.kinds.push((k, what));
+                    }
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+                Stmt::Reading { name, reading }
+            }
+            "provisional" => {
+                let mut fields = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    fields.push(self.ident()?);
+                }
+                if fields.is_empty() {
+                    return self.err("provisional FIELD …");
+                }
+                Stmt::Provisional(fields)
             }
             "extra" | "hidden" => {
                 let mut kinds = vec![];

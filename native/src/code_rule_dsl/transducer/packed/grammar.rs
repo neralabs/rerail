@@ -65,6 +65,9 @@ pub(in crate::code_rule_dsl) enum Act {
     /// The innermost open node holds two leaves and nothing else: they become one leaf of
     /// `kind`, with the first one's field (`fold K`).
     Fold { kind: u16 },
+    /// The node just made at this level and the nodes inside it, read by reading `reading`
+    /// (`reread R`).
+    Reread { reading: u16 },
 }
 /// A transition: from a state, on a token of a kind, its acts, to a state; `push`: the calls it
 /// makes, each entering a nested level and keeping the state to return to, outermost first (a
@@ -128,6 +131,9 @@ pub(super) fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 Act::Fold { kind } => {
                     let _ = write!(acts, " fold {kind}");
                 }
+                Act::Reread { reading } => {
+                    let _ = write!(acts, " reread {reading}");
+                }
             }
         }
         let push: String = arm.push.iter().map(|p| format!(" push {p}")).collect();
@@ -153,6 +159,8 @@ enum Wrap {
     Relabel { field: u16, moved: u16, inner: u16 },
     /// `fold K`: entered, the open node's two leaves become one of kind `K`.
     Fold(u16),
+    /// `reread R`: entered, the node just made at this level is read by reading `R`.
+    Reread(u16),
 }
 
 /// A level's expression, inlined; `Tok` and `Call` are positions.
@@ -196,6 +204,8 @@ pub(super) struct Ids<'a> {
     pub(super) is_token: &'a dyn Fn(&str) -> bool,
     /// Every token kind the grammar may see (marks aside): what a `balanced` leaf takes.
     pub(super) tokens: &'a [String],
+    /// A reading's id, by name (`reread R`).
+    pub(super) reading: &'a dyn Fn(&str) -> Result<u16, String>,
 }
 
 /// The level a `balanced` leaf's name: its kind, then a byte no name holds.
@@ -228,6 +238,7 @@ fn desugar(g: &Gram, levels: &mut Vec<(String, String, String)>, tokens: &[Strin
         Gram::Wrap { kind, field, moved, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), body: Box::new(d(body)) },
         Gram::Relabel { field, moved, inner, body } => Gram::Relabel { field: field.clone(), moved: moved.clone(), inner: inner.clone(), body: Box::new(d(body)) },
         Gram::Fold { kind, body } => Gram::Fold { kind: kind.clone(), body: Box::new(d(body)) },
+        Gram::Reread { reading, body } => Gram::Reread { reading: reading.clone(), body: Box::new(d(body)) },
         Gram::Balanced { kind, open, close } => {
             let key = (kind.clone(), open.clone(), close.clone());
             let n = levels.iter().position(|l| *l == key).unwrap_or_else(|| {
@@ -329,6 +340,7 @@ impl Builder<'_> {
                 E::Wrap(w, Box::new(self.expand(level, body, inlining)?))
             }
             Gram::Fold { kind, body } => E::Wrap(Wrap::Fold((self.ids.kind)(kind)?), Box::new(self.expand(level, body, inlining)?)),
+            Gram::Reread { reading, body } => E::Wrap(Wrap::Reread((self.ids.reading)(reading)?), Box::new(self.expand(level, body, inlining)?)),
             Gram::As(k, a) => {
                 let e = self.expand(level, a, inlining)?;
                 let E::Tok(p) = e else { return Err(format!("`as {k}`: not a token")) };
@@ -473,6 +485,7 @@ impl Pending {
                 Wrap::Wrapped { kind, field, moved } => acts.push(Act::Wrap { kind, field, moved }),
                 Wrap::Relabel { field, moved, inner } => acts.push(Act::Relabel { field, moved, inner }),
                 Wrap::Fold(kind) => acts.push(Act::Fold { kind }),
+                Wrap::Reread(reading) => acts.push(Act::Reread { reading }),
                 Wrap::Node(kind) => {
                     let p = std::mem::take(self);
                     acts.push(Act::Open { kind, field: p.field, supers: p.supers });
@@ -959,7 +972,7 @@ pub(super) fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -
             Gram::Opt(a) => E::Opt(Box::new(expand(a, classes, sets)?)),
             Gram::Star(a) => E::Star(Box::new(expand(a, classes, sets)?)),
             Gram::Plus(a) => E::Seq(vec![expand(a, classes, sets)?, E::Star(Box::new(expand(a, classes, sets)?))]),
-            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
+            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
         })
     }
     let mut sets = Vec::new();

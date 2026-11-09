@@ -26,6 +26,36 @@ impl ByteSwitch {
     }
 }
 
+/// A record a reading dropped (`GONE`), left out at `ACCEPT`.
+pub(in crate::code_rule_dsl) const DEAD: u16 = u16::MAX;
+
+/// What a reading does with a node of a kind: `KEEP` it with every node inside it, unread; it is
+/// `GONE`, the nodes inside taking its place; else the kind it takes, the nodes inside read too.
+pub(in crate::code_rule_dsl) const KEEP: u16 = u16::MAX;
+pub(in crate::code_rule_dsl) const GONE: u16 = u16::MAX - 1;
+
+/// A reading (`reading R = …`, `reread R`): what `RETAG m=3` does with the node made last at a
+/// level and each node inside it, by kind; a kind not listed refuses. A node read but the first
+/// whose field `fields` names takes the field it gives.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct Reading {
+    pub(super) kinds: Vec<(u16, u16)>,
+    pub(super) fields: Vec<(u16, u16)>,
+}
+
+/// A program's readings, and its provisional fields: a node holding one at `ACCEPT` refuses.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub(in crate::code_rule_dsl) struct Readings {
+    pub(super) maps: Vec<Reading>,
+    pub(super) provisional: Vec<u16>,
+}
+
+impl Readings {
+    pub(super) fn is_empty(&self) -> bool {
+        self.maps.is_empty() && self.provisional.is_empty()
+    }
+}
+
 /// Whether a word is one of tier 2's.
 pub(super) fn is_stream(opcode: u8) -> bool {
     (TOKEN..=WRAP).contains(&opcode)
@@ -56,8 +86,9 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
         MARK => mode < 64 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
         // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
-        // `m=3` (a field): the node that one, a wrap, holds first.
-        RETAG => mode <= 2,
+        // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
+        // the nodes inside it, read by reading `operand` (`reread`).
+        RETAG => mode <= 2 || (mode == 3 && usize::from(operand) < program.readings.maps.len()),
         NODE_FIELD => mode <= 3 && operand != 0,
         // `m=1`: the open node's two leaves, one (`fold`).
         MERGE => mode <= 1,
@@ -271,6 +302,8 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
     let (mut head, mut link): (HashMap<usize, usize>, HashMap<usize, usize>) = (HashMap::new(), HashMap::new());
     let mut wraps: HashSet<usize> = HashSet::new();
     let mut moved = 0usize;
+    // A reading dropped a node (`GONE`): its record stays, of kind `DEAD`, left out at `ACCEPT`.
+    let mut dead = false;
     let mut returns: Vec<u16> = Vec::new();
     let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
     loop {
@@ -357,6 +390,51 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 }
             }
             RETAG if mode == 1 => nodes[moved].kind = operand,
+            RETAG if mode == 3 => {
+                // The node made last at this level and the nodes inside it, the records from its
+                // base to the pending extras, each base's chain of wraps first (outermost first,
+                // as `ACCEPT` places them): read, a kind each.
+                let Some(Some((r, base))) = lasts_made.last().copied() else { return refuse(pc - 1, "a reread with no node before it") };
+                let reading = &program.readings.maps[usize::from(operand)];
+                let end = nodes.len() - pending;
+                let mut i = base;
+                while i < end {
+                    if wraps.contains(&i) {
+                        i += 1;
+                        continue;
+                    }
+                    let mut chain = Vec::new();
+                    let mut c = head.get(&i).copied();
+                    while let Some(w) = c {
+                        chain.push(w);
+                        c = link.get(&w).copied();
+                    }
+                    chain.push(i);
+                    let mut next = i + 1;
+                    for n in chain {
+                        let Some(&(_, to)) = reading.kinds.iter().find(|x| x.0 == nodes[n].kind) else { return refuse(pc - 1, "a node the reading does not name") };
+                        if n != r
+                            && let Some(&(_, g)) = reading.fields.iter().find(|x| x.0 == nodes[n].field)
+                        {
+                            nodes[n].field = g;
+                        }
+                        match to {
+                            // A node's records run from its base, `size` of them.
+                            KEEP => {
+                                next = i + nodes[n].size as usize;
+                                break;
+                            }
+                            GONE if n == r => return refuse(pc - 1, "the node read goes"),
+                            GONE => {
+                                nodes[n].kind = DEAD;
+                                dead = true;
+                            }
+                            k => nodes[n].kind = k,
+                        }
+                    }
+                    i = next;
+                }
+            }
             NODE_FIELD if mode == 3 => {
                 // A wrap's frame base is the first record of the node it moved: that node, unless
                 // it is a wrap too (then an older wrap is linked before this one).
@@ -465,8 +543,32 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 let at = open[0];
                 nodes[at].end = bytes.len() as u32;
                 nodes[at].size = (nodes.len() - at) as u32;
-                if head.is_empty() {
+                if nodes.iter().any(|n| n.kind != DEAD && n.field != 0 && program.readings.provisional.contains(&n.field)) {
+                    return refuse(pc - 1, "a provisional field at the file's end");
+                }
+                if head.is_empty() && !dead {
                     return Ok(nodes);
+                }
+                if dead {
+                    // Each node's size, less the dropped records in its range: from its base
+                    // (a wrap's is its chain's), `size` records.
+                    let mut before = vec![0u32; nodes.len() + 1];
+                    for (i, n) in nodes.iter().enumerate() {
+                        before[i + 1] = before[i] + u32::from(n.kind == DEAD);
+                    }
+                    let mut first: Vec<usize> = (0..nodes.len()).collect();
+                    for (&b, &w) in &head {
+                        let mut c = Some(w);
+                        while let Some(w) = c {
+                            first[w] = b;
+                            c = link.get(&w).copied();
+                        }
+                    }
+                    for i in 0..nodes.len() {
+                        let f = first[i];
+                        let e = (f + nodes[i].size as usize).min(nodes.len());
+                        nodes[i].size -= before[e] - before[f];
+                    }
                 }
                 // Each wrap before its base, outermost first; the wraps' own records are placed so.
                 let mut order = Vec::with_capacity(nodes.len());
@@ -481,7 +583,7 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                     }
                     order.push(i);
                 }
-                return Ok(order.into_iter().map(|i| nodes[i].clone()).collect());
+                return Ok(order.into_iter().filter(|&i| nodes[i].kind != DEAD).map(|i| nodes[i].clone()).collect());
             }
             EMPTY => {
                 if tier1.totals[usize::from(operand)] != 0 {

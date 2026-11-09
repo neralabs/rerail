@@ -64,7 +64,7 @@ Python needs too.
 | A3 | `text("…")` is refused | directive words: `.decl` is one token, `.mode` two | keywords in tier 1 | a chain of `next` tests |
 | A4 | a token's kind comes only from its first byte | `:` and `:-`, `<` and `<=` and `<:` | operators | one row per first byte, the longer spellings as keywords. **Done**: a row whose tokens run to their last byte tests each keyword, then takes the plain token |
 | A5 | no wrap: a node cannot start before the token that decides it | `a - b * c`, comparisons, `x ~ \`…\``, `;` | every binary, call and attribute chain | **wrap**: open a node around the last node made at this level (§2.1). **Done** (`wrap K F [as M]`, word `WRAP`) |
-| A6 | no retag: a node's kind is fixed when it opens | `.decl` and `.mode` both open at `.`; an atom and a call look alike until the token after | — | **retag** a node by the next token (§2.1). **Done** for the open node (`retag K A`, word `RETAG`), and for the node made last at the level (`relabel F as M [inner G]`, words `RETAG m=2`, `NODE_FIELD m=2`, `NODE_FIELD m=3`: a modal before `(` is the relation; an atom an operator follows is a call). A parenthesized term at a literal's start, which the engine tells from a group only by going back after its `)`, goes to the engine |
+| A6 | no retag: a node's kind is fixed when it opens | `.decl` and `.mode` both open at `.`; an atom and a call look alike until the token after | — | **retag** a node by the next token (§2.1). **Done** for the open node (`retag K A`, word `RETAG`), and for the node made last at the level (`relabel F as M [inner G]`, words `RETAG m=2`, `NODE_FIELD m=2`, `NODE_FIELD m=3`: a modal before `(` is the relation; an atom an operator follows is a call). A parenthesized term at a literal's start: A20 |
 | A7 | no merge: two tokens cannot make one leaf | `.` and `decl` are one `.decl` leaf; `- 1` is one `number` leaf | — | **merge**: the previous leaf and this token become one leaf (§2.1). **Done** (`merge 'K' A`, word `MERGE`): the extras between are the leaf's text |
 | A8 | no opaque nodes | a `{…}` JSON object, a `raw_text`, are one leaf each | — | **opaque** nested nodes: their tokens make one leaf. **Done** for balanced pairs (`balanced K O C`) |
 | A9 | newlines are never tokens | a setting ends at its line's end; a declaration's tail is on one line | `NEWLINE` | **hidden tokens**: a token the grammar may name; in a state that does not name it, it is skipped and makes no node |
@@ -77,6 +77,7 @@ Python needs too.
 | A17 | a keyword is at most 8 bytes | `violation` | `__future__`, `nonlocal` | `WORD` compares up to 64 bytes, 8 at a time, unrolled. **Done** |
 | A18 | a choice cannot use itself | a term inside a named argument's value | every expression | **nested choices**: `choice N nested`, a level with no node of its own (§2.5). **Done** |
 | A19 | a token's leaf has its token's kind | a word that is a variable, or a call's function, by the token after | names, attributes | **`A as K`**: the leaf of `A` is a `K`; a wrap gives the moved leaf its final kind. **Done** |
+| A20 | a node made is never read again | `(o - n) * 10 > o`: the engine tells a group from a term in parentheses only by going back after the `)`, and `((a(x)))` is a group or a term by what follows, however deep | `[a, (b, c)] = x`: a list is a `list_pattern` once the `=` comes | **cover grammars**: `reread R`, the node made last and the nodes inside it read again by a declared reading (kinds kept, renamed, gone, or kept unread; fields renamed; any other kind refuses), word `RETAG m=3`, a loop over the node's records; `provisional F`, a field no finished tree holds, checked at `ACCEPT`. **Done** |
 | A16 | which rows a state can meet is not known | — (it keeps `ROW` off JSON's strings) | string prefixes, f-strings | **proofs over the block program and modes from toggles** (§2.4). **Done** |
 
 ### 2.1 Wrap, retag and merge
@@ -302,6 +303,7 @@ reference on the corpus.
 | rr-09 | `.violation` (code, tag, fix, suppress, options), `=>` edits, JSON objects; a `fix` clause right after a `.violation` goes to the engine | A8, A10 |
 | rr-10 | `.policy {…}`, its JSON checked as the engine checks it (`fold`, `refuse`); a document nested deeper than the JSON reader's limit goes to the engine | A8 |
 | rr-11 | `.input`/`.output`, `.type`, `.lattice`, `.pragma`, `.functor`, `.edit`: all of `.rr`; what the engine refuses by the token after a directive's word or a functor's name goes to it | A8 |
+| rr-12 | a parenthesized term at a literal's start, `(o - n) * 10 > o`: read as a group, then read again as a term when an operator or a `~` follows its `)` (`reread`, `provisional`) | A20 |
 
 At rr-11:
 - every corpus file is parsed by both parsers;

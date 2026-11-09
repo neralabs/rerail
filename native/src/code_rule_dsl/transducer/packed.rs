@@ -860,6 +860,8 @@ pub(in crate::code_rule_dsl) struct Program {
     block_programs: Vec<block::BlockProgram>,
     /// Tier 2's switch tables (`SWITCH`, decision 0087).
     switches: Vec<stream::ByteSwitch>,
+    /// Tier 2's readings (`RETAG m=3`) and provisional fields.
+    readings: stream::Readings,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
 }
@@ -1914,6 +1916,7 @@ impl Program {
             ast_pattern: None,
             block_programs: Vec::new(),
             switches: Vec::new(),
+            readings: stream::Readings::default(),
             digest: DigestMemo::default(),
         };
         program.validate()?;
@@ -2158,6 +2161,23 @@ impl Program {
                 for t in s.targets.iter().chain([&s.end]) {
                     digest.update(t.to_le_bytes());
                 }
+            }
+        }
+        if !self.readings.is_empty() {
+            digest.update(b"readings");
+            digest.update((self.readings.maps.len() as u64).to_le_bytes());
+            for r in &self.readings.maps {
+                for list in [&r.kinds, &r.fields] {
+                    digest.update((list.len() as u64).to_le_bytes());
+                    for (a, b) in list {
+                        digest.update(a.to_le_bytes());
+                        digest.update(b.to_le_bytes());
+                    }
+                }
+            }
+            digest.update((self.readings.provisional.len() as u64).to_le_bytes());
+            for f in &self.readings.provisional {
+                digest.update(f.to_le_bytes());
             }
         }
         format!("{:x}", digest.finalize())

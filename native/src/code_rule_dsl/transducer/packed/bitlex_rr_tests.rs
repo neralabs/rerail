@@ -193,6 +193,21 @@ const CASES: &[(&str, &str)] = &[
     (".lattice l<> { A -> @f + 1 }", "never"),
     ("r(x) :- s(@f, x).", "never"),
     (".functor g(): t < 3", "never"),
+    // A `(` at a literal's start: a group, or a term that an operator, a comparison or a `~`
+    // after its `)` shows it was; groups in it terms too, an atom a call.
+    ("a(x) :- b(o), (o - n) * 10 > o.\np(x) :- ((a(x))) + 1 > 2.\np(x) :- ((o)) ~ `p`, (b(x) ; c(x)), !(d(x)), ((a(x))).", "12"),
+    ("p(x) :- (o) > 1, (a(x)) = b, (count : { s(_) }) > 2, !(o) - 1 ~ `p`, ((o - n) > 1), ((a(x)) + 1 > 2).", "12"),
+    ("p(x) :- ( // c\n o - n) * 2 > 1, (a(x) /* d */) + 1 > 2, (-o) < 2, ((o)) * (n) > 1.", "12"),
+    ("p(x) :- count : { (o - 1) > 2 } = n, max x : { (s(x)) } > 1, !((a(x))).", "12"),
+    // What the engine refuses: a term where a literal goes; a group of more than one literal, a
+    // disjunction or an atom before what only a term takes; a negated comparison.
+    ("p(x) :- (o).", "never"),
+    ("p(x) :- ((o), a(x)).", "never"),
+    ("p(x) :- (o) - 1.", "never"),
+    ("p(x) :- (a(x)) ~ `p`.", "never"),
+    ("p(x) :- (a(x), b(x)) + 1 > 2.", "never"),
+    ("p(x) :- (a(x) ; b(x)) > 1.", "never"),
+    ("p(x) :- !(o) > 1.", "never"),
     // The same bytes outside JSON: no refusal.
     ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
 ];
@@ -301,6 +316,28 @@ fn a_refused_mark_is_checked() {
     }
 }
 
+/// `reread R`: the compiler takes a reading only by a name declared once, and gives its rows to
+/// the program (`RETAG m=3` names one; `provisional` fields the program checks at `ACCEPT`).
+#[test]
+fn a_reading_is_checked() {
+    let source = std::fs::read_to_string(format!("{DIR}/12-parenthesized.bitlex")).expect("step 12");
+    assert_eq!(super::bitlex_ladder_tests::compile_error(&source), None);
+    for (from, to, why) in [
+        ("reread parenthesized_strict pattern_tail\n  provisional", "reread nowhere pattern_tail\n  provisional", "no reading of that name"),
+        ("reading parenthesized_strict = ", "reading parenthesized = ", "two of that name"),
+        ("conjunction gone, atom as call", "conjunction gone, conjunction gone, atom as call", "a kind twice"),
+    ] {
+        assert_eq!(source.matches(from).count(), 1, "{from}");
+        let e = super::bitlex_ladder_tests::compile_error(&source.replace(from, to));
+        assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
+    }
+    let c = super::bitlex_ladder_tests::compile_step("12", &source);
+    assert_eq!(c.program.readings.maps.len(), 2);
+    assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
+    let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, super::native_ir::StructuralOperation::Reread { .. })).count();
+    assert!(rereads > 0, "the words reread");
+}
+
 /// A document's tokens and parse at a step, for a look by hand: `RERAIL_RR_STEP` (a step's name,
 /// or part of it) and `RERAIL_RR_DOC` (the document, with `\n` for a line break).
 #[test]
@@ -339,10 +376,17 @@ fn rr_look() {
                 eprintln!("  text: {:?}", &doc[n.2.saturating_sub(60)..(n.3 + 60).min(doc.len())]);
             }
         }
+        let theirs = engine(&doc).0;
         if let Some(nodes) = super::bitlex_ladder_tests::reference(&c, doc.as_bytes()) {
-            eprintln!("  reference tree: {:?}", named(&c, &nodes));
+            let ours = named(&c, &nodes);
+            eprintln!("  reference tree: {ours:?}");
+            let compiled = compiled.as_ref().ok().map(|n| named(&c, &super::bitlex_ladder_tests::as_ids(n.clone())));
+            eprintln!("  the engine's tree: {}; the compiled tree the reference's: {}", ours == theirs, compiled.as_ref() == Some(&ours));
+            if let Some(at) = ours.iter().zip(&theirs).position(|(a, b)| a != b) {
+                eprintln!("  the reference leaves the engine at node {at}: {:?} / {:?}", ours.get(at), theirs.get(at));
+            }
         }
-        eprintln!("  engine: {:?}", engine(&doc).0);
+        eprintln!("  engine: {theirs:?}");
     }
 }
 
@@ -400,6 +444,9 @@ fn rr_corpus() {
                 // The grammar's refusal: the token it stops at, and the statement's first word.
                 if why == "the token" {
                     why = stopped_at(&c, &bytes).unwrap_or(why);
+                }
+                if std::env::var("RERAIL_RR_FELL").is_ok_and(|w| why.contains(&w)) {
+                    eprintln!("  fell: {why}: {}", f.display());
                 }
                 *reasons.entry(why.clone()).or_default() += 1;
                 fell.push((why, f.display().to_string()));

@@ -129,6 +129,9 @@ pub(super) enum StructuralOperation {
     Row { mask: u16 },
     /// A node becomes a `kind`: the innermost open node, or another (`On`).
     Retag { kind: u16, on: On },
+    /// The node made last at the innermost open node's level and the nodes inside it, read by
+    /// reading `reading` (`RETAG m=3`, `reread`).
+    Reread { reading: u16 },
     /// A node of `kind` around the node last made at this level, open: it takes that node's
     /// field and start (docs/parser-generators/24-rr-and-bitlex-plan.md §2.5).
     Wrap { kind: u16 },
@@ -191,6 +194,7 @@ impl StructuralOperation {
             Self::Mark { mask, order, end } => (MARK, order | if end { 32 } else { 0 }, mask),
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
+            Self::Reread { reading } => (RETAG, 3, reading),
             Self::Wrap { kind } => (WRAP, 0, kind),
             Self::Merge { kind, fold } => (MERGE, u8::from(fold), kind),
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
@@ -227,6 +231,7 @@ pub(super) struct NativeModule {
     pub strings: Vec<Vec<u8>>,
     /// Tier 2's switch tables (`SWITCH`).
     pub switches: Vec<super::stream::ByteSwitch>,
+    pub readings: super::stream::Readings,
     pub value_programs: Vec<ValueProgram>,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
@@ -420,6 +425,7 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
             MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0 },
             ROW => StructuralOperation::Row { mask: operand },
+            RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
             WRAP => StructuralOperation::Wrap { kind: operand },
             MERGE => StructuralOperation::Merge { kind: operand, fold: mode == 1 },
@@ -469,6 +475,7 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
         longs: program.longs.clone(),
         strings: program.strings.clone(),
         switches: program.switches.clone(),
+        readings: program.readings.clone(),
         value_programs: program.value_programs.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         capture_programs: program.capture_programs.clone(),

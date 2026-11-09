@@ -110,7 +110,7 @@ impl<'a> Parser<'a> {
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.first(a).0, true),
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.first(body),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
             Gram::Any(_) => (0, false),
         }
@@ -139,7 +139,7 @@ impl<'a> Parser<'a> {
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.starts(a).0, true),
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.starts(a),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.starts(body),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts(body),
             Gram::Balanced { open, .. } => (Starts::of(open), false),
             Gram::Any(except) => (Starts { kinds: Default::default(), any: Some(except.iter().cloned().collect()) }, false),
         }
@@ -305,9 +305,10 @@ impl<'a> Parser<'a> {
                 }
             }
             Gram::Field(f, a) => {
+                // The innermost field wins, as the machine's (`f: (g: A)` gives A's node `g`).
                 let me = self.out.len();
                 let next = self.matches(a, at, follow)?;
-                if me < self.out.len() {
+                if me < self.out.len() && self.out[me].field.is_none() {
                     self.out[me].field = Some(f.clone());
                 }
                 Some(next)
@@ -384,6 +385,37 @@ impl<'a> Parser<'a> {
                         self.out.truncate(len);
                         (self.out[a].kind, self.out[a].end) = was;
                         self.out.push(second);
+                        None
+                    }
+                }
+            }
+            Gram::Reread { reading, body } => {
+                // The node just made at this level, as a wrap finds it; read, then `body`.
+                let o = *self.open.last()?;
+                let mut c = None;
+                let mut j = o + 1;
+                while j < self.out.len() {
+                    c = Some(j);
+                    j += self.out[j].size.max(1);
+                }
+                let c = c?;
+                let r = &self.decl.readings.iter().find(|r| r.0 == *reading)?.1;
+                let saved: Vec<Node> = self.out[c..].to_vec();
+                if let Err(why) = reread(&mut self.out, c, r) {
+                    self.out.truncate(c);
+                    self.out.extend(saved);
+                    // Where its body starts, the machine has taken this way, and refuses.
+                    if self.predicts(body, at) {
+                        let here = self.tokens[at].start;
+                        self.fatal.get_or_insert_with(|| format!("{why}, read at byte {here}"));
+                    }
+                    return None;
+                }
+                match self.matches(body, at, follow) {
+                    Some(next) => Some(next),
+                    None => {
+                        self.out.truncate(c);
+                        self.out.extend(saved);
                         None
                     }
                 }
@@ -555,6 +587,50 @@ fn first_of<'a>(p: &mut Parser<'a>) {
     }
 }
 
+/// Node `root` (in preorder) and the nodes inside it, read by `r`: a kind it names as `K` or
+/// `K as M` stays (as `M`) and the nodes inside are read; `gone`, the node goes and the nodes
+/// inside take its place; `keep`, it stays with every node inside, unread. A node read but the
+/// first takes the field `r` gives its own. A kind it does not name refuses, as a first node
+/// that goes does.
+fn reread(out: &mut Vec<Node>, root: usize, r: &crate::syntax::Reading) -> Result<(), String> {
+    use crate::syntax::ReadKind;
+    let end = root + out[root].size;
+    let mut gone = Vec::new();
+    let mut i = root;
+    while i < end {
+        let what = r.kinds.iter().find(|k| k.0 == out[i].kind).map(|k| k.1.clone());
+        let Some(what) = what else { return Err(format!("a {} the reading does not name", out[i].kind)) };
+        if i != root {
+            let to = out[i].field.as_ref().and_then(|f| r.fields.iter().find(|x| x.0 == *f)).map(|x| x.1.clone());
+            if to.is_some() {
+                out[i].field = to;
+            }
+        }
+        match what {
+            ReadKind::Keep => {
+                i += out[i].size.max(1);
+                continue;
+            }
+            ReadKind::Gone if i == root => return Err(format!("the {} read goes", out[i].kind)),
+            ReadKind::Gone => gone.push(i),
+            ReadKind::As(m) => out[i].kind = m,
+        }
+        i += 1;
+    }
+    if gone.is_empty() {
+        return Ok(());
+    }
+    // Each node's size, less the nodes gone inside it; then they go.
+    for x in root..end {
+        let (a, b) = (x, x + out[x].size);
+        out[x].size -= gone.iter().filter(|&&g| g > a && g < b).count();
+    }
+    for &g in gone.iter().rev() {
+        out.remove(g);
+    }
+    Ok(())
+}
+
 /// The nodes of `decl` over `tokens` (a file of `n` bytes), or the reason the file goes to
 /// tree-sitter.
 pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, String> {
@@ -607,6 +683,10 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         Some(next) => return Err(format!("the token at byte {} is past the grammar's end", plain[next].start)),
         None => return Err("no parse: the tokens do not match the grammar".into()),
     };
+    // A provisional field left: no tree of the grammar's.
+    if let Some(x) = out.iter().find(|x| x.field.as_ref().is_some_and(|f| decl.provisional.contains(f))) {
+        return Err(format!("a provisional field {} left at byte {}", x.field.as_deref().unwrap_or_default(), x.start));
+    }
     // The root runs from its first token (or byte 0, when whole) to the end of the file.
     out[0].end = n;
     if decl.whole {

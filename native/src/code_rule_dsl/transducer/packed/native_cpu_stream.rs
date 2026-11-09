@@ -18,7 +18,7 @@ use super::Error;
 
 use super::native_cpu_shape::Step;
 use super::native_ir::{NativeModule, On, StructuralOperation as Op};
-use super::stream::{ByteSwitch, Node, REFUSE, Refused};
+use super::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, Refused};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -308,6 +308,8 @@ struct Vars {
     /// The wraps made, and the node the last one moved.
     wraps: Variable,
     moved: Variable,
+    /// The records a reading dropped (`DEAD`).
+    dead: Variable,
 }
 
 /// A compare tree over a byte (or a place): runs of one target, split at the middle run.
@@ -403,12 +405,19 @@ struct Reorder {
     link: Value,
     place: Value,
     snode: Value,
+    /// A program that rereads: a column of `nodes + 1` slots (the frames', free at `ACCEPT`)
+    /// for the dropped records before each, a dropped record (`DEAD`) left out.
+    before: Option<Value>,
+    /// Where the count of records placed goes.
+    counts: Value,
 }
 
 /// At `ACCEPT` with wraps: the node table in preorder. Each record in the order made, a wrap's
 /// own skipped, and before each its base's chain of wraps, latest (outermost) first; then each
-/// supertype's node at its place. Two loops over the table, one over the supertypes, each step
-/// a record (`Step::Node`). Returns 0.
+/// supertype's node at its place. A program that rereads leaves the dropped records out, each
+/// node's size less those in its range (from its base, `size` records), counted first. Loops
+/// over the table and one over the supertypes, each step a record (`Step::Node`). Writes the
+/// count placed; returns 0.
 fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step)>) {
     let flags = MemFlags::trusted();
     let at = |f: &mut FunctionBuilder<'_>, c: Value, i: Value| {
@@ -423,12 +432,28 @@ fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step
         let a = at(f, c, i);
         f.ins().istore32(flags, x, a, 0);
     };
-    let copy = |f: &mut FunctionBuilder<'_>, from: Value, to: Value| {
-        for (c, o) in r.cols.iter().zip(r.out.iter()) {
-            let x = get(f, *c, from);
+    // Record `from` to place `to`; its range starts at `first`.
+    let copy = |f: &mut FunctionBuilder<'_>, from: Value, to: Value, first: Value| {
+        for (k, (c, o)) in r.cols.iter().zip(r.out.iter()).enumerate() {
+            let mut x = get(f, *c, from);
+            if k == 4
+                && let Some(b) = r.before
+            {
+                let e = f.ins().iadd(first, x);
+                let (de, df) = (get(f, b, e), get(f, b, first));
+                let gone = f.ins().isub(de, df);
+                x = f.ins().isub(x, gone);
+            }
             put(f, *o, to, x);
         }
         put(f, r.place, from, to);
+    };
+    // Whether record `n` was dropped (only a program that rereads drops one).
+    let dropped = |f: &mut FunctionBuilder<'_>, n: Value| -> Option<Value> {
+        r.before.map(|_| {
+            let k = get(f, r.cols[0], n);
+            f.ins().icmp_imm(IntCC::Equal, k, i64::from(DEAD))
+        })
     };
     let (scan, chain, supers, done, plain) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
     for (b, n) in [(scan, 2), (chain, 3), (supers, 1)] {
@@ -441,14 +466,39 @@ fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step
     let start = f.create_block();
     f.ins().brif(r.wraps, start, &[], done, &[]);
     f.switch_to_block(start);
-    f.ins().jump(scan, &[BlockArg::from(zero), BlockArg::from(zero)]);
+    if let Some(b) = r.before {
+        // count(i, d): the dropped records before record i.
+        let count = f.create_block();
+        f.append_block_param(count, types::I64);
+        f.append_block_param(count, types::I64);
+        heads.push((count, Step::Node));
+        f.ins().jump(count, &[BlockArg::from(zero), BlockArg::from(zero)]);
+        f.switch_to_block(count);
+        let (i, d) = (f.block_params(count)[0], f.block_params(count)[1]);
+        put(f, b, i, d);
+        let step = f.create_block();
+        let end = f.ins().icmp(IntCC::Equal, i, r.nodes);
+        f.ins().brif(end, scan, &[BlockArg::from(zero), BlockArg::from(zero)], step, &[]);
+        f.switch_to_block(step);
+        let k = get(f, r.cols[0], i);
+        let is = f.ins().icmp_imm(IntCC::Equal, k, i64::from(DEAD));
+        let is = f.ins().uextend(types::I64, is);
+        let (i1, d1) = (f.ins().iadd_imm(i, 1), f.ins().iadd(d, is));
+        f.ins().jump(count, &[BlockArg::from(i1), BlockArg::from(d1)]);
+    } else {
+        f.ins().jump(scan, &[BlockArg::from(zero), BlockArg::from(zero)]);
+    }
 
     // scan(i, j): record i, the next place j.
     f.switch_to_block(scan);
     let (i, j) = (f.block_params(scan)[0], f.block_params(scan)[1]);
     let body = f.create_block();
     let end = f.ins().icmp(IntCC::Equal, i, r.nodes);
-    f.ins().brif(end, supers, &[BlockArg::from(zero)], body, &[]);
+    let ended = f.create_block();
+    f.ins().brif(end, ended, &[], body, &[]);
+    f.switch_to_block(ended);
+    f.ins().store(flags, j, r.counts, 0);
+    f.ins().jump(supers, &[BlockArg::from(zero)]);
     f.switch_to_block(body);
     let h = get(f, r.head, i);
     let is_wrap = f.ins().icmp_imm(IntCC::Equal, h, IS_WRAP);
@@ -464,13 +514,44 @@ fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step
     f.ins().brif(c, wrap, &[], own, &[]);
     f.switch_to_block(wrap);
     let w = f.ins().iadd_imm(c, -1);
-    copy(f, w, j);
     let c2 = get(f, r.link, w);
-    let j1 = f.ins().iadd_imm(j, 1);
+    let j1 = match dropped(f, w) {
+        Some(gone) => {
+            let (put_it, after) = (f.create_block(), f.create_block());
+            f.append_block_param(after, types::I64);
+            f.ins().brif(gone, after, &[BlockArg::from(j)], put_it, &[]);
+            f.switch_to_block(put_it);
+            copy(f, w, j, i);
+            let j1 = f.ins().iadd_imm(j, 1);
+            f.ins().jump(after, &[BlockArg::from(j1)]);
+            f.switch_to_block(after);
+            f.block_params(after)[0]
+        }
+        None => {
+            copy(f, w, j, i);
+            f.ins().iadd_imm(j, 1)
+        }
+    };
     f.ins().jump(chain, &[BlockArg::from(c2), BlockArg::from(i), BlockArg::from(j1)]);
     f.switch_to_block(own);
-    copy(f, i, j);
-    let (i1, j1) = (f.ins().iadd_imm(i, 1), f.ins().iadd_imm(j, 1));
+    let i1 = f.ins().iadd_imm(i, 1);
+    let j1 = match dropped(f, i) {
+        Some(gone) => {
+            let (put_it, after) = (f.create_block(), f.create_block());
+            f.append_block_param(after, types::I64);
+            f.ins().brif(gone, after, &[BlockArg::from(j)], put_it, &[]);
+            f.switch_to_block(put_it);
+            copy(f, i, j, i);
+            let j1 = f.ins().iadd_imm(j, 1);
+            f.ins().jump(after, &[BlockArg::from(j1)]);
+            f.switch_to_block(after);
+            f.block_params(after)[0]
+        }
+        None => {
+            copy(f, i, j, i);
+            f.ins().iadd_imm(j, 1)
+        }
+    };
     f.ins().jump(scan, &[BlockArg::from(i1), BlockArg::from(j1)]);
 
     // supers(s): supertype s's node, at its place.
@@ -540,6 +621,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
             keep: f.declare_var(types::I64),
             wraps: f.declare_var(types::I64),
             moved: f.declare_var(types::I64),
+            dead: f.declare_var(types::I64),
         };
         // Where returns chain, each `RETURN` is a loop's head: a turn pops a call.
         let chains = bounds(native).chains;
@@ -571,7 +653,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         let wc = |i: usize| w[i];
         let (fbase_c, flast_c, flbase_c, head_c, link_c, place_c) = (0, 1, 2, 3, 4, 5);
         let zero = f.ins().iconst(types::I64, 0);
-        for var in [v.next, v.taken, v.start, v.end, v.limit, v.last_end, v.at_end, v.nodes, v.supers, v.open, v.ret, v.live, v.pending, v.keep, v.wraps, v.moved] {
+        for var in [v.next, v.taken, v.start, v.end, v.limit, v.last_end, v.at_end, v.nodes, v.supers, v.open, v.ret, v.live, v.pending, v.keep, v.wraps, v.moved, v.dead] {
             f.def_var(var, zero);
         }
         let one = f.ins().iconst(types::I64, 1);
@@ -992,6 +1074,122 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     put(&mut f, col, r, x);
                     f.ins().jump(fall, &[]);
                 }
+                Op::Reread { reading } if wrapping => {
+                    // The node made last at the innermost open node's level and the nodes inside
+                    // it: the records from its base to the pending extras, each base's chain of
+                    // wraps first (outermost first, as the reorder places them). A loop over the
+                    // records and one over a chain, each step a record (`Step::Node`); a kind
+                    // each, by a run of compares.
+                    let r = native.readings.maps.get(usize::from(reading)).ok_or(Error::UnsupportedBackend)?;
+                    let open = f.use_var(v.open);
+                    let (last, base) = {
+                        let a = slot(&mut f, wc(flast_c), open);
+                        let b = slot(&mut f, wc(flbase_c), open);
+                        (f.ins().uload32(flags, a, 0), f.ins().uload32(flags, b, 0))
+                    };
+                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+                    let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
+                    let bad = f.ins().bor(none, no_last);
+                    guard(&mut f, bad, pc);
+                    let root = f.ins().iadd_imm(last, -1);
+                    let (nodes, pending) = (f.use_var(v.nodes), f.use_var(v.pending));
+                    let end = f.ins().isub(nodes, pending);
+                    let (scan, chain) = (f.create_block(), f.create_block());
+                    f.append_block_param(scan, types::I64);
+                    f.append_block_param(chain, types::I64);
+                    f.append_block_param(chain, types::I64);
+                    heads.push((scan, Step::Node));
+                    heads.push((chain, Step::Node));
+                    f.ins().jump(scan, &[BlockArg::from(base)]);
+                    // scan(i): record i, a wrap's skipped (its chain's base reads it).
+                    f.switch_to_block(scan);
+                    let i = f.block_params(scan)[0];
+                    let (body, plain) = (f.create_block(), f.create_block());
+                    let done = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, end);
+                    f.ins().brif(done, fall, &[], body, &[]);
+                    f.switch_to_block(body);
+                    let h = {
+                        let a = slot(&mut f, wc(head_c), i);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    let is_wrap = f.ins().icmp_imm(IntCC::Equal, h, IS_WRAP);
+                    f.ins().brif(is_wrap, plain, &[], chain, &[BlockArg::from(h), BlockArg::from(i)]);
+                    f.switch_to_block(plain);
+                    let i1 = f.ins().iadd_imm(i, 1);
+                    f.ins().jump(scan, &[BlockArg::from(i1)]);
+                    // chain(c, i): the wrap `c - 1` on base i, else (c = 0) record i itself.
+                    f.switch_to_block(chain);
+                    let (c, i) = (f.block_params(chain)[0], f.block_params(chain)[1]);
+                    let cm1 = f.ins().iadd_imm(c, -1);
+                    let n = f.ins().select(c, cm1, i);
+                    let k = {
+                        let a = slot(&mut f, kind_c, n);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    // Its field, unless it is the node read: the reading's, by a run of selects.
+                    let fld = {
+                        let a = slot(&mut f, field_c, n);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    let mut to = fld;
+                    for &(a, b) in &r.fields {
+                        let is = f.ins().icmp_imm(IntCC::Equal, fld, i64::from(a));
+                        let g = f.ins().iconst(types::I64, i64::from(b));
+                        to = f.ins().select(is, g, to);
+                    }
+                    let is_root = f.ins().icmp(IntCC::Equal, n, root);
+                    let to = f.ins().select(is_root, fld, to);
+                    put(&mut f, field_c, n, to);
+                    // The chain's next: an older wrap, or record i; after record i, the next.
+                    let next = f.create_block();
+                    let i1 = f.ins().iadd_imm(i, 1);
+                    let older = {
+                        let at = f.ins().select(c, cm1, zero);
+                        let a = slot(&mut f, wc(link_c), at);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    // Its kind's way: a compare each, the last refusing.
+                    for &(kk, way) in &r.kinds {
+                        let (hit, miss) = (f.create_block(), f.create_block());
+                        let is = f.ins().icmp_imm(IntCC::Equal, k, i64::from(kk));
+                        f.ins().brif(is, hit, &[], miss, &[]);
+                        f.switch_to_block(hit);
+                        match way {
+                            KEEP => {
+                                let size = {
+                                    let a = slot(&mut f, size_c, n);
+                                    f.ins().uload32(flags, a, 0)
+                                };
+                                let past = f.ins().iadd(i, size);
+                                f.ins().jump(scan, &[BlockArg::from(past)]);
+                            }
+                            GONE => {
+                                guard(&mut f, is_root, pc);
+                                let d = f.ins().iconst(types::I64, i64::from(DEAD));
+                                put(&mut f, kind_c, n, d);
+                                let dead = f.use_var(v.dead);
+                                let dead = f.ins().iadd_imm(dead, 1);
+                                f.def_var(v.dead, dead);
+                                f.ins().jump(next, &[]);
+                            }
+                            m => {
+                                let m = f.ins().iconst(types::I64, i64::from(m));
+                                put(&mut f, kind_c, n, m);
+                                f.ins().jump(next, &[]);
+                            }
+                        }
+                        f.switch_to_block(miss);
+                    }
+                    let at = f.ins().iconst(types::I64, pc as i64 + 1);
+                    f.ins().jump(refuse, &[BlockArg::from(at)]);
+                    f.switch_to_block(next);
+                    let (more, own) = (f.create_block(), f.create_block());
+                    f.ins().brif(c, more, &[], own, &[]);
+                    f.switch_to_block(more);
+                    f.ins().jump(chain, &[BlockArg::from(older), BlockArg::from(i)]);
+                    f.switch_to_block(own);
+                    f.ins().jump(scan, &[BlockArg::from(i1)]);
+                }
                 Op::Retag { kind, on: On::Here } => {
                     // The innermost open node's kind.
                     let open = f.use_var(v.open);
@@ -1146,13 +1344,45 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     let nodes = f.use_var(v.nodes);
                     let size = f.ins().isub(nodes, root);
                     put(&mut f, size_c, root, size);
+                    if !native.readings.provisional.is_empty() {
+                        // No node left holds a provisional field (a dropped record aside): a loop
+                        // over the table, a step a record.
+                        let (check, step, after) = (f.create_block(), f.create_block(), f.create_block());
+                        f.append_block_param(check, types::I64);
+                        heads.push((check, Step::Node));
+                        f.ins().jump(check, &[BlockArg::from(zero)]);
+                        f.switch_to_block(check);
+                        let i = f.block_params(check)[0];
+                        let done = f.ins().icmp(IntCC::Equal, i, nodes);
+                        f.ins().brif(done, after, &[], step, &[]);
+                        f.switch_to_block(step);
+                        let (fld, k) = {
+                            let a = slot(&mut f, field_c, i);
+                            let b = slot(&mut f, kind_c, i);
+                            (f.ins().uload32(flags, a, 0), f.ins().uload32(flags, b, 0))
+                        };
+                        let mut hit = f.ins().iconst(types::I8, 0);
+                        for &p in &native.readings.provisional {
+                            let is = f.ins().icmp_imm(IntCC::Equal, fld, i64::from(p));
+                            hit = f.ins().bor(hit, is);
+                        }
+                        let live = f.ins().icmp_imm(IntCC::NotEqual, k, i64::from(DEAD));
+                        let bad = f.ins().band(hit, live);
+                        guard(&mut f, bad, pc);
+                        let i1 = f.ins().iadd_imm(i, 1);
+                        f.ins().jump(check, &[BlockArg::from(i1)]);
+                        f.switch_to_block(after);
+                    }
                     f.ins().store(flags, nodes, counts_c, 0);
                     let supers = f.use_var(v.supers);
                     f.ins().store(flags, supers, counts_c, 8);
                     if wrapping {
-                        let wraps = f.use_var(v.wraps);
+                        // A dropped record needs the table in preorder too: without it.
+                        let (wraps, dead) = (f.use_var(v.wraps), f.use_var(v.dead));
+                        let wraps = f.ins().iadd(wraps, dead);
                         f.ins().store(flags, wraps, counts_c, 16);
-                        reorder(&mut f, Reorder { nodes, supers, wraps, cols: [kind_c, field_c, start_c, end_c, size_c], out: [wc(6), wc(7), wc(8), wc(9), wc(10)], head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c }, &mut heads);
+                        let rereads = words.iter().any(|b| matches!(b.operation, Op::Reread { .. }));
+                        reorder(&mut f, Reorder { nodes, supers, wraps, cols: [kind_c, field_c, start_c, end_c, size_c], out: [wc(6), wc(7), wc(8), wc(9), wc(10)], head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c, before: rereads.then(|| wc(fbase_c)), counts: counts_c }, &mut heads);
                     } else {
                         f.ins().return_(&[zero]);
                     }
@@ -1201,7 +1431,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last
 /// at a level (`On::Made`).
 fn framed(words: &[super::native_ir::StructuralBlock]) -> bool {
-    words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::Inner, .. }))
+    words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::Inner, .. }))
 }
 
 /// A mask's words for `CompiledStream::call`: word `i` is `words[i * stride]`, `count` of them.

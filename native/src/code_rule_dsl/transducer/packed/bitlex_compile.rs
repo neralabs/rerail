@@ -235,6 +235,49 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 return Err(format!("refuse {mark}: no hidden mark of that kind"));
             }
         }
+        // The readings (`reading R = …`, `reread R`): each kind's way, an extra's leaf staying as
+        // it is; and the provisional fields.
+        let mut reading_names: Vec<String> = Vec::new();
+        let mut readings = super::stream::Readings::default();
+        for s in &low.tree {
+            match s {
+                Stmt::Reading { name, reading } => {
+                    if reading_names.contains(name) {
+                        return Err(format!("reading {name}: two of that name"));
+                    }
+                    reading_names.push(name.clone());
+                    let mut r = super::stream::Reading::default();
+                    for (k, what) in &reading.kinds {
+                        let to = match what {
+                            ::bitlex::syntax::ReadKind::Keep => super::stream::KEEP,
+                            ::bitlex::syntax::ReadKind::Gone => super::stream::GONE,
+                            ::bitlex::syntax::ReadKind::As(m) => id(m)?,
+                        };
+                        let k = id(k)?;
+                        if r.kinds.iter().any(|x| x.0 == k) {
+                            return Err(format!("reading {name}: a kind twice"));
+                        }
+                        r.kinds.push((k, to));
+                    }
+                    for e in &low.extra {
+                        let e = id(e)?;
+                        if !r.kinds.iter().any(|x| x.0 == e) {
+                            r.kinds.push((e, e));
+                        }
+                    }
+                    for (f, g) in &reading.fields {
+                        r.fields.push((field_id(f)?, field_id(g)?));
+                    }
+                    readings.maps.push(r);
+                }
+                Stmt::Provisional(fields) => {
+                    for f in fields {
+                        readings.provisional.push(field_id(f)?);
+                    }
+                }
+                _ => {}
+            }
+        }
         let (states, mut arms, whole) = {
             let is_token = |name: &str| {
                 token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0))
@@ -254,10 +297,25 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                 }
             }
             tokens.retain(|t| !low.marks.iter().any(|m| &m.0 == t) && !low.extra.contains(t));
-            let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token, tokens: &tokens };
+            let reading = |name: &str| reading_names.iter().position(|r| r == name).map(|r| r as u16).ok_or_else(|| format!("reread {name}: no reading of that name"));
+            let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token, tokens: &tokens, reading: &reading };
             grammar::build(&low.tree, &ids)?
         };
         grammar::without_mark_leaves(&mut arms, &mark_kinds)?;
+        // A node a reading drops has no supertype: tier 2 places the supertypes by their nodes.
+        let gone: Vec<u16> = readings.maps.iter().flat_map(|r| r.kinds.iter().filter(|x| x.1 == super::stream::GONE).map(|x| x.0)).collect();
+        for a in &arms {
+            for act in &a.acts {
+                let k = match act {
+                    grammar::Act::Open { kind, supers, .. } if !supers.is_empty() => *kind,
+                    grammar::Act::Leaf { kind, supers, .. } if !supers.is_empty() => if *kind != 0 { *kind } else { a.token },
+                    _ => continue,
+                };
+                if gone.contains(&k) {
+                    return Err(format!("a reading drops kind {k}, which has a supertype"));
+                }
+            }
+        }
         // Each check, a byte machine over its tokens' bytes (doc 18 §4), compiled into masks
         // over the whole file with the rest of the block program: a token it refuses joins the
         // fallback. Tier 2 keeps only the bytes a token passing it begins with.
@@ -355,7 +413,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
             mark_masks.push(token_rows[r].1);
         }
         // The words, once the fallback's totals are known: each must be zero.
-        let lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, &meets, empties, whole, false)?;
+        let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, &meets, empties, whole, false)?;
+        super::rir::reading_rows(&mut lowered.text, &readings);
         let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
         tier2 = Some((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks));
     }
@@ -495,7 +554,7 @@ impl Lowering {
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
                 // The grammar's rules: the state machine is built once the token rows are known.
-                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } => self.tree.push(stmt.clone()),
+                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Provisional(_) => self.tree.push(stmt.clone()),
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
