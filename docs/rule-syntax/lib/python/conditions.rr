@@ -60,6 +60,22 @@ py_dead(a) :- kind(i, "if_statement"), field(i, "alternative", e), kind(e, "elif
 py_stmt_part("block"). py_stmt_part("if_statement"). py_stmt_part("elif_clause"). py_stmt_part("else_clause").
 py_stmt_part("decorated_definition"). py_stmt_part("expression_statement"). py_stmt_part("try_statement").
 py_stmt_part("except_clause"). py_stmt_part("finally_clause"). py_stmt_part("with_statement").
+// The descent is syntax, made per file and only below a guarded branch (one py_dead may pick); which guarded branch is
+// dead reads the run's settings. Made from py_dead itself, the descent ran where py_dead does, over every child edge
+// of every file (4.3 M rows at 2,063 files) for the few branches a run leaves out.
+.decl py_guard(c: node)
+py_guard(c) :- py_vtest(c, _, _, _).
+py_guard(c) :- py_ptest(c, _, _).
+py_guard(c) :- py_not(c, a), py_guard(a).
+.decl py_guarded(b: node)
+py_guarded(b) :- kind(i, "if_statement"), field(i, "condition", c), py_guard(c), field(i, "consequence", b).
+py_guarded(a) :- kind(i, "if_statement"), field(i, "condition", c), py_guard(c), field(i, "alternative", a).
+py_guarded(b) :- kind(e, "elif_clause"), field(e, "condition", c), py_guard(c), field(e, "consequence", b).
+py_guarded(a) :- kind(i, "if_statement"), field(i, "alternative", e), kind(e, "elif_clause"), field(e, "condition", c),
+    py_guard(c), field(i, "alternative", a).
+// py_under(b, n): n is a statement of guarded branch b, at any depth of statements.
+.decl py_under(b: node, n: node)
+py_under(b, n) :- py_guarded(b), child(b, n, _).
+py_under(b, n) :- py_under(b, p), kind(p, k), py_stmt_part(k), child(p, n, _).
 .decl py_dead_at(n: node)
-py_dead_at(n) :- py_dead(b), child(b, n, _).
-py_dead_at(n) :- py_dead_at(p), kind(p, k), py_stmt_part(k), child(p, n, _).
+py_dead_at(n) :- py_dead(b), py_under(b, n).

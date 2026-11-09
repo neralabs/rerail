@@ -319,8 +319,8 @@ pub(in crate::code_rule_dsl) fn after(
     sources: &[(String, Arc<dyn Source>)],
     measured: HashMap<(String, usize), Measured>,
     input_stats: HashMap<String, InputStats>,
-    docs: (super::input_delta::Docs, [u8; 32]),
     mut input_docs: HashMap<String, Arc<DocDigests>>,
+    docs: (super::input_delta::Docs, [u8; 32]),
 ) -> Retained {
     // An input bound as the last run's source keeps that source's hashes.
     if let Some(old) = &old {
@@ -355,7 +355,7 @@ pub(in crate::code_rule_dsl) fn after(
     // Statistics of the relations still kept, as they are.
     let alive: std::collections::HashSet<usize> = rels.values().map(|k| Arc::as_ptr(&k.rel) as *const u8 as usize).collect();
     let measured = measured.into_iter().filter(|((_, at), _)| alive.contains(at)).collect();
-    Retained { key, inputs, rels, input_srcs, measured, input_stats, docs, input_docs }
+    Retained { key, inputs, rels, input_srcs, measured, input_stats, input_docs, docs }
 }
 
 /// `source` (input `rel`), or the last run's source of the same rows: same name, columns and digest, in any kept
@@ -578,7 +578,7 @@ mod tests {
             let width=p.decls[name].len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
-        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),docs:Default::default(),input_docs:Default::default()};
+        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default()};
         let result=cut(Some(&kept),key,&p,&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};

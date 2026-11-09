@@ -168,6 +168,33 @@ impl ContentStore {
         Ok(out)
     }
 
+    /// The memo row of `key`'s content for one plan: what `facts_memo(key).results[plan]` is, read and decoded alone
+    /// (the primary key's lookup). A file's row holds every plan ever run on it, so decoding all of them to take one
+    /// cost as much as reading its tape.
+    pub fn facts_result(&self, key: FactsMemoKey<'_>, plan: [u8; 32]) -> StoreResult<Option<FactsResult>> {
+        let connection = self
+            .connection
+            .lock()
+            .expect("content store mutex poisoned");
+        let schema = i64::from(key.fact_schema);
+        let mut results = connection.prepare_cached(
+            "SELECT path,codec_id,raw_length,frame FROM facts_results \
+             WHERE source_id=?1 AND fact_schema=?2 AND path IN (?3,?4) AND plan_digest=?5 ORDER BY path",
+        )?;
+        let rows = results.query_map(params![key.source.0, schema, CONTENT_PURE, key.path, &plan[..]], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, Vec<u8>>(3)?))
+        })?;
+        // As `facts_memo`: of the two paths, the later row in key order that decodes.
+        let mut out = None;
+        for row in rows {
+            let (path, codec, raw_length, frame) = row?;
+            if let Ok(entry) = decode(codec, raw_length, &frame) {
+                out = Some(FactsResult { plan, path_dependent: path != CONTENT_PURE, entry });
+            }
+        }
+        Ok(out)
+    }
+
     /// Every memo row of `key`'s content, content-pure and at `key.path`, for `key.fact_schema`.
     pub fn facts_memo(&self, key: FactsMemoKey<'_>) -> StoreResult<FactsMemo> {
         let connection = self

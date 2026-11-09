@@ -387,7 +387,7 @@ mod tests {
     /// 16-bit layout (`metal_rows`) and checked against the CPU's rows.
     #[cfg(target_os = "macos")]
     #[derive(Default)]
-    struct Device { joins: usize, joins_same: usize, joins_off: usize, pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
+    struct Device { key: (usize, usize, u64, f64, usize, usize), key_host: f64, joins: usize, joins_same: usize, joins_off: usize, pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
 
     #[cfg(target_os = "macos")]
     impl Device {
@@ -414,54 +414,75 @@ mod tests {
                 self.gpu += got.gpu_seconds;
                 self.bytes += resident.bytes;
                 self.wide += 8 * n * cols.len();
-                for f in &resident.forms { self.forms[match f { Form::Low16 => 0, Form::I32 => 1, Form::I64 => 2 }] += 1; }
+                for f in &resident.forms { self.forms[match f { Form::Low16 | Form::Code16 | Form::Group => 0, Form::I32 => 1, Form::I64 => 2 }] += 1; }
             }
         }
 
         fn tiles(&mut self, cases: &[super::super::TileCase]) {
-            use crate::code_rule_dsl::transducer::packed::metal_rows::{Form, Resident, tile_join};
-            for case in cases {
-                let (nl, nr) = (case.left[0].len(), case.right[0].len());
-                // Key 0 a node column of one chunk on both sides: the first key that is.
-                let order = (0..case.left.len()).find_map(|k0| {
-                    let mut keys: Vec<usize> = vec![k0];
-                    keys.extend((0..case.left.len()).filter(|&k| k != k0));
-                    let l: Vec<&[i64]> = keys.iter().map(|&k| case.left[k].as_slice()).collect();
-                    let r: Vec<&[i64]> = keys.iter().map(|&k| case.right[k].as_slice()).collect();
-                    let (l, r) = (Resident::new(&l, nl).ok()?, Resident::new(&r, nr).ok()?);
-                    // Node ids: `d << 32 | i`, so a key 0 under 2^32 is not one (a number of a chunk of its own).
-                    let nodes = case.left[k0].iter().chain(&case.right[k0]).all(|&v| v >> 32 > 0);
-                    (l.forms[0] == Form::Low16 && r.forms[0] == Form::Low16 && nodes && keys.len() <= 3).then_some((l, r, keys.len()))
-                });
-                let Some((l, r, k)) = order else {
-                    if self.joins_off < 8 {
-                        let peek = |c: &[i64]| c.iter().take(3).map(|v| format!("{v:#x}")).collect::<Vec<_>>().join(",");
-                        println!("    tile off {}: {} keys, {} x {} rows, left {} right {}", case.rule, case.left.len(), nl, nr, peek(&case.left[0]), peek(&case.right[0]));
-                    }
-                    self.joins_off += 1;
-                    continue
-                };
-                let keys: Vec<usize> = (0..k).collect();
-                let Ok(got) = tile_join(&l, &keys, &r, &keys) else { self.joins_off += 1; continue };
+            use crate::code_rule_dsl::transducer::packed::metal_rows::{Codes, Form, Grouping, Joined, Resident, tile_join};
+            let check = |got: &Joined, case: &super::super::TileCase, how: &str| -> bool {
                 let mut pairs = got.pairs.clone();
                 pairs.sort_unstable();
                 let mut want = case.pairs.clone();
                 want.sort_unstable();
-                self.joins += 1;
-                if pairs == want { self.joins_same += 1 } else { println!("    tile DIFF {}: {} pairs, the CPU {}", case.rule, pairs.len(), want.len()) }
-                self.pairs += want.len();
-                self.compared += got.compared;
+                if pairs != want { println!("    tile DIFF {how} {}: {} pairs, the CPU {}", case.rule, pairs.len(), want.len()) }
+                pairs == want
+            };
+            for case in cases {
+                let (nl, nr) = (case.left[0].len(), case.right[0].len());
+                self.pairs += case.pairs.len();
                 self.join_cpu += case.cpu_seconds;
+                // By key run: key 0 the group, each symbol key after it a 16-bit code of one dictionary for both sides.
+                let k = case.left.len();
+                let h0 = thread_cpu();
+                let codes: Vec<Option<Codes>> = (0..k).map(|i| (i > 0 && case.symbols[i]).then(|| Codes::of(&[&case.left[i], &case.right[i]])).flatten()).collect();
+                let refs: Vec<Option<&Codes>> = codes.iter().map(Option::as_ref).collect();
+                let l: Vec<&[i64]> = case.left.iter().map(Vec::as_slice).collect();
+                let r: Vec<&[i64]> = case.right.iter().map(Vec::as_slice).collect();
+                let keys: Vec<usize> = (0..k).collect();
+                let by_key = Resident::grouped(&l, nl, Grouping::Key, &refs).and_then(|a| Resident::grouped(&r, nr, Grouping::Key, &refs).map(|b| (a, b)));
+                let joined = by_key.and_then(|(a, b)| { let got = tile_join(&a, &keys, &b, &keys)?; Ok((got, a.bytes + b.bytes)) });
+                // The host's part: the codes, the sort into key runs, the upload and the runs' merge (waiting is no CPU).
+                self.key_host += thread_cpu() - h0;
+                match joined {
+                    Ok((got, bytes)) => {
+                        self.key.0 += 1;
+                        self.key.1 += usize::from(check(&got, case, "by key"));
+                        self.key.2 += got.compared;
+                        self.key.3 += got.gpu_seconds;
+                        self.key.4 += bytes;
+                        self.key.5 += 8 * k * (nl + nr);
+                    }
+                    Err(_) => self.joins_off += 1,
+                }
+                // By chunk, when key 0 is a node column of one chunk on both sides: the first key that is.
+                let order = (0..k).find_map(|k0| {
+                    let mut keys: Vec<usize> = vec![k0];
+                    keys.extend((0..k).filter(|&x| x != k0));
+                    let l: Vec<&[i64]> = keys.iter().map(|&x| case.left[x].as_slice()).collect();
+                    let r: Vec<&[i64]> = keys.iter().map(|&x| case.right[x].as_slice()).collect();
+                    let (l, r) = (Resident::new(&l, nl).ok()?, Resident::new(&r, nr).ok()?);
+                    // Node ids: `d << 32 | i`, so a key 0 under 2^32 is not one (a number of a chunk of its own).
+                    let nodes = case.left[k0].iter().chain(&case.right[k0]).all(|&v| v >> 32 > 0);
+                    (l.forms[0] == Form::Low16 && r.forms[0] == Form::Low16 && nodes).then_some((l, r))
+                });
+                let Some((l, r)) = order else { continue };
+                let Ok(got) = tile_join(&l, &keys, &r, &keys) else { continue };
+                self.joins += 1;
+                self.joins_same += usize::from(check(&got, case, "by chunk"));
+                self.compared += got.compared;
                 self.join_gpu += got.gpu_seconds;
             }
         }
 
         fn report(&self) {
             println!(
-                "device tile joins: {} of {} give the CPU's pairs ({} not on the device); {} pairs from {} compared; CPU hash join {:.1} ms, GPU {:.1} ms",
-                self.joins_same, self.joins, self.joins_off, self.pairs, self.compared, self.join_cpu * 1e3, self.join_gpu * 1e3
+                "device joins: {} pairs, CPU hash join {:.1} ms; by key run: {} of {} give the CPU's pairs ({} not on the device), {} compared, GPU {:.1} ms with {:.1} ms of host CPU (sort, codes, upload, merge), keys {} kB against {} kB as i64; by chunk: {} of {}, {} compared, GPU {:.1} ms",
+                self.pairs, self.join_cpu * 1e3, self.key.1, self.key.0, self.joins_off, self.key.2, self.key.3 * 1e3, self.key_host * 1e3, self.key.4 >> 10, self.key.5 >> 10,
+                self.joins_same, self.joins, self.compared, self.join_gpu * 1e3
             );
-            assert_eq!(self.joins_same, self.joins, "every tile join gives the CPU's pairs");
+            assert_eq!(self.joins_same, self.joins, "every chunk tile join gives the CPU's pairs");
+            assert_eq!(self.key.1, self.key.0, "every key-run tile join gives the CPU's pairs");
             println!(
                 "device scans: {} of {} give the CPU's rows ({} not on the device); {} rows in, {} passed; CPU {:.1} ms, GPU {:.1} ms; columns {} kB as 16-bit layout, {} kB as i64 (low16 {}, i32 {}, i64 {})",
                 self.same, self.cases, self.unsupported, self.rows, self.passed, self.cpu * 1e3, self.gpu * 1e3, self.bytes >> 10, self.wide >> 10, self.forms[0], self.forms[1], self.forms[2]

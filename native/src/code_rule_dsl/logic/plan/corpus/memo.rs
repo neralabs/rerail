@@ -166,8 +166,8 @@ pub(in crate::code_rule_dsl) fn decode_frame(frame: &FactsFrame) -> StoreResult<
 pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {
     off();
     let set = plan(program);
-    let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path })?;
-    match memo.results.get(&set.plans[0]) {
+    // This program's row only: the file's other programs' rows are not decoded.
+    match store.facts_result(FactsMemoKey { source, fact_schema: SCHEMA, path }, set.plans[0])? {
         Some(result) => Ok(Some(decode(&result.entry)?).filter(|entry| entry.key == key)),
         None => Ok(None),
     }

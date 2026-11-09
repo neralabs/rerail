@@ -39,14 +39,17 @@ modnode(d, m) :- node(d, m, "module", _, _).
 modname(m, q) :- modnode(d, m), doc(d, _, q), q != "".
 
 // A definition f named x whose nearest scope is s: a function or a class, not in a branch never taken.
-.decl defnode(f: node, x: symbol, k: symbol)
-defnode(f, x, "function") :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), !py_dead_at(f).
-defnode(f, x, "class") :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x), !py_dead_at(f).
 .decl pscope(s: node)
 pscope(m) :- modname(m, _).
 pscope(c) :- pdef(c, _, _, "class").
+// pdef_at(f, s, x, k): definition f, named x, of kind k, has nearest scope s: syntax, so made per file. pdef reads
+// the run's settings (py_dead_at), so it is cross-file; joined there with `nearest`, the cross part held every
+// node's nearest scope (352 k rows at 237 files) and indexed it.
+.decl pdef_at(f: node, s: node, x: symbol, k: symbol)
+pdef_at(f, s, x, "function") :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
+pdef_at(f, s, x, "class") :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
 .decl pdef(f: node, s: node, x: symbol, k: symbol)
-pdef(f, s, x, k) :- defnode(f, x, k), nearest(f, s, scope), pscope(s).
+pdef(f, s, x, k) :- pdef_at(f, s, x, k), !py_dead_at(f), pscope(s).
 
 // The k-th definition of x in s, by position: 0 for the first.
 .decl start(n: node, b: number)
