@@ -598,7 +598,7 @@ async function recoverFromGit(
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);
     for (const blob of [blobs.get(`:./${inCheckout}`), blobs.get(`HEAD:./${inCheckout}`)]) {
-      const form = blob === undefined || digest === undefined ? undefined : heldAs(blob, digest, crlf.has(inCheckout));
+      const form = heldAs(blob, digest, crlf.has(inCheckout));
       if (blob === undefined || form === undefined) continue;
       // In the line breaks the file held it in, so the diff against the working tree lines up line by line.
       recovered.set(path, textAs(blob, form));
