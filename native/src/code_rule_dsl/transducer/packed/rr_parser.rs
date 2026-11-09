@@ -223,6 +223,9 @@ mod tests {
             ("native_cpu_stream.rs", "fn stream<'b>(&self"),
             ("native_cpu_stream.rs", "pub(super) unsafe fn call(&self, bytes"),
             ("native_cpu_stream.rs", "pub(super) fn columns_on(&self"),
+            ("native_cpu_stream.rs", "unsafe fn call_once(&self"),
+            ("native_cpu_stream.rs", "fn full_tape(&self"),
+            ("native_cpu_stream.rs", "fn sized(&self"),
             ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn tapes("),
             ("rr_parser.rs", "fn metal_tapes("),
             ("native_cpu_block.rs", "pub(super) fn new(program: &CompiledBlock, files"),
@@ -304,6 +307,23 @@ mod tests {
         eprintln!("tapes: {} files in {:?} CPU", refs.len(), cpu() - t);
         let differ = refs.iter().zip(&got).filter(|(src, g)| super::tape(src) != **g).count();
         assert_eq!(differ, 0);
+    }
+
+    /// Tier 2's words by operation, and its state machine's size: what makes the function big.
+    #[test]
+    #[ignore = "a profile: run by hand"]
+    fn rr_words_mix() {
+        let c = super::compiled().expect("compiles");
+        let mut mix: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for l in c.words.lines() {
+            let op = l.split_whitespace().find(|w| w.chars().all(|ch| ch.is_ascii_uppercase() || ch == '_') && w.len() > 1).unwrap_or("?");
+            *mix.entry(op.to_owned()).or_default() += 1;
+        }
+        let mut v: Vec<_> = mix.into_iter().collect();
+        v.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        eprintln!("words: {} lines; machine: {} lines", c.words.lines().count(), c.machine.lines().count());
+        eprintln!("{v:?}");
+        eprintln!("first lines:\n{}", c.words.lines().take(60).collect::<Vec<_>>().join("\n"));
     }
 
     /// The process's CPU time so far, user and sys: the one thread runs alone.
@@ -455,7 +475,8 @@ mod tests {
                 used += tape.counts[0] as usize;
             }
         }
-        eprintln!("tape rows: {room} allocated, {used} written ({:.0}x), {} MB zeroed a pass", room as f64 / used.max(1) as f64, room * 4 * 7 / 1_000_000);
+        let retries = super::super::native_cpu_stream::ROOM_RETRIES.load(std::sync::atomic::Ordering::Relaxed);
+        eprintln!("tape rows: {room} allocated, {used} written ({:.1}x), {} MB zeroed a pass; {retries} runs again on the bound's tape (all passes)", room as f64 / used.max(1) as f64, room * 4 * 7 / 1_000_000);
         // Tier 1 alone, every file in one batch.
         let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
         let t = thread_cpu();
