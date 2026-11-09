@@ -1,0 +1,110 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-origin-ranges",
+  "revision": 1,
+  "mode": "log",
+  "description": "Use the Origin trait to place ranges of parsed literals and embedded programs in their file, not host_range or host_span mappers; those widen or misplace reported spans.",
+  "scope": {
+    "include": [
+      "native/src/code_rule_dsl/**/*.rs"
+    ],
+    "exclude": [
+      "native/src/code_rule_dsl/origin.rs",
+      "native/src/code_rule_dsl/literal/offsets.rs",
+      "native/src/code_rule_dsl/embed/segments.rs",
+      "**/*tests.rs",
+      "**/tests/**",
+      "**/test_support.rs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "call",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "regex": "^host_(?:range|span)$"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "field_identifier",
+                    "inside": {
+                      "kind": "field_expression",
+                      "stopBy": "neighbor"
+                    }
+                  },
+                  {
+                    "kind": "identifier",
+                    "inside": {
+                      "kind": "scoped_identifier",
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "function_item",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "name",
+                      "regex": "^map_range$"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "impl_item",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "trait",
+                      "regex": "(?:^|::)Origin$"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "mod_item",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "name",
+                      "regex": "^tests$"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "RANGE_MAPPED_OUTSIDE_ORIGIN",
+        "anchor": "witness.span",
+        "message": "Place this range in its file through the document's Origin (of_node, of_range) or InFile instead of mapping it here; a new kind of nested document gets its own impl Origin beside its type."
+      }
+    },
+    {
+      "id": "mapper",
+      "forbid": {
+        "regex": {
+          "pattern": "\\bfn\\s+host_(?:range|span)\\s*[<(]",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "RANGE_MAPPER_OUTSIDE_ORIGIN",
+        "anchor": "witness.span",
+        "message": "Don't add a mapper from this nested document to its file; implement Origin for the document beside its type so callers use of_node and of_range."
+      }
+    }
+  ]
+}

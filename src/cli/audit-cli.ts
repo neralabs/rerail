@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { describeScan, runHeadlessScan, type HeadlessScanOptions, type ScanReport } from "./headless-scan.js";
+import { RemoteOutbox } from "../runtime/remote-outbox.js";
+import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { daemonEndpoint, findRunningDaemon, type DaemonEndpoint } from "../runtime/daemon-control.js";
 
 import {
@@ -12,6 +16,8 @@ type SteerStrategy = AuditSettings["steerStrategy"];
 
 export interface AuditCliOptions {
   home: string;
+  /** The version `rerail scan` reports; a headless scan names it in its report. */
+  version?: string;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }
 
@@ -104,7 +110,7 @@ async function targetDaemon(options: AuditCliOptions): Promise<DaemonEndpoint> {
 }
 
 async function api<T>(base: DaemonEndpoint, path: string, method: "GET" | "PATCH" | "POST", body?: unknown): Promise<T> {
-  const response = await fetch(new URL(path, base.url), {
+  const response = await base.fetch(new URL(path, base.url), {
     signal: AbortSignal.timeout(WAIT_TIMEOUT_MS),
     method,
     headers: { ...base.headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },
@@ -188,7 +194,105 @@ async function runAuditRequestCommand(
   return result.status === "failed" || result.status === "interrupted" ? 1 : 0;
 }
 
+/** Exit code of a headless scan that completed with violations under `--fail-on-violations`. */
+export const SCAN_VIOLATIONS_EXIT = 3;
+
+/**
+ * Internal testing: `rerail scan` without `--session`, a headless scan of one checkout in this process
+ * (`headless-scan.ts`). Exit 0 when it completed, 1 when it failed, 3 when it completed with violations and
+ * `--fail-on-violations` was given.
+ */
+async function runHeadlessScanCommand(args: readonly string[], options: AuditCliOptions): Promise<number> {
+  const parsed = parseScanArguments(args);
+  const ruleDocuments = new Map<string, RuleDocument>();
+  const report = await runHeadlessScan(headlessScanOptions(parsed, ruleDocuments, options));
+  print(options, parsed.flags.has("--json"), report, describeScan(report));
+  // Internal testing: with a remote added, the report goes to it too (the daemon or `rerail remote push` sends it).
+  if (!parsed.flags.has("--no-send") && report.status === "completed") queueScanForRemotes(report, ruleDocuments, options);
+  return scanExitCode(report, parsed.flags);
+}
+
+interface ScanArguments {
+  readonly values: ReadonlyMap<string, string>;
+  readonly packs: readonly string[];
+  readonly paths: readonly string[] | undefined;
+  readonly flags: ReadonlySet<string>;
+}
+
+function parseScanArguments(args: readonly string[]): ScanArguments {
+  const values = new Map<string, string>();
+  const packs: string[] = [];
+  let paths: string[] | undefined;
+  const flags = new Set<string>();
+  for (let index = 0; index < args.length;) {
+    const argument = args[index]!;
+    switch (argument) {
+      case "--json":
+      case "--fail-on-violations":
+      case "--no-send":
+        flags.add(argument);
+        index += 1;
+        break;
+      case "--pack":
+        packs.push(requireValue(args, index, argument));
+        index += 2;
+        break;
+      case "--path":
+        paths = [...(paths ?? []), requireValue(args, index, argument)];
+        index += 2;
+        break;
+      case "--paths-from": {
+        const listed = readFileSync(requireValue(args, index, argument), "utf8").split(/\r?\n/u).map(line => line.trim()).filter(line => line.length > 0);
+        paths = [...(paths ?? []), ...listed];
+        index += 2;
+        break;
+      }
+      case "--repo":
+      case "--scope":
+      case "--base":
+      case "--rules-ref":
+        values.set(argument, requireValue(args, index, argument));
+        index += 2;
+        break;
+      default:
+        throw new Error(`Unknown option: ${argument}`);
+    }
+  }
+  return { values, packs, paths, flags };
+}
+
+function headlessScanOptions({ values, packs, paths }: ScanArguments, ruleDocuments: Map<string, RuleDocument>, options: AuditCliOptions): HeadlessScanOptions {
+  const scope = auditRequestScope(values.get("--scope")) ?? "repository";
+  const base = values.get("--base");
+  const rulesRef = values.get("--rules-ref");
+  return {
+    ruleDocuments,
+    repo: values.get("--repo") ?? process.cwd(),
+    scope,
+    packs: [...packs],
+    version: options.version ?? "unknown",
+    ...(base === undefined ? {} : { base }),
+    ...(rulesRef === undefined ? {} : { rulesRef }),
+    ...(paths === undefined ? {} : { paths: [...paths] }),
+  };
+}
+
+/** The scan itself succeeded; a remote configuration that cannot be read does not change its exit code. */
+function queueScanForRemotes(report: ScanReport, ruleDocuments: Map<string, RuleDocument>, options: AuditCliOptions): void {
+  try {
+    if (new RemoteOutbox({ home: options.home }).queueScan(report, ruleDocuments)) process.stderr.write("rerail: scan queued for this machine's remotes\n");
+  } catch (error) {
+    process.stderr.write(`rerail: scan not queued for remotes: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+}
+
+function scanExitCode(report: ScanReport, flags: ReadonlySet<string>): number {
+  if (report.status !== "completed") return 1;
+  return flags.has("--fail-on-violations") && report.violations.length > 0 ? SCAN_VIOLATIONS_EXIT : 0;
+}
+
 export async function runAuditCommand(command: "scan" | "settings", args: readonly string[], options: AuditCliOptions): Promise<number> {
+  if (command === "scan" && !args.includes("--session")) return await runHeadlessScanCommand(args, options);
   const parsed = parseCommon(args);
   const patch = command === "settings" ? settingsPatch(parsed) : undefined;
   const base = await targetDaemon(options);

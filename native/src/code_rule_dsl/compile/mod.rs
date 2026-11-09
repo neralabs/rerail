@@ -12,6 +12,7 @@ mod evidence;
 #[cfg(test)]
 mod examples_tests;
 mod format_args;
+mod import_target;
 mod layout;
 mod nth_child;
 pub(crate) mod options;
@@ -20,6 +21,7 @@ mod order;
 mod params_tests;
 mod parse;
 mod resolve;
+mod shared;
 mod transform;
 mod utils;
 mod value;
@@ -31,7 +33,7 @@ use super::language::adapter::{Refusal, gate};
 use super::language::{CodeRuleLanguage, Semantic, Support};
 use super::matcher::{
     AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
-    UtilOrigin, UtilTable, collect_variables, reads_values,
+    UtilOrigin, UtilTable, collect_variables, reads_import_targets, reads_values,
 };
 use super::model::{
     Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexSource,
@@ -51,6 +53,7 @@ use napi::Result;
 use regex::Regex;
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value, json};
+use shared::SharedTables;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 pub(super) use utils::UtilScope;
@@ -296,9 +299,11 @@ pub(super) fn compile_document(
     if clauses.is_empty() {
         return Err(invalid("/clauses must not be empty"));
     }
+    let shared = collect_defines(clauses, capabilities)?;
     let defines = Defines {
-        utils: collect_defines(clauses, capabilities)?,
+        utils: &shared,
         options,
+        tables: SharedTables::new(&shared),
     };
     let mut compiled = Vec::with_capacity(clauses.len());
     let mut required_ast = BTreeSet::new();
@@ -542,8 +547,8 @@ fn compile_query_as(
     seed: bool,
 ) -> Result<Query> {
     let query = object(value, path)?;
-    reject_unknown(query, &["regex", "ast", "select_when"], path)?;
-    let forms = ["regex", "ast", "select_when"]
+    reject_unknown(query, &["regex", "ast", "select_when", "file"], path)?;
+    let forms = ["regex", "ast", "select_when", "file"]
         .into_iter()
         .filter(|key| query.contains_key(*key))
         .collect::<Vec<_>>();
@@ -583,6 +588,14 @@ fn compile_query_as(
                     .map_err(|error| invalid(format!("{path}/regex/pattern: {error}")))?,
                 source,
             })
+        }
+        "file" => {
+            let file = object(
+                query.get("file").expect("form exists"),
+                &format!("{path}/file"),
+            )?;
+            reject_unknown(file, &[], &format!("{path}/file"))?;
+            Ok(Query::File)
         }
         "ast" => {
             let ast = object(
@@ -815,17 +828,40 @@ fn compile_query_as(
             .map_err(|error| invalid(error.to_string()))?;
             let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt, seed);
             let mut bindable = BTreeSet::new();
-            let origins = util_origins(&utils, language_name)?;
+            // A query that reaches shared utilities and has no utilities of its own, no transform
+            // and no `calls` seed, in a language that embeds no program, compiles them as every
+            // such query of its `languageOptions` does: once, in the document's table (`shared`).
+            let context = (local.is_empty()
+                && !utils.is_empty()
+                && transform.is_none()
+                && embedding.is_none()
+                && !seed)
+                .then(|| shared::Context {
+                    written: ast.get("languageOptions").map(Value::to_string),
+                    options: options.clone(),
+                    python: python.clone(),
+                });
+            let mut origins = None;
             for (dialect, language) in &grammars {
                 let mut gaps = Vec::new();
+                let reach = context.as_ref().and_then(|context| {
+                    let ids = utils.keys().map(String::as_str);
+                    defines.tables.reach(language_name, *language, context, ids)
+                });
+                if reach.is_none() && origins.is_none() {
+                    origins = Some(util_origins(&utils, language_name)?);
+                }
                 let new_table = || {
                     Arc::new(UtilTable::new(
                         utils.keys().cloned().collect(),
                         utils.values().map(|util| !util.params.is_empty()).collect(),
-                        origins.iter().cloned().map(Some).collect(),
+                        origins.iter().flatten().cloned().map(Some).collect(),
                     ))
                 };
-                let table = new_table();
+                let table = match &reach {
+                    Some(reach) => Arc::clone(&reach.table),
+                    None => new_table(),
+                };
                 // The other document's tables, by dialect (`embed`): the program's of a host
                 // clause, for its `embedded` rules; the host's of a clause over the program, for
                 // its `host` rules.
@@ -860,9 +896,13 @@ fn compile_query_as(
                         guests,
                     }
                 });
+                let ids: &UtilIds = match &reach {
+                    Some(reach) => reach.ids,
+                    None => &util_ids,
+                };
                 let scope = UtilScope {
                     table: Arc::downgrade(&table),
-                    ids: &util_ids,
+                    ids,
                     options: options.clone(),
                     python: python.clone(),
                     transform: transform.clone(),
@@ -870,6 +910,7 @@ fn compile_query_as(
                     captures: Default::default(),
                     calls: Some(&calls),
                     documents: documents.as_ref(),
+                    instances: reach.as_ref().map(|reach| &reach.instances),
                     side,
                 };
                 let other_scopes = others
@@ -910,41 +951,49 @@ fn compile_query_as(
                         .map(|(dialect, scope)| compile_utils(scope, *dialect, &mut Vec::new()))
                         .collect::<Result<Vec<_>>>()
                 };
-                // A utility's terms are ordered by what the utilities they call bind, and its
-                // `parse` exports what they export, so utilities that met one not compiled yet are
-                // compiled again against this first compilation.
-                let mut first_gaps = Vec::new();
-                let mut compiled_utils = compile_utils(&scope, *language, &mut first_gaps)?;
-                let mut compiled_others = compile_others()?;
-                if table.was_unfilled() || others.iter().any(|(_, table)| table.was_unfilled()) {
-                    if table.draft.set(compiled_utils).is_err() {
-                        unreachable!("a fresh table is drafted once");
+                let query_utils: Arc<[usize]> = match &reach {
+                    Some(reach) => {
+                        gaps.extend(reach.gap.clone());
+                        reach.indices.as_slice().into()
                     }
-                    for ((_, table), compiled) in others.iter().zip(compiled_others) {
-                        if table.draft.set(compiled).is_err() {
-                            unreachable!("a fresh table is drafted once");
+                    None => {
+                        // A utility's terms are ordered by what the utilities they call bind, and
+                        // its `parse` exports what they export, so utilities that met one not
+                        // compiled yet are compiled again against this first compilation. Its gaps
+                        // and `all` order conflicts, met without those utilities, give way to the
+                        // second compilation's.
+                        let settled = conflicts.borrow().clone();
+                        let mut first_gaps = Vec::new();
+                        let mut compiled_utils = compile_utils(&scope, *language, &mut first_gaps)?;
+                        let mut compiled_others = compile_others()?;
+                        if table.was_unfilled()
+                            || others.iter().any(|(_, table)| table.was_unfilled())
+                        {
+                            table.draft_all(compiled_utils);
+                            for ((_, table), compiled) in others.iter().zip(compiled_others) {
+                                table.draft_all(compiled);
+                            }
+                            *conflicts.borrow_mut() = settled;
+                            compiled_utils = compile_utils(&scope, *language, &mut gaps)?;
+                            compiled_others = compile_others()?;
+                        } else {
+                            gaps.extend(first_gaps);
                         }
+                        for ((_, table), compiled) in others.iter().zip(compiled_others) {
+                            table.fill_all(compiled);
+                        }
+                        table.fill_all(compiled_utils);
+                        (0..utils.len()).collect()
                     }
-                    compiled_utils = compile_utils(&scope, *language, &mut gaps)?;
-                    compiled_others = compile_others()?;
-                } else {
-                    gaps.extend(first_gaps);
-                }
-                for ((_, table), compiled) in others.iter().zip(compiled_others) {
-                    if table.rules.set(compiled).is_err() {
-                        unreachable!("a fresh table is filled once");
-                    }
-                }
+                };
                 // A parameterized utility's captures are its frame's; its calls report what returns.
-                for (util, def) in compiled_utils.iter().zip(utils.values()) {
+                for (&index, def) in query_utils.iter().zip(utils.values()) {
+                    let util = table.rule(index).expect("a query's utilities are filled");
                     if def.params.is_empty() {
                         collect_variables(util, &mut variables);
                     } else {
                         collect_variables(util, &mut framed_variables);
                     }
-                }
-                if table.rules.set(compiled_utils).is_err() {
-                    unreachable!("a fresh table is filled once");
                 }
                 let mut matcher = compile_ast_rule(rule, *language, &rule_path, &mut gaps, &scope)?;
                 collect_variables(&matcher, &mut variables);
@@ -975,7 +1024,7 @@ fn compile_query_as(
                 let mut names = BTreeSet::new();
                 let mut summaries = violations::CaptureSummaries::new();
                 violations::ast_captures(&matcher, &table, &mut summaries, &mut names);
-                for util in table.shared_rules() {
+                for util in table.shared_rules(&query_utils) {
                     violations::ast_captures(util, &table, &mut summaries, &mut names);
                 }
                 bindable.extend(names.into_iter().map(str::to_owned));
@@ -993,14 +1042,19 @@ fn compile_query_as(
                         other_utils: others.iter().map(|(_, table)| Arc::clone(table)).collect(),
                         crosses,
                         sound_under_errors: sound_under_errors(&matcher),
+                        import_target: reads_import_targets(&matcher),
                         three_valued,
                         matcher,
                         anchors,
                         text,
                         utils: table,
+                        query_utils,
                         file: file.clone(),
                         applies,
                         source_types: source_types.clone(),
+                        package_type_gate: options
+                            .as_deref()
+                            .is_some_and(|options| options.package_type_module_system),
                         transform: transform.clone(),
                     });
                 }
@@ -1071,13 +1125,19 @@ fn compile_query_as(
                             "{transform_path}/{name}: `${name}` is already a capture of the query"
                         )));
                     }
+                    for (index, source) in trans.source_names().enumerate() {
+                        let known = transform.contains(source)
+                            || bindable.contains(source)
+                            || groups.contains(source);
+                        if !known {
+                            let key = if index == 0 { "source" } else { "digits" };
+                            return Err(invalid(format!(
+                                "{transform_path}/{name}/{key}: `${source}` names no capture the query can bind"
+                            )));
+                        }
+                    }
                     let source = trans.source_name();
                     let group = groups.contains(source);
-                    if !transform.contains(source) && !bindable.contains(source) && !group {
-                        return Err(invalid(format!(
-                            "{transform_path}/{name}/source: `${source}` names no capture the query can bind"
-                        )));
-                    }
                     if group && trans.reads_value() {
                         let kind = ast["transform"][name.as_str()]
                             .as_object()
@@ -1290,7 +1350,7 @@ fn compile_query_as(
             }
             required_ast.insert((language_name.to_owned(), grammar));
             Ok(Query::Ast {
-                matchers,
+                matchers: matchers.into(),
                 calls: terms,
             })
         }

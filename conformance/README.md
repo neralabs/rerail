@@ -19,15 +19,17 @@ The generators that write the expected findings are outside this directory, on t
 the renamer `scripts/pack-data/rename/`). How the data is snapshotted and published is
 [docs/upstream.md](../docs/upstream.md).
 
-Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack).
+Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack); the contributor's steps for
+a rule, written for Rerail or ported, and a port's way from candidate to shipped, are
+[docs/adding-rules-to-a-pack.md](../docs/adding-rules-to-a-pack.md).
 
 ## The gate
 
 `npm run test:conformance` (`conformance/languages/cli.ts --check`) is the one gate a ported rule passes to ship. It
 sits on top of the [pack validation contract](../docs/pack-format.md#the-validation-contract) and reads only pinned
 data: the test data (`test-data.lock`) and the samples (`samples.lock`), with any `publish/` laid over them. It never
-runs upstream. It descends from the V1 validation gates nera-rule-validation ran by hand (its ADR 0006), adapted to
-rerail's layout.
+runs upstream. It descends from the V1 validation gates maintainers ran by hand before Rerail, adapted to rerail's
+layout.
 
 It first scores every pack's fixtures and samples, then judges every rule of each gated tool-pack (one with a
 `packs/<id>/upstream/<tool>/gates.yaml`), shipped (`packs/<id>/rules/`) or candidate (`packs/<id>/candidates/`). A
@@ -43,21 +45,35 @@ To run it locally, pull the data first (`npm run fixtures:pull`), then `npm run 
 
 ### What runs on a pull request
 
-The `tools` job of `ci.yml` runs `npm run conformance:languages:check -- --base <base> --out <dir>` on every push and
-every same-repository pull request, with the data the locks name and any `publish/` laid over it. What blocks and what
-is reported:
+On every push to `main`, and on every same-repository pull request that changes what the check reads, with the data
+the locks name and any `publish/` laid over it, the `conformance` jobs of `ci.yml`, a matrix of shards, each score a
+share of every pack
+(`npm run conformance:languages:check -- --shard <k>/<n> --results-out <dir>`), and the `tools` job makes the reports
+from all their results and judges them (`npm run conformance:languages:check -- --results <dir> --base <base> --out
+<dir>`). The reports are the ones one run scoring everything writes: each pack's scoring is a list of evaluations that
+any process can run, put back together in order (`conformance/languages/shards.ts`). On one machine, `--check` spreads
+the same evaluations over a worker process per core and per 5 GiB of memory. What blocks and what is reported:
 
 | Blocks the job | Reported only |
 | --- | --- |
 | a shipped rule of a gated tool-pack that fails a blocking check (`loads`, `compact`, `conformance`) or whose tool-pack fails a tool-pack check | every candidate's checks, and which candidates are ready to promote |
 | a pack's scoring errors, above | `upstream-status`, and a shipped rule whose `pack.json` `on` disagrees with it |
-| a not-gated or pending list that grows against the base | a shipped rule that passes a check with no evidence behind it (`holds-under-rename` held vacuously) |
-| | a report on a labelled sample's unlabelled line, and engine failures on samples' context files |
+| a not-gated or pending list that grows against the base | a report on a labelled sample's unlabelled line, and engine failures on samples' context files |
 
 The job writes `summary.md`, `gates.json` and the pull request comment (`comment.md`) to the `conformance-summary`
 artifact, and the `conformance-report` job posts the comment ([The pull request comment](#the-pull-request-comment)).
 A fork's pull request runs no CI, and Dependabot's has no OIDC token to fetch the data, so the job and its comment do
 not run for either ([docs/upstream.md](../docs/upstream.md#ci)).
+
+A pull request runs the check when it changes a file the `conformance` filter of `ci.yml`'s `changes` job matches:
+this directory, any pack, the engine (`native/`, `languages/`, `src/engine/`), the test data and samples readers
+(`scripts/s3/`, `scripts/samples/`), `tsconfig.json`, and what every job shares (`ci.yml`, `.github/actions/`, the npm
+and Cargo manifests and locks, `rust-toolchain.toml`, `.cargo/`, `.gitattributes`, `.npmrc`). One that changes none,
+such as a docs-only change, skips the shards, the `tools` job's conformance steps (its script tests and reference
+examples still run) and the comment; a comment an earlier run posted stays, naming the commit it judged. The filter
+compares the pull request's whole diff with its base, so once it matched, every later push runs the check.
+`npm run check:ci-paths` fails when the runner imports a file the filter misses; a file read at runtime rather than
+imported needs adding to the filter by hand (`scripts/check/check-ci-paths.mjs`).
 
 ### Per-rule checks
 
@@ -66,7 +82,7 @@ not run for either ([docs/upstream.md](../docs/upstream.md#ci)).
 | `loads` (blocks) | `json` (no repeated keys), `schema`, `deterministic`, `engine-compile`, `identity`, `bundled-load` (the document alone), `current-contract` (`rerail.policy/v1`, one `mode`, no severity, no `llm` clause), `in-scope` (the scope covers every file type in `gates.yaml`'s `upstream.lints`, or in `rerail.in_scope` when the pack narrows it, or in the port's own `lints` in `conformance.json`) | the document, the engine, `gates.yaml` |
 | `compact` (blocks) | `size`; a document over 15 KiB fails `no-combinatorial-expansion` or `no-written-out-repetition` when it lists cases instead of expressing the logic | the document |
 | `conformance` (blocks) | `scored`; `no-unexplained-false-positives`, `no-unexplained-misses`, `catches-something` (a true positive, or examples in `pack.json`), `engine-reads-fixtures` | the fixtures: upstream's cases and Rerail's probes, after `divergences.json` |
-| | `holds-under-rename`: no unexplained FP or FN, and no engine failure (a parse-induced `source-incomplete` is only reported), on the rename variants (units with `source.units[key].renamedFrom`, under `fixtures/renamed/`), scored apart from the originals. It reports, without failing, the variants the renaming took every finding of the rule from (`renamedAway`); when the renaming took every finding and none survives, the check holds vacuously, which is reported as a pass without evidence. "n/a" when no variant covers the rule, and for a tool-pack without variants, whose detail names the held-out evidence left: its judged samples, or none | the rename variants in the test data |
+| | `holds-under-rename`: no unexplained FP or FN, and no engine failure (a parse-induced `source-incomplete` is only reported), on the rename variants (units with `source.units[key].renamedFrom`, under `fixtures/renamed/`), scored apart from the originals. It reports, without failing, the variants the renaming took every finding of the rule from (`renamedAway`); when the renaming took every finding and none survives, the check fails: nothing shows the rule matches the construct rather than the cases' names (the renamer keeps literals and every two names' order, so a rule that reads a literal or an order keeps its findings), unless `gates.yaml` gives the rule a `rename_exempt` reason. "n/a" when no variant covers the rule, and for a tool-pack without variants, whose detail names the held-out evidence left: its judged samples, or none | the rename variants in the test data |
 | | `samples-catch-labelled`, `samples-silent-on-clean`, `engine-reads-samples` ([How samples are judged](#how-samples-are-judged)) | the samples labelled for the rule |
 | | `stays-silent`: at least one own upstream unit where upstream and the rule both report nothing, or one clean sample in the rule's reach that it is silent on | `source.units` origins and clean samples |
 | | `divergences-current`: every declared divergence explains a disagreement ([Divergences](#divergences)) | `divergences.json` |
@@ -121,7 +137,9 @@ without errors). When one fails, every rule of the tool-pack fails with it.
 - `rerail.in_scope` (optional): the file types the pack's ports cover when it deliberately covers fewer than upstream
   lints; each must be one of `upstream.lints`.
 - `rules`, keyed by upstream rule name: `{ deprecated: <upstream's message> | null, recommended: { config, options } |
-  null }`. A rule not listed is not a rule of the pinned upstream. The facts are declared by hand and reviewed at each
+  null }`, and optionally `rename_exempt: <why>` for a rule whose findings are the very names the rename variants change
+  (next's `no-typos`): `holds-under-rename` then does not fail it when the renaming takes every finding, though an FP,
+  FN or engine failure on its variants still does. A rule not listed is not a rule of the pinned upstream. The facts are declared by hand and reviewed at each
   bump, whose pull request shows them.
 
 ### Own upstream units and rename variants
@@ -130,7 +148,16 @@ Each generator writes, in `fixtures.expected.json`, `source.units`: per unit (by
 multi-file unit), `rules`, the upstream rules whose tests it came from. A rule's own units are the original units whose
 origin names its upstream rule; they count for `stays-silent` and `upstream-rule`. A unit without an entry (Rerail's
 probes, or one whose origin is unknown) is scored but is no rule's own evidence. A rename variant's entry also carries
-`renamedFrom`, the key of the original unit, which must itself be an original with an origin.
+`renamedFrom`, the key of the original unit, which must itself be an original with an origin. An ECMA unit's entry may
+carry `languageOptions`, the language upstream linted it under beyond ESLint's defaults for its extension
+(`ecmaVersion`, `sourceType`, `parserOptions`; a variant carries its original's). The runner evaluates such a unit with
+a copy of each port whose AST clauses' `languageOptions` take them (`ecmaVersion`, `sourceType`,
+`parserOptions.ecmaFeatures.globalReturn` and `impliedStrict`, and typescript-eslint's `jsxPragma`, `jsxFragmentName` and
+`lib`), compiled once per distinct language. A query of the port that had no `languageOptions` of its own keeps
+reading the `global` names its `resolves` lists as unbound names (`declared: false`), as it does without them; a unit
+without them is evaluated with the port as it is, under ESLint's
+flat-config defaults (`module`, or `commonjs` for `.cjs`, at the latest `ecmaVersion`) unless the port sets others
+([pack-format.md](../docs/pack-format.md#conformancejson-divergencesjson-upstream)).
 
 ### Divergences
 
@@ -161,7 +188,6 @@ and the commit it judged, links the job summary, and has these sections:
 - **Ready to promote**: each candidate that passes every check, with its upstream rule and whether `upstream-status`
   starts it on or off;
 - **On or off**: shipped rules whose `pack.json` `on` disagrees with `upstream-status`;
-- **Passing without evidence**: shipped rule checks that hold vacuously, reported;
 - **Candidates**: per tool-pack, how many candidates stop first at each gate, then each candidate's first failure,
   grouped by gate.
 
@@ -201,3 +227,8 @@ A pack whose shipped rules have no upstream adapter is listed in `conformance/la
 today; a tool-pack still validated elsewhere would be listed in `conformance/languages/pending.json`. Both lists may only
 shrink against the base (`--base`); a new shipped rule in such a pack fails, so keep it in `candidates/` until its
 tool-pack is gated.
+
+A private pack (`"private": true` in its `package.json`, as `packs/rerail`) is left out of both checks: it is never
+published, so its rules never reach a user through the gates, and they are written for this repository, not ported, so
+they have no upstream tool to gate them. Its `pack.json` examples (the pack validation's checks 2 and 3) and its own
+tests prove them instead. The frozen list must not name a private pack's rules: a listed one is reported stale.

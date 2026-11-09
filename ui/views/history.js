@@ -5,8 +5,8 @@
  * steered tile opens Steered) narrow the list to the violations recorded on Steer or Block, or on Log.
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
-import { fmt, plural, dayLabel, daysAgo, shortSessionId } from "../format.js";
-import { data, ui, rangeLabel } from "../state.js";
+import { fmt, plural, dayLabel, daysAgo, shortSessionId, whenLabel } from "../format.js";
+import { data, ui, ALL_TIME, rangeLabel, allFires, activityAllOf } from "../state.js";
 import { MODE_LABEL, ruleMode, messageText } from "../derive.js";
 import { loadMoreFindings, refreshNow } from "../poll.js";
 import { invalidate, loadMore } from "../shell.js";
@@ -15,8 +15,8 @@ import { OUTCOME_CHIPS, inRange, rankedRules, filterRanked, historyRuleId, histo
 
 export const needs = ["rules", "packs", "activity", "findings"];
 
-/** The icon and colour of each mode's chip, as the rule sheet shows them. */
-const MODE_OUTCOME = { log: "logged", steer: "steered", block: "blocked" };
+/** The icon and colour of each mode's chip: what Rerail does on it. Block steers until blocking ships, so it shows as steered. */
+const MODE_OUTCOME = { log: "logged", steer: "steered", block: "steered" };
 /** A violation's time, 24-hour ("17:35"), as the design reads it. */
 const CLOCK = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -54,7 +54,8 @@ function build() {
   const summaryLine = h("div.hsum", null, h("span.tsum"));
   const violations = h("div.hrows");
   const more = h("div.more", { hidden: true }, h("button.btn.sm", { "data-act": "hmore" }));
-  const nothing = h("div.empty.hnone", { hidden: true }, h("h3", null, "Nothing in this range"), h("p"));
+  const nothing = h("div.empty.hnone", { hidden: true }, h("h3"), h("p"),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "range", "data-i": ALL_TIME }, "Show since install")));
   const empty = h("div.list.hempty", { hidden: true }, h("div.empty", null, h("h3"), h("p")));
   const chips = h("div.chips.hchips", { role: "group", "aria-label": "Outcome" },
     OUTCOME_CHIPS.map(([v, label]) => h("button.chip", { "data-act": "houtcome", "data-i": v, "aria-pressed": "false" }, label)));
@@ -178,6 +179,15 @@ function violationItems(id) {
   return items;
 }
 
+/** A rule with nothing in the range: what it logged before, or that it never has. */
+function renderNothing(nothing, id) {
+  const earlier = allFires(id), [body, acts] = nothing.querySelectorAll("p");
+  setText(nothing.querySelector("h3"), earlier === 0 ? "No violations logged yet." : "Nothing in this range.");
+  setAttr(body, "hidden", earlier === 0);
+  setAttr(acts, "hidden", earlier === 0);
+  if (earlier > 0) setText(body, `${fmt(earlier)} ${plural(earlier, "violation")} before that, last logged ${whenLabel(activityAllOf(id).lastSeenAt)}.`);
+}
+
 function renderViolations(a, id, count, told) {
   const slot = data.findings, loaded = slot.owner === id && slot.pages > 0, label = rangeLabel();
   const total = loaded ? slot.total : count;
@@ -189,7 +199,8 @@ function renderViolations(a, id, count, told) {
   ]);
   const none = loaded && slot.rows.length === 0;
   setAttr(a.nothing, "hidden", !none);
-  if (none) setText(a.nothing.querySelector("p"), `${historyTitle(id)} logged no violations ${label}. Widen the range above to see earlier ones.`);
+  setAttr(a.summaryLine.firstChild, "hidden", none);
+  if (none) renderNothing(a.nothing, id);
   syncChildren(a.violations, violationItems(id), i => i.key, createViolation, (node, item) => updateViolation(node, item, told));
   const left = loaded && slot.next !== null ? slot.total - slot.rows.length : 0;
   setAttr(a.more, "hidden", left <= 0);
@@ -197,18 +208,18 @@ function renderViolations(a, id, count, told) {
 }
 
 const EMPTY_TEXT = {
-  noRules: ["No history yet", () => "Add a rule pack or create a rule, then run a coding agent session. Violations show here, grouped by rule."],
-  noSessions: ["No history yet", () => "Violations show here, grouped by rule, once a rule logs one in a coding agent session."],
-  noViolations: ["No violations yet", e => `Rerail audited ${fmt(e.sessions)} ${plural(e.sessions, "session")} in this repo and logged none. When a rule logs one, it shows here grouped by rule.`],
-  nothingInRange: ["Nothing in this range", () => `No rule logged a violation ${rangeLabel()}. Widen the range above to see earlier ones.`],
+  noRules: ["No history yet.", () => "Add a rule pack or create a rule."],
+  noSessions: ["No history yet.", () => "When a rule logs a violation, it shows here."],
+  noViolations: ["No violations logged yet.", e => `Rerail logged none in ${fmt(e.sessions)} ${plural(e.sessions, "session")} in this repo.`],
+  nothingInRange: ["Nothing in this range.", () => (ui.range === ALL_TIME ? "" : "Widen the range.")],
 };
 
 /** The line under the title: how many rules the list holds, and under a chip how many violations they count. */
 function leadText(ranked) {
   const label = rangeLabel(), n = ranked.length, rules = `${fmt(n)} ${plural(n, "rule")}`;
-  if (ui.histOutcome === "all") return `${rules} with violations ${label}, most first`;
+  if (ui.histOutcome === "all") return `${rules} with violations ${label}, most first.`;
   const total = ranked.reduce((sum, r) => sum + r.count, 0), violations = `${fmt(total)} ${plural(total, "violation")}`;
-  return ui.histOutcome === "steered" ? `${rules} · ${violations} steered ${label}, most first` : `${rules} · ${violations} logged on Log ${label}, most first`;
+  return ui.histOutcome === "steered" ? `${rules} · ${violations} steered ${label}, most first.` : `${rules} · ${violations} logged on Log ${label}, most first.`;
 }
 
 /** A chip whose list is empty, while other violations are in range: what the section says in place of a rule. */
@@ -217,36 +228,26 @@ function renderUnmatched(a, show) {
   for (const part of [a.detail, a.summaryLine, a.scroll]) setAttr(part, "hidden", show);
   if (!show) return;
   const steered = ui.histOutcome === "steered";
-  setText(a.unmatched.querySelector("h3"), steered ? `Nothing steered ${rangeLabel()}` : `Nothing logged on Log ${rangeLabel()}`);
+  setText(a.unmatched.querySelector("h3"), steered ? `Nothing steered ${rangeLabel()}.` : `Nothing logged on Log ${rangeLabel()}.`);
   setText(a.unmatched.querySelector("p"), steered
     ? `Every violation ${rangeLabel()} was logged by a rule on Log, which records without telling the coding agent.`
-    : `Every violation ${rangeLabel()} was steered: the rules that logged them were on Steer.`);
+    : `Every violation ${rangeLabel()} was steered.`);
 }
 
-export function render(root) {
-  if (pane === null) build();
-  if (pane.parentNode !== root) root.replaceChildren(pane);
-  const a = pane._a;
-  syncRange(a.range);
-  const every = rankedRules("all");
-  const ranked = ui.histOutcome === "all" ? every : rankedRules();
-  const empty = historyEmpty(every);
-  const id = historyRuleId(ranked);
-  const showBody = empty === null || (id !== null && ui.actRule !== null);
-  setText(a.lead, empty === null ? leadText(ranked) : "");
-  // The range only matters once something was logged: before, every range reads the same.
-  setAttr(a.range, "hidden", empty !== null && empty.kind !== "nothingInRange" && !showBody);
-  // Until the activity answers are in (the range's, and since install's for the empty states), nothing is known to be empty.
-  const known = data.activitySessions !== null && (ui.range === 9999 || data.activityAllSessions !== null);
-  setAttr(a.empty, "hidden", showBody || empty === null || !known);
-  if (!showBody && empty !== null && known) {
-    const [title, text] = EMPTY_TEXT[empty.kind];
-    setText(a.empty.querySelector("h3"), title);
-    setText(a.empty.querySelector("p"), text(empty));
-  }
-  setAttr(a.ltrow, "hidden", !showBody);
-  setAttr(a.body, "hidden", !showBody);
-  if (!showBody) return;
+/** Until the activity answers are in (the range's, and since install's for the empty states), nothing is known to be empty. */
+const activityKnown = () => data.activitySessions !== null && (ui.range === ALL_TIME || data.activityAllSessions !== null);
+
+function renderEmptyState(a, empty, showBody) {
+  const shown = !showBody && empty !== null && activityKnown();
+  setAttr(a.empty, "hidden", !shown);
+  if (!shown) return;
+  const [title, text] = EMPTY_TEXT[empty.kind];
+  setText(a.empty.querySelector("h3"), title);
+  setText(a.empty.querySelector("p"), text(empty));
+}
+
+/** The list and, with a rule chosen, what it found. */
+function renderHistoryBody(a, ranked, id) {
   a.body.classList.toggle("nolist", listHidden);
   const label = listHidden ? "Show list" : "Hide list";
   setAttr(a.toggle, "aria-pressed", String(!listHidden));
@@ -260,6 +261,31 @@ export function render(root) {
   const told = toldOf(id);
   renderMeta(a, id, told);
   renderViolations(a, id, inRange(id), told);
+}
+
+function renderLeadAndRange(a, ranked, empty, showBody) {
+  setText(a.lead, empty === null ? leadText(ranked) : "");
+  // The range only matters once something was logged: before, every range reads the same.
+  setAttr(a.range, "hidden", empty !== null && empty.kind !== "nothingInRange" && !showBody);
+}
+
+const bodyShown = (empty, id) => empty === null || (id !== null && ui.actRule !== null);
+
+export function render(root) {
+  if (pane === null) build();
+  if (pane.parentNode !== root) root.replaceChildren(pane);
+  const a = pane._a;
+  syncRange(a.range);
+  const every = rankedRules("all");
+  const ranked = ui.histOutcome === "all" ? every : rankedRules();
+  const empty = historyEmpty(every);
+  const id = historyRuleId(ranked);
+  const showBody = bodyShown(empty, id);
+  renderLeadAndRange(a, ranked, empty, showBody);
+  renderEmptyState(a, empty, showBody);
+  setAttr(a.ltrow, "hidden", !showBody);
+  setAttr(a.body, "hidden", !showBody);
+  if (showBody) renderHistoryBody(a, ranked, id);
 }
 
 /**
@@ -286,7 +312,7 @@ function selectRule(id) {
 
 export const actions = {
   hsel: id => selectRule(id),
-  hmore: () => loadMore(loadMoreFindings),
+  hmore: () => loadMore(loadMoreFindings, "violations"),
   hlisttoggle: () => { listHidden = !listHidden; invalidate(); },
   // A chip starts over at the top of its own list.
   houtcome: outcome => { ui.histOutcome = outcome; ui.actRule = null; invalidate(); refreshNow(); },

@@ -7,6 +7,7 @@
  */
 import { h, setAttr, setClass, setContent, setText, icon } from "../dom.js";
 import { fmt } from "../format.js";
+import { isWorktreePack } from "../derive.js";
 import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
 import { writes } from "../shell.js";
 import { pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
@@ -39,12 +40,12 @@ function renderNotice(root) {
   const added = pack ? isAttached(pack) : false;
   setContent(notice, JSON.stringify([data.loaded, ui.view, ui.pack, pack?.name, added, ui.removeAsk, repo]), () => h("div.list", null, h("div.empty", null,
     !data.loaded ? h("h3", null, "Loading…")
-      : created ? [h("h3", null, "No rules of your own yet"),
+      : created ? [h("h3", null, "No rules of your own yet."),
         h("p", null, "Write one with your coding agent: run ", h("span.mono", null, CREATE_COMMAND), " in a session and it lands here."),
         h("p.acts", null, h("button.btn.sm.solid", { "data-act": "nav", "data-i": "create" }, icon("plus"), "Create a rule"))]
-      : pack === undefined ? [h("h3", null, "Rerail has no rule pack by that name"), h("p", null, h("span.mono", null, ui.pack))]
-        : added ? [h("h3", null, `${pack.name} has no rules in ${repo} yet`), h("p", null, pack.covers), h("p.acts", null, removePackControl(pack))]
-        : [h("h3", null, `${pack.name} is not added to ${repo}`), h("p", null, pack.covers),
+      : pack === undefined ? [h("h3", null, "No rule pack by that name."), h("p", null, h("span.mono", null, ui.pack))]
+        : added ? [h("h3", null, `No ${pack.name} rules in ${repo} yet.`), h("p", null, pack.covers), h("p.acts", null, removePackControl(pack))]
+        : [h("h3", null, `${pack.name} isn’t added to ${repo}.`), h("p", null, pack.covers),
           h("p.acts", null, h("button.btn.sm.solid", { "data-act": "addpack", "data-i": pack.id }, icon("plus"), "Add pack"))])));
 }
 
@@ -57,10 +58,11 @@ function renderHead(all, shown, pack) {
   setAttr(page.share, "hidden", total === 0);
   setText(page.share, `${fmt(n)} of ${fmt(total)} violations logged`);
   setAttr(page.share, "title", `Violations logged by these rules, of all violations ${rangeLabel()}`);
-  // Remove pack sits at the title's right; once clicked, its question takes the counts line and the button goes.
+  // Remove pack sits at the title's right; once clicked, its question takes the counts line and the button goes. The
+  // worktree's own rules are no attachment to remove: the files in its `.rerail/rules` decide them.
   const asking = pack ? ui.removeAsk === pack.id : false;
-  setContent(page.removeButton, JSON.stringify([pack?.id, asking]), () => (pack && !asking
-    ? h("button.btn.sm.danger.outline", { "data-act": "removepack", "data-i": pack.id, title: "Its rules go off and the pack returns to Rule packs" }, "Remove pack")
+  setContent(page.removeButton, JSON.stringify([pack?.id, asking]), () => (pack && !asking && !isWorktreePack(pack)
+    ? h("button.btn.sm.danger.outline", { "data-act": "removepack", "data-i": pack.id }, "Remove pack")
     : null));
   setContent(page.ask, JSON.stringify([pack?.id, asking, repoName()]), () => (asking ? removePackControl(pack) : null));
   setAttr(page.pitch, "hidden", !pack);
@@ -94,10 +96,13 @@ function togglePage() {
   const all = pageRules(pageKey(ui.view, ui.pack));
   if (all === null || all.length === 0) return;
   const turnOn = switchTurnsOn(packSwitch(all).state), pack = ui.view === "created" ? null : packById(ui.pack);
-  const label = `${turnOn ? "On" : "Off"}: ${all.length === 1 ? "its rule" : `all ${fmt(all.length)} rules`} in ${pack?.name ?? CREATED}.`;
+  const state = turnOn ? "on" : "off", one = all.length === 1;
+  const label = pack ? (one ? `The ${pack.name} rule is ${state}.` : `All ${fmt(all.length)} ${pack.name} rules are ${state}.`)
+    : (one ? `Your rule is ${state}.` : `All ${fmt(all.length)} of your rules are ${state}.`);
+  const failure = `Couldn’t turn ${pack ? `${pack.name} rules` : "your rules"} ${state}`;
   // A pack's rules follow one setting for the pack; rules created by you have no pack, so each gets its own.
-  if (pack) writes.setPackEnabled(pack.id, turnOn, label);
-  else writes.setEnabled(all.map(r => r.rule.id), turnOn, label);
+  if (pack) writes.setPackEnabled(pack.id, turnOn, label, failure);
+  else writes.setEnabled(all.map(r => r.rule.id), turnOn, label, failure);
 }
 
 export const actions = { ...ruleControlActions, ptoggle: togglePage };

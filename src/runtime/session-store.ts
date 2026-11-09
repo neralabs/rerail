@@ -3,11 +3,15 @@ import { deserialize, serialize } from "node:v8";
 import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AdapterSession } from "../engine/adapter-contract.js";
-import type { DiscoveryPendingBoundary } from "../engine/code-rule/code-rule-bridge.js";
+import type { DiscoveryPendingBoundary, IgnoredEdit } from "../engine/code-rule/code-rule-bridge.js";
+import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
-import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
+import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
+import type { RuleCatalog } from "../engine/catalog/repository-model.js";
+import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
@@ -57,7 +61,13 @@ export interface SessionGaps {
   droppedEvents: number;
   uncheckedBoundaries: number;
   codeRulesPendingBoundaries: number;
+  /** Tool edits of files no rule checked because Git ignores them (`ignored-edit`). */
+  ignoredEdits: number;
+  /** Changes seen during the session that make Git's ignore rules ignore more (`ignore-rules-changed`). */
+  ignoreRuleChanges: number;
 }
+
+const NO_GAPS: SessionGaps = { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
 
 export interface SessionPageQuery {
   /** Only sessions started at or after this instant. */
@@ -91,6 +101,13 @@ const sessionCursorSchema = z.tuple([z.number().int(), z.string()]);
 export interface SessionHud {
   activeRuleCount: number | null;
   steeringCount: number | null;
+  /**
+   * The labels of the rule overlays in force in the session's checkout while `activeRuleCount` is current: `worktree`
+   * while its `.rerail/rules` holds rules that load (`worktree-pack.ts`); empty otherwise.
+   */
+  overlays: string[];
+  /** While `activeRuleCount` is current, how many rules and packs that are on run in Log waiting for a person's approval. */
+  awaitingApproval: number | null;
 }
 
 /** What a session's active-rule count was computed from, so the footer can tell whether it is still current. */
@@ -268,6 +285,26 @@ export class SqliteSessionStore {
     }, session, attribution);
   }
 
+  /** Marks a tool edit of a file no rule checked because Git ignores it, with the pattern, file and line that ignore it. */
+  recordIgnoredEdit(session: AdapterSession, edit: IgnoredEdit, attribution?: SessionAttribution): void {
+    this.append({
+      sessionId: session.sessionId,
+      eventId: `ignored-edit:${randomUUID()}`,
+      kind: "ignored-edit",
+      payload: edit,
+    }, session, attribution);
+  }
+
+  /** Marks a change seen in the session that makes Git's ignore rules ignore more, with the file and the patterns. */
+  recordIgnoreRulesChanged(session: AdapterSession, change: IgnoreRulesChange, attribution?: SessionAttribution): void {
+    this.append({
+      sessionId: session.sessionId,
+      eventId: `ignore-rules-changed:${randomUUID()}`,
+      kind: "ignore-rules-changed",
+      payload: change,
+    }, session, attribution);
+  }
+
   recordRuleCoverage(session: AdapterSession, coverage: RuleCoverage): void {
     const latest = this.#database.select({ payloadJson: events.payloadJson }).from(events)
       .where(and(eq(events.sessionId, session.sessionId), eq(events.kind, "rule-coverage")))
@@ -352,6 +389,11 @@ export class SqliteSessionReader {
   readonly path: string;
   readonly #database: LazyReadonlyRerailDatabase;
   readonly #repositoryIds: string | readonly string[] | undefined;
+  /**
+   * The footer's count of what waits for approval, by repository, owners and configuration signature: the signature
+   * covers every setting, approval and rule document the count reads, so it is counted once per change, not per poll.
+   */
+  readonly #awaitingApproval = new Map<string, number>();
 
   constructor(path: string, { repositoryId }: RepositoryScope = {}) {
     this.path = path;
@@ -371,7 +413,7 @@ export class SqliteSessionReader {
 
   hud(sessionId: string): SessionHud {
     const database = this.#database.open();
-    if (database === undefined) return { activeRuleCount: null, steeringCount: null };
+    if (database === undefined) return { activeRuleCount: null, steeringCount: null, overlays: [], awaitingApproval: null };
     // Read coverage, lifetime totals, and the catalog signature from one snapshot.
     return database.transaction(() => {
       const baseline = database.select({
@@ -386,11 +428,12 @@ export class SqliteSessionReader {
         ruleSignature: sql<string | null>`json_extract(${events.payloadJson}, '$.ruleSignature')`,
       }).from(events).where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
         .orderBy(desc(events.sequence)).limit(1).get();
-      // Coverage written before repository configuration has no rule signature and is never current.
-      const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && coverage.ownerCheckoutPaths !== null
-        && coverage.ruleSignature === ruleConfigurationSignature(
-          database, loadRuleCatalog(), coverage.repositoryId, JSON.parse(coverage.ownerCheckoutPaths) as string[],
-        );
+      // Coverage written before repository configuration has no rule signature and is never current. Its first owner
+      // is the checkout it was recorded in, whose own rules are in its catalog.
+      const owners = coverage?.ownerCheckoutPaths == null ? null : JSON.parse(coverage.ownerCheckoutPaths) as string[];
+      const catalog = owners?.[0] === undefined ? loadRuleCatalog() : worktreeRuleCatalog(loadRuleCatalog(), owners[0]);
+      const current = coverage?.repositoryId != null && coverage.ruleSignature !== null && owners !== null
+        && coverage.ruleSignature === ruleConfigurationSignature(database, catalog, coverage.repositoryId, owners);
       // Per rule, not per hook output (plan D5): the person counts the steer lines they saw, and one edit can steer two
       // rules. A receipt naming no rules still delivered one steer.
       const steeringCount = baseline?.complete === 1
@@ -399,27 +442,47 @@ export class SqliteSessionReader {
         }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total
         : null;
-      return { activeRuleCount: current ? coverage.activeRuleCount : null, steeringCount };
+      return {
+        activeRuleCount: current ? coverage.activeRuleCount : null,
+        steeringCount,
+        overlays: current && isWorktreePack(catalog.packs.get(WORKTREE_PACK_ID)) ? [WORKTREE_PACK_ID] : [],
+        awaitingApproval: current ? this.#awaitingApprovalIn(database, catalog, coverage.repositoryId!, owners, coverage.ruleSignature!) : null,
+      };
     });
+  }
+
+  #awaitingApprovalIn(database: RerailDatabase, catalog: RuleCatalog, repositoryKey: string, owners: readonly string[], signature: string): number {
+    const key = stableJsonText([repositoryKey, owners, signature])!;
+    const known = this.#awaitingApproval.get(key);
+    if (known !== undefined) return known;
+    // Signatures a session no longer has are never asked for again: keep the map to what open sessions use.
+    if (this.#awaitingApproval.size >= 64) this.#awaitingApproval.clear();
+    const count = awaitingApprovalIn(database, catalog, repositoryKey, owners);
+    this.#awaitingApproval.set(key, count);
+    return count;
   }
 
   /**
    * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
-   * never delivered (`events-dropped` counts), and boundaries that answered before the shell-write check finished or
-   * before code rules were running. Indexed by session and kind.
+   * never delivered (`events-dropped` counts), boundaries that answered before the shell-write check finished or
+   * before code rules were running, tool edits of files Git ignores, and changes to Git's ignore rules. Indexed by
+   * session and kind.
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
-    if (database === undefined) return { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+    if (database === undefined) return { ...NO_GAPS };
     const row = database.all<SessionGaps>(sql`
       SELECT
         coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
-        count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries
+        count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
+        count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
+        count(*) FILTER (WHERE ${events.kind} = 'ignore-rules-changed') AS ignoreRuleChanges
       FROM ${events}
-      WHERE ${events.sessionId} = ${sessionId} AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending')
+      WHERE ${events.sessionId} = ${sessionId}
+        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed')
     `)[0];
-    return row ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+    return row ?? { ...NO_GAPS };
   }
 
   events(sessionId: string, query: SessionEventQuery = {}): readonly SessionEventRecord[] {
@@ -537,4 +600,13 @@ export class SqliteSessionReader {
   close(): void {
     this.#database.close();
   }
+}
+
+/**
+ * How many rules and packs (each counted once) the session's checkout runs in Log because their content waits for a
+ * person's approval; only rules that are on count.
+ */
+function awaitingApprovalIn(database: RerailDatabase, catalog: RuleCatalog, repositoryKey: string, owners: readonly string[]): number {
+  const [checkoutPath, ...parentCheckoutPaths] = owners;
+  return awaitingApprovalOf(listRepositoryRules(database, catalog, repositoryKey, checkoutPath === undefined ? {} : { checkoutPath, parentCheckoutPaths }).rules);
 }

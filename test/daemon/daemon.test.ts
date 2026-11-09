@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +18,7 @@ import {
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import {
   type DaemonHealth,
+  type DaemonState,
   ingestEngineEvent,
   SqliteSessionStore,
   SESSION_EVENT_PAGE_LIMIT,
@@ -320,7 +321,7 @@ describe("Rerail daemon", () => {
     // `sessions_get` adds the transcript's gaps, which the status line does not read.
     const { gaps, ...head } = (await getJson<Record<string, unknown>>(daemon, "/api/sessions/large-run")).body;
     expect(compact.context?.session).toEqual(head);
-    expect(gaps).toEqual({ droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 });
+    expect(gaps).toEqual({ droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 });
     expect(compact.context?.session?.audit).toEqual({
       workspaceRoot: root, scope: "repository", mode: "log", status: "failed", violationCount: 1, failureCount: 148,
       unlistedFailureCount: 140, blindFileCount: 2, gapCount: 5, outOfWorkRuleCount: 1, fileWorkStoppedRuleCount: 1,
@@ -414,7 +415,7 @@ describe("Rerail daemon", () => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
     startTestRepository(root, join(root, "rerail.sqlite"));
     const daemon = await start();
-    await ingestEngineEvent(daemon.kernelSocketPath, {
+    await ingestEngineEvent({ socketPath: daemon.kernelSocketPath, accessToken: ACCESS }, {
       kind: "session-start", eventId: "start-controls",
       session: { host: "claude-code", sessionId: "audit-session", cwd: root },
     });
@@ -776,19 +777,6 @@ describe("Rerail daemon", () => {
     expect(daemon.port).not.toBe(1);
   });
 
-  it("releases its engine socket when a rollback holds the database, so the next start succeeds", async () => {
-    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
-    const databasePath = join(root, "rerail.sqlite");
-    const restoring = `${databasePath}.restoring`;
-    openRerailDatabase(databasePath).$client.close();
-    await writeFile(restoring, "");
-    await expect(start()).rejects.toThrow(/putting back a copy/u);
-    expect(existsSync(defaultEngineSocketPath(databasePath))).toBe(false);
-    await rm(restoring);
-    const daemon = await start();
-    expect((await getJson(daemon, "/healthz")).status).toBe(200);
-  });
-
   // Review of #49 (N1): a resource that fails to close does not keep the next one open.
   it("releases its engine socket on a failed start even when the native session server fails to close", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
@@ -803,6 +791,52 @@ describe("Rerail daemon", () => {
     // Review of #49 (N5): the failed close is on record.
     expect(stderr).toHaveBeenCalledWith("rerail daemon: could not close the native session server after a failed start: close failed\n");
     stderr.mockRestore();
+  });
+
+  describe.runIf(process.platform !== "win32")("engine socket directory another user took first", () => {
+    const originalTmpdir = process.env.TMPDIR;
+
+    /** A short root (a socket path must fit 104 bytes on macOS) whose temp directory already holds `rerail-<uid>`, open to all. */
+    async function squattedTemp(): Promise<string> {
+      root = await realpath(await mkdtemp("/tmp/rerail-daemon-"));
+      process.env.TMPDIR = join(root, "tmp");
+      const squatted = join(root, "tmp", `rerail-${process.getuid!()}`);
+      await mkdir(squatted, { recursive: true });
+      await chmod(squatted, 0o777);
+      return squatted;
+    }
+
+    afterEach(() => {
+      if (originalTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = originalTmpdir;
+    });
+
+    it("listens in a run folder beside its database, which its state file names for hooks", async () => {
+      const squatted = await squattedTemp();
+      const stateFile = join(root, "daemon.json");
+      startTestRepository(root, join(root, "rerail.sqlite"));
+      await start({ stateFile });
+      // Test boundary: the state file a hook reads, parsed and asserted right after.
+      const state = JSON.parse(await readFile(stateFile, "utf8")) as DaemonState;
+      expect(dirname(state.kernelSocketPath)).toBe(join(root, "run"));
+      expect((await lstat(state.kernelSocketPath)).isSocket()).toBe(true);
+      expect(await readdir(squatted)).toEqual([]);
+      await ingestEngineEvent({ socketPath: state.kernelSocketPath, accessToken: state.accessToken! }, {
+        kind: "session-start", eventId: "start-fallback",
+        session: { host: "claude-code", sessionId: "fallback-session", cwd: root },
+      });
+      const response = await fetch(new URL("/api/sessions", state.url));
+      expect(await response.json()).toMatchObject({ sessions: [{ sessionId: "fallback-session" }] });
+    });
+
+    it("refuses to start when the run folder is refused too, naming each directory and what to do", async () => {
+      const squatted = await squattedTemp();
+      await mkdir(join(root, "run"), { mode: 0o700 });
+      await chmod(join(root, "run"), 0o755);
+      const started = start();
+      await expect(started).rejects.toThrow(`${squatted}: it has mode 777, not 700. Remove ${squatted}`);
+      await expect(started).rejects.toThrow(`${join(root, "run")}: it has mode 755, not 700. Remove ${join(root, "run")}`);
+    });
   });
 
   it("publishes every operation in the OpenAPI document", async () => {
@@ -826,6 +860,77 @@ describe("Rerail daemon", () => {
     await response.body?.cancel();
     expect(response.status).toBe(405);
     expect(response.headers.get("Allow")).toBe("POST");
+  });
+
+  /**
+   * A POST to `path` with a `bytes`-byte body: declared in `Content-Length` and never sent, or sent chunked in pieces
+   * with no declared length. Resolves with the answer, which a limit gives before the body is read.
+   */
+  function sizedPost(daemon: RerailDaemon, path: string, bytes: number, sent: "declared" | "chunked"): Promise<{ status: number; body: unknown }> {
+    const { promise, resolve, reject } = Promise.withResolvers<{ status: number; body: unknown }>();
+    let answered = false;
+    const outgoing = httpRequest(new URL(path, daemon.url), {
+      method: "POST",
+      headers: {
+        [ACCESS_HEADER]: ACCESS,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...(sent === "declared" ? { "content-length": bytes } : {}),
+      },
+    }, (incoming) => {
+      answered = true;
+      const chunks: Buffer[] = [];
+      incoming.on("data", chunk => chunks.push(chunk));
+      incoming.on("end", () => {
+        const text = Buffer.concat(chunks).toString();
+        const json = incoming.headers["content-type"]?.startsWith("application/json") === true;
+        resolve({ status: incoming.statusCode!, body: json ? JSON.parse(text) : text });
+        outgoing.destroy();
+      });
+      incoming.on("error", reject);
+    });
+    // Writing a body the daemon stopped reading may fail once it has answered; the answer is what is asserted.
+    outgoing.on("error", (error) => {
+      if (!answered) reject(error);
+    });
+    if (sent === "declared") {
+      outgoing.flushHeaders();
+    } else {
+      const piece = Buffer.alloc(1024 * 1024, " ");
+      for (let left = bytes; left > 0; left -= piece.length) outgoing.write(left >= piece.length ? piece : piece.subarray(0, left));
+      outgoing.end();
+    }
+    return promise;
+  }
+
+  it("answers 413 to a body past each route's limit before the route reads it", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const daemon = await start();
+    const apiLimit = 4 * 1024 * 1024;
+    const tooLarge = { status: 413, body: { error: "request-too-large", message: expect.any(String) } };
+    expect(await sizedPost(daemon, "/api/sessions/s1/audit-requests", apiLimit + 1, "declared")).toEqual(tooLarge);
+    expect(await sizedPost(daemon, "/api/sessions/s1/audit-requests", apiLimit + 1, "chunked")).toEqual(tooLarge);
+    expect((await sizedPost(daemon, "/api/sessions/s1/audit-requests", apiLimit, "chunked")).status).not.toBe(413);
+    expect(await sizedPost(daemon, "/mcp", apiLimit + 1, "declared")).toEqual(tooLarge);
+    // The native bridge would refuse this request for its missing bearer token (403) had it read it.
+    expect(await sizedPost(daemon, "/native/session", 256 * 1024 * 1024 + 1, "declared")).toEqual(tooLarge);
+    expect((await getJson(daemon, "/healthz")).status).toBe(200);
+  });
+
+  it("answers an internal error without its text, which the daemon log keeps", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const detail = "cannot read /Users/someone/private/rules.sqlite";
+    const daemon = await start({ codingAgents: async () => { throw new Error(detail); } });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const { status, body } = await getJson<{ error: string; message: string }>(daemon, "/api/coding-agents");
+      expect(status).toBe(500);
+      expect(body.error).toBe("internal");
+      expect(JSON.stringify(body)).not.toContain("/Users/someone");
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining(detail));
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("exposes the same operations as MCP tools over Streamable HTTP", async () => {
@@ -934,17 +1039,19 @@ describe("Rerail daemon", () => {
     const daemon = await start();
     const remove = (headers: Record<string, string>) => rawRequest(daemon, "/api/presentation-preferences?repository=&host=", { method: "DELETE", headers });
     const bound = `127.0.0.1:${daemon.port}`;
+    // `port: 0` can bind any ephemeral port, 35831 included: the mapped port must differ from the bound one.
+    const mapped = daemon.port === 35831 ? 35832 : 35831;
 
     expect(await remove({ origin: `http://${bound}`, host: bound })).toEqual({ status: 200, body: { removed: 0 } });
 
     // Reached through a container port mapping, the browser addresses a port the daemon never bound.
-    for (const host of ["localhost:35831", "127.0.0.1:35831", "[::1]:35831"]) {
+    for (const host of [`localhost:${mapped}`, `127.0.0.1:${mapped}`, `[::1]:${mapped}`]) {
       expect(await remove({ origin: `http://${host}`, host })).toEqual({ status: 200, body: { removed: 0 } });
     }
 
     const forbidden = { status: 403, body: { error: "api-origin-forbidden" } };
     expect(await remove({ origin: "https://evil.example", host: bound })).toEqual(forbidden);
-    expect(await remove({ origin: "http://localhost:35831", host: bound })).toEqual(forbidden);
+    expect(await remove({ origin: `http://localhost:${mapped}`, host: bound })).toEqual(forbidden);
   });
 
   it("answers 421 before any route when Host is not a name the daemon is known by", async () => {

@@ -22,13 +22,24 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
-import { checkRegistry, runNpm } from "../runtime/npm.js";
+import { auditSignatures, checkRegistry, outsideAnyProject, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { pinnedNodePath } from "./node-path.js";
 
 export const DEFAULT_UPDATE_CHANNEL = "latest";
+
+/** In the Rerail home: the updater's record of the installed versions and the update channel. */
+export const UPDATE_STATE_FILE = "update-state.json";
+/** In the Rerail home: the installed versions. */
+export const VERSIONS_DIR = "versions";
+/** In the Rerail home: the link to the active package root. */
+export const CURRENT_LINK = "current";
+/** In the Rerail home: the folder holding the launcher. */
+export const LAUNCHER_DIR = "bin";
+/** In the Rerail home: the lock an update holds. */
+export const UPDATE_LOCK_DIR = "update.lock";
 
 const UPDATE_STATE_VERSION = 1;
 const LOCK_LEASE_MS = 15 * 60 * 1_000;
@@ -150,9 +161,29 @@ export function compareSemver(left: string, right: string): number {
   return coreComparison === 0 ? comparePrerelease(a.prerelease, b.prerelease) : coreComparison;
 }
 
+/**
+ * The registry npm fetched `@neralabs/rerail` from into `prefix`, as its lockfile records the tarball: the address
+ * up to the package's path. Undefined when npm recorded none.
+ */
+async function installedFromRegistry(prefix: string): Promise<string | undefined> {
+  let lockfile: { packages?: Record<string, { resolved?: unknown } | undefined> };
+  try {
+    lockfile = JSON.parse(await readFile(join(prefix, "node_modules", ".package-lock.json"), "utf8")) as typeof lockfile;
+  } catch {
+    return undefined;
+  }
+  const resolved = lockfile.packages?.[`node_modules/${RERAIL_PACKAGE_NAME}`]?.resolved;
+  if (typeof resolved !== "string") return undefined;
+  const path = resolved.indexOf(`/${RERAIL_PACKAGE_NAME}/-/`);
+  return path > 0 ? resolved.slice(0, path) : URL.parse(resolved)?.origin;
+}
+
 export class NpmPackageRegistry implements PackageRegistry {
+  constructor(private readonly npm: NpmRunner = runNpm) {}
+
+  /** Asked from a scratch folder: `rerail update` runs inside repositories, and one's `.npmrc` must not pick the answer. */
   async resolveVersion(channel: string): Promise<string> {
-    const result = await runNpm(["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json"]);
+    const result = await outsideAnyProject(async cwd => await this.npm(["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json"], { cwd }));
     const parsed = JSON.parse(result.stdout) as unknown;
     if (typeof parsed !== "string") {
       throw new TypeError(`npm returned no single version for ${RERAIL_PACKAGE_NAME}@${channel}`);
@@ -161,20 +192,32 @@ export class NpmPackageRegistry implements PackageRegistry {
     return parsed;
   }
 
+  /**
+   * Installs `version` into the staging `prefix` without running any package's install scripts, then checks the
+   * registry signatures of everything installed before the caller runs any of it. `--prefix` also keeps a project
+   * `.npmrc` in the caller's folder out of the install.
+   */
   async installVersion(version: string, prefix: string): Promise<void> {
     const spec = `${RERAIL_PACKAGE_NAME}@${version}`;
     // npm installs without a word, and a large package on a slow line takes a while: say what is coming first.
     process.stderr.write(`Downloading ${spec} from npm…\n`);
-    await checkRegistry(spec);
-    await runNpm([
+    await checkRegistry(spec, this.npm);
+    await this.npm([
       "install",
       "--prefix",
       prefix,
+      "--ignore-scripts",
       "--omit=dev",
       "--no-audit",
       "--no-fund",
       spec,
     ]);
+    if (await auditSignatures(prefix, this.npm) === "no-signing-keys") {
+      const registry = (await installedFromRegistry(prefix)) ?? "the registry in your npm configuration";
+      process.stderr.write(
+        `warning: ${registry} publishes no signing keys, so npm could not check the registry signatures of ${spec} and its dependencies.\n`,
+      );
+    }
   }
 }
 
@@ -289,8 +332,7 @@ const REPOSITORY_START_STATES: ReadonlySet<string> = new Set(["started", "stoppe
 /**
  * Starts Rerail in the health-check repository; any failure is the staged package's and is thrown. The repository
  * is not set up, so start runs set-up, which asks first: "I'll pick rule packs myself" turns it on reading no code,
- * and the scratch `HOME` gives it no coding agent to connect. A release from before the set-up (rollback validates
- * the previous release) takes no `--answer` and starts at once.
+ * and the scratch `HOME` gives it no coding agent to connect.
  */
 async function startHealthRepository(cli: string, workspace: string, env: NodeJS.ProcessEnv): Promise<void> {
   const run = (args: readonly string[]) => promisify(execFile)(
@@ -298,13 +340,7 @@ async function startHealthRepository(cli: string, workspace: string, env: NodeJS
   );
   const state = (await run(["state", "--repo", workspace])).stdout.trim();
   if (!REPOSITORY_START_STATES.has(state)) throw new Error(`rerail state answered ${JSON.stringify(state)}`);
-  try {
-    await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
-  } catch (error) {
-    const stderr = error instanceof Error && "stderr" in error && typeof error.stderr === "string" ? error.stderr : "";
-    if (!stderr.includes("Unknown start option: --answer")) throw error;
-    await run(["start", "--repo", workspace]);
-  }
+  await run(["start", "--repo", workspace, "--answer", "pick-myself"]);
 }
 
 export async function validateManagedInstallation(installation: Installation): Promise<void> {
@@ -447,8 +483,8 @@ export class ManagedUpdater {
 
   constructor(options: ManagedUpdaterOptions) {
     this.home = options.home ?? defaultRerailHome();
-    this.statePath = join(this.home, "update-state.json");
-    this.versionsRoot = join(this.home, "versions");
+    this.statePath = join(this.home, UPDATE_STATE_FILE);
+    this.versionsRoot = join(this.home, VERSIONS_DIR);
     this.packageRoot = resolve(options.packageRoot);
     this.packageVersion = options.packageVersion;
     parseSemver(this.packageVersion);
@@ -479,12 +515,12 @@ export class ManagedUpdater {
 
   /** `<home>/current` always points at the active package root; harness registrations reference it. */
   get currentLink(): string {
-    return join(this.home, "current");
+    return join(this.home, CURRENT_LINK);
   }
 
   /** Stable launcher every hook and shell alias runs (`rerail.cmd` on Windows). */
   get launcherPath(): string {
-    return join(this.home, "bin", this.platform === "win32" ? "rerail.cmd" : "rerail");
+    return join(this.home, LAUNCHER_DIR, this.platform === "win32" ? "rerail.cmd" : "rerail");
   }
 
   private async writeState(state: UpdateState): Promise<void> {
@@ -542,7 +578,7 @@ export class ManagedUpdater {
     await this.syncCurrentLink(resolve(installation.packageRoot));
     const node = pinnedNodePath();
     const launchers: [path: string, shim: string][] = [[this.launcherPath, launcherShim(this.currentLink, node, this.platform)]];
-    if (this.platform === "win32") launchers.push([join(this.home, "bin", "rerail"), gitBashShim(this.currentLink, node)]);
+    if (this.platform === "win32") launchers.push([join(this.home, LAUNCHER_DIR, "rerail"), gitBashShim(this.currentLink, node)]);
     for (const [path, shim] of launchers) {
       const current = await readFile(path, "utf8").catch(() => undefined);
       if (current === shim) continue;
@@ -584,7 +620,7 @@ export class ManagedUpdater {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    const lockPath = join(this.home, "update.lock");
+    const lockPath = join(this.home, UPDATE_LOCK_DIR);
     const owner = randomUUID();
     await mkdir(this.home, { recursive: true, mode: 0o700 });
     try {
@@ -749,9 +785,10 @@ export class ManagedUpdater {
 
   /**
    * Record `next` as the active installation, re-point `current`, and refresh
-   * the launcher. A previous managed version is kept for rollback; an unmanaged
-   * one (npx cache, checkout) is not, since it may vanish at any time. Callers
-   * hold the update lock.
+   * the launcher. A previous managed version is recorded (`update status`, and
+   * what an update names as newly left out); an unmanaged one (npx cache,
+   * checkout) is not, since it may vanish at any time. Callers hold the update
+   * lock.
    */
   private async adopt(next: Installation): Promise<UpdateResult> {
     const state = await this.readState();
@@ -795,7 +832,7 @@ export class ManagedUpdater {
    * a checkout, as `rerail install --root` uses. Recording it as the current
    * installation keeps `status`, the daemon, and the symlink telling the same
    * story; `isManaged` still reports it as unmanaged, so `update` replaces it
-   * rather than offering it as a rollback target.
+   * rather than recording it as the previous version.
    */
   async activateRoot(packageRoot: string): Promise<UpdateResult> {
     const root = resolve(packageRoot);
@@ -807,21 +844,4 @@ export class ManagedUpdater {
     return await this.withLock(async () => await this.adopt({ version, packageRoot: root }));
   }
 
-  async rollback(): Promise<UpdateResult> {
-    return await this.withLock(async () => {
-      const state = await this.readState();
-      if (state.previous === undefined) throw new Error("No previous Rerail version is available for rollback");
-      if (!existsSync(state.previous.packageRoot)) {
-        throw new Error(`Previous Rerail installation is missing: ${state.previous.packageRoot}`);
-      }
-      await this.validate(state.previous);
-      const rolledBack: UpdateState = {
-        ...state,
-        current: state.previous,
-        previous: state.current,
-      };
-      await this.writeState(rolledBack);
-      return { ...(await this.status()), changed: true };
-    });
-  }
 }

@@ -4,7 +4,7 @@ use crate::code_rule_dsl::json::bounded_text;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::QueryWhen;
 use crate::code_rule_dsl::language::{
-    FileCondition, JsxRuntime, PackageCondition, SourceType, TextCondition,
+    FileCondition, JsxRuntime, NodeVersionCondition, PackageCondition, SourceType, TextCondition,
 };
 use crate::code_rule_dsl::scope::options::{
     DEFAULT_PYTHON_MINOR, EsGlobals, GlobalSetting, LanguageOptions, PythonOptions, PythonTyping,
@@ -17,6 +17,7 @@ use serde_json::{Map, Value};
 const LANGUAGE_OPTIONS_KEYS: &[&str] = &[
     "ecmaVersion",
     "sourceType",
+    "moduleSystem",
     "globals",
     "parserOptions",
     "jsxPragma",
@@ -188,6 +189,21 @@ pub(crate) fn compile_language_options(value: &Value, path: &str) -> Result<Lang
     );
     options.global_return = global_return;
     options.implied_strict = implied_strict;
+    options.package_type_module_system = match value.get("moduleSystem") {
+        None => false,
+        Some(Value::String(system)) if system == "file" => false,
+        Some(Value::String(system)) if system == "package-type" => true,
+        Some(_) => {
+            return Err(invalid(format!(
+                "{path}/moduleSystem must be \"file\" or \"package-type\""
+            )));
+        }
+    };
+    if options.package_type_module_system && options.source_type.is_some() {
+        return Err(invalid(format!(
+            "{path}: moduleSystem decides a file's module system only where sourceType does not; set one of them"
+        )));
+    }
     if let Some(pragma) = jsx_name(value.get("jsxPragma"), "jsxPragma", &path)? {
         options.jsx_pragma = pragma;
     }
@@ -481,8 +497,9 @@ pub(super) struct FileKeys {
 /// match the path the host sends, a `notRegex` that must not, or both. A family with declaration
 /// files has `declaration`, whether the path names one. A family reading package manifests has
 /// `package`, conditions on the file's nearest `package.json` (`bin`, `nodeVersion.subsetOf`,
-/// `dependsOn`, `path`); one with JSX runtimes `jsxRuntime`, the runtimes the file's JSX may be
-/// one of. A family naming modules from package markers has its module path, the host's `module`
+/// `dependsOn`, `path`, `serverGraph`, `private`, `published`); one with JSX runtimes
+/// `jsxRuntime`, the runtimes the file's JSX may be one of. A family naming modules from package
+/// markers has its module path, the host's `module`
 /// or the stem fallback: `module`, `moduleName` and `package` hold text conditions over the dotted
 /// names, the last one and the first one (in a package), and `inPackage` whether the host sent
 /// the path.
@@ -505,6 +522,7 @@ pub(super) fn compile_file_condition(
             "package",
             "inPackage",
             "jsxRuntime",
+            "byteOrderMark",
         ],
         &path,
     )?;
@@ -536,6 +554,7 @@ pub(super) fn compile_file_condition(
         if keys.jsx_runtimes {
             allowed.push("`jsxRuntime`");
         }
+        allowed.push("`byteOrderMark`");
         let last = allowed.pop().unwrap_or_default();
         return Err(invalid(format!(
             "{path} must set {} or {last}",
@@ -552,11 +571,11 @@ pub(super) fn compile_file_condition(
             .is_some_and(|package| names.iter().any(|name| package.contains_key(*name)))
     };
     let text_shaped = shaped(&["regex", "notRegex"]);
-    let manifest_shaped = shaped(&["bin", "nodeVersion", "dependsOn", "path", "serverGraph"]);
+    let manifest_shaped = shaped(&PACKAGE_KEYS);
     let (manifest, package) = match file.get("package") {
         Some(_) if keys.manifests && text_shaped => {
             return Err(invalid(format!(
-                "{path}/package: {language}'s package reads the nearest package.json: set bin, nodeVersion, dependsOn, path or serverGraph"
+                "{path}/package: {language}'s package reads the nearest package.json: set bin, nodeVersion, dependsOn, path, serverGraph, private or published"
             )));
         }
         Some(value) if keys.manifests => (
@@ -586,6 +605,7 @@ pub(super) fn compile_file_condition(
             .get("jsxRuntime")
             .map(|value| jsx_runtimes(value, &format!("{path}/jsxRuntime")))
             .transpose()?,
+        byte_order_mark: flag("byteOrderMark")?,
     })
 }
 
@@ -629,19 +649,27 @@ fn flag_value(value: Option<&Value>, at: &str) -> Result<Option<bool>> {
     }
 }
 
-/// A TypeScript query's `file.package`: `bin` (true or false), `nodeVersion: { subsetOf }` (an
-/// npm semver range), `dependsOn` (a non-empty list of package names), `path` (a text
-/// condition) and `serverGraph` (true or false); at least one.
+/// The keys of a TypeScript query's `file.package`.
+const PACKAGE_KEYS: [&str; 7] = [
+    "bin",
+    "nodeVersion",
+    "dependsOn",
+    "path",
+    "serverGraph",
+    "private",
+    "published",
+];
+
+/// A TypeScript query's `file.package`: `bin` (true or false), `nodeVersion: { subsetOf }` or
+/// `{ notSubsetOf }` (an npm semver range), `dependsOn` (a non-empty list of package names),
+/// `path` (a text condition), and `serverGraph`, `private` and `published` (true or false); at
+/// least one.
 fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<PackageCondition> {
     let package = object(value, at)?;
-    reject_unknown(
-        package,
-        &["bin", "nodeVersion", "dependsOn", "path", "serverGraph"],
-        at,
-    )?;
+    reject_unknown(package, &PACKAGE_KEYS, at)?;
     if package.is_empty() {
         return Err(invalid(format!(
-            "{at} must set `bin`, `nodeVersion`, `dependsOn`, `path` or `serverGraph`"
+            "{at} must set `bin`, `nodeVersion`, `dependsOn`, `path`, `serverGraph`, `private` or `published`"
         )));
     }
     let node_version = package
@@ -649,12 +677,25 @@ fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<
         .map(|value| {
             let at = format!("{at}/nodeVersion");
             let version = object(value, &at)?;
-            reject_unknown(version, &["subsetOf"], &at)?;
+            reject_unknown(version, &["subsetOf", "notSubsetOf"], &at)?;
+            let (key, subset) = match (
+                version.contains_key("subsetOf"),
+                version.contains_key("notSubsetOf"),
+            ) {
+                (true, false) => ("subsetOf", true),
+                (false, true) => ("notSubsetOf", false),
+                _ => {
+                    return Err(invalid(format!(
+                        "{at} must set one of `subsetOf` and `notSubsetOf`"
+                    )));
+                }
+            };
             version
-                .get("subsetOf")
+                .get(key)
                 .and_then(Value::as_str)
                 .and_then(Range::parse)
-                .ok_or_else(|| invalid(format!("{at}/subsetOf must be an npm semver range")))
+                .map(|range| NodeVersionCondition { range, subset })
+                .ok_or_else(|| invalid(format!("{at}/{key} must be an npm semver range")))
         })
         .transpose()?;
     let depends_on = package
@@ -686,6 +727,8 @@ fn package_condition(value: &Value, at: &str, max_regex_bytes: usize) -> Result<
         depends_on,
         path: text_condition(package.get("path"), &format!("{at}/path"), max_regex_bytes)?,
         server_graph: flag_value(package.get("serverGraph"), &format!("{at}/serverGraph"))?,
+        private: flag_value(package.get("private"), &format!("{at}/private"))?,
+        published: flag_value(package.get("published"), &format!("{at}/published"))?,
     })
 }
 

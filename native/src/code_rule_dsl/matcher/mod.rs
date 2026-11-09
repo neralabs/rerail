@@ -30,7 +30,7 @@ mod value;
 use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 pub(super) use analysis::RequiredText;
-pub(crate) use analysis::calls_positive_only;
+pub(crate) use analysis::{calls_positive_only, reads_import_targets};
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 pub(super) use arguments::{Arguments, Passed, SlotKind};
 pub(super) use arguments_sql::SQL_CALL_KINDS;
@@ -63,10 +63,10 @@ pub(super) use relation::{set_answers_off, set_same_key_off};
 pub(crate) use resolve::{
     FileGates, calls_tables, file_biome_suppressions, file_clippy, file_eslint_directives,
     file_lines, file_module, file_noqa, file_nosec, file_oxlint_directives, file_phpcs,
-    file_phpstan, file_psalm, file_rerail_ignores, file_source_type, file_sqlfluff,
+    file_phpstan, file_psalm, file_rerail_ignores, file_source_type_for, file_sqlfluff,
     file_vue_directives, table_reading,
 };
-pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved};
+pub(super) use resolve::{FileScopeSlot, Resolves, Unresolved, matched_file_path};
 #[cfg(test)]
 pub(super) use resolve::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS, TABLE_BUILDS};
 pub(super) use run::{Stopped, enumerate, node_at, run_clause};
@@ -76,7 +76,7 @@ pub(super) use semantic::Semantic;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
-pub(super) use transform::{Separator, Source, StringCase, Trans, Transform};
+pub(super) use transform::{Digits, Separator, Source, StringCase, Trans, Transform};
 
 #[cfg(test)]
 pub(crate) use transform::{
@@ -93,6 +93,7 @@ use util::{
 use util::{THREE_VALUED, UNKNOWN};
 pub(super) use value::{Bound, Reading, ValueTest};
 
+pub(super) use crate::code_rule_dsl::import_target::term::ImportTargetTest;
 #[derive(Clone)]
 pub(super) struct GrammarMatcher {
     /// The dialect of the document the matcher reads: the file's own, or for an embedded clause
@@ -115,9 +116,15 @@ pub(super) struct GrammarMatcher {
     pub(super) text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
     pub(super) sound_under_errors: bool,
+    /// Whether the matcher or a utility it calls holds an `importTarget` term
+    /// (`reads_import_targets`), worked out once when it is compiled.
+    pub(super) import_target: bool,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
     pub(super) utils: Arc<UtilTable>,
+    /// The query's utilities in `utils`, by index: every one of a table of its own, the ones it
+    /// reaches of a document's shared table, which holds other queries' too.
+    pub(super) query_utils: Arc<[usize]>,
     /// The query's `file` condition: a file whose module path fails it gets no matcher.
     pub(super) file: Option<Arc<crate::code_rule_dsl::language::FileCondition>>,
     /// Whether the query's `when` gate holds. A query outside it is compiled in full, so its
@@ -126,6 +133,10 @@ pub(super) struct GrammarMatcher {
     /// The source types `when.sourceType` lets a file have where the query leaves `sourceType`
     /// to each file (`SourceType::of_file`); a file of another matches nothing (`run_clause`).
     pub(super) source_types: Option<Vec<SourceType>>,
+    /// Whether `when.sourceType` reads each file's module system by its extension and package
+    /// type (`languageOptions.moduleSystem: "package-type"`, `SourceType::by_package_type`), as the
+    /// query's scope does, rather than its own.
+    pub(super) package_type_gate: bool,
     /// Whether the matcher can reach an unknown verdict; see `reads_values`.
     pub(super) three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.

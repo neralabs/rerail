@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  getLibraryRule,
   loadRuleCatalog,
   defaultRerailDatabasePath,
   openRerailDatabase,
@@ -18,6 +19,7 @@ import {
   repositories,
 } from "../../src/engine/index.js";
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
+import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
 import { installPack } from "../support/installed-packs.js";
 
 // Core ships no packs; these tests add, configure and copy the complexity pack's rules.
@@ -100,6 +102,15 @@ function rulesOf(repo: string) {
   }
 }
 
+/** The mode library rule `id`'s stored content sets. */
+function getLibraryRuleMode(id: string): string | undefined {
+  const database = openRerailDatabase(defaultRerailDatabasePath());
+  try {
+    return getLibraryRule(database, id)?.document.rule.mode;
+  } finally {
+    database.$client.close();
+  }
+}
 /** Set `repo`'s repository up with nothing in it. */
 function setUpEmpty(repo: string): void {
   const database = openRerailDatabase(defaultRerailDatabasePath());
@@ -201,6 +212,17 @@ describe("rerail rules test", () => {
     expect(report).toMatchObject({ valid: false, error: expect.stringContaining("does not match kind conversation") });
   });
 
+  it("names the field a code rule lacks, rather than the union of rule kinds failing", async () => {
+    const repo = await repository();
+    const { exclude: _exclude, ...scope } = noConsolePolicy().scope;
+    const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), scope } });
+
+    const { exit, report } = await testReport(file, repo);
+
+    expect(exit).toBe(1);
+    expect(report).toMatchObject({ valid: false, error: expect.stringContaining("rule.scope.exclude:") });
+  });
+
   it("counts the rule's matches across the repo's files it covers, ignored directories excluded", async () => {
     const repo = await repository({
       "src/a.ts": "const a = 1;\n  console.log(a);\nconsole.log(a);\n",
@@ -215,15 +237,150 @@ describe("rerail rules test", () => {
 
     expect(exit).toBe(0);
     expect(report.repository).toEqual({
-      matches: 3,
-      examples: [
+      matches: [
         { path: "src/a.ts", line: 2, column: 3, text: "console.log(a);" },
         { path: "src/a.ts", line: 3, column: 1, text: "console.log(a);" },
         { path: "src/nested/b.ts", line: 1, column: 1, text: "console.log('b');" },
       ],
-      unchecked: { count: 0, examples: [], unattributed: [] },
+      unchecked: { files: [], unattributed: [] },
+      binary: 0,
       leftOut: 0,
     });
+  });
+
+  it("lists every match in the JSON report, and the first five in the text one", async () => {
+    const repo = await repository({ "src/a.ts": "console.log(1);\n".repeat(7) });
+    const file = writeDraft(repo, { kind: "code", rule: noConsolePolicy() });
+
+    const { report, stdout } = await testReportText(file, repo);
+
+    expect(report.repository?.matches.map(match => match.line)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(stdout).toContain("  Repo: 7 places match.\n    src/a.ts:1:1  console.log(1);");
+    expect(stdout).toContain("    src/a.ts:5:1  console.log(1);\n    … and 2 more.");
+  });
+
+  it("reports every match once across a repo too large for one request, cross-file clauses included", async () => {
+    // 70 files of 600 KiB: more than the 40 MiB one request to the Engine may carry. The `select_when` holds where its
+    // `exists` witness is the last file, sent long after the first, which it selects.
+    const padding = `// ${"x".repeat(1021)}\n`.repeat(600);
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 70; index += 1) {
+      const name = `src/f${String(index).padStart(2, "0")}.ts`;
+      files[name] = `${padding}console.log(${index});\n${index === 0 ? "debugger;\n" : ""}${index === 69 ? "// DEBUG_BUILD\n" : ""}`;
+    }
+    const repo = await repository(files);
+    const policy = noConsolePolicy();
+    const file = writeDraft(repo, {
+      kind: "code",
+      rule: {
+        ...policy,
+        clauses: [...policy.clauses, {
+          id: "debugger-in-debug-build",
+          forbid: {
+            select_when: {
+              exists: { regex: { pattern: "DEBUG_BUILD", source: "file.content" } },
+              select: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+            },
+          },
+          violation: { anchor: "witness.span", code: "DEBUGGER", message: "No debugger." },
+        }],
+      },
+    });
+
+    const { exit, report } = await testReport(file, repo);
+
+    expect(exit).toBe(0);
+    expect(report.repository).toMatchObject({ unchecked: { files: [], unattributed: [] }, binary: 0, leftOut: 0 });
+    expect(report.repository?.matches).toEqual([
+      ...Object.keys(files).flatMap((path, index) => [
+        { path, line: 601, column: 1, text: `console.log(${index});` },
+        ...(index === 0 ? [{ path, line: 602, column: 1, text: "debugger;" }] : []),
+      ]),
+    ]);
+  });
+
+  it("reads files no language lists as text for a regex rule, skipping binary ones", async () => {
+    const repo = await repository({
+      Justfile: "release:\n\techo TODO\n",
+      "Cargo.lock": "# TODO\n",
+      NOTICE: "Nothing to do.\n",
+      "assets/logo.png": "\u0000PNG TODO\n",
+      "src/blob.ts": "\u0000TODO\n",
+    });
+    const drafts = await mkdtemp(join(tmpdir(), "rerail-rule-draft-file-"));
+    directories.push(drafts);
+    const file = writeDraft(drafts, {
+      kind: "code",
+      rule: { ...noConsolePolicy("TODO"), scope: { include: ["**"], exclude: [] } },
+      cases: { caught: [{ path: "LICENSE", content: "TODO\n" }], passed: [{ path: ".gitattributes", content: "* text=auto\n" }] },
+    });
+
+    const { exit, report, stdout } = await testReportText(file, repo);
+
+    expect(exit).toBe(0);
+    expect(report.cases.map(({ label, caught, ok }) => ({ label, caught, ok }))).toEqual([
+      { label: "LICENSE", caught: true, ok: true },
+      { label: ".gitattributes", caught: false, ok: true },
+    ]);
+    expect(report.repository).toEqual({
+      matches: [
+        { path: "Cargo.lock", line: 1, column: 3, text: "# TODO" },
+        { path: "Justfile", line: 2, column: 7, text: "echo TODO" },
+      ],
+      unchecked: { files: [], unattributed: [] },
+      binary: 2,
+      leftOut: 0,
+    });
+    expect(stdout).toContain("2 files were skipped as binary: no rule reads a file holding a NUL byte.");
+  });
+
+  it("never reads a file no language lists for a rule with no regex or file clause", async () => {
+    const repo = await repository({ Justfile: "debugger\n" });
+    const file = writeDraft(repo, {
+      kind: "code",
+      rule: {
+        ...noConsolePolicy(),
+        scope: { include: ["**"], exclude: [] },
+        clauses: [{
+          id: "debugger",
+          forbid: { ast: { language: "typescript", rule: { kind: "debugger_statement" } } },
+          violation: { anchor: "witness.span", code: "DEBUGGER", message: "No debugger." },
+        }],
+      },
+      cases: { caught: [], passed: [{ path: "Justfile", content: "debugger;\n" }] },
+    });
+
+    const { report } = await testReport(file, repo);
+
+    expect(report.cases).toEqual([{
+      expected: "passed",
+      caught: false,
+      ok: true,
+      label: "Justfile (not read: no language lists this file, and this rule has no regex or file clause)",
+    }]);
+    expect(report.repository).toMatchObject({ matches: [], binary: 0 });
+  });
+
+  it.each([
+    ["a file.path regex", { include: ["**"], exclude: [] }, { regex: { source: "file.path", pattern: String.raw`\.orig$` } }],
+    ["a file query", { include: ["**/*.orig"], exclude: [] }, { file: {} }],
+  ])("reports a match on the file's path, through %s, with no line", async (_name, scope, forbid) => {
+    const repo = await repository({ "src/a.ts.orig": "console.log(1);\n", "src/a.ts": "const a = 1;\n" });
+    const drafts = await mkdtemp(join(tmpdir(), "rerail-rule-draft-file-"));
+    directories.push(drafts);
+    const file = writeDraft(drafts, {
+      kind: "code",
+      rule: {
+        ...noConsolePolicy(),
+        scope,
+        clauses: [{ id: "orig", forbid, violation: { anchor: "witness.span", code: "ORIG", message: "Delete merge leftovers." } }],
+      },
+    });
+
+    const { report, stdout } = await testReportText(file, repo);
+
+    expect(report.repository?.matches).toEqual([{ path: "src/a.ts.orig" }]);
+    expect(stdout).toContain("  Repo: 1 place matches.\n    src/a.ts.orig  (the whole file: no line)");
   });
 
   it("never reads a hidden, sensitive or Git-ignored file; a person turning followGitignore off lets ignored files in", async () => {
@@ -248,9 +405,10 @@ describe("rerail rules test", () => {
 
     const following = await testReportText(file, repo);
 
-    expect(following.report.repository).toMatchObject({ matches: 1, leftOut: 3 });
-    expect(following.report.repository?.examples.map(example => example.path)).toEqual(["app.json"]);
-    expect(following.stdout).toContain("3 files or folders were left out unread: hidden, sensitive by name, or ignored by Git.");
+    // A regex rule reads every file, so each withheld one counts: .env, config/.secrets.json, id_rsa, keys/server.pem,
+    // the .github folder, .gitignore and the ignored local.json.
+    expect(following.report.repository).toMatchObject({ matches: [{ path: "app.json" }], leftOut: 7 });
+    expect(following.stdout).toContain("7 files or folders were left out unread: hidden, sensitive by name, or ignored by Git.");
     expect(following.stdout).not.toMatch(/\.env|\.secrets|id_rsa|server\.pem|ci\.yml|local\.json/);
 
     const database = openRerailDatabase(defaultRerailDatabasePath());
@@ -262,8 +420,7 @@ describe("rerail rules test", () => {
     }
     const { report } = await testReport(file, repo);
 
-    expect(report.repository).toMatchObject({ matches: 2, leftOut: 2 });
-    expect(report.repository?.examples.map(example => example.path)).toEqual(["app.json", "local.json"]);
+    expect(report.repository).toMatchObject({ matches: [{ path: "app.json" }, { path: "local.json" }], leftOut: 6 });
   });
 
   it("never follows a symlink out of the checkout, to a file or a folder", async () => {
@@ -280,7 +437,23 @@ describe("rerail rules test", () => {
     const { exit, report } = await testReport(file, repo);
 
     expect(exit).toBe(0);
-    expect(report.repository).toMatchObject({ matches: 1, examples: [{ path: "src/a.ts", text: "console.log('inside');" }] });
+    expect(report.repository).toMatchObject({ matches: [{ path: "src/a.ts", text: "console.log('inside');" }] });
+  });
+
+  it("tests a worktree's rule document on its own, with no cases, over the repo; rules add still needs a draft", async () => {
+    const repo = await repository({ "src/a.ts": "console.log(1);\n" });
+    mkdirSync(join(repo, ".rerail", "rules"), { recursive: true });
+    const file = join(repo, ".rerail", "rules", "no-console-log.json");
+    writeFileSync(file, JSON.stringify(noConsolePolicy()));
+
+    const { exit, report, stdout } = await testReportText(file, repo);
+
+    expect(exit).toBe(0);
+    expect(report).toMatchObject({ valid: true, cases: [], repository: { matches: [{ path: "src/a.ts", line: 1 }] } });
+    expect(stdout).toContain("● No cases to run; only the repo was checked.");
+    const { exit: added, stderr } = await run("add", [file, "--repo", repo]);
+    expect(added).toBe(1);
+    expect(stderr).toContain("The rule was not added");
   });
 
   it("reports a case and repo files a clause could not check, rather than passing them", async () => {
@@ -310,8 +483,8 @@ describe("rerail rules test", () => {
       { expected: "passed", caught: false, ok: false, label: "src/b.ts", notChecked: "file has syntax errors" },
     ]);
     expect(report.repository).toMatchObject({
-      matches: 1,
-      unchecked: { count: 1, examples: [{ path: "src/broken.ts", message: "file has syntax errors" }], unattributed: [] },
+      matches: [{ path: "src/clean.ts" }],
+      unchecked: { files: [{ path: "src/broken.ts", message: "file has syntax errors" }], unattributed: [] },
     });
     expect(stdout).toContain("✗ not checked (file has syntax errors), expected caught: src/a.ts");
     expect(stdout).toContain("1 file was not checked, so the rule may miss places there:\n    src/broken.ts  file has syntax errors");
@@ -347,8 +520,8 @@ describe("rerail rules test", () => {
     expect(exit).toBe(1);
     expect(report.cases).toEqual([{ expected: "passed", caught: false, ok: false, label: "src/notes.ts", notChecked: unread }]);
     expect(report.repository).toMatchObject({
-      matches: 0,
-      unchecked: { count: 1, examples: [{ path: "src/notes.ts", message: unread }], unattributed: [] },
+      matches: [],
+      unchecked: { files: [{ path: "src/notes.ts", message: unread }], unattributed: [] },
     });
     expect(stdout).toContain(`✗ not checked (${unread}), expected passed: src/notes.ts`);
     expect(stdout).toContain(`1 file was not checked, so the rule may miss places there:\n    src/notes.ts  ${unread}`);
@@ -373,7 +546,7 @@ describe("rerail rules test", () => {
     expect(report.cases).toEqual([
       { expected: "passed", caught: false, ok: false, label: "src/b.ts", notChecked: "LLM capability is unavailable" },
     ]);
-    expect(report.repository?.unchecked).toEqual({ count: 0, examples: [], unattributed: ["LLM capability is unavailable"] });
+    expect(report.repository?.unchecked).toEqual({ files: [], unattributed: ["LLM capability is unavailable"] });
     expect(stdout).toContain("Not checked in any one file (LLM capability is unavailable), so the rule may miss places anywhere.");
   });
 
@@ -412,6 +585,24 @@ describe("rerail rules test", () => {
     expect(report.repository).toBeNull();
     expect(report.cases.map(({ caught, ok }) => ({ caught, ok }))).toEqual([{ caught: true, ok: true }, { caught: false, ok: true }]);
   });
+
+  it.each(["test", "add"] as const)("rules %s --help prints the draft format and an example that passes rules test", async action => {
+    const { exit, stdout } = await run(action, ["--help"]);
+
+    expect(exit).toBe(0);
+    for (const key of ['"kind"', '"rule"', '"folder"?', '"cases"', '"caught"', '"passed"', '"path"', '"content"', '"source"', '"text"']) {
+      expect(stdout).toContain(key);
+    }
+    const example: unknown = JSON.parse(stdout.slice(stdout.indexOf("\n{", stdout.indexOf("Example")) + 1));
+    const repo = await repository();
+    const { exit: tested, report } = await testReport(writeDraft(repo, example), repo);
+    expect(tested).toBe(0);
+    expect(report.cases.map(({ expected, ok }) => ({ expected, ok }))).toEqual([{ expected: "caught", ok: true }, { expected: "passed", ok: true }]);
+  });
+
+  it("points at --help when no draft file is given", async () => {
+    await expect(run("test", [])).rejects.toThrow("rerail rules test --help shows its format");
+  });
 });
 
 describe("rerail rules add", () => {
@@ -427,7 +618,7 @@ describe("rerail rules add", () => {
     const { exit, stdout } = await run("add", [file, "--repo", repo]);
 
     expect(exit).toBe(0);
-    expect(stdout).toMatch(/^● Added acme:no-console-log to rerail-rule-draft-\w+\.\n$/);
+    expect(stdout).toMatch(/^● Added acme:no-console-log to rerail-rule-draft-\w+\.\n {2}It runs in Log until a person approves it: rerail rules approve acme:no-console-log\n$/);
     const after = rulesOf(repo);
     expect(after.library).toContain("acme:no-console-log");
     expect(after).toMatchObject({
@@ -447,6 +638,21 @@ describe("rerail rules add", () => {
     expect(stdout).toContain("● Added acme:no-console-log to rerail-rule-draft-");
     expect(stdout).toContain("/web.\n");
     expect(rulesOf(repo).repository).toEqual([{ id: "acme:no-console-log", kind: "library_rule", folder: "web", on: true }]);
+  });
+
+  it("says a rule added on Block steers in this release, and stores it on Block", async () => {
+    const repo = await repository();
+    setUpEmpty(repo);
+    const file = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: "acme:no-console-block", mode: "block" } });
+
+    const { exit, stdout } = await run("add", [file, "--repo", repo]);
+
+    expect(exit).toBe(0);
+    expect(stdout).toContain(BLOCK_STEERS_NOTE);
+    expect(getLibraryRuleMode("acme:no-console-block")).toBe("block");
+
+    const steering = writeDraft(repo, { kind: "code", rule: { ...noConsolePolicy(), id: "acme:no-console-steer" } });
+    expect((await run("add", [steering, "--repo", repo])).stdout).not.toContain(BLOCK_STEERS_NOTE);
   });
 
   it("sets a repository that is not set up up with only the new rule", async () => {

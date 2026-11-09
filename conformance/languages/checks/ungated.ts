@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { isPrivatePack } from "../../../scripts/release/packs.mjs";
 import { GATES_MANIFEST } from "../manifest.js";
 import type { CommandRunner } from "../../process.js";
 import type { Check } from "./check.js";
@@ -33,6 +34,8 @@ export interface PackState {
   gatedTools: string[];
   /** Each shipped rule's upstream tool, from its conformance.json entry; absent when it has none. */
   toolOf: Map<string, string>;
+  /** `"private": true` in the pack's package.json: never published, so never reaches a user through the gates. */
+  isPrivate: boolean;
 }
 
 /** Every pack under `root` with its tools, its shipped rule ids, its gated tools and each shipped rule's tool. */
@@ -49,7 +52,9 @@ export function packStates(root: string): PackState[] {
       const shipped = (readJson<{ rules?: { id: string }[] }>(join(packs, pack, "pack.json")).rules ?? []).map((rule) => rule.id).sort(byText);
       const gatedTools = tools.filter((tool) => existsSync(join(packs, pack, "upstream", tool, GATES_MANIFEST)));
       const toolOf = new Map((manifest.rules ?? []).filter((rule) => typeof rule.upstream?.tool === "string").map((rule) => [rule.id, rule.upstream!.tool!]));
-      return { pack, tools, shipped, gatedTools, toolOf };
+      const packageJson = join(packs, pack, "package.json");
+      const isPrivate = existsSync(packageJson) && isPrivatePack(readJson<unknown>(packageJson), packageJson);
+      return { pack, tools, shipped, gatedTools, toolOf, isPrivate };
     });
 }
 
@@ -101,7 +106,9 @@ export function shippedRuleTreatment(state: PackState, id: string, pending: Pend
 /**
  * The not-gated and pending checks: every shipped rule whose tool is neither gated nor pending is on the frozen list (a
  * new one is blocked), every listed rule still ships ungated (a stale entry is removed), every pending tool-pack is not
- * gated yet, and, with `base`, both lists only shrink against the base commit's.
+ * gated yet, and, with `base`, both lists only shrink against the base commit's. A private pack is left out: it is never
+ * published, and its rules are proven by their examples and tests, so none of its rules belongs on the frozen list (one
+ * listed there is reported stale).
  */
 export async function ungatedChecks(root: string, options: { base?: string; runner: CommandRunner }): Promise<UngatedResult> {
   const frozen = readJson<Frozen>(join(root, UNGATED_RULES));
@@ -112,7 +119,7 @@ export async function ungatedChecks(root: string, options: { base?: string; runn
   const pendingOut: UngatedResult["pending"] = [];
   const ungatedBy = new Map<string, Set<string>>();
 
-  for (const state of states) {
+  for (const state of states.filter((candidate) => !candidate.isPrivate)) {
     const ungated: string[] = [];
     const pendingRules = new Map<string, number>();
     for (const id of state.shipped) {
@@ -143,7 +150,7 @@ export async function ungatedChecks(root: string, options: { base?: string; runn
     checks.push({
       id: `frozen-list:${pack}`,
       ok: stale.length === 0,
-      detail: stale.length === 0 ? `${ids.length} listed rule(s), all still shipped and not gated` : `${stale.length} listed rule(s) no longer shipped, or now gated or pending (${stale.slice(0, 5).join(", ")}): remove it from the list`,
+      detail: stale.length === 0 ? `${ids.length} listed rule(s), all still shipped and not gated` : `${stale.length} listed rule(s) no longer shipped, now gated or pending, or in a private pack (${stale.slice(0, 5).join(", ")}): remove it from the list`,
     });
   }
   for (const toolPack of Object.keys(pending).sort(byText)) {

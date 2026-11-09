@@ -17,7 +17,8 @@ The convention:
   and are not listed here.
 
 `<tools>` below is a directory with the pinned npm packages installed (`npm install --prefix <tools> <package>@<version>`),
-and `<landing>` a checkout of nera-landing, whose design tokens the UI files project.
+and `<design-source>` a checkout of Nera's design-system source, whose design tokens (`web/src/index.css`, `fonts.css`)
+the UI files project.
 
 ## Engine data (`native/src/code_rule_dsl/`)
 
@@ -39,11 +40,11 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 
 | Generated file | Generator | Command |
 |---|---|---|
-| `src/engine/catalog/pack-list.generated.ts` | `scripts/generate/packs/pack-list.ts` | `npm run generate:packs`; pack check 7 (`test/engine/catalog/packs.test.ts`) fails when it is stale |
+| `src/engine/catalog/pack-list.generated.ts` (packs without `"private": true`) | `scripts/generate/packs/pack-list.ts` | `npm run generate:packs`; pack check 7 (`test/engine/catalog/packs.test.ts`) fails when it is stale |
 | `src/engine/code-rule/code-rule-language-registry.generated.ts` | `scripts/generate/languages/registry.ts` | `npm run generate:languages`; `test/engine/code-rule/language-registry.test.ts` fails when it is stale |
 | `src/engine/storage/schema-sql.generated.ts` | `scripts/generate/schema/schema-sql.ts` | `npm run generate:schema`; `test/engine/catalog/rule-store.test.ts` fails when it is stale |
-| `src/presentation/terminal-brand.generated.ts` | `scripts/generate/ui/terminal-brand.mjs` | `node scripts/generate/ui/terminal-brand.mjs <landing>` |
-| `ui/tokens.generated.css` | `scripts/generate/ui/tokens.mjs` | `node scripts/generate/ui/tokens.mjs <landing>`; `npm run check:ui-tokens` checks what the page references |
+| `src/presentation/terminal-brand.generated.ts` | `scripts/generate/ui/terminal-brand.mjs` | `node scripts/generate/ui/terminal-brand.mjs <design-source>` |
+| `ui/tokens.generated.css` | `scripts/generate/ui/tokens.mjs` | `node scripts/generate/ui/tokens.mjs <design-source>`; `npm run check:ui-tokens` checks what the page references |
 
 ## Documentation
 
@@ -64,10 +65,17 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 
 | Generated file | Generator | Command |
 |---|---|---|
-| `packs/node/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/candidates/rules/`: the ports its `SHIPPED` lists, every shipped rule but `n-no-process-exit.json`, which is written by hand |
-| `packs/node/candidates/rules/` | `scripts/generate/packs/node_policies.py` | `python3 scripts/generate/packs/node_policies.py [--tools <dir>] [--root <dir>]` (eslint-plugin-n 18.4.1, globals 17.13.0); every candidate port. Writes `suppress.eslint`, and `suppress.oxlint` for the rules oxlint 1.88.0's `node` plugin implements; copies each violation's `suppress.biome` from the committed document. A document keeps its committed revision when nothing else changes; a shipped one (under `packs/node/rules/`) that changes gets the next revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
-| `packs/node/candidates/probes/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/candidates/rules/` |
-| `packs/typescript/candidates/rules/vitest-expect-expect.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | `node scripts/generate/packs/typescript-vitest-policies.mjs` (reads no tools; writes the three @vitest/eslint-plugin 1.6.27 candidates). Writes `suppress.eslint` and `suppress.oxlint` (oxlint 1.88.0's `vitest` plugin implements all three); copies each violation's `suppress.biome` from the committed document and keeps its revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
-| `packs/typescript/candidates/rules/vitest-no-disabled-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
-| `packs/typescript/candidates/rules/vitest-no-focused-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
+| `packs/node/rules/` | `scripts/generate/packs/node_policies.py` | `python3 scripts/generate/packs/node_policies.py [--tools <dir>] [--root <dir>]` (eslint-plugin-n 18.4.1, globals 17.13.0): the ports in its `SHIPPED`, every one but `n-no-process-exit.json`, which is written by hand; the other ports go to `packs/node/candidates/rules/`. Writes `suppress.eslint`, and `suppress.oxlint` for the rules oxlint 1.88.0's `node` plugin implements; copies each violation's `suppress.biome` from the committed document. A document keeps its committed revision when nothing else changes; a shipped one that changes gets the next revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
+| `packs/node/candidates/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/rules/`, for the ports not in `SHIPPED` |
+| `packs/node/candidates/probes/rules/` | `scripts/generate/packs/node_policies.py` | as `packs/node/rules/` |
+| `packs/typescript/rules/vitest-expect-expect.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | `node scripts/generate/packs/typescript-vitest-policies.mjs` (reads no tools; writes the three @vitest/eslint-plugin 1.6.27 ports). Writes `suppress.eslint` and `suppress.oxlint` (oxlint 1.88.0's `vitest` plugin implements all three); copies each violation's `suppress.biome` from the committed document; a document whose content changes gets the next revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
+| `packs/typescript/rules/vitest-no-disabled-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
+| `packs/typescript/rules/vitest-no-focused-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
+| `packs/next/rules/` | `scripts/generate/packs/next-policies.mjs` | `node scripts/generate/packs/next-policies.mjs` (reads no tools): every document; a port that fails its fixtures or the port readiness gates goes to `packs/next/candidates/rules/` instead (none today). Writes `suppress.eslint`, and `suppress.oxlint` for the rules oxlint 1.88.0's `nextjs` plugin implements; copies each violation's `suppress.biome` from the committed document and keeps its revision. Run `biome-suppression.mjs` after it, which updates `suppress.biome` |
+| `packs/next/conformance.json` | `scripts/generate/packs/next-policies.mjs` | as `packs/next/rules/`: its `capabilities` and `rules` lists; the rest is written by hand |
+| `packs/next/pack.json` | `scripts/generate/packs/next-policies.mjs` | as `packs/next/rules/`: its `rules` list, keeping each entry's hand-written fields (examples, mode, on); the rest is written by hand |
+| `packs/next/candidates/probes/` | `scripts/generate/packs/next-probes.mjs` | `node scripts/generate/packs/next-probes.mjs`: the whole probe pack, `conformance.json`, `rules/`, `labels/fixtures/` and `labels/fixtures.expected.json` |
+| `packs/react/rules/` | `scripts/generate/packs/react-policies.mjs` | `node scripts/generate/packs/react-policies.mjs` (reads no tools): the documents of `SPECS` in `scripts/generate/packs/react-specs.mjs`, its input; the ports `react-specs.mjs` lists in `HAND_WRITTEN` are written by hand. A spec with `candidate: true` goes to `packs/react/candidates/rules/` (none today). Writes `suppress.eslint`, `suppress.oxlint` for the rules oxlint 1.88.0's `react` plugin implements, and `suppress.biome` for the rules `conformance/biome-same-sources.generated.ts` lists. A document keeps its committed revision when nothing else changes; a shipped one that changes gets the next revision |
+| `packs/react/conformance.json` | `scripts/generate/packs/react-policies.mjs` | as `packs/react/rules/`; lists the specs and the `HAND_WRITTEN` ports |
+| `packs/react/candidates/probes/rules/` | `scripts/generate/packs/react-probes.mjs` | `node scripts/generate/packs/react-probes.mjs`; the probe pack's `conformance.json` and `labels/` are written by hand, and the run fails when `conformance.json` does not list exactly its probes |
 | `conformance/biome-same-sources.generated.ts` | `scripts/generate/packs/biome-suppression.mjs` | as `native/src/code_rule_dsl/suppress/biome_registry.generated.rs`; the run also sets `suppress.biome` on every violation of `packs/<id>/rules/` and `packs/<id>/candidates/` that carries `suppress.eslint`, bumping a shipped document's revision when it changes |

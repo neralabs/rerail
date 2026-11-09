@@ -126,12 +126,15 @@ async function enforcerFor(workspaceRoot: string, codeRule: CodeRule | (() => Co
       source: sources[path]!,
       ...(await sourceFileFacts(workspaceRoot, path, languageFor(path)!, undefined, compiled.readsServerGraph())),
     }))));
-  /** A stateless evaluation of the same files without facts, beside the package.json and tsconfig.json files on disk. */
+  /**
+   * A stateless evaluation of the same files without facts, beside the package.json, ignore and tsconfig.json files on
+   * disk.
+   */
   const derived = async () => {
     const manifests = await Promise.all(
       Object.keys(sources)
-        .filter(path => /(?:^|\/)(?:package\.json|(?:ts|js)config[^/]*\.json)$/.test(path))
-        .map(async path => ({ path, language: "json", source: await readFile(join(workspaceRoot, path), "utf8") })),
+        .filter(path => /(?:^|\/)(?:package\.json|\.npmignore|\.gitignore|(?:ts|js)config[^/]*\.json)$/.test(path))
+        .map(async path => ({ path, language: languageFor(path), source: await readFile(join(workspaceRoot, path), "utf8") })),
     );
     return evaluate([...manifests, ...ecmaPaths.map(path => ({ path, language: languageFor(path), source: sources[path]! }))]);
   };
@@ -251,7 +254,7 @@ describe("file.package and file.jsxRuntime", () => {
     const { audit, edit, snapshot, derived, close } = await enforcerFor(root, CODE_RULE, SOURCES);
     try {
       expect((await sourceFileFacts(root, "web/page.jsx", "javascript")).package).toEqual({
-        folder: "web", type: "unset", bin: [], nodeVersion: ">=22", dependencies: ["next"],
+        folder: "web", type: "unset", bin: [], nodeVersion: ">=22", dependencies: ["next"], published: true,
       });
       expect(await audit()).toEqual({ status: "completed", reported: BEFORE, failures: [] });
       expect(await edit()).toEqual(BEFORE);
@@ -273,6 +276,72 @@ describe("file.package and file.jsxRuntime", () => {
       expect(await audit()).toEqual({ status: "completed", reported: emotionRuntime, failures: [] });
       expect(await snapshot()).toEqual(emotionRuntime);
       expect(await derived()).toEqual(emotionRuntime);
+    } finally {
+      await close();
+    }
+  });
+});
+
+describe("file.package.published and file.package.private", () => {
+  const program = (id: string, file: Record<string, unknown>) => ({
+    id,
+    violation: { code: id.toUpperCase(), anchor: "witness.span", message: id },
+    forbid: { ast: { language: "typescript", file, rule: { kind: "program" } } },
+  });
+  const CODE_RULE = codeRuleSchema.parse({
+    format: "rerail.policy/v1", id: "package-facts:publication", revision: 1, mode: "steer",
+    scope: { include: ["**/*"], exclude: [] },
+    clauses: [program("published", { package: { published: true } }), program("private", { package: { private: true } })],
+  });
+  const SOURCES: Sources = {
+    "package.json": '{ "files": ["lib"], "private": true }\n',
+    ".npmignore": "lib/test\n",
+    "lib/a.js": "export {};\n",
+    "lib/test/b.js": "export {};\n",
+    "src/c.js": "export {};\n",
+    // Without `files` or a `.npmignore`, the `.gitignore` decides.
+    "pkg/package.json": "{}\n",
+    "pkg/.gitignore": "dist\n",
+    "pkg/index.js": "export {};\n",
+    "pkg/dist/d.js": "export {};\n",
+  };
+  const BEFORE = {
+    "lib/a.js PUBLISHED": 1, "lib/a.js PRIVATE": 1,
+    "lib/test/b.js PRIVATE": 1,
+    "src/c.js PRIVATE": 1,
+    "pkg/index.js PUBLISHED": 1,
+  };
+  /** The `.npmignore` now leaves out `lib/a.js` rather than `lib/test`. */
+  const AFTER = {
+    "lib/a.js PRIVATE": 1,
+    "lib/test/b.js PUBLISHED": 1, "lib/test/b.js PRIVATE": 1,
+    "src/c.js PRIVATE": 1,
+    "pkg/index.js PUBLISHED": 1,
+  };
+
+  it.each(MODES)("read the manifest and its ignore files alike through %s, an edit and a snapshot, and follow an ignore file's edit", async (_name, git) => {
+    const root = await repository(git, SOURCES);
+    const { audit, edit, snapshot, derived, acceptsPath, close } = await enforcerFor(root, CODE_RULE, SOURCES);
+    try {
+      expect((await sourceFileFacts(root, "lib/test/b.js", "javascript")).package).toMatchObject({ folder: "", private: true, published: false });
+      expect((await sourceFileFacts(root, "pkg/index.js", "javascript")).package).toEqual({
+        folder: "pkg", type: "unset", bin: [], dependencies: [], published: true,
+      });
+      expect(await audit()).toEqual({ status: "completed", reported: BEFORE, failures: [] });
+      expect(await edit()).toEqual(BEFORE);
+      expect(await snapshot()).toEqual(BEFORE);
+      expect(await derived()).toEqual(BEFORE);
+
+      // The ignore file's edit alone resends the sources whose publication it changes.
+      expect(acceptsPath(".npmignore")).toBe(true);
+      await writeFile(join(root, ".npmignore"), "lib/a.js\n");
+      expect(await edit([{ path: ".npmignore", language: "text", generatedText: "lib/a.js\n" }])).toEqual({
+        "lib/a.js PRIVATE": 1, "lib/test/b.js PUBLISHED": 1, "lib/test/b.js PRIVATE": 1,
+      });
+      expect(await audit()).toEqual({ status: "completed", reported: AFTER, failures: [] });
+      expect(await edit()).toEqual(AFTER);
+      expect(await snapshot()).toEqual(AFTER);
+      expect(await derived()).toEqual(AFTER);
     } finally {
       await close();
     }

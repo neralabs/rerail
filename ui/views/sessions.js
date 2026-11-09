@@ -5,7 +5,7 @@
  */
 import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from "../dom.js";
 import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId, truncate } from "../format.js";
-import { data, ui, titleOf as ruleTitle, packRuleOf } from "../state.js";
+import { data, ui, repoName, titleOf as ruleTitle, packRuleOf } from "../state.js";
 import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
 import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../sessions-model.js";
 import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
@@ -49,8 +49,12 @@ function jumpToFirst() {
 async function selectLinked(id, jump) {
   const error = await selectSession(id, jump ? jumpToFirst : undefined);
   if (error === null || !error.message.endsWith("answered 404")) return;
-  if (ui.selectedSession === id) selectSession(currentSession()?.sessionId ?? null);
-  toast(`Session ${shortSessionId(id, new URLSearchParams(location.search).get("host"))} is not in this repo`);
+  // The page falls back to the list's first row, the most recent session, only while the missing one is selected.
+  const selected = ui.selectedSession === id, fallback = selected ? currentSession() : null;
+  const instead = fallback?.sessionId === id ? null : fallback;
+  if (selected) selectSession(instead?.sessionId ?? null);
+  const shown = instead ? " Showing the most recent one." : "";
+  toast(`Session ${shortSessionId(id, new URLSearchParams(location.search).get("host"))} isn’t in ${repoName() || "this repo"}.${shown}`);
 }
 
 /**
@@ -107,12 +111,10 @@ function build() {
   el.resume = h("button.btn.sm.solid", { "data-act": "resumetoggle", "aria-expanded": "false" });
   el.resumeLbl = h("p.lbl");
   el.resumeText = h("textarea.one", { id: "resumeText", readonly: true, "aria-label": "Resume command" });
-  el.resumeHow = h("p", { style: "margin:0;font-size:13px", hidden: true });
-  el.resumeFoot = h("span");
   el.resumeCopy = h("button.btn.sm.solid", { "data-act": "resumecopy" });
   el.resumeBox = h("div.pask.sresume", { hidden: true },
     h("button.x", { "data-act": "resumetoggle", "aria-label": "Close", title: "Close" }, "✕"),
-    el.resumeLbl, el.resumeText, el.resumeHow, h("div.foot", null, el.resumeFoot, el.resumeCopy));
+    el.resumeLbl, el.resumeText, h("div.foot", null, h("span"), el.resumeCopy));
   // The one filter on the timeline: a rule that logged in this session, with how many; "All rules" lifts it.
   el.rule = h("select", { id: "srule", "aria-label": "Filter the timeline to one rule" });
   el.ruleCtl = h("label.sortctl.srule", null, el.rule);
@@ -120,7 +122,7 @@ function build() {
   el.rail = h("div.rail", { id: "rail" }, h("div.line"));
   el.tl = h("div.tl", { id: "tl" });
   el.scroll = h("div.scroll", { id: "sscroll" }, h("div.tlwrap", null, el.rail, el.tl));
-  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No sessions yet"), h("p", null, "Your first coding agent session in this repo shows here, with the violations it logged.")));
+  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No sessions yet."), h("p", null, "The first coding agent session in this repo shows here.")));
   el.listToggle = h("button.ltoggle", { "data-act": "slisttoggle", "aria-pressed": "true" });
   el.ltrow = h("div.ltrow", null, el.listToggle);
   el.aside = h("aside", null,
@@ -241,7 +243,8 @@ function renderList(all, sess) {
   const visible = all.filter(s => passesFilter(s) && matchesQuery(s, q));
   const total = Math.max(data.sessions.total, all.length);
   // Filters and search run over the loaded pages; the total says how many more Load more can bring.
-  setText(v.lead, `${fmt(visible.length)} of ${fmt(total)} · newest first`);
+  const narrowed = ui.sessFilter !== "all" || q !== "";
+  setText(v.lead, narrowed ? `${fmt(visible.length)} of ${fmt(total)} sessions, newest first.` : `${fmt(total)} ${plural(total, "session")}, newest first.`);
   if (v.search.value !== ui.sessQuery && document.activeElement !== v.search) v.search.value = ui.sessQuery;
   for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
 
@@ -315,11 +318,9 @@ function renderHeader(sess) {
 }
 
 function renderResumeBox(rc) {
-  setText(v.resumeLbl, rc.cmd ? `Run this in your terminal to pick the conversation back up in ${rc.name}` : `${rc.name} has no resume command`);
+  setText(v.resumeLbl, rc.cmd ? `Run this in your terminal to continue the session in ${rc.name}, with its history.` : `Open ${rc.name} in ${rc.cwd} and find the session.`);
   setAttr(v.resumeText, "hidden", !rc.cmd);
   if (rc.cmd && v.resumeText.value !== rc.cmd) v.resumeText.value = rc.cmd;
-  setAttr(v.resumeHow, "hidden", Boolean(rc.cmd)); setText(v.resumeHow, rc.how ?? "");
-  setText(v.resumeFoot, rc.cmd ? "Reopens the same conversation with its history." : "The id is what to look for.");
   setText(v.resumeCopy, rc.cmd ? "Copy command" : "Copy id");
 }
 
@@ -386,14 +387,14 @@ export const actions = {
   showall: () => { ui.showAll = true; invalidate(); },
   sfilter: id => { ui.sessFilter = id; invalidate(); },
   daytoggle: id => { toggleSet(ui.openDays, id); invalidate(); },
-  sessmore: () => loadMore(loadMoreSessions),
-  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId)); },
+  sessmore: () => loadMore(loadMoreSessions, "sessions"),
+  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId), "earlier events"); },
   resumetoggle: () => { ui.resumeOpen = !ui.resumeOpen; invalidate(); },
   slisttoggle: () => { listHidden = !listHidden; invalidate(); },
   resumecopy: () => {
     const s = currentSession(); if (!s) return;
     const rc = resumeCommand(s);
-    copyText(rc.cmd ?? s.sessionId, document.getElementById("resumeText"), rc.cmd ? "Copied. Run it in your terminal." : "Copied the session id.");
+    copyText(rc.cmd ?? s.sessionId, document.getElementById("resumeText"), rc.cmd ? "Resume command copied. Run it in your terminal." : "Session id copied.");
   },
 };
 

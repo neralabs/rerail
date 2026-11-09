@@ -232,15 +232,33 @@ pub(crate) struct ValueTest {
     pub(crate) bits_any: Option<u64>,
     pub(crate) bounds: Vec<(Bound, Value)>,
     pub(crate) truthy: Option<bool>,
+    /// `name: true`: the predicates read what the node names rather than its value: ESTree's
+    /// name (an identifier's, escapes decoded; a private name's without `#`) or a string literal's
+    /// value, as `compare`'s `name` text reads it; PHP's symbol name. A node without one fails.
+    pub(crate) name: bool,
 }
 
 impl ValueTest {
     /// `Some(true)`, `Some(false)`, or `None` when the verdict is unknown.
     pub(super) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> Option<bool> {
-        if !self.reading.has_value(node) {
-            return Some(false);
-        }
-        let value = self.reading.value(node);
+        let value = if self.name {
+            let family = self.reading.family;
+            let Some(units) =
+                with_adapter!(family, A => <<A as Adapter>::Value as ValueRules>::node_name(node))
+            else {
+                return Some(false);
+            };
+            // A name holding a lone surrogate has no text to compare.
+            let text = String::from_utf16(&units).ok()?;
+            Rc::new(
+                with_adapter!(family, A => <<A as Adapter>::Value as ValueRules>::string(&text)),
+            )
+        } else {
+            if !self.reading.has_value(node) {
+                return Some(false);
+            }
+            self.reading.value(node)
+        };
         let lang = self.reading.lang();
         let mut verdict = Some(true);
         let mut all = |term: Option<bool>| match term {

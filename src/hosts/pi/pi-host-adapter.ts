@@ -12,7 +12,8 @@ import {
   type AdapterEvent,
   type AdapterSession,
 } from "../../engine/adapter-contract.js";
-import { registerPiSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
+import type { NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
+import { registerPiSemanticTools } from "./pi-semantic-tools.js";
 import { registerPiConversationRulesCommand, type PiConversationRulesCommandRuntime } from "./pi-command.js";
 import { contained } from "../../harness/contained-hook.js";
 import { guardCompaction } from "../../harness/compaction-guard.js";

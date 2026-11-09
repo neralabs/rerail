@@ -205,7 +205,7 @@ function licensesMarkdown(pack, tool, sources, projects, files) {
       "",
       `Repository ${source.repository}${source.tag === undefined ? "" : `, tag \`${source.tag}\``}, commit \`${source.commit}\`. License: ${source.license}.`,
       "",
-      `${taken.length} file(s): ${counts(taken)}. They remain under ${id}'s licence. Files marked \`extracted\`, \`adapted\` or \`renamed\` were changed by Rerail as \`${PROVENANCE}\` describes: \`extracted\` is one test case cut out of the upstream file it names (\`detail\` locates the case), \`adapted\` is such a case wrapped so the tool reads it, and \`renamed\` is the file \`renamedFrom\` names with its names and literals renamed. \`verbatim\` files are unchanged copies.`,
+      `${taken.length} file(s): ${counts(taken)}. They remain under ${id}'s licence. Files marked \`extracted\`, \`adapted\` or \`renamed\` were changed by Rerail as \`${PROVENANCE}\` describes: \`extracted\` is one test case cut out of the upstream file it names (\`detail\` locates the case), \`adapted\` is such a case wrapped so the tool reads it, and \`renamed\` is the file \`renamedFrom\` names with its names renamed (literals and the names' order kept). \`verbatim\` files are unchanged copies.`,
       "",
     );
     for (const { file, text } of licenceTexts(projects.get(id).directory)) lines.push(`### ${file}`, "", fence(text), text.trimEnd(), fence(text), "");

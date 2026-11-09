@@ -291,7 +291,7 @@ function writeLicenseAndProvenance() {
       .filter(entry => entry.kind === "renamed")
       .map(entry => [
         `fixtures/${entry.path}`,
-        { source, from: testOf(entry.rule), how: "renamed", renamedFrom: `fixtures/${entry.of}`, detail: `derived from ${entry.renamedKind}[${entry.index}] (\`fixtures/${entry.of}\` with its names and literals renamed)` },
+        { source, from: testOf(entry.rule), how: "renamed", renamedFrom: `fixtures/${entry.of}`, detail: `derived from ${entry.renamedKind}[${entry.index}] (\`fixtures/${entry.of}\` with its names renamed (literals and the names' order kept))` },
       ]),
   ]);
   writeProvenance({ pack: "next", tool: TOOL, entries, commits: { [source]: UPSTREAM_COMMIT } });

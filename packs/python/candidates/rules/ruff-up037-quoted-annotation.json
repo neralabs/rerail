@@ -1,0 +1,857 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up037-quoted-annotation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove quotes from type annotations that Python never evaluates at runtime, such as under postponed annotation evaluation or on local variables; the quotes add nothing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "future-annotations": {
+            "kind": "future_import_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "dotted_name",
+                  "regex": "^annotations$"
+                },
+                {
+                  "kind": "aliased_import",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "dotted_name",
+                    "regex": "^annotations$"
+                  }
+                }
+              ]
+            }
+          },
+          "future-seen": {
+            "inside": {
+              "stopBy": "end",
+              "follows": {
+                "stopBy": "end",
+                "matches": "future-annotations"
+              }
+            }
+          },
+          "annotation-root": {
+            "kind": "type",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "any": [
+                    {
+                      "kind": "typed_parameter"
+                    },
+                    {
+                      "kind": "typed_default_parameter"
+                    },
+                    {
+                      "kind": "assignment"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "return_type",
+                  "kind": "function_definition"
+                }
+              }
+            ]
+          },
+          "local-annotation": {
+            "inside": {
+              "stopBy": "end",
+              "matches": "annotation-root",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "assignment",
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "function_definition"
+                }
+              }
+            }
+          },
+          "dispatch-interface": {
+            "kind": "function_definition",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "functools.singledispatch",
+                      "functools.singledispatchmethod"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "dispatch-impl": {
+            "kind": "function_definition",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "decorator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^register$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "kind": "identifier",
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "matches": "dispatch-interface"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "dispatch-annotation": {
+            "kind": "type",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "return_type",
+                  "matches": "dispatch-impl"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "any": [
+                    {
+                      "kind": "typed_parameter",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "any": [
+                            {
+                              "kind": "list_splat_pattern"
+                            },
+                            {
+                              "kind": "dictionary_splat_pattern"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "kind": "typed_default_parameter"
+                    }
+                  ],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parameters",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "matches": "dispatch-impl"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "in-typing-annotation": {
+            "inside": {
+              "stopBy": "end",
+              "matches": "annotation-root",
+              "not": {
+                "matches": "dispatch-annotation"
+              }
+            }
+          },
+          "plain-string": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[a-zA-Z]*[bBfFtT]"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "regex": "^[a-zA-Z]*[bBfFtT]"
+                  }
+                }
+              }
+            ]
+          },
+          "quoted-within": {
+            "any": [
+              {
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "parse": {
+                          "grammar": "annotation",
+                          "kind": "expression_statement"
+                        }
+                      }
+                    ],
+                    "capture": "Q"
+                  }
+                }
+              },
+              {
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "end",
+                    "all": [
+                      {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          }
+                        ]
+                      },
+                      {
+                        "matches": "quoted-within"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "typing-only": {
+            "matches": "in-typing-annotation",
+            "any": [
+              {
+                "matches": "future-seen"
+              },
+              {
+                "matches": "local-annotation"
+              }
+            ]
+          },
+          "typeddict-value": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ]
+              },
+              {
+                "matches": "plain-string"
+              },
+              {
+                "value": {
+                  "regex": "^\\s*[\\w.,|\\[\\]()\\s]+$"
+                }
+              },
+              {
+                "not": {
+                  "value": {
+                    "regex": "[\\w\\])]\\s+\\w|[\\[(,|.]\\s*$|^\\s*[\\]),|.]"
+                  }
+                }
+              }
+            ]
+          },
+          "typeddict-extra-items": {
+            "matches": "typeddict-value",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "regex": "^extra_items$"
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      }
+                    ],
+                    "resolves": {
+                      "import": [
+                        "typing.TypedDict",
+                        "typing_extensions.TypedDict",
+                        "_typeshed.TypedDict"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "typeddict-legacy-field": {
+            "matches": "typeddict-value",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "not": {
+                  "regex": "^(total|extra_items)$"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "argument_list",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "identifier"
+                      },
+                      {
+                        "kind": "attribute"
+                      }
+                    ],
+                    "resolves": {
+                      "import": [
+                        "typing.TypedDict",
+                        "typing_extensions.TypedDict",
+                        "_typeshed.TypedDict"
+                      ]
+                    }
+                  }
+                },
+                "not": {
+                  "any": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "nthChild": {
+                          "position": 3,
+                          "ofRule": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "keyword_argument"
+                                },
+                                {
+                                  "kind": "dictionary_splat"
+                                },
+                                {
+                                  "kind": "comment"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "nthChild": {
+                          "position": 2,
+                          "ofRule": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "keyword_argument"
+                                },
+                                {
+                                  "kind": "dictionary_splat"
+                                },
+                                {
+                                  "kind": "comment"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "not": {
+                          "kind": "none"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "not": {
+              "parse": {
+                "grammar": "annotation",
+                "kind": "expression_statement"
+              }
+            }
+          },
+          "quoted-direct": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "parse": {
+                      "grammar": "annotation",
+                      "kind": "expression_statement"
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "typeddict-extra-items"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "quoted-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "quoted-direct"
+              },
+              {
+                "matches": "typing-only"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP037",
+        "message": "Remove the quotes from this annotation and write the type directly; Python never evaluates it at runtime here, so the quotes add nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP037"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "quoted-annotation-in-quotes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "quoted-within"
+                  }
+                ]
+              },
+              {
+                "matches": "typing-only"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.Q",
+        "code": "UP037",
+        "message": "Remove the quotes from this annotation and write the type directly; Python never evaluates it at runtime here, so the quotes add nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP037"
+            ]
+          }
+        },
+        "each": "Q"
+      }
+    },
+    {
+      "id": "quoted-annotation-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "quoted-direct"
+              },
+              {
+                "matches": "in-typing-annotation"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP037",
+        "message": "Remove the quotes from this annotation and write the type directly; Python never evaluates it at runtime here, so the quotes add nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP037"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "quoted-annotation-in-stub-quotes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "quoted-within"
+                  }
+                ]
+              },
+              {
+                "matches": "in-typing-annotation"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.Q",
+        "code": "UP037",
+        "message": "Remove the quotes from this annotation and write the type directly; Python never evaluates it at runtime here, so the quotes add nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP037"
+            ]
+          }
+        },
+        "each": "Q"
+      }
+    },
+    {
+      "id": "quoted-annotation-deferred",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "quoted-direct"
+              },
+              {
+                "matches": "in-typing-annotation",
+                "not": {
+                  "matches": "typing-only"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "when": {
+            "pythonVersion": {
+              "min": "3.14"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP037",
+        "message": "Remove the quotes from this annotation and write the type directly; Python never evaluates it at runtime here, so the quotes add nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP037"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "quoted-annotation-deferred-in-quotes",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "string"
+                      },
+                      {
+                        "kind": "concatenated_string"
+                      }
+                    ]
+                  },
+                  {
+                    "matches": "quoted-within"
+                  }
+                ]
+              },
+              {
+                "matches": "in-typing-annotation",
+                "not": {
+                  "matches": "typing-only"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "when": {
+            "pythonVersion": {
+              "min": "3.14"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.Q",
+        "code": "UP037",
+        "message": "Remove the quotes from this annotation and write the type directly; Python never evaluates it at runtime here, so the quotes add nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP037"
+            ]
+          }
+        },
+        "each": "Q"
+      }
+    },
+    {
+      "id": "quoted-typeddict-field",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.12"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "typeddict-legacy-field"
+              },
+              {
+                "matches": "typing-only"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP037",
+        "message": "Remove the quotes from this annotation and write the type directly; Python never evaluates it at runtime here, so the quotes add nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP037"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "quoted-typeddict-field-in-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "max": "3.12"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "typeddict-legacy-field"
+              },
+              {
+                "matches": "in-typing-annotation"
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP037",
+        "message": "Remove the quotes from this annotation and write the type directly; Python never evaluates it at runtime here, so the quotes add nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP037"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

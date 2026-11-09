@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
-import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot } from "../engine/package-root.js";
+import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { claudeWorkspace } from "../hosts/claude/claude-event-adapter.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
@@ -22,14 +21,23 @@ import {
 } from "./activation-cli.js";
 import { CustomerActivationManager, CustomerProfileStore } from "../activation/customer-profile.js";
 import {
-  readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
+  checkoutRuleCounts, readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { gitExecutable, GitUnavailableError } from "../engine/git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
-import { assertHostBindable, parseArguments, parsePort, parsePublicHosts } from "../daemon/daemon.js";
+import {
+  assertHostBindable,
+  DAEMON_TRANSPORT_FLAGS,
+  DAEMON_TRANSPORT_OPTIONS,
+  DEFAULT_DAEMON_HOST,
+  parseArguments,
+  parseDaemonTransport,
+  parsePort,
+  parsePublicHosts,
+} from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
   accessTokenKept,
@@ -42,22 +50,31 @@ import {
   stopDaemon,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
+  type DaemonLookup,
   type RunningDaemon,
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
-import { rollbackWithSnapshot, runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
+import { runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
+import { runScrubCommand } from "./scrub-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
+import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
+import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
+import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
+import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
+import { runFeedbackCommand } from "./feedback-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
+import { modelStatusLine } from "../engine/native/model-status.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
@@ -74,8 +91,8 @@ interface PackageManifest {
   version: string;
 }
 
-async function packageManifest(root: string): Promise<PackageManifest> {
-  const value = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as Record<string, unknown>;
+function packageManifest(root: string): PackageManifest {
+  const value = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Record<string, unknown>;
   if (typeof value.name !== "string" || typeof value.version !== "string") {
     throw new TypeError(`Invalid Rerail package manifest: ${join(root, "package.json")}`);
   }
@@ -105,7 +122,7 @@ function printStatus(status: UpdateStatus): void {
 }
 
 /**
- * What an update or rollback did, and, when it changed the active core, the installed rule packs that version leaves
+ * What an update did, and, when it changed the active core, the installed rule packs that version leaves
  * out by their core range: every repository that adds one runs none of its rules until a version that fits is in.
  */
 function printUpdateResult(result: UpdateResult, home: string): void {
@@ -118,7 +135,7 @@ function printUpdateResult(result: UpdateResult, home: string): void {
   process.stdout.write([
     `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    "Install a version that fits with `rerail packs add <id>`, or go back with `rerail update rollback`.",
+    "Install a version that fits with `rerail packs add <package>`.",
   ].join("\n") + "\n");
 }
 
@@ -134,38 +151,48 @@ function usage(): string {
   return [
     "Usage:",
     "  rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--repository] [--port <n>] [--json] [--relay] [--database <file>]",
-    "  rerail install [--root <package>] [--agents <list>] [--remove] [--dry-run]",
+    "  rerail install [--root <package>] [--agents <list>] [--remove [--delete-data]] [--dry-run]",
     "  rerail install --refresh",
     "  rerail start [--repo <dir>] [--repository] [--agents <list>] [--answer <answer>] [--json] [--relay] [--database <file>]",
     "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
     "  rerail version",
-    "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
+    "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--tls-cert <pem> --tls-key <pem>] [--insecure-http] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",
     "  rerail manage [--print]",
     "  rerail seed",
     "  rerail reset",
+    "  rerail scrub",
     "  rerail packs [list]",
-    "  rerail packs add <id[@version] | package | tarball | folder>...",
-    "  rerail packs remove <id>...",
+    "  rerail packs add <id[@version] | package[@version] | tarball | folder>...",
+    "  rerail packs remove <id | package>...",
     "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
-    "  rerail rules import <rules.json>",
-    "  rerail rules test <draft.json> [--repo <dir>] [--json]",
+    "  rerail rules import <rules.json> [--approve]",
+    "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
+    "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
     "  rerail show-me [--cleanup] [--repo <dir>] [--json]",
+    "  rerail feedback <rule-id> <reason>",
+    "  rerail feedback list [--rule <rule-id>]",
+    "  rerail support-bundle [--session <id>] [--repo <dir>] [--output <file>] [--json]",
     "  rerail settings --session <id> [--scope repository|touched-files|ai-output] [--mode log|steer] [--json]",
     "  rerail update",
     "  rerail update check [--channel <tag>]",
     "  rerail update status",
-    "  rerail update rollback",
     "  rerail update --channel <tag>",
     "",
-    internalTesting("Not part of the 0.1.0 release:"),
+    internalTesting(`Not part of the ${packageManifest(packageRoot).version} release:`),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
+    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
+    "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
+    "  rerail remote list|status [--json]",
+    "  rerail remote remove <name|url>",
+    "  rerail remote push [--json]",
+    "  rerail remote exclude|include [--repo <dir>]",
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
@@ -183,24 +210,27 @@ function printDaemon(daemon: RunningDaemon): void {
   process.stdout.write(health.native.ok
     ? `Engine: ok (version ${health.native.kernelVersion})\n`
     : `Engine: unavailable: ${health.native.error}\n`);
+  process.stdout.write(`${modelStatusLine(health.model)}\n`);
 }
 
 async function runDaemonStartCommand(args: readonly string[], home: string): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--dev", "--open", "--allow-remote"], options: ["--port", "--host", "--public-host"] },
+    { flags: ["--dev", "--open", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--port", "--host", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
   const port = options.get("--port");
   const host = options.get("--host");
   if (host !== undefined) assertHostBindable(host, flags.has("--allow-remote"));
   const publicHosts = parsePublicHosts(options.get("--public-host"));
+  const transport = parseDaemonTransport({ flags, options }, host ?? DEFAULT_DAEMON_HOST, publicHosts);
   const result = await startDaemon({ home, packageRoot }, {
     dev: flags.has("--dev"),
     ...(host === undefined ? {} : { host }),
     ...(flags.has("--allow-remote") ? { allowRemote: true } : {}),
     ...(publicHosts.length === 0 ? {} : { publicHosts }),
     ...(port === undefined ? {} : { port: parsePort(port) }),
+    ...transport,
   });
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
@@ -252,6 +282,23 @@ async function runStatusCommand(home: string): Promise<number> {
   } else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
+  const code = printDaemonStatus(lookup);
+  // Internal testing: the remote sink, only when a remote is added.
+  try {
+    for (const remote of new RemoteOutbox({ home }).status()) process.stdout.write(`${describeRemoteStatus(remote)}\n`);
+  } catch (error) {
+    process.stdout.write(`Remote sink: status unreadable (${error instanceof Error ? error.message : String(error)})\n`);
+  }
+  // Last, for each connected coding agent, whether its tools can read Rerail's data on this computer.
+  for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
+    // Each sentence names its coding agent.
+    if (agent.connected) process.stdout.write(`${agent.rerailData.why}\n`);
+  }
+  return code;
+}
+
+/** What `rerail status` says of the daemon, and the exit code that goes with it. */
+function printDaemonStatus(lookup: DaemonLookup): number {
   if (lookup.status === "absent") {
     process.stdout.write("The Rerail daemon is not running. Start it with rerail daemon start.\n");
     return 3;
@@ -265,7 +312,7 @@ async function runStatusCommand(home: string): Promise<number> {
     return 4;
   }
   printDaemon({ state: lookup.state, health: lookup.health });
-  return 0;
+  return lookup.health.healthy === false ? 5 : 0;
 }
 
 /**
@@ -320,7 +367,7 @@ async function dispatchToManagedVersion(args: readonly string[], updater: Manage
   if (resolve(state.current.packageRoot) === packageRoot) return undefined;
   const managedCli = join(state.current.packageRoot, ENTRY_POINTS.cli);
   if (!existsSync(managedCli)) {
-    throw new Error(`Active Rerail launcher is missing: ${managedCli}. Run rerail update rollback.`);
+    throw new Error(`Active Rerail launcher is missing: ${managedCli}. Run npx ${RERAIL_PACKAGE_NAME} setup to install Rerail again.`);
   }
   return await runChild(process.execPath, [managedCli, MANAGED_CHILD_ARGUMENT, ...args]);
 }
@@ -354,10 +401,6 @@ async function runUpdateCommand(
     process.stdout.write(`Update available: ${result.updateAvailable ? "yes" : "no"}\n`);
     return 0;
   }
-  if (action === "rollback") {
-    printUpdateResult(await rollbackWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), () => stopDaemon(home)), home);
-    return 0;
-  }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);
   printUpdateResult(await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel), home);
   // Newer version or not, the version `current` names registers itself again, as its own CLI, with every coding agent
@@ -374,11 +417,12 @@ async function runUpdateCommand(
 }
 
 /**
- * Rules on in `workspace`'s checkout, from its repository's configuration, for `/rerail` where the coding agent
- * cannot name its session. A status read: it never writes, and where the configuration cannot be read (busy, or
- * the checkout not recorded) the summary drops the count line rather than failing.
+ * Rules on in `workspace`'s checkout, and how many of them run in Log waiting for a person's approval, from its
+ * repository's configuration, for `/rerail` where the coding agent cannot name its session. A status read: it never
+ * writes, and where the configuration cannot be read (busy, or the checkout not recorded) the summary drops the count
+ * lines rather than failing.
  */
-function enabledRuleCount(workspace: string): number | null {
+function repositoryRuleCounts(workspace: string): { on: number; awaitingApproval: number } | null {
   const databasePath = defaultRerailDatabasePath();
   if (!existsSync(databasePath)) return null;
   let database;
@@ -386,9 +430,7 @@ function enabledRuleCount(workspace: string): number | null {
     database = openRerailDatabase(databasePath, { readonly: true });
     const checkout = lookupCheckout(database, workspace);
     if (checkout === undefined) return null;
-    const parentCheckoutPaths = parentCheckouts(database, checkout).map(row => row.checkoutPath);
-    return listRepositoryRules(database, loadRuleCatalog(), checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths })
-      .rules.filter(rule => rule.on).length;
+    return checkoutRuleCounts(database, checkout);
   } catch (error) {
     process.stderr.write(`rerail: could not count this repo's rules: ${error instanceof Error ? error.message : String(error)}\n`);
     return null;
@@ -420,13 +462,15 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
     : await readPresentation({ host: host as RerailHost, sessionId, cwd, onDemand: true, startState });
   const repositoryState = presentation === null ? await readSummaryState(cwd, host as RerailHost, startState) : presentation.repositoryState;
   const rulesUrl = (await readRulesDashboard({ cwd })).url;
+  const counts = presentation === null && repositoryState === "started" ? repositoryRuleCounts(cwd) : null;
   process.stdout.write(`${renderRerailSummary({
     presentation,
     repositoryState,
-    ruleCount: presentation === null && repositoryState === "started" ? enabledRuleCount(cwd) : null,
+    ruleCount: counts?.on ?? null,
+    awaitingApproval: counts?.awaitingApproval ?? null,
     rulesUrl,
     repositoryName: repositoryName(cwd),
-    sigil: host === "codex" ? "$" : "/",
+    sigil: ADAPTER_CAPABILITIES[host as RerailHost].commandSigil,
   })}\n`);
   if (!open) return 0;
   const page = presentation?.url ?? rulesUrl;
@@ -482,69 +526,83 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
   const args = rawArgs.slice(positionals.length);
   const io = setupIo(args);
   try {
-    if (command === "start" && args.includes(JSON_FLAG)) {
+    if (command === "stop") return runStopCommand(args, positionals, io);
+    if (args.includes(JSON_FLAG)) {
       const step = await startStep(args, context, machinePlace(context));
       io.say(JSON.stringify(step));
       return step.step === "error" ? 1 : 0;
     }
-    const { flags, options } = parseArguments(
-      args,
-      {
-        flags: command === "start" ? ["--repository", SETUP_FLAGS.relay] : ["--repository"],
-        options: command === "start" ? ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] : ["--repo", "--database"],
-      },
-      argument => `Unknown ${command} option: ${argument}\n\n${usage()}`,
-    );
-    const workspace = resolve(options.get("--repo") ?? process.cwd());
-    const database = options.get("--database");
-    const databasePath = database === undefined ? undefined : resolve(database);
-    const repository = flags.has("--repository");
-    if (command === "stop") {
-      const session = stopSession(positionals);
-      stopRerail(workspace, io, {
-        ...(databasePath === undefined ? {} : { databasePath }),
-        repository,
-        ...(session === undefined ? {} : { session }),
-      });
-      return 0;
-    }
-    // A release from before set-up checks an update with a bare `start`, which set-up would only ask a question of.
-    if (isPreSetupHealthCheck(args, io.lane, workspace)) {
-      startForPreSetupHealthCheck(workspace, io);
-      return 0;
-    }
-    const answer = checkSetupAnswer(options.get("--answer"));
-    const { agents, agentsError } = setupAgents(options.get("--agents"), answer);
-    const packs = setupPacks(options.get(SETUP_FLAGS.packs), answer);
-    const setupCommand = setupAnswerCommand(context, {
-      ...(databasePath === undefined ? {} : { databasePath }),
-      repository,
-      ...(io.lane === "agent" ? { relay: true } : {}),
-      ...(agents === undefined ? {} : { agents }),
-    });
-    const environment = setupEnvironment(context);
-    // An update's health check (`skipsSessionsApproval`) reads no one's sessions, so it is not asked to allow it, and
-    // its "I'll pick rule packs myself" starts with none, as `--packs none` does: no pack fits its empty folder, the
-    // releases that run it expect Rerail on there, and it fetches nothing from npm.
-    const healthCheck = skipsSessionsApproval(args, io.lane, workspace, () => environment.agentsFound());
-    const report = await startRerail(workspace, io, {
-      ...(databasePath === undefined ? {} : { databasePath }),
-      ...(agents === undefined ? {} : { agents }),
-      ...(agentsError === undefined ? {} : { agentsError }),
-      ...(healthCheck ? { packs: [] } : packs),
-      ...(answer === undefined ? {} : { answer }),
-      ...(setupCommand === undefined ? {} : { setupCommand }),
-      repository,
-      environment: healthCheck ? { ...environment, sessionsApproved: () => true } : environment,
-    });
-    // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
-    if (report.setUpRan) return report.cancelled ? 1 : 0;
-    const page = await readRulesDashboard({ cwd: workspace });
-    if (page.url !== null) process.stdout.write(`  ${page.url}\n`);
-    return 0;
+    return await runStartCommand(args, context, io);
   } finally {
     io.close();
   }
+}
+
+/** The options that have a value: `startRerail`'s, `stopRerail`'s and `setupAnswerCommand`'s take none as absent, not `undefined`. */
+function definedOnly<T extends object>(options: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  return Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) as { [K in keyof T]?: Exclude<T[K], undefined> };
+}
+
+/** `databasePath` when `--database` names one, as `startRerail` and `stopRerail` take it. */
+function databasePathOption(options: ReadonlyMap<string, string>): { databasePath?: string } {
+  const database = options.get("--database");
+  return database === undefined ? {} : { databasePath: resolve(database) };
+}
+
+function runStopCommand(args: readonly string[], positionals: readonly string[], io: ReturnType<typeof setupIo>): number {
+  const { flags, options } = parseArguments(args, { flags: ["--repository"], options: ["--repo", "--database"] }, argument => `Unknown stop option: ${argument}\n\n${usage()}`);
+  const workspace = resolve(options.get("--repo") ?? process.cwd());
+  const session = stopSession(positionals);
+  stopRerail(workspace, io, {
+    ...databasePathOption(options),
+    repository: flags.has("--repository"),
+    ...definedOnly({ session }),
+  });
+  return 0;
+}
+
+async function runStartCommand(args: readonly string[], context: SetupContext, io: ReturnType<typeof setupIo>): Promise<number> {
+  const { flags, options } = parseArguments(
+    args,
+    { flags: ["--repository", SETUP_FLAGS.relay], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
+    argument => `Unknown start option: ${argument}\n\n${usage()}`,
+  );
+  const workspace = resolve(options.get("--repo") ?? process.cwd());
+  // A release from before set-up checks an update with a bare `start`, which set-up would only ask a question of.
+  if (isPreSetupHealthCheck(args, io.lane, workspace)) {
+    startForPreSetupHealthCheck(workspace, io);
+    return 0;
+  }
+  const report = await startRerail(workspace, io, startOptions(args, flags.has("--repository"), options, context, { lane: io.lane, workspace }));
+  // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
+  if (report.setUpRan) return report.cancelled ? 1 : 0;
+  const page = await readRulesDashboard({ cwd: workspace });
+  if (page.url !== null) process.stdout.write(`  ${page.url}\n`);
+  return 0;
+}
+
+/** What `rerail start` passes to `startRerail`: the answers given so far, and how the set-up may ask for the rest. */
+function startOptions(
+  args: readonly string[], repository: boolean, options: ReadonlyMap<string, string>, context: SetupContext,
+  { lane, workspace }: { lane: ReturnType<typeof setupIo>["lane"]; workspace: string },
+): Parameters<typeof startRerail>[2] {
+  const answer = checkSetupAnswer(options.get("--answer"));
+  const { agents, agentsError } = setupAgents(options.get("--agents"), answer);
+  const packs = setupPacks(options.get(SETUP_FLAGS.packs), answer);
+  const database = databasePathOption(options);
+  const setupCommand = setupAnswerCommand(context, { ...database, repository, ...(lane === "agent" ? { relay: true } : {}), ...definedOnly({ agents }) });
+  const environment = setupEnvironment(context);
+  // An update's health check (`skipsSessionsApproval`) reads no one's sessions, so it is not asked to allow it, and
+  // its "I'll pick rule packs myself" starts with none, as `--packs none` does: no pack fits its empty folder, the
+  // releases that run it expect Rerail on there, and it fetches nothing from npm.
+  const healthCheck = skipsSessionsApproval(args, lane, workspace, () => environment.agentsFound());
+  return {
+    ...database,
+    ...definedOnly({ agents, agentsError, answer, setupCommand }),
+    ...(healthCheck ? { packs: [] } : packs),
+    repository,
+    environment: healthCheck ? { ...environment, sessionsApproved: () => true } : environment,
+  };
 }
 
 /**
@@ -574,10 +632,13 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   const commandArgs = takeOption(args, "--profile").args;
   const command = commandArgs[0];
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
-  // `seed`, `rules`, `show-me` and `reset` write the Rerail database with the invoking package's schema (a checkout build, say).
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset"].includes(command ?? "")) return true;
+  // `seed`, `rules`, `show-me`, `reset`, `scrub` and `feedback` write the Rerail database with the invoking package's schema (a checkout build, say).
+  // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle", "feedback", "remote"].includes(command ?? "")) return true;
+  // A headless `scan` (no `--session`) runs in this process, so it scans with the package invoked.
+  if (command === "scan") return !commandArgs.includes("--session");
   if (command === "daemon") return commandArgs[1] === "stop";
-  return command === "update" && (commandArgs[1] === "status" || commandArgs[1] === "rollback");
+  return command === "update" && commandArgs[1] === "status";
 }
 
 /**
@@ -597,7 +658,7 @@ function refuseUnsupportedNode(args: readonly string[]): number | undefined {
 }
 
 async function main(): Promise<number> {
-  const manifest = await packageManifest(packageRoot);
+  const manifest = packageManifest(packageRoot);
   const home = defaultRerailHome();
   const updater = new ManagedUpdater({
     home,
@@ -667,25 +728,42 @@ async function runAccountCommand(command: string, args: readonly string[], conte
   return undefined;
 }
 
-async function runProjectCommand(command: string, args: readonly string[], context: CommandContext): Promise<number | undefined> {
-  const { home, updater } = context;
-  if (command === "setup") return await runSetupCommand(args, { home, packageRoot, updater });
-  if (command === "install") return await runInstallCommand(args, { home, packageRoot, updater });
-  if (command === "session") return await runSessionCommand(args);
-  if (command === "seed") return runSeedCommand(args);
-  if (command === "rules" && (args[0] === "test" || args[0] === "add")) return await runRuleDraftCommand(args[0], args.slice(1), usage);
-  if (command === "rules" && args[0] === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
-  if (command === "rules") return runRulesCommand(args, usage);
-  if (command === "show-me") return runShowMeCommand(args, usage);
-  if (command === "packs") return await runPacksCommand(args, usage);
-  if (command === "reset") return runResetCommand(args, usage);
-  const daemonExit = await runDaemonCommand(command, args, home);
-  if (daemonExit !== undefined) return daemonExit;
-  if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
-  if (command === "state") return runStateCommand(args);
-  // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
-  if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
-  return undefined;
+/** `rerail rules` and its subcommands. */
+async function runRulesFamilyCommand(args: readonly string[]): Promise<number> {
+  const [subcommand] = args;
+  if (subcommand === "test" || subcommand === "add") return await runRuleDraftCommand(subcommand, args.slice(1), usage);
+  if (subcommand === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
+  if (subcommand === "approve") return runRuleApproveCommand(args.slice(1), usage);
+  return runRulesCommand(args, usage);
+}
+
+/** Every command that runs without the signed update policy; undefined for a word that is none of them. */
+async function runProjectCommand(command: string, args: readonly string[], { home, updater, packageVersion }: CommandContext): Promise<number | undefined> {
+  switch (command) {
+    case "setup": return await runSetupCommand(args, { home, packageRoot, updater });
+    case "install": return await runInstallCommand(args, { home, packageRoot, updater });
+    case "session": return await runSessionCommand(args);
+    case "seed": return runSeedCommand(args);
+    case "rules": return await runRulesFamilyCommand(args);
+    case "show-me": return runShowMeCommand(args, usage);
+    case "support-bundle": return await runSupportBundleCommand(args, usage, { packageVersion });
+    case "packs": return await runPacksCommand(args, usage);
+    case "reset": return runResetCommand(args, usage);
+    case "feedback": return await runFeedbackCommand(args, usage, { packageVersion });
+    case "scrub": return await runScrubCommand(args, usage);
+    case "start":
+    case "stop":
+      return await runRepositoryCommand(command, args, { home, packageRoot, updater });
+    case "state": return runStateCommand(args);
+    // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
+    case "scan":
+    case "settings":
+      return await runAuditCommand(command, args, { home, version: packageVersion });
+    // Internal testing: the remote sink.
+    case "remote": return await runRemoteCommand(args, { home });
+    // `daemon`, `status` and `manage`.
+    default: return await runDaemonCommand(command, args, home);
+  }
 }
 
 /** Commands gated by the signed update policy, plus help; anything else is unknown. */

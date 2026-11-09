@@ -33,6 +33,72 @@ popularity:
 # Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
 # configuration that turns it on (declared; reviewed at each bump).
 rules:
+  "A005":
+    deprecated: null
+    recommended: null
+  "AIR001":
+    deprecated: null
+    recommended: null
+  "AIR002":
+    deprecated: null
+    recommended: null
+  "AIR301":
+    deprecated: null
+    recommended: null
+  "AIR302":
+    deprecated: null
+    recommended: null
+  "AIR303":
+    deprecated: null
+    recommended: null
+  "AIR311":
+    deprecated: null
+    recommended: null
+  "AIR312":
+    deprecated: null
+    recommended: null
+  "ANN001":
+    deprecated: null
+    recommended: null
+  "ANN002":
+    deprecated: null
+    recommended: null
+  "ANN003":
+    deprecated: null
+    recommended: null
+  "ANN201":
+    deprecated: null
+    recommended: null
+  "ANN202":
+    deprecated: null
+    recommended: null
+  "ANN204":
+    deprecated: null
+    recommended: null
+  "ANN205":
+    deprecated: null
+    recommended: null
+  "ANN206":
+    deprecated: null
+    recommended: null
+  "ANN401":
+    deprecated: null
+    recommended: null
+  "ARG001":
+    deprecated: null
+    recommended: null
+  "ARG002":
+    deprecated: null
+    recommended: null
+  "ARG003":
+    deprecated: null
+    recommended: null
+  "ARG004":
+    deprecated: null
+    recommended: null
+  "ARG005":
+    deprecated: null
+    recommended: null
   "ASYNC100":
     deprecated: null
     recommended: { config: "default", options: [] }
@@ -198,6 +264,204 @@ rules:
   "BLE001":
     deprecated: null
     recommended: { config: "default", options: [{"lint.logger-objects":"[]"}] }
+  "C400":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C401":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C402":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C403":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C404":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C405":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C406":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C408":
+    deprecated: null
+    recommended: { config: "default", options: [{"lint.flake8-comprehensions.allow-dict-calls-with-keyword-arguments":"false"}] }
+  "C409":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C410":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C411":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C413":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C414":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C415":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C416":
+    deprecated: null
+    recommended: null
+  "C417":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C418":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C419":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "C420":
+    deprecated: null
+    recommended: null
+  "C901":
+    deprecated: null
+    recommended: null
+  "COM818":
+    deprecated: null
+    recommended: null
+  "D100":
+    deprecated: null
+    recommended: null
+  "D101":
+    deprecated: null
+    recommended: null
+  "D102":
+    deprecated: null
+    recommended: null
+  "D103":
+    deprecated: null
+    recommended: null
+  "D104":
+    deprecated: null
+    recommended: null
+  "D105":
+    deprecated: null
+    recommended: null
+  "D106":
+    deprecated: null
+    recommended: null
+  "D107":
+    deprecated: null
+    recommended: null
+  "D200":
+    deprecated: null
+    recommended: null
+  "D205":
+    deprecated: null
+    recommended: null
+  "D209":
+    deprecated: null
+    recommended: null
+  "D212":
+    deprecated: null
+    recommended: null
+  "D215":
+    deprecated: null
+    recommended: null
+  "D300":
+    deprecated: null
+    recommended: null
+  "D301":
+    deprecated: null
+    recommended: null
+  "D400":
+    deprecated: null
+    recommended: null
+  "D401":
+    deprecated: null
+    recommended: null
+  "D402":
+    deprecated: null
+    recommended: null
+  "D403":
+    deprecated: null
+    recommended: null
+  "D404":
+    deprecated: null
+    recommended: null
+  "D405":
+    deprecated: null
+    recommended: null
+  "D406":
+    deprecated: null
+    recommended: null
+  "D407":
+    deprecated: null
+    recommended: null
+  "D408":
+    deprecated: null
+    recommended: null
+  "D409":
+    deprecated: null
+    recommended: null
+  "D410":
+    deprecated: null
+    recommended: null
+  "D411":
+    deprecated: null
+    recommended: null
+  "D412":
+    deprecated: null
+    recommended: null
+  "D413":
+    deprecated: null
+    recommended: null
+  "D414":
+    deprecated: null
+    recommended: null
+  "D415":
+    deprecated: null
+    recommended: null
+  "D416":
+    deprecated: null
+    recommended: null
+  "D418":
+    deprecated: null
+    recommended: null
+  "D419":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ001":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ002":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ003":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ004":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ005":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ006":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ007":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ011":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ012":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "DTZ901":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "E401":
+    deprecated: null
+    recommended: null
   "E402":
     deprecated: null
     recommended: null
@@ -229,6 +493,18 @@ rules:
     deprecated: null
     recommended: null
   "E743":
+    deprecated: null
+    recommended: null
+  "EM101":
+    deprecated: null
+    recommended: null
+  "EM102":
+    deprecated: null
+    recommended: null
+  "EM103":
+    deprecated: null
+    recommended: null
+  "ERA001":
     deprecated: null
     recommended: null
   "F401":
@@ -357,9 +633,210 @@ rules:
   "F901":
     deprecated: null
     recommended: { config: "default", options: [] }
+  "FA100":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"}] }
+  "FA102":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"}] }
+  "FAST001":
+    deprecated: null
+    recommended: null
+  "FAST002":
+    deprecated: null
+    recommended: null
+  "FAST003":
+    deprecated: null
+    recommended: null
+  "FBT001":
+    deprecated: null
+    recommended: null
+  "FBT002":
+    deprecated: null
+    recommended: null
+  "FBT003":
+    deprecated: null
+    recommended: null
+  "FIX001":
+    deprecated: null
+    recommended: null
+  "FIX002":
+    deprecated: null
+    recommended: null
+  "FIX003":
+    deprecated: null
+    recommended: null
+  "FIX004":
+    deprecated: null
+    recommended: null
+  "FLY002":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "G001":
+    deprecated: null
+    recommended: null
+  "G002":
+    deprecated: null
+    recommended: null
+  "G003":
+    deprecated: null
+    recommended: null
+  "G004":
+    deprecated: null
+    recommended: null
+  "G010":
+    deprecated: null
+    recommended: { config: "default", options: [{"lint.logger-objects":"[]"}] }
+  "G101":
+    deprecated: null
+    recommended: { config: "default", options: [{"lint.logger-objects":"[]"}] }
+  "G201":
+    deprecated: null
+    recommended: { config: "default", options: [{"lint.logger-objects":"[]"}] }
+  "G202":
+    deprecated: null
+    recommended: { config: "default", options: [{"lint.logger-objects":"[]"}] }
+  "ICN001":
+    deprecated: null
+    recommended: null
+  "INP001":
+    deprecated: null
+    recommended: null
+  "INT001":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "INT002":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "INT003":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "ISC001":
+    deprecated: null
+    recommended: null
+  "ISC003":
+    deprecated: null
+    recommended: null
+  "ISC004":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "LOG001":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "LOG002":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "LOG004":
+    deprecated: null
+    recommended: null
+  "LOG007":
+    deprecated: null
+    recommended: null
+  "LOG009":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "LOG014":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "LOG015":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "N801":
+    deprecated: null
+    recommended: null
+  "N802":
+    deprecated: null
+    recommended: null
+  "N803":
+    deprecated: null
+    recommended: null
+  "N804":
+    deprecated: null
+    recommended: null
+  "N805":
+    deprecated: null
+    recommended: null
+  "N806":
+    deprecated: null
+    recommended: null
+  "N807":
+    deprecated: null
+    recommended: null
+  "N811":
+    deprecated: null
+    recommended: null
+  "N812":
+    deprecated: null
+    recommended: null
+  "N813":
+    deprecated: null
+    recommended: null
+  "N814":
+    deprecated: null
+    recommended: null
+  "N815":
+    deprecated: null
+    recommended: null
+  "N816":
+    deprecated: null
+    recommended: null
+  "N817":
+    deprecated: null
+    recommended: null
+  "N818":
+    deprecated: null
+    recommended: null
   "N999":
     deprecated: null
     recommended: { config: "default", options: [{"lint.pep8-naming.ignore-names":"[setUp, tearDown, setUpClass, tearDownClass, setUpModule, tearDownModule, asyncSetUp, asyncTearDown, setUpTestData, failureException, longMessage, maxDiff,]"}] }
+  "NPY001":
+    deprecated: null
+    recommended: null
+  "NPY002":
+    deprecated: null
+    recommended: null
+  "NPY003":
+    deprecated: null
+    recommended: null
+  "NPY201":
+    deprecated: null
+    recommended: null
+  "PD002":
+    deprecated: null
+    recommended: null
+  "PD012":
+    deprecated: null
+    recommended: null
+  "PD101":
+    deprecated: null
+    recommended: null
+  "PERF101":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PERF102":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PERF203":
+    deprecated: null
+    recommended: null
+  "PERF401":
+    deprecated: null
+    recommended: null
+  "PERF402":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PERF403":
+    deprecated: null
+    recommended: null
+  "PGH003":
+    deprecated: null
+    recommended: null
+  "PGH004":
+    deprecated: null
+    recommended: null
+  "PGH005":
+    deprecated: null
+    recommended: { config: "default", options: [] }
   "PIE790":
     deprecated: null
     recommended: { config: "default", options: [] }
@@ -382,6 +859,360 @@ rules:
     deprecated: null
     recommended: { config: "default", options: [] }
   "PIE810":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PT001":
+    deprecated: null
+    recommended: null
+  "PT002":
+    deprecated: null
+    recommended: null
+  "PT003":
+    deprecated: null
+    recommended: null
+  "PT006":
+    deprecated: null
+    recommended: null
+  "PT007":
+    deprecated: null
+    recommended: null
+  "PT008":
+    deprecated: null
+    recommended: null
+  "PT009":
+    deprecated: null
+    recommended: null
+  "PT010":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PT011":
+    deprecated: null
+    recommended: null
+  "PT012":
+    deprecated: null
+    recommended: null
+  "PT013":
+    deprecated: null
+    recommended: null
+  "PT014":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PT015":
+    deprecated: null
+    recommended: null
+  "PT016":
+    deprecated: null
+    recommended: null
+  "PT017":
+    deprecated: null
+    recommended: null
+  "PT018":
+    deprecated: null
+    recommended: null
+  "PT019":
+    deprecated: null
+    recommended: null
+  "PT020":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PT021":
+    deprecated: null
+    recommended: null
+  "PT022":
+    deprecated: null
+    recommended: null
+  "PT023":
+    deprecated: null
+    recommended: null
+  "PT024":
+    deprecated: null
+    recommended: null
+  "PT025":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PT026":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PT027":
+    deprecated: null
+    recommended: null
+  "PT028":
+    deprecated: null
+    recommended: null
+  "PT030":
+    deprecated: null
+    recommended: null
+  "PT031":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PTH100":
+    deprecated: null
+    recommended: null
+  "PTH101":
+    deprecated: null
+    recommended: null
+  "PTH102":
+    deprecated: null
+    recommended: null
+  "PTH103":
+    deprecated: null
+    recommended: null
+  "PTH104":
+    deprecated: null
+    recommended: null
+  "PTH105":
+    deprecated: null
+    recommended: null
+  "PTH106":
+    deprecated: null
+    recommended: null
+  "PTH107":
+    deprecated: null
+    recommended: null
+  "PTH108":
+    deprecated: null
+    recommended: null
+  "PTH109":
+    deprecated: null
+    recommended: null
+  "PTH110":
+    deprecated: null
+    recommended: null
+  "PTH111":
+    deprecated: null
+    recommended: null
+  "PTH112":
+    deprecated: null
+    recommended: null
+  "PTH113":
+    deprecated: null
+    recommended: null
+  "PTH114":
+    deprecated: null
+    recommended: null
+  "PTH115":
+    deprecated: null
+    recommended: null
+  "PTH116":
+    deprecated: null
+    recommended: null
+  "PTH117":
+    deprecated: null
+    recommended: null
+  "PTH118":
+    deprecated: null
+    recommended: null
+  "PTH119":
+    deprecated: null
+    recommended: null
+  "PTH120":
+    deprecated: null
+    recommended: null
+  "PTH121":
+    deprecated: null
+    recommended: null
+  "PTH122":
+    deprecated: null
+    recommended: null
+  "PTH123":
+    deprecated: null
+    recommended: null
+  "PTH124":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PTH201":
+    deprecated: null
+    recommended: null
+  "PTH202":
+    deprecated: null
+    recommended: null
+  "PTH203":
+    deprecated: null
+    recommended: null
+  "PTH204":
+    deprecated: null
+    recommended: null
+  "PTH205":
+    deprecated: null
+    recommended: null
+  "PTH206":
+    deprecated: null
+    recommended: null
+  "PTH207":
+    deprecated: null
+    recommended: null
+  "PTH208":
+    deprecated: null
+    recommended: null
+  "PTH210":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PTH211":
+    deprecated: null
+    recommended: null
+  "PYI001":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI002":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI003":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI004":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI005":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI006":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI007":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI008":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI009":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI010":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI011":
+    deprecated: null
+    recommended: null
+  "PYI012":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI013":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI014":
+    deprecated: null
+    recommended: null
+  "PYI015":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI016":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI017":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI018":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI019":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI020":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI021":
+    deprecated: null
+    recommended: null
+  "PYI024":
+    deprecated: null
+    recommended: null
+  "PYI025":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI026":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI029":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI030":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI032":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI033":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI034":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI035":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI036":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI041":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI042":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI043":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI044":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI045":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI046":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI047":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI048":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI049":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI050":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI051":
+    deprecated: null
+    recommended: null
+  "PYI052":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI053":
+    deprecated: null
+    recommended: null
+  "PYI054":
+    deprecated: null
+    recommended: null
+  "PYI055":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI056":
+    deprecated: null
+    recommended: null
+  "PYI057":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI058":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI059":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI061":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI062":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI063":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"}] }
+  "PYI064":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "PYI066":
     deprecated: null
     recommended: { config: "default", options: [] }
   "RET501":
@@ -408,6 +1239,144 @@ rules:
   "RET508":
     deprecated: null
     recommended: null
+  "RSE102":
+    deprecated: null
+    recommended: null
+  "RUF001":
+    deprecated: null
+    recommended: null
+  "RUF002":
+    deprecated: null
+    recommended: null
+  "RUF003":
+    deprecated: null
+    recommended: null
+  "RUF005":
+    deprecated: null
+    recommended: null
+  "RUF006":
+    deprecated: null
+    recommended: null
+  "RUF007":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF008":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF009":
+    deprecated: null
+    recommended: { config: "default", options: [{"lint.flake8-bugbear.extend-immutable-calls":"[]"}] }
+  "RUF010":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF012":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF013":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"},{"lint.future-annotations":"(not printed by --show-settings)"}] }
+  "RUF015":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF016":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF017":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF018":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF019":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF020":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF021":
+    deprecated: null
+    recommended: null
+  "RUF022":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF023":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF024":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF026":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF028":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF030":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF032":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF033":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF034":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF036":
+    deprecated: null
+    recommended: null
+  "RUF037":
+    deprecated: null
+    recommended: null
+  "RUF040":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF041":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF043":
+    deprecated: null
+    recommended: null
+  "RUF046":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF048":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF049":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF051":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF053":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF057":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF058":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF059":
+    deprecated: null
+    recommended: { config: "default", options: [{"lint.dummy-variable-rgx":"^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"}] }
+  "RUF060":
+    deprecated: null
+    recommended: null
+  "RUF061":
+    deprecated: null
+    recommended: null
+  "RUF063":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "RUF064":
+    deprecated: null
+    recommended: null
+  "RUF068":
+    deprecated: null
+    recommended: { config: "default", options: [] }
   "SIM101":
     deprecated: null
     recommended: { config: "default", options: [] }
@@ -498,10 +1467,268 @@ rules:
   "SIM911":
     deprecated: null
     recommended: { config: "default", options: [] }
+  "SLF001":
+    deprecated: null
+    recommended: null
+  "SLOT000":
+    deprecated: null
+    recommended: null
+  "SLOT001":
+    deprecated: null
+    recommended: null
+  "SLOT002":
+    deprecated: null
+    recommended: null
   "T100":
     deprecated: null
     recommended: { config: "default", options: [] }
+  "T201":
+    deprecated: null
+    recommended: null
+  "T203":
+    deprecated: null
+    recommended: null
+  "TC001":
+    deprecated: null
+    recommended: null
+  "TC002":
+    deprecated: null
+    recommended: null
+  "TC003":
+    deprecated: null
+    recommended: null
+  "TC004":
+    deprecated: null
+    recommended: { config: "default", options: [{"lint.flake8-type-checking.quote-annotations":"false"}] }
+  "TC005":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "TC006":
+    deprecated: null
+    recommended: null
+  "TC007":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "TC010":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "TD001":
+    deprecated: null
+    recommended: null
+  "TD002":
+    deprecated: null
+    recommended: null
+  "TD003":
+    deprecated: null
+    recommended: null
+  "TD004":
+    deprecated: null
+    recommended: null
+  "TD005":
+    deprecated: null
+    recommended: null
+  "TD006":
+    deprecated: null
+    recommended: null
+  "TD007":
+    deprecated: null
+    recommended: null
+  "TID252":
+    deprecated: null
+    recommended: null
+  "TRY002":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "TRY003":
+    deprecated: null
+    recommended: null
+  "TRY004":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "TRY201":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "TRY203":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "TRY300":
+    deprecated: null
+    recommended: null
+  "TRY301":
+    deprecated: null
+    recommended: null
+  "TRY400":
+    deprecated: null
+    recommended: null
+  "TRY401":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP001":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP003":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP004":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP005":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP006":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"},{"lint.pyupgrade.keep-runtime-typing":"false"},{"lint.future-annotations":"(not printed by --show-settings)"}] }
+  "UP007":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"},{"lint.pyupgrade.keep-runtime-typing":"false"},{"lint.future-annotations":"(not printed by --show-settings)"}] }
+  "UP008":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP009":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP010":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"}] }
+  "UP011":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"}] }
+  "UP012":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP013":
+    deprecated: null
+    recommended: null
+  "UP014":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP015":
+    deprecated: null
+    recommended: null
+  "UP017":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"}] }
+  "UP018":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP019":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP020":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP021":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP022":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP023":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP024":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP025":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP026":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP028":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP029":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP030":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP031":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP032":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP033":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"}] }
+  "UP034":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP035":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP036":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"}] }
+  "UP037":
+    deprecated: null
+    recommended: { config: "default", options: [{"lint.future-annotations":"(not printed by --show-settings)"}] }
+  "UP039":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP040":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP041":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP042":
+    deprecated: null
+    recommended: null
+  "UP043":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"}] }
+  "UP044":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP045":
+    deprecated: null
+    recommended: { config: "default", options: [{"target-version":"3.10"},{"lint.pyupgrade.keep-runtime-typing":"false"},{"lint.future-annotations":"(not printed by --show-settings)"}] }
+  "UP046":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP047":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP049":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "UP050":
+    deprecated: null
+    recommended: { config: "default", options: [] }
   "W605":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT101":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT102":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT103":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT201":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT202":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT203":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT204":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT301":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT302":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "YTT303":
     deprecated: null
     recommended: { config: "default", options: [] }
 # What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,

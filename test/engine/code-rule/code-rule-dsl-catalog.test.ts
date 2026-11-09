@@ -25,6 +25,7 @@ import { applyCodeRuleConfig } from "../../../src/engine/code-rule/code-rule-opt
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { addAttachment, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
+import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
@@ -129,7 +130,8 @@ describe("checkout code-rule catalog", () => {
     const database = openRerailDatabase(databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { capabilities });
     try {
-      upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code");
+      const apiOnly = upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code");
+      approve(database, ruleSubject("test:api-only", apiOnly.payloadHash));
       addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" });
       setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "legacy", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null });
       setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" });
@@ -461,7 +463,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a lib name that is no name", ast({ kind: "identifier" }, { languageOptions: { lib: ["dom/iterable"] } }), /Must be a TypeScript lib name/],
     ["a non-boolean declaration", ast({ kind: "identifier" }, { file: { declaration: "yes" } }), /expected boolean/],
     ["a path file condition that is no object", ast({ kind: "identifier" }, { file: { path: "^src/" } }), /expected object/],
-    ["an empty file condition", document({ forbid: { ast: { language: "python", file: {}, rule: { kind: "module" } } } }), /Set path, declaration, module, moduleName, package, inPackage or jsxRuntime/],
+    ["an empty file condition", document({ forbid: { ast: { language: "python", file: {}, rule: { kind: "module" } } } }), /Set path, declaration, module, moduleName, package, inPackage, jsxRuntime or byteOrderMark/],
     ["an unknown file condition", document({ forbid: { ast: { language: "python", file: { paths: { regex: "a" } }, rule: { kind: "module" } } } }), /Unrecognized key/],
     ["a file module that is no object", document({ forbid: { ast: { language: "python", file: { module: "^a$" }, rule: { kind: "module" } } } }), /expected object/],
     ["a non-boolean inPackage", document({ forbid: { ast: { language: "python", file: { inPackage: "yes" }, rule: { kind: "module" } } } }), /expected boolean/],
@@ -482,6 +484,12 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["a fix on a file.path regex", document({ forbid: { regex: { pattern: "x", source: "file.path" } }, violation: { ...violation, fix: "y" } }), /file.path regex match is not source text/],
     ["a capture anchor on a regex without that group", document({ violation: { ...violation, anchor: "capture.X" } }), /capture.X names no capture of the query/],
     ["a message variable on a group-less regex", document({ violation: { ...violation, message: "set $HOME" } }), /\$HOME names no capture/],
+    ["a file query with a key", document({ forbid: { file: { path: "x" } } }), /Unrecognized key/],
+    ["a file query beside a regex", document({ forbid: { file: {}, ...regex } }), /exactly one source: regex, ast, select_when, or file/],
+    ["a fix on a file query", document({ forbid: { file: {} }, violation: { ...violation, fix: "y" } }), /Only forbid clauses over an ast or file.content regex query can suggest a fix/],
+    ["a capture anchor on a file query", document({ forbid: { file: {} }, violation: { ...violation, anchor: "capture.X" } }), /no source location a capture can anchor/],
+    ["each on a file query", document({ forbid: { file: {} }, violation: { ...violation, each: "X" } }), /each enumerates the captures of an ast query/],
+    ["a capture anchor on a file.path regex group", document({ forbid: { regex: { pattern: "(?<X>x)", source: "file.path" } }, violation: { ...violation, anchor: "capture.X" } }), /no source location a capture can anchor/],
     ["a capture outside parse", py({ kind: "string", capture: "S" }), /capture binds a node of a parsed tree; use it inside parse/],
     ["an unknown grammar", py({ kind: "string", parse: { grammar: "yaml", kind: "format" } }), /grammar must be one of percentFormat, braceFormat/],
     ["a parse without a rule", py({ kind: "string", parse: { grammar: "percentFormat" } }), /parse must hold a rule over the parsed tree/],
@@ -1102,6 +1110,23 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     }
   });
 
+  it("file.byteOrderMark reads whether the file's text opens with U+FEFF, which no node's text holds", () => {
+    const files = [
+      { language: "javascript", path: "bom.js", source: "\uFEFF#!/usr/bin/env node\nhello();\n" },
+      { language: "javascript", path: "plain.js", source: "#!/usr/bin/env node\nhello();\n" },
+      { language: "javascript", path: "inner.js", source: "hello('\uFEFF');\n" },
+    ];
+    const snapshot = JSON.stringify({ facts: [], files, format: "rerail.repository-snapshot/v1", revision: 0 });
+    const runtime = loadNativeBinding().CodeRuleDslRuntime;
+    const reported = (byteOrderMark: boolean) => {
+      const input = ast({ kind: "program", regex: "\\A#!" }, { file: { byteOrderMark } });
+      expect(codeRuleSchema.safeParse(input).success).toBe(true);
+      return (JSON.parse(runtime.compile(JSON.stringify(input), "json", bundledCapabilities).evaluate(snapshot, "report")).violations as { path: string }[]).map(violation => violation.path);
+    };
+    expect(reported(true)).toEqual(["bom.js"]);
+    expect(reported(false)).toEqual(["plain.js"]);
+  });
+
   it("both accept comparisons over values, property names, tokens, structures and nodes", () => {
     for (const input of [
       ast({ pattern: "f($A, $B)", compare: { left: "A", op: "gt", right: "B", text: "value" } }),
@@ -1270,6 +1295,10 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["an end anchor with a regex fix", document({ violation: { ...violation, anchor: "witness.end", fix: "y" } })],
     ["a capture anchor, interpolation, and an ast fix", ast({ pattern: "f($A)" }, {}, { anchor: "capture.A", message: "f of $A", fix: "g($A)" })],
     ["a named regex group", document({ forbid: { regex: { pattern: "(?<X>x)", source: "file.content" } }, violation: { ...violation, anchor: "capture.X", message: "$X", fix: "[$X]" } })],
+    ["a file query", document({ forbid: { file: {} } })],
+    ["a file query with a file start anchor", document({ forbid: { file: {} }, violation: { ...violation, anchor: "file.start" } })],
+    ["a file query on either side of select_when", document({ forbid: { select_when: { select: { file: {} }, exists: { file: {} } } } })],
+    ["a file.path regex group in a message", document({ forbid: { regex: { pattern: "(?<X>x)", source: "file.path" } }, violation: { ...violation, message: "$X" } })],
     ["escaped and digit dollars in a message", document({ violation: { ...violation, message: "set \\$HOME, pay $100" } })],
     ["a comparison of names its own negation binds", ast({
       kind: "pair",

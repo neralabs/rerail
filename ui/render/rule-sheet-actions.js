@@ -39,7 +39,7 @@ export const ruleSheetActions = {
   askintent: intent => { ui.askIntent = intent; invalidate(); },
   askcopy: () => {
     const stored = openRuleStored();
-    if (stored) copyText(askPrompt(askRule(stored), ui.askIntent), document.getElementById("askText"));
+    if (stored) copyText(askPrompt(askRule(stored), ui.askIntent), document.getElementById("askText"), "Prompt copied. Paste it into your coding agent.");
   },
   promptedit: () => {
     sheetState.agentEdit = true;

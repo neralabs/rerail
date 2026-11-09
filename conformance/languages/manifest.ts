@@ -42,11 +42,14 @@ const fileType = z.string().regex(/^(?:\.[a-z0-9]+)+$/u, "a file type such as .p
 /**
  * What upstream says of one of its rules at the pins, declared and reviewed at each bump: `deprecated` is upstream's
  * deprecation message, or null; `recommended` is the first of `upstream.recommended_configs` that turns the rule on,
- * with its options, or null.
+ * with its options, or null. `rename_exempt`, when given, says why the rule's meaning is the very names the rename
+ * variants change (a typo check against fixed export names, say): holds-under-rename then does not fail the rule when
+ * the renaming takes every finding, though an FP, FN or engine failure on its variants still fails it.
  */
 const upstreamRuleFactsSchema = z.strictObject({
   deprecated: z.string().min(1).nullable(),
   recommended: z.strictObject({ config: nonEmpty, options: z.array(z.json()) }).nullable(),
+  rename_exempt: nonEmpty.optional(),
 });
 export type UpstreamRuleFacts = z.infer<typeof upstreamRuleFactsSchema>;
 

@@ -117,12 +117,12 @@ fn persisted_image_round_trips_without_parsing() {
         .collect::<String>();
     // The bytes number kinds by the grammar's symbol table: a grammar that adds a token (Patch 4's
     // `out`, Patch 13's `_arrow_body_end`, Patch 14's `yield` name, Patch 21's
-    // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`,
-    // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape format (7: one
-    // document per tape) changes the header.
+    // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`, Patch 28's
+    // `_member_name_here`, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape
+    // format (7: one document per tape) changes the header.
     assert_eq!(
         digest,
-        "fb9639fc397bf7526c1bc4cbf11fa2e339b00a907de32aeec1ac286884c17158"
+        "b1bbb5d1bb30357069a30b96250d84a91223a8bc56cf3a124387affc59cb9203"
     );
 }
 

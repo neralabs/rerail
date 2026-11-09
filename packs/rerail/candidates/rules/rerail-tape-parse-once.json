@@ -1,0 +1,63 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-tape-parse-once",
+  "revision": 1,
+  "mode": "log",
+  "description": "Build a source file's tape in the native engine only through TapeImage::parse, not with a parser and encoder of your own; each extra copy must be changed in step with it.",
+  "scope": {
+    "include": [
+      "native/src/**/*.rs"
+    ],
+    "exclude": [
+      "native/src/code_rule_dsl/tape.rs",
+      "native/src/code_rule_dsl/tape/**",
+      "native/src/code_rule_dsl/blade/forte/**",
+      "native/src/**/tests.rs",
+      "native/src/**/*_tests.rs",
+      "native/src/**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "second-file-parse",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "regex": "(^|::)TapeImage::encode(_blade|_template)?$"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "regex": "(^|::)parse_tree$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "regex": "^\\(\\s*&?[\\w.]*\\bsource\\b"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SECOND_TAPE_PARSE",
+        "anchor": "witness.span",
+        "message": "Get this file's tape from TapeImage::parse(grammar, source, budget). Keep this copy if it also uses the tree, or times or pauses between parse and encode, or if the text is derived (a view, a range)."
+      }
+    }
+  ]
+}

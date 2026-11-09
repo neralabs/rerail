@@ -2,14 +2,22 @@
  * Samples staged for publishing: a tool-pack's `publish/samples/` (scripts/samples/pack.ts writes it) holds the files of
  * the samples archive entries it adds or replaces, laid out as in the archive (scripts/samples/format.ts), plus a
  * `REUSE.toml` that licenses the tracked copy and is never archived. The publish workflow's prep
- * (`packFrom`, scripts/s3/pack-fixtures.mjs) packs them through `publishedSamples`.
+ * (`packFrom`, scripts/s3/pack-fixtures.mjs) packs them through `publishedSamples`, then `checkLicenceTexts`.
  */
+import { join } from "node:path";
+
 import { LABELS_SUFFIX, LICENSES_FILE, SAMPLE_ID, sampleLabelsSchema, type SampleLabels } from "./format.js";
-import { copyleftReason, recordedLicence } from "./licences.js";
-import { sha256 } from "./samples.js";
+import { copyleftReason, licenceTexts, recordedLicence } from "./licences.js";
+import { byText, sha256 } from "./samples.js";
 
 /** The staged copy's licensing file, beside the samples in `publish/samples/`; prep drops it from the archive. */
 export const PUBLISH_REUSE = "REUSE.toml";
+
+/**
+ * Where checkLicenceTexts keeps the licence files it read from GitHub, for the checkout at `root`: licenceTexts's
+ * cache root, so they land in `.rerail/pack-data/licences/<repo>/<commit>/<file>` (gitignored).
+ */
+export const licenceCache = (root: string): string => join(root, ".rerail", "pack-data");
 
 interface Entry {
   path: string;
@@ -21,9 +29,9 @@ interface Entry {
  * it): every file but `REUSE.toml`, once each is checked. A path is `LICENSES.md` or `<sample-id>/<path>` with a
  * SAMPLE_ID; each staged sample is staged whole, its labels (`<source.path>.expected.json`, sampleLabelsSchema) beside
  * its file, whose sha256 is the labels' `source.sha256`; and no sample is taken from a copyleft source
- * (COPYLEFT_SOURCES). A sample's `source.repo` must have a recorded licence (RECORDED_LICENCES) and its declared
- * `source.license` must equal it, so packFrom's allowlist check on `source.license` judges the recorded value, never a
- * label's own claim. Throws one error naming every problem.
+ * (COPYLEFT_SOURCES). A sample's `source.repo` must have a recorded licence (SOURCE_LICENCES) and its declared
+ * `source.license` must equal the one recorded at its `source.commit` (recordedLicence), so packFrom's allowlist check
+ * on `source.license` judges the recorded value, never a label's own claim. Throws one error naming every problem.
  */
 export function publishedSamples(files: readonly Entry[]): Entry[] {
   const problems: string[] = [];
@@ -59,15 +67,46 @@ export function publishedSamples(files: readonly Entry[]): Entry[] {
       problems.push(`${path}: ${parsed.source.repo} is a copyleft source (${copyleft}); no file of it becomes a sample`);
       continue;
     }
-    const recorded = recordedLicence(parsed.source.repo);
+    const recorded = recordedLicence(parsed.source.repo, parsed.source.commit);
     if (recorded === undefined) problems.push(`${path}: ${parsed.source.repo} has no recorded licence; read its licence and add it to scripts/samples/licences.ts`);
-    else if (parsed.source.license !== recorded) problems.push(`${path}: its source.license ${JSON.stringify(parsed.source.license)} is not ${parsed.source.repo}'s recorded licence ${JSON.stringify(recorded)}`);
+    else if (parsed.source.license !== recorded) problems.push(`${path}: its source.license ${JSON.stringify(parsed.source.license)} is not ${parsed.source.repo}'s recorded licence at ${parsed.source.commit.slice(0, 12)}, ${JSON.stringify(recorded)}`);
   }
   const unlabelled = [...new Set(entries.flatMap(({ path }) => (path === LICENSES_FILE || !path.includes("/") ? [] : [path.slice(0, path.indexOf("/"))])))]
     .filter(id => SAMPLE_ID.test(id) && !labelled.has(id));
   for (const id of unlabelled) problems.push(`${id}/: no labels file (<path>${LABELS_SUFFIX}) is staged for it; stage the sample whole`);
   if (problems.length > 0) throw new Error(`publish/samples/ is no valid sample set:\n  ${problems.join("\n  ")}`);
   return entries;
+}
+
+/**
+ * Checks each sample of `entries` (publishedSamples's) against its repository's licence files at its own commit, read
+ * from GitHub once into `cacheRoot` (licenceTexts): the files scripts/samples/licences.ts records for the commit must
+ * be there, read as the licence recorded for it and name no copyleft licence, and the commit must have a licence (a
+ * recorded `NONE` fails). Throws one error naming every repository and commit that fails, with how many samples it
+ * holds and one of their paths.
+ */
+export function checkLicenceTexts(entries: readonly Entry[], cacheRoot: string): void {
+  const commits = new Map<string, { repo: string; commit: string; samples: string[] }>();
+  for (const { path, bytes } of entries) {
+    if (!path.endsWith(LABELS_SUFFIX)) continue;
+    const labels = parseLabels(bytes);
+    // publishedSamples refuses unreadable labels; they name no commit to check.
+    if (typeof labels === "string") continue;
+    const { repo, commit } = labels.source;
+    const key = `${repo.toLowerCase()}\0${commit}`;
+    const known = commits.get(key) ?? { repo, commit, samples: [] };
+    commits.set(key, { ...known, samples: [...known.samples, path.slice(0, -LABELS_SUFFIX.length)] });
+  }
+  const problems: string[] = [];
+  for (const { repo, commit, samples } of [...commits.entries()].sort(([a], [b]) => byText(a, b)).map(([, value]) => value)) {
+    const held = `${samples.length} sample(s), such as ${[...samples].sort(byText)[0]}`;
+    try {
+      if (licenceTexts(cacheRoot, repo, commit).spdx === "NONE") problems.push(`${repo} at ${commit}: nothing at the commit states a licence, so no file of it may be copied (${held})`);
+    } catch (error) {
+      problems.push(`${error instanceof Error ? error.message : String(error)} (${held})`);
+    }
+  }
+  if (problems.length > 0) throw new Error(`publish/samples/ holds samples whose licence does not hold at their commit:\n  ${problems.join("\n  ")}`);
 }
 
 function parseLabels(bytes: Buffer): SampleLabels | string {

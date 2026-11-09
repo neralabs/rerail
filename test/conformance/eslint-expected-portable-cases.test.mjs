@@ -7,8 +7,8 @@
 import { describe, expect, it } from "vitest";
 import { assertKnownReportRules, assertPortableCase, UPSTREAM_TEST_CWD, withUpstreamTestCwd } from "../../scripts/pack-data/eslint-expected.mjs";
 
-/** The scratch directory #31's unicorn generator ran in, in `machineDirectories()`' form. */
-const SCRATCH = "private/tmp/claude-501/-Users-gabrielgiangi-Documents-Repositories-nera-rule-discovery/0b8f1b38-a217-4238-ab1f-806b5bc153c8/scratchpad/work/javascript";
+/** A scratch directory shaped like the one #31's unicorn generator ran in, in `machineDirectories()`' form. */
+const SCRATCH = "private/tmp/claude-501/-Users-someone-src-app/6f1c2d3e-4a5b-4c6d-8e7f-90a1b2c3d4e5/scratchpad/work/javascript";
 
 describe("withUpstreamTestCwd", () => {
   it("answers UPSTREAM_TEST_CWD while upstream tests declare their cases, and the real directory again afterwards, even when they throw", async () => {

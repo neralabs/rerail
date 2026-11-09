@@ -28,7 +28,7 @@ async function directory(prefix: string): Promise<string> {
  */
 const CODE_RULES = await Promise.all(
   [
-    ["javascript", "candidates", "eslint-no-redeclare.json"],
+    ["javascript", "", "eslint-no-redeclare.json"],
     ["typescript", "", "typescript-eslint-no-redeclare.json"],
     ["typescript", "", "typescript-eslint-no-require-imports.json"],
     ["javascript", "", "eslint-default-param-last.json"],

@@ -5,19 +5,18 @@
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon } from "../dom.js";
 import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
-import { isByRerail, isRunning } from "../derive.js";
-import { data, ui, activityAllOf, fires, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
+import { awaitingApproval, isFromPack, isRunning, worktreeLeftOut } from "../derive.js";
+import { data, ui, ALL_TIME, activityAllOf, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
+import { loggedTip } from "../render/rules.js";
 import { bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules } from "../first-open.js";
 
 export const needs = ["rules", "packs", "activity", "recentSessions"];
 
 /** How many of the range's newest sessions Recent sessions lists. */
 const RECENT_SESSIONS = 5;
-/** The Since install range (`RANGES` in `state.js`): what a range without violations offers to widen to. */
-const ALL_TIME = 9999;
 
 /* ---------- what the page knows ---------- */
 
@@ -25,7 +24,7 @@ const ALL_TIME = 9999;
 function ruleSources() {
   const sections = ruleSections();
   const packs = sections.filter(s => s.kind === "pack");
-  const mine = rulesArray().filter(r => !isByRerail(r)).length;
+  const mine = rulesArray().filter(r => !isFromPack(r)).length;
   return { packs, mine };
 }
 
@@ -58,9 +57,8 @@ function dismissWelcome() {
 function stoppedBanner(repo) {
   return h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
     h("b", null, `Rerail is stopped in ${repo}.`),
-    h("p", null, "Nothing is audited or logged here; your rules and history are kept. Starting it here starts every checkout of the repo; ",
-      h("span.mono", null, "/rerail-start"), " in a session starts that checkout."),
-    h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey }, "Start Rerail"))));
+    h("p", null, "No rules run here, and nothing is logged; rules and history are kept."),
+    h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey, title: `Starts every checkout of ${repo}.` }, "Start Rerail"))));
 }
 
 /** The welcome shows only where Rerail is started: a repository set up but never started reads as stopped. */
@@ -78,6 +76,41 @@ function renderBanner(root, state) {
   const on = rulesArray().filter(isRunning).length;
   setContent(root, JSON.stringify([kind, repo, on, data.repository?.repositoryKey]), () =>
     kind === "stopped" ? stoppedBanner(repo) : kind === "welcome" ? welcomeBanner(repo) : null);
+}
+
+/** The worktree's `.rerail/rules` files left out, each with why; they run nothing until fixed. Not dismissible. */
+function renderLeftOut(root) {
+  const leftOut = data.loaded ? worktreeLeftOut(data.packsSkipped, data.checkout?.checkoutPath) : [];
+  const n = leftOut.length;
+  setContent(root, JSON.stringify(leftOut), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+    h("b", null, `${fmt(n)} ${plural(n, "file")} in this worktree's .rerail/rules ${n === 1 ? "was" : "were"} left out, so ${n === 1 ? "its rule does" : "their rules do"} not run.`),
+    ...leftOut.map(({ file, reason }) => h("p", null, h("span.mono", null, file), `: ${reason}`)),
+    h("p", null, "Fix the file and this updates on its own. ", h("span.mono", null, "rerail packs list"), " in the worktree says the same.")))));
+}
+
+/**
+ * The rules here whose content, or whose pack's, waits for a person's approval: each runs in Log until then. Each item
+ * opens the sheet where it is approved. Not dismissible.
+ */
+function renderApprovals(root) {
+  const items = new Map();
+  for (const stored of data.loaded ? rulesArray() : []) {
+    if (!awaitingApproval(stored)) continue;
+    const { kind, id } = stored.approval.subject;
+    if (items.has(`${kind}\0${id}`)) continue;
+    const packId = stored.source.kind === "pack" ? stored.source.id : packOfRule(stored)?.id;
+    items.set(`${kind}\0${id}`, kind === "pack" && packId !== undefined
+      ? { kind, label: `pack ${id}`, act: "viewpack", target: packId }
+      : { kind: "rule", label: titleOf(stored), act: "detail", target: stored.rule.id });
+  }
+  const list = [...items.values()], n = list.length;
+  const packs = list.filter(item => item.kind === "pack").length, rules = n - packs;
+  const what = [rules && `${fmt(rules)} ${plural(rules, "rule")}`, packs && `${fmt(packs)} ${plural(packs, "pack")}`].filter(Boolean).join(" and ");
+  setContent(root, JSON.stringify(list), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+    h("b", null, `${what} ${n === 1 ? "waits" : "wait"} for approval, so ${n === 1 ? "it runs" : "they run"} in Log and steer${n === 1 ? "s" : ""} no one.`),
+    h("p", null, `Rerail did not write ${n === 1 ? "it" : "them"}. Read what each tells the coding agent, then approve it on its page, or ask your coding agent: `,
+      h("span.mono", null, "/rerail-create approve the rules"), "."),
+    h("p.acts", null, list.map(item => h("button.btn.sm", { "data-act": item.act, "data-i": item.target }, item.label)))))));
 }
 
 /* ---------- tiles ---------- */
@@ -148,7 +181,7 @@ function updateRuleRow(row, item) {
   setAttr(title, "title", item.title);
   setClass(row, "off", !isRunning(item.stored));
   setText(row.querySelector(".count b"), fmt(item.fires));
-  setAttr(row.querySelector(".count"), "title", `${fmt(item.fires)} ${plural(item.fires, "violation")} logged ${rangeLabel()}`);
+  setAttr(row.querySelector(".count"), "title", loggedTip(item.stored, item.fires));
   const sw = row.querySelector(".sw");
   setAttr(sw, "aria-checked", String(item.stored.enabled));
   setAttr(sw, "aria-label", `Toggle ${item.title}`);
@@ -191,12 +224,17 @@ function updateSessionRow(row, s) {
 
 /* ---------- empty blocks ---------- */
 
-function emptyBlock(body, repo) {
+const rulesOffCard = () => h("div.list", null, h("div.empty", null,
+  h("h3", null, "Every rule is off."),
+  h("p", null, "Turn rules on in a rule pack, then start a coding agent session."),
+  h("p.acts", null, h("button.btn.sm.solid", { "data-act": "nav", "data-i": rulesOnHash(ruleSources()) }, "Turn rules on"))));
+
+function emptyBlock(body) {
   const label = rangeLabel();
   if (body === "no-rules") {
     return h("div.list", null, h("div.empty", null,
-      h("h3", null, "No rules added yet"),
-      h("p", null, `Nothing is checked in ${repo} yet. Add rule packs, or write a rule of your own with your coding agent. Once rules are on, start a coding agent session in this repo and the violations they log show here.`),
+      h("h3", null, "No rules added yet."),
+      h("p", null, "Add a rule pack, or write a rule of your own with your coding agent."),
       h("p.acts", null,
         h("button.btn.sm.solid", { "data-act": "nav", "data-i": "packs" }, icon("plus"), "Add rule packs"),
         h("button.btn.sm", { "data-act": "nav", "data-i": "create" }, "Create a rule"))));
@@ -206,17 +244,20 @@ function emptyBlock(body, repo) {
     const on = rulesArray().filter(isRunning).length;
     if (on > 0) {
       return h("div.list", null, h("div.empty", null,
-        h("h3", null, "No sessions yet"),
+        h("h3", null, "No sessions yet."),
         h("p", null, "The rules that log the most violations, and your recent sessions, show here.")));
     }
-    return h("div.list", null, h("div.empty", null,
-      h("h3", null, "Every rule is off"),
-      h("p", null, "Turn rules on in a rule pack, then start a coding agent session."),
-      h("p.acts", null, h("button.btn.sm.solid", { "data-act": "nav", "data-i": rulesOnHash(ruleSources()) }, "Turn rules on"))));
+    return rulesOffCard();
   }
+  if (!rulesArray().some(isRunning)) return rulesOffCard();
+  const { started, withViolations } = data.activitySessions ?? { started: 0, withViolations: 0 };
+  // Violations from rules taken out of the repository: the sessions tile counts them, and the list of rules can't.
+  const title = withViolations > 0 ? `No current rule logged violations ${label}.` : `No violations logged ${label}.`;
+  const line = withViolations > 0 ? null
+    : started > 0 ? `Rerail logged none in ${fmt(started)} ${plural(started, "session")} ${label}.` : `No sessions ${label}.`;
   return h("div.list", null, h("div.empty", null,
-    h("h3", null, `No violations logged ${label}`),
-    h("p", null, ui.range === ALL_TIME ? "Wait for the next coding agent session." : "Widen the range, or wait for the next coding agent session."),
+    h("h3", null, title),
+    line === null ? null : h("p", null, line),
     ui.range === ALL_TIME ? null : h("p.acts", null, h("button.btn.sm", { "data-act": "range", "data-i": ALL_TIME }, "Show since install"))));
 }
 
@@ -226,6 +267,8 @@ let page = null;
 
 function build() {
   const banner = h("div.banners");
+  const leftOut = h("div.banners");
+  const approvals = h("div.banners");
   const range = rangeControl();
   const tiles = TILES.map(tile);
   const empty = h("div.ovempty");
@@ -243,10 +286,10 @@ function build() {
     h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations")),
     recentList);
   const lists = h("div.ovlists", null, top, recent);
-  const root = h("div.ov", null, banner,
+  const root = h("div.ov", null, banner, leftOut, approvals,
     h("div.rollup", null, h("div.rollhead", null, h("h2", null, "Overview"), range), h("div.tiles", null, tiles)),
     empty, lists);
-  page = { root, banner, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
+  page = { root, banner, leftOut, approvals, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
 }
 
 function renderLists(top, repo) {
@@ -270,6 +313,8 @@ export function render(root) {
   const sources = ruleSources();
   const repo = repoName();
   renderBanner(page.banner, state);
+  renderLeftOut(page.leftOut);
+  renderApprovals(page.approvals);
   syncRange(page.range);
   renderTiles(page.tiles, sources, ruleCount, sessionsEver);
 
@@ -280,7 +325,7 @@ export function render(root) {
   if (body === "lists") renderLists(top, repo);
   else if (body !== "loading") {
     const on = rulesArray().filter(isRunning).length;
-    setContent(page.empty, JSON.stringify([body, repo, on, ui.range, rulesOnHash(sources)]), () => emptyBlock(body, repo));
+    setContent(page.empty, JSON.stringify([body, repo, on, ui.range, rulesOnHash(sources), data.activitySessions]), () => emptyBlock(body));
   }
 }
 

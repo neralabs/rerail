@@ -2390,5 +2390,29 @@
     "line": 25,
     "kind": "upstream-wrong",
     "evidence": "This is trigger_deprecation() itself, the function the convention goes through: `@trigger_error(..., \\E_USER_DEPRECATED)` keeps the notice from the default error handler, so only handlers that opt in (Symfony's ErrorHandler and the PHPUnit bridge) record it. Removing the @, as the finding steers, sends every deprecation in every package that calls trigger_deprecation() to the default handler. The port does not report a silenced trigger_error() or user_error() at E_USER_DEPRECATED."
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "samples",
+    "path": "guzzle-src-functions.php-49ad54c9ae99/src/functions.php",
+    "line": 235,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `ob_get_clean()` inside the `describe_type()` helper: its output is captured into a string the function normalises (float vs double) and returns as the description of a value's type; removing it, as the finding says, breaks the function. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block."
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "samples",
+    "path": "guzzle-src-utils.php-da335718b19c/src/Utils.php",
+    "line": 241,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `ob_get_clean()` inside the `describe_type()` helper: its output is captured into a string the function normalises (float vs double) and returns as the description of a value's type; removing it, as the finding says, breaks the function. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block."
+  },
+  {
+    "rule": "psalm-forbidden-code",
+    "source": "samples",
+    "path": "orm-lib-doctrine-orm-tools-debug.php-f643d438b693/lib/Doctrine/ORM/Tools/Debug.php",
+    "line": 73,
+    "kind": "upstream-wrong",
+    "evidence": "The `var_dump()` runs between `ob_start();` and `ob_get_contents()` inside Doctrine's `Debug::dump()`: its output is captured into a string the method reformats before printing or returning it (the method exists to render a variable), so removing it, as the finding says, breaks the method. The port does not report a var_dump statement buffered by an earlier `ob_start()` and read by a later `ob_get_clean()` or `ob_get_contents()` in the same block."
   }
 ]

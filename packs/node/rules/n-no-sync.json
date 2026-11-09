@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-sync",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Avoid calling methods whose name ends in Sync, such as readFileSync; they block the Node.js event loop.",
   "scope": {
@@ -19,22 +19,14 @@
   },
   "clauses": [
     {
-      "id": "call-child",
-      "forbid": {
-        "ast": {
-          "language": "typescript",
-          "rule": {
-            "kind": "call_expression",
-            "not": {
-              "has": {
-                "field": "arguments",
-                "kind": "template_string"
-              }
-            },
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
             "any": [
               {
                 "has": {
-                  "field": "function",
                   "any": [
                     {
                       "kind": "identifier"
@@ -43,27 +35,49 @@
                       "kind": "property_identifier"
                     }
                   ],
+                  "field": "function",
                   "regex": "Sync$"
                 }
               },
               {
                 "has": {
                   "field": "arguments",
-                  "kind": "arguments",
                   "has": {
-                    "any": [
-                      {
-                        "kind": "identifier"
-                      },
-                      {
-                        "kind": "property_identifier"
-                      }
-                    ],
-                    "regex": "Sync$"
-                  }
+                    "matches": "c2"
+                  },
+                  "kind": "arguments"
                 }
               }
-            ]
+            ],
+            "kind": "call_expression",
+            "not": {
+              "has": {
+                "field": "arguments",
+                "kind": "template_string"
+              }
+            }
+          },
+          "c2": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "property_identifier"
+              }
+            ],
+            "regex": "Sync$"
+          }
+        }
+      }
+    },
+    {
+      "id": "call-child",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "c1"
           }
         }
       },
@@ -92,15 +106,7 @@
           "language": "typescript",
           "rule": {
             "has": {
-              "any": [
-                {
-                  "kind": "identifier"
-                },
-                {
-                  "kind": "property_identifier"
-                }
-              ],
-              "regex": "Sync$"
+              "matches": "c2"
             },
             "any": [
               {
@@ -139,46 +145,7 @@
                   "kind": "arguments"
                 },
                 {
-                  "kind": "call_expression",
-                  "not": {
-                    "has": {
-                      "field": "arguments",
-                      "kind": "template_string"
-                    }
-                  },
-                  "any": [
-                    {
-                      "has": {
-                        "field": "function",
-                        "any": [
-                          {
-                            "kind": "identifier"
-                          },
-                          {
-                            "kind": "property_identifier"
-                          }
-                        ],
-                        "regex": "Sync$"
-                      }
-                    },
-                    {
-                      "has": {
-                        "field": "arguments",
-                        "kind": "arguments",
-                        "has": {
-                          "any": [
-                            {
-                              "kind": "identifier"
-                            },
-                            {
-                              "kind": "property_identifier"
-                            }
-                          ],
-                          "regex": "Sync$"
-                        }
-                      }
-                    }
-                  ]
+                  "matches": "c1"
                 }
               ]
             }

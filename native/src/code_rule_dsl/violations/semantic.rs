@@ -33,7 +33,11 @@ pub(super) fn ast_captures<'a>(
                 super::ast_captures(rule, utils, summaries, names);
             }
         }
-        Semantic::Resolves(_) | Semantic::Value(_) | Semantic::Layout(_) | Semantic::Host(_) => {}
+        Semantic::Resolves(_)
+        | Semantic::Value(_)
+        | Semantic::Layout(_)
+        | Semantic::Host(_)
+        | Semantic::ImportTarget(_) => {}
     }
 }
 
@@ -70,7 +74,11 @@ pub(super) fn parse_exports<'a>(
             bound.insert(name.as_str());
         }
         Semantic::Calls(test) => bound.extend(test.chain.as_deref()),
-        Semantic::Resolves(_) | Semantic::Value(_) | Semantic::Layout(_) | Semantic::Host(_) => {}
+        Semantic::Resolves(_)
+        | Semantic::Value(_)
+        | Semantic::Layout(_)
+        | Semantic::Host(_)
+        | Semantic::ImportTarget(_) => {}
     }
 }
 

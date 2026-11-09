@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   ManagedUpdater,
+  NpmPackageRegistry,
   compareSemver,
   gitBashShim,
   launcherShim,
@@ -13,6 +14,7 @@ import {
   type PackageRegistry,
 } from "../../src/setup/updater.js";
 import { ENTRY_POINTS } from "../../src/engine/index.js";
+import type { NpmRunner } from "../../src/runtime/index.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 
 const temporaryDirectories: string[] = [];
@@ -130,13 +132,6 @@ describe("ManagedUpdater", () => {
     expect(registry.resolvedChannels).toEqual(["beta"]);
     expect(registry.installedVersions).toEqual(["1.1.0"]);
     await expect(readFile(join(updated.current.packageRoot, "package.json"), "utf8")).resolves.toContain('"1.1.0"');
-
-    const rolledBack = await updater.rollback();
-    expect(rolledBack).toMatchObject({
-      changed: true,
-      current: { version: "1.0.0", packageRoot },
-      previous: { version: "1.1.0" },
-    });
   });
 
   it("does not reinstall or downgrade when the selected channel is not newer", async () => {
@@ -380,57 +375,6 @@ describe("ManagedUpdater", () => {
   });
 });
 
-/**
- * An installed release from before set-up, as 0.1.0-next.0 behaves under the health check: `state` answers "never",
- * `start` rejects `--answer` as an unknown option, and only a started folder opens a session.
- */
-async function preSetupRelease(): Promise<Installation> {
-  const root = await mkdtemp(join(tmpdir(), "rerail-pre-setup-release-"));
-  temporaryDirectories.push(root);
-  await Promise.all([ENTRY_POINTS.index, ENTRY_POINTS.cli, ENTRY_POINTS.eventStream].map(path => mkdir(dirname(join(root, path)), { recursive: true })));
-  await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.0-next.0", type: "module" }));
-  await writeFile(join(root, ENTRY_POINTS.index), "export function nativeHealth() { return { ok: true }; }\n");
-  await writeFile(join(root, ENTRY_POINTS.cli), [
-    'import { mkdirSync } from "node:fs";',
-    'import { join } from "node:path";',
-    "const [command, ...args] = process.argv.slice(2);",
-    'if (command === "state") process.stdout.write("never\\n");',
-    'else if (command === "start" && args.includes("--answer")) {',
-    '  process.stderr.write("rerail: Unknown start option: --answer\\n");',
-    "  process.exitCode = 1;",
-    '} else if (command === "start") mkdirSync(join(process.env.RERAIL_HOME, "started"), { recursive: true });',
-    "else process.exitCode = 1;",
-    "",
-  ].join("\n"));
-  await writeFile(join(root, ENTRY_POINTS.eventStream), [
-    'import { existsSync, mkdirSync, readFileSync } from "node:fs";',
-    'import { join } from "node:path";',
-    'const request = JSON.parse(readFileSync(0, "utf8").trimEnd().split("\\n").at(-1));',
-    'if (existsSync(join(process.env.RERAIL_HOME, "started"))) mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',
-    'process.stdout.write(JSON.stringify({ eventId: request.event.eventId, deliveries: [] }) + "\\n");',
-    "",
-  ].join("\n"));
-  return { version: "0.1.0-next.0", packageRoot: root };
-}
-
-describe("rollback to a release from before set-up", () => {
-  it("passes the health check by starting the release without --answer", async () => {
-    const { home, packageRoot } = await fixture();
-    const previous = await preSetupRelease();
-    await mkdir(home, { recursive: true });
-    await writeFile(join(home, "update-state.json"), JSON.stringify({
-      schemaVersion: 1,
-      channel: "latest",
-      current: { version: "1.0.0", packageRoot },
-      previous,
-    }));
-    // No validateInstallation: the real health check runs against the release.
-    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0") });
-
-    expect(await updater.rollback()).toMatchObject({ changed: true, current: previous, previous: { version: "1.0.0" } });
-  }, 30_000);
-});
-
 describe("ManagedUpdater.install (setup bootstrap)", () => {
   it("materializes the running version under versions/, links current, and writes the launcher", async () => {
     const { home, packageRoot } = await fixture();
@@ -449,7 +393,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
       version: "1.0.0",
       packageRoot: join(home, "versions", "1.0.0", "node_modules", "@neralabs", "rerail"),
     });
-    // The npx cache / checkout it ran from is not a rollback target.
+    // The npx cache / checkout it ran from is not recorded as the previous version.
     expect(installed.previous).toBeUndefined();
     expect(registry.installedVersions).toEqual(["1.0.0"]);
 
@@ -505,7 +449,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(existsSync(updater.launcherPath)).toBe(true);
   });
 
-  it("keeps a managed previous version for rollback and re-points current on update", async () => {
+  it("records the managed previous version and re-points current on update", async () => {
     const { home, packageRoot } = await fixture();
     const registry = new FakeRegistry("1.0.0");
     const updater = new ManagedUpdater({
@@ -522,11 +466,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     expect(updated.previous).toEqual(first.current);
     expect(await readlink(updater.currentLink)).toBe(updated.current.packageRoot);
 
-    const rolledBack = await updater.rollback();
-    expect(rolledBack.current).toEqual(first.current);
-    expect(await readlink(updater.currentLink)).toBe(first.current.packageRoot);
-
-    // A later `setup` from a newer npx copy keeps the managed previous.
+    // A later `setup` from a newer npx copy records the managed version it replaces.
     const newer = new ManagedUpdater({
       home,
       packageRoot,
@@ -536,7 +476,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
     });
     const bootstrapped = await newer.install();
     expect(bootstrapped.current.version).toBe("1.2.0");
-    expect(bootstrapped.previous).toEqual(first.current);
+    expect(bootstrapped.previous).toEqual(updated.current);
   });
 
   it("leaves no Rerail home behind when a first install fails validation", async () => {
@@ -574,6 +514,92 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
   });
 });
 
+describe("NpmPackageRegistry", () => {
+  interface NpmCall { args: readonly string[]; cwd: string | undefined; projectConfig: boolean }
+
+  /**
+   * An npm whose registry has `@neralabs/rerail@1.1.0` at https://mirror.example/npm and whose `audit signatures`
+   * does what `audit` does. It notes, per call, whether the folder it ran in had a project `.npmrc` or `package.json`.
+   */
+  function fakeNpm(audit: () => Promise<void>): { npm: NpmRunner; calls: NpmCall[] } {
+    const calls: NpmCall[] = [];
+    const npm: NpmRunner = async (args, options = {}) => {
+      const cwd = options.cwd ?? process.cwd();
+      calls.push({ args, cwd: options.cwd, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")) });
+      if (args[0] === "view") return { stdout: JSON.stringify("1.1.0"), stderr: "" };
+      if (args[0] === "audit") {
+        await audit();
+        return { stdout: "", stderr: "" };
+      }
+      const prefix = args[args.indexOf("--prefix") + 1]!;
+      const packageRoot = join(prefix, "node_modules", "@neralabs", "rerail");
+      await mkdir(packageRoot, { recursive: true });
+      await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.1.0" }));
+      await writeFile(join(prefix, "node_modules", ".package-lock.json"), JSON.stringify({
+        packages: { "node_modules/@neralabs/rerail": { resolved: "https://mirror.example/npm/@neralabs/rerail/-/rerail-1.1.0.tgz" } },
+      }));
+      return { stdout: "", stderr: "" };
+    };
+    return { npm, calls };
+  }
+
+  async function updaterWith(npm: NpmRunner, validateInstallation: (installation: Installation) => Promise<void>): Promise<ManagedUpdater> {
+    const { home, packageRoot } = await fixture();
+    return new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new NpmPackageRegistry(npm), validateInstallation });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("installs without install scripts and asks the registry from a folder no repository configures", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { npm, calls } = fakeNpm(async () => {});
+    const updater = await updaterWith(npm, async () => {});
+    await expect(updater.update()).resolves.toMatchObject({ changed: true, current: { version: "1.1.0" } });
+
+    const install = calls.find(call => call.args[0] === "install");
+    expect(install?.args).toContain("--ignore-scripts");
+    const views = calls.filter(call => call.args[0] === "view");
+    expect(views.length).toBeGreaterThan(0);
+    for (const view of views) {
+      expect(view.cwd).toBeDefined();
+      expect(view.cwd).not.toBe(process.cwd());
+      expect(view.projectConfig).toBe(false);
+    }
+  });
+
+  it("refuses the update before running any staged code when a signature does not verify", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { npm, calls } = fakeNpm(async () => {
+      throw new Error("npm failed (1): 1 package has an invalid registry signature:\n\nevil@1.0.0 (https://registry.npmjs.org/)");
+    });
+    const validate = vi.fn(async (_installation: Installation) => {});
+    const updater = await updaterWith(npm, validate);
+
+    await expect(updater.update()).rejects.toThrow("invalid registry signature");
+    expect(calls.map(call => call.args[0])).toContain("audit");
+    expect(validate).not.toHaveBeenCalled();
+    expect((await updater.status()).current.version).toBe("1.0.0");
+    expect(existsSync(join(updater.versionsRoot, "1.1.0"))).toBe(false);
+    expect((await readdir(updater.versionsRoot)).filter(entry => entry.endsWith(".staging"))).toEqual([]);
+  });
+
+  it("installs with a warning naming the registry when that registry publishes no signing keys", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const { npm } = fakeNpm(async () => {
+      throw new Error("npm failed (1): npm error found no dependencies to audit that were installed from a supported registry");
+    });
+    const validate = vi.fn(async (_installation: Installation) => {});
+    const updater = await updaterWith(npm, validate);
+
+    await expect(updater.update()).resolves.toMatchObject({ changed: true, current: { version: "1.1.0" } });
+    expect(validate).toHaveBeenCalled();
+    const written = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(written).toContain("warning: https://mirror.example/npm ");
+  });
+});
+
 /**
  * A staged package that passes the identity, engine and CLI checks, with `eventStream` as its
  * `dist/harness/event-stream.js`. The CLI answers `state` with `never` and accepts `start`.
@@ -599,7 +625,7 @@ async function candidate(eventStream: readonly string[]): Promise<Installation> 
 
 describe("validateManagedInstallation", () => {
   // A build that speaks another event protocol rejects this build's preface with an error frame and exits 0. It is
-  // refused for that reply even when it opened a session, so the update or rollback never activates it.
+  // refused for that reply even when it opened a session, so the update never activates it.
   it("refuses a candidate whose event stream rejects this build's preface", async () => {
     const installation = await candidate([
       'mkdirSync(join(process.env.RERAIL_STORAGE_ROOT, "session"), { recursive: true });',

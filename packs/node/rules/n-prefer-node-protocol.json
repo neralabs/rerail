@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-prefer-node-protocol",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Load Node.js built-in modules with the node: prefix, such as node:fs, when the project's Node versions support it; it marks them as built-ins npm packages can't shadow.",
   "scope": {
@@ -18,6 +18,21 @@
     "exclude": []
   },
   "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "has": {
+              "field": "object",
+              "kind": "identifier",
+              "regex": "^globalThis$"
+            }
+          }
+        }
+      }
+    },
     {
       "id": "require",
       "forbid": {
@@ -136,11 +151,7 @@
                                 "kind": "member_expression",
                                 "all": [
                                   {
-                                    "has": {
-                                      "field": "object",
-                                      "kind": "identifier",
-                                      "regex": "^globalThis$"
-                                    }
+                                    "matches": "c1"
                                   },
                                   {
                                     "has": {
@@ -155,11 +166,7 @@
                                 "kind": "subscript_expression",
                                 "all": [
                                   {
-                                    "has": {
-                                      "field": "object",
-                                      "kind": "identifier",
-                                      "regex": "^globalThis$"
-                                    }
+                                    "matches": "c1"
                                   },
                                   {
                                     "has": {

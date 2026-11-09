@@ -1,0 +1,413 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi006-bad-version-info-comparison",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Compare sys.version_info with only the less-than or greater-than-or-equal operators; the other operators give surprising results on patch releases.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "test-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "field": "condition"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "elif_clause",
+                  "field": "condition"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-slot"
+                }
+              }
+            ]
+          },
+          "bool-and-top": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^and$"
+            },
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "bool-and-top"
+                }
+              }
+            ]
+          },
+          "bool-or-top": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^or$"
+            },
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "bool-or-top"
+                }
+              }
+            ]
+          },
+          "test-operand": {
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "bool-and-top"
+                    },
+                    {
+                      "matches": "bool-or-top"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-operand"
+                }
+              }
+            ]
+          },
+          "sys-version-info": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "sys.version_info"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "sys-version-info"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "greater-than",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "all": [
+              {
+                "matches": "test-operand"
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^>$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "sys-version-info"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI006",
+        "message": "Use `>=` with the next minor version instead of `>`, e.g. `sys.version_info >= (3, 9)` for `> (3, 8)`; `>` is also true on every 3.8 patch release.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI006"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "less-or-equal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "all": [
+              {
+                "matches": "test-operand"
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^<=$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "sys-version-info"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI006",
+        "message": "Use `<` with the next minor version instead of `<=`, e.g. `sys.version_info < (3, 9)` for `<= (3, 8)`; `<=` is false on 3.8 patch releases.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI006"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "equality",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "all": [
+              {
+                "matches": "test-operand"
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^(==|!=)$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "sys-version-info"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI006",
+        "message": "Use `<` and `>=` instead of `==`/`!=`: `sys.version_info >= (3, 8) and sys.version_info < (3, 9)` selects 3.8; use `or` with the opposite bounds for `!=`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI006"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "membership-or-identity",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "all": [
+              {
+                "matches": "test-operand"
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^(in|not\\s+in|is|is\\s+not)$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "sys-version-info"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI006",
+        "message": "Compare `sys.version_info` with `<` or `>=` against a tuple, e.g. `sys.version_info >= (3, 9)`; `in` and `is` don't behave as version checks.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI006"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

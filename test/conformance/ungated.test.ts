@@ -33,6 +33,12 @@ function pack(name: string, tools: string[], rules: Record<string, string>, gate
   for (const tool of gated) write(`packs/${name}/upstream/${tool}/gates.yaml`, "adapter: x\n");
 }
 
+/** A private pack (`"private": true` in package.json) of Rerail's own rules: no conformance.json, no upstream tool. */
+function privatePack(name: string, rules: string[], isPrivate: unknown = true): void {
+  write(`packs/${name}/pack.json`, { rules: rules.map((id) => ({ id })) });
+  write(`packs/${name}/package.json`, { name: `rerail-pack-${name}`, private: isPrivate });
+}
+
 function lists(frozen: Record<string, string[]>, pending: Record<string, string> = {}): void {
   write(UNGATED_RULES, frozen);
   write(PENDING, pending);
@@ -98,6 +104,21 @@ describe("not-gated", () => {
     expect(result.checks).toEqual([]);
     expect(result.notGated).toEqual([]);
   });
+
+  it("leaves out a private pack's shipped rules: it is never published", async () => {
+    privatePack("own", ["own-a", "own-b"]);
+    lists({});
+    const { result } = await byId();
+    expect(result.checks).toEqual([]);
+    expect(result.notGated).toEqual([]);
+  });
+
+  it("still fails a public pack with no upstream tool whose shipped rules the frozen list does not name", async () => {
+    privatePack("own", ["own-a"], false);
+    lists({});
+    const { check } = await byId();
+    expect(check("not-gated:own")).toMatchObject({ ok: false, detail: expect.stringMatching(/^1 new shipped rule\(s\) \(own-a\)/u) });
+  });
 });
 
 describe("frozen-list", () => {
@@ -108,6 +129,14 @@ describe("frozen-list", () => {
     const { check } = await byId();
     expect(check("frozen-list:plain")).toMatchObject({ ok: false, detail: expect.stringContaining("(gone)") });
     expect(check("frozen-list:gated")).toMatchObject({ ok: false, detail: expect.stringContaining("(judged)") });
+  });
+
+  it("fails a private pack's listed rules as stale: none of them belongs on the list", async () => {
+    privatePack("own", ["own-a"]);
+    lists({ own: ["own-a"] });
+    const { check } = await byId();
+    expect(check("not-gated:own")).toBeUndefined();
+    expect(check("frozen-list:own")).toMatchObject({ ok: false, detail: expect.stringContaining("in a private pack") });
   });
 
   it("passes when every listed rule still ships ungated", async () => {

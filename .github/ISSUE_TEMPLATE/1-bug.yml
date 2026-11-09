@@ -15,7 +15,6 @@ body:
     attributes:
       label: Rerail version
       description: The `Current:` line of `rerail update status`.
-      placeholder: "0.1.0"
     validations:
       required: true
   - type: dropdown
@@ -83,8 +82,13 @@ body:
     id: output
     attributes:
       label: Output
-      description: The error, the steer text, or the relevant lines of `~/.rerail/daemon.log`.
+      description: The error, or the steer text.
       render: text
+  - type: textarea
+    id: support-bundle
+    attributes:
+      label: Support bundle
+      description: Run `/rerail-bug-report` in your coding agent, which also fills in this form, or `rerail support-bundle` in a terminal, read the file it writes, and drag it here. It holds Rerail's diagnostics, with no prompts, replies or code ([what it holds](https://github.com/neralabs/rerail/blob/main/docs/troubleshooting.md#reporting-a-problem)). A dashboard link only opens on your computer, so please don't paste one.
   - type: input
     id: fork
     attributes:

@@ -1,6 +1,6 @@
 # Writing a command rule
 
-Internal testing: conversation rules are not part of Rerail 0.1.0, which releases code rules only. Tell the person so in the
+Internal testing: conversation rules are not part of Rerail's latest release, which ships code rules only. Tell the person so in the
 read-back (SKILL.md, Write step 6).
 
 A conversation rule with a structural `match` checks each tool call the agent makes, before Rerail records it. Use one for a

@@ -97,16 +97,26 @@ test("holds-under-rename: fails an FP, FN or engine failure on rename variants e
   assert.equal(check({ ...none, engineFailures: 1 }).ok, false);
 });
 
-test("holds-under-rename: vacuous, reported and not failed, when the renaming took every finding of the rule", () => {
+test("holds-under-rename: fails, vacuous, when the renaming took every finding of the rule", () => {
   const away: RuleRow["renamed"] = { units: 2, tp: 0, fp: 0, fn: 0, falsePositives: [], falseNegatives: [], engineFailures: 0, incomplete: 0, renamedAway: 2 };
   const check = conformanceChecks(conformance([row("a", { renamed: away })]), "a").find((entry) => entry.id === "holds-under-rename");
   assert.deepEqual(check, {
     id: "holds-under-rename",
-    ok: true,
-    vacuous: true,
-    detail: "vacuous: no finding of the rule survives on its 2 rename variant unit(s); 2 variant(s) lost every finding of the rule (renamed away)",
+    ok: false,
+    detail: "vacuous: no finding of the rule survives on its 2 rename variant unit(s); 2 variant(s) lost every finding of the rule (renamed away): the rule matches the test cases' names, not the construct; fix the rule",
   });
-  // One surviving true positive is evidence: the check is no longer vacuous.
+  // One surviving true positive is evidence: the variants that lost every finding are only reported.
   const survived = conformanceChecks(conformance([row("a", { renamed: { ...away, tp: 1, renamedAway: 1 } })]), "a").find((entry) => entry.id === "holds-under-rename");
-  assert.equal(survived?.vacuous, undefined);
+  assert.deepEqual(survived, { id: "holds-under-rename", ok: true, detail: "agrees with upstream on its 2 rename variant unit(s) (1 true positive(s)); 1 variant(s) lost every finding of the rule (renamed away)" });
+});
+
+test("holds-under-rename: a rule gates.yaml exempts is not failed when the renaming took every finding, but still on an FP", () => {
+  const away: RuleRow["renamed"] = { units: 2, tp: 0, fp: 0, fn: 0, falsePositives: [], falseNegatives: [], engineFailures: 0, incomplete: 0, renamedAway: 2, exempt: "its findings are the names" };
+  const check = (renamed: RuleRow["renamed"]) => conformanceChecks(conformance([row("a", { renamed })]), "a").find((entry) => entry.id === "holds-under-rename")!;
+  assert.deepEqual(check(away), {
+    id: "holds-under-rename",
+    ok: true,
+    detail: "n/a: exempt in gates.yaml (its findings are the names); no finding survives on its 2 rename variant unit(s); 2 variant(s) lost every finding of the rule (renamed away)",
+  });
+  assert.equal(check({ ...away, fp: 1, falsePositives: [{ path: "renamed/a.js", line: 1, column: 1 }] }).ok, false);
 });

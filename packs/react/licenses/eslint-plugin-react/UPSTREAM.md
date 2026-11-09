@@ -14,7 +14,7 @@ License: MIT (Copyright (c) 2014 Yannick Croissant); [`LICENSE`](LICENSE) is the
 |---|---|---|
 | `upstream/eslint-plugin-react/tests/**` | `tests/lib/rules/*` | verbatim: the rule test files |
 | `upstream/eslint-plugin-react/fixtures/**` | `tests/lib/rules/*` | extracted: each file is one RuleTester case's `code`, verbatim |
-| `upstream/eslint-plugin-react/fixtures/renamed/**` | as its original | renamed: the file of the same path below `fixtures/`, with its names and literals renamed |
+| `upstream/eslint-plugin-react/fixtures/renamed/**` | as its original | renamed: the file of the same path below `fixtures/`, with its names renamed (literals and the names' order kept) |
 
 The files taken from it are the upstream tests of the rules the React pack ports (`conformance.json`, `upstream/common.mjs` `RULES`), and the test cases extracted from them, one case per file, and remain under eslint-plugin-react's license. Every other file under `upstream/eslint-plugin-react/` is Rerail's, under the Apache License 2.0 (the pack's `LICENSE`): `generate.mjs` (with its stub RuleTester), `../common.mjs` and the expected findings they write by running the pinned plugin. The rule documents in `rules/` and `candidates/rules/` are Rerail's re-implementations of eslint-plugin-react's and eslint-plugin-react-hooks' rules, published under the pack's licence expression, `Apache-2.0 AND MIT`, as `REUSE.toml` annotates them.
 

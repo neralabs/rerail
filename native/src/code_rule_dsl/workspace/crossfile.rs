@@ -58,15 +58,20 @@ pub(super) struct CrossFileScheduler {
 }
 
 impl CrossFileScheduler {
+    /// Registers code rule `index`'s `calls` terms. Only a code rule holding one gets synthetic
+    /// clauses, so only then is the workspace's copy of it made its own.
     pub(super) fn register(
         state: &mut WorkspaceState,
         index: usize,
-        code_rule: &mut CompiledCodeRule,
+        code_rule: &mut Arc<CompiledCodeRule>,
     ) -> Result<()> {
         if code_rule.clauses.iter().any(
             |clause| matches!(&clause.kind, ClauseKind::Forbid(query) if !query.calls().is_empty()),
         ) {
-            state.crossfile.calls.register(index, code_rule)?;
+            state
+                .crossfile
+                .calls
+                .register(index, Arc::make_mut(code_rule))?;
         }
         Ok(())
     }

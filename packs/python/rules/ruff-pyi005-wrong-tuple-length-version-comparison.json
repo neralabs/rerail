@@ -1,0 +1,511 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi005-wrong-tuple-length-version-comparison",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Compare a sys.version_info slice only with a tuple of the same length in stub files; a tuple of another length is never equal.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "test-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "field": "condition"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-slot"
+                }
+              }
+            ]
+          },
+          "bool-and-top": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^and$"
+            },
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "bool-and-top"
+                }
+              }
+            ]
+          },
+          "bool-or-top": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^or$"
+            },
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "bool-or-top"
+                }
+              }
+            ]
+          },
+          "test-operand": {
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "bool-and-top"
+                    },
+                    {
+                      "matches": "bool-or-top"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-operand"
+                }
+              }
+            ]
+          },
+          "sys-version-info": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "sys.version_info"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "sys-version-info"
+                }
+              }
+            ]
+          },
+          "slice-int": {
+            "any": [
+              {
+                "kind": "integer"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "slice-int"
+                }
+              }
+            ]
+          },
+          "version-slice": {
+            "any": [
+              {
+                "kind": "subscript",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "matches": "sys-version-info"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "subscript",
+                      "kind": "slice",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "slice-int",
+                            "follows": {
+                              "stopBy": {
+                                "not": {
+                                  "any": [
+                                    {
+                                      "kind": "comment"
+                                    },
+                                    {
+                                      "kind": "line_continuation"
+                                    }
+                                  ]
+                                }
+                              },
+                              "regex": "^:$",
+                              "not": {
+                                "follows": {
+                                  "stopBy": "neighbor",
+                                  "regex": "(?s)."
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "count": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "not": {
+                                "any": [
+                                  {
+                                    "regex": "^:$"
+                                  },
+                                  {
+                                    "kind": "comment"
+                                  },
+                                  {
+                                    "kind": "line_continuation"
+                                  }
+                                ]
+                              }
+                            },
+                            "min": 1,
+                            "max": 1
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "version-slice"
+                }
+              }
+            ]
+          },
+          "tuple-not-1": {
+            "any": [
+              {
+                "kind": "tuple",
+                "not": {
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),]$"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-not-1"
+                }
+              }
+            ]
+          },
+          "tuple-not-2": {
+            "any": [
+              {
+                "kind": "tuple",
+                "not": {
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),]$"
+                          },
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 2,
+                    "max": 2
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "tuple-not-2"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "major-slice",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "all": [
+              {
+                "matches": "test-operand"
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^(==|!=)$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "version-slice",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "integer",
+                    "value": {
+                      "eq": 1
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "regex": "^(==|!=)$"
+                  },
+                  "matches": "tuple-not-1"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI005",
+        "message": "Match the slice to the tuple length: use `sys.version_info[:2]` for a tuple such as `(3, 9)`, or a one-element tuple such as `(3,)` with `[:1]`; as written the result ignores the version.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI005"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "major-minor-slice",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "all": [
+              {
+                "matches": "test-operand"
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^(==|!=)$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "version-slice",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "integer",
+                    "value": {
+                      "eq": 2
+                    }
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "regex": "^(==|!=)$"
+                  },
+                  "matches": "tuple-not-2"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI005",
+        "message": "Match the slice to the tuple length: use `sys.version_info[0] == 3` for the major version only, or a tuple such as `(3, 9)` with `[:2]`; as written the result ignores the version.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI005"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

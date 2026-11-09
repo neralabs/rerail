@@ -1,0 +1,87 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi044-future-annotations-in-stub",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove the future annotations import from stub files; stubs are never executed and already treat annotations as forward references.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "future-annotations-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "annotations-name": {
+              "kind": "dotted_name",
+              "regex": "^annotations$"
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "future_import_statement"
+                  },
+                  {
+                    "kind": "import_from_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "module_name",
+                      "kind": "relative_import",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "dotted_name",
+                        "regex": "^__future__$"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "annotations-name"
+                    },
+                    {
+                      "kind": "aliased_import",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "annotations-name"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI044",
+        "message": "Delete `annotations` from this `__future__` import (and the whole line if nothing else is imported); stubs already treat annotations as forward references.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI044"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

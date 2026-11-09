@@ -1,0 +1,70 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-table-probes-in-storage",
+  "revision": 1,
+  "mode": "log",
+  "description": "Keep checks for whether a table or column exists in Rerail's database inside the storage layer; one place then decides what a read-only open can read.",
+  "scope": {
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "src/engine/storage/**",
+      "**/claude-status-store.ts",
+      "**/*.test.ts",
+      "**/*.generated.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "schema-probe",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "string",
+                "regex": "(?i)\\b(?:from|join)\\s+(?:[\\\"`\\[]?\\w+[\\\"`\\]]?\\.)?[\\\"`\\[]?sqlite_(?:temp_)?(?:master|schema)\\b|^[\\\"'`](?:\\w+\\.)?sqlite_(?:temp_)?(?:master|schema)[\\\"'`]$|\\bpragma_table_(?:list|x?info)\\b|\\bpragma\\s+(?:[\\\"`\\[]?\\w+[\\\"`\\]]?\\.)?table_(?:list|x?info)\\b|^[\\\"'`]\\s*(?:\\w+\\.)?table_(?:list|x?info)\\b"
+              },
+              {
+                "kind": "template_string",
+                "regex": "(?i)\\b(?:from|join)\\s+(?:[\\\"`\\[]?\\w+[\\\"`\\]]?\\.)?[\\\"`\\[]?sqlite_(?:temp_)?(?:master|schema)\\b|^[\\\"'`](?:\\w+\\.)?sqlite_(?:temp_)?(?:master|schema)[\\\"'`]$|\\bpragma_table_(?:list|x?info)\\b|\\bpragma\\s+(?:[\\\"`\\[]?\\w+[\\\"`\\]]?\\.)?table_(?:list|x?info)\\b|^[\\\"'`]\\s*(?:\\w+\\.)?table_(?:list|x?info)\\b"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "SCHEMA_PROBE_OUTSIDE_STORAGE",
+        "anchor": "witness.span",
+        "message": "Move this schema probe into src/engine/storage/ and call it from here. Don't just drop it: a read-only open upgrades a file missing a table, but not one whose creator hasn't committed yet."
+      }
+    },
+    {
+      "id": "missing-table-error",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "string",
+                "regex": "(?i)\\bno such table\\b"
+              },
+              {
+                "kind": "template_string",
+                "regex": "(?i)\\bno such table\\b"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "MISSING_TABLE_ERROR_OUTSIDE_STORAGE",
+        "anchor": "witness.span",
+        "message": "Ask storage whether the table is there before reading, instead of catching the missing-table error here; put that check in src/engine/storage/ and call it from here."
+      }
+    }
+  ]
+}

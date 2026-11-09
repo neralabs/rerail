@@ -176,17 +176,49 @@ export const runNpm: NpmRunner = async (args, options = {}) => {
 };
 
 /**
+ * Runs `operation` in a new empty folder and removes it afterwards. npm reads a project `.npmrc` from the folder it
+ * runs in, or the nearest above with a `package.json`, so a command run from inside a repository would let that
+ * repository choose the registry. The person's own `~/.npmrc` still applies.
+ */
+export async function outsideAnyProject<T>(operation: (directory: string) => Promise<T>): Promise<T> {
+  const directory = await mkdtemp(join(tmpdir(), "rerail-npm-"));
+  try {
+    return await operation(directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+/**
  * Fails, as `runNpm` words it, when npm cannot fetch `spec`'s metadata from its registry now. Against a registry that
  * is down npm answers from its cache, however stale, once its retries are spent, so an install waits them out for every
  * package in turn; one request with an empty cache finds out in seconds. npm set to work offline is left to it.
  */
-export async function checkRegistry(spec: string): Promise<void> {
-  const cache = await mkdtemp(join(tmpdir(), "rerail-npm-"));
+export async function checkRegistry(spec: string, npm: NpmRunner = runNpm): Promise<void> {
+  await outsideAnyProject(async (directory) => {
+    try {
+      await npm(["view", spec, "version", "--cache", join(directory, "cache"), "--fetch-timeout=30000"], { cwd: directory });
+    } catch (error) {
+      if (!(error instanceof Error) || !/\bENOTCACHED\b/u.test(error.message)) throw error;
+    }
+  });
+}
+
+/** npm's words when no installed package came from a registry that publishes signing keys, as a private mirror may not. */
+const NPM_NO_SIGNING_KEYS = /found no dependencies to audit that were installed from a supported registry/u;
+
+/**
+ * Checks the registry signature and any provenance attestation of every package installed below `prefix` with
+ * `npm audit signatures`. Fails when one does not verify, or has no signature where its registry publishes keys.
+ * Resolves `"no-signing-keys"` when no package came from a registry that publishes keys, so nothing could be checked.
+ */
+export async function auditSignatures(prefix: string, npm: NpmRunner = runNpm): Promise<"verified" | "no-signing-keys"> {
   try {
-    await runNpm(["view", spec, "version", "--cache", cache, "--fetch-timeout=30000"]);
+    await npm(["audit", "signatures", "--prefix", prefix]);
+    return "verified";
   } catch (error) {
-    if (!(error instanceof Error) || !/\bENOTCACHED\b/u.test(error.message)) throw error;
-  } finally {
-    await rm(cache, { recursive: true, force: true });
+    if (error instanceof Error && NPM_NO_SIGNING_KEYS.test(error.message)) return "no-signing-keys";
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`npm could not verify the registry signatures of the packages in ${prefix}: ${detail}`, { cause: error });
   }
 }

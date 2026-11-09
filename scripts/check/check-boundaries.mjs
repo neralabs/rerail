@@ -61,6 +61,22 @@ function isEntryPoint(target) {
   return target === "src/index.ts" || /^src\/(?:hosts\/[^/]+|[^/]+)\/index\.ts$/u.test(target);
 }
 
+/** The specifier of an `import` or `export ... from` declaration. */
+function declarationSpecifier(node) {
+  return ts.isImportDeclaration(node) || ts.isExportDeclaration(node) ? node.moduleSpecifier : undefined;
+}
+
+/** The specifier of an `import x = require("...")`, or of an `import("...")` type. */
+function referenceSpecifier(node) {
+  if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) return node.moduleReference.expression;
+  return ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) ? node.argument.literal : undefined;
+}
+
+const isModuleLoad = (callee) => callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require");
+
+const isMockSeamCall = (callee) => ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "vi"
+  && MOCK_SEAMS.has(callee.name.text);
+
 /** Every module specifier in `text` with its line and whether it is a vitest mock seam. */
 function specifiers(file, text) {
   const kind = /\.[cm]?js$/u.test(file) ? ts.ScriptKind.JS : file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -70,22 +86,26 @@ function specifiers(file, text) {
     if (!ts.isStringLiteralLike(node)) return;
     found.push({ specifier: node.text, line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1, seam });
   };
-  const visit = (node, seam) => {
-    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined) add(node.moduleSpecifier, seam);
-    else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) add(node.moduleReference.expression, seam);
-    else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) add(node.argument.literal, seam);
-    else if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      if (callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require")) {
-        if (node.arguments[0] !== undefined) add(node.arguments[0], seam);
-      } else if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "vi"
-        && MOCK_SEAMS.has(callee.name.text)) {
-        if (node.arguments[0] !== undefined) add(node.arguments[0], true);
-        for (const argument of node.typeArguments ?? []) visit(argument, true);
-        for (const argument of node.arguments.slice(1)) visit(argument, seam);
-        return;
-      }
+  const visitMockSeam = (node, seam) => {
+    if (node.arguments[0] !== undefined) add(node.arguments[0], true);
+    for (const argument of node.typeArguments ?? []) visit(argument, true);
+    for (const argument of node.arguments.slice(1)) visit(argument, seam);
+  };
+  const visitCall = (node, seam) => {
+    if (isMockSeamCall(node.expression)) {
+      visitMockSeam(node, seam);
+      return;
     }
+    if (isModuleLoad(node.expression) && node.arguments[0] !== undefined) add(node.arguments[0], seam);
+    ts.forEachChild(node, child => visit(child, seam));
+  };
+  const visit = (node, seam) => {
+    if (ts.isCallExpression(node)) {
+      visitCall(node, seam);
+      return;
+    }
+    const specifier = declarationSpecifier(node) ?? referenceSpecifier(node);
+    if (specifier !== undefined) add(specifier, seam);
     ts.forEachChild(node, child => visit(child, seam));
   };
   visit(source, false);
