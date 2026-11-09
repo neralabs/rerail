@@ -1690,11 +1690,19 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-assembly.rr",
-      "sha256": "0fa83e95d1f8ad77414a65e0b020c70e97f28c50001182e8cfa138dc885dfea3",
+      "sha256": "e4848cc9a1a9d147baf462c29313cc7fa4852f1c365f56fe72ac484d74f8deeb",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz"
+      "producerEvidence": "gate/data-layer/fixtures/host/data-layer-port/rr-survey-source-exports.json.gz",
+      "importedSha256": "0fa83e95d1f8ad77414a65e0b020c70e97f28c50001182e8cfa138dc885dfea3",
+      "repairs": [
+        {
+          "before": "0fa83e95d1f8ad77414a65e0b020c70e97f28c50001182e8cfa138dc885dfea3",
+          "after": "e4848cc9a1a9d147baf462c29313cc7fa4852f1c365f56fe72ac484d74f8deeb",
+          "reason": "An explicit discovery producer owns the complete source inventory, including empty CLI directory batches; prevent implicit primary buffers bypassing it"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-body.rr",
@@ -1762,7 +1770,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-source.rr",
-      "sha256": "3973b0d8f146d6219d351cfc13ca05d837aa44cc8d49e8346a0de81984454a26",
+      "sha256": "f65b2de537df253ff0234934c12f580228c1c84f394a5a86c5d500efe0d71bfe",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1778,6 +1786,11 @@
           "before": "01380b6d012c4f00fc50e035ad450a6aac943f5f7a41c097b8bb4d9ef7562ac5",
           "after": "3973b0d8f146d6219d351cfc13ca05d837aa44cc8d49e8346a0de81984454a26",
           "reason": "Preserve CLI directory semantics, parsed module membership, and dense filtered report positions"
+        },
+        {
+          "before": "3973b0d8f146d6219d351cfc13ca05d837aa44cc8d49e8346a0de81984454a26",
+          "after": "f65b2de537df253ff0234934c12f580228c1c84f394a5a86c5d500efe0d71bfe",
+          "reason": "An explicit discovery producer owns the complete source inventory, including empty CLI directory batches; prevent implicit primary buffers bypassing it"
         }
       ]
     },
@@ -1791,7 +1804,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-produced-graph.rr",
-      "sha256": "8c941ff60d6f784fe0b23c78ef12e8e0639033c93243b8aacafeb82aee4ca02c",
+      "sha256": "8ebeebdb4df9c7c7d33a6ae640aea664d1a02a9e6c7a3274419d0237d1b4a2d9",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
@@ -1807,6 +1820,11 @@
           "before": "0feafec8a916053c39525172311029e80fc588ce9c92ad2a0c125a925c7a58c7",
           "after": "8c941ff60d6f784fe0b23c78ef12e8e0639033c93243b8aacafeb82aee4ca02c",
           "reason": "Render exact source survey reports from typed rows, with occurrence order, error precedence, Python limits, and JSON formatting"
+        },
+        {
+          "before": "8c941ff60d6f784fe0b23c78ef12e8e0639033c93243b8aacafeb82aee4ca02c",
+          "after": "8ebeebdb4df9c7c7d33a6ae640aea664d1a02a9e6c7a3274419d0237d1b4a2d9",
+          "reason": "An explicit discovery producer owns the complete source inventory, including empty CLI directory batches; prevent implicit primary buffers bypassing it"
         }
       ]
     },
@@ -1987,7 +2005,7 @@
     {
       "destination": "docs/rule-syntax/lib/data-layer/imperative-source.rr",
       "origin": "authored",
-      "sha256": "b83643157e41b386f45de5ad0cd92448dfcbe52cfe952327fc9c9290e7ac7ebd",
+      "sha256": "e5b85cb385f27249ec2457d47ee288c3aa3ee6b69445bf44bd400f7f7fb6198a",
       "importedSha256": "4baa259b0161fc34dd76c4627b46e63d4214cdad41448fc0587d86521ac3efbd",
       "repairs": [
         {
@@ -2004,6 +2022,11 @@
           "before": "6873cf30ade4dd7ecb0fd7b0ed30ed2b69c6cfe47efdd448a6a40c6116acc49a",
           "after": "b83643157e41b386f45de5ad0cd92448dfcbe52cfe952327fc9c9290e7ac7ebd",
           "reason": "Wire the real-source CLI to the shared native graph and reports, with explicit batched directory demands and source public expansion"
+        },
+        {
+          "before": "b83643157e41b386f45de5ad0cd92448dfcbe52cfe952327fc9c9290e7ac7ebd",
+          "after": "e5b85cb385f27249ec2457d47ee288c3aa3ee6b69445bf44bd400f7f7fb6198a",
+          "reason": "An explicit discovery producer owns the complete source inventory, including empty CLI directory batches; prevent implicit primary buffers bypassing it"
         }
       ]
     },
@@ -3031,7 +3054,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "d8fad367bc743e40b78e9b8b7ddcaa9e163a25df",
-    "status": "Current Final through d8fad367b; generic compatibility extensions with a real text-domain regression under repair",
+    "status": "Final d8fad367b with complete constant-domain inference; native acceptance pending",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3171,7 +3194,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "2bba4a1c99787af591177420ce0d562aeae34dfeeaf71af30fc4f265ea397eb8"
+        "sha256": "c92ecc7f3918d59359f2b7f01e78dbb04f1af47921ee50fff02187652d4f4dce"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",

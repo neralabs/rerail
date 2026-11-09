@@ -2,6 +2,7 @@
 #include "data-layer/survey-produced-graph.rr"
 #include "data-layer/survey-discovery.rr"
 sgd_enabled().
+sgs_explicit_inventory().
 sgd_configured().
 .decl ipfs_root(path: symbol)
 ipfs_root("api").

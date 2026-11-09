@@ -362,6 +362,8 @@ fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(St
     if visiting.iter().any(|(r, c)| r == rel && *c == col) || visiting.len() > 16 {
         return None;
     }
+    // Inputs may contribute arbitrary values even when they also have rules.
+    if prog.inputs.contains(&rel.to_owned()) { return None; }
     let rules: Vec<&super::front::Rule> = prog.rules.iter().filter(|r| r.head.rel == rel).collect();
     if rules.is_empty() {
         if prog.inputs.contains(&rel.to_owned()) {
@@ -370,8 +372,16 @@ fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(St
         let rows = prog.facts.get(rel)?;
         return rows.iter().map(|row| match row.get(col) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
     }
-    visiting.push((rel.to_owned(), col));
+    // A relation is the union of its literal facts and every rule. Omitting
+    // its facts underestimates the domain and makes the added prefilter unsound.
     let mut out = BTreeSet::new();
+    if let Some(rows) = prog.facts.get(rel) {
+        for row in rows {
+            let Some(super::front::Value::Str(value)) = row.get(col) else { return None };
+            out.insert(value.clone());
+        }
+    }
+    visiting.push((rel.to_owned(), col));
     for rule in rules {
         let got = match rule.head.args.get(col) {
             Some(Term::Str(s)) => Some(BTreeSet::from([s.clone()])),

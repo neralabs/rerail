@@ -5,7 +5,7 @@
 
 .decl sgp_active()
 sgp_active() :- !option("suppliedGraph", "true").
-sgs_scan_file(d) :- sgp_active(), option_item("inputFiles", _, path), sgs_path(d, path).
+sgs_scan_file(d) :- sgp_active(), !sgs_explicit_inventory(), option_item("inputFiles", _, path), sgs_path(d, path).
 .decl sgp_owner(n: node, has_owner: number)
 sgp_owner(n, 0) :- sgs_definition(n, _, _, _, _, "").
 sgp_owner(n, 1) :- sgs_definition(n, _, _, _, _, owner), owner != "".
