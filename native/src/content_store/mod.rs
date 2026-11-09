@@ -610,6 +610,8 @@ pub struct ContentStore {
     working_set: working_set::WorkingSet,
     /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
     holder: parking_lot::Mutex<Option<(String, i64)>>,
+    /// This handle's shared collection lease (`hold_collection`).
+    lease: std::sync::Arc<collection_guard::SharedLease>,
     #[cfg(test)]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(test)]
@@ -665,6 +667,7 @@ impl ContentStore {
             atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
+            lease: Default::default(),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
             #[cfg(test)]
