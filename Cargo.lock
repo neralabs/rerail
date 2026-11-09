@@ -3135,6 +3135,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-accel"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "cc",
+ "libc",
+ "metal",
+ "objc",
+ "rayon",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "rerail-engine"
 version = "0.1.0"
 dependencies = [
