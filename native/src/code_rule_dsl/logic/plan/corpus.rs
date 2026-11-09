@@ -275,19 +275,17 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// `Report::cone_inputs`: each document's rows of `per_file` (in `x`), by path. A value naming a node of the
-/// document is its rank among those its rows name; the rest (symbols, document keys, numbers) as they are.
-fn cone_digests<'a>(db: &Connection, per_file: &[String], locations: &BTreeMap<String, Vec<usize>>, program: &front::Program, docs: impl Iterator<Item = &'a (i64, String)>) -> Result<BTreeMap<String, String>> {
+/// `Report::cone_inputs`: each document's rows of `per_file` (the held exports), by path. A value naming a node of
+/// the document is its rank among those its rows name; the rest (symbols, document keys, numbers) as they are.
+fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: &BTreeMap<String, Vec<usize>>, program: &front::Program, docs: impl Iterator<Item = &'a (i64, String)>) -> Result<BTreeMap<String, String>> {
     use sha2::{Digest, Sha256};
     let mut by_doc: HashMap<i64, Vec<(usize, Vec<i64>)>> = HashMap::new();
     for (i, rel) in per_file.iter().enumerate() {
         let Some(at) = locations.get(rel).and_then(|l| l.first().copied()) else { continue };
         let width = program.decls.get(rel).map_or(0, Vec::len);
-        let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-        let table = crate::code_rule_dsl::logic::sql::ident(rel);
-        let mut read = db.prepare(&format!("SELECT {cols} FROM x.{table}"))?;
-        for row in read.query_map([], |r| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vec<_>>>())? {
-            let row = row?;
+        let source = exports.snapshot(rel, width);
+        for r in 0..source.len() {
+            let row: Vec<i64> = (0..width).map(|c| source.value(r, c)).collect();
             by_doc.entry(memo::document_of(row[at])).or_default().push((i, row));
         }
     }
@@ -2928,7 +2926,7 @@ fn run_observed(
         drop(answer_one);
         loading_rows = cone.join().map_err(|_| Error::Plan("the cone of requests panicked".to_owned()))??;
         loading_rows.extend(answered);
-        cone_inputs = cone_digests(&db, &per_file, &split.locations, &lowered.program, docs.iter().chain(&loaded_docs))?;
+        cone_inputs = cone_digests(&exports.borrow(), &per_file, &split.locations, &lowered.program, docs.iter().chain(&loaded_docs))?;
         let summary = world.summary(pauses);
         consulted.extend(world.consulted());
         crate::code_rule_dsl::logic::profile::decision("file system and loaded documents (t21)", || summary);
