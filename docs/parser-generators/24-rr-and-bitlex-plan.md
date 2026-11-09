@@ -345,6 +345,31 @@ runs:
 The machine's load is given with every table. Tier 1 is also timed on Metal. Each step's shape
 is pinned, as JSON's is: the operations per block, the CLIF body, the words by opcode.
 
+### 5.1 Tier 1's code on the CPU
+
+The rr grammar's tier 1 runs in 9 passes: 5 forward over the blocks and 4 back for the
+`back_fill`s. A pass reads the values of earlier passes from slot words, a few a block.
+Two changes to how a pass's body is made shrank its code:
+
+- **A slot word is loaded at its first reader.** Before, every slot word was loaded at the
+  body's start and spilled. The block's row of slots is also made once: a load is one `ldr`
+  at its slot's offset, not five instructions.
+- **Values in the order they are needed.** Each value is emitted just before the first value
+  that reads it, not in the grammar's order. Each slot word is stored where it is made.
+
+| | instructions | spills |
+|---|---|---|
+| before | 11,568 | 1,831 |
+| loads at their readers | 10,960 | 1,800 |
+| values on demand | 10,180 | 1,011 |
+
+Tier 1 went from about 500 to about 330 ns a 64-byte block, at a load of 20 to 30.
+
+Two other ideas did not pay. Reordering each `and` chain, so that a keyword's letters meet on
+the vectors before any mask, gave more code: the chain's last `and` is in a later pass, so
+each letter is still a slot word. Making `within` a vector value too moved more values onto
+the vectors, and each one then needed its own mask.
+
 ## 6. Process
 
 - Test first, at every step: the step's tests fail until the compiler handles it.
