@@ -225,8 +225,13 @@ function textAs(blob: Buffer, form: "stored" | "crlf"): string {
 }
 /** The read error of a file too large to be a source or holding binary data, found once it was read. */
 const NOT_TEXT_ERROR = "Source exceeds its byte budget or contains binary data";
-function fileStamp(info: Stats): string {
-  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+/**
+ * What identifies a file's content without reading it. A walk keeps one per file it sees, for every file of the
+ * checkout and in each session and walk at once, so the stamp is built with `join`, which makes one flat string: a
+ * template literal makes a rope of ten strings, about 340 bytes where the flat string takes about 70.
+ */
+export function fileStamp(info: Pick<Stats, "dev" | "ino" | "size" | "mtimeMs" | "ctimeMs">): string {
+  return [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs].join(":");
 }
 /** What a walk observes of every file it looks at, before any read. */
 type StampedSource = Pick<Source, "path" | "language"> & { readonly stamp: string; readonly observedAt: number; readonly modifiedAt: number };
