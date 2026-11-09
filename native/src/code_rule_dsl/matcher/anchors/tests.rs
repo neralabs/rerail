@@ -146,9 +146,11 @@ fn compare_matchers(
     let grammar = Grammar::new(language).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    // The tree\'s nodes: a stored image is named-only (RER-131).
+    let tree_nodes = tape.transducer_len();
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
-    assert_eq!(native.root().dfs().count(), image.primary.node_count());
+    assert_eq!(native.root().dfs().count(), tree_nodes);
     for &(rule, matcher) in matchers {
         let plan = AnchorPlan::compile(matcher);
         let expected = actual(&native, matcher);
@@ -159,7 +161,7 @@ fn compare_matchers(
         assert!(native_complete && tape_complete, "{language:?} {rule}");
         assert_eq!(
             native_visited,
-            image.primary.node_count(),
+            tree_nodes,
             "charge anonymous nodes too"
         );
         assert_eq!(tape_visited, native_visited);
@@ -596,6 +598,8 @@ fn incomplete_index_is_not_a_clean_absence() {
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    // The tree\'s nodes: a stored image is named-only (RER-131).
+    let tree_nodes = tape.transducer_len();
     let matcher = compile_rule(
         &json!({"pattern": "bar(2)"}),
         GrammarDialect::TypeScript,
@@ -604,7 +608,7 @@ fn incomplete_index_is_not_a_clean_absence() {
     )
     .unwrap();
     let plan = AnchorPlan::compile(&matcher);
-    assert!(image.primary.node_count() > 2);
+    assert!(tree_nodes > 2);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
     for budget in [0, 1, 2] {
@@ -633,6 +637,8 @@ fn traversal_polls_closing_nodes_before_another_preorder_batch() {
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    // The tree\'s nodes: a stored image is named-only (RER-131).
+    let tree_nodes = tape.transducer_len();
     let matcher = compile_rule(
         &json!({"kind": "call_expression"}),
         GrammarDialect::TypeScript,
@@ -678,6 +684,8 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    // The tree\'s nodes: a stored image is named-only (RER-131).
+    let tree_nodes = tape.transducer_len();
     let rule = json!({"kind": "class_declaration"});
     let matcher = compile_rule(
         &rule,
@@ -689,13 +697,13 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     let plan = AnchorPlan::compile(&matcher);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
-    assert!(image.primary.node_count() > 1024);
+    assert!(tree_nodes > 1024);
     println!(
         "DEEP_CHAIN nodes={} max_visits=[0,1,7,513,{}]",
-        image.primary.node_count(),
-        image.primary.node_count() - 1
+        tree_nodes,
+        tree_nodes - 1
     );
-    for max_nodes in [0, 1, 7, 513, image.primary.node_count() - 1] {
+    for max_nodes in [0, 1, 7, 513, tree_nodes - 1] {
         let (found, roots, visited, complete, all) =
             selected(&native, &matcher, &plan, max_nodes, || false);
         assert!(found.is_empty() && !complete && all);
@@ -710,10 +718,10 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     let (found, _, visited, complete, all) =
         selected(&native, &matcher, &plan, usize::MAX, || false);
     assert!(found.is_empty() && complete && !all);
-    assert_eq!(visited, image.primary.node_count());
+    assert_eq!(visited, tree_nodes);
     let (found, _, visited, complete, all) = selected(&tape, &matcher, &plan, usize::MAX, || false);
     assert!(found.is_empty() && complete && !all);
-    assert_eq!(visited, image.primary.node_count());
+    assert_eq!(visited, tree_nodes);
 }
 
 fn sibling_matcher(rule: Value, language: GrammarDialect) -> AstMatcher {
@@ -962,6 +970,8 @@ fn stop_rule_relations_plan_as_unbounded_supersets() {
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    // The tree\'s nodes: a stored image is named-only (RER-131).
+    let tree_nodes = tape.transducer_len();
     assert_stop_rule_supersets(&AstGrep::doc(native), &rules);
     assert_stop_rule_supersets(&AstGrep::doc(tape), &rules);
 }
