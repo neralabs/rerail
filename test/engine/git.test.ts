@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitHome, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
-  runGit,
+  runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
@@ -280,6 +280,26 @@ describe("gitCandidates", () => {
   it("keeps every absolute entry outside node_modules when the folder it runs in is in no repository", () => {
     const search = { platform: "linux" as const, home: "/home/me", path: "/home/me/bin", cwd: "/home/me" };
     expect(gitCandidates(search, disk([]))[0]).toBe("/home/me/bin/git");
+  });
+
+  it("skips the PATH entries of the repository it was told to search from, wherever it runs", async () => {
+    // The daemon runs in the Rerail home and serves the repository it was started for (`--workspace-root`).
+    const repository = await realpath(await mkdtemp(join(tmpdir(), "rerail-git-served-")));
+    roots.push(repository);
+    await mkdir(join(repository, ".git"));
+    const tools = await realpath(await mkdtemp(join(tmpdir(), "rerail-git-tools-")));
+    roots.push(tools);
+    const program = process.platform === "win32" ? "git.exe" : "git";
+    vi.stubEnv("PATH", [join(repository, "bin"), tools].join(delimiter));
+    try {
+      expect(gitCandidates()).toContain(join(repository, "bin", program));
+      searchGitFrom(repository);
+      expect(gitCandidates()).not.toContain(join(repository, "bin", program));
+      expect(gitCandidates()[0]).toBe(join(tools, program));
+    } finally {
+      searchGitFrom(undefined);
+      vi.unstubAllEnvs();
+    }
   });
 
   it("still lists PATH and the install locations from a working folder that was deleted", async () => {

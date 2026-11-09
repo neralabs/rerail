@@ -10,6 +10,7 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { renameWithRetry } from "../engine/file-replace.js";
+import { searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
@@ -853,6 +854,10 @@ export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
 
 export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
+  // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
+  // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.
+  const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
+  searchGitFrom(workspaceRoot);
   const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
@@ -864,8 +869,6 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   if (!existsSync(join(uiRoot, "index.html"))) {
     throw new Error(`Rerail page is missing at ${uiRoot}; run npm run build:ui.`);
   }
-  // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`).
-  const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
   const databasePath = defaultRerailDatabasePath();
   // A signal (macOS, Linux) or a shutdown request (Windows, where `process.kill` ends a process without running any
   // handler) closes the daemon. `rerail daemon stop` kills a daemon that has not stopped within its wait.

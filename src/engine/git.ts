@@ -21,9 +21,10 @@ export interface GitSearch {
  * a repository could control is skipped: a relative one (which includes the current folder), one inside the
  * repository Rerail runs in (direnv's `PATH_add`), and one inside a `node_modules` folder (`node_modules/.bin`). Rerail
  * resolves the absolute path itself and runs that, so Windows never looks in the current folder first. "The repository
- * Rerail runs in" is the nearest folder above the current one with a `.git`: an entry inside an outer checkout (around
- * a nested worktree or submodule), or any repository when Rerail runs from outside it (a daemon keeps the Git it found
- * where it started), is not skipped. The fixed locations come after `PATH`: the system ones, then the per-user installs
+ * Rerail runs in" is the nearest folder with a `.git` above the current one, or above the folder {@link searchGitFrom}
+ * named (the daemon runs in the Rerail home and names the repository it serves): an entry inside an outer checkout
+ * (around a nested worktree or submodule), or any repository when Rerail runs from outside it, is not skipped. The Git
+ * found first is kept for the process. The fixed locations come after `PATH`: the system ones, then the per-user installs
  * whose path only the person's account decides (Git for Windows installed for one user, scoop's Git, Linuxbrew's, a
  * Nix profile's), built from the account's home, never from the environment: `LOCALAPPDATA` can be set by a
  * repository as easily as PATH.
@@ -35,8 +36,23 @@ export function gitCandidates(
   return [...new Set([...pathCandidates(search, probe), ...installLocations(search.platform, search.home)])];
 }
 
-/** The current folder, or undefined when it was deleted under the process (`process.cwd()` throws `ENOENT`). */
+let searchFolder: string | undefined;
+
+/**
+ * Has Git looked for as if Rerail ran in `folder` (undefined: the current folder again). The daemon runs in the Rerail
+ * home, not the repository it serves, and calls this before its first Git call, so a `PATH` entry inside that repository
+ * is still skipped and a home that is itself a Git repository (dotfiles) does not hide the person's own tools.
+ */
+export function searchGitFrom(folder: string | undefined): void {
+  searchFolder = folder;
+}
+
+/**
+ * The folder Git is looked for from: the one {@link searchGitFrom} named, else the current folder, or undefined when
+ * that was deleted under the process (`process.cwd()` throws `ENOENT`).
+ */
 function currentFolder(): string | undefined {
+  if (searchFolder !== undefined) return searchFolder;
   try {
     return process.cwd();
   } catch {

@@ -759,7 +759,8 @@ export function launchDetached(launch: DetachedLaunch, platform: NodeJS.Platform
 /**
  * Starts the daemon in the Rerail home, not the caller's folder: Windows holds a process's current folder open, so a
  * daemon started from a repository kept that checkout, and every folder above it, from being deleted or renamed for as
- * long as it ran. The repository goes to it as `--workspace-root` instead.
+ * long as it ran. The repository goes to it as `--workspace-root` instead, and the daemon looks for Git from there
+ * (`searchGitFrom`), so a `PATH` entry inside the repository is still skipped.
  */
 function launchDaemonProcess(control: DaemonControl, args: string[], env: NodeJS.ProcessEnv, logFile: string): LaunchedDaemon {
   return launchDetached({ args, cwd: control.home, env, logFile });
