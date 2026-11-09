@@ -1,0 +1,1 @@
+Python rules no longer read a line that opens with `[` after an unpacking assignment, such as `a, b = c, d()`, as part of that assignment. `ruff-f823-undefined-local` reported a variable read on that line as read before the assignment bound it.
