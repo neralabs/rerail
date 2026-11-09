@@ -52,6 +52,9 @@ use std::os::raw::c_int;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::Instant;
 
+/// Strata captured and run again on their own (decision 0095, step 0).
+pub(in crate::code_rule_dsl) mod lab;
+
 fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()) }
 
 /// Symbols are the store's atoms (`content_store::atoms`, C12), so a symbol column holds atom ids and joins

@@ -67,6 +67,7 @@ impl From<super::front::Error> for Error {
 type Result<T> = std::result::Result<T, Error>;
 
 pub(in crate::code_rule_dsl) mod corpus;
+pub(in crate::code_rule_dsl) mod placement;
 mod demand;
 pub(in crate::code_rule_dsl) mod lower;
 
@@ -194,6 +195,20 @@ pub(in crate::code_rule_dsl) struct Step {
 /// An atom's binding pattern: its relation, and which columns are bound, constants by value (T's `atom_sig`).
 type Sig = (String, Vec<(usize, Option<Constant>)>);
 
+/// The rule an observed fanout belongs to (`Stats::obs`): its head and body as text, hashed. A fanout through a bound
+/// column depends on which values the rule's bindings bring: `docof($x, $d)` with `$d` bound reads a whole document,
+/// and one rule's bindings fall in 11-node documents while another's fall in documents of thousands of nodes. Pooled
+/// over rules, the first set the second's estimate (`up_once`: 1,285 rows a binding, priced at 10).
+fn obs_rule(head: &Atom, body: &[Literal]) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    head.to_string().hash(&mut h);
+    for l in body {
+        l.to_string().hash(&mut h);
+    }
+    h.finish()
+}
+
 fn atom_sig(a: &Atom, bound: &BTreeSet<String>) -> Sig {
     let cols = a
         .args
@@ -226,8 +241,8 @@ pub(in crate::code_rule_dsl) struct Stats {
     pub(in crate::code_rule_dsl) fan: HashMap<(String, usize), f64>,
     /// (derived rel, col) → {value: postings}, for a column of few values (native statistics).
     pub(in crate::code_rule_dsl) dfreq: HashMap<(String, usize), HashMap<Constant, i64>>,
-    /// Binding pattern → [bindings in, bindings out]: fanouts native joins observed.
-    pub(in crate::code_rule_dsl) obs: HashMap<Sig, [i64; 2]>,
+    /// (rule, binding pattern) → [bindings in, bindings out]: fanouts native joins observed, per rule (`obs_rule`).
+    pub(in crate::code_rule_dsl) obs: HashMap<(u64, Sig), [i64; 2]>,
     /// The recursive component being planned (`atom_rows`).
     pub(in crate::code_rule_dsl) solving: BTreeSet<String>,
     /// Input rel → index column lists.
@@ -858,6 +873,7 @@ impl Model {
         explain: bool,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let stats = &self.stats;
+        let rule = obs_rule(head, body);
         // var → constant kind, from kind($v, "k") atoms.
         let mut kinds: HashMap<&str, String> = HashMap::new();
         for l in body {
@@ -879,7 +895,7 @@ impl Model {
             // not a property of the join, so it is priced from the relation's own estimate (below).
             let crossed = !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v)));
             if !crossed
-                && let Some(seen) = stats.obs.get(&atom_sig(a, bound))
+                && let Some(seen) = stats.obs.get(&(rule, atom_sig(a, bound)))
                 && seen[0] >= OBS_MIN
             {
                 return (seen[1] as f64 / seen[0] as f64).max(0.01);
@@ -2535,7 +2551,7 @@ impl Run<'_, '_> {
 /// Adds a native join's step counts ("in:out" per step, `set_fixpoint_steps`) to the observed fanouts of the binding
 /// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
 /// skipped.
-fn observe(stats: &mut Stats, order: &[Step], counts: &[(i64, i64)]) {
+fn observe(stats: &mut Stats, rule: u64, order: &[Step], counts: &[(i64, i64)]) {
     let mut bound = BTreeSet::new();
     for (i, (s, &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
         if i > 0
@@ -2543,7 +2559,7 @@ fn observe(stats: &mut Stats, order: &[Step], counts: &[(i64, i64)]) {
             && !l.neg
             && n_in != 0
         {
-            let o = stats.obs.entry(atom_sig(l, &bound)).or_insert([0, 0]);
+            let o = stats.obs.entry((rule, atom_sig(l, &bound))).or_insert([0, 0]);
             o[0] += n_in;
             o[1] += n_out;
         }
@@ -3333,6 +3349,8 @@ impl Run<'_, '_> {
             *est.entry(h.as_str()).or_default() += n as f64;
         }
         let mut orders = Vec::new();
+        // Each order's rule, for the fanouts its runs observe (`obs_rule`).
+        let mut order_rules: Vec<u64> = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
         // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
         let planning = |r: &Rule, what: &str| {
@@ -3345,6 +3363,8 @@ impl Run<'_, '_> {
         let rule_no = |r: &Rule| numbers.get(&(r as *const Rule)).copied();
         // Per seed, then per probe: (kind, rule, plan as EXPLAIN shows it, planning CPU, replans).
         let mut explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)> = Vec::new();
+        // Its shape and planned work, for where it runs (`placement`, decision 0095).
+        let mut shape = placement::Shape::default();
         // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
         let missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
             let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
@@ -3360,9 +3380,10 @@ impl Run<'_, '_> {
         for r in &seeds {
             let span = planning(r, "plan");
             let t0 = if profiling { super::profile::now() } else { 0.0 };
-            let ((order, _, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
+            let ((order, work, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
+            shape.add(&order, &r.head.args, work, false);
             let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
                 if answering {
                     let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|a| !scc.contains(a)).collect();
@@ -3381,6 +3402,7 @@ impl Run<'_, '_> {
             *est.entry(r.head.rel.as_str()).or_default() += rows;
             lines.push(format!("seed {} {}", ri[&r.head.rel], hex(&spec)));
             orders.push(order);
+            order_rules.push(obs_rule(&r.head, &r.body));
         }
         // A stratum's relations were made empty by `run` unless the program states facts of them or a SQL seed derived
         // some. A produced input (decision 0065 §2a) starts from its rows where it is.
@@ -3412,8 +3434,9 @@ impl Run<'_, '_> {
             for (ai, a) in recursive(&r.body, scc) {
                 let _span = planning(r, "plan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
-                let ((order, _, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
+                let ((order, work, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
+                shape.add(&order, &r.head.args, work, true);
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
                     if answering {
@@ -3472,7 +3495,14 @@ impl Run<'_, '_> {
             let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), lines.join("\n")));
         }
         let started = std::time::Instant::now();
+        // Where it runs (decision 0095). The device has no relational form yet, so every stratum runs here; the
+        // placement is recorded with the CPU it took, for the profile's "Placement" section.
+        let placed = placement::place(&shape);
+        let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s } else { 0.0 };
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
+        // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
+        let lab = super::native::component::lab::wanted(&name, shape.work)
+            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &lines.join("\n"), &path));
         self.fx().open(&lines.join("\n"))?;
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
@@ -3491,6 +3521,7 @@ impl Run<'_, '_> {
                 eprintln!("    {name} probe {k}: {}", shown(o).join(" , "));
             }
         }
+        order_rules.extend(probes.iter().map(|p| obs_rule(&p.0.head, &p.0.body)));
         let mut chunk: i64 = 1;
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;
@@ -3500,8 +3531,8 @@ impl Run<'_, '_> {
                 continue;
             }
             let steps = self.fx().steps(&name)?;
-            for (o, line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&steps) {
-                observe(&mut self.model.stats, o, line);
+            for ((o, &rule), line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&order_rules).zip(&steps) {
+                observe(&mut self.model.stats, rule, o, line);
             }
             for (k, line) in steps.iter().enumerate() {
                 if counted.len() <= k {
@@ -3575,6 +3606,11 @@ impl Run<'_, '_> {
             }
             chunk *= 2;
         }
+        if profiling {
+            let (u, s) = corpus::thread_usage();
+            let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();
+            super::profile::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at);
+        }
         if super::profile::on() {
             let empty = Vec::new();
             let kinds = seeds.iter().map(|r| format!("seed {}", r.head)).chain(probes.iter().map(|(r, ai, _)| format!("join {} (delta at {ai})", r.head)));
@@ -3632,6 +3668,9 @@ impl Run<'_, '_> {
         {
             let _close = super::profile::span(|| "engine close".into());
             self.fx().close(&name)?;
+        }
+        if let Some(capture) = lab {
+            super::native::component::lab::capture_outputs(self.db, capture);
         }
         self.native_rels.extend(scc.iter().cloned());
         Ok(true)

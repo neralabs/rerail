@@ -117,6 +117,24 @@ struct State {
     work: BTreeMap<(String, Unit), u64>,
     /// Waits by (the waiter's span path, what it waited on, what that was doing when the wait began) (`wait`).
     waits: BTreeMap<(String, String, String), WaitTotal>,
+    /// Where each native stratum ran, by stratum (`placed`, decision 0095).
+    placements: BTreeMap<String, PlacedTotal>,
+}
+
+/// A stratum's placements, summed over its runs (chunks, guests, the cross-file part).
+#[derive(Default)]
+struct PlacedTotal {
+    runs: u64,
+    on_gpu: u64,
+    gpu_cheaper: u64,
+    device: bool,
+    forms: Vec<&'static str>,
+    missing: Vec<&'static str>,
+    planned_work: f64,
+    work: u64,
+    cpu_estimate: f64,
+    gpu_estimate: f64,
+    cpu: f64,
 }
 
 #[derive(Default)]
@@ -453,6 +471,91 @@ pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) 
 }
 
 /// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
+/// Records where native stratum `key` ran (`plan::placement`), its shape, the work it did and the CPU it took.
+pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64) {
+    if !on() {
+        return;
+    }
+    let mut state = STATE.lock().unwrap();
+    let t = state.placements.entry(key.to_owned()).or_default();
+    t.runs += 1;
+    t.on_gpu += u64::from(p.gpu);
+    t.gpu_cheaper += u64::from(p.gpu_cheaper);
+    t.device |= p.device;
+    t.forms = shape.forms.iter().map(|f| f.name()).collect();
+    t.missing = p.missing.iter().map(|f| f.name()).collect();
+    t.planned_work += shape.work;
+    t.work += work;
+    t.cpu_estimate += p.cpu_s;
+    t.gpu_estimate += p.gpu_s;
+    t.cpu += cpu;
+}
+
+/// Where the native strata ran (decision 0095): how many on each backend, the strata the GPU would run cheaper and
+/// the forms it lacks for them, by their CPU. What the device must take on next, and what it would save.
+fn placements(r: &mut String, state: &State) {
+    use crate::code_rule_dsl::logic::plan::placement::gpu_price;
+    let all = &state.placements;
+    if all.is_empty() {
+        return;
+    }
+    let runs: u64 = all.values().map(|t| t.runs).sum();
+    let gpu: u64 = all.values().map(|t| t.on_gpu).sum();
+    let cpu: f64 = all.values().map(|t| t.cpu).sum();
+    let device = all.values().any(|t| t.device);
+    let _ = writeln!(
+        r,
+        "\n== Placement (decision 0095): {} strata, {runs} runs; {gpu} runs on the GPU, {} on the CPU ({cpu:.2} s CPU); binding {}",
+        all.len(),
+        runs - gpu,
+        if device { "Metal" } else { "CPU" }
+    );
+    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU assumed (2 ns a unit, 0.15 ms a submission) until the relational lab measures it.");
+    // The strata the GPU would run cheaper in at least one run, and did not.
+    let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
+    let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
+    // The GPU priced at the work each stratum did, not the work planned: a planned estimate can be far off (a cross
+    // product priced at 10^20 rows that met none).
+    let at_work = |t: &PlacedTotal| gpu_price(t.runs, t.work as f64);
+    let cheaper_gpu: f64 = cheaper.iter().map(|(_, t)| at_work(t)).sum();
+    let _ = writeln!(r, "The GPU would be cheaper for {} strata: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
+    // Strata whose planned work is off by 10x or more, either way, by their CPU: the placement read a wrong price, and
+    // the join order likely came from the same estimate.
+    let off = |t: &PlacedTotal| {
+        let (p, w) = (t.planned_work.max(1.0), (t.work as f64).max(1.0));
+        w / p >= 10.0 || p / w >= 10.0
+    };
+    let (under, over) = all.values().filter(|t| off(t)).fold(((0u64, 0.0), (0u64, 0.0)), |(u, o), t| {
+        if (t.work as f64) > t.planned_work { ((u.0 + 1, u.1 + t.cpu), o) } else { (u, (o.0 + 1, o.1 + t.cpu)) }
+    });
+    let _ = writeln!(r, "Planned work off by 10x or more: {} strata under (did more, {:.2} s CPU), {} over (did less, {:.2} s CPU); marked ! below.", under.0, under.1, over.0, over.1);
+    // By the form the GPU lacks: a stratum counts under each form it lacks.
+    let mut by: BTreeMap<&str, (u64, f64)> = BTreeMap::new();
+    for (_, t) in &cheaper {
+        for f in &t.missing {
+            let e = by.entry(f).or_default();
+            e.0 += 1;
+            e.1 += t.cpu;
+        }
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1));
+    let _ = writeln!(r, "GPU support missing, by form (a stratum counts under each form it lacks):");
+    let _ = writeln!(r, "{:>9} {:>7}  form", "cpu s", "strata");
+    for (f, (n, c)) in &by {
+        let _ = writeln!(r, "{c:>9.3} {n:>7}  {f}");
+    }
+    // The strata themselves, costliest first.
+    let mut top = cheaper.clone();
+    top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
+    let _ = writeln!(r, "Costliest strata the GPU would run cheaper:");
+    let _ = writeln!(r, "{:>8} {:>8} {:>12} {:>12} {:>5}  stratum: forms (missing on the GPU)", "cpu s", "gpu s", "planned", "work", "runs");
+    for (key, t) in top.iter().take(20) {
+        let mark = if off(t) { "!" } else { " " };
+        let _ = writeln!(r, "{:>8.3} {:>8.4} {:>12.0} {:>11}{mark} {:>5}  {}: {} (missing {})", t.cpu, at_work(t), t.planned_work, t.work, t.runs, short(key, 60), t.forms.join(", "), t.missing.join(", "));
+    }
+}
+
 /// Records that stratum `key` fell back to SQLite, and the kind of literal the native engine declined (`class`).
 pub(in crate::code_rule_dsl) fn fallback(key: &str, class: String) {
     if !on() {
@@ -839,11 +942,21 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}", work(steps), s.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
+    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\n");
+    for (key, t) in &state.placements {
+        let _ = writeln!(
+            placement_tsv,
+            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}",
+            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(",")
+        );
+    }
+    std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
 
     // The report.
     let mut r = String::new();
     r.push_str(header);
     fallbacks(&mut r, &state);
+    placements(&mut r, &state);
     explain(&mut r, &state);
     // A root is a span with no parent recorded: a top span, or one whose parent was still open (a dump).
     let root = |p: &str| p.rsplit_once('/').is_none_or(|(parent, _)| !state.spans.contains_key(parent));
