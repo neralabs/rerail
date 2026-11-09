@@ -1,0 +1,23 @@
+// PosixPath.parts and with_suffix("") as used by the authority linter on Python 3.13.
+// Candidate paths are supplied by the consumer. Repeated components retain their occurrence index.
+.decl auth_path_input(path: symbol)
+.decl auth_path_component(path: symbol, ordinal: number, value: symbol)
+auth_path_component(path,i,part) :- auth_path_input(path), match_all("(?<part>[^/]+)",path,i,_,_), part != ".".
+.decl auth_path_root(path: symbol, value: symbol)
+auth_path_root(path,"//") :- auth_path_input(path), prefix("//",path), !prefix("///",path).
+auth_path_root(path,"/") :- auth_path_input(path), prefix("/",path), (!prefix("//",path) ; prefix("///",path)).
+.decl auth_path_last(path: symbol, ordinal: number, value: symbol)
+auth_path_last(path,i,value) :- auth_path_component(path,i,value), i = max j : { auth_path_component(path,j,_) }.
+.decl auth_path_stem(path: symbol, value: symbol)
+auth_path_stem(path,stem) :- auth_path_last(path,_,value), match_all("(?s)\\A(?<stem>.+)\\.[^.]+\\z",value).
+.decl auth_path_error(path: symbol, detail: symbol)
+auth_path_error(path,"Invalid name '.'") :- auth_path_stem(path,".").
+auth_path_error(path,cat("PosixPath(",@python_repr(root),") has an empty name")) :- auth_path_input(path), !auth_path_component(path,_,_), auth_path_root(path,root).
+auth_path_error(path,"PosixPath('.') has an empty name") :- auth_path_input(path), !auth_path_component(path,_,_), !auth_path_root(path,_).
+.decl auth_module_part(path: symbol, ordinal: number, value: symbol)
+auth_module_part(path,-1,root) :- auth_path_root(path,root).
+auth_module_part(path,i,value) :- auth_path_component(path,i,value), !auth_path_last(path,i,_).
+auth_module_part(path,i,stem) :- auth_path_last(path,i,_), auth_path_stem(path,stem), stem != ".".
+auth_module_part(path,i,value) :- auth_path_last(path,i,value), !auth_path_stem(path,_).
+.decl auth_module(path: symbol, module: symbol)
+auth_module(path,module) :- auth_path_input(path), !auth_path_error(path,_), module = join value by i sep "." : { auth_module_part(path,i,value) }.

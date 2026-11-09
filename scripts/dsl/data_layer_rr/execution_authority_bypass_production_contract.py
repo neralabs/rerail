@@ -41,7 +41,7 @@ assert REGISTRY_INPUT['sourcePin']==PIN and sha(REGISTRY_INPUT['source'].encode(
 def registry_source(rows):
     import json
     calls=[' ExecutionAuthorityCallsite(module='+json.dumps(m)+', function='+json.dumps(f)+', signature_b64="fixture"),' for m,f in rows]
-    return 'EXPLICIT_EXECUTION_AUTHORITY_CALLSITES = (\n'+'\n'.join(calls)+'\n)\n'
+    return 'from l2050_transaction.execution_boundary import ExecutionAuthorityCallsite\n\nEXPLICIT_EXECUTION_AUTHORITY_CALLSITES = (\n'+'\n'.join(calls)+'\n)\n'
 
 CASES += [
     dict(id='default-config-positive',defaultConfig=True,files=[dict(path=REGISTRY,source=REGISTRY_INPUT['source']),dict(path='impl/a.py',source=BAD+'_legacy_boundary_var\n')]),
@@ -49,6 +49,10 @@ CASES += [
     dict(id='default-config-duplicate-registry',defaultConfig=True,signed=[['impl.a','helper'],['impl.a','helper']],files=[dict(path=REGISTRY,source=registry_source([['impl.a','helper'],['impl.a','helper']])),dict(path='impl/a.py',source='def helper(): explicit_execution_authority()\n')]),
     dict(id='default-config-test-exceptions',defaultConfig=True,files=[dict(path=REGISTRY,source=REGISTRY_INPUT['source']),dict(path='l2050_transaction/tests/test_execution_boundary.py',source='def test_raw_explicit_authority_contextvar_value_does_not_authorize(): _explicit_authority_var\ndef test_explicit_execution_authority_uses_outer_callsite():\n _legacy_boundary_var\n def helper(): explicit_execution_authority()\n')]),
 ]
+
+CASES.append(dict(id='monkeypatch',files=[dict(path='impl/a.py',source='patcher.setattr("execution_boundary._caller_token", replacement)\npatcher.setattr(execution_boundary, "_legacy_boundary_var", replacement)\n')]))
+
+CASES.append(dict(id='dot-filename-module-semantics',signed=[['impl..py','helper']],files=[dict(path='impl/.py',source='def helper(): explicit_execution_authority()\n'),dict(path='impl/..py',source=BAD)]))
 
 
 def source_case(module,case):
@@ -58,6 +62,10 @@ def source_case(module,case):
         root=Path(temporary);write_fixture(root,case['files']);changes=dict(REPO_ROOT=root)
         if 'signed' in case:changes['EXPLICIT_EXECUTION_AUTHORITY_CALLSITES']=tuple(SimpleNamespace(module=m,function=f) for m,f in case['signed'])
         if 'curated' in case:changes['CURATED_EXPLICIT_AUTHORITY_CALLSITES']=frozenset(tuple(x) for x in case['curated'])
+        if case.get('defaultConfig'):
+            namespace={}
+            exec(compile((root/REGISTRY).read_text(),str(root/REGISTRY),'exec'),namespace)
+            changes['EXPLICIT_EXECUTION_AUTHORITY_CALLSITES']=namespace['EXPLICIT_EXECUTION_AUTHORITY_CALLSITES']
         with patch.multiple(module,**changes),patch.object(module.scan_repo,'__defaults__',(root,)):
             config=configuration(module);plugin=module.execution_authority_bypass_plugin(root)
             cli_selected=[str(path.relative_to(root)) for path in module._iter_python_files(root)]

@@ -88,6 +88,8 @@ CASES += [case('dot-extension-module','def helper(): explicit_execution_authorit
     case('invalid-module-stem','_explicit_authority_var\n',path='impl/..py')]
 CASES += [case('module-path-'+str(i),path=value,entry='_module_for_path') for i,value in enumerate(['.py','..py','...a','..','a.','a..py','a..','a.b.c','impl//a.py','/impl/a.py','//impl/a.py','impl/./a.py','','.','a/..','a/...','a/.','impl/a/a.py'])]
 
+CASES.append(case('tree-invalid-module-stem','pass\n',path='impl/..py',treeSource='_explicit_authority_var\n'))
+
 
 def tree_argument(item):
     tree=ast.parse(item['treeSource'])

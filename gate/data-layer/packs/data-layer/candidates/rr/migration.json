@@ -2298,7 +2298,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
-      "sha256": "8f2ef3d4877c8c1341091c5bf431552df8cee24cfb877ddeff33640bf75da7d1",
+      "sha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
       "origin": "Authored native rules from pinned data-layer source; acceptance status remains separate"
     },
     {
@@ -2310,6 +2310,11 @@
       "destination": "docs/rule-syntax/lib/data-layer/authority-settings.rr",
       "sha256": "a7279ede5376ab7292decc1c46fca51c7554af518106aa42ec01abb8baa22146",
       "origin": "Pinned authority constants shared by native API and production contracts"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/authority-paths.rr",
+      "sha256": "530f3da39f72dbe055a71add8ecda38f5df1e4105f28bab68786e867d05229a0",
+      "origin": "Exact Python 3.13 POSIX module-path semantics from the authority linter"
     }
   ],
   "rules": [
@@ -2820,7 +2825,7 @@
       "legacySha256": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
-      "ruleSha256": "8f2ef3d4877c8c1341091c5bf431552df8cee24cfb877ddeff33640bf75da7d1"
+      "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
     },
     {
       "check": "impl_direct_execution",

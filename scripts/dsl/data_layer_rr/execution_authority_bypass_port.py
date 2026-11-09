@@ -17,6 +17,10 @@ def configuration(module):
 def install(suite,module):
     def result(entry,files=(),options=None):
         rows=suite.native('execution_authority_bypass',entry,list(files),dict(configuration(module),**(options or {})))
+        errors=[row for row in rows if row['code']=='AUTH_PATH_ERROR']
+        if errors:
+            if len(rows)!=1:raise ValueError('A path error must be the only native result')
+            raise ValueError(errors[0]['parameters']['detail'])
         if any(row['code']!='AUTH_ROW' for row in rows):raise ValueError('Unexpected authority API diagnostic')
         return [module.AuthorityViolation(**{k:v for k,v in row['parameters'].items() if k!='ordinal'})
                 for row in sorted(rows,key=lambda r:r['parameters']['ordinal'])]
@@ -25,6 +29,14 @@ def install(suite,module):
     def registry():return result('_registry_violations')
     suite.replace(module,'scan_source',scan_source)
     suite.replace(module,'_registry_violations',registry)
+    def module_for_path(path):
+        rows=suite.native('execution_authority_bypass','_module_for_path',[],dict(configuration(module),argumentPath=str(path)))
+        if len(rows)!=1:raise ValueError('One native module-path result required')
+        if rows[0]['code']=='AUTH_PATH_ERROR':raise ValueError(rows[0]['parameters']['detail'])
+        if rows[0]['code']!='AUTH_MODULE':raise ValueError('Unexpected native module-path result')
+        return rows[0]['parameters']['value']
+    suite.replace(module,'_module_for_path',module_for_path)
+
     from pathlib import Path
     import argparse
     import sys
