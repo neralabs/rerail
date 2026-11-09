@@ -2908,8 +2908,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "2b494d4efa8aa2c7ec993f3f935aa59da3650742",
-    "status": "Root Final shape through 2b494d4ef, including request-cone sharing by key, with reviewed generic syntax, world, and stored-program compatibility extensions",
+    "upstreamCommit": "32b16e4fe0ae03772a285f5e7605b869ff5f2bae",
+    "status": "Root Final shape through 32b16e4fe, preserving upstream phase, scope, key and SQL maintenance architecture with reviewed generic compatibility extensions",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -2945,11 +2945,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "e0e67b673ee2371e78a32656b895a4113e392846f7c8644a6dc12ddb623fabd3"
+        "sha256": "3cf65e5b22ea2243d1dbc83f7673cfb5bd3da14443ff68cfc904d04643deeb87"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "6535260f64f13a94041dcdadd2d570fb104646d9a888759b871ac80a06ab616e"
+        "sha256": "56a3afd9233f65bc72247c5e97b2203afdb82db428e536cccf51de35a10fd8d6"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
@@ -2985,11 +2985,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
-        "sha256": "d9739b93e3fbf4d371750bd3f795d52855f295282242e93b928e647db063d983"
+        "sha256": "22894e9a70ea053d85c45b2e42c4df328f2a29dd59b85de6bcc772064e98b031"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "2404f020f0b908767573204a25a14ce0e78684477ee79e7e0fd6b50d73f17354"
+        "sha256": "0cec76314aca31ca4a1a0d5f7e1e8cb901cfcd623b9491502e71ea08cda45eca"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
@@ -3001,15 +3001,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "14c19ec4b23791e9061aa3d4309ddd65d7762b8f0468140b6f7ec10ecd88bf13"
+        "sha256": "741dd16fe726ba311e1d0d4a6f5b6bc9495e022fe1c8bdebe1db49f48199d1d0"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "01dde717bcedf6255abce1c1c77d3423354d18fa54dc7940cd18d612a24ee0e5"
+        "sha256": "73cf251c85905f75e9bdaa94413126aabd4f9251b39960f188e350f595e13b02"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "a1357dab9645759bc89ee0c273b0de22741e674e0c9a1673cd14bb71e745c7a9"
+        "sha256": "042fa28841579f34ca223656708e30d6d9fc65aab2d261373ec4619131bd163d"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -3021,7 +3021,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "28278c95be78add4ac59046d6db7918920e2955e49a467a011f2d51d23b28c3e"
+        "sha256": "781f101ac4276c2a2875dd476a28a4b1e8342ef7a2649deef414d8e405264cf4"
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
@@ -3029,7 +3029,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "144aa2d9c3d4413e123ee8ff58394b3885fb1c8c4d778887222139a7e137cdd9"
+        "sha256": "6bfa27e6778e5d98de46f7a1bc4733622eb2fd50392f5a960d531a082f776389"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
@@ -3037,11 +3037,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "4e8c2534449948776b4db5f2d1da8a298d7e75efd99548245aeb490d9df4d4c6"
+        "sha256": "4f14b52d4d64e1b77f583a673e9a9823714e45b872589607c41dde1c025ff565"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "2562eaa1bca67e1952e362150d15c07c8638e891c92caa710ce1ae2834a1763f"
+        "sha256": "d0c444381314e23637acce53e764917bf01b8da1530d84cc1995eda1ff727af3"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
@@ -3052,42 +3052,205 @@
         "sha256": "8c33575d893f7ee99f810cb82ae7f59320dab34d836289c054349b2964afcb0b"
       },
       {
+        "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
+        "sha256": "6a3ca40885a3b4248483d2dc9d275d87da5a52ac41ecdd9fa5d4757441a96c81"
+      },
+      {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
-        "sha256": "78ce4305f50d1a93bbcd5b2795b3ba2bb31c8db4b2b3dbff215f2becce807f14"
+        "sha256": "21ab58631e324b3c54fd8beda4eae769d7db6e33c6a57b397046ad3c931be00b"
       },
       {
         "path": "native/src/code_rule_dsl/value/python.rs",
         "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
-        "sha256": "6a3ca40885a3b4248483d2dc9d275d87da5a52ac41ecdd9fa5d4757441a96c81"
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "60839bc48b04abac24284399e4ef71a7fed0c68c",
-    "cliArtifact": {
-      "engineCommit": "8ccb4ce4e96d549e41ee3848a713c4596febbb20",
+    "upstreamMerge": "35cdc15ee6b343a79f96092b0be1c2949da0c283"
+  },
+  "engineSourceSnapshots": [
+    {
+      "checkout": ".",
       "upstreamCommit": "2b494d4efa8aa2c7ec993f3f935aa59da3650742",
-      "sourceTrees": {
-        "native": "b2b6709840ade6304c8b744fae25d06fa3223194",
-        "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "8eaf9b81349aeb5072a11fb5c51e66fd283dcb5d"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-e03b012dab19311d",
-      "sha256": "e03b012dab19311dda12745c31067a460f617592de6160b561552cc8ae310555",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine"
+      "status": "Root Final shape through 2b494d4ef, including request-cone sharing by key, with reviewed generic syntax, world, and stored-program compatibility extensions",
+      "retiredCheckout": ".rerail/rr-migration-20261106/engine",
+      "localRepairCommit": "25b580262",
+      "localRepairPaths": [
+        "native/src/code_rule_dsl/logic/plan.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs"
       ],
-      "seconds": 39.249
+      "localCapabilityCommits": [
+        "e6968ad82"
+      ],
+      "localCapabilityPaths": [
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+        "native/src/code_rule_dsl/logic/sql/select.rs",
+        "native/src/code_rule_dsl/logic/strings.rs"
+      ],
+      "rootMetadataCommit": "7b44f4813",
+      "canonicalCallTextCommit": "eea5ed2da",
+      "nativeExtensions": [
+        {
+          "path": "Cargo.lock",
+          "sha256": "d6984f2dee78d5558c3ca5d562576a21a4256567ef35625c78bfbb522b370ccb"
+        },
+        {
+          "path": "native/Cargo.toml",
+          "sha256": "d0d78f89516e66cabfdef13f752a4077927756baf6963ea58b935be223ba145c"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/repository.rs",
+          "sha256": "7ff68b070b737fb38b27f4736c687cba260151ec5c4ff8dff08f75d5ccd991b0"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+          "sha256": "e0e67b673ee2371e78a32656b895a4113e392846f7c8644a6dc12ddb623fabd3"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+          "sha256": "6535260f64f13a94041dcdadd2d570fb104646d9a888759b871ac80a06ab616e"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
+          "sha256": "387a57f02a15ed421338608244cae27f480d4de6565179dfe0ca26e4da4f3ad1"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+          "sha256": "670cc09461d50ae90b01f77fee285066c71cb49933a72cf0d803df0bdede2b79"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
+          "sha256": "214157a6cb66b177fe258f94e75f035130c43100ba19991a9189b441b79c2039"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/expressions.json",
+          "sha256": "5a6eee8ac5ddbc31b67faab5bc57af09be30c54be73d4aa27d8af050fd180bf9"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/printable.generated.rs",
+          "sha256": "a3e99353157742c99f47adcef0d88237c5606a6b9b1dbebe754f75ed4434537b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+          "sha256": "cad0d536546ee5bfdfb055ea7409d9277010941516fcd756b5ea55b8be00147b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+          "sha256": "57d6fde4a113d12208c0eb1fc3779448edbc1a856d562e036b067fc786231bd9"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-errors.json",
+          "sha256": "680ae1afd7c274895609a1c81af94083c42d9f77ebb2471e4edb84222cddc254"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/front.rs",
+          "sha256": "d9739b93e3fbf4d371750bd3f795d52855f295282242e93b928e647db063d983"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native.rs",
+          "sha256": "2404f020f0b908767573204a25a14ce0e78684477ee79e7e0fd6b50d73f17354"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
+          "sha256": "0c935fe75ae2831dfe9db9da2859627a2b5c734d3b593e413d8e812835c32870"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/bfs_walk.rs",
+          "sha256": "a0d972d6f3e877b0ab6bf2bd222958542660dd9963f9085f0b5375e3c8806f4c"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
+          "sha256": "14c19ec4b23791e9061aa3d4309ddd65d7762b8f0468140b6f7ec10ecd88bf13"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan.rs",
+          "sha256": "01dde717bcedf6255abce1c1c77d3423354d18fa54dc7940cd18d612a24ee0e5"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
+          "sha256": "a1357dab9645759bc89ee0c273b0de22741e674e0c9a1673cd14bb71e745c7a9"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
+          "sha256": "9431ef2d41b20be3476403c10a4bf10c216981d1f92b2e3bc74ae8166ad6930e"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
+          "sha256": "c5e605336582b31696e9d910f67ddd8e366af83e5f4f94472fd15cafeb533923"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
+          "sha256": "28278c95be78add4ac59046d6db7918920e2955e49a467a011f2d51d23b28c3e"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/program_facts.rs",
+          "sha256": "ab91c1bf31b901af6ff120c696c356876750d2f46ca6955b09f490c8d11931ff"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
+          "sha256": "144aa2d9c3d4413e123ee8ff58394b3885fb1c8c4d778887222139a7e137cdd9"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/print.rs",
+          "sha256": "84cd0f5ff82a55dd90502df5de208ec1d9a2ecc56f4e769f9c8ac341da4d4e2e"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
+          "sha256": "4e8c2534449948776b4db5f2d1da8a298d7e75efd99548245aeb490d9df4d4c6"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/sql/select.rs",
+          "sha256": "2562eaa1bca67e1952e362150d15c07c8638e891c92caa710ce1ae2834a1763f"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings.rs",
+          "sha256": "b8f9b413df663a6e86595ac0978272ce60ca63d41482745e1d830c2680984d35"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
+          "sha256": "8c33575d893f7ee99f810cb82ae7f59320dab34d836289c054349b2964afcb0b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
+          "sha256": "78ce4305f50d1a93bbcd5b2795b3ba2bb31c8db4b2b3dbff215f2becce807f14"
+        },
+        {
+          "path": "native/src/code_rule_dsl/value/python.rs",
+          "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
+          "sha256": "6a3ca40885a3b4248483d2dc9d275d87da5a52ac41ecdd9fa5d4757441a96c81"
+        }
+      ],
+      "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
+      "upstreamMerge": "60839bc48b04abac24284399e4ef71a7fed0c68c",
+      "cliArtifact": {
+        "engineCommit": "8ccb4ce4e96d549e41ee3848a713c4596febbb20",
+        "upstreamCommit": "2b494d4efa8aa2c7ec993f3f935aa59da3650742",
+        "sourceTrees": {
+          "native": "b2b6709840ade6304c8b744fae25d06fa3223194",
+          "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
+          "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
+          "Cargo.lock": "8eaf9b81349aeb5072a11fb5c51e66fd283dcb5d"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-e03b012dab19311d",
+        "sha256": "e03b012dab19311dda12745c31067a460f617592de6160b561552cc8ae310555",
+        "command": [
+          "cargo",
+          "build",
+          "-p",
+          "rerail-engine",
+          "--features",
+          "headless",
+          "--bin",
+          "rerail-engine"
+        ],
+        "seconds": 39.249
+      }
     }
-  }
+  ]
 }
