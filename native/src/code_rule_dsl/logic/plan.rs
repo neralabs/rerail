@@ -3520,10 +3520,13 @@ impl Run<'_, '_> {
         };
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
         let types = |r: &str| typed[r].clone();
-        // Nothing left to run (every rule joined an empty relation): the stratum's relations are held with no rows,
-        // and no component is specified or opened. `RERAIL_KEEP_EMPTY_JOINS` opens it as before.
+        // Nothing left to run (every rule joined an empty relation, and no relation of the stratum has facts): the
+        // stratum's relations are held with no rows, and no component is specified or opened. A relation with facts
+        // (`d("a"). d(y) :- d(x), e(x, y).` with `e` empty) holds its facts, which the component seeds.
+        // `RERAIL_KEEP_EMPTY_JOINS` opens it as before.
         let asks = scc.iter().any(|r| prog.answers.contains_key(r) || super::answers::produced(prog).contains_key(r.as_str()));
-        if rules.is_empty() && based.is_empty() && gates.is_empty() && !asks && std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_none() {
+        let facts = scc.iter().any(|r| prog.facts.get(r).is_some_and(|rows| !rows.is_empty()));
+        if rules.is_empty() && based.is_empty() && gates.is_empty() && !asks && !facts && std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_none() {
             for r in &rels {
                 super::native::component::hold_empty(self.db, r, types(r).into_bytes());
             }
