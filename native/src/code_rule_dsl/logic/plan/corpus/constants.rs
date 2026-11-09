@@ -20,6 +20,11 @@
 //! facts, so the split places it by what else it reads. The per-file memo keys a file-local part by its facts, so a
 //! changed constant (another Python version) misses the memo, as it must. What the constants' run read is part of
 //! the run's consulted record (`Report::consulted`).
+//!
+//! The constants' rows are kept in the phase store (`constant_rows`), under the programs, the relations, the run's
+//! options (but which documents it runs over: the constants read none), the root and the engine, with what their run
+//! consulted. A later run whose consulted things are as they were (`World::still`) takes them as they are: an edit to
+//! a workspace file derives no constant again.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -116,14 +121,19 @@ pub(super) fn fold(
         return Ok(Vec::new());
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "fold the run's constants".into());
-    // The constants' run: the same texts, its outputs the wanted relations, over no documents.
-    let mut own = if options.is_object() { options.clone() } else { serde_json::json!({}) };
-    own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
-    own["inputFiles"] = serde_json::json!([]);
-    let out = scratch.join("constants");
-    let report: Report = super::run_with_options(programs, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
+    let key = key(programs, root, options, &wanted);
+    let was_kept = kept(&key, root, prog)?;
+    let reused = was_kept.is_some();
+    let (texts, consulted) = match was_kept {
+        Some(kept) => kept,
+        None => {
+            let derived = derive(programs, root, scratch, modes, binding, chunk_nodes, typing, options, &wanted)?;
+            keep(&key, &derived.0, &derived.1)?;
+            derived
+        }
+    };
     for rel in &wanted {
-        let text = std::fs::read_to_string(out.join(format!("{}.csv", copy(rel)))).unwrap_or_default();
+        let text = texts.get(rel).map_or("", String::as_str);
         let types: Vec<String> = prog.decls.get(rel).map(|d| d.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
         let mut rows = Vec::new();
         for line in text.lines() {
@@ -135,10 +145,88 @@ pub(super) fn fold(
         }
         prog.facts.insert(rel.clone(), rows);
     }
-    let _ = std::fs::remove_dir_all(&out);
     prog.rules.retain(|r| !wanted.contains(&r.head.rel));
     crate::code_rule_dsl::logic::profile::decision("the run's constants (decision 0094 §6)", || {
-        format!("{} relations made from no document, derived first and given as facts: {}", wanted.len(), wanted.iter().cloned().collect::<Vec<_>>().join(", "))
+        format!("{} relations made from no document, {} and given as facts: {}", wanted.len(), if reused { "kept from an earlier run (what they read is as it was)" } else { "derived first" }, wanted.iter().cloned().collect::<Vec<_>>().join(", "))
     });
-    Ok(report.consulted)
+    Ok(consulted)
+}
+
+type Derived = (std::collections::BTreeMap<String, String>, Vec<(String, String, String)>);
+
+/// The constants' run: the same texts, its outputs the wanted relations, over no documents. Each relation's rows as
+/// the run wrote them, and what it consulted.
+#[allow(clippy::too_many_arguments)]
+fn derive(
+    programs: &[&str],
+    root: &Path,
+    scratch: &Path,
+    modes: &str,
+    binding: crate::code_rule_dsl::typing::file_local::Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+    wanted: &BTreeSet<String>,
+) -> Result<Derived> {
+    let mut own = if options.is_object() { options.clone() } else { serde_json::json!({}) };
+    own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
+    own["inputFiles"] = serde_json::json!([]);
+    let out = scratch.join("constants");
+    let report: Report = super::run_with_options(programs, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
+    let texts = wanted.iter().map(|rel| (rel.clone(), std::fs::read_to_string(out.join(format!("{}.csv", copy(rel)))).unwrap_or_default())).collect();
+    let _ = std::fs::remove_dir_all(&out);
+    Ok((texts, report.consulted))
+}
+
+/// What the constants are keyed by, beside what their run consulted.
+fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTreeSet<String>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.constants/v1\0");
+    for p in programs {
+        h.update(p.as_bytes());
+        h.update([0]);
+    }
+    for w in wanted {
+        h.update(w.as_bytes());
+        h.update([0]);
+    }
+    // Which documents the run is over is no part of them (they read none).
+    let mut options = options.clone();
+    if let Some(o) = options.as_object_mut() {
+        o.remove("inputFiles");
+        o.remove("phase_no_loads");
+    }
+    h.update(options.to_string().as_bytes());
+    h.update([0]);
+    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn table(db: &rusqlite::Connection) -> Result<()> {
+    db.execute_batch("CREATE TABLE IF NOT EXISTS constant_rows(key TEXT PRIMARY KEY, rows TEXT, consulted TEXT) WITHOUT ROWID;")?;
+    Ok(())
+}
+
+/// The constants kept under `key`, when what their run consulted is as it was.
+fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<Derived>> {
+    let Some(path) = super::phases::store_path().filter(|p| p.exists()) else { return Ok(None) };
+    let db = rusqlite::Connection::open(&path)?;
+    table(&db)?;
+    let Some((rows, consulted)): Option<(String, String)> = db.query_row("SELECT rows, consulted FROM constant_rows WHERE key=?1", [key], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(None) };
+    let consulted: Vec<(String, String, String)> = serde_json::from_str(&consulted).map_err(|e| super::super::Error::Plan(e.to_string()))?;
+    if !super::world::World::new(root, prog).still(&consulted) {
+        return Ok(None);
+    }
+    let rows = serde_json::from_str(&rows).map_err(|e| super::super::Error::Plan(e.to_string()))?;
+    Ok(Some((rows, consulted)))
+}
+
+fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted: &[(String, String, String)]) -> Result<()> {
+    let Some(path) = super::phases::store_path() else { return Ok(()) };
+    let db = rusqlite::Connection::open(&path)?;
+    table(&db)?;
+    db.execute("INSERT OR REPLACE INTO constant_rows VALUES (?1, ?2, ?3)", rusqlite::params![key, serde_json::to_string(rows).unwrap_or_default(), serde_json::to_string(consulted).unwrap_or_default()])?;
+    Ok(())
 }

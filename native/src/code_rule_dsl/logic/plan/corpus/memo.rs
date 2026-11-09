@@ -105,6 +105,25 @@ pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8
     hash.finalize().into()
 }
 
+/// `digest` with rows folded in, by relation: the key of a file-local part that reads relations whose rows are not in
+/// its text (a phase's exports). The rows' order is not part of it.
+pub(super) fn with_rows<'a>(digest: [u8; 32], rels: impl Iterator<Item = (&'a str, &'a Vec<Vec<crate::code_rule_dsl::logic::front::Value>>)>) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-rows/v1\0");
+    hash.update(digest);
+    for (rel, rows) in rels {
+        let mut lines: Vec<String> = rows.iter().map(|r| format!("{r:?}")).collect();
+        lines.sort_unstable();
+        hash.update(rel.as_bytes());
+        hash.update([0]);
+        for l in &lines {
+            hash.update(l.as_bytes());
+            hash.update([0]);
+        }
+    }
+    hash.finalize().into()
+}
+
 /// The memo is the tape cache's: a build without `tape-cache` has no store to keep it in, so the runner never reads or
 /// writes it, and saying so here, where the compiler sees it, leaves the store's zstd frames unlinked.
 pub(super) fn off() {
