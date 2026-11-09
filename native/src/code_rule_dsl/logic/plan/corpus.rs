@@ -3585,7 +3585,7 @@ fn run_observed(
                     // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
                     let s = span("rewrite and old sources");
                     // A changed input's rows gone and new, from the documents that changed (`input_delta`), where its
-                    // rows are each one document's; the others' are a diff of their old and new rows, by rules.
+                    // rows are each one document's; the others' by their documents' row hashes, below.
                     // `RERAIL_DIFF_INPUTS` makes them all by rules.
                     let sd = span("input deltas from documents");
                     let mut from_docs: HashMap<String, (Vec<Vec<i64>>, Vec<Vec<i64>>)> = HashMap::new();
@@ -3637,7 +3637,22 @@ fn run_observed(
                             given.insert(rel.clone(), maintain::rows_given(&rel, cross.program.decls.get(&rel).map_or(0, Vec::len), &new, &gone));
                         }
                     }
-                    let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &given)?;
+                    // An input neither of those gives the delta of is found by its rows hashed by document
+                    // (`retain::document_delta`), not by a join of its new rows against its old; each source's
+                    // documents hashed are kept for the next run.
+                    let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
+                    let mut answer = |rel: &str| -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> {
+                        if let Some((plus, minus)) = given.get(rel) {
+                            return Some((Arc::clone(plus), Arc::clone(minus)));
+                        }
+                        let kept = cell.as_ref()?;
+                        let (old, (_, new)) = (kept.input_source(rel)?, cross_inputs.iter().find(|(r, _)| r == rel)?);
+                        let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta by document".into());
+                        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref())?;
+                        input_docs.insert(rel.to_owned(), docs);
+                        Some(delta)
+                    };
+                    let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
                     drop(s);
                     let part = &maintained.program;
                     step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules, {} old sources", maintained.maintained, maintained.recursive, maintained.derived_again, part.program.rules.len(), maintained.sources.len()));
@@ -3879,7 +3894,7 @@ fn run_observed(
                     }
                     drop(s);
                     let s = span("retain");
-                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, (run_docs_held.lock().expect("the run's documents").clone(), memo_program));
+                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, (run_docs_held.lock().expect("the run's documents").clone(), memo_program), input_docs);
                     drop(s);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
                         format!(

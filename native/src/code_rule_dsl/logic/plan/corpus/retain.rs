@@ -63,7 +63,13 @@ pub(in crate::code_rule_dsl) struct Retained {
     input_stats: HashMap<String, InputStats>,
     /// The documents the run read, and the file-local program their memo entries are under (`input_delta`).
     docs: (super::input_delta::Docs, [u8; 32]),
+    /// Each input source's rows hashed by document (`document_delta`), when a run took them: the next run's old
+    /// side, not hashed again.
+    input_docs: HashMap<String, Arc<DocDigests>>,
 }
+
+/// A source's rows by document: each document's sum of row hashes and its row count.
+pub(in crate::code_rule_dsl) type DocDigests = rustc_hash::FxHashMap<i64, (u64, u64)>;
 
 /// A relation's statistics as bound (`syntax::statistics`), and its counts of the constants rules test it by.
 /// The counts are of the constants tested when they were measured (the third): taken again only for the same.
@@ -96,6 +102,96 @@ pub(in crate::code_rule_dsl) fn digest(source: &dyn Source) -> u64 {
         sum = sum.wrapping_add(h.wrapping_mul(0x9e37_79b9_7f4a_7c15));
     }
     sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
+}
+
+/// An input's rows new and its rows gone between its last run's source `old` and this run's `new`, as
+/// `maintain::Given` binds them (`r__plus`, `r__minus`), found document by document: each document's rows (by the
+/// one its first column names, `memo::document_of`) are hashed as `digest` hashes rows, and only the documents whose
+/// hashes differ are compared row by row. A pass over the columns, not a join of every new row against every old
+/// one (`r__plus :- r, !r__old`), which read each base relation whole every run however few files changed. Exact
+/// whatever the documents are: one whose rows all moved is a document that differs. `None` when the two hold other
+/// columns. Each is named as the planner reads its statistics (`sql_col` of `rel__plus`, `rel__minus`).
+pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was: Option<&DocDigests>, new: &dyn Source) -> Option<((Arc<dyn Source>, Arc<dyn Source>), Arc<DocDigests>)> {
+    use rustc_hash::FxHashSet;
+    let width = new.columns().len();
+    if width == 0 || old.columns() != new.columns() {
+        return None;
+    }
+    let all: Vec<usize> = (0..width).collect();
+    let mut row = vec![0i64; width];
+    let hash = |row: &[i64]| {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &v in row {
+            h = (h ^ v as u64).wrapping_mul(0x0000_0100_0000_01b3);
+            h ^= h >> 29;
+        }
+        h.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+    };
+    // A document's rows are mostly one run of rows: its sum is kept while the run lasts, not looked up per row.
+    let by_doc = |s: &dyn Source, row: &mut [i64]| {
+        let mut by = DocDigests::default();
+        let mut at: Option<(i64, u64, u64)> = None;
+        for r in 0..s.len() {
+            s.row_at(r, &all, row);
+            let d = super::memo::document_of(row[0]);
+            let h = hash(row);
+            match &mut at {
+                Some((doc, sum, n)) if *doc == d => {
+                    *sum = sum.wrapping_add(h);
+                    *n += 1;
+                }
+                _ => {
+                    if let Some((doc, sum, n)) = at.replace((d, h, 1)) {
+                        let e = by.entry(doc).or_default();
+                        e.0 = e.0.wrapping_add(sum);
+                        e.1 += n;
+                    }
+                }
+            }
+        }
+        if let Some((doc, sum, n)) = at {
+            let e = by.entry(doc).or_default();
+            e.0 = e.0.wrapping_add(sum);
+            e.1 += n;
+        }
+        by
+    };
+    let taken;
+    let was = match was {
+        Some(w) => w,
+        None => {
+            taken = by_doc(old, &mut row);
+            &taken
+        }
+    };
+    let now = by_doc(new, &mut row);
+    let differ: FxHashSet<i64> = was.iter().filter(|(d, h)| now.get(*d) != Some(*h)).map(|(d, _)| *d).chain(now.keys().filter(|d| !was.contains_key(*d)).copied()).collect();
+    let rows_of = |s: &dyn Source, row: &mut [i64]| -> FxHashSet<Vec<i64>> {
+        let mut out = FxHashSet::default();
+        if differ.is_empty() {
+            return out;
+        }
+        for r in 0..s.len() {
+            s.row_at(r, &all[..1], &mut row[..1]);
+            if differ.contains(&super::memo::document_of(row[0])) {
+                s.row_at(r, &all, row);
+                out.insert(row.to_vec());
+            }
+        }
+        out
+    };
+    let (gone, made) = (rows_of(old, &mut row), rows_of(new, &mut row));
+    let relation = |suffix: &str, rows: &mut dyn Iterator<Item = &Vec<i64>>| {
+        let names: Vec<String> = (0..width).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&format!("{rel}__{suffix}"), c)).collect();
+        let mut rel = crate::code_rule_dsl::facts::vtab::Relation::new(&names.iter().map(String::as_str).collect::<Vec<_>>());
+        let mut rows: Vec<&Vec<i64>> = rows.collect();
+        rows.sort_unstable();
+        for r in rows {
+            rel.push(r);
+        }
+        Arc::new(rel) as Arc<dyn Source>
+    };
+    Some(((relation("plus", &mut made.difference(&gone)), relation("minus", &mut gone.difference(&made))), Arc::new(now)))
 }
 
 /// Which strata a run evaluates: those not `clean`.
@@ -224,7 +320,19 @@ pub(in crate::code_rule_dsl) fn after(
     measured: HashMap<(String, usize), Measured>,
     input_stats: HashMap<String, InputStats>,
     docs: (super::input_delta::Docs, [u8; 32]),
+    mut input_docs: HashMap<String, Arc<DocDigests>>,
 ) -> Retained {
+    // An input bound as the last run's source keeps that source's hashes.
+    if let Some(old) = &old {
+        for (rel, s) in sources {
+            if !input_docs.contains_key(rel)
+                && let (Some(d), Some(was)) = (old.input_docs.get(rel), old.input_srcs.get(rel))
+                && Arc::ptr_eq(was, s)
+            {
+                input_docs.insert(rel.clone(), Arc::clone(d));
+            }
+        }
+    }
     let mut rels: HashMap<String, Kept> = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
         for (rel, k) in old.rels {
@@ -247,7 +355,7 @@ pub(in crate::code_rule_dsl) fn after(
     // Statistics of the relations still kept, as they are.
     let alive: std::collections::HashSet<usize> = rels.values().map(|k| Arc::as_ptr(&k.rel) as *const u8 as usize).collect();
     let measured = measured.into_iter().filter(|((_, at), _)| alive.contains(at)).collect();
-    Retained { key, inputs, rels, input_srcs, measured, input_stats, docs }
+    Retained { key, inputs, rels, input_srcs, measured, input_stats, docs, input_docs }
 }
 
 /// `source` (input `rel`), or the last run's source of the same rows: same name, columns and digest, in any kept
@@ -293,6 +401,16 @@ impl Retained {
     /// Every statistic kept, to be carried to the next run's (`after`).
     pub(in crate::code_rule_dsl) fn measured_all(&self) -> HashMap<(String, usize), Measured> {
         self.measured.clone()
+    }
+
+    /// The last run's source of an input, as it bound it.
+    pub(in crate::code_rule_dsl) fn input_source(&self, rel: &str) -> Option<&Arc<dyn Source>> {
+        self.input_srcs.get(rel)
+    }
+
+    /// That source's rows hashed by document, if a run took them (`document_delta`).
+    pub(in crate::code_rule_dsl) fn input_docs(&self, rel: &str) -> Option<&Arc<DocDigests>> {
+        self.input_docs.get(rel)
     }
 
     /// The digest the last run took of an input (`digest`, or a phase export's version).
@@ -426,6 +544,27 @@ impl Source for Renamed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only the documents whose rows differ are compared, and their rows new and gone are exactly the diff: with
+    /// the old side's hashes given (as a session's next run has them) or taken.
+    #[test]
+    fn a_document_delta_is_the_diff_of_the_documents_that_changed() {
+        let node = |d: i64, i: i64| d << 32 | i;
+        let source = |rows: &[[i64; 2]]| {
+            crate::code_rule_dsl::logic::native::component::columns_source(vec!["n".into(), "v".into()], vec![Some(rows.iter().map(|r| r[0]).collect()), Some(rows.iter().map(|r| r[1]).collect())])
+        };
+        // Document 1 unchanged (its rows in another order), 2 edited, 3 gone, 4 new.
+        let old = source(&[[node(1, 0), 10], [node(1, 1), 11], [node(2, 0), 20], [node(2, 1), 21], [node(3, 0), 30]]);
+        let new = source(&[[node(2, 0), 20], [node(2, 1), 22], [node(1, 1), 11], [node(1, 0), 10], [node(4, 0), 40]]);
+        let rows = |s: &Arc<dyn Source>| (0..s.len()).map(|r| vec![s.value(r, 0), s.value(r, 1)]).collect::<BTreeSet<_>>();
+        let ((plus, minus), docs) = document_delta("r", old.as_ref(), None, new.as_ref()).unwrap();
+        assert_eq!(rows(&plus), BTreeSet::from([vec![node(2, 1), 22], vec![node(4, 0), 40]]));
+        assert_eq!(rows(&minus), BTreeSet::from([vec![node(2, 1), 21], vec![node(3, 0), 30]]));
+        // The next run: `new` is old, its hashes kept; nothing changed.
+        let ((plus, minus), _) = document_delta("r", new.as_ref(), Some(&docs), source(&[[node(1, 0), 10], [node(1, 1), 11], [node(2, 0), 20], [node(2, 1), 22], [node(4, 0), 40]]).as_ref()).unwrap();
+        assert_eq!((plus.len(), minus.len()), (0, 0));
+    }
+
     #[test]
     fn unchanged_gated_programs_reuse_only_complete_retained_results() {
         use crate::code_rule_dsl::logic::magic;
@@ -439,7 +578,7 @@ mod tests {
             let width=p.decls[name].len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
-        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),docs:Default::default()};
+        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),docs:Default::default(),input_docs:Default::default()};
         let result=cut(Some(&kept),key,&p,&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
