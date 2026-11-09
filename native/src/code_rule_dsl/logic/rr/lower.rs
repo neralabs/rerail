@@ -398,6 +398,16 @@ impl Lowerer {
                     self.three.insert(name.clone());
                 }
                 "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
+                // What the relation keeps (decision 0097): an override of the planner's choice.
+                q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {
+                    let own = self.prog.qualifiers.entry(name.clone()).or_default();
+                    own.insert(q.to_owned());
+                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic")] {
+                        if own.contains(a) && own.contains(b) {
+                            return Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together")));
+                        }
+                    }
+                }
                 other => return not_yet(format!("`{other}` on .decl {name}")),
             }
         }
