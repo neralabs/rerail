@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, realpathSync } from "node:fs";
+import { constants } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
@@ -33,6 +33,7 @@ import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../engine/audit/
 import { DEFAULT_AUDIT_SETTINGS } from "../engine/audit/audit-control-schema.js";
 import { CheckoutCatalogs, configurationSignatureOf, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
+import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { makeLedgerFolder, openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
@@ -1965,7 +1966,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
-    const cwd = realpathSync(session.cwd);
+    const cwd = checkoutRealpath()(session.cwd);
     const known = recordCheckout(this.#catalogs.database, cwd);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
