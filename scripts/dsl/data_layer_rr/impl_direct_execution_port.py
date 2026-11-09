@@ -37,7 +37,7 @@ def install(suite, module):
             raise ValueError('Unexpected native direct-execution result')
         return [module.Violation(Path(r['parameters']['file']), r['parameters']['line_num'],
                                  r['parameters']['line'], r['parameters']['pattern'])
-                for r in sorted(result, key=lambda r: (r['parameters']['file_order'], r['parameters']['phase'], r['parameters']['ordinal']))]
+                for r in sorted(result, key=lambda r: (r['parameters']['request_order'], r['parameters']['file_order'], r['parameters']['phase'], r['parameters']['ordinal']))]
 
     def scan(entry, path, content=None):
         path = Path(path)

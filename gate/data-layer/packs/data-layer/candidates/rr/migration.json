@@ -2318,7 +2318,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
-      "sha256": "f9ec85d71220c80e89b9e00b8bf5178adfa827adffe5c2e8eea889c40ac13c97",
+      "sha256": "f7022ae92ca6e15b15128c38c79ecc557998c3b4e3738e7134e630e89f842904",
       "origin": "authored",
       "repairs": [
         {
@@ -2335,6 +2335,11 @@
           "before": "a4416e300fd342797be230a0c98d6dea3f5a924b7dff6a427377378a542de5c9",
           "after": "f9ec85d71220c80e89b9e00b8bf5178adfa827adffe5c2e8eea889c40ac13c97",
           "reason": "Preserve physical tokenizer masks applied to logical splitlines coordinates; prepare character coordinates only for affected source files."
+        },
+        {
+          "before": "f9ec85d71220c80e89b9e00b8bf5178adfa827adffe5c2e8eea889c40ac13c97",
+          "after": "f7022ae92ca6e15b15128c38c79ecc557998c3b4e3738e7134e630e89f842904",
+          "reason": "Retain the caller directory demand ordinal in results; repeated and overlapping roots share parsing but preserve duplicate observations."
         }
       ]
     },
@@ -2961,7 +2966,7 @@
       "legacySha256": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
-      "ruleSha256": "f9ec85d71220c80e89b9e00b8bf5178adfa827adffe5c2e8eea889c40ac13c97"
+      "ruleSha256": "f7022ae92ca6e15b15128c38c79ecc557998c3b4e3738e7134e630e89f842904"
     },
     {
       "check": "raw_execute_regression",

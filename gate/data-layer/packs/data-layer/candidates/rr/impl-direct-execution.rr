@@ -28,11 +28,13 @@ IdeBool(@place("",0),1) :- option("entryPoint","is_allowed_file"), option("argum
 IdeBool(@place("",0),0) :- option("entryPoint","is_allowed_file"), option("argumentPath",p), !ide_allowed(p).
 
 // Discovery consumes every caller root in one request family. Path.rglob does not prune test directories.
-.decl ide_walk(root: symbol, path: symbol)
-ide_walk(p,p) :- env(key,p), prefix("ide.scan.",key).
-ide_walk(root,cat(path,"/",name)) :- ide_walk(root,path), dir_entry(path,name,1), dir_metadata(path,name,_,0,_).
+.decl ide_walk(request: symbol, path: symbol)
+ide_walk(key,p) :- env(key,p), prefix("ide.scan.",key).
+ide_walk(key,cat(path,"/",name)) :- ide_walk(key,path), dir_entry(path,name,1), dir_metadata(path,name,_,0,_).
+.decl ide_request(ordinal: number, path: symbol)
+ide_request(to_number(@slice(key,9,strlen(key))),cat(path,"/",name)) :- ide_walk(key,path), dir_entry(path,name,0), suffix(".py",name).
 .decl ide_file(path: symbol)
-ide_file(cat(path,"/",name)) :- ide_walk(_,path), dir_entry(path,name,0), suffix(".py",name).
+ide_file(path) :- ide_request(_,path).
 #include "data-layer/plugin-discovery.rr"
 .decl ide_production_root(name: symbol)
 ide_production_root(name) :- !env("ide.api","true"), dir_entry(".",name,1), (name = "impl" ; name = "data_layer" ; name = "_internal" ; match_all("\\Al\\d{4}_.+",name)).
@@ -50,6 +52,10 @@ ide_physical_doc(c,d) :- ide_document_candidate(c,d), d = min other : { ide_docu
 .decl ide_doc(d: number, path: symbol)
 ide_doc(d,p) :- option("argumentPath",p), doc(d,"input.py",_), doc_role(d,"primary"), !syntax_error(d,_,_).
 ide_doc(d,p) :- ide_target(p,c), ide_physical_doc(c,d), !syntax_error(d,_,_).
+.decl ide_result_request(ordinal: number, path: symbol)
+ide_result_request(0,p) :- option("argumentPath",p).
+ide_result_request(i,p) :- ide_request(i,p).
+ide_result_request(0,p) :- pfd_file(p).
 
 .decl ide_fts(path: symbol)
 ide_fts(path) :- ide_doc(_,path), match_all("(^|/)impl/[^/]+/fts/.*\\.py$",path).
@@ -132,8 +138,8 @@ ide_output_path(p,p) :- ide_doc(_,p), option("projectRoot",root), !prefix(cat(ro
 ide_output_path(p,p) :- ide_doc(_,p), !option("projectRoot",_).
 .decl ide_line(d: number, line: number, value: symbol)
 ide_line(d,l,@replace_all(raw,"\\A[\\x09-\\x0d\\x1c-\\x20\\x85\\xa0\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}]+|[\\x09-\\x0d\\x1c-\\x20\\x85\\xa0\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}]+\\z","")) :- ide_selected(d,_), split_line(d,l,raw).
-.violation IdeRow(at: span, file_order: symbol, phase: number, ordinal: number, file: symbol, line_num: number, line: symbol, pattern: symbol) code "IDE_ROW" "{pattern}: {line}"
-IdeRow(@place(p,l),@replace_all(p,"/","\u0000"),phase,i,output,l,text,pattern) :- option("entryPoint",_), ide_doc(d,p), ide_event(d,p,phase,i,l,pattern), ide_output_path(p,output), ide_line(d,l,text).
+.violation IdeRow(at: span, request_order: number, file_order: symbol, phase: number, ordinal: number, file: symbol, line_num: number, line: symbol, pattern: symbol) code "IDE_ROW" "{pattern}: {line}"
+IdeRow(@place(p,l),request,@replace_all(p,"/","\u0000"),phase,i,output,l,text,pattern) :- option("entryPoint",_), ide_doc(d,p), ide_result_request(request,p), ide_event(d,p,phase,i,l,pattern), ide_output_path(p,output), ide_line(d,l,text).
 .violation IdeFile(at: span, path: symbol, path_order: symbol) code "IDE_FILE" "{path}"
 IdeFile(@place("",0),p,@replace_all(p,"/","\u0000")) :- option("entryPoint","_production_facts"), pfd_file(p).
 .violation IdeFinding(at: span, pattern: symbol, snippet: symbol) code "direct_execution" "{pattern}: {snippet}"
