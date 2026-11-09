@@ -51,6 +51,9 @@ pub(super) struct Ctx {
     counts: *mut u64,
     /// The bytes from one of the mask's words to the next.
     lasts_stride: u64,
+    /// Every output's word 0, interleaved as `lasts` is (output `o`'s word `w` at
+    /// `o + w * stride` words): the masks `MARK` reads.
+    outputs: *const u64,
 }
 
 /// The field offsets of `Ctx`.
@@ -72,6 +75,7 @@ const OPEN: i32 = 112;
 const RETURNS: i32 = 120;
 const COUNTS: i32 = 128;
 const LASTS_STRIDE: i32 = 136;
+const OUTPUTS: i32 = 144;
 
 /// Returns 0 when the words accept, else one more than the refusing word's place.
 type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
@@ -92,6 +96,8 @@ pub(super) struct CompiledStream {
     /// The extract `TOKEN` reads, and the output of the mask `SPAN m=1` reads.
     starts: Option<usize>,
     lasts: Option<usize>,
+    /// The marks `MARK` tests: a token can be switched on once per mark and once more.
+    marks: u64,
     pub(super) clif: String,
     pub(super) disassembly: String,
     /// The CLIF blocks of the loops' heads, with their steps (`native_cpu_shape`).
@@ -111,7 +117,7 @@ fn successors(native: &NativeModule, pushes: &[u16], pc: usize) -> Vec<usize> {
             out
         }
         Op::Return { again } => pushes.iter().map(|&p| usize::from(p) + usize::from(again)).collect(),
-        Op::Word { test: true, .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } => vec![pc + 1, pc + 2],
         _ => vec![pc + 1],
     }
     .into_iter()
@@ -192,6 +198,14 @@ struct Vars {
     supers: Variable,
     open: Variable,
     ret: Variable,
+    /// 1 once the token's bytes are taken (`SPAN`): `TOKEN` then takes the next.
+    need: Variable,
+    /// The marks not yet taken or passed at this token, a bit each.
+    live: Variable,
+    /// The deferred extras' leaves at the table's end.
+    pending: Variable,
+    /// While leaves are pending, the end of the token before them: a node closed then ends there.
+    keep: Variable,
 }
 
 /// A compare tree over a byte (or a place): runs of one target, split at the middle run.
@@ -319,6 +333,10 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
             supers: f.declare_var(types::I64),
             open: f.declare_var(types::I64),
             ret: f.declare_var(types::I64),
+            need: f.declare_var(types::I64),
+            live: f.declare_var(types::I64),
+            pending: f.declare_var(types::I64),
+            keep: f.declare_var(types::I64),
         };
 
         f.switch_to_block(entry);
@@ -333,13 +351,16 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         let nlasts = load(&mut f, NLASTS);
         let lasts_stride = load(&mut f, LASTS_STRIDE);
         let totals_p = load(&mut f, TOTALS);
+        let outputs_p = load(&mut f, OUTPUTS);
         let cols: Vec<Value> = [KIND, FIELD, START, END, SIZE, SUPER_NODE, SUPER_KIND, OPEN, RETURNS, COUNTS].iter().map(|&at| load(&mut f, at)).collect();
         let (kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c) =
             (cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9]);
         let zero = f.ins().iconst(types::I64, 0);
-        for var in [v.next, v.taken, v.start, v.end, v.limit, v.last_end, v.at_end, v.nodes, v.supers, v.open, v.ret] {
+        for var in [v.next, v.taken, v.start, v.end, v.limit, v.last_end, v.at_end, v.nodes, v.supers, v.open, v.ret, v.live, v.pending, v.keep] {
             f.def_var(var, zero);
         }
+        let one = f.ins().iconst(types::I64, 1);
+        f.def_var(v.need, one);
         let before_first = f.ins().iconst(types::I64, -1);
         f.def_var(v.lw, before_first);
         match wb.first() {
@@ -371,6 +392,14 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
             match w.operation {
                 Op::Token { .. } => {
                     heads.push((wb[pc], Step::Token));
+                    // A token whose bytes are not taken yet (after a mark's arm) is kept.
+                    let take = f.create_block();
+                    let need = f.use_var(v.need);
+                    f.ins().brif(need, take, &[], fall, &[]);
+                    f.switch_to_block(take);
+                    f.def_var(v.need, zero);
+                    let all = f.ins().iconst(types::I64, -1);
+                    f.def_var(v.live, all);
                     let at_end = f.use_var(v.at_end);
                     guard(&mut f, at_end, pc);
                     let (next, end) = (f.use_var(v.next), f.use_var(v.end));
@@ -408,6 +437,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                 }
                 Op::Switch { table } => {
                     let s = &native.switches[usize::from(table)];
+                    f.def_var(v.live, zero);
                     let at_end = f.use_var(v.at_end);
                     let (ended, taking) = (f.create_block(), f.create_block());
                     f.ins().brif(at_end, ended, &[], taking, &[]);
@@ -440,6 +470,8 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
                     guard(&mut f, past, pc);
                     f.def_var(v.end, e);
+                    let one = f.ins().iconst(types::I64, 1);
+                    f.def_var(v.need, one);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Span { last: true, .. } => {
@@ -464,6 +496,8 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
                     guard(&mut f, past, pc);
                     f.def_var(v.end, e);
+                    let one = f.ins().iconst(types::I64, 1);
+                    f.def_var(v.need, one);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Word { string, test } => {
@@ -490,7 +524,57 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                         f.ins().jump(fall, &[]);
                     }
                 }
+                Op::Mark { mask, order, end } => {
+                    // The mark's bit at the token's start, if the mark is live: one load. At the
+                    // stream's end, the mark is there when the end has it.
+                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
+                    let (at_end, live) = (f.use_var(v.at_end), f.use_var(v.live));
+                    let lit = f.ins().ushr_imm(live, i64::from(order));
+                    let lit = f.ins().band_imm(lit, 1);
+                    let (look, ended) = (f.create_block(), f.create_block());
+                    let taken = f.create_block();
+                    let mid = f.create_block();
+                    f.ins().brif(lit, mid, &[], skip, &[]);
+                    f.switch_to_block(mid);
+                    f.ins().brif(at_end, ended, &[], look, &[]);
+                    f.switch_to_block(ended);
+                    if end {
+                        f.ins().jump(taken, &[]);
+                    } else {
+                        f.ins().jump(skip, &[]);
+                    }
+                    f.switch_to_block(look);
+                    let start = f.use_var(v.start);
+                    let w = f.ins().ushr_imm(start, 6);
+                    let base = f.ins().iadd_imm(outputs_p, 8 * output as i64);
+                    let word = mask_word(&mut f, base, lasts_stride, w);
+                    let s = f.ins().band_imm(start, 63);
+                    let bit = f.ins().ushr(word, s);
+                    let bit = f.ins().band_imm(bit, 1);
+                    f.ins().brif(bit, taken, &[], skip, &[]);
+                    f.switch_to_block(taken);
+                    // It and the marks before it are done at this token.
+                    let live = f.use_var(v.live);
+                    let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
+                    f.def_var(v.live, rest);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Row { mask } => {
+                    // The row's start bit at the token's start: one load.
+                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
+                    let start = f.use_var(v.start);
+                    let w = f.ins().ushr_imm(start, 6);
+                    let base = f.ins().iadd_imm(outputs_p, 8 * output as i64);
+                    let word = mask_word(&mut f, base, lasts_stride, w);
+                    let s = f.ins().band_imm(start, 63);
+                    let bit = f.ins().ushr(word, s);
+                    let bit = f.ins().band_imm(bit, 1);
+                    f.ins().brif(bit, fall, &[], skip, &[]);
+                }
                 Op::Open { kind } => {
+                    f.def_var(v.pending, zero);
                     let (nodes, start, open) = (f.use_var(v.nodes), f.use_var(v.start), f.use_var(v.open));
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     put(&mut f, kind_c, nodes, k);
@@ -513,14 +597,30 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                         let a = slot(&mut f, open_c, open);
                         f.ins().uload32(flags, a, 0)
                     };
-                    let e = if this { f.use_var(v.end) } else { f.use_var(v.last_end) };
+                    let (nodes, pending) = (f.use_var(v.nodes), f.use_var(v.pending));
+                    let e = if this {
+                        f.use_var(v.end)
+                    } else {
+                        let (keep, last_end) = (f.use_var(v.keep), f.use_var(v.last_end));
+                        f.ins().select(pending, keep, last_end)
+                    };
                     put(&mut f, end_c, at, e);
-                    let nodes = f.use_var(v.nodes);
                     let size = f.ins().isub(nodes, at);
+                    let size = f.ins().isub(size, pending);
                     put(&mut f, size_c, at, size);
                     f.ins().jump(fall, &[]);
                 }
-                Op::Leaf { kind } => {
+                Op::Leaf { kind, deferred } => {
+                    let pending = if deferred {
+                        // The first pending leaf keeps the end of the token before it.
+                        let (p, keep, last_end) = (f.use_var(v.pending), f.use_var(v.keep), f.use_var(v.last_end));
+                        let keep = f.ins().select(p, keep, last_end);
+                        f.def_var(v.keep, keep);
+                        f.ins().iadd_imm(p, 1)
+                    } else {
+                        zero
+                    };
+                    f.def_var(v.pending, pending);
                     let (nodes, start, end) = (f.use_var(v.nodes), f.use_var(v.start), f.use_var(v.end));
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     let one = f.ins().iconst(types::I64, 1);
@@ -634,7 +734,8 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
     // SAFETY: `tempo_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     let heads = heads.into_iter().map(|(b, s)| (b.to_string(), s)).collect();
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, clif, disassembly, heads })
+    let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
+    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, clif, disassembly, heads })
 }
 
 /// A mask's words for `CompiledStream::call`: word `i` is `words[i * stride]`, `count` of them.
@@ -661,7 +762,8 @@ pub(super) struct Tape {
 impl CompiledStream {
     /// Room for a stream of `n` starts.
     pub(super) fn tape(&self, n: usize) -> Tape {
-        let paths = n as u64 + 2;
+        // A token is switched on once, and once more after each mark's arm.
+        let paths = (n as u64 + 2) * (1 + self.marks);
         let nodes = (self.bounds.nodes * paths + 1) as usize;
         let supers = (self.bounds.supers * paths + 1) as usize;
         let pushes = (self.bounds.pushes * paths + 1) as usize;
@@ -685,7 +787,7 @@ impl CompiledStream {
     ///
     /// # Safety
     /// The slices must be as stated, and `tape` from `self.tape(nstarts)`.
-    pub(super) unsafe fn call(&self, padded: *const u8, len: usize, starts: (&[u32], usize), lasts: MaskWords<'_>, totals: &[u64], tape: &mut Tape) -> u64 {
+    pub(super) unsafe fn call(&self, padded: *const u8, len: usize, starts: (&[u32], usize), lasts: MaskWords<'_>, outputs: *const u64, totals: &[u64], tape: &mut Tape) -> u64 {
         assert!(lasts.count == 0 || (lasts.count - 1) * lasts.stride < lasts.words.len(), "the mask's words lie in its slice");
         let ctx = Ctx {
             bytes: padded,
@@ -706,6 +808,7 @@ impl CompiledStream {
             returns: tape.returns.as_mut_ptr(),
             counts: tape.counts.as_mut_ptr(),
             lasts_stride: 8 * lasts.stride as u64,
+            outputs,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers.
         unsafe { (self.entry)(&ctx) }
@@ -722,13 +825,24 @@ impl CompiledStream {
             (v, n)
         };
         let starts = stream(self.starts);
-        let none = Vec::new();
-        let words: &[u64] = self.lasts.map_or(&none, |m| &tier1.outputs[m]);
+        // The outputs interleaved, as a batch holds them: output `o`'s word `w` at `o + w * n`.
+        let n = tier1.outputs.len().max(1);
+        let count = tier1.outputs.iter().map(Vec::len).max().unwrap_or(0);
+        let mut all = vec![0u64; n * count.max(1)];
+        for (o, words) in tier1.outputs.iter().enumerate() {
+            for (w, &x) in words.iter().enumerate() {
+                all[o + w * n] = x;
+            }
+        }
+        let (words, count) = match self.lasts {
+            Some(m) => (&all[m..], tier1.outputs[m].len()),
+            None => (&all[..0], 0),
+        };
         let mut tape = self.tape(starts.1);
         let totals = if tier1.totals.is_empty() { vec![0] } else { tier1.totals.clone() };
         // SAFETY: `padded` has the byte before and 64 after; each stream two slots past its count;
-        // the tape is sized for the stream.
-        let r = unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), (&starts.0, starts.1), MaskWords { words, stride: 1, count: words.len() }, &totals, &mut tape) };
+        // the tape is sized for the stream; every output has `count` words in `all`.
+        let r = unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), (&starts.0, starts.1), MaskWords { words, stride: n, count }, all.as_ptr(), &totals, &mut tape) };
         if r != 0 {
             return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
         }
@@ -812,7 +926,8 @@ impl Parser {
         // SAFETY: the file's bytes in the batch have `FRONT` zero bytes before them and 64 after
         // its blocks; each stream has `capacity` slots, at least two past its count; the tape is
         // sized for the stream.
-        let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, starts, lasts, totals, tape) };
+        let outputs = batch.out[row.out as usize..].as_ptr();
+        let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, starts, lasts, outputs, totals, tape) };
         if r != 0 {
             return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
         }

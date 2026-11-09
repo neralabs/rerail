@@ -273,6 +273,7 @@ mod block_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
 mod grammar;
+mod bitlex_prove;
 mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
@@ -335,6 +336,11 @@ const ACCEPT: u8 = 0x5b;
 const SPAN: u8 = 0x5c;
 /// Refuses unless one of tier 1's totals is zero: the fallback.
 const EMPTY: u8 = 0x5d;
+/// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
+const MARK: u8 = 0x5e;
+/// Runs the next word when the token starts at a bit of mask `operand`, else skips it: which of
+/// two rows beginning with one byte the token is.
+const ROW: u8 = 0x5f;
 
 pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;

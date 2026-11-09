@@ -494,6 +494,27 @@ pub(super) fn json_variant_block_program(src: &str) -> block::BlockProgram {
 /// `json.bitlex`'s text.
 pub(super) const JSON_BITLEX: &str = JSON;
 
+/// JSON's tier 2 tells every token's row by its first byte: no `ROW` word. Its rows share bytes
+/// (a string's text and a number begin with nearly any), but never in one state: a string's
+/// text is read inside a string, a number outside (the toggle's modes, `row_modes`), and a
+/// number never begins with a quote (an escaped one follows a word's `\\`, `bitlex_prove`).
+#[test]
+fn json_tier2_switches_on_the_first_byte_alone() {
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
+        id => Some(id),
+    };
+    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
+    let text = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).text();
+    let rows: Vec<&str> = text.lines().filter(|l| l.split_whitespace().nth(1) == Some("ROW")).collect();
+    assert!(text.contains(" SWITCH "), "no tier 2 words:\n{text}");
+    assert!(rows.is_empty(), "{} ROW words: {rows:?}", rows.len());
+}
+
 /// JSON's fallback outputs (`bitlex_compile::Compiled::fallbacks`).
 fn json_fallbacks() -> Vec<u16> {
     use ast_grep_language::LanguageExt;

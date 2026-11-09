@@ -121,6 +121,14 @@ pub enum Stmt {
     Check { kind: String, body: Gram },
     /// `extra KIND …`: nodes of these kinds carry the extra flag.
     Extra(Vec<String>),
+    /// `mark KIND = E`: a token of no width before the first grammar token that starts at or
+    /// after each bit of `E`; several bits before one token are one mark, and marks of several
+    /// kinds before one token come in the order they are declared. `, end`: the end of the file
+    /// has it too, after the last token.
+    Mark { kind: String, at: Expr, end: bool },
+    /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
+    /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
+    Hidden(Vec<String>),
 }
 
 impl Stmt {
@@ -704,12 +712,22 @@ impl P {
                 self.want_p("=")?;
                 Stmt::Check { kind, body: self.gram()? }
             }
-            "extra" => {
+            "extra" | "hidden" => {
                 let mut kinds = vec![];
                 while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
                     kinds.push(self.kind()?);
                 }
-                Stmt::Extra(kinds)
+                if kw == "extra" { Stmt::Extra(kinds) } else { Stmt::Hidden(kinds) }
+            }
+            "mark" => {
+                let kind = self.kind()?;
+                self.want_p("=")?;
+                let at = self.expr()?;
+                let end = self.eat_p(",");
+                if end {
+                    self.want_kw("end")?;
+                }
+                Stmt::Mark { kind, at, end }
             }
             "token" => {
                 let kind = self.kind()?;

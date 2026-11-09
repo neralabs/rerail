@@ -34,6 +34,8 @@ pub struct Token {
     pub start: usize,
     pub end: usize,
     pub soft: bool,
+    /// A mark (`mark K = E`): no width, before the token at `start`.
+    pub mark: bool,
 }
 
 /// A `tree` section's grammar (docs/parser-generators/18-tree-as-grammar.md).
@@ -46,6 +48,10 @@ pub struct TreeDecl {
     pub extra: Vec<String>,
     /// The root spans the whole file (`node K whole`): from byte 0, and it may hold no token.
     pub whole: bool,
+    /// The marks (`hidden K`) taken where the grammar can take them, skipped elsewhere.
+    pub hidden: Vec<String>,
+    /// The marks' kinds, in the order declared.
+    pub marks: Vec<String>,
 }
 
 pub struct Output {
@@ -89,6 +95,8 @@ pub struct Ev<'a> {
     munch: Vec<(String, Mask, Vec<(Vec<u8>, Option<String>)>)>,
     keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, Vec<Vec<u8>>, bool)>,
     skip: Mask,
+    /// Each `mark`, in the order declared: its kind, its bits, and whether the end has it.
+    marks: Vec<(String, Mask, bool)>,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
     tree: Option<TreeDecl>,
     /// Each class's byte ranges, for `check`; and each `check`: a token kind and its grammar.
@@ -152,6 +160,7 @@ impl<'a> Ev<'a> {
             munch: vec![],
             keywords: vec![],
             skip: Mask::zeros(n),
+            marks: vec![],
             tables,
             tree: None,
             byte_classes: HashMap::new(),
@@ -159,6 +168,9 @@ impl<'a> Ev<'a> {
         };
         ev.exec(prog)?;
         let tokens = ev.finish()?;
+        if let Some(tree) = &mut ev.tree {
+            tree.marks = ev.marks.iter().map(|m| m.0.clone()).collect();
+        }
         Ok(Output { tree: ev.tree, tokens, errors: ev.errors, rounds: ev.rounds, vars: ev.vars })
     }
 
@@ -348,6 +360,11 @@ impl<'a> Ev<'a> {
             Stmt::Choice { name, supertype, body } => self.tree.get_or_insert_with(TreeDecl::default).choices.push((name.clone(), supertype.clone(), body.clone())),
             Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
+            Stmt::Hidden(kinds) => self.tree.get_or_insert_with(TreeDecl::default).hidden.extend(kinds.iter().cloned()),
+            Stmt::Mark { kind, at, end } => {
+                let m = self.mask(at)?;
+                self.marks.push((kind.clone(), m, *end));
+            }
             Stmt::Error(msg, e) => {
                 let m = self.mask(e)?;
                 self.err(msg, &m);
@@ -1013,7 +1030,11 @@ impl<'a> Ev<'a> {
             for j in i..end {
                 covered.set(j)
             }
-            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: false });
+            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: false, mark: false });
+        }
+        // A token that starts inside the one before (tier 2 refuses it too).
+        if let Some(w) = toks.windows(2).find(|w| w[1].start < w[0].end) {
+            self.errors.push(format!("token {} starts inside {} (byte {})", w[1].kind, w[0].kind, w[1].start));
         }
         let gap = covered.or(&self.skip).not();
         if let Some(i) = gap.first() {
@@ -1039,7 +1060,37 @@ impl<'a> Ev<'a> {
                 }
             }
         }
-        Ok(toks)
+        if self.marks.is_empty() {
+            return Ok(toks);
+        }
+        // Each mark before the first grammar token (not an extra) at or after each of its bits.
+        let extra = self.tree.as_ref().map_or(&[][..], |t| &t.extra[..]);
+        let grammar: Vec<usize> = (0..toks.len()).filter(|&i| !extra.contains(&toks[i].kind)).collect();
+        let mut before: Vec<Vec<bool>> = vec![vec![false; self.marks.len()]; toks.len()];
+        for (k, (_, m, _)) in self.marks.iter().enumerate() {
+            for i in m.ones_iter() {
+                let g = grammar.partition_point(|&t| toks[t].start < i);
+                if let Some(&t) = grammar.get(g) {
+                    before[t][k] = true;
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(toks.len());
+        for (t, tok) in toks.into_iter().enumerate() {
+            for (k, (kind, _, _)) in self.marks.iter().enumerate() {
+                if before[t][k] {
+                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: false, mark: true });
+                }
+            }
+            out.push(tok);
+        }
+        // A bit after the last grammar token's start puts no mark; `, end` puts one at the end.
+        for (kind, _, end) in &self.marks {
+            if *end {
+                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: false, mark: true });
+            }
+        }
+        Ok(out)
     }
 }
 

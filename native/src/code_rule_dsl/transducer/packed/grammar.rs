@@ -39,6 +39,9 @@ pub(in crate::code_rule_dsl) enum Act {
     Open { kind: u16, field: u16, supers: Vec<u16> },
     /// The token's leaf node, of the token's kind.
     Leaf { field: u16, supers: Vec<u16> },
+    /// An extra's leaf, deferred: the nodes closed before the next node leave it out, so it goes
+    /// where the next token puts it (`with_extras`).
+    Extra,
 }
 /// A transition: from a state, on a token of a kind, its acts, to a state; `push`: a call, which
 /// enters a nested level and keeps the state to return to.
@@ -82,6 +85,7 @@ pub(super) fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 Act::Leaf { field, supers } => {
                     let _ = write!(acts, " leaf{}", marks(*field, supers));
                 }
+                Act::Extra => acts.push_str(" extra"),
             }
         }
         let push = arm.push.map_or(String::new(), |p| format!(" push {p}"));
@@ -535,9 +539,10 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
 /// on either side, after the nodes that end before it. A state's arms close those nodes when
 /// the next token comes; so an extra arm closes them first, writes the extra's leaf, and goes on
 /// in a copy of the state without those closes. That needs every way on from the state to close
-/// the same number: where they differ, the extra's place depends on the token after it, and the
-/// state has no extra arm (the file goes to tree-sitter). So too a nested level that may end
-/// where it could go on.
+/// the same number. Where they differ, the extra's place depends on the token after it: the
+/// arm writes the leaf deferred (`Act::Extra`), the closes the next token makes leave it out,
+/// and the state stays as it is (docs/parser-generators/24-rr-and-bitlex-plan.md §2.3). A
+/// nested level that may end where it could go on has no extra arm.
 ///
 /// A state takes extras only where `apart(token, extra)` for each of its tokens: tier 2 tells a
 /// token's row by its first byte, so an extra there must not begin as one of the state's tokens
@@ -551,6 +556,7 @@ pub(super) fn with_extras(
     extras: &[u16],
     apart: &dyn Fn(u16, u16) -> bool,
     whole: bool,
+    marks: &[u16],
 ) -> Result<(Vec<StateRow>, Vec<ArmRow>), String> {
     if extras.is_empty() {
         return Ok((states, arms));
@@ -603,8 +609,39 @@ pub(super) fn with_extras(
         }
         let mut ways: Vec<usize> = mine.iter().map(|a| closes(&a.acts)).collect();
         ways.extend(end.map(usize::from));
-        let m = ways[0];
-        if ways.iter().all(|&w| w == m) {
+        // A mark's arm takes no token: the nodes closed before the next token are its closes and
+        // then the next state's (`None`: past a call or a return, not followed).
+        let through = |s: u16| -> Option<Vec<usize>> {
+            let mut out = Vec::new();
+            let mut work = vec![(s, 0usize, 0usize)];
+            while let Some((at, before, depth)) = work.pop() {
+                if depth > marks.len() {
+                    return None;
+                }
+                let state = &states[usize::from(at)];
+                let here: Vec<&ArmRow> = arms.iter().filter(|a| a.from == at).collect();
+                if state.level != root && (here.is_empty() || state.end.is_some()) {
+                    return None;
+                }
+                out.extend(state.end.map(|e| before + usize::from(e)));
+                for a in here {
+                    let c = before + closes(&a.acts);
+                    if marks.contains(&a.token) {
+                        if a.push.is_some() {
+                            return None;
+                        }
+                        work.push((a.to, c, depth + 1));
+                    } else {
+                        out.push(c);
+                    }
+                }
+            }
+            Some(out)
+        };
+        let marked = mine.iter().any(|a| marks.contains(&a.token));
+        let early = if marked { through(s).is_some_and(|w| w.iter().all(|&x| x == 0)) } else { ways.iter().all(|&w| w == ways[0]) };
+        let m = if marked { 0 } else { ways[0] };
+        if early {
             let to = if m == 0 {
                 s
             } else {
@@ -622,12 +659,33 @@ pub(super) fn with_extras(
             for &k in extras {
                 new_arms.push(ArmRow { from: s, token: k, acts: acts.clone(), to, push: None });
             }
+        } else {
+            for &k in extras {
+                new_arms.push(ArmRow { from: s, token: k, acts: vec![Act::Extra], to: s, push: None });
+            }
         }
         s += 1;
     }
     arms.extend(new_arms);
     arms.sort_by_key(|a| a.from);
     Ok((states, arms))
+}
+
+/// The arms on marks (tokens of no width) write no leaf: a mark makes no node. A field or a
+/// supertype on one would name a node that is not there.
+pub(super) fn without_mark_leaves(arms: &mut [ArmRow], marks: &[u16]) -> Result<(), String> {
+    for a in arms.iter_mut().filter(|a| marks.contains(&a.token)) {
+        let mut acts = Vec::with_capacity(a.acts.len());
+        for act in std::mem::take(&mut a.acts) {
+            match act {
+                Act::Leaf { field: 0, supers } if supers.is_empty() => {}
+                Act::Leaf { .. } => return Err(format!("mark kind {} with a field or a supertype: a mark makes no node", a.token)),
+                other => acts.push(other),
+            }
+        }
+        a.acts = acts;
+    }
+    Ok(())
 }
 
 /// A `check`'s grammar over a token's bytes to a byte state machine (doc 18 §4): its names are

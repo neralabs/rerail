@@ -74,14 +74,18 @@ pub(super) struct Lang {
     extras: Vec<String>,
     /// Sample texts of token kinds, from the ladder (`check_ladder`): drawn before any other.
     samples: HashMap<String, Vec<Vec<u8>>>,
+    /// The marks' kinds (`mark K = E`): line breaks, here; a sentence writes one as a `\n`.
+    marks: Vec<String>,
 }
 
 impl Lang {
     pub(super) fn of(stmts: &[Stmt]) -> Lang {
         let (mut rules, mut order, mut keywords, mut checks, mut classes) = (HashMap::new(), Vec::new(), HashMap::new(), HashMap::new(), HashMap::new());
         let mut extras = Vec::new();
+        let mut marks = Vec::new();
         for s in stmts {
             match s {
+                Stmt::Mark { kind, .. } => marks.push(kind.clone()),
                 Stmt::Class(n, r) => {
                     classes.insert(n.clone(), r.clone());
                 }
@@ -113,7 +117,7 @@ impl Lang {
                 _ => {}
             }
         }
-        let mut lang = Lang { rules, root: order[0].clone(), keywords, checks, classes, least: HashMap::new(), extras, samples: HashMap::new() };
+        let mut lang = Lang { rules, root: order[0].clone(), keywords, checks, classes, least: HashMap::new(), extras, samples: HashMap::new(), marks };
         // The fewest tokens of each rule: a fixpoint from "unreachable".
         for _ in 0..32 {
             for name in &order {
@@ -180,6 +184,9 @@ impl Lang {
     /// A token of kind `k`: one its check accepts, one of its keywords, or text.
     fn token(&self, rng: &mut Rng, k: &str) -> Vec<u8> {
         let long = rng.below(12) == 0;
+        if self.marks.iter().any(|m| m == k) {
+            return b"\n".to_vec();
+        }
         if let Some(s) = self.samples.get(k) {
             return rng.pick(s).clone();
         }
@@ -319,7 +326,9 @@ pub(super) fn documents_with(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> 
         let mut line = false;
         for t in tokens {
             // A line comment ends at the line's end.
-            let space = if line { "\n" } else { *rng.pick(&["", "", " ", "\n", " \t "]) };
+            // With marks, a line break is the grammar's: only a mark's sentence writes one.
+            let spaces: &[&str] = if lang.marks.is_empty() { &["", "", " ", "\n", " \t "] } else { &["", "", " ", " \t "] };
+            let space = if line { "\n" } else { *rng.pick(spaces) };
             // A line comment: a sample of the extras' table that runs to its line's end, or a
             // ladder's sample (`check_ladder`) that begins as one.
             line = lang.extras.iter().any(|k| {
@@ -331,6 +340,7 @@ pub(super) fn documents_with(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> 
             doc.extend(t);
         }
         doc.extend(if line { "\n" } else { *rng.pick(&["", "\n", " "]) }.as_bytes());
+        let _ = &lang.marks;
         // Sentences the reference accepts, and some it does not (a sample token its lexer
         // refuses, say): the mutations below make many more of those.
         if accepts(&doc) {
@@ -396,7 +406,7 @@ pub(super) fn compile_step(name: &str, source: &str) -> Compiled {
     let text = compiled.text();
     // `RERAIL_LADDER_DUMP`: the program as text, for a step whose name holds it.
     if std::env::var("RERAIL_LADDER_DUMP").is_ok_and(|d| name.contains(&d)) {
-        eprintln!("{name}:\n{text}");
+        eprintln!("{name}:\n{}\n{text}", compiled.machine);
     }
     let program = rir::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
     let native = native_ir::lower(&program).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
@@ -463,17 +473,19 @@ pub(super) fn check_shape(name: &str, c: &Compiled) {
 /// and why the reference refused each sentence it refused.
 #[test]
 fn every_step_parses_as_the_reference() {
-    let differ = check_ladder(&steps(), b"<>();=#^ \nav9~,eE-{}", &[], &|_, _, _, _| None);
+    let differ = check_ladder(&steps(), b"<>();=#^ \nav9~,eE-{}", &[], &[], &|_, _, _, _| None);
     assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
 }
 
 /// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
-/// `alphabet`; and `also`, for each document, given the reference's nodes: a difference with
-/// another parser, if any. The differences, one per step at most.
+/// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
+/// reference's nodes: a difference with another parser, if any. The differences, one per step at
+/// most.
 pub(super) fn check_ladder(
     steps: &[(String, String)],
     alphabet: &[u8],
     samples: &[(&str, &[&str])],
+    fixed: &[&str],
     also: &dyn Fn(&str, &Compiled, &[u8], &Option<Vec<IdNode>>) -> Option<String>,
 ) -> Vec<String> {
     let mut differ: Vec<String> = Vec::new();
@@ -488,7 +500,8 @@ pub(super) fn check_ladder(
         let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
         let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
-        let (docs, before) = documents_with(&lang, seed(name), &|b| reference(&c, b).is_some(), alphabet);
+        let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(&c, b).is_some(), alphabet);
+        docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
         for (i, bytes) in docs.into_iter().enumerate() {
             let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
             let want = reference(&c, &bytes);

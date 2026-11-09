@@ -62,7 +62,7 @@ Python needs too.
 | A1 | `scan … = reflect(…)` is not compiled | `"` strings beside backtick literals, the first opener wins | `'` and `"` strings | lower as designed (doc 08 §2.2): a toggle, then a prefix sum mod 3 over two bit planes |
 | A2 | `rounds … until settled` is not compiled | comments that hide quotes; quotes that hide `//` | the same, f-strings | a fixed number of rounds per block, each a copy of the body; a file that does not settle falls back |
 | A3 | `text("…")` is refused | directive words: `.decl` is one token, `.mode` two | keywords in tier 1 | a chain of `next` tests |
-| A4 | a token's kind comes only from its first byte | `:` and `:-`, `<` and `<=` and `<:` | operators | one row per first byte, the longer spellings as keywords (works today: test it) |
+| A4 | a token's kind comes only from its first byte | `:` and `:-`, `<` and `<=` and `<:` | operators | one row per first byte, the longer spellings as keywords. **Done**: a row whose tokens run to their last byte tests each keyword, then takes the plain token |
 | A5 | no wrap: a node cannot start before the token that decides it | `a - b * c`, comparisons, `x ~ \`…\``, `;` | every binary, call and attribute chain | **wrap**: open a node at a saved anchor, around what came since (§2.1) |
 | A6 | no retag: a node's kind is fixed when it opens | an atom and a call look alike until the token after | — | **retag** the node just closed, decided by the next token (§2.1) |
 | A7 | no merge: two tokens cannot make one leaf | `- 1` is one `number` leaf | — | **merge**: the previous leaf and this token become one leaf (§2.1) |
@@ -71,6 +71,10 @@ Python needs too.
 | A10 | keywords are reserved everywhere they have rows | `count`, `min`, `code`, `fix` are words elsewhere | soft keywords | **soft keywords**: the keyword's kind only in a state with an arm for it, the word's kind elsewhere |
 | A11 | a nested level cannot start with another nested call, nor end optionally | `((a + b))`, an aggregate's body | suites, calls | lift both limits in the automaton |
 | A12 | with a tree, a byte in no token is not refused by the compiled path | — | — | refuse it, as the evaluator does |
+| A13 | the file's end is no line break | a setting on the file's last line | NEWLINE at the end | **`mark K = E, end`**: the mark comes after the last token too. **Done** |
+| A14 | an extra's leaf goes where its token is | a comment after a setting's last word | comments, everywhere | **extras placed late** (§2.3). **Done** |
+| A15 | two rows may not begin with one byte | `//` beside the `/` operator | `#` comments, `.` and `...` | **`ROW`**: a word tests a row's start mask at the token's start (§2.4). **Done** |
+| A16 | which rows a state can meet is not known | — (it keeps `ROW` off JSON's strings) | string prefixes, f-strings | **proofs over the block program and modes from toggles** (§2.4). **Done** |
 
 ### 2.1 Wrap, retag and merge
 
@@ -94,6 +98,119 @@ choice product = unary (wrap binary_expression left operator: ('*' | '/' | '%') 
 - **`retag`** changes the kind of the node just closed, and the field of its first child,
   when the next token decides: a call `f(x)` that a comparison does not follow is an atom.
 - **`merge`** joins the leaf just written and the current token into one leaf.
+
+### 2.3 Line breaks: marks, hidden marks, extras placed late
+
+`.rr` reads lines in a few places only:
+- A setting runs to the end of its line. A line that ends in `,` goes on.
+- A declaration's tail is the words on the line of its `)`. Here a `,` does not join lines.
+- Everywhere else, line breaks mean nothing.
+
+The engine's rule, exactly: a token begins a new line when a `\n` lies between the start of
+the token before it and its own start. The `\n` may be in a gap, in a comment, or inside the
+token before: a string may span lines.
+
+So a line break is not a byte between two tokens, and it can't be a token of its own. There
+may be no byte for it:
+
+```
+.scope "a
+b"x        // x is on a new line: the string holds the break
+```
+
+Three additions handle this, each one general.
+
+**Marks (A9).** A mark is a token of no width.
+- It is declared with a mask: `mark line = lf`.
+- Each set bit puts the mark before the first grammar token that starts at or after it.
+- Several bits before one token make one mark.
+- Marks of several kinds before one token come in the order they are declared.
+- The compiler places them in tier 1: the token starts with a bit since the start before,
+  `starts & (m | prev(fill(m & ~starts, starts)))`.
+
+`.rr` declares two marks:
+- `line`: any line break;
+- `newline`: a line break whose token before is not a `,`.
+
+Python needs the same for NEWLINE, INDENT and DEDENT, which are also tokens of no width.
+
+**Hidden marks.** `hidden line newline` in the tree:
+- A hidden mark is taken where the grammar can take it, and skipped elsewhere. A clause never
+  sees its line breaks.
+- A mark that is not hidden and comes where the grammar can't take it refuses the file.
+
+The reference decides this with follow sets: after each token, the mark is kept when the
+kinds that may come next include it. That is the automaton's rule (a state with an arm on the
+mark), so the two agree on every LL(1) grammar.
+
+Why not grammar alone: "after a word, a break ends the setting; after a `,`, it is skipped"
+has no one-unambiguous expression. Its two states form one orbit whose gates differ
+(Brüggemann-Klein and Wood), so no Glushkov automaton is deterministic for it. The lexer
+knows the `,`; the grammar does not need to.
+
+In tier 2:
+- `MARK k` tests mark k's bit at the token's start. If it is set, it takes the mark and runs
+  the next word, the arm. If not, it skips that word.
+- A state tests the marks it names, in order, before its `SWITCH`.
+- A taken mark clears itself and the marks before it, and `SWITCH` clears them all.
+- An arm that takes no bytes leaves the token for the next state. That state's `TOKEN` takes
+  the same token again; it moves on only after a token's bytes are taken (`SPAN`).
+
+**Extras placed late (A14).** A comment at the end of a setting's line:
+
+```
+.mode block   // a comment
+.scope tests false
+```
+
+The comment goes in the setting when more words follow it, and after the setting when the
+next line starts something else. Only the next token tells which. The comment's leaf is
+written at once and counted as **pending**:
+- a `CLOSE` leaves the pending leaves out of the node it closes;
+- the next `OPEN` or `LEAF` ends the pending run.
+
+A node table in preorder then holds each comment where tree-sitter's rule puts it: after the
+nodes that end before it, before those that start after it. This needs no buffer and no copy
+of a state. States where every way on closes the same nodes keep the early placement.
+
+### 2.4 Rows that begin with one byte
+
+Tier 2 reads a token's row from its first byte: one `SWITCH`, as simdjson reads its structural
+characters. Two rows may begin with one byte, though:
+
+```
+// a comment       row `comment`, first byte '/'
+a / b              row `punct`, first byte '/'
+```
+
+Then a `ROW` word tests a row's start mask at the token's start, one load and a branch. It
+must cost nothing where the rows never meet: JSON's string text and its numbers both begin
+with nearly any byte, and JSON should still switch on the byte alone. Two analyses keep it
+there, both general:
+
+**Proofs over the block program.** A small decision procedure answers "can this value have a
+bit at byte b?". Its free values are the bytes around the position, and the carried values
+(`toggle`, `escaped`, `fill`). Each carried value keeps its defining equation, so the search
+knows, for example:
+
+```
+escaped(a) = prev(a) & ~prev(escaped(a))     # an escaped byte has the escape before it
+toggle(x)  = prev(toggle(x)) ^ x
+fill(s, e) = s | (prev(fill(s, e)) & ~e)
+```
+
+So a JSON number never begins with `"`: outside a string, an escaped quote follows a `\`,
+which is itself a word byte. The same proof drops a fallback pair whose two rows can never
+start at one byte.
+
+**Modes from toggles.** A row's start often fixes a toggle: a string's text is inside the
+quotes, a number outside. When every bit of the toggle's input is some token's start, only
+those tokens change the mode. Then each state's modes follow from the grammar's machine:
+arms, calls and returns, starting in mode 0. A state meets only the rows that fit one of its
+modes. Arms it can't meet are dead, and a byte shared only with rows it can't meet needs no
+`ROW`.
+
+The result, checked by a test: JSON's tier 2 has no `ROW` word.
 
 ### 2.2 Regions: strings, backticks and comments
 

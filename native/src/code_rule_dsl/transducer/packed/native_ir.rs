@@ -2,7 +2,7 @@ use super::{
     ABSENT_FIELD, ASSERT, CAPTURE, CHILD, DESCEND, EMIT, FIELD, FIRST, FLAGS, FOLLOWING, FORK,
     GOTO, KIND, LAST, NEXT, PARENT, Program, REPEAT_BEGIN, REPEAT_BUMP, REPEAT_END, RESTORE_CURSOR,
     SAVE_CURSOR, SIZE, STOP, SUPERTYPE, TEXT, split,
-    ACCEPT, CLOSE, EMPTY, LEAF, NODE_FIELD, NODE_SUPER, OPEN, PUSH, RETURN, SPAN, SWITCH, TOKEN, WORD_IS,
+    ACCEPT, CLOSE, EMPTY, LEAF, MARK, ROW, NODE_FIELD, NODE_SUPER, OPEN, PUSH, RETURN, SPAN, SWITCH, TOKEN, WORD_IS,
     value::{CaptureProgram, ValueProgram},
 };
 
@@ -95,7 +95,14 @@ pub(super) enum StructuralOperation {
     Open { kind: u16 },
     /// At the end of this token (`this`), or of the one before.
     Close { this: bool },
-    Leaf { kind: u16 },
+    /// A token's leaf; `deferred`: an extra's, left out of the nodes closed before the next
+    /// node (docs/parser-generators/24-rr-and-bitlex-plan.md §2.3).
+    Leaf { kind: u16, deferred: bool },
+    /// Mark `order` (its bit in mask `mask` at the token's start; at the stream's end, `end`),
+    /// if not yet taken nor passed: take it and run the next word; else skip that word.
+    Mark { mask: u16, order: u8, end: bool },
+    /// The token starts at a bit of mask `mask`: run the next word; else skip it.
+    Row { mask: u16 },
     NodeField { field: u16 },
     NodeSuper { kind: u16 },
     Push { target: u16 },
@@ -146,7 +153,9 @@ impl StructuralOperation {
             Self::Word { string, test } => (WORD_IS, u8::from(test), string),
             Self::Open { kind } => (OPEN, 0, kind),
             Self::Close { this } => (CLOSE, u8::from(this), 0),
-            Self::Leaf { kind } => (LEAF, 0, kind),
+            Self::Leaf { kind, deferred } => (LEAF, u8::from(deferred), kind),
+            Self::Mark { mask, order, end } => (MARK, order | if end { 32 } else { 0 }, mask),
+            Self::Row { mask } => (ROW, 0, mask),
             Self::NodeField { field } => (NODE_FIELD, 0, field),
             Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
             Self::Push { target } => (PUSH, 0, target),
@@ -371,7 +380,9 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
             WORD_IS => StructuralOperation::Word { string: operand, test: mode != 0 },
             OPEN => StructuralOperation::Open { kind: operand },
             CLOSE => StructuralOperation::Close { this: mode != 0 },
-            LEAF => StructuralOperation::Leaf { kind: operand },
+            LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode != 0 },
+            MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0 },
+            ROW => StructuralOperation::Row { mask: operand },
             NODE_FIELD => StructuralOperation::NodeField { field: operand },
             NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
             PUSH => StructuralOperation::Push { target: operand },

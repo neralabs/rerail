@@ -27,7 +27,7 @@ impl ByteSwitch {
 
 /// Whether a word is one of tier 2's.
 pub(super) fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=EMPTY).contains(&opcode)
+    (TOKEN..=ROW).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -45,7 +45,12 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
         SWITCH => mode == 0 && usize::from(operand) < program.switches.len(),
         // `m=1`: a test, which skips the next word where the token is not the string.
         WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 8),
-        OPEN | LEAF | NODE_SUPER => mode == 0,
+        OPEN | NODE_SUPER => mode == 0,
+        // `m=1`: an extra's leaf, deferred.
+        LEAF => mode <= 1,
+        // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
+        MARK => mode < 64 && usize::from(operand) < masks,
+        ROW => mode == 0 && usize::from(operand) < masks,
         NODE_FIELD => mode == 0 && operand != 0,
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
@@ -76,9 +81,25 @@ pub(super) fn validate(program: &Program) -> Result<(), Error> {
         .filter(|&&w| split(w).0 == PUSH)
         .map(|&w| usize::from(split(w).2))
         .collect();
+    // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`.
+    let state = |p: usize| {
+        let mut q = p + 1;
+        while words.get(q).is_some_and(|&w| split(w).0 == MARK) {
+            if words.get(q + 1).is_none_or(|&w| !matches!(split(w).0, GOTO | STOP)) {
+                return false;
+            }
+            q += 2;
+        }
+        split(words[p]).0 == TOKEN && words.get(q).is_some_and(|&w| split(w).0 == SWITCH)
+    };
     for &p in &returns {
-        if split(words[p]).0 != TOKEN || words.get(p + 1).is_none_or(|&w| split(w).0 != SWITCH) {
+        if !state(p) {
             return Err(Error::InvalidTarget(p));
+        }
+    }
+    for (pc, &w) in words.iter().enumerate() {
+        if matches!(split(w).0, MARK | ROW) && words.get(pc + 1).is_none_or(|&w| !matches!(split(w).0, GOTO | STOP)) {
+            return Err(Error::InvalidTarget(pc));
         }
     }
     // One stream of starts and one of last bytes: every `TOKEN` names one extract, and every
@@ -108,6 +129,7 @@ pub(super) fn validate(program: &Program) -> Result<(), Error> {
             }
             RETURN => returns.iter().map(|&p| p + usize::from(mode)).collect(),
             WORD_IS if mode == 1 => vec![pc + 1, pc + 2],
+            MARK | ROW => vec![pc + 1, pc + 2],
             _ => vec![pc + 1],
         }
     };
@@ -187,6 +209,19 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
     };
     let mut pc = 0usize;
     let (mut next, mut taken, mut start, mut end, mut limit, mut last_end, mut at_end) = (0usize, 0usize, 0u32, 0u32, 0u32, 0u32, false);
+    // `need`: the token's bytes were taken (`SPAN`), so `TOKEN` takes the next; an arm of a mark
+    // takes none, and the next state switches on the same token. `live`: the marks not yet
+    // taken or passed at this token. `pending`: the deferred extras' leaves at the table's end.
+    // `keep`: while leaves are pending, the end of the token before them, where a node closed
+    // then ends.
+    let (mut need, mut live, mut pending, mut keep) = (true, 0u32, 0usize, 0u32);
+    let block = program.block_programs.first();
+    let mask_bit = |m: u16, at: u32| -> bool {
+        block.is_some_and(|b| {
+            let words = &tier1.outputs[b.mask_outputs()[usize::from(m)]];
+            words.get(at as usize / 64).is_some_and(|w| w >> (at % 64) & 1 == 1)
+        })
+    };
     let mut nodes: Vec<Node> = Vec::new();
     let mut open: Vec<usize> = Vec::new();
     let mut returns: Vec<u16> = Vec::new();
@@ -195,10 +230,13 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
         let (opcode, mode, operand) = split(words[pc]);
         pc += 1;
         match opcode {
+            TOKEN if !need => {}
             TOKEN => {
                 if at_end {
                     return refuse(pc - 1, "a token past the stream's end");
                 }
+                need = false;
+                live = u32::MAX;
                 last_end = end;
                 if next == starts.len() {
                     at_end = true;
@@ -229,8 +267,10 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                     return refuse(pc - 1, "a token past the next one");
                 }
                 end = e;
+                need = true;
             }
             SWITCH => {
+                live = 0;
                 let s = &program.switches[usize::from(operand)];
                 let t = if at_end {
                     s.end
@@ -252,16 +292,38 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                     _ => return refuse(pc - 1, "not the keyword"),
                 }
             }
+            MARK => {
+                let k = u32::from(mode % 32);
+                let here = if at_end { mode & 32 != 0 } else { mask_bit(operand, start) };
+                if live >> k & 1 == 1 && here {
+                    // Taken: it and the marks before it are done at this token.
+                    live &= !(u32::MAX >> (31 - k));
+                } else {
+                    pc += 1;
+                }
+            }
+            ROW => {
+                if !mask_bit(operand, start) {
+                    pc += 1;
+                }
+            }
             OPEN => {
+                pending = 0;
                 open.push(nodes.len());
                 nodes.push(Node { kind: operand, field: 0, supers: vec![], start, end: 0, size: 0 });
             }
             CLOSE => {
                 let Some(at) = open.pop() else { return refuse(pc - 1, "a close with no open node") };
-                nodes[at].end = if mode == 0 { last_end } else { end };
-                nodes[at].size = (nodes.len() - at) as u32;
+                nodes[at].end = if mode == 1 { end } else if pending > 0 { keep } else { last_end };
+                nodes[at].size = (nodes.len() - pending - at) as u32;
             }
-            LEAF => nodes.push(Node { kind: operand, field: 0, supers: vec![], start, end, size: 1 }),
+            LEAF => {
+                if mode == 1 && pending == 0 {
+                    keep = last_end;
+                }
+                pending = if mode == 1 { pending + 1 } else { 0 };
+                nodes.push(Node { kind: operand, field: 0, supers: vec![], start, end, size: 1 });
+            }
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
             PUSH => returns.push(operand),

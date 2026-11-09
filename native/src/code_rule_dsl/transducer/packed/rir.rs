@@ -85,6 +85,8 @@ const OPCODES: &[(u8, &str)] = &[
     (ACCEPT, "ACCEPT"),
     (SPAN, "SPAN"),
     (EMPTY, "EMPTY"),
+    (MARK, "MARK"),
+    (ROW, "ROW"),
 ];
 
 /// How an opcode's operand prints.
