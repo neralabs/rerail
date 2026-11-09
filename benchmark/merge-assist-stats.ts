@@ -839,6 +839,8 @@ export interface CompletionRunFields {
   readonly agent: { readonly wallMs: number; readonly total: number; readonly uncached: number; readonly usd: number };
   readonly reviewer: { readonly usd: number };
   readonly grader: { readonly usd: number };
+  /** The final message named another pull request or branch (reports before it was recorded have none). */
+  readonly toldPerson?: boolean;
 }
 
 /** The fields of a `--completion --json` report the analysis reads. */
@@ -854,7 +856,7 @@ interface CompletionReport {
 
 const COMPLETION_REPORT_FORMAT = "rerail.merge-assist-replay-completion/v1";
 
-export const COMPLETION_METRICS = ["items_end", "usd", "agent_time", "adopted_end", "total_tokens", "uncached_tokens", "items_phase1", "fix_rounds"] as const;
+export const COMPLETION_METRICS = ["items_end", "usd", "agent_time", "adopted_end", "total_tokens", "uncached_tokens", "items_phase1", "fix_rounds", "told"] as const;
 export type CompletionMetric = (typeof COMPLETION_METRICS)[number];
 
 /**
@@ -872,6 +874,7 @@ export const COMPLETION_SPECS: Readonly<Record<CompletionMetric, MetricSpec>> = 
   uncached_tokens: { kind: "log", better: "lower", label: "agent uncached input tokens" },
   items_phase1: { kind: "plain", better: "lower", label: "conflict items violated after phase 1" },
   fix_rounds: { kind: "plain", better: "lower", label: "fix rounds" },
+  told: { kind: "binary", better: "higher", label: "told the person (final message names another PR or branch)" },
 };
 
 /** A completion run that failed its protocol: an error, an empty final diff, or no final verdict. */
@@ -887,16 +890,33 @@ function completionMeasured(metric: CompletionMetric, run: CompletionRunFields):
     case "uncached_tokens": return run.agent.uncached;
     case "items_phase1": return run.itemsAfterPhase1 ?? run.items;
     case "fix_rounds": return run.fixRounds;
+    case "told": return run.toldPerson === true ? 1 : 0;
   }
+}
+
+/**
+ * A failed run's value when failures must tie at a non-inferiority `margin`: the treatment is compared shifted by the
+ * margin, so a failed treatment run that took the pair's worst raw value would look better than a failed control run by
+ * exactly the margin. Here both tie in the tested space: a binary metric's failure is 0 (the treatment's 0 − margin);
+ * a logged one's is the pair's worst sound value in the tested space (the treatment's log values less log margin),
+ * mapped back to each arm's raw scale.
+ */
+function failureAtMargin(metric: CompletionMetric, own: readonly CompletionRunFields[], treatment: string, margin: number): (run: CompletionRunFields) => number {
+  if (COMPLETION_SPECS[metric].kind === "binary") return run => (run.arm === treatment ? -margin : 0);
+  const shift = (run: CompletionRunFields) => (run.arm === treatment ? Math.log(margin) : 0);
+  const tested = own.filter(run => !completionFailed(run)).map(run => Math.log1p(completionMeasured(metric, run)) - shift(run));
+  const worst = tested.length === 0 ? 0 : Math.max(...tested);
+  return run => Math.expm1(Math.max(Math.log1p(completionMeasured(metric, run)) - shift(run), worst) + shift(run));
 }
 
 /**
  * Per pair, the treatment's and the control's values of `metric` (leaked runs already left out). A failed run violates
  * every item at the end and did not end on the adopted design; its first pass counts as graded when it was, else as
  * violating every item; for a cost (USD, time, tokens, fix rounds) it is at least as costly as its pair's worst sound
- * run. Also each stratum's scenario.
+ * run. With `atMargin` (a non-inferiority margin), failed runs of a binary or logged metric tie in the tested space
+ * instead ({@link failureAtMargin}). Also each stratum's scenario.
  */
-export function completionStrata(metric: CompletionMetric, runs: readonly CompletionRunFields[], treatment: string, control: string): { strata: Stratum[]; scenarios: Scenario[]; unpaired: string[] } {
+export function completionStrata(metric: CompletionMetric, runs: readonly CompletionRunFields[], treatment: string, control: string, atMargin?: number): { strata: Stratum[]; scenarios: Scenario[]; unpaired: string[] } {
   const strata: Stratum[] = [];
   const scenarios: Scenario[] = [];
   const unpaired: string[] = [];
@@ -904,8 +924,10 @@ export function completionStrata(metric: CompletionMetric, runs: readonly Comple
     const own = runs.filter(run => run.pair === pair && (run.arm === treatment || run.arm === control));
     const sound = own.filter(run => !completionFailed(run)).map(run => completionMeasured(metric, run));
     const worst = sound.length === 0 ? 0 : Math.max(...sound);
+    const marginal = atMargin === undefined || COMPLETION_SPECS[metric].kind === "plain" ? null : failureAtMargin(metric, own, treatment, atMargin);
     const value = (run: CompletionRunFields): number => {
-      if (!completionFailed(run) || metric === "items_phase1") return completionMeasured(metric, run);
+      if (!completionFailed(run) || metric === "items_phase1" || metric === "told") return completionMeasured(metric, run);
+      if (marginal !== null) return marginal(run);
       if (metric === "items_end") return run.items;
       if (metric === "adopted_end") return 0;
       return Math.max(completionMeasured(metric, run), worst);
@@ -931,6 +953,8 @@ export interface CompletionHypothesis {
    * Absent for superiority.
    */
   readonly margin?: number;
+  /** Failed runs tie at the margin in the tested space ({@link failureAtMargin}); the units comparison's P2 and P3. */
+  readonly failuresAtMargin?: boolean;
   /** `prevalence`: the scenarios weighed by `--weights` (the mix); balanced ({@link BALANCED}) otherwise. */
   readonly weighting?: "prevalence";
 }
@@ -1049,7 +1073,7 @@ interface CompletionAnalysis {
 
 function analyseCompletion(hypothesis: CompletionHypothesis, runs: readonly CompletionRunFields[], treatment: string, control: string, seed: number, prevalence: ScenarioWeights | null): CompletionAnalysis {
   const scoped = runs.filter(run => hypothesis.scenarios === null || hypothesis.scenarios.includes(run.scenario));
-  const { strata, scenarios, unpaired } = completionStrata(hypothesis.metric, scoped, treatment, control);
+  const { strata, scenarios, unpaired } = completionStrata(hypothesis.metric, scoped, treatment, control, hypothesis.failuresAtMargin === true ? hypothesis.margin : undefined);
   return { hypothesis, treatment, result: strata.length === 0 ? null : completionTest(hypothesis, strata, scenarios, seed, prevalence), unpaired };
 }
 
@@ -1077,20 +1101,20 @@ function printCompletion(title: string, analyses: readonly CompletionAnalysis[],
   ));
 }
 
-/**
- * `--analyze-completion`: per treatment against `control`, H1–H4 with Holm across every primary (all treatments) and
- * the look's verdict, over both scenarios weighed half and half; then the secondaries (raw p), the mix weighed by
- * `prevalence` among them, and the per-scenario means.
- */
-function analyzeCompletionReports(paths: readonly string[], arms: readonly string[], control: string, look: number, seed: number, prevalence: ScenarioWeights | null): void {
-  const reports = paths.map(path => ({ path, report: JSON.parse(readFileSync(path, "utf8")) as CompletionReport }));
-  const problems = completionPoolingProblems(reports);
-  const all = problems.length > 0 ? [] : reports.flatMap(({ report }) => report.runs);
-  const treatments = arms.filter(arm => arm !== control);
-  if (problems.length === 0) for (const arm of [control, ...treatments]) if (!all.some(run => run.arm === arm)) problems.push(`no report holds a run of arm ${arm}`);
-  if (treatments.length === 0) problems.push(`--arms names no treatment besides the control ${control}`);
+/** Pooled completion reports: the reports, the arms, every run of those arms (`listed`) and the unleaked ones (`runs`). */
+interface PooledCompletion {
+  readonly reports: ReadonlyArray<{ path: string; report: CompletionReport }>;
+  readonly treatments: string[];
+  readonly used: string[];
+  readonly listed: CompletionRunFields[];
+  readonly runs: CompletionRunFields[];
+}
+
+/** Runs two reports both hold (the same pair, arm, trial and wall time): the same batch pooled twice. */
+function duplicateRuns(reports: ReadonlyArray<{ path: string; report: CompletionReport }>): string[] {
+  const problems: string[] = [];
   const seen = new Map<string, string>();
-  for (const { path, report } of problems.length > 0 ? [] : reports) {
+  for (const { path, report } of reports) {
     for (const run of report.runs) {
       const key = `${run.pair}\0${run.arm}\0${run.trial}\0${run.wallMs}`;
       const other = seen.get(key);
@@ -1098,31 +1122,131 @@ function analyzeCompletionReports(paths: readonly string[], arms: readonly strin
       seen.set(key, path);
     }
   }
+  return problems;
+}
+
+/**
+ * The pooled runs of `paths` (`--completion --json` reports) for `control` and the treatments: refused when the
+ * reports cannot be pooled, an arm has no run, or two reports hold the same run.
+ */
+function pooledCompletionRuns(paths: readonly string[], arms: readonly string[], control: string): PooledCompletion {
+  const reports = paths.map(path => ({ path, report: JSON.parse(readFileSync(path, "utf8")) as CompletionReport }));
+  const problems = completionPoolingProblems(reports);
+  const all = problems.length > 0 ? [] : reports.flatMap(({ report }) => report.runs);
+  const treatments = arms.filter(arm => arm !== control);
+  if (problems.length === 0) problems.push(...[control, ...treatments].filter(arm => !all.some(run => run.arm === arm)).map(arm => `no report holds a run of arm ${arm}`));
+  if (treatments.length === 0) problems.push(`--arms names no treatment besides the control ${control}`);
+  if (problems.length === 0) problems.push(...duplicateRuns(reports));
   if (problems.length > 0) throw new Error(`Refusing to pool:\n- ${problems.join("\n- ")}`);
   const used = [control, ...treatments];
   const listed = all.filter(run => used.includes(run.arm));
-  const runs = listed.filter(run => !run.leaked);
+  return { reports, treatments, used, listed, runs: listed.filter(run => !run.leaked) };
+}
+
+/** The pooled reports' protocol, the leaked runs left out and the failures counted, per arm. */
+function printCompletionHeader(title: string, paths: readonly string[], pooled: PooledCompletion, seed: number): void {
+  const { reports, used, listed, runs } = pooled;
   const options = reports[0]!.report.options;
-  console.log(`Merge Assist completion: ${treatments.join(", ")} (treatment${treatments.length === 1 ? "" : "s"}) vs ${control} (control), strata = pair, look ${look} of at most ${MAX_LOOKS}; ${reports.length} report(s) pooled: ${paths.join("; ")}`);
+  console.log(`${title}; ${reports.length} report(s) pooled: ${paths.join("; ")}`);
   console.log(`${COMPLETION_PROTOCOL_OPTIONS.map(option => `${option} ${JSON.stringify(options[option] ?? null)}`).join(", ")}, ${reports[0]!.report.maxReviewRounds} review rounds; ${PERMUTATIONS} permutations within pair, ${RESAMPLES} bootstrap resamples (pairs within scenario), seed ${seed}; one-sided; aggregates over both scenarios weigh each scenario's mean within-pair effect ${formatWeights(BALANCED)}`);
   console.log(`\nExcluded (leaked): ${used.map(arm => `${arm} ${listed.filter(run => run.arm === arm && run.leaked).length}/${listed.filter(run => run.arm === arm).length}`).join(", ")}`);
   const failures = runs.filter(completionFailed);
   console.log(`Failures (an error, an empty final diff or no final verdict), counted as violating every item and as costly as their pair's worst run: ${used.map(arm => `${arm} ${failures.filter(run => run.arm === arm).length}/${runs.filter(run => run.arm === arm).length}`).join(", ")}`);
   for (const run of failures) console.log(`  ${run.arm} ${run.pair} #${run.trial}: ${(run.error ?? (run.final.diff.trim() === "" ? "empty final diff" : "no final verdict")).replace(/\s+/gu, " ").slice(0, 160)}`);
-  const primary = treatments.flatMap(arm => COMPLETION_PRIMARY.map(hypothesis => analyseCompletion({ ...hypothesis, id: treatments.length === 1 ? hypothesis.id : `${hypothesis.id}-${arm}` }, runs, arm, control, seed, null)));
-  const adjusted = holm(primary.map(({ result }) => result?.p ?? 1));
-  printCompletion(`Primary: H1–H4 per treatment (Holm across ${primary.length})`, primary, control, adjusted, null);
-  const secondary = treatments.flatMap(arm => completionSecondary(prevalence !== null).map(hypothesis => analyseCompletion({ ...hypothesis, id: treatments.length === 1 ? hypothesis.id : `${hypothesis.id}-${arm}` }, runs, arm, control, seed, prevalence)));
-  printCompletion(`Secondary (not used for stopping; raw p against the per-look α)${prevalence === null ? "; pass --weights D1=w1,D2=w2 for the prevalence-weighted mix" : ""}`, secondary, control, secondary.map(() => null), prevalence);
+}
+
+/** Means per scenario × arm: items, adoption, rounds, cost and time, and how often the person was told. */
+function printScenarioMeans(used: readonly string[], runs: readonly CompletionRunFields[]): void {
   console.log("\nMeans per scenario × arm (failures as counted above; agent cost and time, reviewer and grader cost besides)");
   console.log(table(
-    ["scenario", "arm", "runs", "items p1", "items end", "adopted", "fix rounds", "agent $", "agent min", "reviewer $", "grader $"],
+    ["scenario", "arm", "runs", "items p1", "items end", "adopted", "fix rounds", "agent $", "agent min", "reviewer $", "grader $", "told"],
     SCENARIOS.flatMap(scenario => used.map(arm => {
       const own = runs.filter(run => run.scenario === scenario && run.arm === arm);
       const average = (pick: (run: CompletionRunFields) => number) => (own.length === 0 ? "-" : mean(own.map(pick)).toFixed(2));
-      return [scenario, arm, String(own.length), average(run => completionMeasured("items_phase1", run)), average(run => (completionFailed(run) ? run.items : completionMeasured("items_end", run))), `${own.filter(run => !completionFailed(run) && run.adoptedAtEnd === true).length}/${own.length}`, average(run => run.fixRounds), average(run => run.agent.usd), average(run => run.agent.wallMs / 60_000), average(run => run.reviewer.usd), average(run => run.grader.usd)];
+      return [scenario, arm, String(own.length), average(run => completionMeasured("items_phase1", run)), average(run => (completionFailed(run) ? run.items : completionMeasured("items_end", run))), `${own.filter(run => !completionFailed(run) && run.adoptedAtEnd === true).length}/${own.length}`, average(run => run.fixRounds), average(run => run.agent.usd), average(run => run.agent.wallMs / 60_000), average(run => run.reviewer.usd), average(run => run.grader.usd), `${own.filter(run => run.toldPerson === true).length}/${own.length}`];
     })),
   ));
+}
+
+/** `hypotheses` per arm against `control`, ids suffixed with the arm when there are several. */
+function analyseArms(hypotheses: readonly CompletionHypothesis[], arms: readonly string[], runs: readonly CompletionRunFields[], control: string, seed: number, prevalence: ScenarioWeights | null): CompletionAnalysis[] {
+  return arms.flatMap(arm => hypotheses.map(hypothesis => analyseCompletion({ ...hypothesis, id: arms.length === 1 ? hypothesis.id : `${hypothesis.id}-${arm}` }, runs, arm, control, seed, prevalence)));
+}
+
+/**
+ * `--analyze-completion`: per treatment against `control`, H1–H4 with Holm across every primary (all treatments) and
+ * the look's verdict, over both scenarios weighed half and half; then the secondaries (raw p), the mix weighed by
+ * `prevalence` among them, and the per-scenario means.
+ */
+function analyzeCompletionReports(paths: readonly string[], arms: readonly string[], control: string, look: number, seed: number, prevalence: ScenarioWeights | null): void {
+  const pooled = pooledCompletionRuns(paths, arms, control);
+  const { treatments, used, runs } = pooled;
+  printCompletionHeader(`Merge Assist completion: ${treatments.join(", ")} (treatment${treatments.length === 1 ? "" : "s"}) vs ${control} (control), strata = pair, look ${look} of at most ${MAX_LOOKS}`, paths, pooled, seed);
+  const primary = analyseArms(COMPLETION_PRIMARY, treatments, runs, control, seed, null);
+  const adjusted = holm(primary.map(({ result }) => result?.p ?? 1));
+  printCompletion(`Primary: H1–H4 per treatment (Holm across ${primary.length})`, primary, control, adjusted, null);
+  const secondary = analyseArms(completionSecondary(prevalence !== null), treatments, runs, control, seed, prevalence);
+  printCompletion(`Secondary (not used for stopping; raw p against the per-look α)${prevalence === null ? "; pass --weights D1=w1,D2=w2 for the prevalence-weighted mix" : ""}`, secondary, control, secondary.map(() => null), prevalence);
+  printScenarioMeans(used, runs);
+  console.log(`\n${verdict(adjusted, look)}`);
+}
+
+// ---------------------------------------------------------------------------------------------------------- units
+
+/** The arm the units comparison is about: its primaries decide; every other treatment is a secondary family. */
+export const UNITS_ARM = "units";
+/** P3's margin: the agent's cost per task may be at most ×1.10 the control's. */
+export const COST_MARGIN = 1.1;
+/** The prevalence mix the secondaries weigh scenarios by: how often the earlier pull request was adopted (D1 0.74). */
+export const UNITS_PREVALENCE: ScenarioWeights = { D1: 0.74, D2: 0.26 };
+
+/**
+ * The units comparison's pre-registered primaries, per treatment against the control, one-sided, D1 and D2 weighed
+ * half and half: P1 fewer conflict items with the adopted design after the first pass (all pairs); P2 ending on the
+ * adopted design non-inferior by {@link ADOPTED_MARGIN} (D2); P3 agent cost (µUSD) non-inferior at ×{@link COST_MARGIN}.
+ */
+export const UNITS_PRIMARY: readonly CompletionHypothesis[] = [
+  { id: "P1", metric: "items_phase1", scenarios: null },
+  { id: "P2", metric: "adopted_end", scenarios: ["D2"], margin: ADOPTED_MARGIN, failuresAtMargin: true },
+  { id: "P3", metric: "usd", scenarios: null, margin: COST_MARGIN, failuresAtMargin: true },
+];
+
+/** The units comparison's secondaries (raw p): completion items, rounds, told the person, D1 alone, the prevalence mix. */
+const UNITS_SECONDARY: readonly CompletionHypothesis[] = [
+  { id: "S-items-end", metric: "items_end", scenarios: null },
+  { id: "S-rounds", metric: "fix_rounds", scenarios: null },
+  { id: "S-told", metric: "told", scenarios: null },
+  ...UNITS_PRIMARY.map(hypothesis => ({ ...hypothesis, id: `D1-${hypothesis.id}`, scenarios: ["D1" as const] })),
+  ...UNITS_PRIMARY.map(hypothesis => ({ ...hypothesis, id: `Mix-${hypothesis.id}`, scenarios: null, weighting: "prevalence" as const })),
+];
+
+/**
+ * `--analyze-units`: `units` against `control` on P1–P3 with Holm across the three and the look's Pocock verdict;
+ * every other treatment (`git-conflict`) on P1–P3 as a secondary family, Holm within it; then `units`' secondaries
+ * (raw p, the mix at {@link UNITS_PREVALENCE}), `units` against each other treatment on P1–P3 (raw p), how often each
+ * arm told the person, and the per-scenario means.
+ */
+function analyzeUnitsReports(paths: readonly string[], arms: readonly string[], control: string, look: number, seed: number): void {
+  if (!arms.includes(UNITS_ARM)) throw new Error(`--analyze-units needs ${UNITS_ARM} among --arms\n${USAGE}`);
+  const pooled = pooledCompletionRuns(paths, arms, control);
+  const { treatments, used, runs } = pooled;
+  const others = treatments.filter(arm => arm !== UNITS_ARM);
+  printCompletionHeader(`Merge Assist coordination units: ${UNITS_ARM} vs ${control} (control)${others.length === 0 ? "" : `, ${others.join(", ")} as a secondary family`}, strata = pair, look ${look} of at most ${MAX_LOOKS}`, paths, pooled, seed);
+  const primary = analyseArms(UNITS_PRIMARY, [UNITS_ARM], runs, control, seed, null);
+  const adjusted = holm(primary.map(({ result }) => result?.p ?? 1));
+  printCompletion(`Primary: P1–P3, ${UNITS_ARM} vs ${control} (Holm across ${primary.length}; Pocock ${POCOCK_ALPHA} per look)`, primary, control, adjusted, null);
+  for (const arm of others) {
+    const family = analyseArms(UNITS_PRIMARY, [arm], runs, control, seed, null);
+    printCompletion(`Secondary family: P1–P3, ${arm} vs ${control} (Holm within the family; not used for stopping)`, family, control, holm(family.map(({ result }) => result?.p ?? 1)), null);
+  }
+  const secondary = analyseArms(UNITS_SECONDARY, [UNITS_ARM], runs, control, seed, UNITS_PREVALENCE);
+  printCompletion(`Secondary, ${UNITS_ARM} vs ${control} (raw p; not used for stopping)`, secondary, control, secondary.map(() => null), UNITS_PREVALENCE);
+  for (const arm of others) {
+    const head = analyseArms(UNITS_PRIMARY, [UNITS_ARM], runs, arm, seed, null);
+    printCompletion(`Secondary, ${UNITS_ARM} vs ${arm} on P1–P3 (raw p)`, head, arm, head.map(() => null), null);
+  }
+  console.log(`\nTold the person (the final message names another PR or branch): ${used.map(arm => `${arm} ${runs.filter(run => run.arm === arm && run.toldPerson === true).length}/${runs.filter(run => run.arm === arm).length}`).join(", ")}`);
+  printScenarioMeans(used, runs);
   console.log(`\n${verdict(adjusted, look)}`);
 }
 
@@ -1209,14 +1333,23 @@ function binomial(trials: number, rate: number, random: () => number): number {
   return hits;
 }
 
+/** A synthetic treatment's effects: multipliers on item violation rates, cost and time; a shift in adoption. */
+interface SyntheticEffect {
+  readonly items?: number;
+  readonly phase1?: number;
+  readonly adopted?: number;
+  readonly time?: number;
+  readonly usd?: number;
+}
+
 /**
- * Synthetic completion runs of `arms` (the treatment first): per pair 3–8 items, each violated at the end at a pair's
- * rate (0.05 to 0.5), times `effect.items` under the treatment; ending on the adopted design at a pair's rate (0.3 to
- * 0.8) plus `effect.adopted` under the treatment, drawn on its own; agent cost and time log-normal around a pair's
- * centre, time times `effect.time` under the treatment. Every run has a 10% chance of failing (no diff) and 5% of
- * leaking.
+ * Synthetic completion runs of `arms` (the treatment first): per pair 3–8 items, each violated after the first pass
+ * and at the end at a pair's rate (0.05 to 0.5), times `effect.phase1` and `effect.items` under the treatment; ending
+ * on the adopted design at a pair's rate (0.3 to 0.8) plus `effect.adopted` under the treatment, drawn on its own;
+ * agent cost and time log-normal around a pair's centre, times `effect.usd` and `effect.time` under the treatment;
+ * the person told 30% of the time. Every run has a 10% chance of failing (no diff) and 5% of leaking.
  */
-function syntheticCompletionRuns(arms: readonly string[], random: () => number, effect: { items?: number; adopted?: number; time?: number }): CompletionRunFields[] {
+function syntheticCompletionRuns(arms: readonly string[], random: () => number, effect: SyntheticEffect): CompletionRunFields[] {
   return SCENARIOS.flatMap(scenario => Array.from({ length: COMPLETION_PAIRS[scenario] }, (_, pair) => {
     const items = 3 + Math.floor(random() * 6);
     const violation = 0.05 + 0.45 * random();
@@ -1224,34 +1357,69 @@ function syntheticCompletionRuns(arms: readonly string[], random: () => number, 
     const usd = Math.log(2) + 0.6 * normal(random);
     const seconds = Math.log(900) + 0.6 * normal(random);
     return arms.flatMap((arm, index) => Array.from({ length: COMPLETION_RUNS }, (_, trial): CompletionRunFields => {
-      const treated = index === 0;
-      const time = 1000 * Math.exp(seconds + (treated ? Math.log(effect.time ?? 1) : 0) + 0.4 * normal(random));
+      const shift: SyntheticEffect = index === 0 ? effect : {};
+      const time = 1000 * Math.exp(seconds + Math.log(shift.time ?? 1) + 0.4 * normal(random));
       return {
         pair: `${scenario}-${pair}`, scenario, arm, trial: trial + 1, error: null, leaked: random() < 0.05, items,
-        itemsAfterPhase1: binomial(items, violation, random),
-        itemsAfterCompletion: binomial(items, Math.min(1, violation * (treated ? effect.items ?? 1 : 1)), random),
-        adoptedAtEnd: random() < adoption + (treated ? effect.adopted ?? 0 : 0),
+        itemsAfterPhase1: binomial(items, Math.min(1, violation * (shift.phase1 ?? 1)), random),
+        itemsAfterCompletion: binomial(items, Math.min(1, violation * (shift.items ?? 1)), random),
+        adoptedAtEnd: random() < adoption + (shift.adopted ?? 0),
         fixRounds: binomial(3, violation, random),
         wallMs: time, final: { diff: random() < 0.1 ? "" : "diff" },
-        agent: { wallMs: time, total: 1e6, uncached: 1e5, usd: Math.exp(usd + 0.4 * normal(random)) }, reviewer: { usd: 0.01 }, grader: { usd: 0.01 },
+        agent: { wallMs: time, total: 1e6, uncached: 1e5, usd: Math.exp(usd + Math.log(shift.usd ?? 1) + 0.4 * normal(random)) }, reviewer: { usd: 0.01 }, grader: { usd: 0.01 },
+        toldPerson: random() < 0.3,
       };
     }));
   }).flat());
 }
 
+/** One synthetic self-test case: hypotheses tested together (Holm), the treatment's effect, and whether its rate is bounded. */
+interface SyntheticCase {
+  readonly name: string;
+  readonly hypotheses: readonly CompletionHypothesis[];
+  readonly effect: SyntheticEffect;
+  readonly check: string;
+  readonly bound: boolean;
+}
+
+/**
+ * Each case's rejection rate over `datasets` synthetic batches (treatment `T` against `none`), through the same strata,
+ * failure handling, weights and test the analysis uses, Holm across a case's hypotheses. A bounded rate passes when it
+ * is not above `alpha` by more than two Monte Carlo standard errors of a rate of exactly `alpha`: a test at its nominal
+ * level lands above `alpha` half the time.
+ */
+function syntheticCases(label: string, cases: readonly SyntheticCase[], datasets: number, alpha: number, random: () => number, prevalence: ScenarioWeights): { rows: string[][]; ok: boolean } {
+  const limit = alpha + 2 * Math.sqrt((alpha * (1 - alpha)) / datasets);
+  const shape = `${COMPLETION_PAIRS.D1} D1 + ${COMPLETION_PAIRS.D2} D2 pairs × ${COMPLETION_RUNS} runs per arm`;
+  let ok = true;
+  const rows = cases.map(({ name, hypotheses, effect, check, bound }) => {
+    const started = performance.now();
+    let rejections = 0;
+    for (let dataset = 0; dataset < datasets; dataset++) {
+      const runs = syntheticCompletionRuns(["T", "none"], random, effect).filter(run => !run.leaked);
+      const pValues = hypotheses.map(hypothesis => {
+        const { strata, scenarios } = completionStrata(hypothesis.metric, runs.filter(run => hypothesis.scenarios === null || hypothesis.scenarios.includes(run.scenario)), "T", "none", hypothesis.failuresAtMargin === true ? hypothesis.margin : undefined);
+        return permutationTest(completionAnalysed(hypothesis.metric, strata, hypothesis.margin), COMPLETION_SPECS[hypothesis.metric].better, PERMUTATIONS, random, scenarioWeights(scenarios, hypothesis.weighting === "prevalence" ? prevalence : BALANCED));
+      });
+      if (holm(pValues).some(p => p <= alpha)) rejections++;
+    }
+    const rate = rejections / datasets;
+    const passed = !bound || rate <= limit;
+    ok &&= passed;
+    return [`${label} ${name} (${shape})`, check, `${rejections}/${datasets} = ${rate.toFixed(3)}`, bound ? `≤ ${alpha} + 2 MC s.e. = ${limit.toFixed(3)}` : "reported", bound ? (passed ? "ok" : "FAIL") : "", `${((performance.now() - started) / 1000).toFixed(1)}s`];
+  });
+  return { rows, ok };
+}
+
 /**
  * The completion cases of `--self-test`: the false-positive rate of H1 under no effect, of H3 and H4 at their margins,
  * of H1–H4 with Holm under their global null, and of the prevalence mix under no effect; the power of H1 and H4; and
- * the balanced weights. Through the same strata, failure handling, weights and test the analysis uses. A rate passes
- * when it is not above `alpha` by more than two Monte Carlo standard errors of a rate of exactly `alpha`: a test at its
- * nominal level lands above `alpha` half the time.
+ * the balanced weights.
  */
 function completionSelfTest(datasets: number, alpha: number, random: () => number): { rows: string[][]; ok: boolean } {
-  const limit = alpha + 2 * Math.sqrt((alpha * (1 - alpha)) / datasets);
-  const shape = `${COMPLETION_PAIRS.D1} D1 + ${COMPLETION_PAIRS.D2} D2 pairs × ${COMPLETION_RUNS} runs per arm`;
   const prevalence: ScenarioWeights = { D1: 0.74, D2: 0.26 };
   const [h1, , h3, h4] = COMPLETION_PRIMARY as [CompletionHypothesis, CompletionHypothesis, CompletionHypothesis, CompletionHypothesis];
-  const cases: Array<{ name: string; hypotheses: readonly CompletionHypothesis[]; effect: Parameters<typeof syntheticCompletionRuns>[2]; check: string; bound: boolean }> = [
+  const cases: SyntheticCase[] = [
     { name: "H1 items after completion, no effect", hypotheses: [h1], effect: {}, check: "false-positive rate", bound: true },
     { name: "H1 items after completion, violation rate × 0.3", hypotheses: [h1], effect: { items: 0.3 }, check: "power", bound: false },
     { name: `H3 time non-inferiority ×${TIME_MARGIN}, true ×${TIME_MARGIN}`, hypotheses: [h3], effect: { time: TIME_MARGIN }, check: "false-positive rate", bound: true },
@@ -1260,28 +1428,42 @@ function completionSelfTest(datasets: number, alpha: number, random: () => numbe
     { name: "H1–H4 global null (H3, H4 at their margins)", hypotheses: COMPLETION_PRIMARY, effect: { time: TIME_MARGIN, adopted: -ADOPTED_MARGIN }, check: "family-wise false-positive rate, Holm", bound: true },
     { name: `Mix-H1 (D1 ${prevalence.D1}, D2 ${prevalence.D2}), no effect`, hypotheses: [{ ...h1, id: "Mix-H1", weighting: "prevalence" }], effect: {}, check: "false-positive rate", bound: true },
   ];
-  let ok = true;
-  const rows = cases.map(({ name, hypotheses, effect, check, bound }) => {
-    const started = performance.now();
-    let rejections = 0;
-    for (let dataset = 0; dataset < datasets; dataset++) {
-      const runs = syntheticCompletionRuns(["T", "none"], random, effect).filter(run => !run.leaked);
-      const pValues = hypotheses.map(hypothesis => {
-        const { strata, scenarios } = completionStrata(hypothesis.metric, runs.filter(run => hypothesis.scenarios === null || hypothesis.scenarios.includes(run.scenario)), "T", "none");
-        return permutationTest(completionAnalysed(hypothesis.metric, strata, hypothesis.margin), COMPLETION_SPECS[hypothesis.metric].better, PERMUTATIONS, random, scenarioWeights(scenarios, hypothesis.weighting === "prevalence" ? prevalence : BALANCED));
-      });
-      if (holm(pValues).some(p => p <= alpha)) rejections++;
-    }
-    const rate = rejections / datasets;
-    const passed = !bound || rate <= limit;
-    ok &&= passed;
-    return [`completion ${name} (${shape})`, check, `${rejections}/${datasets} = ${rate.toFixed(3)}`, bound ? `≤ ${alpha} + 2 MC s.e. = ${limit.toFixed(3)}` : "reported", bound ? (passed ? "ok" : "FAIL") : "", `${((performance.now() - started) / 1000).toFixed(1)}s`];
-  });
+  const { rows, ok } = syntheticCases("completion", cases, datasets, alpha, random, prevalence);
   const weights = scenarioWeights(["D1", "D1", "D2", "D2", "D2"], BALANCED).map(weight => weight.toFixed(4)).join(",");
   const weightsOk = weights === "0.2500,0.2500,0.1667,0.1667,0.1667";
-  ok &&= weightsOk;
   rows.push(["completion balanced weights of D1,D1,D2,D2,D2", "each scenario 0.5, shared within it", weights, "0.2500,0.2500,0.1667,0.1667,0.1667", weightsOk ? "ok" : "FAIL", ""]);
-  return { rows, ok };
+  return { rows, ok: ok && weightsOk };
+}
+
+/**
+ * The units comparison's cases: P1's false-positive rate under no effect, P2's and P3's at their margins, P1–P3 with
+ * Holm under their global null (P2, P3 at their margins), Mix-P1 at {@link UNITS_PREVALENCE} under no effect, the
+ * told-the-person secondary under no effect; P1's and P2's power.
+ */
+function unitsSelfTest(datasets: number, alpha: number, random: () => number): { rows: string[][]; ok: boolean } {
+  const [p1, p2, p3] = UNITS_PRIMARY as [CompletionHypothesis, CompletionHypothesis, CompletionHypothesis];
+  const atMargins: SyntheticEffect = { adopted: -ADOPTED_MARGIN, usd: COST_MARGIN };
+  const cases: SyntheticCase[] = [
+    { name: "P1 first-pass items, no effect", hypotheses: [p1], effect: {}, check: "false-positive rate", bound: true },
+    { name: "P1 first-pass items, violation rate × 0.5", hypotheses: [p1], effect: { phase1: 0.5 }, check: "power", bound: false },
+    { name: `P2 adopted non-inferiority −${ADOPTED_MARGIN} (D2), true −${ADOPTED_MARGIN}`, hypotheses: [p2], effect: { adopted: -ADOPTED_MARGIN }, check: "false-positive rate", bound: true },
+    { name: `P2 adopted non-inferiority −${ADOPTED_MARGIN} (D2), no effect`, hypotheses: [p2], effect: {}, check: "power", bound: false },
+    { name: `P3 cost non-inferiority ×${COST_MARGIN}, true ×${COST_MARGIN}`, hypotheses: [p3], effect: { usd: COST_MARGIN }, check: "false-positive rate", bound: true },
+    { name: "P1–P3 global null (P2, P3 at their margins)", hypotheses: UNITS_PRIMARY, effect: atMargins, check: "family-wise false-positive rate, Holm", bound: true },
+    { name: `Mix-P1 (D1 ${UNITS_PREVALENCE.D1}, D2 ${UNITS_PREVALENCE.D2}), no effect`, hypotheses: [{ ...p1, id: "Mix-P1", weighting: "prevalence" }], effect: {}, check: "false-positive rate", bound: true },
+    { name: "S-told, no effect", hypotheses: [{ id: "S-told", metric: "told", scenarios: null }], effect: {}, check: "false-positive rate", bound: true },
+  ];
+  return syntheticCases("units", cases, datasets, alpha, random, UNITS_PREVALENCE);
+}
+
+/** `--self-test-units`: the units comparison's cases alone, over 1,000 synthetic datasets each. */
+function unitsOnlySelfTest(): boolean {
+  const alpha = 0.05;
+  const { rows, ok } = unitsSelfTest(1000, alpha, seeded(20_261_107));
+  console.log(`Units self-test: 1000 synthetic datasets per case, ${PERMUTATIONS} permutations each, α ${alpha} one-sided`);
+  console.log(table(["case", "check", "rejected", "required", "", "time"], rows));
+  console.log(ok ? "self-test passed" : "self-test FAILED");
+  return ok;
 }
 
 /**
@@ -1360,6 +1542,9 @@ function selfTest(): boolean {
   const completion = completionSelfTest(1000, alpha, random);
   rows.push(...completion.rows);
   ok &&= completion.ok;
+  const units = unitsSelfTest(1000, alpha, random);
+  rows.push(...units.rows);
+  ok &&= units.ok;
   console.log(`Self-test: ${datasets} synthetic datasets per case (18 tasks × 2 runs per arm unless stated), ${PERMUTATIONS} permutations each, α ${alpha} one-sided`);
   console.log(table(["case", "check", "rejected", "required", "", "time"], rows));
   console.log(`Large family, raw rejections per hypothesis at α ${alpha}: ${LARGE_PRIMARY.map((hypothesis, index) => `${hypothesis.id} ${rawRejections[index]}/${datasets}`).join(", ")}`);
@@ -1372,7 +1557,7 @@ function selfTest(): boolean {
 
 // ---------------------------------------------------------------------------------------------------------- CLI
 
-const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] [--diagnostic] | --analyze report.json [report.json ...] --family large --arms A,B,C[,D] [--diagnostic] [--look N] [--seed N] | --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N] | --analyze-replay replay.json [replay.json ...] --arms A[,B...] --control none [--look N] [--seed N] | --analyze-completion completion.json [completion.json ...] --arms A[,B...] --control none [--weights D1=w,D2=w] [--look N] [--seed N] | --self-test`;
+const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] [--diagnostic] | --analyze report.json [report.json ...] --family large --arms A,B,C[,D] [--diagnostic] [--look N] [--seed N] | --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N] | --analyze-replay replay.json [replay.json ...] --arms A[,B...] --control none [--look N] [--seed N] | --analyze-completion completion.json [completion.json ...] --arms A[,B...] --control none [--weights D1=w,D2=w] [--look N] [--seed N] | --analyze-units completion.json [completion.json ...] --arms units[,git-conflict] --control none [--look N] [--seed N] | --self-test`;
 
 /** `--weights D1=0.74,D2=0.26`: each scenario's prevalence, positive and summing to 1. */
 export function parseWeights(text: string): ScenarioWeights {
@@ -1385,6 +1570,10 @@ export function parseWeights(text: string): ScenarioWeights {
 
 function main(): void {
   const args = process.argv.slice(2);
+  if (args.includes("--self-test-units")) {
+    process.exitCode = unitsOnlySelfTest() ? 0 : 1;
+    return;
+  }
   if (args.includes("--self-test")) {
     process.exitCode = selfTest() ? 0 : 1;
     return;
@@ -1393,6 +1582,7 @@ function main(): void {
   const livePaths: string[] = [];
   const replayPaths: string[] = [];
   const completionPaths: string[] = [];
+  const unitsPaths: string[] = [];
   let prevalence: ScenarioWeights | null = null;
   let control: string | null = null;
   let arms: string[] | null = null;
@@ -1424,6 +1614,9 @@ function main(): void {
         break;
       case "--analyze-completion":
         while (args[index + 1] !== undefined && !args[index + 1]!.startsWith("--")) completionPaths.push(args[++index]!);
+        break;
+      case "--analyze-units":
+        while (args[index + 1] !== undefined && !args[index + 1]!.startsWith("--")) unitsPaths.push(args[++index]!);
         break;
       case "--weights":
         prevalence = parseWeights(value());
@@ -1481,6 +1674,13 @@ function main(): void {
     if (arms === null || control === null) throw new Error(`--analyze-replay takes --arms and --control\n${USAGE}`);
     if (look === null && replayPaths.length > MAX_LOOKS) throw new Error(`${replayPaths.length} reports is more than ${MAX_LOOKS} looks; pass --look\n${USAGE}`);
     analyzeReplayReports(replayPaths, arms, control, look ?? replayPaths.length, seed);
+    return;
+  }
+  if (unitsPaths.length > 0) {
+    if (paths.length > 0 || replayPaths.length > 0 || completionPaths.length > 0 || metric !== null || family !== "default" || prevalence !== null) throw new Error(`--analyze-units takes no other report list, --metric, --family or --weights (its mix is fixed at D1 ${UNITS_PREVALENCE.D1})\n${USAGE}`);
+    if (arms === null || control === null) throw new Error(`--analyze-units takes --arms and --control\n${USAGE}`);
+    if (look === null && unitsPaths.length > MAX_LOOKS) throw new Error(`${unitsPaths.length} reports is more than ${MAX_LOOKS} looks; pass --look\n${USAGE}`);
+    analyzeUnitsReports(unitsPaths, arms, control, look ?? unitsPaths.length, seed);
     return;
   }
   if (completionPaths.length > 0) {

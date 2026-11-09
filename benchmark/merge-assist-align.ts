@@ -24,14 +24,17 @@
  * delivered before `noticed_at` and a blinded judge (the conflict summary and the unit text only) says it is about the
  * conflict; lead time is `noticed_at` minus that delivery. On negatives it reports how many got any contradiction
  * verdict and how many got any delivery from `first`. Commit extraction and positions are cached under `--cache`; judge
- * answers in its `judge.sqlite`. Judge calls run at most `--concurrency` (≤ 4) at once.
+ * answers in its `judge.sqlite`. Judge calls run at most `--concurrency` (4 by default, at most 16) at once. With
+ * `--fetch-pr-bodies dir`, it only fetches the pull request descriptions the pairs name into `dir` (`ledgerBuild` reads
+ * them as passages; see `descriptionPassages`).
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import {
   anchorsCoverFile,
   branchName,
@@ -44,7 +47,9 @@ import {
   type ExtractedUnit,
   identifiers,
   isDesignDoc,
+  type LedgerCommit,
   type LedgerUnit,
+  MAX_PASSAGE_CHARS,
   mergeTreeConflicts,
   nameIndex,
   openRerailDatabase,
@@ -129,7 +134,10 @@ const POSITION_ANCHORS_VERSION = 3;
 /** The most files one decision or open-item id anchors a position to. */
 const MAX_REFERENCING_FILES = 12;
 export const JUDGE_REPOSITORY = "eval:merge-assist-align";
+/** Judge calls in flight by default (the Mac's ceiling). */
 const MAX_CONCURRENCY = 4;
+/** The most `--concurrency` raises it to, on a build host. */
+const MAX_JUDGE_CONCURRENCY = 16;
 /** Pairs replayed at once; pairs that share a side and ledger then share judge answers as they go. */
 const PAIR_CONCURRENCY = 16;
 /** The most candidates one area ranking offers the judge. */
@@ -225,11 +233,23 @@ export interface ResolvedSide {
   commits: Array<{ sha: string; authoredAt: string; visibleAt: string }>;
 }
 
+/** Judge tasks by kind: asked, answered from the cache, answered by a call, and failed. */
+export type JudgeCounts = Record<string, { asked: number; cached: number; called: number; failed: number }>;
+
+function countOutcome(counts: JudgeCounts, kind: string, outcome: { ok: boolean; cached?: boolean }): void {
+  const entry = (counts[kind] ??= { asked: 0, cached: 0, called: 0, failed: 0 });
+  entry.asked += 1;
+  if (!outcome.ok) entry.failed += 1;
+  else if (outcome.cached === true) entry.cached += 1;
+  else entry.called += 1;
+}
+
 /**
- * Bounds judge calls in flight across the whole run. A task whose cache key is already in flight waits for it and is
- * then answered from the judge's cache: pairs that replay the same side against the same ledger ask the same things.
+ * Bounds judge calls in flight across the whole run, and counts them in `counts`. A task whose cache key is already in
+ * flight waits for it and is then answered from the judge's cache: pairs that replay the same side against the same
+ * ledger ask the same things.
  */
-function limitedJudge(judge: AgentJudge, concurrency: number): AgentJudge {
+function limitedJudge(judge: AgentJudge, concurrency: number, counts: JudgeCounts): AgentJudge {
   let running = 0;
   const waiting: Array<() => void> = [];
   const inFlight = new Map<string, Promise<unknown>>();
@@ -241,7 +261,9 @@ function limitedJudge(judge: AgentJudge, concurrency: number): AgentJudge {
       await promise;
     } else running += 1;
     try {
-      return await judge.judge(task);
+      const outcome = await judge.judge(task);
+      countOutcome(counts, task.kind, outcome);
+      return outcome;
     } finally {
       const next = waiting.shift();
       if (next === undefined) running -= 1;
@@ -268,32 +290,54 @@ function limitedJudge(judge: AgentJudge, concurrency: number): AgentJudge {
   };
 }
 
+/** How the judge's Codex runs: its executable, `-c key=value` overrides (a model provider), a model. Plain data. */
+export interface JudgeCodex {
+  executable?: string;
+  config?: string[];
+  model?: string;
+}
+
 export interface AlignmentOptions {
   /** Where commit records, positions and judge answers are cached. */
   cacheDir?: string;
   /** No judge: no positions, rankings fall back to anchor order, no contradiction checks. */
   noJudge?: boolean;
+  /** Judge calls in flight: {@link MAX_CONCURRENCY} by default, at most {@link MAX_JUDGE_CONCURRENCY}. */
   concurrency?: number;
   /** One judge call's limit. */
   judgeTimeoutMs?: number;
+  /** How the judge's Codex runs; Codex or Claude from PATH with the person's sign-in when unset. */
+  judgeCodex?: JudgeCodex;
+  /** More environment for the judge's processes only (a provider's token): never cached, logged or written. */
+  judgeEnv?: Readonly<Record<string, string>>;
+  /**
+   * The folder of `<owner>__<name>.json` pull request descriptions (`--fetch-pr-bodies`): each ledger ref that is a
+   * pull request's head gets its title and description as a passage, visible from the pull request's creation.
+   */
+  prBodies?: string;
+  /** `deliverForArea` appends each area's candidates, how they were ranked and what it picked, one JSON line each. */
+  rankLog?: string;
 }
 
 /** A clone, its caches and the judge: everything a replay or a ledger lookup reads. */
 export class AlignmentContext {
   readonly root: string;
   readonly judge: AgentJudge | null;
+  /** Every judge task this context asked, by kind. */
+  readonly judgeCounts: JudgeCounts;
   readonly #cache: string;
   readonly #records = new Map<string, Promise<CommitRecord | undefined>>();
   readonly #positions = new Map<string, Promise<ExtractedUnit[]>>();
   readonly errors: string[] = [];
   #mainline: string | null | undefined;
 
-  constructor(root: string, options: AlignmentOptions, judge: AgentJudge | null) {
+  constructor(root: string, options: AlignmentOptions, judge: AgentJudge | null, judgeCounts: JudgeCounts = {}) {
     this.root = root;
     this.#cache = join(options.cacheDir ?? DEFAULT_CACHE, createHash("sha256").update(resolve(root)).digest("hex").slice(0, 12));
     mkdirSync(join(this.#cache, "commits"), { recursive: true });
     mkdirSync(join(this.#cache, "positions"), { recursive: true });
     this.judge = judge;
+    this.judgeCounts = judgeCounts;
   }
 
   record(sha: string): Promise<CommitRecord | undefined> {
@@ -344,26 +388,34 @@ export class AlignmentContext {
 
   /** The positions the judge reads from a commit's passages; none without a judge or passages. */
   positions(record: CommitRecord): Promise<ExtractedUnit[]> {
-    let pending = this.#positions.get(record.sha);
+    const changed = record.files.filter(file => file.status !== "deleted" && sourceLanguageOf(file.path) !== null).map(file => file.path);
+    return this.passagePositions({ name: record.sha, tree: record.sha, passages: record.passages, changed, source: record.subject });
+  }
+
+  /**
+   * The positions the judge reads from `passages`, anchored in the tree at `tree`, cached as `name`: a commit's (its
+   * sha), or a pull request's description (`--fetch-pr-bodies`) read against its ref's tree then.
+   */
+  passagePositions(input: { name: string; tree: string; passages: readonly Passage[]; changed: readonly string[]; source: string }): Promise<ExtractedUnit[]> {
+    let pending = this.#positions.get(input.name);
     if (pending === undefined) {
-      pending = this.#readPositions(record);
-      this.#positions.set(record.sha, pending);
+      pending = this.#readPositions(input);
+      this.#positions.set(input.name, pending);
     }
     return pending;
   }
 
-  async #readPositions(record: CommitRecord): Promise<ExtractedUnit[]> {
-    if (this.judge === null || record.passages.length === 0) return [];
-    const key = hashOf({ passages: record.passages, anchors: POSITION_ANCHORS_VERSION });
-    const path = join(this.#cache, "positions", `${record.sha}.json`);
+  async #readPositions(input: { name: string; tree: string; passages: readonly Passage[]; changed: readonly string[]; source: string }): Promise<ExtractedUnit[]> {
+    if (this.judge === null || input.passages.length === 0) return [];
+    const key = hashOf({ passages: input.passages, anchors: POSITION_ANCHORS_VERSION });
+    const path = join(this.#cache, "positions", `${input.name}.json`);
     const cached = readJson<PositionsRecord>(path);
     if (cached?.key === key) return Object.values(cached.units).flat();
-    const paths = treePaths(this.root, record.sha);
-    const tree = { names: nameIndex(paths), referencing: (id: string) => this.#referencing(record.sha, paths, id) };
-    const changed = record.files.filter(file => file.status !== "deleted" && sourceLanguageOf(file.path) !== null).map(file => file.path);
-    const outcome = await extractPositions(this.judge, { repositoryKey: JUDGE_REPOSITORY, source: record.subject, passages: record.passages, resolve: treeResolver(paths), tree, changed });
+    const paths = treePaths(this.root, input.tree);
+    const tree = { names: nameIndex(paths), referencing: (id: string) => this.#referencing(input.tree, paths, id) };
+    const outcome = await extractPositions(this.judge, { repositoryKey: JUDGE_REPOSITORY, source: input.source, passages: input.passages, resolve: treeResolver(paths), tree, changed: input.changed });
     if (outcome.error !== null) {
-      this.errors.push(`positions ${record.sha.slice(0, 10)}: ${outcome.error}`);
+      this.errors.push(`positions ${input.name.slice(0, 16)}: ${outcome.error}`);
       return [];
     }
     writeJson(path, { key, units: Object.fromEntries(outcome.units), rejected: outcome.rejected } satisfies PositionsRecord);
@@ -1026,13 +1078,22 @@ function judgeCodexHome(cacheDir: string): string {
   return home;
 }
 
-function makeJudge(cacheDir: string, options: AlignmentOptions): AgentJudge | null {
+const judgeConcurrency = (options: AlignmentOptions): number => Math.max(1, Math.min(MAX_JUDGE_CONCURRENCY, options.concurrency ?? MAX_CONCURRENCY));
+
+function makeJudge(cacheDir: string, options: AlignmentOptions, counts: JudgeCounts = {}): AgentJudge | null {
   if (options.noJudge === true) return null;
   mkdirSync(cacheDir, { recursive: true });
   const database = openRerailDatabase(join(cacheDir, "judge.sqlite"));
-  const env = { ...process.env, CODEX_HOME: judgeCodexHome(cacheDir) };
-  const judge = createAgentJudge({ database, env, preferredHost: "codex", limitPerHour: 1_000_000, ...(options.judgeTimeoutMs === undefined ? {} : { timeoutMs: options.judgeTimeoutMs }) });
-  return limitedJudge(judge, Math.min(MAX_CONCURRENCY, options.concurrency ?? MAX_CONCURRENCY));
+  const env = { ...process.env, ...options.judgeEnv, CODEX_HOME: judgeCodexHome(cacheDir) };
+  const judge = createAgentJudge({
+    database,
+    env,
+    preferredHost: "codex",
+    limitPerHour: 1_000_000,
+    ...(options.judgeTimeoutMs === undefined ? {} : { timeoutMs: options.judgeTimeoutMs }),
+    ...(options.judgeCodex === undefined ? {} : { codex: options.judgeCodex }),
+  });
+  return limitedJudge(judge, judgeConcurrency(options), counts);
 }
 
 const contexts = new Map<string, AlignmentContext>();
@@ -1042,11 +1103,130 @@ export function contextFor(repoPath: string, options: AlignmentOptions): Alignme
   const key = `${resolve(repoPath)}\u0000${cacheDir}\u0000${options.noJudge === true}`;
   let context = contexts.get(key);
   if (context === undefined) {
-    context = new AlignmentContext(resolve(repoPath), options, makeJudge(cacheDir, options));
+    const counts: JudgeCounts = {};
+    context = new AlignmentContext(resolve(repoPath), options, makeJudge(cacheDir, options, counts), counts);
     contexts.set(key, context);
   }
   return context;
 }
+
+// ---------------------------------------------------------------------------------------------------------- descriptions
+
+export const PR_DESCRIPTIONS_FORMAT = "rerail.merge-assist-pr-bodies/v1";
+/** The most passages one pull request description is read in. */
+const MAX_DESCRIPTION_PASSAGES = 6;
+/** A title and description shorter than this state no position. */
+const MIN_DESCRIPTION_CHARS = 60;
+
+/** One pull request's title and description, as `--fetch-pr-bodies` fetched them. */
+export interface PrDescription {
+  number: number;
+  title: string;
+  author: string;
+  createdAt: string;
+  headRefName: string;
+  /** The owner of the repository the head branch is in: a fork's, or the repository's own. */
+  headOwner: string | null;
+  /** The description now. */
+  body: string;
+  /** Every revision of the description, newest first (GitHub's edit history); null when it was never edited. */
+  revisions: Array<{ editedAt: string; body: string }> | null;
+}
+
+/** `<owner>__<name>.json` in the `--pr-bodies` folder: one repository's fetched descriptions by number. */
+export interface PrDescriptions {
+  format: string;
+  repo: string;
+  fetchedAt: string;
+  prs: Record<string, PrDescription>;
+  /** Numbers asked for that are not pull requests (or not visible). */
+  missing: number[];
+}
+
+const descriptionFiles = new Map<string, PrDescriptions | null>();
+
+function descriptionsFor(folder: string, repo: string): PrDescriptions | null {
+  const path = join(folder, `${repo.replace("/", "__")}.json`);
+  if (!descriptionFiles.has(path)) descriptionFiles.set(path, readJson<PrDescriptions>(path) ?? null);
+  return descriptionFiles.get(path)!;
+}
+
+/**
+ * The description as it read at `time`: the newest revision edited by then, so an edit made later (an outcome, a
+ * "superseded by") is never read early; the current text when it was never edited; null when no revision that old was
+ * fetched.
+ */
+export function descriptionAt(pr: PrDescription, time: string): string | null {
+  if (pr.revisions === null) return pr.body;
+  const at = Date.parse(time);
+  return pr.revisions.find(revision => Date.parse(revision.editedAt) <= at)?.body ?? null;
+}
+
+/** Paragraph-aligned chunks of `text`, each at most {@link MAX_PASSAGE_CHARS} characters. */
+function paragraphChunks(text: string): string[] {
+  const chunks: string[] = [];
+  let chunk = "";
+  for (const paragraph of text.split(/\n\s*\n/u)) {
+    const piece = paragraph.trim().slice(0, MAX_PASSAGE_CHARS);
+    if (chunk !== "" && chunk.length + piece.length + 2 > MAX_PASSAGE_CHARS) {
+      chunks.push(chunk);
+      chunk = "";
+    }
+    chunk = chunk === "" ? piece : `${chunk}\n\n${piece}`;
+  }
+  return chunk === "" ? chunks : [...chunks, chunk];
+}
+
+/**
+ * A pull request's title and description as it read at `time`, as position passages (`<name>:<n>`): HTML comments
+ * (templates) left out, paragraph-aligned chunks of at most {@link MAX_PASSAGE_CHARS} characters, at most
+ * {@link MAX_DESCRIPTION_PASSAGES}; none when the text is shorter than {@link MIN_DESCRIPTION_CHARS}.
+ */
+export function descriptionPassages(pr: PrDescription, time: string, name: string): Passage[] {
+  const body = (descriptionAt(pr, time) ?? "").replace(/<!--[\s\S]*?-->/gu, "").replace(/\r\n/gu, "\n");
+  const text = `${pr.title}\n\n${body}`.replace(/\n{3,}/gu, "\n\n").trim();
+  if (text.length < MIN_DESCRIPTION_CHARS) return [];
+  return paragraphChunks(text)
+    .filter(chunk => chunk.length >= MIN_DESCRIPTION_CHARS)
+    .slice(0, MAX_DESCRIPTION_PASSAGES)
+    .map((chunk, index) => ({ id: `${name}:${index}`, path: null, heading: index === 0 ? null : pr.title, text: chunk, source: `pull request #${pr.number}` }));
+}
+
+/**
+ * The pull request whose head `side` is: its number's, or for a branch, the latest pull request opened from that
+ * branch of the repository itself by `time`.
+ */
+function sidePullRequest(descriptions: PrDescriptions | null, repo: string, side: ResolvedSide, time: string): PrDescription | null {
+  if (descriptions === null) return null;
+  if (side.pr !== null) return descriptions.prs[String(side.pr)] ?? null;
+  const owner = repo.split("/")[0];
+  const opened = Object.values(descriptions.prs).filter(pr => pr.headRefName === side.branch && pr.headOwner === owner && Date.parse(pr.createdAt) <= Date.parse(time));
+  return opened.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
+}
+
+/** Source files `records` change, deleted ones left out. */
+function changedSources(records: ReadonlyArray<CommitRecord | undefined>): string[] {
+  return [...new Set(records.flatMap(record => record?.files.filter(file => file.status !== "deleted" && sourceLanguageOf(file.path) !== null).map(file => file.path) ?? []))];
+}
+
+/**
+ * `pr`'s description as `side`'s ledger entry: its positions, visible from the pull request's creation, read
+ * against the side's tree then (its newest commit visible by that time, else its first) and anchored like a commit's
+ * to the side's changed source files when they are few. Null when it has no passage or no commit to anchor in.
+ */
+async function descriptionCommit(context: AlignmentContext, side: ResolvedSide, pr: PrDescription, time: string): Promise<{ commit: LedgerCommit; passages: number } | null> {
+  const opened = Date.parse(pr.createdAt);
+  const tree = side.commits.filter(commit => Date.parse(commit.visibleAt) <= opened).at(-1)?.sha ?? side.commits[0]?.sha;
+  const probe = descriptionPassages(pr, time, "pr");
+  if (tree === undefined || probe.length === 0) return null;
+  const name = `pr-${pr.number}-${hashOf(probe).slice(0, 8)}`;
+  const passages = descriptionPassages(pr, time, name);
+  const changed = changedSources(await Promise.all(side.commits.map(commit => context.record(commit.sha))));
+  const units = await context.passagePositions({ name, tree, passages, changed, source: `pull request #${pr.number}` });
+  return { commit: { sha: name, author: pr.author, visibleAt: pr.createdAt, units, closes: [] }, passages: passages.length };
+}
+
+// ---------------------------------------------------------------------------------------------------------- harness ledger
 
 /** A ledger unit as the agent-replay harness reads it. */
 export interface HarnessUnit {
@@ -1056,60 +1236,220 @@ export interface HarnessUnit {
   author: string;
   pr?: number;
   branch?: string;
+  /** The full ref it is from. */
+  ref?: string;
+  /** The commit it is from, or `pr-<n>-<hash>` for a pull request description. */
+  sha?: string;
+  visibleAt?: string;
+  /** What it was read from: a position's description, design doc or commit message, or another unit's diff. */
+  origin?: UnitOrigin;
   anchors: { files: string[]; symbols: string[] };
   conflict?: boolean;
 }
 
+export type UnitOrigin = "pr-body" | "doc" | "message" | "diff";
+
+function unitOrigin(unit: LedgerUnit): UnitOrigin {
+  if (unit.kind !== "position") return "diff";
+  if (unit.sha.startsWith("pr-")) return "pr-body";
+  return /, commit message: /u.test(unit.text) ? "message" : "doc";
+}
+
+/** What building one pair's ledger read, kept and asked: the extraction funnel `--build-ledgers` reports. */
+export interface LedgerStats {
+  time: string;
+  /**
+   * The ledger's refs: listed (first and `concurrent`, the two sides left out), resolved in the clone, with a commit
+   * visible at `time`, and kept by the area pre-filter; those dropped by it.
+   */
+  refs: { listed: number; resolved: number; visible: number; kept: number; dropped: string[] };
+  /** Visible commits of the kept refs, second's own left out. */
+  commits: number;
+  /** Position passages offered the judge: commit messages, design-doc chunks, pull request descriptions. */
+  passages: { message: number; doc: number; description: number };
+  /** Kept refs that are a pull request's head with a fetched description; those opened by `time`; those with a passage. */
+  descriptions: { found: number; visible: number; read: number };
+  /** Units by kind, and positions by origin (`position:pr-body`, `position:doc`, `position:message`). */
+  units: Record<string, number>;
+  contested: number;
+  /** Judge tasks this build asked, by kind. */
+  judge: JudgeCounts;
+  errors: string[];
+  ms: number;
+}
+
+/** The areas (`pathArea`) of every file in the tree at `sha`, per clone and commit. */
+const treeAreas = new Map<string, Set<string>>();
+
+function areasAt(context: AlignmentContext, sha: string): Set<string> {
+  const key = `${context.root}\u0000${sha}`;
+  if (!treeAreas.has(key)) treeAreas.set(key, new Set(treePaths(context.root, sha).map(pathArea)));
+  return treeAreas.get(key)!;
+}
+
 /**
- * The units of `pair.first` and `pair.concurrent` visible at `time`, for the agent-replay harness. Positions live on
- * different refs are compared (`contestPositions`); one in a contradicting pair is marked `conflict`.
+ * The extraction pre-filter, part of the mechanism: a ref is extracted only when a file its visible commits change
+ * shares an area (`pathArea`, two folder segments) with a file in the repository at second's base. Refs with no
+ * changed file are dropped with it.
  */
-export async function ledgerAt(repoPath: string, pair: Pair, time: string, options: AlignmentOptions = {}): Promise<HarnessUnit[]> {
-  const context = contextFor(repoPath, options);
+async function sharesArea(context: AlignmentContext, side: ResolvedSide, base: ReadonlySet<string>): Promise<boolean> {
+  const records = await Promise.all(side.commits.map(commit => context.record(commit.sha)));
+  return records.some(record => record?.files.some(file => base.has(pathArea(file.path)) || base.has(pathArea(file.oldPath))) === true);
+}
+
+function countsSince(after: JudgeCounts, before: JudgeCounts): JudgeCounts {
+  return Object.fromEntries(Object.entries(after).map(([kind, now]) => {
+    const then = before[kind] ?? { asked: 0, cached: 0, called: 0, failed: 0 };
+    return [kind, { asked: now.asked - then.asked, cached: now.cached - then.cached, called: now.called - then.called, failed: now.failed - then.failed }];
+  }));
+}
+
+/** The ledger refs as visible at `time` (commits public by then) and those the pre-filter keeps. */
+async function keptSides(context: AlignmentContext, pair: Pair, time: string): Promise<{ resolved: number; visible: ResolvedSide[]; kept: ResolvedSide[] }> {
+  const at = Date.parse(time);
   const sides = ledgerSides(context, pair);
-  await prefetchPositions(context, sides, options.concurrency ?? MAX_CONCURRENCY);
+  const visible = sides.map(side => ({ ...side, commits: side.commits.filter(commit => Date.parse(commit.visibleAt) <= at) })).filter(side => side.commits.length > 0);
+  const base = context.exists(pair.second.base_sha) ? areasAt(context, pair.second.base_sha) : null;
+  const flags = await Promise.all(visible.map(side => (base === null ? Promise.resolve(true) : sharesArea(context, side, base))));
+  return { resolved: sides.length, visible, kept: visible.filter((_, index) => flags[index]) };
+}
+
+/** Each kept ref's description entry, when it is a pull request's head opened by `time`. */
+async function descriptionEntries(context: AlignmentContext, pair: Pair, sides: readonly ResolvedSide[], time: string, options: AlignmentOptions): Promise<{ entries: Array<{ commit: LedgerCommit; passages: number } | null>; found: number; visible: number }> {
+  const descriptions = options.prBodies === undefined ? null : descriptionsFor(options.prBodies, pair.repo);
+  const prs = sides.map(side => sidePullRequest(descriptions, pair.repo, side, time));
+  const open = prs.map(pr => (pr !== null && Date.parse(pr.createdAt) <= Date.parse(time) ? pr : null));
+  const entries = await pool(sides.map((side, index) => ({ side, pr: open[index] ?? null })), judgeConcurrency(options), ({ side, pr }) => (pr === null ? Promise.resolve(null) : descriptionCommit(context, side, pr, time)));
+  return { entries, found: prs.filter(pr => pr !== null).length, visible: open.filter(pr => pr !== null).length };
+}
+
+function unitCounts(units: readonly LedgerUnit[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const unit of units) {
+    const key = unit.kind === "position" ? `position:${unitOrigin(unit)}` : unit.kind;
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
+async function passageCounts(context: AlignmentContext, sides: readonly ResolvedSide[]): Promise<{ message: number; doc: number }> {
+  const records = await Promise.all(sides.flatMap(side => side.commits.map(commit => context.record(commit.sha))));
+  const passages = records.flatMap(record => record?.passages ?? []);
+  return { message: passages.filter(passage => passage.path === null).length, doc: passages.filter(passage => passage.path !== null).length };
+}
+
+/**
+ * The ledger of `pair.first` and `pair.concurrent` as visible at `time`, for the agent-replay harness, and what
+ * building it read and asked. Only the refs the area pre-filter ({@link sharesArea}) keeps are extracted, and only
+ * their commits public by `time`; positions are judged from their passages alone (design docs, commit messages, and
+ * with `prBodies` the description of each ref that is a pull request's head). Positions live on different refs are
+ * compared (`contestPositions`); one in a contradicting pair is marked `conflict`.
+ */
+export async function ledgerBuild(repoPath: string, pair: Pair, time: string, options: AlignmentOptions = {}): Promise<{ units: HarnessUnit[]; stats: LedgerStats }> {
+  const started = Date.now();
+  const context = contextFor(repoPath, options);
+  const before = structuredClone(context.judgeCounts);
+  const errorsBefore = context.errors.length;
+  const { resolved, visible, kept } = await keptSides(context, pair, time);
+  await prefetchPositions(context, kept, judgeConcurrency(options));
+  const descriptions = await descriptionEntries(context, pair, kept, time, options);
   const own = await ownCommits(context, pair.second, resolveSide(context, pair.second));
-  const histories = await Promise.all(sides.map(side => loadHistory(context, side, own)));
-  const units = visibleUnits(histories.map(loaded => loaded.history), time);
+  const histories = await Promise.all(kept.map(async (side, index) => {
+    const { history } = await loadHistory(context, side, own);
+    const description = descriptions.entries[index];
+    const commits = description == null ? history.commits : [description.commit, ...history.commits].sort((a, b) => Date.parse(a.visibleAt) - Date.parse(b.visibleAt));
+    return { ...history, commits };
+  }));
+  const units = visibleUnits(histories, time);
   const contest = context.judge === null
     ? null
     : await contestPositions(context.judge, { repositoryKey: JUDGE_REPOSITORY, positions: units.filter(unit => unit.kind === "position") });
   if (contest !== null) context.errors.push(...contest.errors);
-  return units.map(unit => ({
+  const stats: LedgerStats = {
+    time,
+    refs: { listed: 1 + pair.concurrent.length, resolved, visible: visible.length, kept: kept.length, dropped: visible.filter(side => !kept.includes(side)).map(side => side.ref) },
+    commits: histories.reduce((sum, history) => sum + history.commits.filter(commit => !commit.sha.startsWith("pr-")).length, 0),
+    passages: { ...(await passageCounts(context, kept)), description: descriptions.entries.reduce((sum, entry) => sum + (entry?.passages ?? 0), 0) },
+    descriptions: { found: descriptions.found, visible: descriptions.visible, read: descriptions.entries.filter(entry => entry !== null).length },
+    units: unitCounts(units),
+    contested: contest?.contested.size ?? 0,
+    judge: countsSince(context.judgeCounts, before),
+    errors: context.errors.slice(errorsBefore),
+    ms: Date.now() - started,
+  };
+  return { units: units.map(unit => harnessUnit(unit, contest?.contested.has(unit.id) === true)), stats };
+}
+
+function harnessUnit(unit: LedgerUnit, contested: boolean): HarnessUnit {
+  return {
     id: unit.id,
     kind: unit.kind,
     text: unit.text,
     author: unit.author,
     ...(unit.pr === null ? {} : { pr: unit.pr }),
     branch: unit.branch,
+    ref: unit.ref,
+    sha: unit.sha,
+    visibleAt: unit.visibleAt,
+    origin: unitOrigin(unit),
     anchors: { files: [...unit.anchors.files], symbols: [...unit.anchors.symbols] },
-    ...(contest?.contested.has(unit.id) === true ? { conflict: true } : {}),
-  }));
+    ...(contested ? { conflict: true } : {}),
+  };
+}
+
+/** {@link ledgerBuild}'s units alone. */
+export async function ledgerAt(repoPath: string, pair: Pair, time: string, options: AlignmentOptions = {}): Promise<HarnessUnit[]> {
+  return (await ledgerBuild(repoPath, pair, time, options)).units;
+}
+
+/** One area's ranking as `deliverForArea` logs it to `rankLog`. */
+export interface RankLogEntry {
+  area: string;
+  path: string;
+  /** Undelivered units anchored to the touched files or the area, before the cut to the ranking's candidates. */
+  anchored: number;
+  /** The candidates offered the ranking, highest anchor score first. */
+  candidates: Array<{ id: string; score: number }>;
+  via: "judge" | "fallback" | "no-judge";
+  error: string | null;
+  /** What it returned, in order. */
+  picked: string[];
+}
+
+/** The undelivered units anchored to the touched files (`files`, a folder anchor above `path`) or the area, scored. */
+function anchoredUnits(units: readonly HarnessUnit[], input: { area: string; path: string; delivered: readonly string[]; files: readonly string[] }): Array<{ unit: HarnessUnit; score: number }> {
+  const done = new Set(input.delivered);
+  const files = new Set([input.path, ...input.files]);
+  return units.flatMap(unit => {
+    if (done.has(unit.id)) return [];
+    const direct = unit.anchors.files.filter(file => files.has(file) || (file.endsWith("/") && input.path.startsWith(file))).length;
+    const inArea = unit.anchors.files.some(file => pathArea(file) === input.area);
+    return direct > 0 || inArea ? [{ unit, score: (unit.conflict === true ? 100 : 0) + direct * 2 + (inArea ? 1 : 0) }] : [];
+  }).sort((a, b) => b.score - a.score);
 }
 
 /**
  * At an area's first touch in the agent-replay harness: the undelivered units anchored to the touched file, the files
  * given or the area, ranked for the prompt by the judge, at most 3, contested ones first. Falls back to anchor order
- * when the judge fails or takes longer than a minute.
+ * when the judge fails or takes longer than a minute. With `rankLog`, each call's candidates and outcome are logged.
  */
 export async function deliverForArea(
   units: readonly HarnessUnit[],
   input: { area: string; path: string; prompt: string; delivered: readonly string[]; files: readonly string[] },
   options: AlignmentOptions = {},
 ): Promise<HarnessUnit[]> {
-  const done = new Set(input.delivered);
-  const files = new Set([input.path, ...input.files]);
-  const scored = units.flatMap(unit => {
-    if (done.has(unit.id)) return [];
-    const direct = unit.anchors.files.filter(file => files.has(file) || (file.endsWith("/") && input.path.startsWith(file))).length;
-    const inArea = unit.anchors.files.some(file => pathArea(file) === input.area);
-    return direct > 0 || inArea ? [{ unit, score: (unit.conflict === true ? 100 : 0) + direct * 2 + (inArea ? 1 : 0) }] : [];
-  }).sort((a, b) => b.score - a.score).slice(0, MAX_RANK_CANDIDATES);
+  const anchored = anchoredUnits(units, input);
+  const scored = anchored.slice(0, MAX_RANK_CANDIDATES);
   if (scored.length === 0) return [];
   const fallback = scored.slice(0, MAX_AREA_UNITS).map(entry => entry.unit);
+  const log = (via: RankLogEntry["via"], error: string | null, picked: readonly HarnessUnit[]): readonly HarnessUnit[] => {
+    const entry: RankLogEntry = { area: input.area, path: input.path, anchored: anchored.length, candidates: scored.map(({ unit, score }) => ({ id: unit.id, score })), via, error, picked: picked.map(unit => unit.id) };
+    if (options.rankLog !== undefined) appendFileSync(options.rankLog, `${JSON.stringify(entry)}\n`);
+    return picked;
+  };
   const cacheDir = options.cacheDir ?? DEFAULT_CACHE;
   const judge = makeJudge(cacheDir, { ...options, judgeTimeoutMs: options.judgeTimeoutMs ?? 55_000 });
-  if (judge === null) return fallback;
+  if (judge === null) return [...log("no-judge", null, fallback)];
   const ledgerUnits: LedgerUnit[] = scored.map(({ unit }) => ({
     kind: (unit.kind as LedgerUnit["kind"]),
     text: unit.text,
@@ -1124,10 +1464,10 @@ export async function deliverForArea(
     visibleAt: "",
   }));
   const ranked = await rankUnits(judge, { repositoryKey: JUDGE_REPOSITORY, task: `${input.prompt}\n\nFile: ${input.path}`, candidates: ledgerUnits, max: MAX_AREA_UNITS });
-  if (ranked.via !== "judge") return fallback;
+  if (ranked.via !== "judge") return [...log("fallback", ranked.error, fallback)];
   const byId = new Map(scored.map(({ unit }) => [unit.id, unit]));
   const picked = ranked.units.map(unit => byId.get(unit.id)!);
-  return [...picked.filter(unit => unit.conflict === true), ...picked.filter(unit => unit.conflict !== true)];
+  return [...log("judge", null, [...picked.filter(unit => unit.conflict === true), ...picked.filter(unit => unit.conflict !== true)])];
 }
 
 interface CliOptions {
@@ -1140,12 +1480,14 @@ interface CliOptions {
   json: string | null;
   noJudge: boolean;
   verbose: boolean;
+  /** `--fetch-pr-bodies dir`: fetch the pairs' pull request descriptions into `dir` and stop. */
+  fetchPrBodies: string | null;
 }
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-align.ts --pairs pairs.json [--repo dir | --repos root] [--ids a,b] [--concurrency N] [--cache dir] [--json out.json] [--no-judge] [--verbose]";
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-align.ts --pairs pairs.json [--repo dir | --repos root] [--ids a,b] [--concurrency N] [--cache dir] [--json out.json] [--no-judge] [--verbose] | --pairs pairs.json --fetch-pr-bodies dir";
 
 function parseCli(argv: readonly string[]): CliOptions {
-  const options: CliOptions = { pairs: "", repo: null, repos: null, ids: null, concurrency: MAX_CONCURRENCY, cache: DEFAULT_CACHE, json: null, noJudge: false, verbose: false };
+  const options: CliOptions = { pairs: "", repo: null, repos: null, ids: null, concurrency: MAX_CONCURRENCY, cache: DEFAULT_CACHE, json: null, noJudge: false, verbose: false, fetchPrBodies: null };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index]!;
     const value = (): string => {
@@ -1158,11 +1500,12 @@ function parseCli(argv: readonly string[]): CliOptions {
       case "--repo": options.repo = value(); break;
       case "--repos": options.repos = value(); break;
       case "--ids": options.ids = new Set(value().split(",").filter(Boolean)); break;
-      case "--concurrency": options.concurrency = Math.max(1, Math.min(MAX_CONCURRENCY, Number(value()) || 1)); break;
+      case "--concurrency": options.concurrency = Math.max(1, Math.min(MAX_JUDGE_CONCURRENCY, Number(value()) || 1)); break;
       case "--cache": options.cache = value(); break;
       case "--json": options.json = value(); break;
       case "--no-judge": options.noJudge = true; break;
       case "--verbose": options.verbose = true; break;
+      case "--fetch-pr-bodies": options.fetchPrBodies = resolve(value()); break;
       default: throw new Error(`unknown argument ${flag}\n${USAGE}`);
     }
   }
@@ -1176,10 +1519,115 @@ function repoDir(options: CliOptions, pair: Pair): string {
   throw new Error(`no clone for ${pair.repo}: pass --repo or --repos\n${USAGE}`);
 }
 
+/** Pull requests one GraphQL query fetches. */
+const FETCH_BATCH = 25;
+/** The description revisions fetched per pull request, newest first: enough for nearly all, within GraphQL's hourly points. */
+const FETCH_REVISIONS = 40;
+
+const graphqlSchema = z.object({ data: z.object({ repository: z.record(z.string(), z.unknown()).nullable() }).nullable().optional() }).passthrough();
+
+/** One read-only `gh api graphql` query; its repository's fields, with errors for absent numbers tolerated. */
+function graphql(query: string): Record<string, unknown> {
+  const result = spawnSync("gh", ["api", "graphql", "-f", `query=${query}`], { encoding: "utf8", maxBuffer: 512 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  // A query naming a number that is an issue answers with data and a NOT_FOUND error, and gh exits non-zero.
+  if ((result.stdout ?? "") === "") throw new Error(`gh api graphql failed (exit ${result.status}): ${(result.stderr ?? "").slice(0, 300)}`);
+  return graphqlSchema.parse(JSON.parse(result.stdout)).data?.repository ?? {};
+}
+
+const fetchedPrSchema = z.object({
+  number: z.number().int(),
+  title: z.string(),
+  createdAt: z.string(),
+  lastEditedAt: z.string().nullable(),
+  headRefName: z.string(),
+  headRepositoryOwner: z.object({ login: z.string() }).nullable(),
+  author: z.object({ login: z.string() }).nullable(),
+  body: z.string(),
+  userContentEdits: z.object({ totalCount: z.number(), nodes: z.array(z.object({ editedAt: z.string(), diff: z.string().nullable() })) }),
+});
+
+const PR_FIELDS = `number title createdAt lastEditedAt headRefName headRepositoryOwner { login } author { login } body userContentEdits(first: ${FETCH_REVISIONS}) { totalCount nodes { editedAt diff } }`;
+
+function descriptionOf(pr: z.infer<typeof fetchedPrSchema>): PrDescription {
+  const revisions = pr.userContentEdits.nodes.flatMap(edit => (edit.diff === null ? [] : [{ editedAt: edit.editedAt, body: edit.diff }]));
+  return {
+    number: pr.number,
+    title: pr.title,
+    author: pr.author?.login ?? "ghost",
+    createdAt: pr.createdAt,
+    headRefName: pr.headRefName,
+    headOwner: pr.headRepositoryOwner?.login ?? null,
+    body: pr.body,
+    revisions: pr.lastEditedAt === null ? null : revisions,
+  };
+}
+
+const headsPageSchema = z.object({
+  pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }),
+  nodes: z.array(z.object({ number: z.number().int(), headRefName: z.string() })),
+});
+
+/** Every pull request of `repo` with its head branch: for sides named by branch. */
+function pullRequestHeads(owner: string, name: string): Array<{ number: number; headRefName: string }> {
+  const heads: Array<{ number: number; headRefName: string }> = [];
+  let after: string | null = null;
+  do {
+    const cursor: string = after === null ? "" : `, after: ${JSON.stringify(after)}`;
+    const page = headsPageSchema.parse(graphql(`query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { pullRequests(first: 100${cursor}) { pageInfo { hasNextPage endCursor } nodes { number headRefName } } } }`).pullRequests);
+    heads.push(...page.nodes);
+    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (after !== null);
+  return heads;
+}
+
+/** The pull request numbers a repository's pairs name: sides and `concurrent` by number, and branch refs' pull requests. */
+function wantedNumbers(repo: string, pairs: readonly Pair[]): number[] {
+  const own = pairs.filter(pair => pair.repo === repo);
+  const numbers = new Set(own.flatMap(pair => [pair.first.pr, pair.second.pr, ...pair.concurrent].filter((entry): entry is number => typeof entry === "number")));
+  const branches = new Set(own.flatMap(pair => [pair.first.ref, pair.second.ref, ...pair.concurrent].filter((entry): entry is string => typeof entry === "string").map(branchName)));
+  if (branches.size > 0) {
+    const [owner, name] = repo.split("/") as [string, string];
+    for (const head of pullRequestHeads(owner, name)) if (branches.has(head.headRefName)) numbers.add(head.number);
+  }
+  return [...numbers].sort((a, b) => a - b);
+}
+
+/**
+ * `--fetch-pr-bodies`: each repository's wanted pull requests (`wantedNumbers`) not already in
+ * `<dir>/<owner>__<name>.json`, fetched read-only through `gh api graphql` (title, author, creation, head branch,
+ * description and its revisions; no comments), {@link FETCH_BATCH} per query, and the file rewritten.
+ */
+function fetchDescriptions(pairs: readonly Pair[], folder: string): void {
+  mkdirSync(folder, { recursive: true });
+  for (const repo of [...new Set(pairs.map(pair => pair.repo))]) {
+    const path = join(folder, `${repo.replace("/", "__")}.json`);
+    const file: PrDescriptions = readJson<PrDescriptions>(path) ?? { format: PR_DESCRIPTIONS_FORMAT, repo, fetchedAt: "", prs: {}, missing: [] };
+    const wanted = wantedNumbers(repo, pairs).filter(number => file.prs[String(number)] === undefined && !file.missing.includes(number));
+    const [owner, name] = repo.split("/") as [string, string];
+    for (let start = 0; start < wanted.length; start += FETCH_BATCH) {
+      const batch = wanted.slice(start, start + FETCH_BATCH);
+      const data = graphql(`query { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { ${batch.map(number => `pr${number}: pullRequest(number: ${number}) { ${PR_FIELDS} }`).join(" ")} } }`);
+      for (const number of batch) {
+        const pr = fetchedPrSchema.nullable().optional().parse(data[`pr${number}`]);
+        if (pr === null || pr === undefined) file.missing.push(number);
+        else file.prs[String(number)] = descriptionOf(pr);
+      }
+      console.error(`  ${repo}: ${Math.min(start + FETCH_BATCH, wanted.length)}/${wanted.length}`);
+    }
+    file.fetchedAt = new Date().toISOString();
+    writeJson(path, file);
+    console.error(`${repo}: ${Object.keys(file.prs).length} descriptions, ${file.missing.length} numbers that are not pull requests (${wanted.length} fetched now)`);
+  }
+}
+
 async function main(): Promise<void> {
   const options = parseCli(process.argv.slice(2));
   const all = (JSON.parse(readFileSync(options.pairs, "utf8")) as { pairs: Pair[] }).pairs;
   const pairs = all.filter(pair => options.ids === null || options.ids.has(pair.id));
+  if (options.fetchPrBodies !== null) {
+    fetchDescriptions(pairs, options.fetchPrBodies);
+    return;
+  }
   const alignment: AlignmentOptions = { cacheDir: options.cache, noJudge: options.noJudge, concurrency: options.concurrency };
   console.error(`Merge Assist alignment replay: ${pairs.length} pairs (${pairs.filter(pair => pair.kind === "conflict").length} conflicts), judge ${options.noJudge ? "off" : `on (concurrency ${options.concurrency})`}, cache ${options.cache}`);
   for (const pair of pairs) {

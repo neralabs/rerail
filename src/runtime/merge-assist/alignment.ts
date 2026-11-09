@@ -19,6 +19,7 @@ import {
   positionsPrompt,
   positionsVerdictSchemaFor,
   type PositionsInput,
+  type PositionsVerdict,
   rankJsonSchemaFor,
   rankPrompt,
   rankVerdictSchemaFor,
@@ -56,22 +57,53 @@ const MAX_POSITION_FILES = 16;
 /** A commit changing at most this many source files is focused: the code its positions are about. */
 const MAX_FOCUSED_COMMIT_FILES = 6;
 
+type ExtractInput = { repositoryKey: string; source: string; passages: readonly Passage[]; resolve: PathResolver; tree?: ConceptTree; changed?: readonly string[] };
+
+/** Where a passage is from as a prompt and a unit name it: its doc, its source, or the commit message (`source`). */
+function passageOrigin(passage: Passage, source: string): { prompt: string; unit: string } {
+  const named = passage.path ?? passage.source;
+  return named === undefined ? { prompt: `commit message (${source})`, unit: `commit message: ${source}` } : { prompt: named, unit: named };
+}
+
+/** One judged position of `passage` as a unit, anchored as {@link extractPositions} describes. */
+function positionUnit(position: PositionsVerdict["positions"][number], passage: Passage, input: ExtractInput, focused: readonly string[]): ExtractedUnit {
+  const files = position.files.filter(file => passage.text.includes(file)).flatMap(file => {
+    const path = input.resolve(file);
+    return path === undefined ? [] : [path];
+  });
+  const symbols = position.symbols
+    .filter(symbol => passage.text.includes(symbol))
+    .map(symbol => symbol.replace(/(?:\(\)|!)$/u, "").replace(/::/gu, "."))
+    .filter(distinctiveSymbol);
+  const ids = conceptIds(position.ids, `${passage.heading ?? ""}\n${passage.text}`);
+  const area = passage.path === null ? "" : pathArea(passage.path);
+  const tree = input.tree;
+  const concepts = tree === undefined ? [] : [...subsystemAnchors(position.subsystem, tree.names), ...ids.flatMap(id => tree.referencing(id))];
+  return {
+    kind: "position",
+    text: `${position.statement} ("${position.quote.replace(/\s+/gu, " ").trim()}", ${passageOrigin(passage, input.source).unit})`.slice(0, MAX_UNIT_TEXT),
+    anchors: {
+      files: [...new Set([...(passage.path === null ? [] : [passage.path]), ...files, ...(area === "" ? [] : [`${area}/`]), ...focused, ...concepts])].slice(0, MAX_POSITION_FILES),
+      // Open-item ids are names the later side writes too; a decision is reached through its record's files.
+      symbols: [...new Set([...symbols, ...ids.filter(id => id.startsWith("O"))])],
+    },
+    key: null,
+  };
+}
+
 /**
  * The positions `passages` take, as units anchored to the files and symbols each passage names (resolved by
  * `resolve`), to the doc it is in and that doc's area (`docs/final-shape/`), to the source files the commit changes
  * (`changed`) when it is focused, and, given the ref's `tree`, to concept anchors: the folders and files its subsystem
  * names and the files that write the decision and open-item ids it belongs to. One judge call for all of them;
- * `source` labels the commit they come from.
+ * `source` labels the commit they come from, a passage's own `source` the description it is.
  */
-export async function extractPositions(
-  judge: AgentJudge,
-  input: { repositoryKey: string; source: string; passages: readonly Passage[]; resolve: PathResolver; tree?: ConceptTree; changed?: readonly string[] },
-): Promise<PositionsOutcome> {
+export async function extractPositions(judge: AgentJudge, input: ExtractInput): Promise<PositionsOutcome> {
   if (input.passages.length === 0) return { units: new Map(), error: null, rejected: 0 };
   const focused = input.changed !== undefined && input.changed.length <= MAX_FOCUSED_COMMIT_FILES ? input.changed : [];
   const byId = new Map(input.passages.map((passage, index) => [`p${index + 1}`, passage]));
   const prompted: PositionsInput = {
-    passages: [...byId].map(([id, passage]) => ({ id, source: passage.path ?? `commit message (${input.source})`, heading: passage.heading, text: passage.text })),
+    passages: [...byId].map(([id, passage]) => ({ id, source: passageOrigin(passage, input.source).prompt, heading: passage.heading, text: passage.text })),
   };
   const verdict = positionsVerdictSchemaFor(prompted);
   const outcome = await judge.judge({
@@ -83,41 +115,22 @@ export async function extractPositions(
     cacheKey: cacheKey("positions:concepts", prompted),
   });
   if (!outcome.ok) return { units: new Map(), error: `${outcome.reason}: ${outcome.detail}`, rejected: 0 };
+  return { ...positionUnits(outcome.value.positions, byId, input, focused), error: null };
+}
+
+/** The judged positions whose quote is in their passage as units by passage id, and how many were not. */
+function positionUnits(positions: PositionsVerdict["positions"], byId: ReadonlyMap<string, Passage>, input: ExtractInput, focused: readonly string[]): { units: Map<string, ExtractedUnit[]>; rejected: number } {
   const units = new Map<string, ExtractedUnit[]>();
   let rejected = 0;
-  for (const position of outcome.value.positions) {
+  for (const position of positions) {
     const passage = byId.get(position.passageId)!;
-    const text = flat(passage.text);
-    if (!text.includes(flat(position.quote))) {
+    if (!flat(passage.text).includes(flat(position.quote))) {
       rejected += 1;
       continue;
     }
-    const files = position.files.filter(file => passage.text.includes(file)).flatMap(file => {
-      const path = input.resolve(file);
-      return path === undefined ? [] : [path];
-    });
-    const symbols = position.symbols
-      .filter(symbol => passage.text.includes(symbol))
-      .map(symbol => symbol.replace(/(?:\(\)|!)$/u, "").replace(/::/gu, "."))
-      .filter(distinctiveSymbol);
-    const ids = conceptIds(position.ids, `${passage.heading ?? ""}\n${passage.text}`);
-    const area = passage.path === null ? "" : pathArea(passage.path);
-    const tree = input.tree;
-    const concepts = tree === undefined ? [] : [...subsystemAnchors(position.subsystem, tree.names), ...ids.flatMap(id => tree.referencing(id))];
-    const where = passage.path ?? `commit message: ${input.source}`;
-    const unit: ExtractedUnit = {
-      kind: "position",
-      text: `${position.statement} ("${position.quote.replace(/\s+/gu, " ").trim()}", ${where})`.slice(0, MAX_UNIT_TEXT),
-      anchors: {
-        files: [...new Set([...(passage.path === null ? [] : [passage.path]), ...files, ...(area === "" ? [] : [`${area}/`]), ...focused, ...concepts])].slice(0, MAX_POSITION_FILES),
-        // Open-item ids are names the later side writes too; a decision is reached through its record's files.
-        symbols: [...new Set([...symbols, ...ids.filter(id => id.startsWith("O"))])],
-      },
-      key: null,
-    };
-    units.set(passage.id, [...(units.get(passage.id) ?? []), unit]);
+    units.set(passage.id, [...(units.get(passage.id) ?? []), positionUnit(position, passage, input, focused)]);
   }
-  return { units, error: null, rejected };
+  return { units, rejected };
 }
 
 export interface RankedUnits {

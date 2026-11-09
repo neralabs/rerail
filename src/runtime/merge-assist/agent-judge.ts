@@ -66,6 +66,12 @@ export interface JudgeOptions {
   readonly timeoutMs?: number;
   readonly spawn?: typeof nodeSpawn;
   readonly now?: () => number;
+  /**
+   * How Codex judges: its executable instead of `codex` on PATH (Codex then judges whatever the preferred host), and
+   * `-c key=value` overrides and a model on its command line, since `--ignore-user-config` leaves the person's
+   * config.toml out (a model provider, its region).
+   */
+  readonly codex?: { readonly executable?: string; readonly config?: readonly string[]; readonly model?: string };
 }
 
 type Failure = Extract<JudgeOutcome<never>, { ok: false }>;
@@ -76,8 +82,19 @@ interface Detected {
   readonly executable: string | null;
 }
 
-/** The first runner on PATH: the preferred one, then `JUDGE_RUNNERS` in order. Looks at PATH only; runs nothing. */
-function detectRunner(env: NodeJS.ProcessEnv, preferredHost: RerailHost | undefined): Detected {
+/** Codex at `path` (absolute, or a name on PATH). */
+function namedCodex(env: NodeJS.ProcessEnv, path: string): Detected {
+  const executable = resolveExecutable(path, env);
+  if (executable !== undefined) return { readiness: { available: true, runner: "codex", problem: null }, executable };
+  return { readiness: { available: false, runner: null, problem: `Merge Assist judges with ${path}, which is not runnable.` }, executable: null };
+}
+
+/**
+ * The first runner on PATH: the preferred one, then `JUDGE_RUNNERS` in order; Codex at `codexExecutable` when one is
+ * given. Looks at PATH only; runs nothing.
+ */
+function detectRunner(env: NodeJS.ProcessEnv, preferredHost: RerailHost | undefined, codexExecutable: string | undefined): Detected {
+  if (codexExecutable !== undefined) return namedCodex(env, codexExecutable);
   const preferred = preferredHost === undefined ? undefined : HOST_RUNNERS[preferredHost];
   const order = preferred === undefined ? [...JUDGE_RUNNERS] : [preferred, ...JUDGE_RUNNERS.filter(runner => runner !== preferred)];
   for (const runner of order) {
@@ -104,6 +121,7 @@ class DatabaseAgentJudge implements AgentJudge {
   readonly #timeoutMs: number;
   readonly #spawn: typeof nodeSpawn;
   readonly #now: () => number;
+  readonly #codex: NonNullable<JudgeOptions["codex"]>;
   /** Calls running now, per repository: they count against the budget before they are recorded. */
   readonly #running = new Map<string, number>();
   #detected: Detected;
@@ -116,11 +134,12 @@ class DatabaseAgentJudge implements AgentJudge {
     this.#timeoutMs = options.timeoutMs ?? JUDGE_TIMEOUT_MS;
     this.#spawn = options.spawn ?? nodeSpawn;
     this.#now = options.now ?? Date.now;
-    this.#detected = detectRunner(this.#env, this.#preferredHost);
+    this.#codex = options.codex ?? {};
+    this.#detected = detectRunner(this.#env, this.#preferredHost, this.#codex.executable);
   }
 
   readiness(): JudgeReadiness {
-    this.#detected = detectRunner(this.#env, this.#preferredHost);
+    this.#detected = detectRunner(this.#env, this.#preferredHost, this.#codex.executable);
     return this.#detected.readiness;
   }
 
@@ -131,7 +150,7 @@ class DatabaseAgentJudge implements AgentJudge {
   async judge<T>(task: JudgeTask<T>): Promise<JudgeOutcome<T>> {
     const cached = this.#cached(task);
     if (cached !== undefined) return cached;
-    const { readiness, executable } = (this.#detected = detectRunner(this.#env, this.#preferredHost));
+    const { readiness, executable } = (this.#detected = detectRunner(this.#env, this.#preferredHost, this.#codex.executable));
     if (readiness.runner === null || executable === null) {
       return { ok: false, reason: "unavailable", detail: readiness.problem ?? "No agent CLI is available to judge." };
     }
@@ -206,7 +225,7 @@ class DatabaseAgentJudge implements AgentJudge {
   async #call(runner: JudgeRunnerId, executable: string, task: JudgeTask<unknown>): Promise<RunOutcome> {
     const directory = await mkdtemp(join(tmpdir(), "rerail-judge-"));
     try {
-      const { args, answerPath } = await prepareInvocation(runner, task.jsonSchema, directory);
+      const { args, answerPath } = await prepareInvocation(runner, task.jsonSchema, directory, this.#codex);
       const result = await runProcess(this.#spawn, executable, args, { cwd: directory, env: this.#env, input: task.prompt, timeoutMs: this.#timeoutMs });
       return await readAnswer(runner, result, answerPath, this.#timeoutMs);
     } finally {
@@ -215,8 +234,11 @@ class DatabaseAgentJudge implements AgentJudge {
   }
 }
 
-/** The command line for `runner`; Codex reads its schema from a file and writes its answer to another. */
-async function prepareInvocation(runner: JudgeRunnerId, schema: Record<string, unknown>, directory: string): Promise<{ args: string[]; answerPath: string | null }> {
+/**
+ * The command line for `runner`; Codex reads its schema from a file and writes its answer to another, with `codex`'s
+ * config overrides and model.
+ */
+async function prepareInvocation(runner: JudgeRunnerId, schema: Record<string, unknown>, directory: string, codex: NonNullable<JudgeOptions["codex"]>): Promise<{ args: string[]; answerPath: string | null }> {
   if (runner === "claude") {
     return {
       args: [
@@ -257,6 +279,8 @@ async function prepareInvocation(runner: JudgeRunnerId, schema: Record<string, u
       "--disable", "unified_exec",
       "--disable", "code_mode_host",
       "--disable", "multi_agent",
+      ...(codex.config ?? []).flatMap(setting => ["-c", setting]),
+      ...(codex.model === undefined ? [] : ["-m", codex.model]),
       "--output-schema", schemaPath,
       "-o", answerPath,
       // The prompt comes on stdin.
