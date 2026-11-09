@@ -490,7 +490,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "00a895299f837ee055114268cdaa4cfe02919e0cb571b6bcc03d3ec1c2723166",
+      "sha256": "fe1c8674ce5fd25ae15449a8470ce5bfba83439338eee5dd379cd3d1a387ea77",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -604,6 +604,11 @@
           "before": "d78ddd102b74af9f002f04c1e6723ea5a2d917df1076ad5910c2958feb247252",
           "after": "00a895299f837ee055114268cdaa4cfe02919e0cb571b6bcc03d3ec1c2723166",
           "reason": "Add demanded host metadata and exact bounded Python decimal conversion for scanner worker configuration"
+        },
+        {
+          "before": "00a895299f837ee055114268cdaa4cfe02919e0cb571b6bcc03d3ec1c2723166",
+          "after": "fe1c8674ce5fd25ae15449a8470ce5bfba83439338eee5dd379cd3d1a387ea77",
+          "reason": "Adopt Final core declarations and truthful policy scopes for combined execution"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -1879,7 +1884,7 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
       "origin": "authored",
-      "sha256": "57b50347036b7e884af3c279a0bd9fa74d6c95ca11079a5cace197036cbb4f28",
+      "sha256": "3380ab65acb8ca3857893c50680047921b4093f5a2636777b932e60ddfe2f5b5",
       "importedSha256": "69c287f6eb74fdfeab7e6fa15ef57ec6a8d46d87663933e8535da6c149a37c69",
       "repairs": [
         {
@@ -1901,6 +1906,11 @@
           "before": "002b175a0f69602f3cbbf17ea40179476c289b61703628b3db39d0e36c7aa630",
           "after": "57b50347036b7e884af3c279a0bd9fa74d6c95ca11079a5cace197036cbb4f28",
           "reason": "Preserve source plugin description and enforcement in compiled metadata"
+        },
+        {
+          "before": "57b50347036b7e884af3c279a0bd9fa74d6c95ca11079a5cace197036cbb4f28",
+          "after": "3380ab65acb8ca3857893c50680047921b4093f5a2636777b932e60ddfe2f5b5",
+          "reason": "Adopt Final core declarations and truthful policy scopes for combined execution"
         }
       ]
     },
@@ -2432,7 +2442,7 @@
       "legacySha256": "a6f3834fc9a74b85e5df4706b13efb0943b6bb0ae82e5e0f59a80f048df53c04",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
-      "ruleSha256": "57b50347036b7e884af3c279a0bd9fa74d6c95ca11079a5cace197036cbb4f28"
+      "ruleSha256": "3380ab65acb8ca3857893c50680047921b4093f5a2636777b932e60ddfe2f5b5"
     },
     {
       "check": "legacy_execution_surfaces",
@@ -3009,7 +3019,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "042fa28841579f34ca223656708e30d6d9fc65aab2d261373ec4619131bd163d"
+        "sha256": "4b89aacb985562c47316d8c28d2e6a8ec09f68b4390286ff7c24de2e70a1ced6"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",

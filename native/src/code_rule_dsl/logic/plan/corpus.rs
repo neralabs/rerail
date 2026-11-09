@@ -736,6 +736,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
+    let mut world_bridges = BTreeSet::new();
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
     for (unit, mut prog) in units {
@@ -788,6 +789,21 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             }
         };
         let atom = |a: &mut front::Atom| a.rel = rename(&a.rel);
+        // Producers retain their policy/request namespace. The external world
+        // dispatches engine names, so bridge every coloured request into that
+        // name instead of losing it when the programs are combined.
+        for (_,request) in WORLD {
+            if !prog.rules.iter().any(|r| r.head.rel == *request) { continue; }
+            let alias = rename(request);
+            if alias == *request || !world_bridges.insert((request.to_string(),alias.clone())) { continue; }
+            let cols = prog.decls.get(*request).expect("a lowered world request is declared").clone();
+            let args: Vec<front::Term> = (0..cols.len()).map(|i| front::Term::Var(format!("rr_world_{i}"))).collect();
+            all.decls.entry(request.to_string()).or_insert(cols);
+            all.rules.push(front::Rule {
+                head: front::Atom { rel: request.to_string(), args: args.clone(), neg: false, gated: false },
+                body: vec![Literal::Atom(front::Atom { rel: alias, args, neg: false, gated: false })],
+            });
+        }
         for rule in &mut prog.rules {
             atom(&mut rule.head);
             for l in &mut rule.body {
@@ -4207,6 +4223,33 @@ impl Own {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn combined_policy_and_library_requests_reach_the_external_world() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("combined-world-requests");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("payload.py"),"pass\n").unwrap();
+        let library = dir.join("directory-reader.rr");
+        std::fs::write(&library,r#"
+#include "core.rr"
+.decl asked(path: symbol)
+.decl entries(name: symbol)
+entries(name) :- asked(path), dir_entry(path,name,0), suffix(".py",name).
+"#).unwrap();
+        let _serial = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        for modular in [false,true] {
+            let include = if modular { format!("#include {:?}\n",library) } else { "#include \"core.rr\"\n.decl asked(path: symbol)\n.decl entries(name: symbol)\nentries(name) :- asked(path), dir_entry(path,name,0), suffix(\".py\",name).\n".to_owned() };
+            let first = format!(".language python\n.scope dirs \"__no_primary__\"\n{include}\nasked(\".\").\n.decl seen(name: symbol)\nseen(name) :- entries(name).\n.output seen\n");
+            let quiet_include = if modular { format!("#include {:?}\n",library) } else { String::new() };
+            let second = format!(".language python\n.scope dirs \"__no_primary__\"\n{quiet_include}\n.decl marker(value: symbol)\nmarker(\"other\").\n.output marker\n");
+            let out = dir.join(if modular {"library-out"} else {"policy-out"});
+            super::run_all(&[&first,&second],&dir,&out,"program",crate::code_rule_dsl::typing::file_local::Binding::Cpu,1<<18).unwrap();
+            assert_eq!(std::fs::read_to_string(out.join("p0_seen.csv")).unwrap(),"payload.py\n","modular={modular}");
+        }
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// Decision 0076: cross-file rows memoised per import component. b imports a; c imports nothing. An edit
     /// re-derives the edited file's component and its importers' only; `verify` derives everything again and
     /// compares; the contract refuses a relation that reads an undeclared cross-file one, and a row naming a node

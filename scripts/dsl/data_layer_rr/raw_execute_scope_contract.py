@@ -62,8 +62,8 @@ def main():
                 command=[str(args.engine.absolute()),'logic',str(directory),str(corpus),str(out)]
                 run=subprocess.run(command,capture_output=True,text=True,timeout=100)
                 if run.returncode:raise RuntimeError(run.stderr)
-                path=out/'p0_observed_raw.csv'
-                if not path.is_file():raise ValueError('Missing native observation output')
+                path=out/('observed_raw.csv' if mode=='single' else 'p0_observed_raw.csv')
+                if not path.is_file():raise ValueError('Missing native observation output: '+str(sorted(p.name for p in out.iterdir()))+'\n'+run.stdout)
                 rows=list(csv.reader(path.open(),delimiter='\t'))
                 rows.sort(key=lambda r:int(r[3]))
                 runs[mode]=dict(rows=rows,stdout=run.stdout,stderr=run.stderr)

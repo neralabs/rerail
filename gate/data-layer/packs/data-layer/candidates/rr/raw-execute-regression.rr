@@ -2,7 +2,7 @@
 .description "Removed raw execution surfaces stay removed from production code"
 .language python
 .mode block
-.scope dirs "__raw_execute_request_only__"
+.scope include "**/impl/**/*.py", "**/data_layer/**/*.py", "**/_internal/**/*.py", "**/l*/**/*.py"
 .scope exclude
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_raw_execute_regression.py
 #include "python/ast.rr"
