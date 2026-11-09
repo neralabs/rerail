@@ -105,6 +105,59 @@ impl Keeper {
     }
 }
 
+impl Keeper {
+    /// The keeper as a run of the tape cache keeps it (decision 0096 §2): one blob, the files' contents it counts
+    /// and each relation's statistics. Only stored contents are kept (a session's are its memory's).
+    pub(super) fn encode(&self) -> Vec<u8> {
+        let mut out = vec![1u8];
+        let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
+        let docs: Vec<(&String, i64, i64)> = self.docs.iter().filter_map(|(p, (c, k))| match c { memo::Content::Stored(id) => Some((p, id.raw(), *k)), memo::Content::Held(_) => None }).collect();
+        int(&mut out, docs.len() as i64);
+        for (p, id, k) in docs {
+            int(&mut out, p.len() as i64);
+            out.extend_from_slice(p.as_bytes());
+            int(&mut out, id);
+            int(&mut out, k);
+        }
+        int(&mut out, self.rels.len() as i64);
+        for (rel, stats) in &self.rels {
+            int(&mut out, rel.len() as i64);
+            out.extend_from_slice(rel.as_bytes());
+            stats.encode(&mut out);
+        }
+        out
+    }
+
+    /// `encode`'s keeper back, `None` if the bytes are not one.
+    pub(super) fn decode(bytes: &[u8]) -> Option<Keeper> {
+        let mut at = 1;
+        let take = |at: &mut usize, n: usize| -> Option<&[u8]> {
+            let b = bytes.get(*at..*at + n)?;
+            *at += n;
+            Some(b)
+        };
+        let int = |at: &mut usize| -> Option<i64> { Some(i64::from_le_bytes(take(at, 8)?.try_into().ok()?)) };
+        let text = |at: &mut usize| -> Option<String> {
+            let n = usize::try_from(int(at)?).ok()?;
+            String::from_utf8(take(at, n)?.to_vec()).ok()
+        };
+        if bytes.first() != Some(&1) {
+            return None;
+        }
+        let mut k = Keeper::default();
+        for _ in 0..int(&mut at)? {
+            let path = text(&mut at)?;
+            let id = crate::content_store::SourceId::from_raw(int(&mut at)?);
+            k.docs.insert(path, (memo::Content::Stored(id), int(&mut at)?));
+        }
+        for _ in 0..int(&mut at)? {
+            let rel = text(&mut at)?;
+            k.rels.insert(rel, RelStats::decode(bytes, &mut at)?);
+        }
+        (at == bytes.len()).then_some(k)
+    }
+}
+
 fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
     a.1 == b.1
         && match (a.0, b.0) {
@@ -112,4 +165,38 @@ fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
             (memo::Content::Held(x), memo::Content::Held(y)) => x == y,
             _ => false,
         }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Keeper, memo};
+
+    /// A keeper read back from its blob counts the same files the same way: an edit patches it as it would the one
+    /// that wrote it, and only stored contents are kept.
+    #[test]
+    fn a_kept_blob_reads_back_the_files_and_statistics_it_counted() {
+        let entry = |key: i64, salt: i64| {
+            let mut e = memo::Entry { key, ..memo::Entry::default() };
+            e.rows.insert(memo::base_key("r"), (2, (0..20).flat_map(|i| [key << 32 | i, (i + salt) % 3]).collect()));
+            e
+        };
+        let id = |n| memo::Content::Stored(crate::content_store::SourceId::from_raw(n));
+        let rels = [("r".to_owned(), vec!["n".to_owned(), "v".to_owned()])];
+        let mut k = Keeper::default();
+        k.begin(&rels);
+        for (n, path) in ["a.py", "b.py"].iter().enumerate() {
+            k.file(path, Some(id(n as i64 + 1)), n as i64 + 1, &entry(n as i64 + 1, 0), &|_, _| None);
+        }
+        let first = k.end(&|_, _, _| None).unwrap();
+        let mut back = Keeper::decode(&k.encode()).expect("a keeper");
+        assert_eq!(back.encode(), k.encode());
+        // b.py edited: counted out by its old content, in by its new.
+        back.begin(&rels);
+        back.file("a.py", Some(id(1)), 1, &entry(1, 0), &|_, _| None);
+        back.file("b.py", Some(id(3)), 2, &entry(2, 1), &|c, key| matches!(c, memo::Content::Stored(s) if s.raw() == 2).then(|| entry(key, 0)));
+        let after = back.end(&|_, _, _| None).unwrap();
+        assert_eq!(back.counted, (1, 1));
+        assert_eq!(after["r"].rows(), first["r"].rows());
+        assert_ne!(after["r"], first["r"], "b.py's values moved");
+    }
 }

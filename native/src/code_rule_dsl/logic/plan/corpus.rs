@@ -2246,18 +2246,24 @@ fn run_observed(
     }
     // A session's base relations' statistics, kept by file across its runs (decision 0096 §3): each with every column
     // `input_columns` names. `RERAIL_STATS_KEEP=off` measures them as before.
-    let mut keeper: Option<keptstats::Keeper> = match session.as_ref() {
-        Some(s) if memoised && !stored.is_empty() && std::env::var("RERAIL_STATS_KEEP").map_or(true, |v| v != "off") => {
-            let mut k = s.stats.lock().expect("the session's statistics").remove(&memo_program).unwrap_or_default();
-            let rels: Vec<(String, Vec<String>)> = stored
-                .iter()
-                .map(|(rel, _)| (rel.clone(), super::super::sql::select::input_columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect()))
-                .collect();
-            k.begin(&rels);
-            Some(k)
+    // Without a session, the tape cache's memo keeps them: read from the blob the last run of this plan wrote.
+    let keeping = memoised && !stored.is_empty() && std::env::var("RERAIL_STATS_KEEP").map_or(true, |v| v != "off");
+    let mut keeper: Option<keptstats::Keeper> = match (session.as_ref(), memo) {
+        _ if !keeping => None,
+        (Some(s), _) => Some(s.stats.lock().expect("the session's statistics").remove(&memo_program).unwrap_or_default()),
+        (None, Some(memo::Memo::Stored(store))) => {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "read the kept statistics".into());
+            Some(store.stat_blob(memo_program).ok().flatten().and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default())
         }
         _ => None,
     };
+    if let Some(k) = keeper.as_mut() {
+        let rels: Vec<(String, Vec<String>)> = stored
+                .iter()
+                .map(|(rel, _)| (rel.clone(), super::super::sql::select::input_columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect()))
+                .collect();
+        k.begin(&rels);
+    }
     let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, crate::content_store::SourceId)>)> {
     let worker = spawn_chunks(scope, || {
         let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
@@ -3210,8 +3216,17 @@ fn run_observed(
             ended.ok()
         });
         let kept = kept.flatten();
-        if let (Some(s), Some(k)) = (session.as_ref(), keeper.take()) {
-            s.stats.lock().expect("the session's statistics").insert(memo_program, k);
+        match (session.as_ref(), keeper.take(), memo) {
+            (Some(s), Some(k), _) => {
+                s.stats.lock().expect("the session's statistics").insert(memo_program, k);
+            }
+            // Written as one blob with the run, whose memo entries it names by content (0096 §2): a later process
+            // patches it. A run that could not keep them writes it empty, so the next counts every file in.
+            (None, Some(k), Some(memo::Memo::Stored(store))) if kept.is_none() || k.counted != (0, 0) => {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "write the kept statistics".into());
+                store.put_stat_blob(memo_program, &k.encode()).map_err(|e| Error::Plan(e.to_string()))?;
+            }
+            _ => {}
         }
         for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
             let rows = values.iter().flatten().map(Vec::len).next().unwrap_or(0);
