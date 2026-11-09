@@ -4472,12 +4472,20 @@
           "name": "expression_list"
         },
         {
-          "type": "SYMBOL",
-          "name": "assignment"
+          "type": "PREC_DYNAMIC",
+          "value": -1,
+          "content": {
+            "type": "SYMBOL",
+            "name": "assignment"
+          }
         },
         {
-          "type": "SYMBOL",
-          "name": "augmented_assignment"
+          "type": "PREC_DYNAMIC",
+          "value": -1,
+          "content": {
+            "type": "SYMBOL",
+            "name": "augmented_assignment"
+          }
         },
         {
           "type": "SYMBOL",
@@ -6334,6 +6342,7 @@
     "_suite",
     "_expressions",
     "_left_hand_side",
+    "_right_hand_side",
     "keyword_identifier"
   ],
   "supertypes": [

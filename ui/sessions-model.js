@@ -133,7 +133,7 @@ function toolCall(e, pl) {
     key: e.eventId, verb, label: v.label, level: v.level, toolName: String(pl.toolName ?? ""), input: pl.input, target,
     title: (pl.input && typeof pl.input === "object" && typeof pl.input.description === "string" && pl.input.description) || target,
     kind: verb === "run" ? RUN_KIND(target) : null,
-    callSeq: e.sequence, callTime: e.observedAt, resSeq: null, resTime: null, output: undefined, failed: false, dur: null, correction: null, raw: [e],
+    callSeq: e.sequence, callTime: e.observedAt, resSeq: null, resTime: null, output: undefined, failed: false, dur: null, corrections: [], raw: [e],
   };
 }
 
@@ -187,9 +187,10 @@ export function sessionViolationTotal(sessionId) {
 }
 
 /**
- * Approximate placement: a finding attaches to the first tool call whose input mentions the
- * finding's path; otherwise it hangs off the second turn. The daemon does not record which
- * event a finding interrupted.
+ * A finding goes under the latest tool call made before its audit started. The daemon records no event for a finding,
+ * but an audit starts between one call's result and the next call, so the time places it: `at` is the audit's start,
+ * `callTime` the call's. A finding older than every loaded call (the loaded window opens after it) hangs off the first
+ * turn, ahead of its calls.
  */
 export function placeCorrections(turns, corrections) {
   // The loaded window can start between a tool call and its result, leaving no turn at all: the corrections still
@@ -197,24 +198,28 @@ export function placeCorrections(turns, corrections) {
   const placed = turns.length === 0 && corrections.length > 0
     ? [{ key: "t-window", ti: 0, u: null, a: null, uSeq: null, aSeq: null, uTime: null, aTime: null, tools: [], orphans: [], ended: true }]
     : turns;
-  for (const c of corrections) {
-    const key = c.finding.path ? c.finding.path.split(":")[0] : null;
-    const ev = key ? toolCallTouching(placed, key) : null;
-    if (ev) ev.correction = c;
-    else placed[Math.min(1, placed.length - 1)].orphans.push(c);
+  const calls = placed.flatMap(t => t.tools);
+  for (const c of [...corrections].sort(byAuditThenPlace)) {
+    const ev = latestCallBefore(calls, c.finding.at);
+    if (ev) ev.corrections.push(c);
+    else placed[0].orphans.push(c);
   }
   return placed;
 }
 
-/** First unclaimed tool call on `key`: a change or command targeting it, else any call whose input mentions it. */
-function toolCallTouching(turns, key) {
-  return findToolCall(turns, ev => (ev.level === "change" || ev.level === "execute") && ev.target.includes(key))
-    ?? findToolCall(turns, ev => JSON.stringify(ev.input ?? "").includes(key));
-}
+/** Oldest audit first; within one, by file then line, as a person reads a report. */
+const byAuditThenPlace = (a, b) => a.finding.at - b.finding.at
+  || (a.finding.path ?? "").localeCompare(b.finding.path ?? "")
+  || (a.finding.span?.startLine ?? 0) - (b.finding.span?.startLine ?? 0);
 
-function findToolCall(turns, pred) {
-  for (const t of turns) for (const ev of t.tools) if (ev.correction === null && pred(ev)) return ev;
-  return null;
+/** The last of `calls` (in sequence order) made at or before `at`; `null` when `at` precedes them all. */
+function latestCallBefore(calls, at) {
+  let found = null;
+  for (const ev of calls) {
+    if (ev.callTime > at) break;
+    found = ev;
+  }
+  return found;
 }
 
 /** POSIX single-quoting: safe for any path or id, including spaces and quotes. */

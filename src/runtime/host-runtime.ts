@@ -1,5 +1,6 @@
 import { StreamingSampleChunker } from "./chunker.js";
 import { stableJsonText } from "../engine/stable-json.js";
+import { InactiveSessionError } from "./event-protocol.js";
 import { SessionLanes } from "./session-lanes.js";
 import { steers, type RuleMode } from "../engine/catalog/rule-mode.js";
 import type {
@@ -75,7 +76,7 @@ export class RerailHostRuntime {
     if (event.kind === "session-start") return this.#startEvent(event);
     if (event.kind === "session-end") return this.#endEvent(event);
     const active = this.#sessions.get(event.sessionId);
-    if (active === undefined) throw new Error(`Inactive session: ${event.sessionId}`);
+    if (active === undefined) throw new InactiveSessionError(event.sessionId);
     if (active.processed.has(event.eventId)) return;
     active.processed.add(event.eventId);
     await this.#port.persistEvent(event);
@@ -156,7 +157,7 @@ export class RerailHostRuntime {
     rules: readonly SteerRule[] = [],
   ): Promise<void> {
     return this.#lanes.run(sessionId, async () => {
-      if (!this.#sessions.has(sessionId)) throw new Error(`Inactive session: ${sessionId}`);
+      if (!this.#sessions.has(sessionId)) throw new InactiveSessionError(sessionId);
       const delivery: AdapterDelivery = {
         sessionId,
         requested,

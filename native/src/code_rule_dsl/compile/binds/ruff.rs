@@ -293,6 +293,15 @@ fn f823_skips_forward_references_the_module_resolves() {
     check("F823_string", f823(), source, &[]);
 }
 
+#[test]
+fn f823_reads_after_an_unpacking_assignment() {
+    // A line that opens with `[` after an unpacking assignment starts a statement of its own, not
+    // a chained target of that assignment (Patch 3 in grammars/tree-sitter-python/PATCHES.md), so
+    // the names the unpacking binds are bound when that line reads them.
+    let source = oracle!("python/scope/usage/F823_unpacking.py");
+    check("F823_unpacking", f823(), source, &[]);
+}
+
 /// F822: a module `__all__` entry that names nothing the module binds; an implicit
 /// concatenation is one entry.
 fn f822() -> Value {

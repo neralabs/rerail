@@ -16,7 +16,7 @@ import {
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
-import { SteerRuleSchema } from "./event-protocol.js";
+import { InactiveSessionError, SteerRuleSchema } from "./event-protocol.js";
 import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
@@ -1970,7 +1970,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   } {
     const active = this.#sessions.get(event.sessionId)?.descriptor;
     const descriptor = active ?? event.session;
-    if (descriptor === undefined) throw new Error(`Inactive session: ${event.sessionId}`);
+    if (descriptor === undefined) throw new InactiveSessionError(event.sessionId);
     if (descriptor.sessionId !== event.sessionId) throw new Error("Event session descriptor does not match sessionId");
     assertEventHost(descriptor.host);
     if (active !== undefined && event.session !== undefined && active.host !== event.session.host) {
@@ -2027,7 +2027,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   #session(sessionId: string): RuntimeSessionState {
     const state = this.#sessions.get(sessionId);
-    if (state === undefined) throw new Error(`Inactive session: ${sessionId}`);
+    if (state === undefined) throw new InactiveSessionError(sessionId);
     return state;
   }
 

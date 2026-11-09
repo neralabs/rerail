@@ -7,6 +7,7 @@ import { diffLines } from "diff";
 import { z } from "zod";
 import {
   encodeCodeRuleWorkspaceRequest,
+  isWorkspaceBusy,
   loadNativeBinding,
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
@@ -212,7 +213,10 @@ const storedEditSchema = z.object({
   readError: z.string().optional(),
 });
 type Evaluation = z.infer<typeof evaluationSchema>;
+type WorkspaceResult = z.infer<typeof workspaceResultSchema>;
 type WorkspaceFile = { language: CodeRuleSourceLanguage; path: string; source: string } & SourceFileFacts;
+/** What `#applyRequest` sends the engine: the files to apply and the paths removed. */
+type ApplyRequest = { files: WorkspaceFile[]; removed: string[]; deferGlobal?: boolean; quiet?: boolean };
 type StoredEdit = {
   edit?: CodeRuleEdit;
   spool?: string;
@@ -440,6 +444,21 @@ function emptyEvaluation(): Evaluation {
     violations: [],
     failures: [],
     metrics: { files: 0, visitedNodes: 0, witnesses: 0 },
+  };
+}
+
+/** `applied`, after `previous`'s violations and failures on paths outside `replaced` (and on no path). */
+function withReplacedPaths(previous: Evaluation, applied: Evaluation, replaced: ReadonlySet<string>): Evaluation {
+  return {
+    ...applied,
+    violations: [
+      ...previous.violations.filter((violation) => violation.path === undefined || !replaced.has(violation.path)),
+      ...applied.violations,
+    ],
+    failures: [
+      ...previous.failures.filter((failure) => failure.path === undefined || !replaced.has(failure.path)),
+      ...applied.failures,
+    ],
   };
 }
 function failure(
@@ -1456,7 +1475,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
           followGitignore: this.#followGitignore,
         });
       } catch (error) {
-        if (!(error instanceof Error) || error.message !== "WORKSPACE_BUSY") throw error;
+        if (!isWorkspaceBusy(error)) throw error;
         await pause(backoff);
         backoff = Math.min(backoff * 2, 25);
       }
@@ -1905,58 +1924,64 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return enclosing?.dependencies.includes("next") ? enclosing.folder : folder;
   }
 
-  async #applyRequest(
-    workspace: NativeCodeRuleDslWorkspace,
-    request: { files: WorkspaceFile[]; removed: string[]; deferGlobal?: boolean; quiet?: boolean },
-  ): Promise<Evaluation> {
+  async #applyRequest(workspace: NativeCodeRuleDslWorkspace, request: ApplyRequest): Promise<Evaluation> {
+    const revision = await this.#nextRevision(workspace);
+    let backoff = 2;
+    while (!this.#closing) {
+      try {
+        return this.#recordApplied(workspace, request, await this.#applyOnce(workspace, revision, request));
+      } catch (error) {
+        if (!isWorkspaceBusy(error)) throw error;
+        await pause(backoff);
+        backoff = Math.min(backoff * 2, 25);
+      }
+    }
+    throw new Error("Policy execution interrupted by session closure");
+  }
+
+  /** The revision `workspace`'s next apply takes, recorded as its current one once its storage is attached. */
+  async #nextRevision(workspace: NativeCodeRuleDslWorkspace): Promise<number> {
     await this.#workspaceStorage.get(workspace);
     const current = this.#workspaceRevisions.get(workspace);
     // A workspace disposed meanwhile (a superseded replacement) must not be revived in the revision map.
     if (current === undefined) throw new Error("Policy workspace was disposed");
     const revision = current + 1;
     this.#workspaceRevisions.set(workspace, revision);
-    let backoff = 2;
-    while (!this.#closing) {
-      try {
-        const inline =
-          workspace === this.#workspace?.workspace &&
-          !request.deferGlobal &&
-          request.files.length <= 1 &&
-          (request.files[0]?.source.length ?? 0) < 4_096
-            ? workspace.tryApply(JSON.stringify({ revision, ...request }))
-            : undefined;
-        const result =
-          inline ?? (await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, ...request })));
-        const parsed = workspaceResultSchema.parse(JSON.parse(result));
-        const failures = withBlindFiles(parsed.evaluation.failures, parsed.blindFiles);
-        // An apply is no repository audit: a file read in part fails it (`#finishScopeAudit` decides a repository audit's).
-        const applied: Evaluation = { ...parsed.evaluation, status: failsAudit(failures, "touched-files") ? "failed" : "completed", failures };
-        if (request.deferGlobal || parsed.replacedPaths == null) {
-          if (!request.deferGlobal) this.#workspaceEvaluations.set(workspace, applied);
-          return applied;
-        }
-        const replaced = new Set(parsed.replacedPaths);
-        const previous = this.#workspaceEvaluations.get(workspace) ?? emptyEvaluation();
-        const evaluation: Evaluation = {
-          ...applied,
-          violations: [
-            ...previous.violations.filter((violation) => violation.path === undefined || !replaced.has(violation.path)),
-            ...applied.violations,
-          ],
-          failures: [
-            ...previous.failures.filter((failure) => failure.path === undefined || !replaced.has(failure.path)),
-            ...applied.failures,
-          ],
-        };
-        this.#workspaceEvaluations.set(workspace, evaluation);
-        return evaluation;
-      } catch (error) {
-        if (!(error instanceof Error) || error.message !== "WORKSPACE_BUSY") throw error;
-        await pause(backoff);
-        backoff = Math.min(backoff * 2, 25);
-      }
+    return revision;
+  }
+
+  /** One apply of `request` at `revision`: inline when it is small and on the session's own workspace, else buffered. */
+  async #applyOnce(workspace: NativeCodeRuleDslWorkspace, revision: number, request: ApplyRequest): Promise<WorkspaceResult> {
+    const inline = this.#appliesInline(workspace, request) ? workspace.tryApply(JSON.stringify({ revision, ...request })) : undefined;
+    const result = inline ?? (await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, ...request })));
+    return workspaceResultSchema.parse(JSON.parse(result));
+  }
+
+  #appliesInline(workspace: NativeCodeRuleDslWorkspace, request: ApplyRequest): boolean {
+    return (
+      workspace === this.#workspace?.workspace &&
+      !request.deferGlobal &&
+      request.files.length <= 1 &&
+      (request.files[0]?.source.length ?? 0) < 4_096
+    );
+  }
+
+  /**
+   * The evaluation an apply's `parsed` result gives, stored as `workspace`'s unless `request` defers the global rules. A
+   * result that replaced paths keeps the stored findings on every other path.
+   */
+  #recordApplied(workspace: NativeCodeRuleDslWorkspace, request: ApplyRequest, parsed: WorkspaceResult): Evaluation {
+    const failures = withBlindFiles(parsed.evaluation.failures, parsed.blindFiles);
+    // An apply is no repository audit: a file read in part fails it (`#finishScopeAudit` decides a repository audit's).
+    const applied: Evaluation = { ...parsed.evaluation, status: failsAudit(failures, "touched-files") ? "failed" : "completed", failures };
+    if (request.deferGlobal || parsed.replacedPaths == null) {
+      if (!request.deferGlobal) this.#workspaceEvaluations.set(workspace, applied);
+      return applied;
     }
-    throw new Error("Policy execution interrupted by session closure");
+    const previous = this.#workspaceEvaluations.get(workspace) ?? emptyEvaluation();
+    const evaluation = withReplacedPaths(previous, applied, new Set(parsed.replacedPaths));
+    this.#workspaceEvaluations.set(workspace, evaluation);
+    return evaluation;
   }
   async #publishReady(): Promise<void> {
     const ready = [...this.#readyViolations.entries()];

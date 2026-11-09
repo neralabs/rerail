@@ -684,7 +684,7 @@ AI-output scope diffs source, not violation IDs: it compares each edit with pre-
 <details>
 <summary>Fallbacks when no pre-edit source was captured</summary>
 
-Without a boundary (a shell write, a Codex `apply_patch` its hooks don't show), Rerail uses the file's last-seen text this session (from the most recently changed 64 MB). Else it uses the file's Git index or `HEAD` blob. Each counts only if its SHA-256 matches the pre-change file. Blob reads never fetch a partial clone's missing objects.
+Without a boundary (a shell write, a Codex `apply_patch` its hooks don't show), Rerail uses the file's last-seen text this session (from the most recently changed 64 MB). For a file Git lists as modified or untracked when Rerail first sees it (`git ls-files --modified --others --exclude-standard`), that is the text it held then, up to 8 MB of such files per session. Else it uses the file's Git index or `HEAD` blob. Each counts only if its SHA-256 matches the pre-change file. Blob reads never fetch a partial clone's missing objects.
 
 If nothing matches, the edit reports its whole file, as `touched-files` does, until Rerail has seen the file change in the session. Parsing and cross-file query context may exceed reporting scope. Source, parse and match caches are incremental; repository scans stream bounded batches through a separate native workspace.
 

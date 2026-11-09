@@ -236,6 +236,11 @@ export function gitText(cwd: string, args: readonly string[]): string | undefine
 
 /** Trimmed stdout of a successful Git command run under `runGit`'s safe configuration without blocking; else undefined. */
 async function gitOutput(cwd: string, args: readonly string[]): Promise<string | undefined> {
+  return (await gitStdout(cwd, args))?.trim();
+}
+
+/** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
+async function gitStdout(cwd: string, args: readonly string[], maxBuffer = 1024 * 1024): Promise<string | undefined> {
   let executable: string;
   try {
     executable = gitExecutable();
@@ -246,8 +251,8 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string |
   execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    (error, stdout) => settle(error === null ? stdout.trim() : undefined),
+    { encoding: "utf8", maxBuffer, timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
+    (error, stdout) => settle(error === null ? stdout : undefined),
   );
   return await promise;
 }
@@ -320,6 +325,19 @@ export async function gitBranchTips(cwd: string): Promise<string[]> {
 export async function gitCommitsBetween(cwd: string, from: string, to: string): Promise<string[]> {
   const commits = await gitOutput(cwd, ["rev-list", `${from}..${to}`]);
   return commits === undefined || commits === "" ? [] : commits.split("\n");
+}
+
+/** The most bytes of paths `gitModifiedOrUntrackedPaths` reads: past it, a checkout lists none. */
+const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The files of the checkout at `cwd` whose text its index may not hold: modified since staged (or deleted), and untracked
+ * but not ignored; relative to `cwd`. Empty without Git, outside a repository, past the timeout, or past
+ * `MAX_LISTED_PATH_BYTES` of paths.
+ */
+export async function gitModifiedOrUntrackedPaths(cwd: string): Promise<string[]> {
+  const listed = await gitStdout(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], MAX_LISTED_PATH_BYTES);
+  return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
 }
 
 /**
