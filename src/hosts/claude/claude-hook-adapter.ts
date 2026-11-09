@@ -3,12 +3,10 @@ import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engi
 import { claudeHookEvents, claudeWorkspace } from "./claude-event-adapter.js";
 import {
   deliveryRules,
-  holdStopSteers,
   pendingPath,
   routeDeliveries,
   steerHookOutput,
   type EventTable,
-  type HeldDelivery,
   type HookInput,
   type HookOutput,
   type SteerLines,
@@ -31,14 +29,16 @@ const CLAUDE_EVENTS: EventTable = {
 };
 
 /**
- * Events whose `additionalContext` reaches the model beside a tool call or at the session's start. `UserPromptSubmit`'s
- * lands inside the person's own turn, so a steer held then waits for the next tool call.
+ * Events whose `additionalContext` reaches the model beside a tool call, at the session's start, or at `Stop`, where
+ * Claude Code (2.1.163 and newer) shows it as `Stop hook feedback` and continues the turn so the agent can act on it.
+ * `UserPromptSubmit`'s lands inside the person's own turn, so a steer held then waits for the next tool call or `Stop`.
  */
 const CONTEXT_EVENTS: EventTable = {
   SessionStart: true,
   PreToolUse: true,
   PostToolUse: true,
   PostToolUseFailure: true,
+  Stop: true,
 };
 
 const { required: requiredText } = hookText("Claude");
@@ -70,9 +70,9 @@ export interface ClaudeOutputOptions {
 
 /**
  * Steers reach the model as `additionalContext` and the person as one line per rule in `systemMessage` (Claude Code
- * shows it under the tool call); at `Stop`, only the person's lines (`steerHookOutput`).
+ * shows it under the tool call, or at the turn's end), in the same output (`steerHookOutput`).
  */
-export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery[], { note, links = "hyperlink", mark }: ClaudeOutputOptions = {}): HookOutput {
+export function claudeHookOutput(hook: string, deliveries: readonly AdapterDelivery[], { note, links = "hyperlink", mark }: ClaudeOutputOptions = {}): HookOutput {
   return steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines(links, mark), note);
 }
 
@@ -95,9 +95,7 @@ export async function handleClaudeEvent(
   const cwd = claudeWorkspace(input.cwd);
   const links = terminalDrawsHyperlinks(env) ? "hyperlink" : "plain";
   const mark = rerailMark(colourDepth(env));
-  if (hook === "Stop") return claudeHookOutput(hook, await linkDeliveries(await holdStopSteers(path, deliveries), cwd), { links, mark });
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })) : undefined;
-  const routed: HeldDelivery[] = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
-  // `linkDeliveries` copies each delivery, so a held steer keeps its `shown` mark.
+  const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
   return claudeHookOutput(hook, await linkDeliveries(routed, cwd), { note, links, mark });
 }
