@@ -76,12 +76,20 @@ pub(in crate::code_rule_dsl) struct Report {
     /// Derived relations made their projection on the columns some reader reads (decision 0096 §1, `count only`
     /// inferred): each with the columns it lost.
     pub(in crate::code_rule_dsl) projected: Vec<(String, Vec<usize>)>,
+    /// Existence counts read as the atom they count (`count : { r(…) } = 0` as `!r(…)`, `> 0` as `r(…)`; decision 0097).
+    pub(in crate::code_rule_dsl) existence: usize,
 }
 
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     let mut report = Report::default();
     unit_columns(prog);
     report.constants += ground_rules(prog);
+    // `RERAIL_EXISTENCE_COUNTS=off`: existence counts stay counts, for comparison.
+    if std::env::var("RERAIL_EXISTENCE_COUNTS").map_or(true, |v| v != "off") {
+        for rule in &mut prog.rules {
+            report.existence += existence_as_reads(rule);
+        }
+    }
     report.inlined = inline_node_tests(prog);
     // `RERAIL_INLINE_FILTERS=off`: filters are built, for comparison.
     if std::env::var("RERAIL_INLINE_FILTERS").map_or(true, |v| v != "off") {
@@ -117,6 +125,11 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         if !report.climbs.is_empty() {
             super::profile::decision("recursion along the tree made an axis", || {
                 format!("{} recursive components that step one `child` edge at a time read `within` instead: {}", report.climbs.len(), report.climbs.iter().take(8).cloned().collect::<Vec<_>>().join(", "))
+            });
+        }
+        if report.existence > 0 {
+            super::profile::decision("existence counts read as their atom (decision 0097)", || {
+                format!("{} counts compared with 0 read as a negation (`= 0`) or a positive atom (`> 0`), so demand, inlining and projection read them as plain reads", report.existence)
             });
         }
         if !report.projected.is_empty() {
@@ -510,6 +523,8 @@ fn fixed(prog: &Program, rel: &str) -> bool {
         || prog.lattice.contains_key(rel)
         || prog.demand.iter().any(|d| d == rel)
         || prog.gates.iter().any(|(g, _)| g == rel)
+        // The program's own choice of what it keeps (`.decl r(…) inline`, decision 0097) stays with its name.
+        || prog.qualifiers.contains_key(rel)
 }
 
 fn kept(prog: &Program, rel: &str) -> bool {
@@ -1163,6 +1178,42 @@ fn existence_counts(rule: &Rule) -> BTreeSet<String> {
         }
     }
     out
+}
+
+/// **An existence count is a negation** (decision 0097 item 2). `$c = count { r(…) }` whose `$c` is named only in
+/// comparisons with 0 asks whether a row exists: `$c = 0` is `!r(…)`, and `$c > 0` (`!=`, `<>`, `0 <`) is `r(…)`. The
+/// count's own variables are `_` already (lowering makes them so), so the atom names only the rule's variables and
+/// constants, as a negation must. Read as the atom, demand, inlining and projection see a plain read; a count over a
+/// negated atom, or compared both ways, stays. Returns the counts replaced.
+fn existence_as_reads(rule: &mut Rule) -> usize {
+    let mut done = 0;
+    for var in existence_counts(rule) {
+        let zero = |t: &Term| matches!(t, Term::Int(0));
+        let is = |t: &Term| matches!(t, Term::Var(v) if *v == var);
+        // Per comparison of `$c`: `Some(true)` none exists, `Some(false)` one does, `None` anything else.
+        let mut none = BTreeSet::new();
+        for l in &rule.body {
+            let Literal::Cmp { l, op, r } = l else { continue };
+            let class = match (is(l) && zero(r), is(r) && zero(l), *op) {
+                (true, _, "=") | (_, true, "=") => Some(true),
+                (true, _, "!=" | "<>" | ">") | (_, true, "!=" | "<>" | "<") => Some(false),
+                (false, false, _) => continue,
+                _ => None,
+            };
+            none.insert(class);
+        }
+        let classes: Vec<Option<bool>> = none.into_iter().collect();
+        let negated = match classes.as_slice() {
+            [Some(n)] => *n,
+            _ => continue,
+        };
+        let Some(at) = rule.body.iter().position(|l| matches!(l, Literal::Agg { var: v, op: AggOp::Count, atom, .. } if *v == var && !atom.neg)) else { continue };
+        let Literal::Agg { atom, .. } = rule.body.remove(at) else { unreachable!("a count") };
+        rule.body.retain(|l| !matches!(l, Literal::Cmp { l, r, .. } if is(l) || is(r)));
+        rule.body.insert(at, Literal::Atom(Atom { neg: negated, ..atom }));
+        done += 1;
+    }
+    done
 }
 
 /// `l` with the variable `from` renamed `to`.
@@ -2045,5 +2096,34 @@ mod tests {
         let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         assert!(text.iter().any(|r| r.starts_with("out(") && r.contains("pair($n)")), "{text:?}");
         assert!(text.iter().any(|r| r.starts_with("pair($a) :-")), "{text:?}");
+    }
+
+    /// `count : { r(…) } = 0` is `!r(…)`, and `> 0` is `r(…)`: a plain read for demand, inlining and projection.
+    #[test]
+    fn an_existence_count_is_a_negation() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .input node
+            .decl pair(a: node, b: node, k: symbol)
+            .decl none(n: node)
+            .decl some(n: node)
+            .decl many(n: node)
+            .output none
+            .output some
+            .output many
+            pair(a, b, k) :- node(_, a, k, _, _), node(_, b, k, _, _), a != b.
+            none(n) :- node(_, n, "call", _, _), count : { pair(n, _, _) } = 0.
+            some(n) :- node(_, n, "call", _, _), count : { pair(n, _, _) } > 0.
+            many(n) :- node(_, n, "call", _, _), count : { pair(n, _, _) } > 1.
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert_eq!(report.existence, 2);
+        let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        assert!(text.iter().any(|r| r.starts_with("none(") && r.contains("!pair($n") && !r.contains("count")), "{text:?}");
+        assert!(text.iter().any(|r| r.starts_with("some(") && r.contains(", pair($n") && !r.contains("count")), "{text:?}");
+        assert!(text.iter().any(|r| r.starts_with("many(") && r.contains("count")), "{text:?}");
     }
 }

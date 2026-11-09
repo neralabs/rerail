@@ -1,6 +1,7 @@
 # 0097: What a relation keeps: recompute in the reader, restrict by demand, or store, decided per relation
 
-Status: draft (2026-11-09). A perspective, built only as far as 0096's projection (`count only`).
+Status: built (2026-11-09): items 1 to 3, with the constants from the relational lab below. Item 4 (the planner
+fix) and the factorized store are open.
 
 ## Intro
 
@@ -110,6 +111,62 @@ memory.
 ## Built
 
 - **Projection (`count only`), 0096 §1:** the cheapest of the options, and the first.
+- **An existence count is a negation (item 2).** Before anything else in `simplify`, a count compared only with 0 is
+  the atom it counts: `count : { r(…) } = 0` is `!r(…)`, and `> 0` is `r(…)`. The count's own variables are `_`
+  already, so the atom is a plain read. Demand, inlining and projection then treat it as any other read.
+  `RERAIL_EXISTENCE_COUNTS=off` keeps the counts.
+- **The program's override (item 3).** `.decl r(…) inline`, `no_inline`, `magic` and `no_magic` are read as Soufflé
+  spells them; two that disagree are an error. `no_magic` keeps a relation from demand; `magic` demands it past the
+  size test. An `inline` that cannot be honoured (recursive, an output, a negated read of a join) is an error, not a
+  quiet store.
+- **The choice per relation (item 1).** In the planner, after `simplify` and before demand (`plan/keeps.rs`). For
+  each derived relation it prices two things with the plan's own estimates:
+  - stored: the work to build it, plus `M` per row;
+  - inlined: the work its readers add once each reads the relation's rules in place of its rows.
 
-Next is a lab experiment: inline `rr_agg77`, `module_of` and `fl4683_p207_outer` into their readers' captured specs,
-and compare CPU and rows. Those numbers set `α`, `m` and `K`.
+  It inlines when the added work is under `α` times the stored cost, the relation has at most `K` rules, and
+  inlining makes at most 8 reader copies. A positive read becomes one reader copy per rule. A negated read is
+  unfolded only into a negation of plain literals: a single atom whose own variables appear once (`!b(t, _)`), or
+  literals over the head's variables alone (their disjunction, one copy per literal). Anything else stays stored.
+  Every choice is a profile line under "inline or store (decision 0097)", with the numbers.
+  `RERAIL_INLINE=off` stores everything. `RERAIL_INLINE_ONLY=r,…` inlines only those, for the lab.
+
+**The lab experiment.** These numbers come from 8 programs that read `bound_in`, on the 486 fixture files, in 2
+chunks. In that program set the pack's three relations carry other numbers: `rr_agg77` is `rr_agg59`, and
+`fl4683_p207_outer` is `fl858_p4_outer`. Strata were captured with everything stored, and again with `module_of`
+inlined and the existence counts read as negations. Each capture was replayed alone. CPU is the replay thread's
+user + sys, summed over both chunks. Load was 100 to 140 throughout.
+
+| Relation | Stored: build + readers | Changed: readers | Rows not written |
+|---|---:|---:|---:|
+| `module_of` (inlined; 4 of its 7 readers captured) | 235 + 696 ms | 392 ms | 129,313 |
+| `rr_agg59` (now demanded: its read is a negation) | 1,099 + 1,233 ms | 49 + 1 + 24 ms | 772,613 |
+| `fl858_p4_outer` (stays stored: it crosses the chunk boundary) | 1,108 + 555 ms | 545 ms | none |
+
+- **`module_of`** costs less inlined in every reader. Its readers did 303 ms less work without its stored rows, so
+  the rows cost that much beyond their build: there are 129 k of them, and its build runs at 0.6 µs per unit of
+  work. That is about 4 units a row, so **`M` = 4**.
+- **`rr_agg59` cannot be inlined.** Its read is a negation of a join with a variable of its own (`!∃p. inside(s, p),
+  bound_in(p, x)`), and no single literal says that. Read as a negation, though, demand (0048) takes it: 31 times
+  less CPU, 1 row in place of 773 k.
+- **`fl858_p4_outer` is an export.** The cross-file part reads it, so it must be stored. Only the factorized store
+  shrinks it.
+- **`α` = 1.** Both sides of the test are in the planner's units, so 1 is break-even, and no case measured was near
+  it. `module_of`'s readers were estimated to save work; the relations kept stored had readers estimated to add 1.5
+  to 300 times their stored cost.
+- **`K` = 4 rules**, with at most 8 reader copies. `module_of` has 1 rule and 7 readers. The relations refused for
+  size have 3 to 5 rules and 9 to 30 copies.
+
+**The gate.** Findings with everything on are identical to those with `RERAIL_INLINE=off RERAIL_EXISTENCE_COUNTS=off`.
+This held on the 8 programs, and on 12 that read counts (5 more programs). On the 8, the analysis inlined 18 to 19
+relations per part (`module_of`, `scope_node`, `tp_decl`, `exists_11`, …), and read 34 counts as plain reads.
+Demand then took 34 relations in the largest part, against 28 with the counts kept. Local CPU was
+14.6 + 0.4 s on against 16.5 + 0.3 s off, at load 125 to 145. On the 12 it was 22.3 + 0.5 s against
+22.9 + 0.4 s, at load 50 to 100.
+
+**Next.**
+
+- Take the observed step counts (`native.tsv`) in place of the first run's estimates.
+- Store a relation that crosses the chunk boundary factorized.
+- The planner fix of item 4.
+- Have the converter write `inline` on the helpers it makes.

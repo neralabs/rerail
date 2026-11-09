@@ -69,6 +69,7 @@ type Result<T> = std::result::Result<T, Error>;
 pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
 mod demand;
+mod keeps;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -4202,6 +4203,18 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
     let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
+    // What each derived relation keeps (decision 0097): stored, or inlined into its readers, from this plan's
+    // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
+    let inlined;
+    let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
+        Some((p, done)) => {
+            super::profile::decision("inline or store (decision 0097)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
+            inlined = p;
+            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&inlined));
+            &inlined
+        }
+        None => prog,
+    };
     let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
         Some((p, demanded)) => {
             super::profile::decision("demand (decision 0048)", || {

@@ -857,6 +857,9 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         for (rel, rows) in prog.facts {
             all.facts.insert(rename(&rel), rows);
         }
+        for (rel, words) in prog.qualifiers {
+            all.qualifiers.entry(rename(&rel)).or_default().extend(words);
+        }
         for (rel, mut native) in prog.natives {
             native.rename_reads(rename);
             all.natives.insert(rename(&rel), native);
