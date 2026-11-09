@@ -88,3 +88,24 @@ fn a_wave_runs_on_every_lane_at_once_and_matches_the_reference() {
     }
     eprintln!("placed: {:?}; {report:?}", done.iter().map(|d| (d.lane.name(), d.out.clone()).0).collect::<Vec<_>>());
 }
+
+/// Begun batches do not wait (decision 0100 §3): two batches go out before either is collected, and each still
+/// gives the reference's outputs. A lane's worker runs them in the order they were sent.
+#[test]
+fn begun_batches_run_while_the_caller_works_and_match_the_reference() {
+    let ex = Executor::new();
+    let lanes = ex.lanes();
+    let mut rng = Rng(7);
+    let (a, b) = (wave(&mut rng), wave(&mut rng));
+    let pin = |ks: &[(Kernel, Lane)]| Batch(ks.iter().map(|(k, l)| Launch::on(k.clone(), if lanes.contains(l) { *l } else { Lane::Cpu })).collect());
+    let first = ex.begin(pin(&a)).unwrap();
+    let second = ex.begin(pin(&b)).unwrap();
+    // The caller's own work meanwhile: the references. Then the second batch is collected before the first.
+    let want: Vec<_> = a.iter().chain(&b).map(|(k, _)| cpu::run(k)).collect();
+    let (db, _) = second.wait().unwrap();
+    let (da, _) = first.wait().unwrap();
+    assert_eq!(da.len() + db.len(), want.len());
+    for (d, w) in da.iter().chain(&db).zip(&want) {
+        assert_eq!(&d.out, w, "on {}", d.lane.name());
+    }
+}
