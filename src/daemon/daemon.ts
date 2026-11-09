@@ -1,6 +1,6 @@
 import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
-import { readFile, stat, writeFile, rm, rename } from "node:fs/promises";
+import { readFile, stat, writeFile, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo, Server as NetServer } from "node:net";
@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
+import { renameWithRetry } from "../engine/file-replace.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
@@ -201,7 +202,8 @@ async function writePrivateFile(file: string, content: string): Promise<void> {
   const temporaryFile = `${file}.${process.pid}.tmp`;
   try {
     await writeFile(temporaryFile, content, { mode: 0o600 });
-    await rename(temporaryFile, file);
+    // A status line or hook reading daemon.json holds it open for a moment, which fails a rename on Windows.
+    await renameWithRetry(temporaryFile, file);
   } finally {
     await rm(temporaryFile, { force: true });
   }

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants, type Dirent, type Stats } from "node:fs";
-import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rename, rm, unlink } from "node:fs/promises";
+import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
@@ -18,6 +18,7 @@ import type { AuditMode } from "../audit/audit.js";
 import { gitBranchTips, gitCommitsBetween, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
+import { renameWithRetry } from "../file-replace.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { IGNORED_DIRECTORIES } from "./code-rule-enforcer.js";
 import { binaryPrefix } from "./binary-prefix.js";
@@ -965,7 +966,8 @@ export class CodeRuleBridge {
       } finally {
         await handle.close();
       }
-      await rename(temporary, location.absolute);
+      // Retried on Windows while an editor, language server or scanner holds the file; a read-only file is replaced too.
+      await renameWithRetry(temporary, location.absolute);
     } catch (error) {
       await unlink(temporary).catch(() => undefined);
       throw error;

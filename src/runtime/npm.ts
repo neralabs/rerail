@@ -1,8 +1,9 @@
 import { accessSync, constants, existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { spawn } from "../engine/child-process.js";
+import { removeScratch } from "../engine/file-replace.js";
 
 export interface CommandResult {
   stdout: string;
@@ -185,7 +186,8 @@ export async function outsideAnyProject<T>(operation: (directory: string) => Pro
   try {
     return await operation(directory);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    // A scan can still hold npm's private cache in it on Windows; a leftover folder never fails the command.
+    await removeScratch(directory);
   }
 }
 

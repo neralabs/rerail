@@ -1,4 +1,6 @@
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
 import {
   chmod,
@@ -21,6 +23,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn } from "../engine/child-process.js";
+import { removeScratch, renameWithRetry } from "../engine/file-replace.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
@@ -392,7 +395,8 @@ export async function validateManagedInstallation(installation: Installation): P
     await mkdir(userHome);
     await startHealthRepository(join(installation.packageRoot, ENTRY_POINTS.cli), workspace, env);
   } catch (error) {
-    await rm(root, { recursive: true, force: true });
+    // A Git the timed-out CLI left running can still hold the workspace on Windows; the health check's error is the one thrown.
+    await removeScratch(root);
     throw new Error(`Installed CLI could not start a health-check repository: ${error instanceof Error ? error.message : String(error)}`);
   }
   const child = spawn(process.execPath, [join(installation.packageRoot, ENTRY_POINTS.eventStream)], {
@@ -447,9 +451,23 @@ export async function validateManagedInstallation(installation: Installation): P
     }
   } finally {
     clearTimeout(timeout);
-    if (child.exitCode === null) child.kill();
-    await rm(root, { recursive: true, force: true });
+    await stopChild(child);
+    await removeScratch(root);
   }
+}
+
+/** How long a killed health-check child gets to exit before its scratch folder is removed anyway. */
+const CHILD_EXIT_WAIT_MS = 5_000;
+
+/**
+ * Kills `child` if it still runs and waits for it to exit, up to {@link CHILD_EXIT_WAIT_MS}: on Windows the kill
+ * returns before the process is gone, and the SQLite files it holds open cannot be removed until it is.
+ */
+async function stopChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const gone = once(child, "exit").then(() => undefined, () => undefined);
+  child.kill();
+  await Promise.race([gone, sleep(CHILD_EXIT_WAIT_MS, undefined, { ref: false })]);
 }
 async function pathEntryExists(path: string): Promise<boolean> {
   try {
@@ -527,7 +545,7 @@ export class ManagedUpdater {
     await mkdir(this.home, { recursive: true, mode: 0o700 });
     const temporaryPath = `${this.statePath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporaryPath, this.statePath);
+    await renameWithRetry(temporaryPath, this.statePath, { platform: this.platform });
     await this.syncLauncher(state.current);
   }
 
@@ -586,7 +604,7 @@ export class ManagedUpdater {
       const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
       await writeFile(temporaryPath, shim, { mode: 0o755 });
       if (this.platform !== "win32") await chmod(temporaryPath, 0o755);
-      await rename(temporaryPath, path);
+      await renameWithRetry(temporaryPath, path, { platform: this.platform });
     }
   }
 

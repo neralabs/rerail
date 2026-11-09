@@ -9,8 +9,6 @@ import {
   readFile,
   readlink,
   realpath,
-  rename,
-  rm,
   rmdir,
   stat,
   symlink,
@@ -35,6 +33,7 @@ import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { runGit } from "../engine/git.js";
+import { renameWithRetry } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
 import { DAEMON_ACCESS_TOKEN_FILE } from "../runtime/daemon-control.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
@@ -474,8 +473,8 @@ export async function writeTextFile(path: string, text: string, existing: { exis
   const temp = join(directory, `.${randomUUID()}.tmp`);
   await writeFile(temp, text, { mode: existing.mode });
   await chmod(temp, existing.mode);
-  if (process.platform === "win32" && existing.exists) await rm(target, { force: true });
-  await rename(temp, target);
+  // A rename replaces the file on every platform; removing it first on Windows would leave no file if the rename failed.
+  await renameWithRetry(temp, target);
 }
 
 function planMutation(
