@@ -4,6 +4,11 @@ Status: live, started 2026-10-27. Each item says what is open, why it matters, h
 closed or validated, and where it stands. Items are added at the phase they are found and are
 never deleted: a closed item keeps its row with the commit that closed it.
 
+**Ids.** From 2026-11-08, a new item takes a mnemonic id, `O-<area>-<topic>` (`O-artifact-store`,
+`O-git-merge-base`), not the next number. Branches drift apart in numbers (on 2026-11-08 one was at O146 and the
+others at O143) and collided three times in a day (0094 §9); a name says what the item is and two branches
+choosing the same one are writing about the same thing. Numbered items keep their numbers.
+
 | Id | Found | Item | Status |
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
@@ -3043,3 +3048,45 @@ is with it off.
 whether the per-phase figures the budget is checked against should be the process peak.
 
 **Closure:** the process peak within the budget, or the phase that exceeds it named, with a figure the report gives.
+
+## O-artifact-entries. An artifact is one digest, so one edit makes all of it stale
+
+Decision 0095 §2. `test_collection`'s inputs are `**/*.py`: after any edit the artifact is stale everywhere, and
+locally it is never fresh again. **Closure:** the v2 envelope with entries, each with its own digest and status;
+`facts-stamp` writing entries; a stale entry withholding and making Unknown only its rows' places; a test where one
+edited key file stales one entry.
+
+## O-artifact-digest-p0. Artifact digests walk and hash the tree beside phase 0
+
+Decision 0095 §3. `inputs_digest` walks the root and hashes every matching file on every run and in every cutoff
+check, and it hashes git blob ids where phase 0 keys content by sha256. **Closure:** digests over phase 0's
+content sources, no read of an unchanged file on a warm run (counted by the observer), and stamp and run agreeing.
+
+## O-artifact-store. One stamp per artifact, lost on a branch switch
+
+Decision 0095 §4. **Closure:** stamped entries in the store by `(artifact, key, digest)`, absorbed from the facts
+directory; a revert finds its old stamp; least recently used entries removed within the disk budget.
+
+## O-artifact-imports. An entry's inputs are globs, not its imports
+
+Decision 0095 §2. **Closure:** an entry's digest as a join over its import closure, once phase 0's module graph is
+a phase output (t24, "not built").
+
+## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
+
+Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`. **Closure:** the `product`
+aggregate; `python/pytest-collect.rr`; `collect_disabled` for
+`conform/l5250_matching/test_phase1_case_matrix.py`, reported as a finding; the per-file counts of
+`notes/t13/est-full-6.json` reproduced (1,131 of 1,143 exact) on the corpus.
+
+## O-git-tracked. `git_tracked` is declared and never made
+
+Decision 0095 §6. `markdown_docs` needs tracked against on-disk. **Closure:** `@git_tracked(path)` answered from the
+index phase 0's Git provider reads, with a staged-add and a deleted-file test.
+
+## O-git-merge-base. `git_rev` is declared and never made; `--base` is the caller's
+
+Decision 0095 §6. **Closure:** `git_rev("head", …)` from `HEAD` as an observed read, `git_rev("base", …)` from gix's
+`merge_base` (the `revision` feature) of `HEAD` and the base reference, kept under the two ids; `at="base"` reading
+at it; the whole-run cutoff checking `HEAD` and the reference.
+
