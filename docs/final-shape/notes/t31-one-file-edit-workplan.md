@@ -106,8 +106,8 @@ repository. Each must keep findings equal to a cold run.
 
 | Step | Change | Expected | Done when |
 |---|---|---|---|
-| A1 | F823: an `outer_cand(f, x)` relation, read in f and local to f, as the first literal of `outer`'s three rules | memo 1,450 MB → about 650 MB; the 6.6 s index goes | measured (the trial below) |
-| A2 | Engine: a file-local push of part of a rule carries the rule's filter on the same document as a semi-join. A pushed join that exports more rows than a bound per node of its document is reported in the profile | no rule needs A1's workaround | an `outer`-shaped test exports only the filtered rows |
+| A1 | Engine, in the file-local split (decision 0051): never push down and export a join whose filter stays in the cross-file part. Either keep the join cross-file, probing the filter first, or push the filter's file-local half down with it as a semi-join. A rewrite of the rule alone does not help (the trial below) | memo 1,450 MB → about 650 MB; the 6.6 s index goes | F823's `outer` exports no `fl*_p137_outer` rows beyond its filter |
+| A2 | The profile reports any pushed join that exports more rows than a bound per node of its document, with the rule it came from | the next such rule is found by the profile, not by hand | a test with `outer`'s shape is reported |
 | A3 | Memo entries hold only what the cross-file part reads: exports it reads and base relations it reads, projected to the columns it reads | entries smaller again | memo bytes per source byte under 20 |
 | A4 | Entries stored as columns: replay is a slice, not a decode and transpose of each value | replay of 299 files under 1 s | measured |
 
@@ -130,7 +130,7 @@ is reading the kept relations, which is proportional to the bytes kept, so strea
 
 | Step | Change | Done when |
 |---|---|---|
-| C1 | A1 removes the 6.6 s index of a base input | verified in the trial |
+| C1 | A1 removes the 6.6 s index of a base input | measured after A1 |
 | C2 | Kept relations carry their indexes (B1). A delta updates postings in place | an edit builds no index of a kept relation |
 | C3 | Within a run, a derived relation's indexes are shared by every stratum that reads it. Today `setfix`'s cache is per relation object, and each stratum gets a new one (14,113 builds on a cold run, 12 s) | builds per relation and column set: one |
 | C4 | Large base inputs use their source's sorted or leading-column path, not a full hash table | no index of a base input over 1 s |
@@ -170,14 +170,30 @@ These are not on the edit path. They were found on the way.
 
 | Order | Steps | One-file edit, expected |
 |---|---|---|
-| now | 0.1, A1, C1 | 29 s → about 20 s (index and half the memo gone) |
-| next | A2–A4, C3, E1 | about 10 s one-shot; less memory everywhere |
+| now | 0.1, A1, A2, C1 | 29 s → about 20 s (index and half the memo gone) |
+| next | A3, A4, C3, E1 | about 10 s one-shot; less memory everywhere |
 | architecture | B1–B3, D4, C2 (in a session) | under 1 s in a session |
 | then | B4 (one-shot), D1–D3, D5, E2 | under 1 s one-shot; a comment edit at the cost of a warm run |
 
 Stream B and D4 are decision 0090's own steps 2–4. They should be built where 0090 is being built, not as a
 second mechanism. This plan adds the measurement, stream A, and the pack-side work (D1–D3) around them.
 
-## The A1 trial
+## The rule-level trial, and why A1 is in the engine
 
-To be filled in from the run in progress: cold and edit CPU, memo bytes, and the findings against the run above.
+F823's three `outer` rules were rewritten to start from `outer_cand(f, x) :- read(_, x, f, _), local_in(f, x)`.
+Same workload, same build:
+
+| Run | Before | With `outer_cand` |
+|---|---:|---:|
+| cold CPU | 146 s (load 100) | 161 s (load 120) |
+| cold peak | 5.6 GB | 4.4 GB |
+| edit CPU | 29.2 s (load 65) | 37.8 s (load 72) |
+| memo replay on the edit | 10.4 s, 11.9 GB | 13.5 s, 11.9 GB |
+| the `outer` base-input index | 6.6 s, 6.1 GB | 7.6 s, 6.1 GB |
+| memo, uncompressed | 1,450 MB | 1,528 MB |
+| findings | 615, 616 after the edit | the same |
+
+Nothing moved but the noise. `outer_cand` itself is small (27,191 rows), but it is a cross-file relation: one of
+the relations it reads is cross-file. So the split still pushes `inside(f, p, fscope), bound_in(p, x)` into the
+chunks on its own and exports it (now as `fl3437_p137_outer`, still 15.4 M rows in `conftest.py`). A rule cannot
+steer that; the split must (A1).
