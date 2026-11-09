@@ -3754,11 +3754,11 @@
     "previousUpstreamCommit": "04e3b5b83cc915926d842a8fe3ba6d94c78b555b",
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "7e77fa2ead6148b651731514be9670e15934a288",
-      "engineCommit": "87537241d5130f0461556d964e690320ce6950fc",
+      "upstreamCommit": "07bba2f69102a09a7a66e0c0119905d7807d0af9",
+      "engineCommit": "ad3e52a109a0f5a9a1f999ac0501434e19b51a74",
       "sourceTrees": {
-        "native": "481848f5a4913fcdfdb7050de664a52be93a93cd",
-        "accel": "082f5a84143d8cc8547150d1f617f1cf47ab4887",
+        "native": "f9e53632c2997d40292adcb7a46bd608b2b78baa",
+        "accel": "bef82f014cb20e05ea0c03f5c4178b828760c7d5",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
