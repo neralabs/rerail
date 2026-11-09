@@ -3,14 +3,14 @@
 //! A tree-sitter node's visible children follow its rule in `grammar.json`. For each visible kind
 //! this module builds the rule's automaton over the children (named children labelled by kind and
 //! field, anonymous tokens by kind and field; hidden rules inlined) and determinizes it. Between
-//! two named children, and after the last, the tokens are a *gap*. Each gap has a **default**: the
-//! shortest token word (ties broken by a fixed order) that leads from the automaton's state to the
-//! next named child, or to the end.
+//! two named children, and after the last, the tokens are a *gap*. A gap's tokens are
+//! **recognized** from the source between its named neighbours: a bounded search over the
+//! automaton's token moves from the gap's state (longest text first, then a fixed order), each
+//! token the next text that is not white space, ending exactly where the next named child starts
+//! (or the node ends) in a state that takes that child (or accepts).
 //!
-//! [`fold`] keeps a gap's tokens only when they are not its default, or when the decoder could not
-//! rebuild them exactly: [`unfold`] rebuilds a default gap's tokens from the source between the
-//! named neighbours, skipping white space a word at a time, and `fold` replays that recovery and
-//! keeps the gap when any kind, field or span would differ. So `unfold(fold(t)) == t` holds by
+//! [`fold`] drops a gap's tokens when recognition rebuilds exactly them (kinds, fields, spans);
+//! otherwise it keeps them, and [`unfold`] only recognizes gaps with no kept tokens. So `unfold(fold(t)) == t` holds by
 //! construction, whatever the grammar; a node the automaton cannot walk (an ERROR, a contextual
 //! alias, a grammar the corpus disagrees with) keeps all of its tokens and is flagged.
 //! Nothing here is chosen by hand: a new grammar version is a new automaton, never a
@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
 use rustc_hash::FxHashMap;
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Language;
 
 /// An interned name (a kind or a field; 0 is "no field").
@@ -41,10 +41,8 @@ struct Automaton {
     /// Per state: its moves, by label.
     moves: Vec<FxHashMap<Label, u32>>,
     accepting: Vec<bool>,
-    /// Per state: the default token word to each named label, with the state it reaches before
-    /// that label; and the default word to the end.
-    to_named: Vec<FxHashMap<Label, (Vec<Label>, u32)>>,
-    to_end: Vec<Option<Vec<Label>>>,
+    /// Per state: its token moves in recognition order (longest text first, then by label).
+    tokens: Vec<Vec<(Label, u32)>>,
 }
 
 /// Every visible kind's automaton for one grammar.
@@ -299,45 +297,6 @@ fn determinize(nfa: &Nfa, start: u32, accept: u32) -> Option<(Vec<FxHashMap<Labe
     Some((moves, accepting))
 }
 
-/// The defaults from each state: a breadth-first search over token moves, in label order, so the
-/// first word found to a state is a shortest one, the same one every time.
-fn defaults(moves: &[FxHashMap<Label, u32>], accepting: &[bool]) -> (Vec<FxHashMap<Label, (Vec<Label>, u32)>>, Vec<Option<Vec<Label>>>) {
-    let mut to_named = Vec::with_capacity(moves.len());
-    let mut to_end = Vec::with_capacity(moves.len());
-    for start in 0..moves.len() as u32 {
-        let mut word: FxHashMap<u32, Vec<Label>> = FxHashMap::default();
-        let mut queue = VecDeque::from([start]);
-        word.insert(start, Vec::new());
-        let mut order = Vec::new();
-        while let Some(state) = queue.pop_front() {
-            order.push(state);
-            let mut tokens: Vec<(Label, u32)> = moves[state as usize].iter().filter(|(l, _)| l.token).map(|(l, &t)| (*l, t)).collect();
-            tokens.sort();
-            for (label, to) in tokens {
-                if !word.contains_key(&to) {
-                    let mut w = word[&state].clone();
-                    w.push(label);
-                    word.insert(to, w);
-                    queue.push_back(to);
-                }
-            }
-        }
-        let mut named: FxHashMap<Label, (Vec<Label>, u32)> = FxHashMap::default();
-        let mut end = None;
-        for &state in &order {
-            if end.is_none() && accepting[state as usize] {
-                end = Some(word[&state].clone());
-            }
-            for (label, _) in moves[state as usize].iter().filter(|(l, _)| !l.token) {
-                named.entry(*label).or_insert_with(|| (word[&state].clone(), state));
-            }
-        }
-        to_named.push(named);
-        to_end.push(end);
-    }
-    (to_named, to_end)
-}
-
 impl TokenGrammar {
     /// Every visible kind's automaton from `json` (a `grammar.json`), its names resolved in
     /// `language`.
@@ -403,9 +362,17 @@ impl TokenGrammar {
                 unsupported.insert(name.clone());
                 continue;
             };
-            let (to_named, to_end) = defaults(&moves, &accepting);
+            let texts = &builder.texts;
+            let tokens = moves
+                .iter()
+                .map(|out| {
+                    let mut tokens: Vec<(Label, u32)> = out.iter().filter(|(l, _)| l.token).map(|(l, &t)| (*l, t)).collect();
+                    tokens.sort_by_key(|&(label, _)| (std::cmp::Reverse(texts[label.name as usize].len()), label));
+                    tokens
+                })
+                .collect();
             let sym = builder.sym(name);
-            kinds.insert(sym, Automaton { moves, accepting, to_named, to_end });
+            kinds.insert(sym, Automaton { moves, accepting, tokens });
         }
         let Builder { names, texts, .. } = builder;
         let kind_sym = (0..language.node_kind_count() as u16)
@@ -536,20 +503,69 @@ fn skip_white(source: &[u8], mut at: usize, end: usize) -> usize {
     end
 }
 
-/// The tokens of a default gap, read from the source from `at`: each the next text that is not
-/// white space, spelling the token's kind. `None` where the source does not spell them.
-fn recover(grammar: &TokenGrammar, word: &[Label], source: &[u8], mut at: usize, end: usize) -> Option<Vec<(Label, u32, u32)>> {
-    let mut out = Vec::with_capacity(word.len());
-    for &label in word {
-        let text = grammar.text(label.name).as_bytes();
-        at = skip_white(source, at, end);
-        if text.is_empty() || at + text.len() > end || &source[at..at + text.len()] != text {
+/// Search steps per gap: recognition gives up (and `fold` keeps the gap) past this, the same way
+/// on both sides.
+const RECOGNIZE_STEPS: u32 = 4096;
+
+/// Whether `source[at..]` spells `text`: exactly, or (keywords of case-insensitive grammars, such
+/// as PHP's and SQL's) ignoring ASCII case.
+fn spells(source: &[u8], at: usize, text: &[u8]) -> bool {
+    let got = &source[at..at + text.len()];
+    got == text || got.eq_ignore_ascii_case(text)
+}
+
+/// The tokens of a gap from `state`, recognized in `source[at..limit]`: the first word, in
+/// recognition order, whose tokens spell the source (white space between them) up to `limit`,
+/// and after which the automaton takes `next` (or, at the end, accepts). `None` if there is none
+/// within [`RECOGNIZE_STEPS`].
+fn recognize(
+    grammar: &TokenGrammar,
+    automaton: &Automaton,
+    source: &[u8],
+    state: u32,
+    at: usize,
+    limit: usize,
+    next: Option<Label>,
+) -> Option<(Vec<(Label, u32, u32)>, u32)> {
+    fn walk(
+        grammar: &TokenGrammar,
+        automaton: &Automaton,
+        source: &[u8],
+        state: u32,
+        at: usize,
+        limit: usize,
+        next: Option<Label>,
+        out: &mut Vec<(Label, u32, u32)>,
+        steps: &mut u32,
+    ) -> Option<u32> {
+        if *steps == 0 {
             return None;
         }
-        out.push((label, at as u32, text.len() as u32));
-        at += text.len();
+        *steps -= 1;
+        let at = skip_white(source, at, limit);
+        if at == limit {
+            let fits = match next {
+                Some(label) => automaton.moves[state as usize].contains_key(&label),
+                None => automaton.accepting[state as usize],
+            };
+            return fits.then_some(state);
+        }
+        for &(label, to) in &automaton.tokens[state as usize] {
+            let text = grammar.text(label.name).as_bytes();
+            if text.is_empty() || at + text.len() > limit || !spells(source, at, text) {
+                continue;
+            }
+            out.push((label, at as u32, text.len() as u32));
+            if let Some(end) = walk(grammar, automaton, source, to, at + text.len(), limit, next, out, steps) {
+                return Some(end);
+            }
+            out.pop();
+        }
+        None
     }
-    Some(out)
+    let mut out = Vec::new();
+    let mut steps = RECOGNIZE_STEPS;
+    walk(grammar, automaton, source, state, at, limit, next, &mut out, &mut steps).map(|end| (out, end))
 }
 
 fn children_of(nodes: &[Pending]) -> Vec<Vec<u32>> {
@@ -603,7 +619,6 @@ pub(in crate::code_rule_dsl) fn fold(
         // Walk the children; a gap's fate is decided at its named child, or at the end.
         let mut drops: Vec<u32> = Vec::new();
         let mut not_default: Vec<String> = Vec::new();
-        let mut unrecoverable = 0usize;
         let mut ok = true;
         let mut state = 0u32;
         let mut gap: Vec<u32> = Vec::new();
@@ -611,7 +626,7 @@ pub(in crate::code_rule_dsl) fn fold(
         let mut at = node.start as usize;
         let mut gap_start = at;
         let end = (node.start + node.length) as usize;
-        let mut close = |gap: &mut Vec<u32>, gap_extra: bool, gap_start: usize, state: &mut u32, next: Option<Label>, limit: usize, drops: &mut Vec<u32>, not_default: &mut Vec<String>, unrecoverable: &mut usize| -> bool {
+        let close = |gap: &mut Vec<u32>, gap_extra: bool, gap_start: usize, state: &mut u32, next: Option<Label>, limit: usize, drops: &mut Vec<u32>, not_default: &mut Vec<String>| -> bool {
             let mut word = Vec::with_capacity(gap.len());
             for &t in gap.iter() {
                 let token = &nodes[t as usize];
@@ -625,48 +640,42 @@ pub(in crate::code_rule_dsl) fn fold(
                     None => return false,
                 }
             }
-            let default = match next {
-                Some(label) => {
-                    if !automaton.moves[s as usize].contains_key(&label) {
-                        return false;
-                    }
-                    automaton.to_named[*state as usize].get(&label).map(|(w, _)| w.clone())
-                }
-                None => {
-                    if !automaton.accepting[s as usize] {
-                        return false;
-                    }
-                    automaton.to_end[*state as usize].clone()
-                }
+            let fits = match next {
+                Some(label) => automaton.moves[s as usize].contains_key(&label),
+                None => automaton.accepting[s as usize],
             };
+            if !fits {
+                return false;
+            }
+            let from = *state;
             *state = match next {
                 Some(label) => automaton.moves[s as usize][&label],
                 None => s,
             };
             if gap.is_empty() {
-                return true;
+                // The decoder reads a gap it cannot recognize as empty; one it recognizes as
+                // tokens would be wrong here, so the node keeps its (no) tokens.
+                return recognize(grammar, automaton, source, from, gap_start, limit, next).is_none_or(|(spans, _)| spans.is_empty());
             }
-            if default.as_ref() != Some(&word) {
-                not_default.push(word.iter().map(|l| grammar.text(l.name)).collect::<Vec<_>>().join(" "));
-                return true;
-            }
-            // The default: can the decoder rebuild exactly these tokens?
-            let exact = !gap_extra
+            // Can the decoder recognize exactly these tokens from the source?
+            let plain = !gap_extra
                 && gap.iter().all(|&t| {
                     let token = &nodes[t as usize];
                     !token.extra && !token.missing && token.kind_alias.is_none() && !has_class.contains_key(&t) && children[t as usize].is_empty()
-                })
-                && recover(grammar, &word, source, gap_start, limit).is_some_and(|spans| {
-                    spans.iter().zip(gap.iter()).all(|(&(label, start, length), &t)| {
-                        let token = &nodes[t as usize];
-                        token.start == start && token.length == length && grammar.token_id.get(&label.name) == Some(&(token.kf & 1023))
-                    })
                 });
-            if exact {
-                drops.extend(gap.iter().copied());
-            } else {
-                *unrecoverable += gap.len();
+            let exact = plain
+                && recognize(grammar, automaton, source, from, gap_start, limit, next).is_some_and(|(spans, _)| {
+                    spans.len() == gap.len()
+                        && spans.iter().zip(gap.iter()).zip(&word).all(|((&(label, start, length), &t), actual)| {
+                            let token = &nodes[t as usize];
+                            label == *actual && token.start == start && token.length == length && grammar.token_id.get(&label.name) == Some(&(token.kf & 1023))
+                        })
+                });
+            if !exact {
+                not_default.push(word.iter().map(|l| grammar.text(l.name)).collect::<Vec<_>>().join(" "));
+                return true;
             }
+            drops.extend(gap.iter().copied());
             true
         };
         for &c in &children[index] {
@@ -692,7 +701,7 @@ pub(in crate::code_rule_dsl) fn fold(
                 gap_start = at;
             }
             let label = Label { token: false, name, field: view.field(child) };
-            if !close(&mut gap, gap_extra, gap_start, &mut state, Some(label), child.start as usize, &mut drops, &mut not_default, &mut unrecoverable) {
+            if !close(&mut gap, gap_extra, gap_start, &mut state, Some(label), child.start as usize, &mut drops, &mut not_default) {
                 ok = false;
                 break;
             }
@@ -705,7 +714,7 @@ pub(in crate::code_rule_dsl) fn fold(
             if gap.is_empty() {
                 gap_start = at;
             }
-            ok = close(&mut gap, gap_extra, gap_start, &mut state, None, end, &mut drops, &mut not_default, &mut unrecoverable);
+            ok = close(&mut gap, gap_extra, gap_start, &mut state, None, end, &mut drops, &mut not_default);
         }
         if !ok {
             // The decoder runs this kind's automaton, so a node it cannot walk is always flagged.
@@ -718,7 +727,6 @@ pub(in crate::code_rule_dsl) fn fold(
             continue;
         }
         stats.implied += drops.len();
-        stats.kept_unrecoverable += unrecoverable;
         let parent = view.name(node).map(|s| grammar.text(s).to_owned()).unwrap_or_default();
         for word in not_default {
             stats.kept_not_default += word.split(' ').count();
@@ -816,8 +824,6 @@ pub(in crate::code_rule_dsl) fn unfold(
             }
             Ok(())
         };
-        let kind = view.name(node).map(|s| grammar.text(s).to_owned()).unwrap_or_default();
-        let at_node = |error: &str| format!("{error} in {kind} at {}", node.start);
         for &c in kids {
             let child = &nodes[c as usize];
             if child.extra {
@@ -835,10 +841,10 @@ pub(in crate::code_rule_dsl) fn unfold(
             let name = view.name(child).ok_or("a named child outside the grammar")?;
             let label = Label { token: false, name, field: view.field(child) };
             if stored.is_empty() {
-                let (word, _) = automaton.to_named[state as usize].get(&label).ok_or_else(|| at_node(&format!("no default before {}", grammar.text(label.name))))?;
-                let spans = recover(grammar, word, bytes, at, child.start as usize).ok_or_else(|| at_node("a default gap the source does not spell"))?;
+                // A gap recognition cannot read is empty (`fold` made sure of it).
+                let (spans, to) = recognize(grammar, automaton, bytes, state, at, child.start as usize, Some(label)).unwrap_or((Vec::new(), state));
                 sequence.extend(spans.into_iter().map(|(l, s, n)| Work::Token(l, s, n, here)));
-                advance(&mut state, word)?;
+                state = to;
             } else {
                 advance(&mut state, &stored)?;
                 stored.clear();
@@ -848,8 +854,7 @@ pub(in crate::code_rule_dsl) fn unfold(
             at = (child.start + child.length) as usize;
         }
         if stored.is_empty() {
-            let word = automaton.to_end[state as usize].as_ref().ok_or_else(|| at_node("no default at the end"))?;
-            let spans = recover(grammar, word, bytes, at, end).ok_or("a default end gap the source does not spell")?;
+            let (spans, _) = recognize(grammar, automaton, bytes, state, at, end, None).unwrap_or_default();
             sequence.extend(spans.into_iter().map(|(l, s, n)| Work::Token(l, s, n, here)));
         }
         stack.extend(sequence.drain(..).rev());
