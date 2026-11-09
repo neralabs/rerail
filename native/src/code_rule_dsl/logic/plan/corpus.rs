@@ -3407,7 +3407,10 @@ fn run_observed(
     // files are as they were, and their row counts. And that program's key, to record what this run writes.
     let mut unchanged_outputs: HashMap<String, usize> = HashMap::new();
     let mut written_key: Option<[u8; 32]> = None;
-    if !cross.program.rules.is_empty() {
+    // Folding can leave an output as facts with no deriving rule. It still runs
+    // once for the corpus, including when no primary document was selected.
+    let output_facts = cross.program.outputs.iter().any(|r| cross.program.facts.get(r).is_some_and(|rows| !rows.is_empty()));
+    if !cross.program.rules.is_empty() || output_facts {
         // RERAIL_DUMP_CROSS=<file>: the cross-file part's rules, one per line (a debugging aid).
         if let Ok(path) = std::env::var("RERAIL_DUMP_CROSS") {
             let _ = std::fs::write(path, cross.program.rules.iter().map(|r| format!("{r}\n")).collect::<String>());
