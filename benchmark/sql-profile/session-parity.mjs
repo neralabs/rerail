@@ -12,12 +12,32 @@ function normalize(value) {
   if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map(key => [key, normalize(value[key])]));
   return value;
 }
+function cell(value) {
+  return value === null || typeof value === "string" && /^-?\d+$/.test(value)
+    || value && typeof value === "object" && !Array.isArray(value)
+      && (Object.keys(value).length === 1 && (typeof value.symbol === "string" || typeof value.document === "string")
+        || Object.keys(value).length === 1 && Array.isArray(value.node) && value.node.length === 2
+          && typeof value.node[0] === "string" && typeof value.node[1] === "string" && /^\d+$/.test(value.node[1]));
+}
+function documents(value) {
+  if (!Array.isArray(value) || value.some(f => !f || typeof f.path !== "string" || typeof f.language !== "string" || typeof f.source !== "string")) throw new Error("Missing complete document state");
+  if (new Set(value.map(f => f.path)).size !== value.length) throw new Error("Duplicate document path");
+  return value.map(f => ({path:f.path,language:f.language,source:f.source})).sort((a,b)=>a.path.localeCompare(b.path));
+}
+function publishFiles(before, step) {
+  if (step.snapshot) return documents(step.snapshot.files);
+  if (!step.file_changes) return before;
+  const files = new Map(before.map(f=>[f.path,f]));
+  for (const file of step.file_changes.upsert ?? []) files.set(file.path,file);
+  for (const path of step.file_changes.delete ?? []) files.delete(path);
+  return documents([...files.values()]);
+}
 function state(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Missing complete state");
   return Object.fromEntries(Object.entries(value).map(([name, table]) => {
     if (!Array.isArray(table.columns) || !table.columns.every(c => typeof c === "string") || !Array.isArray(table.rows)
         || !table.rows.every(row => Array.isArray(row) && row.length === table.columns.length
-          && row.every(cell => cell === null || typeof cell === "string" && /^-?\d+$/.test(cell)))) throw new Error(`Invalid integer relation ${name}`);
+          && row.every(cell))) throw new Error(`Invalid integer relation ${name}`);
     // Preserve multiplicity. Sorting permits differences in SQL scan order.
     return [name, { columns: table.columns, rows: table.rows.map(canonical).sort() }];
   }));
@@ -32,8 +52,9 @@ export function compareSessions(requestBytes, actual, oracle, execution) {
   const request = JSON.parse(requestBytes), requestSha256 = sha256(requestBytes), problems = [];
   const steps = request.steps ?? (request.changes ?? []).map(changes => ({ changes }));
   const checks = [], failures = [];
-  if (typeof request.program !== "string" || Object.keys(request).some(name => !["program", "dialect", "relations", "steps", "changes", "max_waves", "queries"].includes(name))) problems.push("Unsupported verification request fields");
-  for (const step of steps) if (!step || Object.keys(step).some(name => !["changes", "limits", "max_waves", "expected_error"].includes(name))) problems.push("Unsupported verification step fields");
+  if (typeof request.program !== "string" || Object.keys(request).some(name => !["program", "dialect", "relations", "snapshot", "steps", "changes", "max_waves", "queries"].includes(name))) problems.push("Unsupported verification request fields");
+  for (const step of steps) if (!step || Object.keys(step).some(name => !["changes", "snapshot", "file_changes", "limits", "max_waves", "expected_error"].includes(name))) problems.push("Unsupported verification step fields");
+  for (const step of steps) if (["changes","snapshot","file_changes"].filter(k=>Object.hasOwn(step,k)).length !== 1) problems.push("Ambiguous publication action");
   for (const q of request.queries ?? []) if (typeof q !== "string" && (!q || Object.keys(q).some(name => !["sql", "parameters"].includes(name)))) problems.push("Unsupported verification query fields");
   if (request.steps && request.changes) problems.push("Ambiguous change sequence");
   if (!Array.isArray(steps)) throw new Error("Missing change sequence");
@@ -45,6 +66,8 @@ export function compareSessions(requestBytes, actual, oracle, execution) {
   }
   if (execution.retained?.status !== 0 || execution.oracle?.status !== 0 || execution.retained?.signal || execution.oracle?.signal || execution.retained?.error || execution.oracle?.error) problems.push("Verification process failed");
   if (canonical(actual?.outputs) !== canonical(oracle?.outputs) || canonical(actual?.relations) !== canonical(oracle?.relations)) problems.push("Different compiled relation inventories");
+  if (canonical(actual?.inputs) !== canonical(oracle?.inputs)) problems.push("Different bound input inventories");
+  let expectedDocuments = request.snapshot ? documents(request.snapshot.files) : null;
   let failureChecks = 0, recoveredFailures = 0, pendingFailure = false;
   for (let id = 0; id <= steps.length; id++) {
     const a = actual?.checks?.[id], o = oracle?.checks?.[id], expectedOutcome = id === 0 ? "ok" : steps[id - 1].expected_error ?? "ok";
@@ -52,6 +75,14 @@ export function compareSessions(requestBytes, actual, oracle, execution) {
     if (!a || !o || a.id !== id || o.id !== id) { failures.push({ id, errors: ["Missing checkpoint"] }); continue; }
     if (a.outcome !== expectedOutcome || o.outcome !== expectedOutcome) errors.push("Unexpected execution outcome");
     try {
+      if (id > 0 && expectedOutcome === "ok" && (expectedDocuments !== null || steps[id-1].snapshot)) {
+        expectedDocuments = publishFiles(expectedDocuments,steps[id-1]);
+      }
+      if (expectedDocuments !== null) {
+        if (canonical(documents(a.documents)) !== canonical(expectedDocuments)
+            || canonical(documents(o.documents)) !== canonical(expectedDocuments)) errors.push("Complete document contents differ");
+        for (const [name,columns] of Object.entries(actual.inputs ?? {})) if (canonical(a.state[name]?.columns) !== canonical(columns)) errors.push(`Missing native input ${name}`);
+      }
       const actualState = state(a.state), oracleState = state(o.state), actualSha256 = hashState(a.state), oracleSha256 = hashState(o.state);
       if (actualSha256 !== oracleSha256) errors.push("Complete relation contents differ");
       if (canonical(Object.keys(actualState).sort()) !== canonical(Object.keys(actual.checks[0].state).sort())) errors.push("Relation inventory changed");
@@ -89,6 +120,7 @@ export function compareSessions(requestBytes, actual, oracle, execution) {
   if (canonical(actual?.queries) !== canonical(oracle?.queries)) problems.push("Query results differ");
   if (!failureChecks || !recoveredFailures || pendingFailure) problems.push("Failure rollback and subsequent recovery require coverage");
   return { format: "rerail.sql-session-parity/v1", requestSha256, runnerSha256: execution.runnerSha256,
+    publications: [...new Set([...(request.snapshot ? ["bindSnapshot"] : []),...steps.map(s=>s.snapshot?"applySnapshot":s.file_changes?"applyFileChanges":"applyChanges")])],
     expectedChecks: steps.length + 1, checks, failureChecks, recoveredFailures, queries: queryCount, problems, failures };
 }
 

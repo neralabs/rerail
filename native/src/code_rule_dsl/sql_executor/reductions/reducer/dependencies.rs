@@ -6,7 +6,7 @@ impl Reducer {
         self.native_keys || self.outer_keys.iter().any(|e| !plain(e))
     }
     fn dependencies(&self) -> String {
-        format!("{}_dependencies", self.groups)
+        self.dependencies.clone()
     }
     pub(super) fn initialize_dependencies(
         &self,

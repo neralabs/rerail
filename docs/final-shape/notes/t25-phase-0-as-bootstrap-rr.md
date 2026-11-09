@@ -187,6 +187,29 @@ Where the optimized cold run's 16.1 s of main-thread CPU goes:
 
 The warm run's 3.4 s: memo replay into SQLite 1.5 s, typeshed's load requests 0.9 s, statistics 0.8 s.
 
+### The first fixes, in the dev build
+
+Cold runs of calls_cx on the 84 files, profiled. The load average was 70–157, so CPU differs by up to a quarter
+between runs of the same code. Every run agreed on all 6,299 answers.
+
+| part | before | after | what changed |
+|---|---|---|---|
+| moving the chunks' rows to the cross-file part | 10.5 s | 7.9 s | each run of one document's rows finds its owners once, and rows are gathered by file and handed on once (before: a list allocated and a relation's name copied for each row) |
+| storing the import components' rows | 3.5 s | 3.0 s | one sort of the rows tagged by component; a column's last checked document is kept |
+| statistics | 11.9 s | 7.1 s | the prepared plan's facts are stored as they are, not parsed back from their own text (3.6 s) |
+| the file-local split, within statistics | 1.84 s | 1.73 s | a rule is checked again only when a relation it reads was found cross-file |
+
+What remains:
+- **Statistics, own time, 4.4 s.** Not yet attributed.
+- **Pushing the file-local joins, 1.7 s.** It runs the split five times: twice for each of the two pushes, and
+  once to check whether the cross-file part reads base relations.
+- **The 53-relation stratum.** With no component found, its 1,986 `!rr_cross_doc` guards are now dropped
+  (`cross_memo::drop_guards`). This halves its join work (72.9 M to 39.6 M units). Two cold runs side by side, one
+  binary keeping the guards and one dropping them, under the same load: 20.5 s against 18.4 s for the stratum's joins,
+  and 109.2 s against 104.6 s for the process (user + sys). The stratum's 12.7 s before the change was at a lower
+  load. What remains in it is the joins' own lookups (`RowRef::at`, `Stored::rows_of`, index sorts) and the debug
+  build's checks.
+
 ## Open items
 
 - O144: a relation the request cone derives is written empty as an output. `bootstrap.rr` outputs copies.

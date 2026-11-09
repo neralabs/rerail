@@ -12,7 +12,8 @@
 //! - each file's file-local rows (decision 0052's memo), in memory, under its content, path and the file-local
 //!   program: an unchanged file is neither parsed nor evaluated.
 //!
-//! The cross-file part runs every time, over every file's rows. A run with T's facts or typing is not a session's
+//! The cross-file part reuses unchanged retained strata. Gates reuse only a complete unchanged program.
+//! A run with T's facts or typing is not a session's
 //! (`corpus::run_with_options`).
 
 use super::memo;

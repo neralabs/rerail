@@ -1257,6 +1257,36 @@ NQ(m, c) :- hit(m, c).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A text test of a capture in the body that captured it tests the capture's text: `match_all("(?<w>…)", t),
+/// match("…", w)` over a string's content (RUF001's words). It once tested the span's id as a text, and never held.
+#[test]
+fn a_text_test_of_a_capture_in_its_own_body_tests_the_captured_text() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("capturetest");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a = \"x\u{211d}y plain\"\nb = \"2\u{211d}6789\"\n").unwrap();
+    let rule = dir.join("m.rr");
+    std::fs::write(&rule, r#"
+.decl piece(t: loc)
+piece(p) :- kind(p, "string_content").
+.decl wide(w: symbol)
+wide(x) :- piece(t), match_all("(?<w>[\\p{Alphabetic}\\p{N}]+)", t), match("[\\s\\S]*[^\\x00-\\x7f][\\s\\S]*", w), text(w, x).
+.decl odd(w: symbol)
+odd(x) :- piece(t), match_all("(?<w>[a-z0-9ℝ]+)", t), !match(".*ℝ.*", w), text(w, x).
+.output wide, odd
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows.join("\n")
+    };
+    assert_eq!(read("wide"), "2\u{211d}6789\nx\u{211d}y");
+    assert_eq!(read("odd"), "plain");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0081: `match_all` over nodes the rules bind to a kind, through derived columns that join kinds, and over
 /// another pattern's captures; a distinct text is scanned once, and containers with equal text each get their spans.
 /// A capture inside `count : { … }` reads its text from the rule.

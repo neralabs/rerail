@@ -133,8 +133,9 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     changed.sort();
     let mut dirty: BTreeSet<String> = changed.iter().cloned().collect();
     let mut clean = BTreeSet::new();
-    // A program with gates keeps their relations to its end and decides on them together: it runs whole.
-    let whole = kept.is_none() || !prog.gates.is_empty();
+    // Gates decide on the whole program. Reuse it only when every input and derived relation survived unchanged.
+    let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.rels.contains_key(r)));
+    let whole = kept.is_none() || (!prog.gates.is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
     for scc in &sccs {
         let runs = whole || reads(prog, scc).iter().any(|r| dirty.contains(r)) || !scc.iter().all(|r| kept.is_some_and(|k| k.rels.contains_key(r)));
@@ -155,6 +156,9 @@ impl Cut {
         let mut program = cross.program.clone();
         program.rules.retain(|r| !self.clean.contains(&r.head.rel));
         program.natives.retain(|rel, _| !self.clean.contains(rel));
+        if self.strata.0 == 0 {
+            program.gates.clear();
+        }
         let read: BTreeSet<String> = program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.clone())).collect();
         for rel in self.clean.iter().filter(|r| read.contains(*r)) {
             if !program.inputs.contains(rel) {
@@ -258,6 +262,20 @@ pub(in crate::code_rule_dsl) fn kept_source(
 }
 
 impl Retained {
+    /// The inputs of program `key` whose rows are as the last run had them (`inputs`, each input's digest): the
+    /// last run's sources of them, read again in place of this run's copies, so their column indexes and
+    /// statistics are kept with them (0094 §4), not built again.
+    pub(in crate::code_rule_dsl) fn same_inputs(&self, key: [u8; 32], inputs: &HashMap<String, u64>) -> Vec<(String, Arc<dyn Source>)> {
+        if self.key != key {
+            return Vec::new();
+        }
+        inputs
+            .iter()
+            .filter(|(rel, d)| self.inputs.get(*rel) == Some(*d))
+            .filter_map(|(rel, _)| self.input_srcs.get(rel).map(|s| (rel.clone(), Arc::clone(s))))
+            .collect()
+    }
+
     /// The statistics measured of kept relation `held` bound as `name`, if a run measured them.
     pub(in crate::code_rule_dsl) fn measured(&self, name: &str, held: &Arc<InRel>) -> Option<&Measured> {
         self.measured.get(&(name.to_owned(), Arc::as_ptr(held) as *const u8 as usize))
@@ -273,19 +291,6 @@ impl Retained {
         self.inputs.get(rel).copied()
     }
 
-    /// The inputs of program `key` whose rows are as the last run had them (`inputs`, each input's digest): the
-    /// last run's sources of them, read again in place of this run's copies, so their column indexes and
-    /// statistics are kept with them (0094 §4), not built again.
-    pub(in crate::code_rule_dsl) fn same_inputs(&self, key: [u8; 32], inputs: &HashMap<String, u64>) -> Vec<(String, Arc<dyn Source>)> {
-        if self.key != key {
-            return Vec::new();
-        }
-        inputs
-            .iter()
-            .filter(|(rel, d)| self.inputs.get(*rel) == Some(*d))
-            .filter_map(|(rel, _)| self.input_srcs.get(rel).map(|s| (rel.clone(), Arc::clone(s))))
-            .collect()
-    }
     /// Whether the last run's rows of a relation or an input are kept.
     pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
         self.rels.contains_key(rel) || self.input_srcs.contains_key(rel)
@@ -397,5 +402,39 @@ impl Source for Renamed {
     }
     fn ordered_range(&self, equal: &[(usize, i64)]) -> Option<std::ops::Range<usize>> {
         self.0.ordered_range(equal)
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unchanged_gated_programs_reuse_only_complete_retained_results() {
+        use crate::code_rule_dsl::logic::magic;
+        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(include_str!("../golden/programs/workload.rr")).unwrap());
+        let p = magic::magic_adorn(p, &magic::Options { gate:true, ..Default::default() }).unwrap();
+        assert!(!p.gates.is_empty());
+        let (strata,_) = front::strata(&p).unwrap();
+        let key=[1;32];
+        let inputs:HashMap<_,_>=p.inputs.iter().map(|r|(r.clone(),7)).collect();
+        let rels=strata.iter().flatten().map(|name| {
+            let width=p.decls[name].len();
+            (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
+        }).collect();
+        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default()};
+        let result=cut(Some(&kept),key,&p,&inputs).unwrap();
+        assert_eq!(result.strata,(0,strata.len()));
+        let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let reused=result.program(&lowered);
+        assert!(reused.program.rules.is_empty() && reused.program.gates.is_empty());
+        let mut changed=inputs.clone();
+        *changed.values_mut().next().unwrap()=8;
+        for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
+            assert_eq!(cut(Some(&kept),candidate,&p,&rows).unwrap().strata,(strata.len(),strata.len()));
+        }
+        let missing=kept.rels.keys().next().unwrap().clone();
+        kept.rels.remove(&missing);
+        assert_eq!(cut(Some(&kept),key,&p,&inputs).unwrap().strata,(strata.len(),strata.len()));
     }
 }

@@ -748,13 +748,14 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
 /// a finding's location) or relations of documents (`p9_path_module(d, m)`), is a row per node of the chunk: on 200
 /// files, 611,865 rows for each such rule, every one held by the cross part. It is pushed only when that keeps the
 /// cross part off the base relations (so the per-file memo works); when the cross part reads them anyway, it reads
-/// these lookups there too.
+/// these lookups there too. So is a component that enumerates subtrees (`descends`): `within(n, a)` with `n`
+/// narrowed only by its attributes.
 pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
     let original = prog.clone();
-    let made = push_with(prog, false);
-    if cross_reads_base(prog) {
+    let (made, local) = push_with(prog, false);
+    if cross_reads_base(prog, &local) {
         *prog = original;
-        return push_with(prog, true);
+        return push_with(prog, true).0;
     }
     made
 }
@@ -868,9 +869,8 @@ pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program
     Some(semi)
 }
 
-/// Whether a rule outside the chunks reads a base relation.
-fn cross_reads_base(prog: &crate::code_rule_dsl::logic::front::Program) -> bool {
-    let local = split(prog);
+/// Whether a rule outside the chunks (`local`: `split(prog)`) reads a base relation.
+fn cross_reads_base(prog: &crate::code_rule_dsl::logic::front::Program, local: &std::collections::BTreeSet<String>) -> bool {
     prog.rules.iter().filter(|r| !local.contains(&r.head.rel)).any(|r| {
         r.body.iter().any(|l| l.atom().is_some_and(|a| prog.inputs.iter().any(|i| *i == a.rel)))
     })
@@ -889,7 +889,24 @@ fn unrestricted(prog: &crate::code_rule_dsl::logic::front::Program, atoms: &[&cr
         && atoms.iter().all(|a| (attribute(&a.rel) && plain(a)) || (!attribute(&a.rel) && !prog.decls.get(&a.rel).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span")))))
 }
 
-fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrestricted: bool) -> Vec<String> {
+/// Whether a component enumerates subtrees: `within(n, a)` with `n` read by no other atom of it but a node's
+/// attributes (`docof`, `visit_index`, `line`, …). Its rows are every node under each `a` it narrows, whatever reads
+/// it: `c4_shadow`'s `binding(s, x, site, _), within(n, s), earlier(site, n)` made 922,044 rows on the Python pack's
+/// fixtures for a cross-file reader that binds `n` from a few hundred asks (`c4_builtin_ask(n, x)`).
+fn descends(atoms: &[&crate::code_rule_dsl::logic::front::Atom]) -> bool {
+    use crate::code_rule_dsl::logic::front::Term;
+    let attribute = |rel: &str| matches!(rel, "docof" | "line" | "end_line" | "col" | "visit_index" | "ast_depth");
+    atoms.iter().any(|w| match (w.rel.as_str(), w.args.as_slice()) {
+        ("within", [Term::Var(n), a]) if a != &Term::Var(n.clone()) => atoms
+            .iter()
+            .filter(|b| !std::ptr::eq(**b, *w) && b.args.iter().any(|t| matches!(t, Term::Var(x) if x == n)))
+            .all(|b| attribute(&b.rel)),
+        _ => false,
+    })
+}
+
+/// The relations made, and the split of the program as it is left (`split(prog)`).
+fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrestricted: bool) -> (Vec<String>, std::collections::BTreeSet<String>) {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
     // An atom such as field(parent, name, child) connects its node columns. Document equality
@@ -936,8 +953,9 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
     // Per rule, how much it takes: 0 negated base and file-local reads, 1 negated base reads only, 2 nothing (the
     // split did not find the join file-local: a negation read through no location column, say).
     let mut level: BTreeMap<usize, u8> = BTreeMap::new();
+    // The program is changed only when a round succeeds, so its split is found once.
+    let local = split(prog);
     loop {
-        let local = split(prog);
         let mut next = prog.clone();
         let mut made: Vec<(usize, String)> = Vec::new();
         let mut helpers: Vec<Rule> = Vec::new();
@@ -1008,7 +1026,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 }
                 // A component that holds a row for every node of the chunk (nothing in it narrows its nodes) is left
                 // when the cross part reads base relations anyway (`push_local_joins`).
-                if keep_unrestricted && unrestricted(prog, &atoms) {
+                if keep_unrestricted && (unrestricted(prog, &atoms) || descends(&atoms)) {
                     continue;
                 }
                 // Comparisons and negated file-local reads over only this component's variables go with it.
@@ -1074,14 +1092,14 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             next.rules[i].body = out;
         }
         if made.is_empty() {
-            return Vec::new();
+            return (Vec::new(), local);
         }
         next.rules.extend(helpers);
         let now = split(&next);
         let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
         if failed.is_empty() {
             *prog = next;
-            return made.into_iter().map(|(_, n)| n).collect();
+            return (made.into_iter().map(|(_, n)| n).collect(), now);
         }
         for i in failed {
             *level.entry(i).or_default() += 1;
