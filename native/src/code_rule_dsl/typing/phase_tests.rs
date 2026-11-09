@@ -13,7 +13,8 @@ fn types_resolves_names_bases_members_and_annotations_by_symbol() {
     std::fs::create_dir_all(src.join("pkg")).unwrap();
     std::fs::write(src.join("pkg/__init__.py"), "from pkg.m import C as Exported\n").unwrap();
     std::fs::write(src.join("pkg/m.py"), "class B:\n    def run(self) -> int:\n        return 1\n    size: int = 0\n\nclass C(B):\n    def own(self) -> 'B':\n        return self\n").unwrap();
-    std::fs::write(src.join("n.py"), "from pkg import Exported\nimport pkg.m\n\nlimit: int = 3\n\ndef f(c: Exported, d: pkg.m.B) -> None:\n    pass\n").unwrap();
+    std::fs::write(src.join("pkg/star.py"), "from pkg.m import *\n").unwrap();
+    std::fs::write(src.join("n.py"), "from pkg import Exported\nimport pkg.m\nfrom pkg.star import B\n\nlimit: int = 3\n\ndef f(c: Exported, d: pkg.m.B) -> None:\n    pass\n\ndef g(u: B | None) -> list[B] | None:\n    pass\n").unwrap();
     let out = dir.join("out");
     let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
@@ -53,6 +54,7 @@ v(s, d) :- types__vtype(s, _, d).
     assert!(b.contains(&"n\tExported\tpkg.m.C".to_owned()), "{b:?}");
     assert!(b.contains(&"pkg\tExported\tpkg.m.C".to_owned()), "{b:?}");
     assert!(b.contains(&"n\tlimit\tn.limit".to_owned()), "{b:?}");
+    assert!(b.contains(&"n\tB\tpkg.m.B".to_owned()), "through `from pkg.m import *`: {b:?}");
     assert_eq!(rows("k"), ["pkg.m.C\t0\tpkg.m.B"]);
     let a = rows("a");
     assert!(a.contains(&"pkg.m.C\trun\tpkg.m.B.run\tpkg.m.B".to_owned()), "inherited: {a:?}");
@@ -61,7 +63,10 @@ v(s, d) :- types__vtype(s, _, d).
     let s = rows("s");
     assert!(s.contains(&"n.f\t0\tc\tpkg.m.C".to_owned()), "an annotation through the re-export: {s:?}");
     assert!(s.contains(&"n.f\t1\td\tpkg.m.B".to_owned()), "a dotted annotation through `import pkg.m`: {s:?}");
+    // A union: each alternative's head, None as builtins.None.
+    assert!(s.contains(&"n.g\t0\tu\tpkg.m.B".to_owned()) && s.contains(&"n.g\t0\tu\tbuiltins.None".to_owned()), "{s:?}");
     let r = rows("r");
+    assert!(r.contains(&"n.g\tlist[B] | None\tbuiltins.None".to_owned()), "{r:?}");
     assert!(r.contains(&"pkg.m.C.own\t'B'\tpkg.m.B".to_owned()), "a quoted forward reference: {r:?}");
     let v = rows("v");
     assert!(v.contains(&"pkg.m.B.size\t".to_owned()) || v.iter().any(|l| l.starts_with("pkg.m.B.size\t")), "{v:?}");
@@ -98,7 +103,12 @@ imp_ok(m, x, t) :- imp(m, x, t), types__binds(m, x, _).
 .decl imp_lib(m: symbol, x: symbol, t: symbol)
 imp_lib(m, x, t) :- imp(m, x, t), types__binds(m, x, d), types__owner(d, o), lib(o).
 .decl imp_miss(m: symbol, x: symbol, t: symbol)
-imp_miss(m, x, t) :- imp(m, x, t), !imp_ok(m, x, t).
+imp_miss(m, x, t) :- imp(m, x, t), !imp_ok(m, x, t), !imp_absent(m, x, t).
+.decl struct__def(s: symbol, k: symbol)
+// An import of a module the corpus does not have (the fixture is part of a repository) or of a name in one.
+.decl imp_absent(m: symbol, x: symbol, t: symbol)
+imp_absent(m, x, t) :- imp(m, x, t), !imp_ok(m, x, t), !struct__def(t, "module"), split_dot(t, p, y), !struct__def(p, "module").
+imp_absent(m, x, t) :- imp(m, x, t), !imp_ok(m, x, t), !contains(".", t), !struct__def(t, "module").
 .decl ann(f: symbol, i: number, a: symbol)
 ann(f, i, a) :- types__sig(f, i, _, a, _), a != "", types__owner(f, m), ws(m).
 ann(f, -1, a) :- types__rtype(f, a, _), types__owner(f, m), ws(m).
@@ -115,7 +125,7 @@ ann_lib(s, -2, a) :- types__vtype(s, a, d), types__owner(s, m), ws(m), types__ow
 ann_miss(f, i, a) :- ann(f, i, a), !ann_ok(f, i, a).
 .decl lib_attr(c: symbol, x: symbol)
 lib_attr(c, x) :- types__attr(c, x, _, _), types__owner(c, o), lib(o).
-.output ws, lib, imp, imp_ok, imp_lib, imp_miss, ann, ann_ok, ann_lib, ann_miss, lib_attr
+.output ws, lib, imp, imp_ok, imp_lib, imp_miss, imp_absent, ann, ann_ok, ann_lib, ann_miss, lib_attr
 "#;
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
@@ -134,12 +144,12 @@ lib_attr(c, x) :- types__attr(c, x, _, _), types__owner(c, o), lib(o).
     show("cold", &cold);
     let pct = |a: usize, b: usize| 100.0 * a as f64 / b.max(1) as f64;
     println!("TYPES modules: workspace {}, library {}", count("ws"), count("lib"));
-    println!("TYPES workspace imports: {} bound, {} resolved ({:.1}%), {} to a library's symbol", count("imp"), count("imp_ok"), pct(count("imp_ok"), count("imp")), count("imp_lib"));
+    println!("TYPES workspace imports: {} bound, {} resolved ({:.1}%), {} to a library's symbol; {} of a module the corpus lacks, {} missed ({:.1}% of the rest resolved)", count("imp"), count("imp_ok"), pct(count("imp_ok"), count("imp")), count("imp_lib"), count("imp_absent"), count("imp_miss"), pct(count("imp_ok"), count("imp") - count("imp_absent")));
     println!("TYPES workspace annotations: {} written, {} resolved ({:.1}%), {} to a library's symbol", count("ann"), count("ann_ok"), pct(count("ann_ok"), count("ann")), count("ann_lib"));
     println!("TYPES library class lookups answered by attr: {}", count("lib_attr"));
     for rel in ["imp_miss", "ann_miss"] {
         let text = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
-        for l in text.lines().take(12) {
+        for l in text.lines().take(25) {
             println!("TYPES {rel}: {l}");
         }
     }

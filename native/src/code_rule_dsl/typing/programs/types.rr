@@ -52,6 +52,10 @@ parent(s, p) :- struct__vann(s, _), split_dot(s, p, _).
 binds(m, x, d) :- struct__binds(m, x, "def", d).
 binds(m, x, @dot(m, x)) :- struct__binds(m, x, "assign", "").
 binds(m, x, d) :- struct__binds(m, x, "import", t), res(t, d).
+// `from n import *`: n's names that are not private, and not bound in m itself.
+binds(m, x, d) :- struct__binds(m, "*", "star", n), binds(n, x, d), x != "*", !prefix("_", x), !own_name(m, x).
+.decl own_name(m: symbol, x: symbol)
+own_name(m, x) :- struct__binds(m, x, how, _), how != "star".
 .decl mbound(m: symbol, x: symbol)
 mbound(m, x) :- binds(m, x, _).
 
@@ -75,9 +79,18 @@ written(m, a) :- struct__param(f, _, _, a), a != "", owner(f, m).
 written(m, a) :- struct__ret(f, a), owner(f, m).
 written(m, a) :- struct__vann(s, a), owner(s, m).
 .decl head_of(m: symbol, e: symbol, h: symbol)
-head_of(m, e, h) :- written(m, e), h0 = @replace_all(e, "\\[.*$", ""), h = @replace_all(h0, "^[\"']|[\"']$", ""), h != "".
+head_of(m, e, h) :- alt(m, e, a), h0 = @replace_all(a, "\\[.*$", ""), h = @replace_all(h0, "^[\"']|[\"']$", ""), h != "", !contains("]", h).
+// alt(m, e, a): an alternative of union e (`A | None`), each part split at its first `|` (one inside brackets
+// splits too: the part left of it keeps its head, the part right of it has `]` and is dropped above).
+.decl alt(m: symbol, e: symbol, a: symbol)
+.decl rest(m: symbol, e: symbol, s: symbol)
+rest(m, e, e) :- written(m, e).
+rest(m, e, b) :- rest(m, e, s), match("^[^|]*\\|\\s*(?<b>.*)$", s).
+alt(m, e, a) :- rest(m, e, s), match("^(?<a>[^|]*[^|\\s])\\s*(\\|.*)?$", s).
 // rexpr(m, e, d): e's head names d: a name of m, or else a builtin; a dotted head through its first name.
 .decl rexpr(m: symbol, e: symbol, d: symbol)
+// `None` is the type of None.
+rexpr(m, e, "builtins.None") :- head_of(m, e, "None").
 rexpr(m, e, d) :- head_of(m, e, h), !contains(".", h), binds(m, h, d).
 rexpr(m, e, d) :- head_of(m, e, h), !contains(".", h), !mbound(m, h), binds("builtins", h, d).
 rexpr(m, e, d) :- head_of(m, e, h), contains(".", h), x = @head(h), binds(m, x, d0), r = substr(h, strlen(x) + 1, strlen(h) - strlen(x) - 1),
