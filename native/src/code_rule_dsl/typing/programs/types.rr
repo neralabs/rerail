@@ -26,7 +26,7 @@
 #include "core.rr"
 
 .phase types
-.export binds, bases, anc, attr, sig, rtype, vtype
+.export binds, bases, anc, attr, sig, rtype, vtype, owner
 
 .decl struct__def(s: symbol, k: symbol)
 .decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
@@ -39,8 +39,11 @@
 // ---- where a symbol is: the module it is defined in ------------------------------------------------------------
 .decl owner(s: symbol, m: symbol)
 owner(s, s) :- struct__def(s, "module").
-owner(s, m) :- struct__def(s, k), k != "module", split_dot(s, p, _), owner(p, m).
-owner(s, m) :- struct__vann(s, _), split_dot(s, p, _), owner(p, m).
+owner(s, m) :- parent(s, p), owner(p, m).
+// parent(s, p): s is defined in p, by its symbol: made once, so the recursion above joins on p.
+.decl parent(s: symbol, p: symbol)
+parent(s, p) :- struct__def(s, k), k != "module", split_dot(s, p, _).
+parent(s, p) :- struct__vann(s, _), split_dot(s, p, _).
 
 // ---- a module's names ------------------------------------------------------------------------------------------
 // binds(m, x, d): module m binds x to symbol d: a definition, a value assigned (its symbol `m.x`), or what an

@@ -237,7 +237,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // upstream change is a new key (types over struct: a changed struct export runs types again).
         // Their runs are listed with the reader's, in the order they ran (struct, types, …), each once.
         let (upstream, upstream_runs, upstream_handed) = self::facts(&program, root, scratch, modes, binding, chunk_nodes, typing, options, &|_| None)?;
-        let key = run_key(&format!("{text}\n{}", digest_facts(&upstream)), root, options);
+        let key = run_key(&format!("{text}\n{}", digest_facts(&upstream, &upstream_handed)), root, options);
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
                 runs.push(r);
@@ -540,14 +540,21 @@ fn hand_on(name: &str, program: &Program, reads: &[(String, String)], rows: &BTr
     Ok(())
 }
 
-/// A digest of the rows earlier phases hand on.
-fn digest_facts(facts: &Facts) -> String {
+/// A digest of what earlier phases hand on: each export's version, which the phase store moves only when its rows
+/// change, or else its rows, in order (a full run hands them on as written, a kept one as stored).
+fn digest_facts(facts: &Facts, versions: &Deltas) -> String {
     let mut h = Sha256::new();
     for (rel, rows) in facts {
         h.update(rel.as_bytes());
         h.update([0]);
+        if let Some(v) = versions.get(rel) {
+            h.update(v.now.to_le_bytes());
+            continue;
+        }
+        let mut rows: Vec<String> = rows.iter().map(|r| format!("{r:?}")).collect();
+        rows.sort();
         for row in rows {
-            h.update(format!("{row:?}").as_bytes());
+            h.update(row.as_bytes());
             h.update([1]);
         }
     }
@@ -597,11 +604,19 @@ fn reuse(phase: &str, key: &str, text: &str, root: &Path, typing: &Typing, optio
     let db = Connection::open(&path)?;
     records(&db)?;
     let Some((last, consulted)): Option<(String, String)> = db.query_row("SELECT key, consulted FROM phase_record WHERE phase=?1", [phase], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(None) };
+    // `RERAIL_PHASE_WHY`: why a phase was not kept, on stderr.
+    let why = |what: &str| {
+        if std::env::var_os("RERAIL_PHASE_WHY").is_some() {
+            eprintln!("phase {phase}: not kept: {what}");
+        }
+    };
     if last != key {
+        why("its key changed (its program, options, root or an earlier phase's exports)");
         return Ok(None);
     }
     let consulted = parse_consulted(&consulted);
-    if !super::unchanged(&[text], root, typing, options, &consulted)? {
+    if !super::unchanged_phase(&[text], root, typing, options, &consulted)? {
+        why("an input it consulted changed");
         return Ok(None);
     }
     Ok(Some(documents(&consulted)))
@@ -906,6 +921,9 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, ["p1", "p2"]);
         assert!(report.phase_runs[1].report.phase_runs.is_empty(), "p1 is not checked again inside p2's run");
+        // Nothing changed: p2 is kept, although p1's rows come back from the store in another order than its run wrote.
+        let again = run(&reader).unwrap();
+        assert!(again.phase_runs.iter().all(|r| r.report.phases.first().is_some_and(|p| p.0.starts_with("unchanged"))), "both kept: {:?}", again.phase_runs.iter().map(|r| r.report.phases.first().map(|p| p.0)).collect::<Vec<_>>());
         // p1 changed (its program: no class has a base now): p2, which reads it, is not kept.
         std::fs::write(phases.join("p1.rr"), p1.replace("text(e, b).", "text(e, b), b = \"none\".")).unwrap();
         run(&reader).unwrap();
