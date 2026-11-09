@@ -2349,3 +2349,10 @@ The checkpoint lists all 28 original tests outside native acceptance. The five r
 The [signature TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-signature-tdd.json.gz) adds both original signature tests and 72 complete API cases.
 The shared native verifier also passes 1,110 recorded transport/error cases in one SQL batch.
 Both blocker collectors, legacy scanning, and CLI reporting remain open. A combined original-suite replay and production acceptance still remain to run.
+
+The [collector checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-collectors-checkpoint.json.gz) adds both collectors and reruns all implemented API contracts together.
+It passes 140 original tests, 204 complete observations, and 145 supplemental cases across the four recorded corpora.
+The collector policy shares its definitions with the full step policy. Its API routes and consumed libraries are audited.
+Logical load requests now retain their answers while sharing one physical document. Target changes invalidate retained observations.
+All 177 tooling tests, seven filesystem tests, and 99 rule-engine tests pass.
+The checkpoint lists all 24 original cases outside native acceptance. Legacy scanning, CLI, configuration, and production acceptance remain unfinished.

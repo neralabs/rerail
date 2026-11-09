@@ -9621,3 +9621,32 @@ The final root CLI and unit builds take 15.498 and 27.118 seconds.
 The [TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-signature-tdd.json.gz) retains the original failures, complete API results, parser corpus, and build identities.
 Both blocker collectors, legacy scanning, and CLI reporting remain untranslated.
 The complete original-suite replay and production acceptance remain open, along with seven absent translations and earlier migration gaps.
+
+### 2026-11-09 — Blocker collectors, shared definitions, and logical load answers
+
+Both blocker collectors now execute native `.rr` policies. Filesystem discovery uses the engine's existing observer and load requests.
+The collector policy imports the same AST and candidate definitions as the full step policy.
+Static API routing selects that consumer. The parity auditor checks each declared policy and rejects conflicting shared-library hashes.
+
+Positive cases expose two detector defects. Side-effect exceptions require `path:class` keys, and duplicate class names share candidate membership.
+The repairs retain duplicate findings in the direct checker APIs.
+Additional cases preserve decorators, hidden/test/temporary files, overlapping roots, relative discovery, and a separate read root.
+Direct checks preserve outside-root `ValueError` results. File scanning converts those errors to `PARSE` findings; collectors ignore those failed files.
+An error in one batched checker no longer suppresses an independent check's result.
+
+A file-link case exposes a generic engine defect: physical-load deduplication discards a later logical request's answer.
+The engine now answers every accepted logical request and parses each new physical document once.
+Dependency snapshots also record the requested path's target. A test rejects a changed symlink target even when both files have identical bytes.
+All seven filesystem tests and 99 rule-engine tests pass. Two existing rule-engine helpers remain ignored.
+
+The first repository-fixture attempts exceed the 100-second native timeout in the debug build.
+An external `sample` report and relational-lab captures show planning work and unrelated producers from the full rule program.
+The focused collector removes those producer dependencies. Its debug execution still exceeds the original fixture limit.
+The optimized root build takes 478.732 seconds. Both original collector tests then pass over all 546 files in about 31.7 seconds per command.
+Compilation remains separate from acceptance timing. Diagnostic captures use different subsets and include instrumentation overhead.
+
+The [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-collectors-checkpoint.json.gz) audits 140 original tests and 204 complete observations through 168 native calls.
+All twelve combined shards pass within 115 seconds; the slowest takes 97.880 seconds.
+All 45 detector cases, thirteen scanner cases, 72 signature cases, fifteen collector/path cases, and 177 tooling tests pass.
+The checkpoint retains all 58 positive detector observations and names the 24 original cases outside native acceptance.
+Legacy scanning, CLI reporting, configuration, production acceptance, controls, updates, seven absent translations, and earlier migration gaps remain open.
