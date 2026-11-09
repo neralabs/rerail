@@ -12,6 +12,7 @@ mod initial;
 mod cte;
 mod analysis;
 mod sharing;
+mod shape;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();

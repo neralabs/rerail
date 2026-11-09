@@ -49,8 +49,7 @@ pub(super) fn keys(w: &mut Work<'_>, target: &str, d: &Delta, width: usize) -> R
 
 impl Frame {
     pub(super) fn fused(&self, relations: usize) -> bool {
-        self.operators.iter().all(|op| op.phase_eligible)
-            && self.operators.iter().map(|op| op.phase_arms).sum::<usize>() + relations * 6 < 500
+        self.operators.iter().map(|op| op.phase_arms).sum::<usize>() + relations * 6 < 500
     }
     pub fn prepared(&self, store: &versions::Store) -> Vec<(usize, Prepared)> {
         self.operators
@@ -192,7 +191,7 @@ impl Frame {
         let _scope = store.activate(self.scope)?;
         if self.fused(relations.len()) {
             return self.advance_phase(
-                w, store, relations, steps, desired, external, active, preparing, templates,
+                w, store, relations, steps, desired, external, active, preparing, templates, limit,
             );
         }
         let mut touched = BTreeMap::new();

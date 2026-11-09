@@ -423,7 +423,7 @@ fn retained_statistics_are_sql_queryable_through_views_and_restore_on_failure() 
     assert_eq!(rows(&e,"SELECT rows FROM observed_counts WHERE tbl='distance'"),json!([[3]]));
     assert!(e.apply_changes(json!([{"name":"edge","insert":[[2,3,2]]}]).to_string(),Some(1)).is_err());
     assert_eq!(rows(&e,"SELECT rows FROM observed_counts WHERE tbl='distance'"),json!([[3]]));
-    e.run(".decl distance(n:number,d:number)\n.input distance\n.decl copied(n:number,d:number)\ncopied(n,d) :- distance(n,d).\n.output copied\n".into(),"python".into(),None).unwrap();
+    e.run(".decl copied(n:number,d:number)\n.input copied(IO=sql, query=\"SELECT c0,c1 FROM distance\")\n.output copied\n".into(),"python".into(),None).unwrap();
     assert!(e.statistics.snapshot().is_none());
     assert_eq!(rows(&e,"SELECT rows FROM observed_counts WHERE tbl='distance'"),json!([[3]]));
 }
