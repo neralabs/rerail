@@ -111,17 +111,27 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
             _ => false,
         })
     };
-    // A scan of the corpus: the fewest rows of a base atom that binds the rule's key (measured counts of the base
-    // relations and of the program's constants, not estimates of derived relations); `None` when no base atom does.
+    // A scan of the corpus: per head variable, the fewest rows of a base atom that binds it (measured counts of the
+    // base relations and of the program's constants, not estimates of derived relations), and the most of those over
+    // the head's variables; `None` when no base atom binds one. Not the key's alone: in
+    // `restores(s, x, a) :- binding(s, x, site, _), site != a, earlier(site, a)` a derived atom binds the key `s`,
+    // and `earlier`'s `docof(a, d)` makes a row for every node after each site (1.6 M rows on the Python pack's
+    // fixtures, for a reader that asks about 483).
     let scan = |rule: &Rule| -> Option<f64> {
-        let Some(key @ Term::Var(_)) = rule.head.args.first() else { return None };
-        rule.body
+        rule.head
+            .args
             .iter()
-            .filter_map(|l| match l {
-                Literal::Atom(a) if !a.neg && base(prog, &a.rel) && a.args.contains(key) => Some(base_rows(prog, model, a)),
-                _ => None,
+            .filter(|t| matches!(t, Term::Var(_)))
+            .filter_map(|v| {
+                rule.body
+                    .iter()
+                    .filter_map(|l| match l {
+                        Literal::Atom(a) if !a.neg && base(prog, &a.rel) && a.args.contains(v) => Some(base_rows(prog, model, a)),
+                        _ => None,
+                    })
+                    .reduce(f64::min)
             })
-            .reduce(f64::min)
+            .reduce(f64::max)
     };
     // A scan is worth demanding when it reaches at least this many rows: the rows not built must outweigh the strata
     // the split adds (`pre_<i>` and `demand_<r>`, opened in every chunk).

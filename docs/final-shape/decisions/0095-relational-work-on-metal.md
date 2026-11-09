@@ -348,12 +348,26 @@ sys), GPU time from the command buffers' timestamps (0039), and its occupancy.
   - The profile prices the GPU at the work done, and marks strata whose estimate is off by 10x or more.
   - Placement before the run reads the plan's estimate. A replan from observed fanouts (decision 0038's
     observations) is what corrects it.
-- **A text-test result changed with the merges, toward ruff.**
-  - RUF001 now reports `flake8_simplify/SIM401.py:62`, and ruff reports it too.
-  - Ruff also reports line 43, which we still miss. The two strings differ only by a final `ß`, and we find 2 of
-    the 5 `ℝ` on line 62.
-  - This looks like an offset problem in `match_all` over non-ASCII spans. It is open, and the reference findings
-    are not updated for it.
+- **A text test of a capture in its own body never held.**
+  - In `match_all("(?<w>…)", t), match("…", w)` the test of `w` was lowered as `@rx(w, …)`, a test of the span's
+    id as a text. Only an atom reading `w` at a node column made it a test of `w`'s text.
+  - RUF001's words are this shape, so RUF001 reported nothing on the fixtures, where ruff reports 54. The one line
+    that appeared after the merges came by another path.
+  - A named group of a `match_all` over a node or span is now a span (`node_typed`). The test reads its text.
+- **`p511_restores` and `q6_c4_shadow` were large by the rules' shape, not by the join order.**
+  - `restores(s, x, a)` makes a row for every node after each binding site (1.6 M rows). Its one reader asks about
+    483. Demand (decision 0048) passed it over: it measured a relation by a base atom on the head's first column,
+    which a derived atom binds here. It now takes the largest such measure over the head's variables.
+  - `c4_shadow`'s file-local piece, `binding(s, x, site, _), within(n, s), earlier(site, n)`, was pushed into the
+    chunks. There it enumerated every node under each scope (922,044 rows), without the cross-file reader that
+    binds `n`. A component whose `within` descendant is narrowed only by its attributes now stays with the
+    reader, where the cross part reads base relations anyway.
+- **The three fixes together** (Python pack, cold, load 102–137):
+  - CPU fell from 79.3 s (73.0 user + 6.4 sys) to 55.6 s (51.3 + 4.3), instructions from 728 G to 677 G, and peak RSS
+    from 1.60 GB to 1.48 GB.
+  - The placed strata take 12.45 s (they took 21.6 s). `restores` and the `c4_shadow` pieces take milliseconds.
+  - Findings change only in RUF001 (14 lines) and RUF003 (3 lines), which now match ruff's line for line.
+  - The GPU would still be cheaper for 1,353 strata (11.0 s), each of them a join.
 
 ## Answered (the user, 2026-11-09)
 
