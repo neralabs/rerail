@@ -1867,7 +1867,14 @@ impl Lowerer {
                 return Ok(Literal::Atom(Atom { rel: format!("{axis}{set}"), args, neg, gated: false }));
             }
             ("split_dot", [q, m, x]) if !neg => {
-                return Ok(Literal::Cmp { l: self.term(q)?, op: "=", r: Term::Call("cat".to_owned(), vec![self.term(m)?, self.term(x)?]) });
+                // A part not wanted (`split_dot(q, m, _)`) is a variable of its own, so the split is placed only once
+                // q is bound, or both parts are: a wildcard part would read as bound.
+                let mut part = |t: &STerm| -> Result<Term, Error> {
+                    let t = self.term(t)?;
+                    Ok(if matches!(t, Term::Wild) { Term::Var(self.fresh("part")) } else { t })
+                };
+                let (m, x) = (part(m)?, part(x)?);
+                return Ok(Literal::Cmp { l: self.term(q)?, op: "=", r: Term::Call("cat".to_owned(), vec![m, x]) });
             }
             ("ast", _) if !neg => return self.ast(args),
             ("precedes_stop", [a, b, set]) => {

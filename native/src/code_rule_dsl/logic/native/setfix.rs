@@ -2007,7 +2007,7 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
             }
             "cat" => {
                 let (o, a, b) = (tok(toks[1], syms)?, tok(toks[2], syms)?, tok(toks[3], syms)?);
-                let (Some(Key::Slot(o)), Some(a), Some(b)) = (o, a, b) else { return Err(err("bad cat")) };
+                let (Some(Key::Slot(o)), Some(a), Some(b)) = (o, a, b) else { return Err(err(format!("bad cat: {}", toks.join(" ")))) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) {
                     if !is_bound(&bound, Key::Slot(o)) { return Err(err("cat of an unbound slot")); }
                     let part = |b: &mut Vec<bool>, k: Key| match k {
