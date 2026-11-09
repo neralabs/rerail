@@ -2667,6 +2667,39 @@ count). The tool is a dev script, not engine code.
 
 Not yet measured: key churn across commits (renames and moves), and rows under tree-sitter's tapes rather than `ast`.
 
+**0094 §2's encoding, sized** (2026-11-08, `scripts/profiling/o126/encoding.py`). Same repository and `ast` proxy.
+Granules as §2 sets them: the innermost function or method, a class header, and each module-level statement (an
+import by the names it binds, any other by its digest and `#k`). A slot is a hash of the symbol over 14 bits. The run
+covers 136 commits of the last 300 that change at most 40 files; two chunks of the run hit the 2-minute cap.
+
+- **Rows renumbered per commit**, in the encoding against preorder: a median 3.8x fewer (p25 2.4x, p75 6.0x).
+  - On the 7 one-file commits: 225 rows against 2,620 (11.6x).
+  - The encoding renumbers a median 13.7% of the changed files' nodes; preorder renumbers 53%.
+- **How clashes are settled hardly matters for rows.**
+  - Settling by symbol order (§2) and probing in source order (today's flag) differ by 818 rows of 2.48 M.
+  - Granules moved by a clash: 21 by symbol order and 35 in source order, over all 136 commits.
+  - §2's rule is about stability (a granule never moves because of an unrelated insert), not about cost.
+- **Module-level statements as granules save little.** Keeping them as one root granule, as the flag does today,
+  renumbers a median 6% more rows per commit (12% in total, over 25 commits).
+- **Field widths**, over the 13,088 files at HEAD:
+  - granules per file: p50 17, p99 221, max 3,073;
+  - granules that share a slot with another: 1,873 at 14 bits, 493 at 16, 7,559 at 12;
+  - the largest granule is 21,388 `ast` nodes. Tree-sitter's nodes plus tokens are a few times that, under
+    18 bits' 262,144.
+
+  The flag's widths (14-bit slot, 18-bit index) fit. A file with more granules than slots keeps preorder ids
+  (`DefIds::new`).
+
+**Readers that assumed preorder ids** (2026-11-08). The flag's encoding can only go in once nothing reads a node
+id's low bits as a preorder index or a subtree as a contiguous id range:
+- `core_rr.rs` (part starts) and both guest paths (`facts/vtab/syntax/guests.rs`, `plan/corpus/guests.rs`) now map
+  the id to its local index (`local_of`, `syntax::Numbering`) before indexing.
+- `front/cycles.rs` treats `<` and `>` between two node variables under the flag as ordering by value
+  (`Later`/`Earlier`), not as moves down or up the tree.
+- `native/extension.rs`'s tape (dense, preorder vectors, and `down` as `n+1..=n+size`) is read only by
+  `run_sql_native` over T's own per-file facts, which are preorder by construction. Every engine path drops
+  `nearest` and `kseed`, so the tape never sees an engine id. It is unchanged.
+
 ## O127. Layout invariance of today's engine (decision 0083, spike 3)
 
 **Method:** move definitions between modules of the 84 files, with imports rewritten by a script. Run with and
@@ -2930,6 +2963,18 @@ and both in a `rr_in_annotation_0_*` relation.
   has matching rows (`pv__del(…6154, 1451, …5048)`, `ext_base_up__old(c, …6154)`). Turning the demand split off
   does not change it. The suspicion is the evaluation of the rewritten rule (delta probe or replanning), not the
   rewrite.
+
+  It persists on the tree with every branch merged (survivors in place, scalar sharing, exports in memory;
+  2026-11-08). One session over steps 01–20 matches a full run until step 05. From step 05 on, `call_open` has 2
+  extra rows (`l2055_lazy_result/tests/test_lazy_result_bugs.py:1067`), unchanged through step 20. Survivors in
+  place is not the cause, because the departure is older than that spike. On the merged tree, the row is
+  `(c, b) = (…6151, …5048)` with `e = …6154`, and the rule now reads `fl684_ext_base_up__old(c, e),
+  pv__del(e, 158, b), !special_base__old(e)`. Every input row is present: `ext_base_up__old(c, e)`,
+  `pv__del(e, 158, b)` and no `special_base__old(e)`. The profile shows the rule ran with `pv__del` as its delta:
+  40 delta rows in, 8 out, and the row is not among them. `base(c, b)` itself is in `base__del`. So the fault is
+  in the semi-naive evaluation of the over-delete stratum (174 relations). The step to take next is to replay
+  step 05 with that stratum evaluated naively. If the row comes back, the delta bookkeeping is wrong; if not, the
+  probe is.
 - **Typeshed, step 17.** `rr_in_annotation_0_gfn` has 60 rows extra and 3 missing. The extra rows are in `__del`
   and in `__ins` but not in `__old`: the insert rules derive them from rows that a full run does not have.
 
@@ -3182,3 +3227,22 @@ Decision 0095 §6. **Closure:** `git_rev("head", …)` from `HEAD` as an observe
 `merge_base` (the `revision` feature) of `HEAD` and the base reference, kept under the two ids; `at="base"` reading
 at it; the whole-run cutoff checking `HEAD` and the reference.
 
+
+## O-stored-patterns. A stored prepared program lost its AST patterns, and its memo kept the result (fixed)
+
+**Seen (2026-11-08)** as `pattern_literals_match_and_bind_their_metavariables` failing on a warm shared tape cache
+and passing on an empty one. Every finding was `Plain`, none `Cut`: the run had no `ast_match` rows.
+
+- `program_facts` writes a program's `rx_spans` and not its `ast_patterns`. A prepared program read back from the store
+  (`prepared::lookup`) therefore asks the batch for no pattern matches.
+- A run that reuses the prepared program and finds no file-local memo row makes the document's facts without
+  `ast_match`, and memoises that result. `program_digest`, the memo's key, did not include the patterns, so the result
+  matched the key of a correct run, and later runs read it.
+- To reproduce on an empty cache: run the test, delete `facts_results` rows with `fact_schema = 5`, run it again.
+
+**Fix:** `ast_pattern(p, s)` in the program facts, read back into `ast_patterns`
+(`ast_patterns_read_back_as_written`). `program_digest` now also hashes `rx_spans` and `ast_patterns`.
+
+**Still open:** `Program::answers` has no relation in the program facts either. Check whether a stored prepared
+program needs it. **Closure:** every `Program` field a run reads after `prepared::lookup` either round-trips through
+the program facts or is derived from what does, and a test compares a read-back program against the original.

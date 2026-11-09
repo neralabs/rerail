@@ -53,6 +53,11 @@ enum Move {
     /// To a node nearer the root, and further from it (`Depths`).
     Shallower,
     Deeper,
+    /// To a greater and a smaller value, by `<` between two variables, where that is not preorder: under node ids
+    /// per definition (`RERAIL_NODE_IDS=definition`, decision 0094 §2) a node's id follows preorder only inside its
+    /// granule, so `$a < $b` and a tree edge are moves in two orders, and a cycle may not mix them.
+    Later,
+    Earlier,
 }
 
 impl Move {
@@ -64,6 +69,8 @@ impl Move {
             Move::Longer => Move::Shorter,
             Move::Shallower => Move::Deeper,
             Move::Deeper => Move::Shallower,
+            Move::Later => Move::Earlier,
+            Move::Earlier => Move::Later,
         }
     }
 }
@@ -117,6 +124,20 @@ fn base() -> Moves {
 }
 
 /// A rule's variables' edges: `var → [(var, Some(step) or None for the same node)]`.
+/// Whether `<` between variables is its own order (`Move::Later`), not preorder: node ids per definition.
+fn by_value() -> bool {
+    crate::code_rule_dsl::facts::vtab::syntax::definition_ids()
+}
+
+/// The orders a key may move along: the tree's, and under node ids per definition, values' (`Move::Later`).
+fn ways() -> Vec<Move> {
+    let mut out = vec![Move::Down, Move::Up];
+    if by_value() {
+        out.extend([Move::Later, Move::Earlier]);
+    }
+    out
+}
+
 fn edges(rule: &Rule, moves: &Moves) -> BTreeMap<String, Vec<(String, Option<Step>)>> {
     let mut out = BTreeMap::<String, Vec<(String, Option<Step>)>>::new();
     let mut add = |a: &str, b: &str, m: Option<Step>| {
@@ -138,14 +159,18 @@ fn edges(rule: &Rule, moves: &Moves) -> BTreeMap<String, Vec<(String, Option<Ste
                     add(x, v, Some((Move::Shorter, strict)));
                 }
             }
-            Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } => match *op {
-                "=" => add(x, y, None),
-                "<" => add(x, y, Some((Move::Down, true))),
-                "<=" => add(x, y, Some((Move::Down, false))),
-                ">" => add(x, y, Some((Move::Up, true))),
-                ">=" => add(x, y, Some((Move::Up, false))),
-                _ => {}
-            },
+            Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } => {
+                // A node is its preorder index, so `<` moves down, unless ids are per definition (`Move::Later`).
+                let (later, earlier) = if by_value() { (Move::Later, Move::Earlier) } else { (Move::Down, Move::Up) };
+                match *op {
+                    "=" => add(x, y, None),
+                    "<" => add(x, y, Some((later, true))),
+                    "<=" => add(x, y, Some((later, false))),
+                    ">" => add(x, y, Some((earlier, true))),
+                    ">=" => add(x, y, Some((earlier, false))),
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
@@ -488,7 +513,7 @@ fn summary(prog: &Program, rules: &[&Rule], moves: &Moves) -> Guarantees {
     for &i in &columns {
         for &j in columns.iter().filter(|&&j| j != i) {
             let mut held = BTreeSet::new();
-            for way in [Move::Down, Move::Up] {
+            for way in ways() {
                 let reached: Option<Vec<bool>> = rules
                     .iter()
                     .zip(&edges)
@@ -533,7 +558,7 @@ fn summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
         let columns = node_columns(prog, rel);
         let all: Guarantees = columns
             .iter()
-            .flat_map(|&i| columns.iter().filter(move |&&j| j != i).map(move |&j| ((i, j), BTreeSet::from([(Move::Down, true), (Move::Up, true)]))))
+            .flat_map(|&i| columns.iter().filter(move |&&j| j != i).map(move |&j| ((i, j), ways().into_iter().map(|m| (m, true)).collect::<BTreeSet<_>>())))
             .collect();
         moves.insert((*rel).clone(), all);
     }
@@ -874,7 +899,7 @@ pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<Str
         let mut first = None;
         let ok = !choices.is_empty()
             && choices.iter().all(|(_, columns)| !columns.is_empty())
-            && [Move::Down, Move::Up, Move::Longer, Move::Shallower, Move::Deeper].into_iter().any(|way| {
+            && ways().into_iter().chain([Move::Longer, Move::Shallower, Move::Deeper]).any(|way| {
                 keys(&choices, 4096).iter().any(|key| match bounded(&rules, component, key, &functions, way, &moves, &depths) {
                     Ok(()) => true,
                     Err(rule) => {
