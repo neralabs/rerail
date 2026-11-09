@@ -247,6 +247,8 @@ pub(in crate::code_rule_dsl) struct Stats {
     pub(in crate::code_rule_dsl) obs: HashMap<(u64, Sig), [i64; 2]>,
     /// The recursive component being planned (`atom_rows`).
     pub(in crate::code_rule_dsl) solving: BTreeSet<String>,
+    /// `solving`'s digest, for plan keys (`plan_key`): set with it (`solve`), not made again at every lookup.
+    solving_digest: u128,
     /// Input rel → index column lists.
     indexes: HashMap<String, Vec<Vec<String>>>,
     /// Documents (node-id intervals, `stat_docrange`), if the facts have them.
@@ -259,6 +261,15 @@ pub(in crate::code_rule_dsl) struct Stats {
 }
 
 impl Stats {
+    /// The recursive component being planned (`solving`), and its digest.
+    pub(in crate::code_rule_dsl) fn solve(&mut self, scc: BTreeSet<String>) {
+        self.solving_digest = super::derived::digest(|d| {
+            d.u64(scc.len() as u64);
+            scc.iter().for_each(|r| d.str(r));
+        });
+        self.solving = scc;
+    }
+
     /// What the planner knows of `rel` (`RERAIL_DUMP_STATS`, a debugging aid): each column's (rows, distinct, sum of
     /// squared postings, within documents), its cardinality, and its few-valued columns' value counts.
     pub(in crate::code_rule_dsl) fn describe(&self, rel: &str) -> String {
@@ -301,6 +312,7 @@ impl Stats {
             dfreq: HashMap::new(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            solving_digest: 0,
             indexes: HashMap::new(),
             docs: None,
             memo: HashMap::new(),
@@ -435,6 +447,7 @@ impl Stats {
             dfreq: HashMap::new(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            solving_digest: 0,
             indexes: HashMap::new(),
             docs: meta.get("docs").copied(),
             memo: of("val").filter_map(|r| Some((text(&r[0]), (text(&r[1]), sql_constant(&r[3])?), int(&r[2])))).fold(HashMap::new(), |mut m, (t, k, n)| {
@@ -832,8 +845,8 @@ impl Model {
             d.u64(body.len() as u64);
             body.iter().for_each(|l| digest_literal(d, l));
             d.u64(first.map_or(u64::MAX, |f| f as u64));
-            d.u64(self.stats.solving.len() as u64);
-            self.stats.solving.iter().for_each(|r| d.str(r));
+            d.u64(self.stats.solving_digest as u64);
+            d.u64((self.stats.solving_digest >> 64) as u64);
         })
     }
 
@@ -2446,6 +2459,8 @@ struct Run<'a, 'b> {
     /// Relations whose one rule projects one atom (`kind($n, $k) :- node(_, $n, $k, _, _)`, variables distinct): a
     /// native join reads such a view from its input in place. Found once per program, not per atom of each spec.
     projections: HashSet<String>,
+    /// The program's inputs, as a set: asked per atom of each spec (`prog.inputs` is a list).
+    inputs: rustc_hash::FxHashSet<&'a str>,
     /// Each rule's number in the program, by address: for spans, EXPLAIN and the engine's reasons. Made once per
     /// program (a map of every rule per stratum cost more than the stratum's own planning).
     numbers: rustc_hash::FxHashMap<*const Rule, usize>,
@@ -2541,7 +2556,7 @@ impl Run<'_, '_> {
                 }
             }
             if let Some(a) = a
-                && !self.prog.inputs.contains(&a.rel)
+                && !self.inputs.contains(a.rel.as_str())
                 && !self.views.contains(&a.rel)
             {
                 let cols: Vec<usize> = (0..a.args.len())
@@ -3022,7 +3037,7 @@ impl Run<'_, '_> {
     /// Moves the native set engine's relations among `rels` into their tables (`set_fixpoint_materialize`).
     fn materialize(&mut self, rels: &[String]) -> Result<()> {
         // An adopted input is bound as a source too, which SQL reads: it stays native.
-        let held: BTreeSet<String> = rels.iter().filter(|r| self.native_rels.contains(*r) && !self.prog.inputs.contains(*r)).cloned().collect();
+        let held: BTreeSet<String> = rels.iter().filter(|r| self.native_rels.contains(*r) && !self.inputs.contains(r.as_str())).cloned().collect();
         self.ensure(&held)?;
         for r in held {
             self.fx().materialize(&r)?;
@@ -3087,7 +3102,7 @@ impl Run<'_, '_> {
                 } else {
                     d.u64(2);
                     d.str(&self.model.relation(prog, rel, false).render());
-                    d.u64(u64::from(prog.inputs.iter().any(|i| i == rel)) | u64::from(self.model.derived.contains(rel)) << 1 | u64::from(self.projections.contains(rel)) << 2);
+                    d.u64(u64::from(self.inputs.contains(rel)) | u64::from(self.model.derived.contains(rel)) << 1 | u64::from(self.projections.contains(rel)) << 2);
                     match self.model.view_src.get(rel) {
                         Some((base, cols)) => {
                             d.str(base);
@@ -3240,7 +3255,7 @@ impl Run<'_, '_> {
             if toks.is_empty() {
                 toks.push("_".to_owned());
             }
-            let base = if prog.inputs.contains(&l.rel) || self.model.view_src.contains_key(&l.rel) { "b" } else { "d" };
+            let base = if self.inputs.contains(l.rel.as_str()) || self.model.view_src.contains_key(&l.rel) { "b" } else { "d" };
             Some((format!("t:{base}:{}:{}:{types}", hex(&sel), hex(&cols)), toks))
         };
         let kinds = |kset: &str| hex(&prog.kindsets[kset].join(","));
@@ -3465,7 +3480,7 @@ impl Run<'_, '_> {
     /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it.
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
-        self.model.stats.solving = if reads { scc.clone() } else { BTreeSet::new() };
+        self.model.stats.solve(if reads { scc.clone() } else { BTreeSet::new() });
         // The relations run natively so far, lent to the stratum (it reads them, and adds its own only at the end):
         // cloning them per stratum was quadratic in strata (3% of a combined run's main thread).
         let native_rels = std::mem::take(&mut self.native_rels);
@@ -3475,7 +3490,7 @@ impl Run<'_, '_> {
         self.numbers = numbers;
         let added = std::mem::replace(&mut self.native_rels, native_rels);
         self.native_rels.extend(added);
-        self.model.stats.solving.clear();
+        self.model.stats.solve(BTreeSet::new());
         out
     }
 
@@ -3526,7 +3541,7 @@ impl Run<'_, '_> {
             let mut is_empty = |rel: &str| -> bool {
                 // An input delta read from the changed documents (`input_delta`) is bound once, before the run; other
                 // inputs may be bound when their first reader runs, so they are not taken as empty.
-                let delta_input = prog.inputs.iter().any(|i| i == rel) && (rel.ends_with("__minus") || rel.ends_with("__plus"));
+                let delta_input = self.inputs.contains(rel) && (rel.ends_with("__minus") || rel.ends_with("__plus"));
                 if scc.contains(rel) || fillable.contains(rel) || !(native_rels.contains(rel) || delta_input) {
                     return false;
                 }
@@ -3650,7 +3665,7 @@ impl Run<'_, '_> {
         }
         // A stratum's relations were made empty by `run` unless the program states facts of them or a SQL seed derived
         // some. A produced input (decision 0065 §2a) starts from its rows where it is.
-        let produced_inputs: BTreeSet<&str> = super::answers::produced(prog).into_keys().filter(|p| prog.inputs.iter().any(|i| i == p)).collect();
+        let produced_inputs: BTreeSet<&str> = super::answers::produced(prog).into_keys().filter(|p| self.inputs.contains(p)).collect();
         let mut rel_lines = Vec::new();
         for r in &rels {
             if produced_inputs.contains(r.as_str()) {
@@ -4577,7 +4592,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // Inputs kept in the engine from an earlier run (a session's, decision 0090 step 3) are read in place, as native
     // relations, with the indexes they have.
     let adopted: BTreeSet<String> = super::native::component::adopted(db).into_iter().filter(|r| prog.inputs.contains(r)).collect();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, pending: HashMap::new(), why_not: None, projections: projections(prog), inputs: prog.inputs.iter().map(String::as_str).collect(), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.

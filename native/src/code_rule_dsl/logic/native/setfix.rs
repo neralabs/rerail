@@ -441,6 +441,14 @@ fn read_sql(conn: &Connection, sql: &str, types: &[u8], syms: &mut Interner) -> 
 fn slot(t: &str) -> Result<usize> { t.strip_prefix('v').and_then(|s| s.parse().ok()).ok_or_else(|| err(format!("bad slot {t}"))) }
 fn num<T: std::str::FromStr>(t: &str) -> Result<T> { t.parse().map_err(|_| err(format!("bad number {t}"))) }
 
+/// Whether an environment setting is on, read once per process (these are asked per index and per join).
+macro_rules! env_set {
+    ($name:literal) => {{
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os($name).is_some())
+    }};
+}
+
 pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let symbols = symbols(conn)?;
     let mut syms = Interner::for_loading(&symbols);
@@ -1712,12 +1720,12 @@ impl InRel {
                 charge(Unit::IndexEntry, self.len() as u64);
                 Csr::build(self, cols)
             };
-            if std::env::var_os("RERAIL_SPIKE_INDEX").is_some() {
+            if env_set!("RERAIL_SPIKE_INDEX") {
                 eprintln!("O125 index base={} took {:.3} ms rows={} cols={cols:?} chain={} source={} sorted={} lead={} view={}", self.base, (thread_cpu() - c0) * 1e3, self.len(), m.chain.is_some(), m.source, m.sorted, m.lead, self.view.is_some());
             }
             let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
             l.0 += thread_cpu() - c0;
-            if std::env::var_os("RDL_PROFILE").is_some() {
+            if env_set!("RDL_PROFILE") {
                 eprintln!("      index on {cols:?} of {} rows in {:.1} ms", self.len(), t0.elapsed().as_secs_f64() * 1e3);
             }
             Arc::new(m)
@@ -1784,7 +1792,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
             let n = view.ids.as_ref().map_or(0, Vec::len);
             let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default() });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
-            if std::env::var_os("RDL_PROFILE").is_some() {
+            if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
             }
             INPUTS.lock().unwrap().insert(key, rel.clone());
@@ -1804,7 +1812,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
         l.0 += thread_cpu() - c0;
         l.1 += rel.len() as u64;
     }
-    if std::env::var_os("RDL_PROFILE").is_some() {
+    if env_set!("RDL_PROFILE") {
         eprintln!("      input {} rows in {:.1} ms: SELECT {cols} FROM {table}", rel.len(), t0.elapsed().as_secs_f64() * 1e3);
     }
     INPUTS.lock().unwrap().insert(key, rel.clone());
@@ -2370,7 +2378,7 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
     liveness::sums(&mut steps,&out);
     scalars::plan(&mut steps);
     let counts = steps.iter().map(|_| Default::default()).collect();
-    let fused = if std::env::var_os("RERAIL_NO_ROW_PROGRAMS").is_some() { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
+    let fused = if env_set!("RERAIL_NO_ROW_PROGRAMS") { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
     Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused })
 }
 
