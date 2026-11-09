@@ -30,7 +30,7 @@ Both our parsers and simdjson run in two passes: one over the bytes, one over th
 | pass 1 per 64 bytes | about 172 instructions, measured | 790 instructions, measured | 960 |
 | pass 1 body, in Cranelift IR | (hand-written) | 225 on an ASCII block, 508 on others; 490 more where a number is, 156 where a `\u` is | 293 and 561; comments 59 more |
 | pass 1 branches | the loop, the flattening, a UTF-8 fast path | the loop, the flattening, an ASCII test, one per gated region | the same |
-| pass 1 writes | structural positions | token starts and last bytes, fallback totals | the same |
+| pass 1 writes | structural positions | token starts; a mask of last bytes; fallback flags | the same |
 | pass 1 machine code | (hand-written) | 4,263 instructions | 5,007 |
 | pass 2 runs | hand-written C++, a state machine with a jump per state | 429 generated words, one function | 564 words |
 | pass 2 machine code | (hand-written) | 4,914 instructions | 6,458 |
@@ -79,6 +79,11 @@ the instruction counts do not depend on the load.
 | ours 15, pass 1 | 1.97 | 15.0 | 2.10 |
 | ours 15, both | 1.29 | 24.2 | 3.12 |
 | tree-sitter-json | 0.038 | 550 | 121 |
+
+These figures are from before the changes in §4. After them, step 14 runs 10.0 instructions a
+byte in pass 1 and 20.0 in both; step 15, 13.4 and 24.4. Timed again at a load average of about
+90, ours and simdjson's one after the other, pass 1 ran 1.51 GB/s against simdjson's stage 1 at
+5.1 to 5.4: the load slows both, so the instruction counts are the figures to compare.
 
 In ratios:
 
@@ -178,18 +183,19 @@ What is left, in the compiler and not in a language:
   need a loop over numbers. Tier 2 has one, over tokens, but the check was moved out of it
   to be masks.
 - **The rest of the body.** On an ASCII block, 225 instructions in Cranelift's IR, before
-  code generation: 6 masks (quote, backslash, `u` and three byte classes), the string and
-  escape carries, and the token starts. simdjson makes 4 to 5 masks.
+  code generation: 5 masks (quote, backslash and three byte classes; the `u` only in a block
+  with an escape), the string and escape carries, and the token starts. simdjson makes 4 to 5
+  masks.
 - **Carried `prev`s of masks.** 23 are left outside full-block constants: 4 outside the
   regions, 19 inside them. Each is a mask shifted with its field in the carried state, about
   4 to 7 instructions. A `prev` of a value that is not byte-local has no byte form.
 - **Blocks with UTF-8.** They make 7 masks outside the regions, against 6 on an ASCII block;
   the 13 UTF-8 tests stay in vectors but cost about 280 instructions more than the ASCII body.
-- **The sinks and the flattening:** about 70 instructions a block, and about 45 for each
-  eight positions written, as in simdjson.
+- **The sinks and the flattening:** about 70 instructions a block, and 48 for each eight
+  token starts written, as in simdjson.
 
 **Pass 1 in machine code, on an ASCII block.** Step 14's hot path, read from the
-disassembly:
+disassembly, before the changes below:
 
 | part | instructions | what it does |
 |---|---|---|
@@ -200,21 +206,34 @@ disassembly:
 | flattening | 58 per 8 positions | 7 per position, done twice: starts and last bytes |
 | fallback totals | 29 | 4 popcounts |
 
-The UTF-8 body is 540 instructions, with 73 values spilled to the stack. Over the corpus, pass 1
-runs 12.4 instructions and 1.86 cycles a byte, at 6.6 instructions a cycle; simdjson's stage 1
-runs 2.7 and 0.66, at 4.1 a cycle. The core is busy for both: the gap is the instruction count.
-Where ours runs more than simdjson:
+The core was busy for both: pass 1 ran 12.4 instructions and 1.86 cycles a byte, at 6.6
+instructions a cycle; simdjson's stage 1 runs 2.7 and 0.66, at 4.1 a cycle. The gap is the
+instruction count. What changed, each step measured on its own (step 14, pass 1, instructions
+a byte):
 
-- **6 masks, not 4.** The `u`, number-first-byte and control classes exist for the checks.
-- **Two flattenings, not one.** Token starts and last bytes are written separately. One list,
-  with the last byte found from the next start, would halve it.
-- **7 instructions a position, not about 5.** Cranelift does not fold the constant offset of
-  each store into its address, so every store has its own add.
-- **4 popcounts for the fallback totals.** The totals are only tested against zero. One word,
-  OR-ed across blocks, would do.
-- **16 carried words, not 3 or 4.** On the UTF-8 path they no longer fit in registers.
+| change | before | after |
+|---|---|---|
+| a total is a flag, the OR of its words, not a count: tier 2 only tests it against zero | 12.35 | 12.15 |
+| the last bytes are a mask tier 2 reads a word at a time, not a second flattening | 12.15 | 10.99 |
+| the flattening carries its write pointer, so each store is `[pointer, #offset]`: 6 instructions a position, as simdjson | 10.99 | 10.88 |
+| a gated region tests the gate's word before making its byte class: the `u` mask only after an escape | 10.88 | 10.24 |
+
+Both passes of step 14 went from 21.4 to 20.0 instructions a byte: tier 2 spends some of what
+tier 1 saves, finding each last byte in the mask. Step 15's pass 1 went from 15.0 to 13.4.
+
+What is left, against simdjson:
+
+- **Masks.** An ASCII block makes 5: quote, backslash, and three classes from one lookup
+  (whitespace, operators, and the control bytes a string may not hold). simdjson makes 4.
+- **The carried state.** It is one 64-bit word of 31 fields for step 14 (decision 0048). In a
+  full block, the byte-order mark's fields are constants; about 9 fields are read and written
+  in every block, 4 instructions each. 17 more belong to the gated regions. The 73 values the
+  UTF-8 body spills are live values of the body, not the state.
 - **The output words.** simdjson keeps its masks in registers until it flattens them.
-- **The number check**, about 490 instructions where a block holds a number (above).
+- **The number check**, about 490 instructions where a block holds a number. Its class masks
+  are made from shifted bytes. Making each class once and shifting the mask instead needs a
+  carried field, written in every block, including those that skip the region. Tried on the
+  corpus, it ran more instructions (10.30 against 10.04).
 
 **Pass 2: no check left.** It runs at 2.9 GB/s over the corpus, 7.7 GB/s on gsoc-2018. Its
 time is the token loop: a switch, the arm's nodes, and the jump to the next state, per token.
