@@ -484,10 +484,72 @@ impl Lowering {
                     let x = self.expr(at)?;
                     self.marks.push((kind.clone(), x, *end));
                 }
+                Stmt::Rounds { n: None, body, .. } => {
+                    ::bitlex::syntax::strictly_causal(body)?;
+                    self.rounds(body)?;
+                }
+                Stmt::Rounds { n: Some(n), .. } => return Err(format!("`rounds {n}` is not compiled: only `rounds until settled`, whose fixed point is exact")),
                 other => return Err(format!("not compiled yet: {}", statement(other))),
             }
         }
         Ok(())
+    }
+
+    /// `rounds until settled { … }` (`docs/parser-generators/03-bitlex.md` §2.7): a group of the
+    /// block program (`BlockProgram::rounds`), each carry a `carry` of its initial value, paired
+    /// with its next. A carry and its next are one word, so they are at one delay: the carry's,
+    /// with the next brought to it by `prev`. A next later than its carry (an operand outside the
+    /// group later still) or dirty where the carry is clean lowers the body again with the carry
+    /// at that delay or dirty; the first try's operations are dead (`live`). A strictly causal
+    /// body (`strictly_causal`) has a `prev` on every way from a carry to a next, so each way
+    /// still holds one once the delays are evened out: the block verifier checks it.
+    fn rounds(&mut self, body: &[Stmt]) -> Result<(), String> {
+        let carries: Vec<(&String, &Expr)> = body.iter().filter_map(|s| if let Stmt::Carry(a, e) = s { Some((a, e)) } else { None }).collect();
+        let nexts: Vec<(&String, &Expr)> = body.iter().filter_map(|s| if let Stmt::Next(a, e) = s { Some((a, e)) } else { None }).collect();
+        if let Some((name, _)) = nexts.iter().find(|(n, _)| !carries.iter().any(|(c, _)| c == n)) {
+            return Err(format!("next {name}: no carry of that name"));
+        }
+        if carries.is_empty() {
+            return Err("rounds with no carry".into());
+        }
+        let inits: Vec<Val> = carries.iter().map(|(_, e)| self.expr(e)).collect::<Result<_, _>>()?;
+        let mut delay: Vec<u8> = inits.iter().map(|x| x.d).collect();
+        let mut dirty: Vec<bool> = inits.iter().map(|x| x.dirty).collect();
+        let rest: Vec<Stmt> = body.iter().filter(|s| !matches!(s, Stmt::Carry(..) | Stmt::Next(..))).cloned().collect();
+        // Each try raises a delay or makes a carry dirty, and neither falls: a bounded number.
+        for _ in 0..=usize::from(MAX_DELAY) + 2 {
+            let mut vs = Vec::new();
+            for (k, (name, _)) in carries.iter().enumerate() {
+                // Zero is zero at any delay.
+                let init = if self.is_zero(inits[k]) { inits[k].v } else { self.at(inits[k], delay[k])? };
+                // Never shared: each carry is its own value, from try to try.
+                let v = self.program.ops.len() as u16;
+                self.program.ops.push(BlockOp::Carry(init));
+                vs.push(v);
+                self.names.insert((*name).clone(), Val { v, d: delay[k], dirty: dirty[k], set: None });
+            }
+            self.stmts(&rest)?;
+            let mut pairs = Vec::new();
+            let mut again = false;
+            for (k, (name, _)) in carries.iter().enumerate() {
+                let Some((_, e)) = nexts.iter().find(|(n, _)| n == name) else {
+                    return Err(format!("carry {name}: no next"));
+                };
+                let x = self.expr(e)?;
+                if x.d > delay[k] || (x.dirty && !dirty[k]) {
+                    delay[k] = delay[k].max(x.d);
+                    dirty[k] |= x.dirty;
+                    again = true;
+                } else {
+                    pairs.push((vs[k], self.at(x, delay[k])?));
+                }
+            }
+            if !again {
+                self.program.rounds.push(pairs);
+                return Ok(());
+            }
+        }
+        Err("rounds: the carries' delays do not settle".into())
     }
 
     /// The fallback masks, ORed per delay (`empty` without any): a mask at one delay is never
@@ -1380,11 +1442,28 @@ fn live(program: &BlockProgram) -> BlockProgram {
     for &v in &program.outputs {
         keep[usize::from(v)] = true;
     }
-    for at in (0..program.ops.len()).rev() {
-        if keep[at] {
-            for v in program.ops[at].operands() {
-                keep[usize::from(v)] = true;
+    // A group is kept whole once one of its carries is: each next is read by the next round.
+    loop {
+        for at in (0..program.ops.len()).rev() {
+            if keep[at] {
+                for v in program.ops[at].operands() {
+                    keep[usize::from(v)] = true;
+                }
             }
+        }
+        let mut grew = false;
+        for group in &program.rounds {
+            if group.iter().any(|&(c, _)| keep[usize::from(c)]) {
+                for &(c, x) in group {
+                    for v in [c, x] {
+                        grew |= !keep[usize::from(v)];
+                        keep[usize::from(v)] = true;
+                    }
+                }
+            }
+        }
+        if !grew {
+            break;
         }
     }
     let mut number = vec![u16::MAX; program.ops.len()];
@@ -1401,6 +1480,7 @@ fn live(program: &BlockProgram) -> BlockProgram {
     out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
     out.totals = program.totals.iter().map(|&v| n(v)).collect();
     out.masks = program.masks.iter().map(|&v| n(v)).collect();
+    out.rounds = program.rounds.iter().filter(|g| keep[usize::from(g[0].0)]).map(|g| g.iter().map(|&(c, x)| (n(c), n(x))).collect()).collect();
     out
 }
 

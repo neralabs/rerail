@@ -1056,3 +1056,65 @@ fn json_compiled_path_equals_the_interpreters() {
         assert_eq!(got, want, "tier 2: {}", String::from_utf8_lossy(f));
     }
 }
+
+/// `rounds until settled`: strings with escapes and `//` comments, each hiding the other's
+/// openers, through one carry (the reference's own test lexer). Its masks equal the
+/// evaluator's on the CPU executors (Metal refuses a fixed point so far), over every short
+/// string of the bytes that matter and long ones that cross blocks.
+const ROUNDS: &str = r#"
+lexer t
+class quote = '"'
+class backslash = '\\'
+class slash = '/'
+class lf = '\n'
+mask q0 = quote & ~escaped(backslash)
+rounds until settled {
+  carry hidden = empty
+  mask q = q0 & ~hidden
+  mask s = toggle(q)
+  mask open = slash & prev(slash & ~s)
+  mask line = fill(open, lf)
+  next hidden = line
+}
+mask comment = line | (slash & next(open))
+"#;
+
+#[test]
+fn rounds_equal_the_evaluator() {
+    let names = ["q", "s", "open", "line", "comment"];
+    let stmts = ::bitlex::syntax::parse(ROUNDS).expect("parses");
+    let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
+    assert!(compiled.rows.contains(" rounds %"), "a group\n{}", compiled.rows);
+    let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
+    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let run = Executors::new(&p);
+    let alphabet = b"\"\\/\na";
+    let mut cases = inputs();
+    for len in 1..=5u32 {
+        for code in 0..5usize.pow(len) {
+            cases.push((0..len).map(|k| alphabet[code / 5usize.pow(k) % 5]).collect());
+        }
+    }
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    for _ in 0..200 {
+        let len = (seed % 300) as usize;
+        cases.push(
+            (0..len)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    alphabet[(seed % 5) as usize]
+                })
+                .collect(),
+        );
+    }
+    for bytes in cases {
+        let want = evaluated(&stmts, &bytes, &names);
+        for (executor, got) in run.run(&bytes, false).0 {
+            for (k, name) in names.iter().enumerate() {
+                assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {:?}\n{}", String::from_utf8_lossy(&bytes), compiled.rows);
+            }
+        }
+    }
+}
