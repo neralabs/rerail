@@ -3249,4 +3249,6 @@ the whole-run cutoff records both as a read (`git_rev`, with the index as `git_i
 
 **Seen (2026-11-08).** `converted_rules_give_the_recorded_findings` gave `3988 248 243 0` once and `3988 303 298 0`
 on the next run, with the same code. Suspect: the shared default tape cache (O146), which other sessions write.
+After the merges of 2026-11-08 (`0078ba091`, with the collection rules), 2026-11-09 00:15: `3988 303 298 0`, 55.6 s
+CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 **Closure:** the cause found, or twenty runs on an isolated store all `3988 303 298 0`.
