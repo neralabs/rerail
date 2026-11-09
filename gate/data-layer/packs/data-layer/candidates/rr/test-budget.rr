@@ -3,7 +3,7 @@
 .language python
 .mode block
 .scope tests true
-.scope include "conform/**", "*.py"
+.scope include "conform/**", "data_layer_testing/**", "*.py"
 // Python check: scripts/check_test_budget.py. pytest collects the tests under conform/; their number may not
 // exceed total_tests in .test-budget-baseline.json, whose counts are signed. A drop of more than 10% fails too:
 // it is more likely a broken collection than deleted tests. The script reports one finding, at the baseline.

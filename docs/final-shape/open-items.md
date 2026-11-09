@@ -3199,9 +3199,20 @@ Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `note
 **Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
 model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
 tree; `test-budget` counting with it, the artifact optional, `collect_disabled` reported as `collection_disabled`.
-On `conform/l1*`, 77 of 78 files are exact against real pytest.
+**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json`).**
 
-**Left.** The whole of `conform/` against `notes/t13/truth-full.json`; the scope (see O-names-cost). Known
+| Scope | Files exact | Total (pytest 14,449; model 13,610) | CPU |
+|---|---:|---:|---:|
+| `conform/` and the root's files (1,418 files) | 1,120 of 1,143 | 13,515 | 327 s user + sys, load 12–17 |
+| the same plus `data_layer_testing/`, on the five directories that differed (394 files) | 143 of 145 (the model: 145) | | 63 s |
+
+With `conform/` alone, all eleven files where the rules and the model differ read a name from outside it: a case
+list (`READ_PERMISSION_SCENARIO_KEYS`), a decorator that replaces a class with a function (`requires_capabilities`),
+or an enum. `data_layer_testing/` holds the first two; `test-budget` reads it. The two files left read enums of
+`data_layer` itself (`DelegationCapability`, `BranchTipMaterialization`), which the scope leaves open.
+
+**Left.** A run of `test-budget`'s scope over the whole of `conform/` (expected near the model's 1,131); enums
+outside the scope (O-names-cost). Known
 differences from the model: a nested Test class reached through two parents counts once (the owner is a node, not
 a path).
 
@@ -3212,7 +3223,10 @@ and was stopped. On the 133-file sample, `resolve_export` alone costs 15 s of th
 nearly all of that is `qn`, which reads `look`: the LEGB walk of every name reference (`type_checking_block` reads
 `qn`, and `import_time` negates it). Every check that reads `sym_of` pays this.
 
-**Worked around.** `test-budget` reads `conform/` and the root's files only (1,416 files). A case list or enum
+The run over `conform/` (1,418 files) also peaked at 3.8 GB RSS, in the parse workers and the cross-file part,
+against the 1 GB budget.
+
+**Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.
 
 **Closure:** the walk computed only for the references a rule asks about (demand), or `qn` without the walk for
