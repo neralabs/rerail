@@ -20,6 +20,7 @@ import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { renameWithRetry } from "../file-replace.js";
 import { crlfCheckout, lfStored } from "./line-endings.js";
+import { openNoFollow } from "../no-follow.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { IGNORED_DIRECTORIES } from "./code-rule-enforcer.js";
 import { binaryPrefix } from "./binary-prefix.js";
@@ -279,9 +280,9 @@ function previousOf(preimage: Preimage | undefined): Pick<CodeRuleEdit, "previou
   return { ...(preimage.text === undefined ? {} : { previousText: preimage.text }), ...(preimage.readError === undefined ? {} : { previousReadError: preimage.readError }) };
 }
 /** `absolute` opened without following a final symlink; undefined when it is one. */
-async function openNoFollow(absolute: string): Promise<FileHandle | undefined> {
+async function openSource(absolute: string): Promise<FileHandle | undefined> {
   try {
-    return await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+    return await openNoFollow(absolute, constants.O_RDONLY);
   } catch (error) {
     if (hasErrorCode(error, "ELOOP")) return undefined;
     throw error;
@@ -1770,7 +1771,7 @@ export class CodeRuleBridge {
    * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source.
    */
   async #readLocatedSource(root: string, location: SourceLocation): Promise<Source | undefined> {
-    const handle = await openNoFollow(location.absolute);
+    const handle = await openSource(location.absolute);
     if (handle === undefined) return undefined;
     try {
       const info = await handle.stat();

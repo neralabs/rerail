@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { openNoFollow } from "../no-follow.js";
 import { resolve, sep } from "node:path";
 
 /**
@@ -78,7 +79,7 @@ export async function makeLedgerFolder(directory: string): Promise<void> {
  */
 export async function openLedgerFile(path: string, flags: number): Promise<FileHandle> {
   try {
-    return await open(path, flags | constants.O_NOFOLLOW, 0o600);
+    return await openNoFollow(path, flags, 0o600);
   } catch (error) {
     if (errno(error) === "ELOOP") refuse(path, "a symbolic link");
     throw error;
