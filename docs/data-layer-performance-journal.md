@@ -9312,3 +9312,52 @@ All 144 original tests pass, with 129 API observations, including the collection
 Its native port remains absent.
 The inventory remains 90 drafts and ten absent translations.
 Raw-execute callback/factory transport, shared registry integration, rule 89 deletion, and full migration acceptance remain open.
+### 2026-11-08 — Final 490 adoption and complete raw-execute rerun
+
+The branch merges Final through `49035cc90`.
+It adopts in-memory exports, native computed steps, and the revised crossed-atom estimates.
+The source conflict retains Final's arithmetic functions and the existing Python integer functor.
+
+The merge first exposes an aggregate interface mismatch.
+The initial string-join test passes over native stored rows, which retain every column.
+The stronger test requires a projected table input through the production atom-native runner.
+Its valid fixture supplies stored column statistics.
+An earlier probe uses the older SQL reference runner and rejects the new opcode.
+The production probe then panics: it reads column three from a row with two columns.
+The repair maps both the value and ordering keys through the projected columns.
+The same regression passes after the repair.
+
+The broader cohort exposes a separate stored-program failure.
+The codec omits explicit empty fact tables, including `input_error`.
+A small marker preserves those tables without extra rows for ordinary nonempty tables.
+New checks preserve empty tables, zero-arity rows, and legacy records.
+The original prepared-program assertion passes after the repair.
+Both [projection](../gate/data-layer/fixtures/host/data-layer-port/rr-final490-string-join-projection-red.json.gz)
+and [codec](../gate/data-layer/fixtures/host/data-layer-port/rr-final490-empty-facts-red.json.gz) failures remain recorded.
+
+The registered engine uses source `4721b1d81` and Final `49035cc90`.
+Its final unit and CLI builds take 51.847 and 23.435 seconds.
+The build receipts record compilation separately from execution.
+All 153 focused native tests pass, including the new export and codec checks.
+Three existing report, translation, or benchmark helpers remain ignored by their annotations.
+
+The new engine passes all four original raw-execute tests and five complete observations.
+It passes all 187 supplemental API cases, 31 snapshot cases, 31 workspace cases, and 44 CLI cases.
+Fifteen workspace cases contain findings.
+All fourteen detector controls, nine CLI controls, and three combined-scope cases pass.
+Both consumers match the source through thirteen persistent-workspace steps.
+Eight rule-89 update steps pass on the new engine too.
+All 101 policy/table readers and 163 tooling tests pass, with 127 tooling subtests.
+
+All forty acceptance commands finish within 115 seconds.
+The longest takes 29.905 seconds wall time. This is not a CPU benchmark.
+The six focused native commands also meet their individual limits.
+The [Final acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-raw-execute-final490-acceptance.json.gz) retains complete results, source recordings, programs, harness files, commands, logs, builds, and its validator.
+No full repository cold run occurs.
+
+The next rule's [ordered source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-private-functions-ordered-source.json.gz)
+preserves 144 original tests and 129 API observations.
+It also retains raw caller iteration order and guards imported graph algorithms.
+That native translation remains absent.
+The inventory remains 90 drafts and ten absent translations.
+Callback/factory transport, shared registry integration, rule 89 deletion, and full migration acceptance remain open.

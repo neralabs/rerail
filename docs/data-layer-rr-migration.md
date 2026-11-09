@@ -2166,3 +2166,24 @@ The documentation-only Final commit `06b9b015d` is merged. Later Final engine ch
 Raw-execute callback/factory transport and shared registry integration remain open.
 The [next source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-private-functions-original-source.json.gz) retains all 144 original imperative-private-function tests and 129 API observations.
 That native translation remains absent. The inventory remains 90 drafts and ten absent translations.
+
+### 2026-11-08 — Final 490 engine adoption and raw-execute acceptance
+
+The branch now includes Final `49035cc90`, with in-memory exports and native computed steps.
+Two integration repairs preserve projected string-join columns and explicit empty fact tables in stored programs.
+The [projection failure](../gate/data-layer/fixtures/host/data-layer-port/rr-final490-string-join-projection-red.json.gz)
+and [codec failure](../gate/data-layer/fixtures/host/data-layer-port/rr-final490-empty-facts-red.json.gz) retain their actual failing executions.
+Their regressions pass on engine source `4721b1d81`.
+
+All four original raw-execute tests and five observations pass on the new engine.
+All 187 API cases, 31 snapshot cases, 31 workspace cases, and 44 CLI cases pass again.
+The fourteen detector controls, nine CLI controls, and three combined-scope cases pass.
+Both consumers pass thirteen update steps in one persistent workspace.
+The new engine also passes eight rule-89 update steps, 101 readers, 153 focused native tests, and 163 tooling tests.
+The tooling run includes 127 subtests.
+
+The [Final receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-raw-execute-final490-acceptance.json.gz) retains complete evidence and exact consumed programs.
+Earlier receipts retain their earlier engine identities.
+The [next rule's recording](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-private-functions-ordered-source.json.gz) preserves caller iteration order alongside all 144 original tests and 129 observations.
+Its native implementation remains absent.
+The inventory remains 90 drafts and ten absent translations. Full migration acceptance remains open.
