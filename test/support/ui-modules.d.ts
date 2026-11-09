@@ -6,7 +6,7 @@
 declare module "*/ui/sessions-model.js" {
   export interface Correction {
     key: string;
-    finding: { path?: string | null; [k: string]: unknown };
+    finding: { path?: string | null; at: number; span?: { startLine: number } | null; [k: string]: unknown };
     rule: unknown;
   }
   export interface CallView {
@@ -27,7 +27,7 @@ declare module "*/ui/sessions-model.js" {
     failed: boolean;
     dur: number | null;
     lines?: number;
-    correction: Correction | null;
+    corrections: Correction[];
     raw: unknown[];
   }
   export interface TurnView {
