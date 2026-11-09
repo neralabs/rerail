@@ -22,7 +22,7 @@
 //! `vhigh_bits` (one `pmovmskb` on x86).
 
 use super::Error;
-use super::block::{BatchFile, BlockRun, padded_by};
+use super::block::{BatchFile, BlockRun};
 use super::native_cpu_lanes::{Lane, Lanes, Plan, all_ascii};
 use super::native_cpu_shape::Step;
 use super::native_ir::{BlockInst, BlockNative, Pass};
@@ -141,16 +141,20 @@ impl Batch {
         let (mut bytes, mut rows) = (Vec::new(), Vec::with_capacity(files.len()));
         let (mut words, mut positions, mut counts, mut scratch) = (0u64, 0u64, 0u64, 0u64);
         for file in files {
-            let blocks = padded_by(file, usize::from(program.delay));
+            // The file's blocks and `delay` bytes past its end, zero beyond it.
+            let blocks = (file.len() + usize::from(program.delay)).div_ceil(64);
             bytes.resize(bytes.len() + FRONT, 0);
             // An extract has at most one position per byte; the flattening writes up to seven
             // past the last.
             let capacity = file.len() as u64 + 8;
             words += program.outputs as u64;
-            let row = Row { bytes: bytes.len() as u64, blocks: blocks.len() as u64, len: file.len() as u64, out: words, positions, capacity, counts, scratch };
-            scratch += (program.slots * blocks.len()) as u64;
-            bytes.extend(blocks.iter().flatten());
-            words += (program.outputs * blocks.len()) as u64;
+            let row = Row { bytes: bytes.len() as u64, blocks: blocks as u64, len: file.len() as u64, out: words, positions, capacity, counts, scratch };
+            scratch += (program.slots * blocks) as u64;
+            // One copy, as simdjson's padded input: the file, then zeros to its last block's end.
+            let at = bytes.len();
+            bytes.extend_from_slice(file);
+            bytes.resize(at + blocks * 64, 0);
+            words += (program.outputs * blocks) as u64;
             positions += program.extracts.len() as u64 * capacity;
             counts += program.counted.len() as u64;
             rows.push(row);

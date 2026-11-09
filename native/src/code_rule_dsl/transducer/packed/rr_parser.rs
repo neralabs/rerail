@@ -10,6 +10,7 @@
 //! on purpose: a run of four backticks or more, braces nested past 127.
 
 use super::bitlex_compile;
+use super::native_cpu_stream::{Columns, NO_PARENT};
 use super::{native_cpu_stream, native_ir, rir};
 use crate::code_rule_dsl::logic::rr;
 use std::cell::RefCell;
@@ -22,10 +23,9 @@ const GRAMMAR: &str = include_str!("bitlex_ladder/rr/20-json-depth.bitlex");
 /// tape.
 const OWN_IDS: u16 = 0x4000;
 
-/// The compiled parser, and which kinds are extras (comments).
+/// The compiled parser.
 pub(super) struct Compiled {
     pub(super) parser: native_cpu_stream::Parser,
-    extra: Vec<u16>,
     /// Tier 1's cost by grammar statement, for the profile.
     pub(super) costs: Vec<bitlex_compile::Cost>,
     /// Tier 1's block program as text, for the profile's operation mix.
@@ -67,51 +67,40 @@ fn compile() -> Result<Compiled, String> {
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program).map_err(|e| format!("lowers: {e:?}"))?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
-    let extra = stmts
-        .iter()
-        .flat_map(|s| match s {
-            ::bitlex::syntax::Stmt::Tree { body, .. } => body.clone(),
-            _ => Vec::new(),
-        })
-        .filter_map(|s| match s {
-            ::bitlex::syntax::Stmt::Extra(kinds) => Some(kinds),
-            _ => None,
-        })
-        .flatten()
-        .map(|k| id(rr::tape::KIND_NAMES, &k))
-        .collect();
-    Ok(Compiled { parser, extra, costs: compiled.costs.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok(Compiled { parser, costs: compiled.costs.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
 }
 
-/// `src`'s tape, as `logic::rr::tape` gives it: from the compiled grammar, or from the engine's
-/// parser for a file the grammar refuses.
-pub(in crate::code_rule_dsl) fn tape(src: &str) -> Vec<rr::tape::Node> {
-    compiled_tape(src).unwrap_or_else(|| rr::tape(src))
+/// `src`'s node table, as tier 2 writes it: from the compiled grammar, or, for a file the grammar
+/// refuses, from the engine's parser (`logic::rr::tape`) in the same columns.
+pub(in crate::code_rule_dsl) fn tape(src: &str) -> Columns {
+    compiled_tape(src).unwrap_or_else(|| engine_columns(&rr::tape(src)))
 }
 
-/// The compiled grammar's tape, or `None` where it refuses the file (or did not compile).
-pub(in crate::code_rule_dsl) fn compiled_tape(src: &str) -> Option<Vec<rr::tape::Node>> {
-    let c = compiled().ok()?;
-    let nodes = c.parser.parse(src.as_bytes()).ok()?;
-    Some(nodes_to_tape(c, &nodes))
+/// The compiled grammar's node table, or `None` where it refuses the file (or did not compile).
+/// Every column is the compiled code's: kinds, fields, spans and sizes from tier 2's words,
+/// parents and extra flags from its final pass.
+pub(in crate::code_rule_dsl) fn compiled_tape(src: &str) -> Option<Columns> {
+    compiled().ok()?.parser.columns(src.as_bytes()).ok()
 }
 
-/// The compiled parser's nodes as the engine's tape nodes: each node's parent, from preorder and
-/// sizes, and its extra flag.
-pub(super) fn nodes_to_tape(c: &Compiled, nodes: &[super::stream::Node]) -> Vec<rr::tape::Node> {
-    {
-        // Preorder with sizes: each node's parent is the nearest open node before it.
-        let mut out = Vec::with_capacity(nodes.len());
-        let mut open: Vec<(u32, usize)> = Vec::new();
-        for (i, n) in nodes.iter().enumerate() {
-            while open.last().is_some_and(|&(_, end)| end <= i) {
-                open.pop();
-            }
-            out.push(rr::tape::Node { kind: n.kind, field: n.field, start: n.start, end: n.end, parent: open.last().map(|o| o.0), extra: c.extra.contains(&n.kind) });
-            open.push((i as u32, i + n.size as usize));
-        }
-        out
+/// The fallback: the engine's parser's nodes, in the compiled parser's columns.
+pub(in crate::code_rule_dsl) fn engine_columns(nodes: &[rr::tape::Node]) -> Columns {
+    let mut c = Columns { size: vec![1; nodes.len()], ..Columns::default() };
+    for n in nodes {
+        c.kind.push(u32::from(n.kind));
+        c.field.push(u32::from(n.field));
+        c.start.push(n.start);
+        c.end.push(n.end);
+        c.parent.push(n.parent.unwrap_or(NO_PARENT));
+        c.extra.push(u8::from(n.extra));
     }
+    // In preorder a node comes after its parent: sizes from the last node back.
+    for (i, n) in nodes.iter().enumerate().rev() {
+        if let Some(p) = n.parent {
+            c.size[p as usize] += c.size[i];
+        }
+    }
+    c
 }
 
 /// Why the grammar did not compile, if it did not: a test's check.
@@ -134,12 +123,69 @@ mod tests {
         ];
         for src in parsed {
             assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
-            assert_eq!(super::tape(src), super::rr::tape(src), "{src:?}");
+            assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
         }
         let deep = format!(".policy {{\"a\": {}{}}}", "[".repeat(127), "]".repeat(127));
         for src in ["r(x) :- x ~ ````a````.", deep.as_str(), "r(x) :- ."] {
             assert!(super::compiled_tape(src).is_none(), "the grammar takes {src:?}");
-            assert_eq!(super::tape(src), super::rr::tape(src), "{src:?}");
+            assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
+        }
+    }
+
+    /// The parse path is the compiled code's: the host functions around the two compiled calls
+    /// (layout, buffers, the columns taken) hold no loop over bytes, tokens or nodes, and call
+    /// no Rust that walks them. Each function on the path is read from its source and refused if
+    /// its body has a loop or an iterator walk; the only loops allowed are over a batch's files
+    /// and over tier 1's compiled passes. The engine's parser, for a file the grammar refuses, is
+    /// the one way out of the path. The compiled code's own loops are checked where it is
+    /// made (`native_cpu_shape`: each loop steps a block, a token or a record, never a byte).
+    #[test]
+    fn the_parse_path_is_compiled_code() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer/packed");
+        let read = |f: &str| std::fs::read_to_string(dir.join(f)).expect("the source");
+        // The body of the function whose signature starts with `head`.
+        let body = |src: &str, head: &str| -> String {
+            let at = src.find(head).unwrap_or_else(|| panic!("no `{head}`"));
+            let open = at + src[at..].find('{').expect("a body");
+            let mut depth = 0usize;
+            for (k, ch) in src[open..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return src[open..open + k + 1].to_owned();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            panic!("`{head}`: no end")
+        };
+        let path = [
+            ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn tape(src: &str)"),
+            ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn compiled_tape("),
+            ("native_cpu_stream.rs", "pub(super) fn columns(&self, bytes: &[u8])"),
+            ("native_cpu_stream.rs", "pub(super) fn columns(mut self)"),
+            ("native_cpu_stream.rs", "pub(super) fn tape(&self, batch"),
+            ("native_cpu_stream.rs", "pub(super) fn tape(&self, n: usize)"),
+            ("native_cpu_stream.rs", "pub(super) fn words(&self, batch"),
+            ("native_cpu_stream.rs", "fn stream<'b>(&self"),
+            ("native_cpu_stream.rs", "pub(super) unsafe fn call(&self, padded"),
+            ("native_cpu_block.rs", "pub(super) fn new(program: &CompiledBlock, files"),
+            ("native_cpu_block.rs", "pub(super) fn call(&mut self, program: &CompiledBlock)"),
+        ];
+        let walks = [".iter(", ".iter_mut(", ".into_iter(", ".chunks", ".windows(", ".flatten(", ".map(", ".fold(", ".for_each(", ".bytes()", ".chars()", ".collect", ".position(", ".find(", ".any(", ".all(", ".filter(", ".sum(", ".count()", "while ", "loop {", "nodes()"];
+        let loops_allowed = ["for file in files", "for entry in &program.entries"];
+        for (file, head) in path {
+            // The code alone: comments dropped.
+            let b: String = body(&read(file), head).lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+            for w in walks {
+                assert!(!b.contains(w), "{file} `{head}`: `{w}` on the parse path");
+            }
+            for (k, _) in b.match_indices("for ") {
+                assert!(loops_allowed.iter().any(|a| b[k..].starts_with(a)), "{file} `{head}`: a loop on the parse path: {}", &b[k..(k + 40).min(b.len())]);
+            }
         }
     }
 
@@ -243,8 +289,8 @@ mod tests {
         let files = corpus();
         let bytes: usize = files.iter().map(String::len).sum();
         let mb = bytes as f64 / 1e6;
-        let mut stage = [std::time::Duration::ZERO; 6];
-        let names = ["layout (Batch::new)", "tier 1 (masks, extracts)", "tape allocated", "tier 2 (words)", "nodes (Vec<Node>)", "to the engine's tape"];
+        let mut stage = [std::time::Duration::ZERO; 5];
+        let names = ["layout (Batch::new)", "tier 1 (masks, extracts)", "tape allocated", "tier 2 (words)", "columns taken"];
         let (mut nodes_n, mut refused) = (0usize, 0usize);
         for _ in 0..REPEAT {
             for src in &files {
@@ -267,10 +313,8 @@ mod tests {
                     refused += 1;
                     continue;
                 }
-                let nodes = tape.nodes();
+                let out = tape.columns();
                 lap(4, &mut t);
-                let out = super::nodes_to_tape(c, &nodes);
-                lap(5, &mut t);
                 nodes_n += out.len();
             }
         }

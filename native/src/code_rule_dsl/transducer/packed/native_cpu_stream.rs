@@ -71,6 +71,10 @@ pub(super) struct Ctx {
     out_start: *mut u32,
     out_end: *mut u32,
     out_size: *mut u32,
+    /// The table's last columns, made by its final pass (`table`): each node's parent
+    /// (`NO_PARENT` for the root) and whether it is an extra.
+    parent: *mut u32,
+    extra: *mut u8,
 }
 
 /// The field offsets of `Ctx`.
@@ -104,6 +108,11 @@ const OUT_FIELD: i32 = 208;
 const OUT_START: i32 = 216;
 const OUT_END: i32 = 224;
 const OUT_SIZE: i32 = 232;
+const PARENT: i32 = 240;
+const EXTRA: i32 = 248;
+
+/// The root's parent in the table's `parent` column.
+pub(super) const NO_PARENT: u32 = u32::MAX;
 /// `head`'s mark of a wrap's own record.
 const IS_WRAP: i64 = u32::MAX as i64;
 
@@ -394,7 +403,7 @@ fn runs(s: &ByteSwitch, word: &dyn Fn(u16) -> Block) -> Vec<(u32, Block)> {
 
 /// Compile a program's tier-2 words.
 /// The columns `reorder` reads and writes.
-struct Reorder {
+struct Reorder<'a> {
     nodes: Value,
     supers: Value,
     wraps: Value,
@@ -410,6 +419,10 @@ struct Reorder {
     before: Option<Value>,
     /// Where the count of records placed goes.
     counts: Value,
+    /// The final pass's (`table`): its stack, its columns and the extras' kinds.
+    stack: Value,
+    last: [Value; 2],
+    extras: &'a [u16],
 }
 
 /// At `ACCEPT` with wraps: the node table in preorder. Each record in the order made, a wrap's
@@ -418,7 +431,7 @@ struct Reorder {
 /// node's size less those in its range (from its base, `size` records), counted first. Loops
 /// over the table and one over the supertypes, each step a record (`Step::Node`). Writes the
 /// count placed; returns 0.
-fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step)>) {
+fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder<'_>, heads: &mut Vec<(Block, Step)>) {
     let flags = MemFlags::trusted();
     let at = |f: &mut FunctionBuilder<'_>, c: Value, i: Value| {
         let off = f.ins().ishl_imm(i, 2);
@@ -568,6 +581,89 @@ fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step
     f.ins().jump(supers, &[BlockArg::from(s1)]);
 
     f.switch_to_block(done);
+    // Without a wrap made, the table is in preorder as made.
+    let placed = f.ins().load(types::I64, flags, r.counts, 0);
+    let kind = f.ins().select(r.wraps, r.out[0], r.cols[0]);
+    let size = f.ins().select(r.wraps, r.out[4], r.cols[4]);
+    table(f, [kind, size], placed, r.stack, r.last, r.extras, heads);
+}
+
+/// The table's final pass, once it is in preorder: each node's parent and its extra flag, into
+/// the `parent` and `extra` columns, from the `kind` and `size` columns of `count` records.
+/// The open nodes are a stack of records in `stack` (the open stack's room, free at `ACCEPT`):
+/// before record `i`, each open node whose range ends at or before `i` is popped, and the top is
+/// `i`'s parent. One loop over the records and one over the pops, each step a record
+/// (`Step::Node`): a record is pushed once and popped at most once. Returns 0.
+fn table(f: &mut FunctionBuilder<'_>, cols: [Value; 2], count: Value, stack: Value, out: [Value; 2], extras: &[u16], heads: &mut Vec<(Block, Step)>) {
+    let flags = MemFlags::trusted();
+    let [kind_c, size_c] = cols;
+    let [parent_c, extra_c] = out;
+    let at = |f: &mut FunctionBuilder<'_>, c: Value, i: Value, shift: i64| {
+        let off = f.ins().ishl_imm(i, shift);
+        f.ins().iadd(c, off)
+    };
+    let (next, pop, popped, place, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    // next(i, d): record i, d open records on the stack.
+    for b in [next, pop] {
+        f.append_block_param(b, types::I64);
+        f.append_block_param(b, types::I64);
+    }
+    heads.extend([(next, Step::Node), (pop, Step::Node)]);
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(next, &[BlockArg::from(zero), BlockArg::from(zero)]);
+
+    f.switch_to_block(next);
+    let (i, d) = (f.block_params(next)[0], f.block_params(next)[1]);
+    let end = f.ins().icmp(IntCC::Equal, i, count);
+    let body = f.create_block();
+    f.ins().brif(end, done, &[], body, &[]);
+    f.switch_to_block(body);
+    f.ins().jump(pop, &[BlockArg::from(i), BlockArg::from(d)]);
+
+    // pop(i, d): the top's range ends at or before i: popped.
+    f.switch_to_block(pop);
+    let (i, d) = (f.block_params(pop)[0], f.block_params(pop)[1]);
+    let has = f.create_block();
+    f.ins().brif(d, has, &[], place, &[]);
+    f.switch_to_block(has);
+    let d1 = f.ins().iadd_imm(d, -1);
+    let a = at(f, stack, d1, 2);
+    let top = f.ins().uload32(flags, a, 0);
+    let a = at(f, size_c, top, 2);
+    let size = f.ins().uload32(flags, a, 0);
+    let ends = f.ins().iadd(top, size);
+    let closed = f.ins().icmp(IntCC::UnsignedLessThanOrEqual, ends, i);
+    f.ins().brif(closed, popped, &[], place, &[]);
+    f.switch_to_block(popped);
+    f.ins().jump(pop, &[BlockArg::from(i), BlockArg::from(d1)]);
+
+    // place: the parent is the top (none on an empty stack); i is pushed.
+    f.switch_to_block(place);
+    let none = f.ins().iconst(types::I64, i64::from(NO_PARENT));
+    let d1 = f.ins().iadd_imm(d, -1);
+    let a = at(f, stack, d1, 2);
+    let has = f.ins().icmp_imm(IntCC::NotEqual, d, 0);
+    // An empty stack reads no slot: the address is the stack's own.
+    let a = f.ins().select(has, a, stack);
+    let top = f.ins().uload32(flags, a, 0);
+    let parent = f.ins().select(has, top, none);
+    let a = at(f, parent_c, i, 2);
+    f.ins().istore32(flags, parent, a, 0);
+    let a = at(f, kind_c, i, 2);
+    let k = f.ins().uload32(flags, a, 0);
+    let mut extra = f.ins().iconst(types::I8, 0);
+    for &e in extras {
+        let is = f.ins().icmp_imm(IntCC::Equal, k, i64::from(e));
+        extra = f.ins().bor(extra, is);
+    }
+    let a = at(f, extra_c, i, 0);
+    f.ins().store(flags, extra, a, 0);
+    let a = at(f, stack, d, 2);
+    f.ins().istore32(flags, i, a, 0);
+    let (i1, d2) = (f.ins().iadd_imm(i, 1), f.ins().iadd_imm(d, 1));
+    f.ins().jump(next, &[BlockArg::from(i1), BlockArg::from(d2)]);
+
+    f.switch_to_block(done);
     f.ins().return_(&[zero]);
 }
 
@@ -645,6 +741,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         let cols: Vec<Value> = [KIND, FIELD, START, END, SIZE, SUPER_NODE, SUPER_KIND, OPEN, RETURNS, COUNTS].iter().map(|&at| load(&mut f, at)).collect();
         let (kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c) =
             (cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9]);
+        let (parent_c, extra_c) = (load(&mut f, PARENT), load(&mut f, EXTRA));
         let w: Vec<Value> = if wrapping {
             [FRAME_BASE, FRAME_LAST, FRAME_LAST_BASE, HEAD, LINK, PLACE, OUT_KIND, OUT_FIELD, OUT_START, OUT_END, OUT_SIZE].iter().map(|&at| load(&mut f, at)).collect()
         } else {
@@ -1394,9 +1491,9 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                         let wraps = f.ins().iadd(wraps, dead);
                         f.ins().store(flags, wraps, counts_c, 16);
                         let rereads = words.iter().any(|b| matches!(b.operation, Op::Reread { .. }));
-                        reorder(&mut f, Reorder { nodes, supers, wraps, cols: [kind_c, field_c, start_c, end_c, size_c], out: [wc(6), wc(7), wc(8), wc(9), wc(10)], head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c, before: rereads.then(|| wc(fbase_c)), counts: counts_c }, &mut heads);
+                        reorder(&mut f, Reorder { nodes, supers, wraps, cols: [kind_c, field_c, start_c, end_c, size_c], out: [wc(6), wc(7), wc(8), wc(9), wc(10)], head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c, before: rereads.then(|| wc(fbase_c)), counts: counts_c, stack: open_c, last: [parent_c, extra_c], extras: &native.readings.extras }, &mut heads);
                     } else {
-                        f.ins().return_(&[zero]);
+                        table(&mut f, [kind_c, size_c], nodes, open_c, [parent_c, extra_c], &native.readings.extras, &mut heads);
                     }
                 }
                 Op::Empty { total } => {
@@ -1471,6 +1568,9 @@ pub(super) struct Tape {
     frames: [Vec<u32>; 3],
     chains: [Vec<u32>; 3],
     out: [Vec<u32>; 5],
+    /// The final pass's columns (`table`): each node's parent and extra flag, in preorder.
+    pub(super) parent: Vec<u32>,
+    pub(super) extra: Vec<u8>,
 }
 
 impl CompiledStream {
@@ -1495,6 +1595,8 @@ impl CompiledStream {
             frames: std::array::from_fn(|_| vec![0; if self.wraps { nodes + 1 } else { 0 }]),
             chains: std::array::from_fn(|_| vec![0; if self.wraps { nodes } else { 0 }]),
             out: std::array::from_fn(|_| vec![0; if self.wraps { nodes } else { 0 }]),
+            parent: vec![0; nodes],
+            extra: vec![0; nodes],
         }
     }
 
@@ -1537,6 +1639,8 @@ impl CompiledStream {
             out_start: tape.out[2].as_mut_ptr(),
             out_end: tape.out[3].as_mut_ptr(),
             out_size: tape.out[4].as_mut_ptr(),
+            parent: tape.parent.as_mut_ptr(),
+            extra: tape.extra.as_mut_ptr(),
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers.
         unsafe { (self.entry)(&ctx) }
@@ -1578,7 +1682,47 @@ impl CompiledStream {
     }
 }
 
+/// The node table as tier 2 wrote it, in preorder: a column per field, a record each. Taken
+/// from the tape's buffers as they are (`Tape::columns`), not copied.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct Columns {
+    pub(in crate::code_rule_dsl) kind: Vec<u32>,
+    pub(in crate::code_rule_dsl) field: Vec<u32>,
+    pub(in crate::code_rule_dsl) start: Vec<u32>,
+    pub(in crate::code_rule_dsl) end: Vec<u32>,
+    pub(in crate::code_rule_dsl) size: Vec<u32>,
+    /// The parent's record; `NO_PARENT` for the root.
+    pub(in crate::code_rule_dsl) parent: Vec<u32>,
+    /// 1 for an extra (a comment).
+    pub(in crate::code_rule_dsl) extra: Vec<u8>,
+}
+
+impl Columns {
+    pub(in crate::code_rule_dsl) fn len(&self) -> usize {
+        self.kind.len()
+    }
+}
+
 impl Tape {
+    /// The node table's columns: the tape's own buffers, cut to the records written.
+    pub(super) fn columns(mut self) -> Columns {
+        let n = self.counts[0] as usize;
+        let take = |v: &mut Vec<u32>| {
+            let mut v = std::mem::take(v);
+            v.truncate(n);
+            v
+        };
+        let [kind, field, start, end, size] = if self.counts[2] > 0 {
+            let [a, b, c, d, e] = &mut self.out;
+            [take(a), take(b), take(c), take(d), take(e)]
+        } else {
+            [take(&mut self.kind), take(&mut self.field), take(&mut self.start), take(&mut self.end), take(&mut self.size)]
+        };
+        let (parent, mut extra) = (take(&mut self.parent), std::mem::take(&mut self.extra));
+        extra.truncate(n);
+        Columns { kind, field, start, end, size, parent, extra }
+    }
+
     /// The node table as `stream::Node`s.
     pub(super) fn nodes(&self) -> Vec<Node> {
         let n = self.counts[0] as usize;
@@ -1606,7 +1750,18 @@ impl Parser {
         Ok(Parser { tier1: super::native_cpu_block::compile(block)?, tier2: compile(native)? })
     }
 
-    /// The nodes of `bytes`, or the word that refused it (the file goes to tree-sitter).
+    /// The node table of `bytes` as tier 2 wrote it, or the word that refused it (the file goes
+    /// to tree-sitter).
+    pub(super) fn columns(&self, bytes: &[u8]) -> Result<Columns, Refused> {
+        let mut batch = super::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
+        batch.call(&self.tier1);
+        let mut tape = self.tape(&batch);
+        self.words(&batch, &mut tape)?;
+        Ok(tape.columns())
+    }
+
+    /// The nodes of `bytes` as `stream::Node`s, for the tests' comparisons with the interpreter.
+    #[cfg(test)]
     pub(super) fn parse(&self, bytes: &[u8]) -> Result<Vec<Node>, Refused> {
         let mut batch = super::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);

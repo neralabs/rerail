@@ -701,6 +701,10 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             let f: u16 = line.number("#")?;
             parts.readings.provisional.push(f);
         }
+        "extra" => {
+            let k: u16 = line.number("#")?;
+            parts.readings.extras.push(k);
+        }
         "long" => {
             index(line, parts.longs.len(), "long")?;
             parts.longs.push(line.number("")?);
@@ -1109,7 +1113,7 @@ pub(super) fn switch_rows(out: &mut String, at: usize, s: &stream::ByteSwitch) {
 }
 
 /// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,
-/// `reading N field #F as #G`; then `provisional #F`.
+/// `reading N field #F as #G`; then `provisional #F`; then `extra #K`, the extras' kinds.
 pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
     use std::fmt::Write as _;
     for (at, r) in readings.maps.iter().enumerate() {
@@ -1132,6 +1136,9 @@ pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
     }
     for f in &readings.provisional {
         let _ = writeln!(out, "  provisional #{f}");
+    }
+    for k in &readings.extras {
+        let _ = writeln!(out, "  extra #{k}");
     }
 }
 

@@ -2186,6 +2186,13 @@ impl Program {
             for f in &self.readings.provisional {
                 digest.update(f.to_le_bytes());
             }
+            if !self.readings.extras.is_empty() {
+                digest.update(b"extras");
+                digest.update((self.readings.extras.len() as u64).to_le_bytes());
+                for k in &self.readings.extras {
+                    digest.update(k.to_le_bytes());
+                }
+            }
         }
         format!("{:x}", digest.finalize())
     }
