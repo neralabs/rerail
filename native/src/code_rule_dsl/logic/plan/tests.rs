@@ -557,6 +557,59 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+const CORPUS_STORE_CHILD: &str = "RERAIL_CORPUS_STORE_CHILD";
+
+/// The child of `a_second_corpus_run_deletes_and_creates_its_store_again`, run without the tape cache: each run's
+/// store is its own `store.sqlite`, which the next run deletes and creates again. Once a run is over nothing in the
+/// process holds the store open, and the second run's symbols are its own store's.
+#[test]
+#[ignore = "a child process of the corpus store test"]
+fn corpus_store_child() {
+    let Some(dir) = std::env::var_os(CORPUS_STORE_CHILD).map(std::path::PathBuf::from) else { return };
+    assert_eq!(std::env::var("RERAIL_TAPE_CACHE").as_deref(), Ok("off"));
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl name(s: symbol)
+name(s) :- node(_, n, "identifier", _, _), text(n, s).
+.output name
+"#;
+    let out = dir.join("out");
+    let store = out.join("store.sqlite");
+    for (i, [a, b]) in [["alpha", "beta"], ["gamma", "delta"]].into_iter().enumerate() {
+        let root = dir.join(format!("corpus-{i}"));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), format!("{a} = {b}\n")).unwrap();
+        super::corpus::run(program, &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut names = [a, b];
+        names.sort_unstable();
+        assert_eq!(std::fs::read_to_string(out.join("name.csv")).unwrap(), format!("{}\n{}\n", names[0], names[1]));
+        #[cfg(target_os = "linux")]
+        {
+            let open: Vec<std::path::PathBuf> = std::fs::read_dir("/proc/self/fd").unwrap().filter_map(|fd| std::fs::read_link(fd.ok()?.path()).ok()).collect();
+            let held: Vec<_> = open.iter().filter(|file| file.to_string_lossy().starts_with(&*store.to_string_lossy())).collect();
+            assert!(held.is_empty(), "run {i} left its store open: {held:?}");
+        }
+    }
+    std::fs::write(dir.join("done"), "").unwrap();
+}
+
+/// A process runs the corpus twice over its own store (`corpus_store_child`).
+#[test]
+fn a_second_corpus_run_deletes_and_creates_its_store_again() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("restore");
+    std::fs::create_dir_all(&dir).unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--ignored", "--exact", "code_rule_dsl::logic::plan::tests::corpus_store_child", "--nocapture", "--test-threads=1"])
+        .env(CORPUS_STORE_CHILD, &dir)
+        .env("RERAIL_TAPE_CACHE", "off")
+        .status()
+        .unwrap();
+    assert!(status.success() && dir.join("done").exists(), "the child failed: {status}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Step 30's primitives through the corpus runner: `line(n, l)`, and literal tests on names and paths (`glob`,
 /// `prefix`, `suffix`) in place of regexes.
 #[test]

@@ -71,24 +71,38 @@ impl Interner {
             }
         }
     }
+    /// The atom of `s` in this process's arena (`symbols` read the database's atoms into it).
     fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from) }
-    fn name(&self, v: i64) -> String { self.atoms.with_str(v as crate::content_store::atoms::Sym, str::to_owned).unwrap_or_default() }
-    fn len(&self) -> usize { self.atoms.len() }
+    /// Atom `v`'s text, reading the database's atoms written since `symbols` when `v` is past the arena; "" if there
+    /// is no such atom or they could not be read (a join step has no error to return: it matches as it did before).
+    fn name(&self, v: i64) -> String {
+        let Ok(atom) = crate::content_store::atoms::Sym::try_from(v) else { return String::new() };
+        self.atoms.with_str(atom, str::to_owned).or_else(|| self.atoms.value(atom).ok().flatten()).unwrap_or_default()
+    }
+    /// Whether `v` is an atom of the database, read as `name` reads it.
+    fn known(&self, v: i64) -> Result<bool> {
+        let Ok(atom) = crate::content_store::atoms::Sym::try_from(v) else { return Ok(false) };
+        Ok(self.atoms.with_str(atom, |_| ()).is_some() || self.atoms.value(atom).map_err(|e| err(e.to_string()))?.is_some())
+    }
     /// The first interning that failed since the last check.
     fn check(&mut self) -> Result<()> {
         match self.failed.take() { Some(e) => Err(err(e)), None => Ok(()) }
     }
 }
+/// The process's symbols of each database, kept from run to run with their arena: a run need not read a large
+/// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
 /// The symbols of `conn`'s database: the process's arena of it.
 fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
     let key = conn.path().unwrap_or_default().to_owned();
     let mut syms = SYMS.lock().unwrap();
     let atoms = crate::content_store::atoms::Atoms::for_connection(conn);
-    // A database created again at the same path has new atoms (`Atoms::fresh`).
+    // A store created again at the same path has new atoms (`Atoms::for_database`, checked by `Atoms::install`).
     if let Some(s) = syms.get(&key) && Arc::ptr_eq(&s.read().unwrap().atoms, &atoms) {
         return Ok(Arc::clone(s));
     }
+    // An arena made after the store was written holds none of its atoms yet: the run's SQL and joins read them.
+    atoms.read_stored().map_err(|e| err(e.to_string()))?;
     let s = Arc::new(RwLock::new(Interner { atoms, buf: String::new(), failed: None }));
     syms.insert(key, Arc::clone(&s));
     Ok(s)
@@ -115,7 +129,7 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
     conn.create_scalar_function(c"sym_text", 1, det, move |ctx| {
         let Some(a) = ctx.get::<Option<i64>>(0)? else { return Ok(None) };
         let s = s.read().unwrap();
-        if a < 0 || a as usize >= s.len() {
+        if !s.known(a)? {
             return Err(err(format!("no symbol {a}")));
         }
         Ok(Some(s.name(a)))
@@ -131,8 +145,10 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
     conn.create_scalar_function(c"sym_cat", 2, det, move |ctx| {
         let (Some(a), Some(b)) = (ctx.get::<Option<i64>>(0)?, ctx.get::<Option<i64>>(1)?) else { return Ok(None) };
         let mut s = syms.write().unwrap();
-        if a.min(b) < 0 || a.max(b) as usize >= s.len() {
-            return Err(err(format!("no symbol {}", if a < 0 || a as usize >= s.len() { a } else { b })));
+        for v in [a, b] {
+            if !s.known(v)? {
+                return Err(err(format!("no symbol {v}")));
+            }
         }
         let id = cat(&mut s, a, b);
         s.check()?;
