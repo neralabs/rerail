@@ -2103,6 +2103,11 @@
       "destination": "docs/rule-syntax/lib/tests/directory-reader.rr",
       "sha256": "6ee56b3c0a2523d61f45ad4c43d21e06895b2d2c6ca7d137fc3740e417dd61db",
       "origin": "authored shared-library regression fixture"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
+      "sha256": "10946603864803c63e72ec4940bcc61e11a1b10a2ec73e14ea915c54a504b36c",
+      "origin": "authored native translation; partial original-suite coverage"
     }
   ],
   "rules": [
@@ -2570,8 +2575,9 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json",
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
+      "ruleSha256": "10946603864803c63e72ec4940bcc61e11a1b10a2ec73e14ea915c54a504b36c"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3221,7 +3227,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "89c85be9d1ac71fed9c632706d6812f2b660d42468ba6743e0daee003dd0981d"
+        "sha256": "fe8c7721da7de1bd7e9e0535459338bfcba8be3515dfc141e57f704af25da517"
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",

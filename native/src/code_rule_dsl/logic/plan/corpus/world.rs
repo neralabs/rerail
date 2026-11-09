@@ -404,7 +404,7 @@ mod tests {
         let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-listing-only");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("a.py"), "abc").unwrap();
-        let program = front::parse(".decl rr_dir_req(path: symbol)\n.decl ask(path: symbol)\nask(\".\").\nrr_dir_req(p) :- ask(p).").unwrap();
+        let program = front::parse(".decl rr_dir_req(path: symbol)\n.decl ask(path: symbol)\nask(\".\").\nrr_dir_req(P) :- ask(P).").unwrap();
         let mut world = World::new(&root, &program);
         assert_eq!(world.dir("."), vec![("a.py".to_owned(), false)]);
         assert!(world.metadata.is_empty(), "a names/type consumer must not construct metadata rows");
@@ -416,7 +416,7 @@ mod tests {
         let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-directory-cache");
         std::fs::create_dir_all(root.join("pkg")).unwrap();
         std::fs::write(root.join("pkg/a.py"), "abc").unwrap();
-        let program = front::parse(".decl rr_dir_metadata_req(path: symbol)\n.decl ask(path: symbol)\nask(\"pkg\").\nrr_dir_metadata_req(p) :- ask(p).").unwrap();
+        let program = front::parse(".decl rr_dir_metadata_req(path: symbol)\n.decl ask(path: symbol)\nask(\"pkg\").\nrr_dir_metadata_req(P) :- ask(P).").unwrap();
         let mut world = World::new(&root, &program);
         assert_eq!(world.dir("pkg"), vec![("a.py".to_owned(), false)]);
         std::fs::write(root.join("pkg/a.py"), "changed").unwrap();
