@@ -38,7 +38,7 @@ pub(super) struct Plan {
     /// May be set on a byte of 0x00 (the zeros before a file), for a shiftable value.
     at_zero: Vec<bool>,
     /// Its value on every window of ASCII bytes, when it is the same on all of them.
-    ascii: Vec<Option<bool>>,
+    pub(super) ascii: Vec<Option<bool>>,
     /// Some value reads the 16 bytes before the block.
     pub(super) before: bool,
     /// The full-block body has an ASCII twin: some value is known on ASCII windows.

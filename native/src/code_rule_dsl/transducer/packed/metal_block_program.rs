@@ -914,7 +914,18 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
     // A full group's body (`full_form`): the same in every lane of the group. Then the general one.
     let full = full_form(native);
     let span = w * (GROUP - plan.warm);
-    out.push_str(&format!("  if (g > 0u && (g + 1u) * {span}u <= len) {{\n{}  return true;\n  }}\n", levels(p, native, &full, plan, width)));
+    // In a full group, a group of ASCII bytes takes a third body (`ascii_form`): each lane's bytes
+    // and the 16 before them below 0x80, the warm-up lanes' included, so every byte a byte-local
+    // value reads.
+    let ascii = ascii_form(native);
+    let chunks = w / 16;
+    let loads: Vec<String> = (0..=chunks).map(|c| format!("load16(bytes, f, gl * {chunks}u + {c}u - 1u)")).collect();
+    out.push_str(&format!(
+        "  if (g > 0u && (g + 1u) * {span}u <= len) {{\n    const uint4 high = {};\n    const bool ascii = ((high.x | high.y | high.z | high.w) & 0x80808080u) == 0u;\n    if (simd_all(ascii)) {{\n{}    return true;\n    }}\n{}  return true;\n  }}\n",
+        loads.join(" | "),
+        levels(p, native, &ascii, plan, width),
+        levels(p, native, &full, plan, width)
+    ));
     out.push_str(&levels(p, native, native, plan, width));
     out.push_str("  return true;\n}\n\n");
     out
@@ -1073,6 +1084,22 @@ fn full_form(native: &BlockNative) -> BlockNative {
         };
         if let Some(c) = folded {
             *inst = BlockInst::Const(c);
+        }
+    }
+    form
+}
+
+/// A program's form in a full group of ASCII bytes: `full_form`, with each byte-local value known
+/// on ASCII bytes (`native_cpu_lanes::Plan::ascii`) a constant: a UTF-8 check's, say.
+fn ascii_form(native: &BlockNative) -> BlockNative {
+    let plan = super::native_cpu_lanes::Plan::of(native);
+    let mut form = full_form(native);
+    for (at, inst) in form.insts.iter_mut().enumerate() {
+        if inst.carried() || !plan.lanes[at] {
+            continue;
+        }
+        if let Some(one) = plan.ascii[at] {
+            *inst = BlockInst::Const(if one { u64::MAX } else { 0 });
         }
     }
     form
