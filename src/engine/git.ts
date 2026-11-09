@@ -369,6 +369,91 @@ export async function gitCommitsBetween(cwd: string, from: string, to: string): 
   return commits === undefined || commits === "" ? [] : commits.split("\n");
 }
 
+/** A Git boolean that is true. */
+const GIT_TRUE = /^(?:true|yes|on|1)$/iu;
+
+/** The line-ending settings Git reads for one path: its `text` and `eol` attributes, and `core.autocrlf` and `core.eol`. */
+interface LineEndingSettings {
+  /** `set`, `unset`, `unspecified` or a value such as `auto`, as `git check-attr` prints it. */
+  readonly text: string;
+  readonly eol: string;
+  readonly autocrlf: string | undefined;
+  readonly coreEol: string | undefined;
+}
+
+/**
+ * Whether a checkout writes a text file's line breaks as CRLF under `settings`, as Git decides it: `-text` never; an
+ * `eol` attribute as it says; a file with no `text` attribute only under `core.autocrlf=true`; a `text` or `text=auto`
+ * file under `core.autocrlf=true`, never under `input`, else as `core.eol` says, whose default (`native`) is CRLF on
+ * Windows alone.
+ */
+function writesCrlf(settings: LineEndingSettings, platform: NodeJS.Platform): boolean {
+  const { text, eol, autocrlf, coreEol } = settings;
+  if (text === "unset") return false;
+  if (eol === "crlf" || eol === "lf") return eol === "crlf";
+  const autoCrlf = autocrlf !== undefined && GIT_TRUE.test(autocrlf);
+  if (text === "unspecified" || autoCrlf) return autoCrlf;
+  if (autocrlf === "input") return false;
+  return coreEol === "crlf" || ((coreEol === undefined || coreEol === "native") && platform === "win32");
+}
+
+/**
+ * The `text` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty without
+ * Git, outside a repository or past the timeout.
+ */
+async function lineEndingAttributes(cwd: string, paths: readonly string[]): Promise<Map<string, { text: string; eol: string }>> {
+  const attributes = new Map<string, { text: string; eol: string }>();
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch {
+    return attributes;
+  }
+  const { promise, resolve: settle } = Promise.withResolvers<void>();
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "check-attr", "-z", "--stdin", "text", "eol"], {
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["pipe", "pipe", "ignore"],
+    timeout: DEFAULT_TIMEOUT_MS,
+  });
+  const chunks: Buffer[] = [];
+  child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+  settleWhenDone(child, settle);
+  child.stdin.on("error", () => undefined);
+  child.stdin.end(paths.map(path => `${path}\0`).join(""));
+  await promise;
+  // `<path> NUL <attribute> NUL <value> NUL`, once per path and attribute.
+  const fields = Buffer.concat(chunks).toString("utf8").split("\0");
+  for (let at = 0; at + 2 < fields.length; at += 3) {
+    const [path, name, value] = [fields[at]!, fields[at + 1]!, fields[at + 2]!];
+    const entry = attributes.get(path) ?? { text: "unspecified", eol: "unspecified" };
+    if (name === "text") entry.text = value;
+    else if (name === "eol") entry.eol = value;
+    attributes.set(path, entry);
+  }
+  return attributes;
+}
+
+/**
+ * The paths among `paths` (relative to `cwd`, `/`-separated) that a checkout of `cwd` writes with CRLF line breaks
+ * ({@link writesCrlf}), read from the repository's attributes and configuration. Empty without Git, outside a
+ * repository or past the timeout, so a file with CRLF line breaks is then never taken for Git's writing.
+ */
+export async function gitCrlfPaths(cwd: string, paths: readonly string[], platform: NodeJS.Platform = process.platform): Promise<Set<string>> {
+  const asked = paths.filter(path => !path.includes("\0"));
+  const crlf = new Set<string>();
+  if (asked.length === 0) return crlf;
+  const [autocrlf, coreEol, attributes] = await Promise.all([
+    gitOutput(cwd, ["config", "--get", "core.autocrlf"]),
+    gitOutput(cwd, ["config", "--get", "core.eol"]),
+    lineEndingAttributes(cwd, asked),
+  ]);
+  for (const path of asked) {
+    const attribute = attributes.get(path);
+    if (attribute !== undefined && writesCrlf({ ...attribute, autocrlf: autocrlf?.toLowerCase(), coreEol: coreEol?.toLowerCase() }, platform)) crlf.add(path);
+  }
+  return crlf;
+}
+
 /**
  * The object id of each of `revisions` (as for {@link readGitBlobs}) that names a blob, by one `git cat-file
  * --batch-check`: no blob is read. A revision Git does not resolve to a blob is absent, and so is every revision

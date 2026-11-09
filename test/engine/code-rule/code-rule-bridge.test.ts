@@ -1079,6 +1079,40 @@ describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
       [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nmine\r\n" }],
     ]);
   });
+
+  it("audits a shell write that gives an LF file CRLF line breaks where Git would never write them", async () => {
+    const root = await twoBranches();
+    // As on macOS and Linux, and on Windows set up to check files out as they are stored.
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "config", "core.eol", "lf");
+    // Checked out again under these settings: a Windows machine-wide core.autocrlf=true wrote it with CRLF.
+    await rm(join(root, "src", "a.py"));
+    git(root, "checkout", "--", "src/a.py");
+    await awaitClockAfter(join(root, "src", "a.py"));
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\r\n" }],
+    ]);
+  });
+
+  it("credits Git with CRLF line breaks an eol attribute or a text file under core.eol=crlf has it write", async () => {
+    for (const setup of [
+      { attributes: "*.py eol=crlf\n", eol: "lf" },
+      { attributes: "*.py text\n", eol: "crlf" },
+    ]) {
+      const root = await twoBranches();
+      git(root, "config", "core.autocrlf", "false");
+      git(root, "config", "core.eol", setup.eol);
+      await writeFile(join(root, ".git", "info", "attributes"), setup.attributes);
+      await rm(join(root, "src", "a.py"));
+      git(root, "checkout", "--", "src/a.py");
+      await awaitClockAfter(join(root, "src", "a.py"));
+      const { bridge, auditGeneratedEdits } = await opened(root);
+      await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other")), setup.attributes).resolves.toEqual([]);
+      expect(auditGeneratedEdits, setup.attributes).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe("CodeRuleBridge and Git's own writes", () => {

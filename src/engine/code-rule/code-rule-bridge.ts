@@ -15,7 +15,7 @@ import type {
   IgnoredEditMatch,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
-import { gitBranchTips, gitCommitsBetween, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs } from "../git.js";
+import { gitBranchTips, gitCommitsBetween, gitCrlfPaths, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { renameWithRetry } from "../file-replace.js";
@@ -142,6 +142,8 @@ interface GitBlobs {
   readonly committed: boolean;
   /** `HEAD` as the last walk saw it, when it moved since. */
   readonly before: string | undefined;
+  /** The changes whose blobs a checkout writes with CRLF line breaks (`gitCrlfPaths`). */
+  readonly crlf: ReadonlySet<string>;
 }
 interface GitView extends GitBlobs {
   /** A merge, rebase or cherry-pick stopped on a conflict, having not moved `HEAD` for its work so far. */
@@ -155,9 +157,12 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
   const moved = from !== head;
   const committed = moved && await headMovedOnlyByCommits(checkout, from);
   const before = from === head ? undefined : from;
-  // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-  const blobs = await readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES });
-  return { blobs, head, moved, committed, before };
+  const [blobs, crlf] = await Promise.all([
+    // A blob larger than a source could never match its digest: it is skipped, never read into memory.
+    readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES }),
+    gitCrlfPaths(checkout, paths),
+  ]);
+  return { blobs, head, moved, committed, before, crlf };
 }
 /** The commits that moved `HEAD` since the last walk: none when something else moved it, undefined when Git cannot list them. */
 async function commitsMade(checkout: string, view: GitBlobs): Promise<string[] | undefined> {
@@ -170,28 +175,29 @@ function gitRevisions(path: string, before: string | undefined): string[] {
   return before === undefined ? revisions : [...revisions, `${before}:./${path}`];
 }
 /**
- * How a file whose bytes have `digest` holds `blob`: as stored, as a `core.autocrlf=true` checkout writes it (CRLF), or
- * not at all (undefined). No blob and no digest, a file absent on both sides, counts as held as stored.
+ * How a file whose bytes have `digest` holds `blob`: as stored, as a checkout writes it with CRLF line breaks when its
+ * repository's settings have it do so (`crlf`, `gitCrlfPaths`), or not at all (undefined). No blob and no digest, a file
+ * absent on both sides, counts as held as stored.
  */
-function heldAs(blob: Buffer | undefined, digest: string | undefined): "stored" | "crlf" | undefined {
+function heldAs(blob: Buffer | undefined, digest: string | undefined, crlf: boolean): "stored" | "crlf" | undefined {
   if (blob === undefined) return digest === undefined ? "stored" : undefined;
   if (digest === undefined) return undefined;
   if (sha256(blob) === digest) return "stored";
-  const checkedOut = crlfCheckout(blob);
+  const checkedOut = crlf ? crlfCheckout(blob) : undefined;
   return checkedOut !== undefined && sha256(checkedOut) === digest ? "crlf" : undefined;
 }
-/** Whether a file whose bytes have `digest` holds the blob `revision` names, in either form. */
-function holdsBlob(view: GitBlobs, revision: string, digest: string): boolean {
+/** Whether a file at `path` whose bytes have `digest` holds the blob `revision` names, in either form. */
+function holdsBlob(view: GitBlobs, path: string, revision: string, digest: string): boolean {
   const blob = view.blobs.get(revision);
-  return blob !== undefined && heldAs(blob, digest) !== undefined;
+  return blob !== undefined && heldAs(blob, digest, view.crlf.has(path)) !== undefined;
 }
 function heldBefore(view: GitBlobs, path: string, digest: string): boolean {
-  return view.before !== undefined && holdsBlob(view, `${view.before}:./${path}`, digest);
+  return view.before !== undefined && holdsBlob(view, path, `${view.before}:./${path}`, digest);
 }
 /** A file stays unmerged after the agent edits it: Git wrote it only if it changed from what Git started the merge on. */
 function conflictedByGit(view: GitBlobs, path: string, prior: string | undefined): boolean {
   if (!view.blobs.has(`:2:./${path}`) && !view.blobs.has(`:3:./${path}`)) return false;
-  return prior === undefined || holdsBlob(view, `:2:./${path}`, prior) || heldBefore(view, path, prior);
+  return prior === undefined || holdsBlob(view, path, `:2:./${path}`, prior) || heldBefore(view, path, prior);
 }
 /** A file a move left absent from `HEAD` was removed by it; while a merge is stopped, so was one the index no longer has. */
 function removedByGit(view: GitView, path: string): boolean {
@@ -199,7 +205,7 @@ function removedByGit(view: GitView, path: string): boolean {
 }
 /** A file holding `HEAD`'s blob, unless only commits moved `HEAD`; while a merge is stopped, one holding its index blob. */
 function holdsGitBlob(view: GitView, path: string, after: string): boolean {
-  return (!view.committed && holdsBlob(view, `HEAD:./${path}`, after)) || (view.stopped && holdsBlob(view, `:./${path}`, after));
+  return (!view.committed && holdsBlob(view, path, `HEAD:./${path}`, after)) || (view.stopped && holdsBlob(view, path, `:./${path}`, after));
 }
 /**
  * The text the change was made from, when it held the file's blob at `before`: `HEAD`'s, unless only commits moved it,
@@ -207,7 +213,7 @@ function holdsGitBlob(view: GitView, path: string, after: string): boolean {
  */
 function movedFromText(view: GitBlobs, path: string, prior: string | undefined): GitVerdict | undefined {
   if (view.before === undefined) return undefined;
-  const form = heldAs(view.blobs.get(`${view.before}:./${path}`), prior);
+  const form = heldAs(view.blobs.get(`${view.before}:./${path}`), prior, view.crlf.has(path));
   if (form === undefined) return undefined;
   const earlier = view.committed ? undefined : view.blobs.get(`HEAD:./${path}`);
   const previous = earlier ?? view.blobs.get(`${view.before}:./${path}`);
@@ -595,12 +601,15 @@ async function recoverFromGit(
 ): Promise<void> {
   const named = paths.map(path => ({ path, inCheckout: sessionPath(checkout, resolve(root, path)) }));
   const revisions = named.flatMap(({ inCheckout }) => [`:./${inCheckout}`, `HEAD:./${inCheckout}`]);
-  // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-  const blobs = await readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES });
+  const [blobs, crlf] = await Promise.all([
+    // A blob larger than a source could never match its digest: it is skipped, never read into memory.
+    readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES }),
+    gitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout)),
+  ]);
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);
     for (const blob of [blobs.get(`:./${inCheckout}`), blobs.get(`HEAD:./${inCheckout}`)]) {
-      const form = blob === undefined || digest === undefined ? undefined : heldAs(blob, digest);
+      const form = blob === undefined || digest === undefined ? undefined : heldAs(blob, digest, crlf.has(inCheckout));
       if (blob === undefined || form === undefined) continue;
       // In the line breaks the file held it in, so the diff against the working tree lines up line by line.
       recovered.set(path, textAs(blob, form));
@@ -1514,7 +1523,8 @@ export class CodeRuleBridge {
    * committed (`git restore`, `git stash`). A file a move left absent from `HEAD` was removed by it. A merge, rebase or
    * cherry-pick stopped on a conflict has not moved `HEAD` for its work so far: an unmerged file it just wrote is Git's, and
    * in the same walk so is one that holds its index blob or that the index no longer has. A file holds a blob in the
-   * line breaks a `core.autocrlf=true` checkout writes as well (`line-endings.ts`); other filters' bytes never match, and
+   * CRLF line breaks as well where the repository's settings have a checkout write them (`gitCrlfPaths`,
+   * `line-endings.ts`); other filters' bytes never match, and
    * stay the session's. Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`).
    */
   async #gitVerdicts(
@@ -1564,7 +1574,8 @@ export class CodeRuleBridge {
    *
    * Each file's blob id is computed here, and only text the repository already holds as an object is looked for in the
    * branches: new text, which most edits write, costs one `cat-file --batch-check` and no branch is read. Text with CRLF
-   * line breaks is also looked for as the LF text a `core.autocrlf=true` checkout wrote it from.
+   * line breaks is also looked for as the LF text a checkout wrote it from, where the repository's settings have a
+   * checkout write CRLF.
    */
   async #restoredFromBranches(checkout: string, view: GitBlobs, named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>): Promise<string[]> {
     // Git names a blob by the SHA-1, or in a SHA-256 repository the SHA-256, of its header and bytes; `HEAD`'s id says which.
@@ -1573,8 +1584,8 @@ export class CodeRuleBridge {
       const bytes = Buffer.from(text, "utf8");
       return createHash(algorithm).update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
     };
-    const ids = new Map(named.map(({ edit }) => {
-      const stored = lfStored(edit.generatedText!);
+    const ids = new Map(named.map(({ edit, path }) => {
+      const stored = view.crlf.has(path) ? lfStored(edit.generatedText!) : undefined;
       return [edit.path, stored === undefined ? [blobId(edit.generatedText!)] : [blobId(edit.generatedText!), blobId(stored)]];
     }));
     const known = await readGitBlobIds(checkout, [...new Set([...ids.values()].flat())]);

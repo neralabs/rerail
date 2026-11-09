@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitHome, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
+  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitHead, gitHome, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
   runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -193,6 +193,24 @@ describe("gitExcludeFiles", () => {
     vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global"));
     expect((await gitConfigFiles(root)).slice(2)).toEqual([join(home, "global")]);
     expect(await gitConfigFiles(home)).toEqual([]);
+  });
+});
+
+describe("gitCrlfPaths", () => {
+  it("names the files a checkout writes with CRLF line breaks, as Git's attributes and configuration decide it", async () => {
+    const root = await repository({ "a.py": "a\n", "b.bin": "b\n", "c.txt": "c\n", "d.md": "d\n" });
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "config", "core.eol", "native");
+    await writeFile(join(root, ".git", "info", "attributes"), "*.py text\n*.bin -text eol=crlf\n*.txt eol=crlf\n");
+    const paths = ["a.py", "b.bin", "c.txt", "d.md"];
+    // A text file takes core.eol, whose default (native) is CRLF on Windows alone; -text is never converted.
+    expect([...await gitCrlfPaths(root, paths, "win32")].sort()).toEqual(["a.py", "c.txt"]);
+    expect([...await gitCrlfPaths(root, paths, "linux")]).toEqual(["c.txt"]);
+    // core.autocrlf=true converts every file with no text attribute too; input converts none on checkout.
+    git(root, "config", "core.autocrlf", "true");
+    expect([...await gitCrlfPaths(root, paths, "linux")].sort()).toEqual(["a.py", "c.txt", "d.md"]);
+    git(root, "config", "core.autocrlf", "input");
+    expect([...await gitCrlfPaths(root, paths, "win32")]).toEqual(["c.txt"]);
   });
 });
 
