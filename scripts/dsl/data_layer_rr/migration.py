@@ -26,8 +26,8 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs',
     'native/src/code_rule_dsl/facts/vtab/syntax/python_',
     'native/src/code_rule_dsl/logic/plan.rs',
-    # Document-free constants must be derived by the cross program even with no source files.
-    'native/src/code_rule_dsl/typing/file_local.rs',
+    # Unconditional ground readers must seed a demanded producer.
+    'native/src/code_rule_dsl/logic/plan/demand.rs',
     # Generic ordered BFS, on Final's existing native-relation boundary.
     'native/src/code_rule_dsl/logic/front.rs',
     'native/src/code_rule_dsl/logic/native.rs',

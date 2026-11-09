@@ -3537,7 +3537,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "7e77fa2ead6148b651731514be9670e15934a288",
-    "status": "Final 7e77 JSON Boolean regression failed; generic constant-derivation split repair committed for the next TDD build.",
+    "status": "Final 7e77: the initial split hypothesis was disproven and removed. SQL trace identifies missing unconditional demand seeds; corrected repair is ready for TDD verification.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3669,7 +3669,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "685d5ef8f921659dab7cdda67c45bc3aa3384f24f2bbb1d0c0749eb380a43b22"
+        "sha256": "30ca9999b6ada3ccb79b75348cd4cca7f4a0ad2c140a571e69c9f884bd4b5ee4"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -3724,9 +3724,9 @@
         "sha256": "4c9c48783f5e0d4decfbabb7f89c0ef86b959d3b27841fd50268eb2467a7bd22"
       },
       {
-        "path": "native/src/code_rule_dsl/typing/file_local.rs",
-        "sha256": "0bbe32982ff274fa579460814cb9c9e0d2a0470a2c78f26ed714211f3e438530",
-        "reason": "The actual ratchet port proves document-free Boolean predicates vanish unless public. Keep constant derivations and outputs in the cross program, and do not require per-file exports for them."
+        "path": "native/src/code_rule_dsl/logic/plan/demand.rs",
+        "reason": "The ratchet Boolean regression proves an unconditional ground reader leaves its demanded producer unseeded. Add literal demand keys and require a nonzero measured scan for the automatic size heuristic.",
+        "sha256": "9fa3272a833ea337a8b4579d2cfbdea802046dbc1907fcc965f83765849d991a"
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",

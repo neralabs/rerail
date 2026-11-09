@@ -2989,12 +2989,13 @@ Seen(@place("",0)) :- verified_shape().
             std::fs::create_dir_all(&root).unwrap();
             std::fs::write(root.join("baseline.json"), source).unwrap();
             for i in 0..documents { std::fs::write(root.join(format!("source{i}.py")), "pass\n").unwrap(); }
-            for expose in [false, true] {
-                let policy = dir.join(format!("{case}-{documents}-{expose}.rr"));
+            for (expose, magic) in [(false, false), (true, false), (false, true), (true, true)] {
+                let program = program.replace(".decl verified_shape()", if magic { ".decl verified_shape() magic" } else { ".decl verified_shape()" });
+                let policy = dir.join(format!("{case}-{documents}-{expose}-{magic}.rr"));
                 std::fs::write(&policy, format!("{program}\n{}", if expose { ".output has_meta, has_counts\n" } else { "" })).unwrap();
-                let report = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(format!("out-{case}-{documents}-{expose}")), &serde_json::Value::Null).unwrap();
+                let report = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(format!("out-{case}-{documents}-{expose}-{magic}")), &serde_json::Value::Null).unwrap();
                 let seen = report["diagnostics"].as_array().unwrap().iter().filter(|r| r["code"] == "SEEN").count();
-                assert_eq!(seen, expected, "{case}, documents={documents}, exposed={expose}: {report}");
+                assert_eq!(seen, expected, "{case}, documents={documents}, exposed={expose}, magic={magic}: {report}");
             }
         }
     }

@@ -58,7 +58,7 @@
 //! becomes `pre_i($n) :- m126($n)`, `demand_m131($n) :- pre_i($n)`, `m131` over `demand_m131`, and
 //! `m132($n) :- pre_i($n), m131($n)`. Corpus runs only, so the golden plans are unchanged.
 
-use super::super::front::{Atom, Literal, Program, Rule, Term};
+use super::super::front::{Atom, Literal, Program, Rule, Term, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 thread_local! {
@@ -144,7 +144,8 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
     // Its scan rules reach `large` together; its other rules (a join of derived relations, `m132(n) :- pre(n), m131(n)`)
     // take the demand too, which only narrows them.
     let demandable = |rules: &[&Rule]| -> bool {
-        rules.iter().all(|r| per_node(r)) || rules.iter().filter_map(|r| scan(r)).sum::<f64>() >= large
+        let rows = rules.iter().filter_map(|r| scan(r)).sum::<f64>();
+        rules.iter().all(|r| per_node(r)) || (rows > 0.0 && rows >= large)
     };
     let recursive = |rel: &str, rules: &[&Rule]| rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Atom(a) | Literal::Agg { atom: a, .. } if a.rel == rel)));
     let mut candidates: BTreeSet<&str> = by_rel
@@ -297,9 +298,20 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         if let Some(own) = &own {
             kept.insert(0, own);
         }
-        // Nothing left to bind the demand (every literal is a negated read): a `pre_<i>` of an empty body is no
-        // relation any engine makes, so the rule stays as it is.
+        // A ground reader needs its keys unconditionally. Leaving the reader unchanged but guarding its
+        // producer without these seeds makes a true Boolean false. No context relation is needed here.
         if kept.is_empty() {
+            for literal in &cut {
+                let read = literal.atom().expect("a demanded read");
+                let values = read.args.iter().map(|term| match term {
+                    Term::Int(value) => Some(Value::Int(*value)),
+                    Term::Str(value) => Some(Value::Str(value.clone())),
+                    _ => None,
+                }).collect::<Option<Vec<_>>>();
+                let Some(values) = values else { return Err(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect()) };
+                let rows = out.facts.entry(format!("demand_{}", read.rel)).or_default();
+                if !rows.contains(&values) { rows.push(values); }
+            }
             rules.push(rule.clone());
             continue;
         }
