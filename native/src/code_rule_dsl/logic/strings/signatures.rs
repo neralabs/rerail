@@ -2,7 +2,7 @@
 use base64::{Engine, alphabet, engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig}};
 use ed25519_dalek::{Signature, VerifyingKey};
 
-/// CPython's non-strict base64 transport ignores ASCII noise and data after completed padding.
+/// CPython 3.13.18's non-strict base64 transport ignores ASCII noise and interior padding.
 /// Canonicalize that transport, then let the base64 library decode it. Signature bytes stay unchanged.
 fn signature_bytes(text: &str) -> Result<Vec<u8>, String> {
     if !text.is_ascii() {
@@ -11,18 +11,9 @@ fn signature_bytes(text: &str) -> Result<Vec<u8>, String> {
     let mut encoded = Vec::with_capacity(88);
     let mut data = 0usize;
     let mut pads = 0;
-    let mut complete = false;
     for byte in text.bytes() {
         if byte == b'=' {
-            let position = data % 4;
             pads = (pads + 1).min(4);
-            if position >= 2 && position + pads >= 4 {
-                if data <= 86 {
-                    encoded.extend(std::iter::repeat_n(b'=', 4 - position));
-                }
-                complete = true;
-                break;
-            }
         } else if byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/') {
             pads = 0;
             data += 1;
@@ -34,16 +25,18 @@ fn signature_bytes(text: &str) -> Result<Vec<u8>, String> {
         }
     }
     let remainder = data % 4;
-    if !complete && remainder != 0 {
-        return Err(if remainder == 1 {
-            format!("Invalid base64-encoded string: number of data characters ({data}) cannot be 1 more than a multiple of 4")
-        } else {
-            "Incorrect padding".to_owned()
-        });
+    if remainder == 1 {
+        return Err(format!("Invalid base64-encoded string: number of data characters ({data}) cannot be 1 more than a multiple of 4"));
     }
-    let bytes = data / 4 * 3 + if complete { remainder - 1 } else { 0 };
+    if remainder != 0 && remainder + pads < 4 {
+        return Err("Incorrect padding".to_owned());
+    }
+    let bytes = data / 4 * 3 + remainder.saturating_sub(1);
     if bytes != 64 {
         return Err("The signature must be exactly 64 bytes long".to_owned());
+    }
+    if remainder != 0 {
+        encoded.extend(std::iter::repeat_n(b'=', 4 - remainder));
     }
     let decoder = GeneralPurpose::new(&alphabet::STANDARD,
         GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true));
