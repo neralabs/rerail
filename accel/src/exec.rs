@@ -269,7 +269,11 @@ impl Backend for CpuBackend {
     fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
         use rayon::prelude::*;
         if ks.len() == 1 {
-            return Ok((vec![crate::cpu::run(ks[0])], Phases::default()));
+            // The kernel parallelizes inside, on the pool: its workers' CPU is the pool's over the call (other work
+            // the pool ran meanwhile counts too).
+            let before = pool_cpu();
+            let o = crate::cpu::run(ks[0]);
+            return Ok((vec![o], Phases { worker_cpu: (pool_cpu() - before).max(0.0), ..Phases::default() }));
         }
         let me = std::thread::current().id();
         let ran: Vec<(Output, f64)> = ks
@@ -283,6 +287,11 @@ impl Backend for CpuBackend {
         let worker_cpu = ran.iter().map(|r| r.1).sum();
         Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
     }
+}
+
+/// The rayon pool's CPU seconds: every worker's thread clock, summed.
+fn pool_cpu() -> f64 {
+    rayon::broadcast(|_| thread_cpu()).iter().sum()
 }
 
 /// This thread's CPU seconds (`CLOCK_THREAD_CPUTIME_ID`; 0 where there is none).

@@ -669,7 +669,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 done = true;
             }
             None => {
-                crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || "a walk's reach too large for bit rows: semi-naive from its seeds".into());
+                crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || format!("a walk's reach too large for bit rows: semi-naive from its seeds ({name})"));
                 store.rels[0].set_delta(0, n)
             }
         }
