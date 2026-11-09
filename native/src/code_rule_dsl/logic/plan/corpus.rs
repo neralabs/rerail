@@ -3469,7 +3469,22 @@ fn run_observed(
                     }
                     // Changed strata maintain their rows from deltas where they can (stage 2, `maintain`).
                     let s = span("rewrite and old sources");
-                    let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &given)?;
+                    // Every other input's delta a maintained stratum reads, found by its documents
+                    // (`retain::document_delta`), not by a join of its new rows against its old; each source's
+                    // documents hashed are kept for the next run.
+                    let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
+                    let mut answer = |rel: &str| -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> {
+                        if let Some((plus, minus)) = given.get(rel) {
+                            return Some((Arc::clone(plus), Arc::clone(minus)));
+                        }
+                        let kept = cell.as_ref()?;
+                        let (old, (_, new)) = (kept.input_source(rel)?, cross_inputs.iter().find(|(r, _)| r == rel)?);
+                        let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta by document".into());
+                        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref())?;
+                        input_docs.insert(rel.to_owned(), docs);
+                        Some(delta)
+                    };
+                    let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
                     drop(s);
                     let part = &maintained.program;
                     step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules, {} old sources", maintained.maintained, maintained.recursive, maintained.derived_again, part.program.rules.len(), maintained.sources.len()));
@@ -3710,7 +3725,7 @@ fn run_observed(
                     }
                     drop(s);
                     let s = span("retain");
-                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats);
+                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs);
                     drop(s);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
                         format!(
