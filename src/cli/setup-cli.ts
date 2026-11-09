@@ -33,6 +33,7 @@ import {
   START_LOCK_DIR,
   startDaemon,
   stopDaemon,
+  type DaemonMachine,
   type DaemonState,
 } from "../runtime/daemon-control.js";
 import { DAEMON_PORT_FILE, DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
@@ -432,11 +433,12 @@ function pathExists(path: string): boolean {
 /**
  * Another Rerail daemon (another `RERAIL_HOME`'s) that still holds the machine-wide cache, by pid. On Windows the
  * record outlives a daemon ended at logoff, so its pid counts only while a Rerail engine pipe exists (`daemonMayHold`).
+ * `machine` is this one unless a test names another.
  */
-function cacheHolder(cache: string): number | undefined {
+export function cacheHolder(cache: string, machine?: DaemonMachine): number | undefined {
   try {
     const { pid } = JSON.parse(readFileSync(join(cache, MAIN_INSTANCE_HOLDER_FILE), "utf8")) as { pid?: unknown };
-    return typeof pid === "number" && Number.isInteger(pid) && pid !== process.pid && daemonMayHold(pid) ? pid : undefined;
+    return typeof pid === "number" && Number.isInteger(pid) && pid !== process.pid && daemonMayHold(pid, machine) ? pid : undefined;
   } catch {
     return undefined;
   }

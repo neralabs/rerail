@@ -16,6 +16,7 @@ import { keepFolderToOwner } from "../engine/storage/windows-acl.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
+import { engineHoldsCapability } from "./engine-proof.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
@@ -337,8 +338,8 @@ export function processAlive(pid: number, kill: ProcessSignal = process.kill.bin
  * Whether `pid` is a live process this OS user runs, the only kind that can be this user's daemon. A state file whose
  * pid belongs to another user is left over from a daemon that is gone, its pid since reused; probing the URL it records
  * would send the capability to whoever listens there now. On Windows `EPERM` answers alike for another user's
- * process, a SYSTEM service and this user's elevated one, so it counts as not this user's there too: a daemon started
- * from an elevated terminal is not found, and `rerail daemon stop` run elevated stops it.
+ * process, a SYSTEM service and this user's elevated one, so it counts as not this user's there too; `lookupDaemon`
+ * tells this user's elevated daemon apart by its engine's proof.
  */
 export function ownProcessAlive(pid: number, kill: ProcessSignal = process.kill.bind(process)): boolean {
   return processLiveness(pid, kill) === "own";
@@ -449,6 +450,10 @@ export interface DaemonMachine {
   kill: ProcessSignal;
   /** The named pipes that exist on Windows, read from `\\.\pipe\` without connecting to any. */
   pipes(): readonly string[];
+  /** Whether the engine on `socketPath` proves it holds `accessToken`, which it never sees (`engineHoldsCapability`). */
+  holdsCapability(socketPath: string, accessToken: string): Promise<boolean>;
+  /** Removes the main-instance record when it names `pid` (`forgetMainInstanceHolder`). */
+  forgetMainInstanceHolder(pid: number): void;
 }
 
 const WINDOWS_PIPES = String.raw`\\.\pipe` + "\\";
@@ -457,6 +462,8 @@ const THIS_MACHINE: DaemonMachine = {
   platform: process.platform,
   kill: (pid, signal) => process.kill(pid, signal),
   pipes: () => readdirSync(WINDOWS_PIPES),
+  holdsCapability: async (socketPath, accessToken) => await engineHoldsCapability(socketPath, accessToken),
+  forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
 };
 
 /**
@@ -491,13 +498,27 @@ export function daemonMayHold(pid: number, machine: DaemonMachine = THIS_MACHINE
   }
 }
 
+/**
+ * Whether the daemon `state` records may be this user's: a live pid, on Windows one holding its engine pipe, and this
+ * user's process. On Windows a pid this user may not signal (`EPERM`) can still be this user's daemon, started from an
+ * elevated terminal or an elevated agent session; it counts when its engine proves it holds the capability `state`
+ * records, which a process on a reused pid cannot. Nothing is sent to its URL before that.
+ */
+async function recordedDaemonMayBeOwn(state: DaemonState, machine: DaemonMachine): Promise<boolean> {
+  const liveness = processLiveness(state.pid, machine.kill);
+  if (liveness === "dead") return false;
+  if (machine.platform !== "win32") return liveness === "own";
+  if (!enginePipeExists(state, machine)) return false;
+  return liveness === "own" || (state.accessToken !== undefined && await machine.holdsCapability(state.kernelSocketPath, state.accessToken));
+}
+
 export async function lookupDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<DaemonLookup> {
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
   // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe: the
   // state is stale, and its URL is never probed.
-  if (!ownProcessAlive(state.pid, machine.kill) || (machine.platform === "win32" && !enginePipeExists(state, machine))) {
+  if (!(await recordedDaemonMayBeOwn(state, machine))) {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
@@ -816,7 +837,7 @@ let autostartAttempted = false;
  * daemon serves every repository; sessions in any repository reuse it for their
  * engine service and status.
  */
-export function autostartDaemon(): void {
+export function autostartDaemon(platform: NodeJS.Platform = process.platform): void {
   if (autostartAttempted) return;
   autostartAttempted = true;
   const setting = process.env.RERAIL_AUTOSTART;
@@ -829,7 +850,7 @@ export function autostartDaemon(): void {
       cwd: undefined,
       env: process.env,
       logFile: join(home, DAEMON_LOG_FILE),
-    });
+    }, platform);
   } catch {
     // Autostart is a convenience; the session must never notice it failing.
   }
@@ -900,7 +921,7 @@ export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MAC
   // The daemon removes its own state file and main-instance record on a clean shutdown; one killed, as Windows
   // always does, leaves both behind, and a record naming a pid Windows reuses would keep the uninstall from the cache.
   await rm(join(home, DAEMON_STATE_FILE), { force: true });
-  if (machine.platform === "win32") forgetMainInstanceHolder(pid);
+  if (machine.platform === "win32") machine.forgetMainInstanceHolder(pid);
   return "stopped";
 }
 
