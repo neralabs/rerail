@@ -150,7 +150,7 @@ pub(super) fn component(
         })
         .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
     let mut emitted = emit::Emitted {
-        analysis: std::sync::Arc::new(super::super::analysis::ProgramAnalysis::analyze(&run.prog)),
+        analysis: std::sync::Arc::clone(&run.model.analysis),
         program: p,
         queries,
         setup: vec![],

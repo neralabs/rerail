@@ -58,7 +58,28 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("float_str", &[Number], Text),
     // `.rr`'s `match("(?<x>…)", s)`: the named group's text (`strings::group`), none when the regex does not match.
     ("rx_group", &[Text, Text, Text], Text),
+    // `.rr`'s integer arithmetic, `strlen` and `to_string`, as the native engine computes them (`native_call`); SQL
+    // lowers the calls to its own operators, and these names give it the same functions. No value on overflow or
+    // for a zero divisor; division truncates, as SQLite's does.
+    ("rr_add", &[Number, Number], Number),
+    ("rr_sub", &[Number, Number], Number),
+    ("rr_mul", &[Number, Number], Number),
+    ("rr_div", &[Number, Number], Number),
+    ("rr_max", &[Number, Number], Number),
+    ("rr_min", &[Number, Number], Number),
+    // Characters, as SQLite's `length` counts a text's.
+    ("rr_strlen", &[Text], Number),
+    ("rr_to_string", &[Number], Text),
 ];
+
+/// The function the native engine computes `.rr`'s call `f` with: `f` itself when it is one of these, or its
+/// `rr_` name (`@add`, `@strlen`, …).
+pub(in crate::code_rule_dsl) fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
+    match f {
+        "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" => signature(&format!("rr_{f}")),
+        _ => signature(f),
+    }
+}
 
 /// A function's name (as SQL names it), arguments and result, if `name` is one of these.
 pub(in crate::code_rule_dsl) fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
@@ -160,6 +181,14 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "git_commit" => return super::git::git_commit(t(0)),
         "git_has" => return super::git::git_has(t(0), t(1)),
         "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
+        "rr_add" => return numbers[0].checked_add(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_mul" => return numbers[0].checked_mul(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_div" => return numbers[0].checked_div(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_max" => return Value::Integer(numbers[0].max(numbers[1])),
+        "rr_min" => return Value::Integer(numbers[0].min(numbers[1])),
+        "rr_strlen" => return Value::Integer(t(0).chars().count() as i64),
+        "rr_to_string" => Some(numbers[0].to_string()),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {

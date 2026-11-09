@@ -2873,6 +2873,18 @@ So per-unit rows would save at most 4 to 7 s of the roughly 100 s a pack edit co
 - `push_local_joins`;
 - preparing the whole program again for one rule.
 
+Decision 0094 places stage 3 after phase 0, which keys the prepared program by the module graph.
+
+**Measured again after the day's merges (2026-11-08, trunk at `32b16e4fe`, with O141's fix).** Whole pack, 534
+programs over the Ruff fixtures, no profile, load 27 to 56:
+
+- rc 0, 6,184 findings, equal to before the merges;
+- 64.6 s CPU (stage 1 alone: 76.7 s), 821G instructions;
+- peak footprint 1,124 MB, still over the 1 GB budget.
+
+Before the fix, the merged trunk took 161.6 s with the profile on (100.1 s before the merges). Quarter 1 went
+from 11.7 s before the merges to 19.6 s, and back to 10.6 s with the fix.
+
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.
@@ -3037,6 +3049,27 @@ candidates) on each merge of the day.
 **Closure:** the merge that adds the cost is found by bisecting the day's merges, and the cost is explained or
 removed.
 
+**Closed (2026-11-08).** The cause was found by sampling, not bisecting.
+
+- **Where.** `sql_kernel::component` ran `ProgramAnalysis::analyze` over the whole program for every stratum it
+  ran, in every chunk. That analysis is the logical key and scalar analysis from `0edfc6227`, which came in through
+  the Rerail-rule-expressivity merge (`9be591511`).
+- **What it cost.** Each stratum's own time rose from about 1 ms to 0.45 s, with 233 MB allocated, outside every
+  named span. On the Python pack that was hundreds of strata.
+- **The fix.** The planner's model already made the analysis once per plan. It is now held behind an `Arc` and
+  shared. It is made again only when the demand split replaces the program (`plan::run`). `emit` shares it too,
+  where it was deep-copied.
+
+s50, 43 files, the same 32 violations:
+
+| guards | before the merges (`329e0b5d1`) | after (`9be591511`) | with the fix |
+|---|---|---|---|
+| off | 380.8G | 644.5G | 336.3G |
+| on | 390.5G | 681.1G | 343.3G |
+
+The fix leaves the pack slightly cheaper than before the merges. The analysis, planner, corpus and SQL executor
+tests pass, and so does the replay gate (`converted_rules_give_the_recorded_findings`).
+
 ## O142. `calls_cx`'s process peak RSS is above the run's sampled peak and the 1 GB budget
 
 **Seen (2026-11-08, t24).** On the 84 files with typeshed and both memos on, the run's report gives a peak RSS of
@@ -3048,6 +3081,21 @@ is with it off.
 whether the per-phase figures the budget is checked against should be the process peak.
 
 **Closure:** the process peak within the budget, or the phase that exceeds it named, with a figure the report gives.
+
+## O143. The Python pack's annotation stratum read every annotation guest once per binding
+
+**Status:** fix in progress (2026-11-08); this entry reserves the number.
+
+**What.** On the Python pack (534 programs), the `ann_input/ann_strip/type_app` stratum cost 39 s of about 89 s of
+CPU. The cause was not a collision of guest ids. In every chunk, each `ann_strip` row has its own `t`: the rows equal
+their distinct first columns, about 480 to 800 per chunk. The cause was join order.
+
+- **Stale postings.** The first chunk of a mix measures the program's constants' postings before the guest rounds
+  make any guest. So `parsed($s, "annotation", $r)` was priced at no rows.
+- **Stale observations.** An atom that shares no bound variable kept its fanout observed in one wave or chunk. That
+  number is the relation's size at that moment, not a property of the join.
+- **The result.** Between chunks the replanner moved `parsed` straight after the delta, as a filter. Every delta row
+  then read every annotation guest: 10,857 bindings gave 5.4M rows for RUF013 alone.
 
 ## O-artifact-entries. An artifact is one digest, so one edit makes all of it stale
 
