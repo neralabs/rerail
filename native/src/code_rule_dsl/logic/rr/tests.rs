@@ -319,6 +319,32 @@ Joined(@place("a.py", 1), value) :- value = join name by rank sep "," : { event(
     let rows = report["diagnostics"].as_array().unwrap();
     assert_eq!(rows.len(), 1, "{report}");
     assert_eq!(rows[0]["message"], "x4,x9", "{report}");
+    // Derived rows can remain in the native store, which keeps every column.
+    // A table input projects its filtered columns away. Exercise that boundary
+    // explicitly and require a native join, so SQL fallback cannot hide it.
+    let facts = root.join("facts.sqlite");
+    let db = rusqlite::Connection::open(&facts).unwrap();
+    let dump = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/plan/golden/facts.sql.zst");
+    let sql = zstd::decode_all(std::fs::File::open(dump).unwrap()).unwrap();
+    db.execute_batch(std::str::from_utf8(&sql).unwrap()).unwrap();
+    db.execute_batch("CREATE TABLE item(owner INTEGER, name TEXT, label TEXT, rank INTEGER);
+        INSERT INTO item VALUES (1,'x9','keep',9),(1,'x4','keep',4),(1,'skip','skip',100);
+        INSERT INTO stat_meta VALUES ('rows.item',3);").unwrap();
+    drop(db);
+    let program = parse(r#"
+.decl item(owner: number, name: symbol, label: symbol, rank: number)
+.input item
+.decl joined(value: symbol)
+joined(value) :- value = join name by rank sep "," : { item(1, name, "keep", rank) }.
+.output joined
+"#).unwrap();
+    let outcome = crate::code_rule_dsl::logic::plan::run_sql_native(&program,&facts,"program",|db| {
+        let rc = unsafe { crate::code_rule_dsl::logic::native::extension::sqlite3_extension_init(db.handle(),std::ptr::null_mut(),std::ptr::null_mut()) };
+        assert_eq!(rc,rusqlite::ffi::SQLITE_OK);
+        Ok(())
+    }).unwrap();
+    assert!(outcome.native.contains(&"joined".to_owned()),"{:?}",outcome.native);
+    assert_eq!(outcome.outputs["joined"],["x4,x9"]);
     std::fs::remove_dir_all(root).unwrap();
 }
 
