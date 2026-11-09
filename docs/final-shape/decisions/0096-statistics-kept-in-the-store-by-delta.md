@@ -134,7 +134,9 @@ fields through one conversion (`Totals::apply` today).
 
 Relations derived inside a run (setfix `measured`, `obs` fanouts) are measured by the run that makes them. They
 move here once derived relations have deletes in the engine core (0094 §4's open point). The same sketches then
-apply to their deltas.
+apply to their deltas. serverplan-quality's `a34441da4` (merged at `d89eb3147`) already takes a derived relation's
+statistics from the postings the engine kept while deriving it (`InRel::posted`), with no sort. Its per-value
+posting lengths are the counts a sketch is fed, so a maintained derived relation can patch its sketch from them.
 
 ## Evidence (2026-11-09)
 
