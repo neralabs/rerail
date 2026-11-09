@@ -36,6 +36,7 @@ mod prepared;
 mod maintain;
 mod supports;
 mod retain;
+mod keptstats;
 mod bridge;
 pub(crate) mod phases;
 mod constants;
@@ -2184,7 +2185,7 @@ fn run_observed(
     // own thread and reported as `parse` and `batch`; the main thread's as the other phases.
     // A chunk: its nodes and sources (none when it is only memo hits), its documents (key, path, source, nodes) and
     // the memo hits read since the last chunk.
-    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<memo::Content>, u64)>, Vec<(String, memo::Entry)>, Vec<syntax::Document>);
+    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<memo::Content>, u64)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
     #[cfg(not(target_family = "wasm"))]
     let (send, chunks_in) = std::sync::mpsc::sync_channel::<Result<Option<Chunk>>>(1);
     // wasm32 has no threads: the builder runs to its end first (`spawn_chunks`), so every chunk waits here.
@@ -2230,6 +2231,20 @@ fn run_observed(
     if docs_out.is_some() {
         return Err(Error::Plan("requests answered inside the fixpoint need threads (decision 0065 §2a)".to_owned()));
     }
+    // A session's base relations' statistics, kept by file across its runs (decision 0096 §3): each with every column
+    // `input_columns` names. `RERAIL_STATS_KEEP=off` measures them as before.
+    let mut keeper: Option<keptstats::Keeper> = match session.as_ref() {
+        Some(s) if memoised && !stored.is_empty() && std::env::var("RERAIL_STATS_KEEP").map_or(true, |v| v != "off") => {
+            let mut k = s.stats.lock().expect("the session's statistics").remove(&memo_program).unwrap_or_default();
+            let rels: Vec<(String, Vec<String>)> = stored
+                .iter()
+                .map(|(rel, _)| (rel.clone(), super::super::sql::select::input_columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect()))
+                .collect();
+            k.begin(&rels);
+            Some(k)
+        }
+        _ => None,
+    };
     let worker_cpu = std::thread::scope(|scope| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, crate::content_store::SourceId)>)> {
     let worker = spawn_chunks(scope, || {
         let (mut parse, mut batch) = ((0.0, 0.0), (0.0, 0.0));
@@ -2329,7 +2344,7 @@ fn run_observed(
             match build(d, path, module.clone()) {
                 Ok((source_id, Ok(entry))) => {
                     read_sources.extend(source_id.and_then(memo::Content::stored));
-                    hits.push((path.clone(), entry));
+                    hits.push((path.clone(), entry, source_id));
                 }
                 Ok((source_id, Err(doc))) => {
                     read_sources.extend(source_id.and_then(memo::Content::stored));
@@ -2422,7 +2437,7 @@ fn run_observed(
             // counts of its own mix, else of a mix of its types, else of any mix measured under this program.
             if own {
                 let mut groups: BTreeMap<&str, Vec<(&str, usize)>> = BTreeMap::new();
-                for (path, e) in &hits {
+                for (path, e, _) in &hits {
                     let name = path.rsplit('/').next().unwrap_or(path);
                     groups.entry(name.rsplit_once('.').map_or("", |(_, ext)| ext)).or_default().push((path.as_str(), e.nodes as usize));
                 }
@@ -2444,7 +2459,11 @@ fn run_observed(
             // Each export's rows over the batch, as columns: one statement per relation writes them to `x`, from
             // a bound source (`rr_memo_w<width>`), not a statement per row.
             let mut batch: BTreeMap<String, (usize, Vec<Vec<i64>>)> = BTreeMap::new();
-            for (_, entry) in hits {
+            for (path, entry, content) in hits {
+                // The statistics kept by file (decision 0096 §3): a content new to the keeper is counted in.
+                if let (Some(k), Some(memo)) = (keeper.as_mut(), memo) {
+                    k.file(&path, content, entry.key, &entry, &|c, key| memo.lookup(c, world::store_path(&path), key, &memo_program).ok().flatten());
+                }
                 nodes += entry.nodes as usize;
                 own_totals.add(&Own::taken(&entry.rows));
                 for (rel, names) in &stored {
@@ -2900,11 +2919,18 @@ fn run_observed(
         if memoised && attributable {
             let _remember = crate::code_rule_dsl::logic::profile::span(|| "memo remember".into());
             for (d, path, source_id, _) in &chunk_docs {
+                // Counted in before it is remembered: the content it replaces is the memo's still.
+                if let (Some(k), Some(entry), Some(memo)) = (keeper.as_mut(), entries.get(d), memo) {
+                    k.file(path, *source_id, *d, entry, &|c, key| memo.lookup(c, world::store_path(path), key, &memo_program).ok().flatten());
+                }
                 let (Some(id), Some(entry), Some(memo)) = (source_id, entries.get(d), memo) else { continue };
                 memo.remember(*id, world::store_path(path), *d, &memo_program, entry).map_err(|e| Error::Plan(format!("{path}: memo publication for source {id:?}: {e}")))?;
             }
         } else if memoised {
             memo_unattributed += 1;
+            if let Some(k) = keeper.as_mut() {
+                k.fail("a chunk's rows not attributed to its files");
+            }
         }
         // The chunk's sources are dropped before the next is built.
         for rel in &bound {
@@ -3157,12 +3183,44 @@ fn run_observed(
         // asks for it, so it is stated as a key.
         // In a session, rows as the last run had them are its source.
         let parts = session.as_ref().map(|s| s.cross.lock().expect("the session's cross-file parts"));
+        // Kept by file (`keptstats`): every file's rows counted in or out as its content changed, none measured.
+        let kept = keeper.as_mut().map(|k| {
+            let ended = k.end(&|path, c, key| memo.and_then(|m| m.lookup(c, world::store_path(path), key, &memo_program).ok().flatten()));
+            let (counted_in, counted_out) = k.counted;
+            if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                eprintln!("statkeep {:02x}{:02x}: in {counted_in} out {counted_out} {:?}", memo_program[0], memo_program[1], ended.as_ref().err());
+            }
+            crate::code_rule_dsl::logic::profile::decision("statistics kept by file", || match &ended {
+                Ok(_) => format!("{counted_in} files counted in, {counted_out} out; the base relations' statistics are read as kept, none measured"),
+                Err(why) => format!("not kept this run ({why}): measured, and every file counted in again next run"),
+            });
+            ended.ok()
+        });
+        let kept = kept.flatten();
+        if let (Some(s), Some(k)) = (session.as_ref(), keeper.take()) {
+            s.stats.lock().expect("the session's statistics").insert(memo_program, k);
+        }
         for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
             let rows = values.iter().flatten().map(Vec::len).next().unwrap_or(0);
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+            // A semi-join's relation holds only the rows its exports name: measured, as the keeper counts every row.
+            let statistics = kept.as_ref().and_then(|m| m.get(&rel)).filter(|r| !semijoin.contains(&rel) && r.rows() == rows as i64).map(|r| {
+                let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
+                let by_name: HashMap<String, (String, i64, i64, i64, i64)> = r.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
+                let n = rows as i64;
+                columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), n, n, n, n))).collect::<Vec<_>>()
+            });
+            let source = match &statistics {
+                Some(st) => crate::code_rule_dsl::logic::native::component::columns_source_measured(columns, values, st.clone()),
+                None => crate::code_rule_dsl::logic::native::component::columns_source(columns, values),
+            };
             let source = retain::kept_source(parts.as_deref(), &rel, source, &mut input_digests);
-            totals.add(&rel, rows, &syntax::statistics(source.as_ref()));
+            let statistics = statistics.unwrap_or_else(|| syntax::statistics(source.as_ref()));
+            totals.add(&rel, rows, &statistics);
             base_sources.insert(rel, source);
+        }
+        // Their rows replayed from the memo are counted with them (above), not again.
+        if kept.is_some() {
+            replayed.clear();
         }
     }
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
@@ -3485,6 +3543,7 @@ fn run_observed(
                         let (measured, counts) = match known {
                             Some((measured, counts, _)) => (measured, counts),
                             None => {
+                                let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
                                 let measured = syntax::statistics(source.as_ref());
                                 // The constants the rules test it by are counted too: a column measured without them
                                 // reads as holding none, so `kind__old(r, identifier)` was planned as one row and drove

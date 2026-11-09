@@ -1845,6 +1845,16 @@ pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Ar
     let _ = t.n.set(n);
     Arc::new(t)
 }
+/// `columns_source`, its statistics given (kept by delta, decision 0096): read as they are, never measured.
+pub fn columns_source_measured(columns: Vec<String>, values: Vec<Option<Vec<i64>>>, statistics: Vec<(String, i64, i64, i64, i64)>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+    let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
+    let mut t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
+    let kept = std::sync::OnceLock::new();
+    let _ = kept.set(statistics);
+    t.statistics = Some(kept);
+    let _ = t.n.set(n);
+    Arc::new(t)
+}
 /// The table `schema.name` read once into memory, every column (`None`: not a table of integers).
 pub fn table_source(conn: &Connection, schema: &str, name: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
     let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().into_iter().map(str::to_owned).collect();
