@@ -2289,12 +2289,18 @@ fn run_observed(
         _ => None,
     };
     if let Some(k) = keeper.as_mut() {
+        // By the key their rows have in a memo entry: a base relation's (`base_key`), and an export's own name.
         let rels: Vec<(String, Vec<String>)> = stored
-                .iter()
-                .map(|(rel, _)| (rel.clone(), super::super::sql::select::input_columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect()))
-                .collect();
-        k.begin(&rels);
+            .iter()
+            .map(|(rel, _)| (memo::base_key(rel), super::super::sql::select::input_columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect()))
+            .chain(split.exports.iter().map(|rel| (rel.clone(), (0..lowered.program.decls[rel].len()).map(|c| format!("c{c}")).collect())))
+            .collect();
+        // An export's rows' document: its first node column's, as the chunks' totals read it (`Totals::add_rows`).
+        let doc_at = split.exports.iter().map(|rel| (rel.clone(), lowered.program.decls[rel].iter().position(|(_, t)| t == "node"))).collect();
+        k.begin(&rels, doc_at);
     }
+    // The memo hits' exports are not measured while the keeper counts them: their statistics are its (after the chunks).
+    let mut hits_unmeasured = false;
     // Each document this run reads, with its content as the memo knows it (`input_delta`): a session's next run
     // reads its input deltas from the documents whose content changed.
     let run_docs_held: std::sync::Mutex<input_delta::Docs> = std::sync::Mutex::new(HashMap::new());
@@ -2560,7 +2566,11 @@ fn run_observed(
                 let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
                 let rows = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), cols.into_iter().map(Some).collect());
                 let inserted = exports.borrow_mut().add(&rel, width, rows.as_ref());
-                totals.add_rows(&rel, inserted, rows.as_ref(), &types);
+                if keeper.as_ref().is_some_and(|k| !k.failed()) {
+                    hits_unmeasured = true;
+                } else {
+                    totals.add_rows(&rel, inserted, rows.as_ref(), &types);
+                }
             }
             db.execute_batch("COMMIT")?;
         }
@@ -2975,13 +2985,18 @@ fn run_observed(
         crate::code_rule_dsl::logic::native::component::forget_derived(&db);
         if memoised && attributable {
             let _remember = crate::code_rule_dsl::logic::profile::span(|| "memo remember".into());
+            // The chunk's entries are written as one wave, not one transaction per document.
+            let mut publish: Vec<(memo::Content, &str, i64, &memo::Entry)> = Vec::with_capacity(chunk_docs.len());
             for (d, path, source_id, _) in &chunk_docs {
                 // Counted in before it is remembered: the content it replaces is the memo's still.
                 if let (Some(k), Some(entry), Some(memo)) = (keeper.as_mut(), entries.get(d), memo) {
                     k.file(path, *source_id, *d, entry, &|c, key| memo.lookup(c, world::store_path(path), key, &memo_program).ok().flatten());
                 }
-                let (Some(id), Some(entry), Some(memo)) = (source_id, entries.get(d), memo) else { continue };
-                memo.remember(*id, world::store_path(path), *d, &memo_program, entry).map_err(|e| Error::Plan(format!("{path}: memo publication for source {id:?}: {e}")))?;
+                let (Some(id), Some(entry)) = (source_id, entries.get(d)) else { continue };
+                publish.push((*id, world::store_path(path), *d, entry));
+            }
+            if let Some(memo) = memo {
+                memo.remember_all(&memo_program, &publish).map_err(|e| Error::Plan(format!("memo publication of {} documents: {e}", publish.len())))?;
             }
         } else if memoised {
             memo_unattributed += 1;
@@ -3277,6 +3292,51 @@ fn run_observed(
             ended.ok()
         });
         let kept = kept.flatten();
+        // The exports' statistics as kept by file: a memo hit's rows are not measured again. An export whose kept rows
+        // are not the rows held (a row handed to two files is held once) is measured from the rows held, as is every
+        // export when the keeper was given up after the hits went unmeasured.
+        if hits_unmeasured || kept.is_some() {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the exports' statistics, kept or measured".into());
+            let tested = constants_tested(&lowered.program);
+            let (mut from_kept, mut measured_held) = (0usize, Vec::<String>::new());
+            for rel in &split.exports {
+                let decl = &lowered.program.decls[rel];
+                let types: Vec<&str> = decl.iter().map(|(_, t)| t.as_str()).collect();
+                let held = exports.borrow().len(rel);
+                match kept.as_ref().and_then(|m| m.get(rel)).filter(|r| r.rows() == held as i64) {
+                    Some(r) => {
+                        totals.forget(rel);
+                        totals.add(rel, held, &r.statistics(&|_| true));
+                        // The planner prices a constant by its count (`const_freq`): a value column's counts as kept
+                        // while few-valued, else those of the constants the rules test, counted in the rows held.
+                        let mut count: Vec<(usize, i64)> = Vec::new();
+                        for c in (0..decl.len()).filter(|c| types[*c] != "node") {
+                            match r.exact(c) {
+                                Some(vals) => totals.consts.extend(vals.map(|(v, n)| (rel.clone(), format!("c{c}"), v, n))),
+                                None => count.extend(tested.get(rel.as_str()).into_iter().flatten().filter(|(tc, _)| *tc == c)),
+                            }
+                        }
+                        if !count.is_empty() {
+                            let src = exports.borrow_mut().source(rel, decl.len());
+                            for (c, v) in count {
+                                let n = (0..src.len()).filter(|&i| src.value(i, c) == v).count();
+                                totals.consts.push((rel.clone(), format!("c{c}"), v, n as i64));
+                            }
+                        }
+                        from_kept += 1;
+                    }
+                    None if hits_unmeasured => {
+                        let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure export {rel}"));
+                        totals.forget(rel);
+                        let src = exports.borrow_mut().source(rel, decl.len());
+                        totals.add_rows(rel, src.len(), src.as_ref(), &types);
+                        measured_held.push(rel.clone());
+                    }
+                    None => {}
+                }
+            }
+            crate::code_rule_dsl::logic::profile::decision("exports' statistics kept by file", || format!("{from_kept} kept; {} measured from the rows held: {}", measured_held.len(), measured_held.join(", ")));
+        }
         match (session.as_ref(), keeper.take(), memo) {
             (Some(s), Some(k), _) => {
                 s.stats.lock().expect("the session's statistics").insert(memo_program, k);
@@ -3293,7 +3353,7 @@ fn run_observed(
             let rows = values.iter().flatten().map(Vec::len).next().unwrap_or(0);
             base_held.insert(rel.clone(), columns.iter().zip(&values).map(|(c, v)| v.is_some().then(|| c.clone())).collect());
             // A semi-join's relation holds only the rows its exports name: measured, as the keeper counts every row.
-            let statistics = kept.as_ref().and_then(|m| m.get(&rel)).filter(|r| !semijoin.contains(&rel) && r.rows() == rows as i64).map(|r| {
+            let statistics = kept.as_ref().and_then(|m| m.get(&memo::base_key(&rel))).filter(|r| !semijoin.contains(&rel) && r.rows() == rows as i64).map(|r| {
                 let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
                 let by_name: HashMap<String, (String, i64, i64, i64, i64)> = r.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
                 let n = rows as i64;
@@ -3320,10 +3380,15 @@ fn run_observed(
     totals.vals = BTreeMap::new();
     repository_stats(&mut cross_stats);
     drop(applying);
-    // RERAIL_DUMP_STATS=a,b: what the cross-file part plans with for those relations (a debugging aid).
+    // RERAIL_DUMP_STATS=a,b: what the cross-file part plans with for those relations (a debugging aid); `exports`
+    // names every export.
     if let Ok(rels) = std::env::var("RERAIL_DUMP_STATS") {
         for rel in rels.split(',') {
-            eprintln!("cross stats {}", cross_stats.describe(rel));
+            if rel == "exports" {
+                split.exports.iter().for_each(|e| eprintln!("cross stats {}", cross_stats.describe(e)));
+            } else {
+                eprintln!("cross stats {}", cross_stats.describe(rel));
+            }
         }
     }
     // With no documents there was no batch to bind or measure base relations.
@@ -4501,12 +4566,15 @@ struct Totals {
     rels: BTreeMap<String, (usize, BTreeMap<String, [i64; 4]>)>,
     /// Per (relation, value column): per value, (n, docs, sqd).
     vals: BTreeMap<(String, String), HashMap<i64, [i64; 3]>>,
+    /// Constants' counts of columns whose statistics are given whole (`add`): (relation, column, value, count).
+    consts: Vec<(String, String, i64, i64)>,
 }
 impl Totals {
     /// Drops `rel`'s measurements (to measure it again).
     fn forget(&mut self, rel: &str) {
         self.rels.remove(rel);
         self.vals.retain(|(r, _), _| r != rel);
+        self.consts.retain(|(r, ..)| r != rel);
     }
     /// `from`'s measurements also under the name `to` (the same rows, measured once).
     fn alias(&mut self, from: &str, to: &str) {
@@ -4515,6 +4583,8 @@ impl Totals {
         }
         let vals: Vec<_> = self.vals.iter().filter(|((r, _), _)| r == from).map(|((_, c), v)| ((to.to_owned(), c.clone()), v.clone())).collect();
         self.vals.extend(vals);
+        let consts: Vec<_> = self.consts.iter().filter(|(r, ..)| r == from).map(|(_, c, v, n)| (to.to_owned(), c.clone(), *v, *n)).collect();
+        self.consts.extend(consts);
     }
     fn add(&mut self, rel: &str, rows: usize, measured: &[(String, i64, i64, i64, i64)]) {
         let entry = self.rels.entry(rel.to_owned()).or_default();
@@ -4569,6 +4639,9 @@ impl Totals {
                 super::sketch::shadow(&format!("totals {rel}"), col, rows, ndv, sq, &sketch);
             }
             stats.measured(rel, [(col.clone(), [rows, ndv.max(1), sq, sqd])], per.iter().map(|(v, [n, _, _])| (col.clone(), *v, *n)));
+        }
+        for (rel, col, v, n) in &self.consts {
+            stats.measured(rel, [], [(col.clone(), *v, *n)]);
         }
     }
 }

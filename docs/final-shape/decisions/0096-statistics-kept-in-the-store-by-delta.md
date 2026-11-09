@@ -279,7 +279,7 @@ Node columns are exact (§1) and are not sketched.
 | --- | --- | --- |
 | 1 | A phase export's statistics counted once, then patched by each version's plus and minus | built (`8da5e1b01`): `PhasedSource` keeps its `RelStats` |
 | 2 | A base relation's statistics patched by file: a file's old rows out (by the content counted), its new in; replayed rows not counted again | built for memoised runs, in a session (`e388adcc3`) and over the tape cache, durable as one blob per memo plan (`5f7def8b8`) |
-| 3 | An unchanged file is neither replayed nor counted: the session keeps the base sources and exports, and patches a changed file's rows in | open |
+| 3 | An unchanged file is neither replayed nor counted: the session keeps the base sources and exports, and patches a changed file's rows in | counted: the exports' statistics are kept by file too (phased-facts branch); replayed: open, the hits' exports are still held again each run (0.46 s at O125 step 07) |
 | 4 | Derived relations: a maintained relation's statistics patched by its delta rather than read from its postings | open |
 
 Measured on the O125 replay (calls.rr over real history, a session, load 65–140), per one-to-four-file step:

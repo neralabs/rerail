@@ -29,18 +29,25 @@ len_want(v) :- len_val(_, v).
 len_of(e, k) :- len_val(e, v), len_of(v, k).
 .decl len_of(e: node, k: number)
 .decl len_num(n: number)
-len_num(0).
-len_num(n + 1) :- len_num(n), n < 100000.
+// Made in one join of digits, not counted up (a recursion of 100001 steps).
+.decl len_digit(d: number)
+len_digit(0). len_digit(1). len_digit(2). len_digit(3). len_digit(4).
+len_digit(5). len_digit(6). len_digit(7). len_digit(8). len_digit(9).
+len_num(100000).
+len_num(a * 10000 + b * 1000 + c * 100 + d * 10 + e) :- len_digit(a), len_digit(b), len_digit(c), len_digit(d),
+    len_digit(e).
 
-// Parentheses.
-len_want(x) :- len_want(e), kind(e, "parenthesized_expression"), unparen(e, x), x != e.
-len_of(e, k) :- len_want(e), kind(e, "parenthesized_expression"), unparen(e, x), x != e, len_of(x, k).
+// Parentheses: one level at a time, as asked (python/ast's unparen is made for every node).
+len_want(x) :- len_want(e), kind(e, "parenthesized_expression"), child(e, x, _), !kind(x, "comment").
+len_of(e, k) :- len_want(e), kind(e, "parenthesized_expression"), child(e, x, _), !kind(x, "comment"), len_of(x, k).
 
 // List, tuple and set literals: the plain elements, plus each `*xs`'s length, folded in source order.
 .decl len_seq(l: node)
 len_seq(l) :- len_want(l), (kind(l, "list") ; kind(l, "tuple") ; kind(l, "set")).
 .decl len_plain(l: node, n: number)
-len_plain(l, n) :- len_seq(l), n = count : { child(l, e, _), !kind(e, "comment"), !kind(e, "list_splat") }.
+// (len_seq in the count too, so that its view holds the asked lists only, not every child edge.)
+len_plain(l, n) :- len_seq(l),
+    n = count : { len_seq(l), child(l, e, _), !kind(e, "comment"), !kind(e, "list_splat") }.
 .decl len_splat(l: node, s: node, j: number)
 len_splat(l, s, j) :- len_seq(l), child(l, s, _), kind(s, "list_splat"),
     j = count : { child(l, s2, _), kind(s2, "list_splat"), s2 < s }.

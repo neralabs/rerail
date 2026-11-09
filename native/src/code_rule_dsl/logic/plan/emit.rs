@@ -200,7 +200,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
             step(&rule.head.rel, stratum, reads, &query.render(), Some(query));
         }
         if recursive {
-            model.stats.solving = scc.clone();
+            model.stats.solve(scc.clone());
             for rule in &rules {
                 for (i, l) in rule.body.iter().enumerate() {
                     if !own(l) {
@@ -215,7 +215,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
                     step(&rule.head.rel, stratum, vec![a.rel.clone()], &query.render(), Some(query));
                 }
             }
-            model.stats.solving.clear();
+            model.stats.solve(BTreeSet::new());
         }
     }
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();

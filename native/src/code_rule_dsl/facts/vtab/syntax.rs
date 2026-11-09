@@ -873,7 +873,8 @@ impl Batch {
         }
         let mut dialects: HashMap<u8, Dialect> = HashMap::new();
         let mut strings: Vec<String> = Vec::new();
-        let mut at: HashMap<String, usize> = HashMap::new();
+        // Every string of every node passes here: Fx, not SipHash (a third of the projection's time with SipHash).
+        let mut at: rustc_hash::FxHashMap<String, usize> = rustc_hash::FxHashMap::default();
         let mut string = |s: &str| -> usize {
             if let Some(&i) = at.get(s) {
                 return i;
@@ -906,6 +907,8 @@ impl Batch {
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
         let wants_split_lines = core && projection.wants("split_line");
+        // Asked once for the batch, not per node (a lookup in the program's set of read relations).
+        let (wants_parts, wants_part_starts, wants_part_offsets, wants_words) = (projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_offset"), projection.wants("str_part_word"));
         let wants_lf_lines = core && projection.wants("lf_line");
         let wants_tokens = core && ["first_token", "last_token", "token_before", "token_after"].iter().any(|r| projection.wants(r));
         // Only a program that reads it: every node's hash is a symbol.
@@ -1120,7 +1123,7 @@ impl Batch {
                     _ => {}
                 }
                 if core {
-                    c.node(&p, dialect, local as u32, &mut string, wants_text, projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_offset"), projection.wants("str_part_word"));
+                    c.node(&p, dialect, local as u32, &mut string, wants_text, wants_parts, wants_part_starts, wants_part_offsets, wants_words);
                 }
             }
             if let Some((line, msg)) = &error {

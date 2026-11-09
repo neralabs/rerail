@@ -812,13 +812,33 @@ impl BlockNative {
             }
             loads.sort_unstable();
             loads.dedup();
+            // Each load just before its first reader (a fixed point's first member, for a value
+            // its members read): a word loaded at the body's start lives through all of it.
+            let mut first_member: Vec<Option<usize>> = vec![None; n];
+            for g in self.groups.iter().filter(|g| g.members.iter().all(|&m| pass(m) == p)) {
+                let first = g.members.iter().copied().min().expect("a member");
+                for &m in &g.members {
+                    first_member[m] = Some(first);
+                }
+            }
+            let mut due: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+            let mut late = Vec::new();
+            for &x in &loads {
+                match mine.iter().copied().filter(|&r| self.insts[r].operands().contains(&x)).map(|r| first_member[r].unwrap_or(r)).min() {
+                    Some(at) => due.entry(at).or_default().push(x),
+                    None => late.push(x),
+                }
+            }
             let mut local: Vec<Option<u16>> = vec![None; n];
             let mut insts = Vec::with_capacity(loads.len() + mine.len());
-            for &x in &loads {
+            let load = |x: usize, local: &mut Vec<Option<u16>>, insts: &mut Vec<BlockInst>| {
                 local[x] = Some(insts.len() as u16);
                 insts.push(BlockInst::Load(slot[x].expect("read later")));
-            }
+            };
             for &x in &mine {
+                for &l in due.get(&x).map(Vec::as_slice).unwrap_or(&[]) {
+                    load(l, &mut local, &mut insts);
+                }
                 local[x] = Some(insts.len() as u16);
                 let m = |o: u16| local[usize::from(o)].expect("made before");
                 insts.push(match self.insts[x] {
@@ -835,6 +855,10 @@ impl BlockNative {
                     BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("not in a forward pass"),
                     other => other,
                 });
+            }
+            // Loads only an output reads: last.
+            for &l in &late {
+                load(l, &mut local, &mut insts);
             }
             let place = |x: usize| usize::from(local[x].expect("the pass's"));
             let groups: Vec<super::block::Group> = self
