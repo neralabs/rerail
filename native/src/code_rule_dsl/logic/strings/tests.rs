@@ -212,11 +212,11 @@ fn signature_verification_errors_match_recorded_transport() {
         ed25519_error(?1,json_extract(value,'$.message'),json_extract(value,'$.signature'))
         FROM json_each(?2,'$.cases')").unwrap();
     let rows = query.query_map(rusqlite::params![expected["key"].as_str().unwrap(), recording], |r|
-        Ok((r.get::<_,usize>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?))).unwrap();
+        Ok((r.get::<_,i64>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?))).unwrap();
     let mut count = 0;
     for row in rows {
         let (i, valid, error) = row.unwrap();
-        let case = &expected["cases"][i];
+        let case = &expected["cases"][usize::try_from(i).unwrap()];
         assert_eq!(valid, case["valid"].as_i64().unwrap(), "{:?}", case["signature"]);
         assert_eq!(error, case["error"].as_str().unwrap(), "{:?}", case["signature"]);
         count += 1;
