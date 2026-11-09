@@ -9497,3 +9497,19 @@ Seven other translations remain absent. Earlier migration gaps remain open.
 Final advances to `e3dbedd64` after this immutable acceptance run starts.
 The live alignment audit correctly requests another merge. This checkpoint continues to identify its actual `4dd2dec74` engine.
 No full repository cold run or external fixture suite runs.
+
+### 2026-11-09 — Parameter-shape TDD after the checkpoint
+
+Final `e3dbedd64` is merged. Its per-rule fanouts replace shared observations that can misprice another rule's document lookup.
+The root CLI and unit builds take 41.124 and 121.411 seconds.
+
+Additional source cases expose two missed positives: a positional-only separator and a comment before a call argument.
+Both fail before their repairs. Callback positions now exclude separators. Call argument positions now exclude comments and keywords.
+The same ladder retains keyword-only carrier and authority behavior.
+Duplicate keyword cases prove that grammar dictionaries use the last value. Helper keyword lookup uses the first value.
+All nineteen source/native cases pass, including eleven positives.
+
+The [TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-step-arguments-tdd.json.gz) binds each red and green result to its exact consumed program hash.
+The source recorder now retains engine identity and program text before comparison, including failed runs.
+Original-suite regression after these repairs remains to run. The earlier 95-test checkpoint identifies its earlier program exactly.
+Serverplan-steps and the full migration remain incomplete.

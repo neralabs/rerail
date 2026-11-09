@@ -2119,7 +2119,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "a4d643ed4167bc69aaa7e4eba2810d592815748b91a1f253adc93e3fce5c0475",
+      "sha256": "7df45429f46b495ea340a65c07d57fca9b5274d4ccb05207e26ff8c7268acb55",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2147,6 +2147,16 @@
           "before": "9f8764aee8339041a748419a13bf203e93fba98d0f02707ed49227b950193a94",
           "after": "a4d643ed4167bc69aaa7e4eba2810d592815748b91a1f253adc93e3fce5c0475",
           "reason": "Take Final placement planner; retain the function name at its authority-return producer"
+        },
+        {
+          "before": "a4d643ed4167bc69aaa7e4eba2810d592815748b91a1f253adc93e3fce5c0475",
+          "after": "fdd14098151c9a18b64df3f67542a3450cef910b1e9b6edf46b99eadd60ab21a",
+          "reason": "Count callback positional parameters without separators; preserve keyword-only authority distinctions"
+        },
+        {
+          "before": "fdd14098151c9a18b64df3f67542a3450cef910b1e9b6edf46b99eadd60ab21a",
+          "after": "7df45429f46b495ea340a65c07d57fca9b5274d4ccb05207e26ff8c7268acb55",
+          "reason": "Preserve positional arguments across comments and distinguish first-keyword helpers from last-keyword dictionaries"
         }
       ]
     }
@@ -2618,7 +2628,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "a4d643ed4167bc69aaa7e4eba2810d592815748b91a1f253adc93e3fce5c0475"
+      "ruleSha256": "7df45429f46b495ea340a65c07d57fca9b5274d4ccb05207e26ff8c7268acb55"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3316,7 +3326,30 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b"
+    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b",
+    "cliArtifact": {
+      "engineCommit": "eae9de404a00d7169c0ab92d95110b8262147ab5",
+      "upstreamCommit": "e3dbedd647348f486c5862603b8f1b2c1d83552e",
+      "sourceTrees": {
+        "native": "e6037935cdd85994e4a1e7bbea6afc2a7d173735",
+        "tools/bitlex": "4abd73b7e2f3bcb7f7f90d9cf3183abbd8edbec1",
+        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
+        "Cargo.lock": "36d03ae745ce0a93a9c95b7f57d15c49f1635bff"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-382ee31b88c36f23",
+      "sha256": "382ee31b88c36f2323514bb972c834414b7fac90e53c4f1d445ff00fe3567c2a",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "rerail-engine",
+        "--features",
+        "headless",
+        "--bin",
+        "rerail-engine"
+      ],
+      "seconds": 41.124
+    }
   },
   "engineSourceSnapshots": [
     {

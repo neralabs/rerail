@@ -2302,3 +2302,8 @@ Neither result completes this rule's definition of done.
 
 Final advances to `e3dbedd64` during acceptance. That merge is next; the recorded checkpoint remains tied to `4dd2dec74`.
 The previously authorized external fixture exclusion remains unchanged.
+
+Final `e3dbedd64` is now merged and built in this worktree.
+Additional TDD cases repair positional-only separators, comments in call arguments, and first-versus-last keyword lookup.
+All nineteen added source/native cases pass, including eleven positives.
+The original-suite regression must run again after these repairs. The 95-test checkpoint remains an earlier, separately bound result.

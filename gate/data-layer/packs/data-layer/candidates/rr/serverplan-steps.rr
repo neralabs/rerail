@@ -70,9 +70,13 @@ ssp_self_private(n,name) :- ssp_attr(n,v,name), ssp_name(v,"self"), prefix("_",n
 .decl ssp_ret(r: node, v: node)
 ssp_ret(r,v) :- kind(r,"return_statement"), child(r,raw,0), unparen(raw,v).
 .decl ssp_pos(c: node, i: number, value: node)
-ssp_pos(c,i,v) :- kind(c,"call"), field(c,"arguments",al), child(al,raw,i), !kind(raw,"keyword_argument"), !kind(raw,"dictionary_splat"), !kind(raw,"comment"), unparen(raw,v).
+ssp_pos(c,i,v) :- kind(c,"call"), field(c,"arguments",al), child(al,raw,k), !kind(raw,"keyword_argument"), !kind(raw,"dictionary_splat"), !kind(raw,"comment"), unparen(raw,v), i = count : { child(al,other,j), j < k, !kind(other,"keyword_argument"), !kind(other,"dictionary_splat"), !kind(other,"comment") }.
 .decl ssp_kw(c: node, name: symbol, value: node)
 ssp_kw(c,@nfkc(name),v) :- kind(c,"call"), field(c,"arguments",al), child(al,k,_), kind(k,"keyword_argument"), field(k,"name",nm), text(nm,name), field(k,"value",raw), unparen(raw,v).
+.decl ssp_first_kw(c: node, name: symbol, value: node)
+ssp_first_kw(c,name,v) :- ssp_kw(c,name,v), visit_index(v,i), i = min j : { ssp_kw(c,name,w), visit_index(w,j) }.
+.decl ssp_last_kw(c: node, name: symbol, value: node)
+ssp_last_kw(c,name,v) :- ssp_kw(c,name,v), visit_index(v,i), i = max j : { ssp_kw(c,name,w), visit_index(w,j) }.
 .decl ssp_true(n: node)
 ssp_true(n) :- kind(n,"true").
 .decl ssp_false(n: node)
@@ -161,8 +165,8 @@ ssp_named_call(n,name) :- ssp_func(n,f), ssp_dotted(f,name).
 .decl ssp_compiled(c: node)
 ssp_compiled(c) :- ssp_func(c,f), ssp_name(f,"CompiledStep").
 .decl ssp_missing_grammar(c: node)
-ssp_missing_grammar(c) :- ssp_compiled(c), !ssp_kw(c,"grammar",_).
-ssp_missing_grammar(c) :- ssp_compiled(c), ssp_kw(c,"grammar",v), ssp_none(v).
+ssp_missing_grammar(c) :- ssp_compiled(c), !ssp_last_kw(c,"grammar",_).
+ssp_missing_grammar(c) :- ssp_compiled(c), ssp_last_kw(c,"grammar",v), ssp_none(v).
 .decl ssp_nonempty(n: node)
 ssp_nonempty(n) :- kind(n,_), !ssp_empty_collection(n), !ssp_none(n), !str_const(n,"").
 .decl ssp_closed(v: node)
@@ -195,8 +199,8 @@ ssp_extra("check_misc_runtime_is_deleted",m,m,n,n,0,"STEP-030","RuntimeBuilderKi
 ssp_extra("check_misc_runtime_is_deleted",m,m,a,a,i,"STEP-030","RuntimeBuilderKind must not define MISC_RUNTIME") :- ssp_module(d,m), docof(a,d), kind(a,"assignment"), !field(a,"type",_), assign_target(a,t), ssp_name(t,"MISC_RUNTIME"), visit_index(t,i).
 .decl ssp_builder_name(c: node, n: node)
 ssp_builder_name(c,n) :- ssp_call_name(c,"runtime_builder_post_op"), ssp_pos(c,1,n).
-ssp_builder_name(c,n) :- ssp_call_name(c,"runtime_builder_post_op"), !ssp_pos(c,1,_), ssp_kw(c,"builder_name",n).
-ssp_builder_name(c,n) :- ssp_call_name(c,"RuntimeBuilderSpec"), ssp_kw(c,"builder_name",n).
+ssp_builder_name(c,n) :- ssp_call_name(c,"runtime_builder_post_op"), !ssp_pos(c,1,_), ssp_first_kw(c,"builder_name",n).
+ssp_builder_name(c,n) :- ssp_call_name(c,"RuntimeBuilderSpec"), ssp_first_kw(c,"builder_name",n).
 ssp_extra("check_runtime_builder_names_are_enum_members",m,m,c,n,0,"STEP-031","runtime builder names must use RuntimeBuilderName enum members, not raw strings") :- ssp_module(d,m), docof(c,d), ssp_builder_name(c,n), str_const(n,_).
 // check_runtime_builder_kind_name_pairs is intentionally empty in the pinned
 // source: runtime-builder deletion made that validation obsolete.
@@ -210,10 +214,10 @@ ssp_role(c,name) :- ssp_first(c,f,"execution_role"), ssp_walk(f,r), ssp_ret(r,v)
 ssp_role(c,upper) :- ssp_first(c,f,"execution_role"), ssp_walk(f,r), ssp_ret(r,v), str_const(v,name), (name = "virtual", upper = "VIRTUAL" ; name = "sql", upper = "SQL" ; name = "apply", upper = "APPLY" ; name = "control", upper = "CONTROL").
 .decl ssp_scalar_value(c: node)
 ssp_scalar_value(c) :- ssp_func(c,f), ssp_name(f,"scalar_column_post_op"), ssp_pos(c,0,v), str_const(v,"value").
-ssp_scalar_value(c) :- ssp_func(c,f), ssp_name(f,"scalar_column_post_op"), !ssp_pos(c,0,_), ssp_kw(c,"column_name",v), str_const(v,"value").
+ssp_scalar_value(c) :- ssp_func(c,f), ssp_name(f,"scalar_column_post_op"), !ssp_pos(c,0,_), ssp_first_kw(c,"column_name",v), str_const(v,"value").
 .decl ssp_scalar_compile(f: node)
-ssp_scalar_compile(f) :- kind(f,"function_definition"), ssp_under(c,f), ssp_missing_grammar(c), !ssp_kw(c,"runtime_ref_ids",_), ssp_kw(c,"closed_post_op",v), ssp_scalar_value(v).
-ssp_scalar_compile(f) :- kind(f,"function_definition"), ssp_under(c,f), ssp_missing_grammar(c), ssp_kw(c,"runtime_ref_ids",r), !ssp_nonempty(r), ssp_kw(c,"closed_post_op",v), ssp_scalar_value(v).
+ssp_scalar_compile(f) :- kind(f,"function_definition"), ssp_under(c,f), ssp_missing_grammar(c), !ssp_last_kw(c,"runtime_ref_ids",_), ssp_last_kw(c,"closed_post_op",v), ssp_scalar_value(v).
+ssp_scalar_compile(f) :- kind(f,"function_definition"), ssp_under(c,f), ssp_missing_grammar(c), ssp_last_kw(c,"runtime_ref_ids",r), !ssp_nonempty(r), ssp_last_kw(c,"closed_post_op",v), ssp_scalar_value(v).
 ssp_problem_hit("check_virtual_execute_runtime_scalar_value_guardrail",c,f,f,f,0,"STEP-033",cat(name," is a virtual execute_runtime() projection compiled as grammar-less scalar_column_post_op('value'); make the projection SQL-visible or fail closed when the source is not a declared CTE/relation")) :- ssp_step(c,name), ssp_first(c,_,"execute_runtime"), ssp_role(c,"VIRTUAL"), ssp_first(c,f,"compile"), ssp_scalar_compile(f).
 ssp_problem_hit("check_virtual_execute_runtime_python_shaping_guardrail",c,e,e,e,0,"STEP-036",cat(name,".execute_runtime() runs after compiling to a grammarless virtual step; publish SQL-visible rows or encode terminal-only behavior as a closed typed materialization contract instead of an executor callback")) :- ssp_step(c,name), ssp_first(c,e,"execute_runtime"), ssp_role(c,"VIRTUAL"), ssp_first(c,f,"compile"), ssp_under(call,f), ssp_missing_grammar(call).
 
@@ -277,7 +281,9 @@ ssp_nested_def(f,name,p) :- ssp_nested_candidate(f,name,p), visit_index(p,i), i 
 ssp_callback(f,call,v,name,cb) :- ssp_method(_,f,"compile"), ssp_walk(f,call), ssp_compiled(call), ssp_kw(call,name,v), (name = "post_op" ; name = "post_op_with_refs" ; name = "on_commit" ; name = "on_rollback"), ssp_name(v,cbname), ssp_nested_def(f,cbname,cb).
 .decl ssp_cb_carrier(cb: node, kind: symbol, name: symbol)
 ssp_cb_carrier(cb,kind,name) :- ssp_callback(_,_,_,kind,cb), sig_param(cb,_,nm,_,pk,ann,_), (pk = "posonly" ; pk = "pos"), text(nm,raw), name = @nfkc(raw), ssp_annotation_name(ann,"Hydrator").
-ssp_cb_carrier(cb,kind,name) :- ssp_callback(_,_,_,kind,cb), (kind = "post_op" ; kind = "post_op_with_refs"), sig_param(cb,_,nm,1,pk,_,_), (pk = "posonly" ; pk = "pos"), text(nm,raw), name = @nfkc(raw).
+.decl ssp_cb_positional(cb: node, nm: node, index: number)
+ssp_cb_positional(cb,nm,index) :- ssp_callback(_,_,_,_,cb), sig_param(cb,_,nm,i,pk,_,_), (pk = "posonly" ; pk = "pos"), index = count : { sig_param(cb,_,_,j,other,_,_), (other = "posonly" ; other = "pos"), j < i }.
+ssp_cb_carrier(cb,kind,name) :- ssp_callback(_,_,_,kind,cb), (kind = "post_op" ; kind = "post_op_with_refs"), ssp_cb_positional(cb,nm,1), text(nm,raw), name = @nfkc(raw).
 .decl ssp_cb_authority(cb: node, name: symbol)
 ssp_cb_authority(cb,name) :- ssp_callback(_,_,_,_,cb), sig_param(cb,_,nm,_,pk,ann,_), (pk = "posonly" ; pk = "pos" ; pk = "kwonly"), text(nm,raw), name = @nfkc(raw), ssp_authority_annotation(ann).
 .decl ssp_carrier_attr(name: symbol)
