@@ -9871,3 +9871,26 @@ No command limit was extended. Native CLI and module/DTO acceptance remain unfin
 
 Final advanced from `004df7e75` to `49f791af1` during the run.
 The latter changes session delta maintenance in three native files. Commit the frozen evidence, then merge and rebuild before certifying that cohort.
+
+### 2026-11-10 — Final 49 engine and direct-execution checkpoint
+
+Merged the local Final branch at `49f791af1`, which advances beyond its fetched remote tip.
+The root engine includes its document-based delta implementation. No retired engine was changed.
+Two generic regressions failed before their fixes: constant-folded corpus outputs were discarded, and positional regex outputs failed static binding checks.
+Both now have passing regression tests. The [engine validation receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final49-engine-validation.json.gz) records 151 passing focused engine tests, two existing ignored helpers, and 199 passing tooling tests.
+The optimized build took 704.738 seconds, recorded separately from rule execution.
+
+Authority acceptance was repeated on the optimized Final 49 artifact: all 577 native executions pass.
+Its manifest entry remains accepted, with the previous cohort evidence retained.
+
+The [direct-execution checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-final49-checkpoint.json.gz) verifies 403 native executions.
+All 174 original source tests pass. Native acceptance covers 165 original cases per API, including all 38 module and passive DTO assertions.
+Native settings supply the configuration values. Each API includes 35 positive scanner observations.
+Another 63 API cases, 20 production cases, eight mutation controls, and fifteen persistent update steps pass.
+The update sequence includes an unchanged repeat with preserved timestamps.
+
+Fresh tests found and repaired three public keyword mismatches, Unicode logical-line masking differences, and directory demand mapping and multiplicity defects.
+Repeated and overlapping directory demands now share parsed documents and retain separate ordered results.
+Their red, intermediate, and green receipts retain complete observations.
+The rule remains a draft: nine original CLI cases, signing and ratchet workflows, and the full migration gate remain open.
+The inventory has one accepted rule, 94 drafts, and five absent translations.
