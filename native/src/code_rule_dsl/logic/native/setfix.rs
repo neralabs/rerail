@@ -55,6 +55,8 @@ use std::time::Instant;
 
 /// Strata captured and run again on their own (decision 0095, step 0).
 pub(in crate::code_rule_dsl) mod lab;
+pub(in crate::code_rule_dsl) mod spec;
+use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 mod closure;
 mod table;
 
@@ -364,7 +366,7 @@ enum Body { Sql(String), Join(JoinRule) }
 /// any literal order, reading that relation in full. `wkey`: its spec, the same for each probe of one rule: in a wave
 /// the store does not change, so a whole plan run once derives what each of its rule's probes would (it is not run
 /// again).
-struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<String> }
+struct ProbeRule { head: usize, delta: usize, body: Body, whole: Option<JoinRule>, wkey: Option<Arc<JoinSpec>> }
 
 pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `seeded`: the seed joins have run (in the first wave). `write`: at the fixpoint, insert the new rows into the
@@ -407,10 +409,7 @@ fn component_in(scope: usize, name: &str) -> Result<Arc<Mutex<Component>>> {
     COMPONENTS.lock().unwrap().iter().find(|((s, n), _)| *s == scope && n == name).map(|c| c.1.clone()).ok_or_else(|| err(format!("no set fixpoint named {name:?}")))
 }
 
-fn unhex(s: &str) -> Result<String> {
-    let b: Result<Vec<u8>> = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| err(e.to_string()))).collect();
-    String::from_utf8(b?).map_err(|e| err(e.to_string()))
-}
+fn unhex(s: &str) -> Result<String> { spec::unhex(s).map_err(err) }
 
 fn read_value(v: ValueRef<'_>, ty: u8, syms: &mut Interner) -> Result<i64> {
     match (v, ty) {
@@ -445,8 +444,6 @@ fn read_sql(conn: &Connection, sql: &str, types: &[u8], syms: &mut Interner) -> 
     Ok(out)
 }
 
-fn slot(t: &str) -> Result<usize> { t.strip_prefix('v').and_then(|s| s.parse().ok()).ok_or_else(|| err(format!("bad slot {t}"))) }
-fn num<T: std::str::FromStr>(t: &str) -> Result<T> { t.parse().map_err(|_| err(format!("bad number {t}"))) }
 
 /// Whether an environment setting is on, read once per process (these are asked per index and per join).
 macro_rules! env_set {
@@ -456,127 +453,106 @@ macro_rules! env_set {
     }};
 }
 
+/// Opens a component from its spec's text (the SQL function's form, `set_fixpoint_open`).
 pub fn open(conn: &Connection, spec: &str) -> Result<String> {
+    open_spec(conn, &ComponentSpec::parse(spec).map_err(err)?)
+}
+
+/// Opens a component from its spec: the planner's, in process, or one read from text.
+pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
     let symbols = symbols(conn)?;
     let mut syms = Interner::for_loading(&symbols);
-    let (mut name, mut rels, mut edges, mut probes, mut gates) = (String::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut rels, mut edges, mut probes, mut gates) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let name = spec.name.clone();
     let mut write = true;
     let (mut requests, mut produced) = (Vec::new(), Vec::new());
-    for line in spec.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let toks: Vec<&str> = line.split_whitespace().collect();
-        match toks[0] {
-            "name" => name = toks[1].to_string(),
-            "rel" => {
-                let mut rel = Rel::new(toks[1], toks[2].as_bytes());
-                let mut empty = false;
-                let mut from = None;
-                let mut based: Option<(String, String)> = None;
-                let mut kept_base = false;
-                let mut seeded = false;
-                let mut t = 3;
-                while t < toks.len() {
-                    match toks[t] {
-                        "empty" => { empty = true; t += 1; }
-                        // With `base`: rows a SQL seed or the program's facts wrote to the table, added to it.
-                        "seeded" => { seeded = true; t += 1; }
-                        "base" => {
-                            let (old, gone) = (toks.get(t + 1).ok_or_else(|| err("rel: base needs two tables"))?, toks.get(t + 2).ok_or_else(|| err("rel: base needs two tables"))?);
-                            based = Some((unhex(old)?, unhex(gone)?));
-                            kept_base = true;
-                            empty = true;
-                            t += 3;
-                        }
-                        "from" => { from = Some(unhex(toks.get(t + 1).ok_or_else(|| err("rel: from needs SQL"))?)?); t += 2; }
-                        other => return Err(err(format!("rel: unknown token {other}"))),
-                    }
-                }
-                // `empty`: the table was made this run and nothing wrote it (no statement). `from`: its rows are a
+    let joins = |j: &JoinSpec, syms: &mut Interner| -> Result<JoinRule> {
+        let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into());
+        join_rule(conn, j, syms)
+    };
+    for line in &spec.lines {
+        match line {
+            Line::Rel { name: table, types, start } => {
+                let mut rel = Rel::new(table, types.as_bytes());
+                // `Empty`: the table was made this run and nothing wrote it (no statement). `From`: its rows are a
                 // query's (an input's, read where it is).
-                // `base`: the relation starts as a kept native relation less another's rows (the survivors of a
-                // maintained stratum, `h__old` less `h__del`), dead in place; else, made from those rows.
-                let what: &'static str = if based.is_some() { "open: survivors" } else if from.is_some() { "open: rows from SQL" } else if !empty { "open: rows from its table" } else { "open: empty" };
+                // `Base`: the relation starts as a kept native relation less another's rows (the survivors of a
+                // maintained stratum, `h__old` less `h__del`), dead in place; else, made from those rows. `seeded`:
+                // rows a SQL seed or the program's facts wrote to the table, added to it.
+                let what: &'static str = match start { Start::Base { .. } => "open: survivors", Start::From(_) => "open: rows from SQL", Start::Rows => "open: rows from its table", Start::Empty => "open: empty" };
                 let _rows = crate::code_rule_dsl::logic::profile::span(move || what.into());
-                if let Some((old, gone)) = based {
-                    let (o, g) = { let d = DERIVED.lock().unwrap(); (d.get(&(scope(conn), old.clone())).cloned(), d.get(&(scope(conn), gone.clone())).cloned()) };
-                    let (o, g) = (o.ok_or_else(|| err(format!("rel: no native relation {old}")))?, g.ok_or_else(|| err(format!("rel: no native relation {gone}")))?);
-                    match Rel::based(toks[1], toks[2].as_bytes(), &o, &g) {
-                        Some(b) => rel = b,
-                        None => {
-                            let k = rel.k;
-                            let mut gone_rows: rustc_hash::FxHashSet<Vec<i64>> = Default::default();
-                            for id in 0..g.len() { if !is_dead(&g.dead, id as u32) { let r = g.at(id); gone_rows.insert((0..k).map(|c| r.at(c)).collect()); } }
-                            let mut row = vec![0i64; k];
-                            for id in 0..o.len() {
-                                if is_dead(&o.dead, id as u32) { continue; }
-                                let r = o.at(id);
-                                for (c, v) in row.iter_mut().enumerate() { *v = r.at(c); }
-                                if !gone_rows.contains(&row) { rel.push(&row); }
+                match start {
+                    Start::Base { old, gone, seeded } => {
+                        let (o, g) = { let d = DERIVED.lock().unwrap(); (d.get(&(scope(conn), old.clone())).cloned(), d.get(&(scope(conn), gone.clone())).cloned()) };
+                        let (o, g) = (o.ok_or_else(|| err(format!("rel: no native relation {old}")))?, g.ok_or_else(|| err(format!("rel: no native relation {gone}")))?);
+                        match Rel::based(table, types.as_bytes(), &o, &g) {
+                            Some(b) => rel = b,
+                            None => {
+                                let k = rel.k;
+                                let mut gone_rows: rustc_hash::FxHashSet<Vec<i64>> = Default::default();
+                                for id in 0..g.len() { if !is_dead(&g.dead, id as u32) { let r = g.at(id); gone_rows.insert((0..k).map(|c| r.at(c)).collect()); } }
+                                let mut row = vec![0i64; k];
+                                for id in 0..o.len() {
+                                    if is_dead(&o.dead, id as u32) { continue; }
+                                    let r = o.at(id);
+                                    for (c, v) in row.iter_mut().enumerate() { *v = r.at(c); }
+                                    if !gone_rows.contains(&row) { rel.push(&row); }
+                                }
                             }
                         }
+                        if *seeded {
+                            for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                        }
                     }
-                    if seeded {
+                    Start::From(sql) => {
+                        for row in read_sql(conn, sql, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                    }
+                    Start::Rows => {
                         for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
                     }
-                } else if let Some(sql) = from {
-                    for row in read_sql(conn, &sql, &rel.types.clone(), &mut syms)? { rel.push(&row); }
-                } else if !empty {
-                    for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
+                    Start::Empty => {}
                 }
                 // A relation started from a kept one has none of its rows in its table (made this run).
-                rel.stored = if kept_base { 0 } else { rel.n };
+                rel.stored = if matches!(start, Start::Base { .. }) { 0 } else { rel.n };
                 rels.push(rel);
             }
-            "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None, wkey: None }),
-            "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join({ let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); parse_join(conn, &unhex(toks[2])?, &mut syms)? }), whole: None, wkey: None }),
-            "nowrite" => write = false,
-            "request" => requests.push((num(toks[1])?, 0)),
-            "produced" => produced.push(num(toks[1])?),
-            "gate" => {
-                let list = |t: &str| -> Result<Vec<usize>> { if t == "-" { Ok(Vec::new()) } else { t.split(',').map(num).collect() } };
-                let src = if toks[2] == "-" { None } else { Some(num(toks[2])?) };
-                gates.push(Gate { done: num(toks[1])?, src, quiet: list(toks[3])?, after: list(toks[4])?, passed: 0 });
+            Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None }),
+            Line::Seed { head, join } => probes.push(ProbeRule { head: *head, delta: SEED, body: Body::Join(joins(join, &mut syms)?), whole: None, wkey: None }),
+            Line::NoWrite => write = false,
+            Line::Request(r) => requests.push((*r, 0)),
+            Line::Produced(r) => produced.push(*r),
+            Line::Gate { done, src, quiet, after } => gates.push(Gate { done: *done, src: *src, quiet: quiet.clone(), after: after.clone(), passed: 0 }),
+            Line::Join { head, delta, join, whole } => {
+                let w = match whole { Some(w) => Some(joins(w, &mut syms)?), None => None };
+                probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Join(joins(join, &mut syms)?), whole: w, wkey: whole.clone() });
             }
-            "join" => {
-                let (head, delta) = (num(toks[1])?, num(toks[2])?);
-                let whole = match toks.get(4) { Some(w) => Some(parse_join(conn, &unhex(w)?, &mut syms)?), None => None };
-                let wkey = toks.get(4).map(|w| w.to_string());
-                probes.push(ProbeRule { head, delta, body: Body::Join({ let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); parse_join(conn, &unhex(toks[3])?, &mut syms)? }), whole, wkey });
-            }
-            "rule" => {
-                let (head, src) = (num(toks[1])?, num(toks[2])?);
-                let sections: Vec<&[&str]> = toks[5..].split(|t| *t == ";").collect();
-                let section = |name: &str| -> Result<&[&str]> {
-                    sections.iter().find(|s| s.first() == Some(&name)).map(|s| &s[1..]).ok_or_else(|| err(format!("no {name}")))
-                };
-                let key: Vec<usize> = section("key")?.iter().map(|t| slot(t)).collect::<Result<_>>()?;
-                let ecols: Vec<usize> = section("ecols")?.iter().map(|t| slot(t)).collect::<Result<_>>()?;
+            Line::Edge(e) => {
                 let mut pat = Vec::new();
-                for t in section("pat")? {
-                    pat.push(if *t == "_" { Pat::Any } else if let Some(i) = t.strip_prefix("i:") { Pat::Int(num(i)?) }
-                             else if let Some(x) = t.strip_prefix("x:") { Pat::Sym(syms.id(&unhex(x)?)) } else { Pat::Slot(slot(t)?) });
+                for t in &e.pat {
+                    pat.push(match t { Tok::Wild => Pat::Any, Tok::Int(i) => Pat::Int(*i), Tok::Sym(x) => Pat::Sym(syms.id(x)), Tok::Slot(s) => Pat::Slot(*s) });
                 }
                 let mut out = Vec::new();
-                for t in section("head")? {
-                    out.push(if let Some(i) = t.strip_prefix("i:") { Term::Const(num(i)?) }
-                             else if let Some(x) = t.strip_prefix("x:") { Term::Const(syms.id(&unhex(x)?)) }
-                             else if let Some(c) = t.strip_prefix("cat:") {
-                                 let (a, b) = c.split_once(':').ok_or_else(|| err("bad cat"))?;
-                                 Term::Cat(slot(a)?, slot(b)?)
-                             } else { Term::Slot(slot(t)?) });
+                for t in &e.out {
+                    out.push(match t {
+                        spec::HeadTok::Tok(Tok::Int(i)) => Term::Const(*i),
+                        spec::HeadTok::Tok(Tok::Sym(x)) => Term::Const(syms.id(x)),
+                        spec::HeadTok::Tok(Tok::Slot(s)) => Term::Slot(*s),
+                        spec::HeadTok::Tok(Tok::Wild) => return Err(err("bad slot _")),
+                        spec::HeadTok::Cat(a, b) => Term::Cat(*a, *b),
+                    });
                 }
+                let (key, ecols) = (e.key.clone(), e.ecols.clone());
                 let nslots = key.iter().chain(&ecols).copied().chain(pat.iter().filter_map(|p| if let Pat::Slot(s) = p { Some(*s) } else { None }))
                     .max().map_or(0, |m| m + 1);
                 let mut map: HashMap<Vec<i64>, Vec<Vec<i64>>> = HashMap::default();
-                let has_edge = toks[3] != "-";
-                if has_edge {
-                    for row in read_rows(conn, toks[3], toks[4].as_bytes(), &mut syms)? {
-                        let (k, e) = row.split_at(key.len());
-                        map.entry(k.to_vec()).or_default().push(e.to_vec());
+                if let Some((table, types)) = &e.edge {
+                    for row in read_rows(conn, table, types.as_bytes(), &mut syms)? {
+                        let (k, v) = row.split_at(key.len());
+                        map.entry(k.to_vec()).or_default().push(v.to_vec());
                     }
                 }
-                edges.push(EdgeRule { head, src, key, ecols, pat, out, edges: map, has_edge, nslots });
+                edges.push(EdgeRule { head: e.head, src: e.src, key, ecols, pat, out, edges: map, has_edge: e.edge.is_some(), nslots });
             }
-            other => return Err(err(format!("unknown spec item {other}"))),
         }
     }
     let _multi = crate::code_rule_dsl::logic::profile::span(|| "open: indexes".into());
@@ -723,7 +699,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             }
         }
         // Join probes, natively; seed joins in the first wave only.
-        let mut wholes_run: Vec<&str> = Vec::new();
+        let mut wholes_run: Vec<&Arc<JoinSpec>> = Vec::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let Body::Join(j) = &p.body else { continue };
             let tp = Instant::now();
@@ -731,7 +707,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
             let j = match (&p.whole, &p.wkey) {
                 (Some(w), Some(k)) if p.delta != SEED && store.rels[p.delta].lo == 0 => {
-                    if wholes_run.contains(&k.as_str()) { skips += 1; continue; }
+                    if wholes_run.iter().any(|w| Arc::ptr_eq(w, k) || ***w == **k) { skips += 1; continue; }
                     wholes_run.push(k);
                     w
                 }
@@ -1103,35 +1079,34 @@ pub fn steps(conn: &Connection, name: &str) -> Result<String> {
 /// Replaces probe `i`'s body, replanned from `stats`: `kind` is `sql` (hex SQL, prepared by the next `run`) or `join`
 /// (a hex join spec).
 pub fn reprobe(conn: &Connection, name: &str, i: usize, kind: &str, body: &str) -> Result<()> {
+    reprobe_spec(conn, name, i, &Reprobe::parse(kind, body).map_err(err)?)
+}
+
+/// `reprobe` of the planner's values, in process.
+pub fn reprobe_spec(conn: &Connection, name: &str, i: usize, new: &Reprobe) -> Result<()> {
     let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
     let n = comp.probes.len();
-    let body = match kind {
-        "sql" => Body::Sql(unhex(body)?),
-        "join" => {
-            let symbols = Arc::clone(&comp.store.read().unwrap().syms);
-            let mut syms = Interner::for_loading(&symbols);
-            let j = parse_join(conn, &unhex(body)?, &mut syms)?;
-            syms.check()?;
-            let mut store = comp.store.write().unwrap();
-            for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
-            Body::Join(j)
-        }
+    let joined = |comp: &Component, spec: &JoinSpec| -> Result<JoinRule> {
+        let symbols = Arc::clone(&comp.store.read().unwrap().syms);
+        let mut syms = Interner::for_loading(&symbols);
+        let j = join_rule(conn, spec, &mut syms)?;
+        syms.check()?;
+        let mut store = comp.store.write().unwrap();
+        for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
+        Ok(j)
+    };
+    let body = match new {
+        Reprobe::Sql(sql) => Body::Sql(sql.clone()),
+        Reprobe::Join(spec) => Body::Join(joined(&comp, spec)?),
         // The probe's whole plan (`ProbeRule::whole`), planned again from live statistics.
-        "whole" => {
-            let symbols = Arc::clone(&comp.store.read().unwrap().syms);
-            let mut syms = Interner::for_loading(&symbols);
-            let j = parse_join(conn, &unhex(body)?, &mut syms)?;
-            syms.check()?;
-            let mut store = comp.store.write().unwrap();
-            for (r, cols) in &j.multi { store.rels[*r].add_multi(cols); }
-            drop(store);
+        Reprobe::Whole(spec) => {
+            let j = joined(&comp, spec)?;
             let p = comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?;
             p.whole = Some(j);
-            p.wkey = Some(body.to_owned());
+            p.wkey = Some(Arc::clone(spec));
             return Ok(());
         }
-        other => return Err(err(format!("unknown probe kind {other}"))),
     };
     comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?.body = body;
     Ok(())
@@ -1456,12 +1431,8 @@ pub fn unindex(conn: &Connection, tables: &[String]) {
 /// the stored tables of those names: no later stratum reads them.
 pub fn forget_inputs_of(conn: &Connection, tables: &[String]) {
     let path = conn.path().unwrap_or_default().to_owned();
-    let names = |spec: &str| -> Vec<String> {
-        let Some(hex) = spec.split(':').nth(1) else { return Vec::new() };
-        let Ok(text) = unhex(hex) else { return Vec::new() };
-        text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map(str::to_owned).collect()
-    };
-    INPUTS.lock().unwrap().retain(|(p, spec), _| *p != path || !names(spec).iter().any(|w| tables.contains(w)));
+    let reads = |key: &InputKey| key.sql.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| tables.iter().any(|t| t == w));
+    if let Some(m) = INPUTS.lock().unwrap().get_mut(&path) { m.retain(|key, _| !reads(key)); }
     STORED.lock().unwrap().retain(|(p, t), _| *p != path || !t.rsplit('.').next().is_some_and(|n| tables.iter().any(|x| x == n)));
 }
 
@@ -1815,27 +1786,21 @@ impl InRel {
 /// Input relations loaded for joins, by database and spec, for the run that loaded them: the base relations are
 /// vtabs rebound per batch, so a load is not reused across runs (`forget_inputs`). T cached them for its process,
 /// which ran one program over one facts file.
-static INPUTS: LazyLock<Mutex<HashMap<(String, String), Arc<InRel>>>> = LazyLock::new(Default::default);
+static INPUTS: LazyLock<Mutex<HashMap<String, HashMap<InputKey, Arc<InRel>>>>> = LazyLock::new(Default::default);
 
 /// Drops the input relations loaded on `conn`'s database: a run starts over the relations bound now.
 pub fn forget_inputs(conn: &Connection) {
     let path = conn.path().unwrap_or_default().to_owned();
     let changing = CHANGING.lock().unwrap().get(&path).cloned();
     let Some(changing) = changing else {
-        INPUTS.lock().unwrap().retain(|(p, _), _| *p != path);
+        INPUTS.lock().unwrap().remove(&path);
         STORED.lock().unwrap().retain(|(p, _), _| *p != path);
         return;
     };
     // Kept: base inputs (`b:` specs) that read none of the relations that change between runs; their rows and
     // indexes are the same in the next run. Derived inputs (`d:`, a SQL stratum's table) are made again.
     let reads_changing = |sel: &str| sel.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(|w| changing.contains(w));
-    INPUTS.lock().unwrap().retain(|(p, spec), _| {
-        if *p != path {
-            return true;
-        }
-        let parts: Vec<&str> = spec.splitn(4, ':').collect();
-        matches!(parts.as_slice(), ["b", table, ..] if unhex(table).is_ok_and(|sel| !reads_changing(&sel)))
-    });
+    if let Some(m) = INPUTS.lock().unwrap().get_mut(&path) { m.retain(|key, _| key.base && !reads_changing(&key.sql)); }
     STORED.lock().unwrap().retain(|(p, table), _| *p != path || (!table.starts_with("main.") && !table.starts_with("temp.") && !reads_changing(table)));
 }
 
@@ -1857,14 +1822,18 @@ pub fn keep_inputs(conn: &Connection, changing: Option<std::collections::BTreeSe
     }
 }
 
+/// An input from its spec's text (`<b|d|x>:<hex select>:<hex columns>:<types>`).
 fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel>> {
-    let key = (conn.path().unwrap_or_default().to_owned(), spec.to_owned());
-    if let Some(r) = INPUTS.lock().unwrap().get(&key) { return Ok(r.clone()); }
+    input_of(conn, &InputKey::parse(spec).map_err(err)?, syms)
+}
+
+fn input_of(conn: &Connection, spec: &InputKey, syms: &mut Interner) -> Result<Arc<InRel>> {
+    let path = conn.path().unwrap_or_default();
+    if let Some(r) = INPUTS.lock().unwrap().get(path).and_then(|m| m.get(spec)) { return Ok(r.clone()); }
+    let keep = |rel: &Arc<InRel>| { INPUTS.lock().unwrap().entry(path.to_owned()).or_default().insert(spec.clone(), rel.clone()); };
     let _load = crate::code_rule_dsl::logic::profile::span(|| "open: input load".into());
-    let parts: Vec<&str> = spec.splitn(4, ':').collect();
-    let [which, table, cols, types] = parts[..] else { return Err(err(format!("bad input {spec}"))) };
-    let base = which == "b";
-    let (table, cols, types) = (unhex(table)?, unhex(cols)?, types.as_bytes());
+    let base = spec.base;
+    let (table, cols, types) = (&spec.sql, &spec.cols, spec.types.as_bytes());
     let (t0, c0) = (Instant::now(), thread_cpu());
     // A stored table holds symbols as atoms (integers), so any column types read in place there.
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
@@ -1875,7 +1844,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
             if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
             }
-            INPUTS.lock().unwrap().insert(key, rel.clone());
+            keep(&rel);
             return Ok(rel);
         }
     }
@@ -1895,7 +1864,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     if env_set!("RDL_PROFILE") {
         eprintln!("      input {} rows in {:.1} ms: SELECT {cols} FROM {table}", rel.len(), t0.elapsed().as_secs_f64() * 1e3);
     }
-    INPUTS.lock().unwrap().insert(key, rel.clone());
+    keep(&rel);
     Ok(rel)
 }
 
@@ -2260,34 +2229,47 @@ pub struct JoinRule { steps: Vec<Step>, out: Vec<Term>, nslots: usize, multi: Ve
                       fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm> }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
+    join_rule(conn, &JoinSpec::parse(spec).map_err(err)?, syms)
+}
+
+/// A native join's steps from its spec: each slot bound by its first step, tested by later ones.
+fn join_rule(conn: &Connection, spec: &JoinSpec, syms: &mut Interner) -> Result<JoinRule> {
     let mut bound: Vec<bool> = Vec::new();
     let mut steps = Vec::new();
     let mut out = Vec::new();
     let mut multi = Vec::new();
-    fn tok(t: &str, syms: &mut Interner) -> Result<Option<Key>> {
-        Ok(if t == "_" { None } else if let Some(i) = t.strip_prefix("i:") { Some(Key::Const(num(i)?)) }
-           else if let Some(x) = t.strip_prefix("x:") { Some(Key::Const(syms.id(&unhex(x)?))) } else { Some(Key::Slot(slot(t)?)) })
+    fn tok(t: &Tok, syms: &mut Interner) -> Option<Key> {
+        match t { Tok::Wild => None, Tok::Int(i) => Some(Key::Const(*i)), Tok::Sym(x) => Some(Key::Const(syms.id(x))), Tok::Slot(s) => Some(Key::Slot(*s)) }
     }
     let grow = |b: &mut Vec<bool>, s: usize| if b.len() <= s { b.resize(s + 1, false) };
-    for line in spec.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let toks: Vec<&str> = line.split_whitespace().collect();
+    // An aggregate's value goes into its out slot: bound there (true), or tested where an earlier step bound it.
+    fn out_slot(o: &Tok, what: &str, bound: &mut Vec<bool>, syms: &mut Interner) -> Result<(usize, bool)> {
+        let Some(Key::Slot(o)) = tok(o, syms) else { return Err(err(format!("bad {what}"))) };
+        let bind = !bound.get(o).copied().unwrap_or(false);
+        if bound.len() <= o { bound.resize(o + 1, false) }
+        bound[o] = true;
+        Ok((o, bind))
+    }
+    for item in &spec.items {
         let is_bound = |b: &Vec<bool>, k: Key| match k { Key::Slot(s) => b.get(s).copied().unwrap_or(false), Key::Const(_) => true };
-        match toks[0] {
-            "pos" | "neg" | "count" | "sum" | "min" | "max" | "strjoin" => {
-                let (neg, count, extreme, sjoin) = (toks[0] == "neg", toks[0] == "count", matches!(toks[0], "sum" | "min" | "max"), toks[0] == "strjoin");
-                // Scalar value columns use `_` tokens. A strjoin additionally carries value,
-                // ordering, separator, and output tokens after the atom columns.
-                if sjoin && toks.len() < 7 { return Err(err("bad strjoin")); }
-                let atoks = if count { &toks[2..toks.len() - 1] } else if extreme { &toks[2..toks.len() - 2] } else if sjoin { &toks[2..toks.len() - 4] } else { &toks[2..] };
-                let count = count || sjoin;
+        match item {
+            JoinItem::Atom { src, args: atoks, .. } | JoinItem::Count { src, args: atoks, .. } | JoinItem::Extreme { src, args: atoks, .. } | JoinItem::StrJoin { src, args: atoks, .. } => {
+                let neg = matches!(item, JoinItem::Atom { neg: true, .. });
+                let extreme = matches!(item, JoinItem::Extreme { .. });
+                // A strjoin counts its rows as a count does, then joins its value column's.
+                let count = matches!(item, JoinItem::Count { .. } | JoinItem::StrJoin { .. });
                 let (mut keys, mut binds, mut tests) = (Vec::new(), Vec::new(), Vec::new());
-                let mut locals=HashMap::default();
+                let mut locals: HashMap<&str, usize> = HashMap::default();
                 for (col, t) in atoks.iter().enumerate() {
-                    if (count || extreme) && let Some(local)=t.strip_prefix('a') {
-                        if let Some(previous)=locals.insert(local,col) {tests.push((col,previous));}
-                        continue;
-                    }
-                    match tok(t, syms)? {
+                    let t = match t {
+                        spec::Arg::Local(local) if count || extreme => {
+                            if let Some(previous) = locals.insert(local.as_str(), col) { tests.push((col, previous)); }
+                            continue;
+                        }
+                        spec::Arg::Local(local) => return Err(err(format!("bad slot a{local}"))),
+                        spec::Arg::Tok(t) => t,
+                    };
+                    match tok(t, syms) {
                         None => {}
                         Some(k) if is_bound(&bound, k) => keys.push((col, k)),
                         Some(Key::Slot(s)) => {
@@ -2298,61 +2280,49 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     }
                 }
                 for &(_, s) in &binds { grow(&mut bound, s); bound[s] = true; }
-                let src = match toks[1] {
-                    t if t.starts_with("d") => Src::Delta(num(&t[1..])?),
-                    t if t.starts_with("c") && keys.len() >= 2 => {
-                        let (r, cols): (usize, Vec<usize>) = (num(&t[1..])?, keys.iter().map(|&(c, _)| c).collect());
-                        multi.push((r, cols.clone()));
-                        Src::FullMulti(r, cols)
+                let src = match src {
+                    Source::Delta(r) => Src::Delta(*r),
+                    Source::Full(r) if keys.len() >= 2 => {
+                        let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
+                        multi.push((*r, cols.clone()));
+                        Src::FullMulti(*r, cols)
                     }
-                    t if t.starts_with("c") => Src::Full(num(&t[1..])?),
-                    t if t.starts_with("r:") => {
-                        let table = unhex(&t[2..])?;
+                    Source::Full(r) => Src::Full(*r),
+                    Source::Native(table) => {
                         let rel = DERIVED.lock().unwrap().get(&(scope(conn), table.clone())).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
                         let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
                         let ix = rel.index(&cols);
                         Src::In(rel, ix)
                     }
-                    t if t.starts_with("t:") => {
+                    Source::Input(key) => {
                         let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
-                        let rel = input(conn, &t[2..], syms)?;
+                        let rel = input_of(conn, key, syms)?;
                         let ix = rel.index(&cols);
                         Src::In(rel, ix)
                     }
-                    t => return Err(err(format!("bad source {t}"))),
                 };
-                if sjoin {
-                    let n = toks.len();
-                    let column = |t: &str| -> Result<(usize, bool)> {
-                        let (c, sym) = t.split_once(':').ok_or_else(|| err("bad strjoin column"))?;
-                        Ok((num(c)?, sym == "1"))
-                    };
-                    let x = column(toks[n - 4])?;
-                    let by = if toks[n - 3] == "-" { Vec::new() } else { toks[n - 3].split(',').map(column).collect::<Result<_>>()? };
-                    let Some(Key::Const(sep)) = tok(toks[n - 2], syms)? else { return Err(err("a strjoin's separator is a constant")) };
-                    let Some(Key::Slot(o)) = tok(toks[n - 1], syms)? else { return Err(err("bad strjoin")) };
-                    let bind = !is_bound(&bound, Key::Slot(o));
-                    grow(&mut bound, o); bound[o] = true;
-                    steps.push(Step::StrJoin { src, keys, tests, x, by, sep, out: o, bind });
-                } else if extreme {
-                    let col = num(toks[toks.len() - 2])?;
-                    if col >= atoks.len() { return Err(err("native scalar value column is out of range")); }
-                    let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad min or max")) };
-                    let bind = !is_bound(&bound, Key::Slot(o));
-                    grow(&mut bound, o); bound[o] = true;
-                    steps.push(Step::Scalar { src, keys, tests, col: Some(col), out: o, bind, kind: match toks[0] {"sum"=>ScalarKind::Sum,"min"=>ScalarKind::Min,_=>ScalarKind::Max}, bag: None });
-                } else if count {
-                    let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad count")) };
-                    let bind = !is_bound(&bound, Key::Slot(o));
-                    grow(&mut bound, o); bound[o] = true;
-                    steps.push(Step::Scalar { src, keys, tests, col: None, out: o, bind, kind: ScalarKind::Count, bag: None });
-                } else {
-                    steps.push(Step::Atom { src, neg, keys, binds, tests });
+                match item {
+                    JoinItem::StrJoin { x, by, sep, out: o, .. } => {
+                        let Some(Key::Const(sep)) = tok(sep, syms) else { return Err(err("a strjoin's separator is a constant")) };
+                        let (o, bind) = out_slot(o, "strjoin", &mut bound, syms)?;
+                        steps.push(Step::StrJoin { src, keys, tests, x: *x, by: by.clone(), sep, out: o, bind });
+                    }
+                    JoinItem::Extreme { op, col, out: o, .. } => {
+                        if *col >= atoks.len() { return Err(err("native scalar value column is out of range")); }
+                        let (o, bind) = out_slot(o, "min or max", &mut bound, syms)?;
+                        let kind = match op { spec::Extreme::Sum => ScalarKind::Sum, spec::Extreme::Min => ScalarKind::Min, spec::Extreme::Max => ScalarKind::Max };
+                        steps.push(Step::Scalar { src, keys, tests, col: Some(*col), out: o, bind, kind, bag: None });
+                    }
+                    JoinItem::Count { out: o, .. } => {
+                        let (o, bind) = out_slot(o, "count", &mut bound, syms)?;
+                        steps.push(Step::Scalar { src, keys, tests, col: None, out: o, bind, kind: ScalarKind::Count, bag: None });
+                    }
+                    _ => steps.push(Step::Atom { src, neg, keys, binds, tests }),
                 }
             }
-            "cat" => {
-                let (o, a, b) = (tok(toks[1], syms)?, tok(toks[2], syms)?, tok(toks[3], syms)?);
-                let (Some(Key::Slot(o)), Some(a), Some(b)) = (o, a, b) else { return Err(err(format!("bad cat: {}", toks.join(" ")))) };
+            JoinItem::Cat { out: o, a, b } => {
+                let (o, a, b) = (tok(o, syms), tok(a, syms), tok(b, syms));
+                let (Some(Key::Slot(o)), Some(a), Some(b)) = (o, a, b) else { return Err(err(format!("bad cat: {item}"))) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) {
                     if !is_bound(&bound, Key::Slot(o)) { return Err(err("cat of an unbound slot")); }
                     let part = |b: &mut Vec<bool>, k: Key| match k {
@@ -2367,26 +2337,24 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                 grow(&mut bound, o); bound[o] = true;
                 steps.push(Step::Cat { out: o, a, b, bind });
             }
-            "lt" | "le" => {
-                let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
+            JoinItem::Lt { a, b, or_eq } => {
+                let (Some(a), Some(b)) = (tok(a, syms), tok(b, syms)) else { return Err(err("bad comparison")) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("order of an unbound slot")); }
-                steps.push(Step::Lt { a, b, or_eq: toks[0] == "le" });
+                steps.push(Step::Lt { a, b, or_eq: *or_eq });
             }
-            "func" => {
-                // `func <name> <out> <args…>`
-                let Some((name, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(toks[1]) else { return Err(err(format!("no function {}", toks[1]))) };
-                let args: Vec<Key> = toks[3..].iter().map(|t| tok(t, syms)).collect::<Result<Option<Vec<_>>>>()?.ok_or_else(|| err("a function of `_`"))?;
+            JoinItem::Func { name, out: o, args } => {
+                let Some((name, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(name) else { return Err(err(format!("no function {name}"))) };
+                let args: Vec<Key> = args.iter().map(|t| tok(t, syms)).collect::<Option<Vec<_>>>().ok_or_else(|| err("a function of `_`"))?;
                 if args.len() != kinds.len() || args.iter().any(|&a| !is_bound(&bound, a)) { return Err(err(format!("{name} of unbound or missing arguments"))); }
-                let Some(Key::Slot(o)) = tok(toks[2], syms)? else { return Err(err("a function's value into a constant")) };
+                let Some(Key::Slot(o)) = tok(o, syms) else { return Err(err("a function's value into a constant")) };
                 let bind = !is_bound(&bound, Key::Slot(o));
                 grow(&mut bound, o); bound[o] = true;
                 steps.push(Step::Func { name, kinds, args, out: o, bind });
             }
-            "test" => {
-                // `test <op> <s> <pattern> <0|1>`
+            JoinItem::Test { op, s, p, want } => {
                 use crate::code_rule_dsl::logic::strings;
-                let Some(&op) = strings::TESTS.iter().find(|&&t| t == toks[1]) else { return Err(err(format!("no text test {}", toks[1]))) };
-                let (Some(s), Some(p)) = (tok(toks[2], syms)?, tok(toks[3], syms)?) else { return Err(err("a text test of `_`")) };
+                let Some(&op) = strings::TESTS.iter().find(|&&t| t == op) else { return Err(err(format!("no text test {op}"))) };
+                let (Some(s), Some(p)) = (tok(s, syms), tok(p, syms)) else { return Err(err("a text test of `_`")) };
                 if !is_bound(&bound, s) || !is_bound(&bound, p) { return Err(err(format!("{op} of an unbound slot"))); }
                 let matcher = match p {
                     Key::Const(c) => {
@@ -2396,67 +2364,63 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     }
                     Key::Slot(_) => None,
                 };
-                steps.push(Step::Test { op, s, p, matcher, want: toks[4] == "1" });
+                steps.push(Step::Test { op, s, p, matcher, want: *want });
             }
-            "docof" => {
-                // `docof <out> <n>`
-                let (Some(Key::Slot(o)), Some(n)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad docof")) };
+            JoinItem::DocOf { out: o, n } => {
+                let (Some(Key::Slot(o)), Some(n)) = (tok(o, syms), tok(n, syms)) else { return Err(err("bad docof")) };
                 if !is_bound(&bound, n) { return Err(err("the document of an unbound slot")); }
                 let bind = !is_bound(&bound, Key::Slot(o));
                 grow(&mut bound, o); bound[o] = true;
                 steps.push(Step::DocOf { out: o, n, bind });
             }
-            "testset" => {
-                // `testset <op> <s> <0|1> <constants…>`: a text test against a set of symbols' names.
+            JoinItem::TestSet { op, s, want, members } => {
+                // A text test against a set of symbols' names.
                 use crate::code_rule_dsl::logic::strings;
-                let Some(&op) = strings::TESTS.iter().find(|&&t| t == toks[1]) else { return Err(err(format!("no text test {}", toks[1]))) };
-                let Some(s) = tok(toks[2], syms)? else { return Err(err("a text test of `_`")) };
+                let Some(&op) = strings::TESTS.iter().find(|&&t| t == op) else { return Err(err(format!("no text test {op}"))) };
+                let Some(s) = tok(s, syms) else { return Err(err("a text test of `_`")) };
                 if !is_bound(&bound, s) { return Err(err(format!("{op} of an unbound slot"))); }
-                let patterns = toks[4..].iter().map(|t| match tok(t, syms)? { Some(Key::Const(c)) => Ok(syms.name(c).to_string()), _ => Err(err("a pattern that is not a constant")) }).collect::<Result<Vec<String>>>()?;
+                let patterns = members.iter().map(|t| match tok(t, syms) { Some(Key::Const(c)) => Ok(syms.name(c).to_string()), _ => Err(err("a pattern that is not a constant")) }).collect::<Result<Vec<String>>>()?;
                 let matcher = strings::Matcher::new(op, &patterns).ok().map(Arc::new);
                 // A set that does not compile matches nothing, as SQL's `str_test`.
                 let p = Key::Const(syms.id(&patterns.join(&strings::SET_SEP.to_string())));
-                steps.push(Step::Test { op, s, p, matcher, want: toks[3] == "1" });
+                steps.push(Step::Test { op, s, p, matcher, want: *want });
             }
-            "in" => {
-                // `in <a> <0|1> <constants…>`
-                let Some(a) = tok(toks[1], syms)? else { return Err(err("a membership test of `_`")) };
+            JoinItem::In { a, want, set } => {
+                let Some(a) = tok(a, syms) else { return Err(err("a membership test of `_`")) };
                 if !is_bound(&bound, a) { return Err(err("a membership test of an unbound slot")); }
-                let set = toks[3..].iter().map(|t| match tok(t, syms)? { Some(Key::Const(c)) => Ok(c), _ => Err(err("a set member that is not a constant")) }).collect::<Result<Vec<_>>>()?;
-                steps.push(Step::In { a, set, want: toks[2] == "1" });
+                let set = set.iter().map(|t| match tok(t, syms) { Some(Key::Const(c)) => Ok(c), _ => Err(err("a set member that is not a constant")) }).collect::<Result<Vec<_>>>()?;
+                steps.push(Step::In { a, set, want: *want });
             }
-            "deq" | "dne" => {
-                let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
+            JoinItem::Doc { a, b, eq } => {
+                let (Some(a), Some(b)) = (tok(a, syms), tok(b, syms)) else { return Err(err("bad comparison")) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) { return Err(err("a document comparison of an unbound slot")); }
-                steps.push(Step::Doc { a, b, eq: toks[0] == "deq" });
+                steps.push(Step::Doc { a, b, eq: *eq });
             }
-            "eq" | "ne" => {
-                let (Some(a), Some(b)) = (tok(toks[1], syms)?, tok(toks[2], syms)?) else { return Err(err("bad comparison")) };
+            JoinItem::Eq { a, b, ne } => {
+                let (Some(a), Some(b)) = (tok(a, syms), tok(b, syms)) else { return Err(err("bad comparison")) };
                 if !is_bound(&bound, b) { return Err(err("comparison with an unbound right side")); }
-                match (toks[0], a) {
-                    ("eq", Key::Slot(s)) if !is_bound(&bound, a) => { grow(&mut bound, s); bound[s] = true; steps.push(Step::Let { a: s, b }) }
+                match (*ne, a) {
+                    (false, Key::Slot(s)) if !is_bound(&bound, a) => { grow(&mut bound, s); bound[s] = true; steps.push(Step::Let { a: s, b }) }
                     _ if !is_bound(&bound, a) => return Err(err("comparison with an unbound left side")),
-                    ("eq", _) => steps.push(Step::Eq { a, b }),
+                    (false, _) => steps.push(Step::Eq { a, b }),
                     _ => steps.push(Step::Ne { a, b }),
                 }
             }
-            "head" => {
-                for t in &toks[1..] {
-                    out.push(if let Some(c) = t.strip_prefix("cat:") {
-                        let (a, b) = c.split_once(':').ok_or_else(|| err("bad cat"))?;
-                        Term::Cat(slot(a)?, slot(b)?)
-                    } else {
-                        match tok(t, syms)? { Some(Key::Const(c)) => Term::Const(c), Some(Key::Slot(s)) => Term::Slot(s), None => return Err(err("_ in a head")) }
+            JoinItem::Near { down, .. } => return Err(err(format!("unknown join item {}", if *down { "down" } else { "near" }))),
+            JoinItem::Head(terms) => {
+                for t in terms {
+                    out.push(match t {
+                        spec::HeadTok::Cat(a, b) => Term::Cat(*a, *b),
+                        spec::HeadTok::Tok(t) => match tok(t, syms) { Some(Key::Const(c)) => Term::Const(c), Some(Key::Slot(s)) => Term::Slot(s), None => return Err(err("_ in a head")) },
                     });
                 }
             }
-            other => return Err(err(format!("unknown join item {other}"))),
         }
     }
     // Every head term reads a slot the body binds: an unbound one is refused here, not read out of range later.
     let unbound = |s: usize| !bound.get(s).copied().unwrap_or(false);
     if out.iter().any(|t| match t { Term::Slot(s) => unbound(*s), Term::Cat(a, b) => unbound(*a) || unbound(*b), Term::Const(_) => false }) {
-        return Err(err(format!("a head reads a slot its body does not bind: {spec}")));
+        return Err(err(format!("a head reads a slot its body does not bind: {}", spec.to_text())));
     }
     liveness::sums(&mut steps,&out);
     scalars::plan(&mut steps);
