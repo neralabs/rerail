@@ -319,8 +319,8 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let checking = super::thread_usage();
         if let Some(documents) = reuse(&name, &key, &text, root, typing, options)? {
             let versions = current_versions(&name, &declared.exports)?;
-            let rows = stored_rows(&name, &wanted_rows(&reads, &versions, held))?;
-            hand_on(&name, &program, &reads, &rows, &mut facts)?;
+            let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its kept exports read")); stored_rows(&name, &wanted_rows(&reads, &versions, held))? };
+            { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
             hand_versions(&reads, &versions, &mut handed);
             let now = super::thread_usage();
             let mut report = Report::default();
@@ -335,10 +335,11 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let producer: [u8; 32] = Sha256::digest(src.as_bytes()).into();
         // Some workspace documents changed, and nothing else: their rows replaced, when the rest stands.
         let job = Job { name: &name, key: &key, text: &text, root, scratch, modes, binding, chunk_nodes, typing, options, program: &program, declared: &declared, producer };
-        let full_because = match maintain(&job)? {
+        let maintained = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: maintained")); maintain(&job)? };
+        let full_because = match maintained {
             Ok((report, exports, units, granules, began, versions)) => {
-                let rows = stored_rows(&name, &wanted_rows(&reads, &versions, held))?;
-                hand_on(&name, &program, &reads, &rows, &mut facts)?;
+                let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); stored_rows(&name, &wanted_rows(&reads, &versions, held))? };
+                { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
                 hand_versions(&reads, &versions, &mut handed);
                 runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began, full_because: None, versions });
                 continue;
@@ -347,15 +348,18 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         };
         let report = super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, options)?;
         let began = thread_cpu();
-        let rows = read_exports(&name, &program, &declared, &out)?;
-        let ((exports, units, granules), versions) = keep(&name, &rows, &declared.positions, declared.owner.as_deref(), producer, None)?;
+        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &declared, &out)? };
+        let ((exports, units, granules), versions) = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports kept")); keep(&name, &rows, &declared.positions, declared.owner.as_deref(), producer, None)? };
         // Once its exports are kept: what it consulted, so an unchanged next run takes them as they are, and each
         // document's cone inputs, so a run of changed documents can tell whether the rest stands.
-        record(&name, &key, &report.consulted)?;
-        record_documents(&name, &report.cone_inputs, true)?;
+        {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: what it consulted recorded"));
+            record(&name, &key, &report.consulted)?;
+            record_documents(&name, &report.cone_inputs, true)?;
+        }
         let wanted = wanted_rows(&reads, &versions, held);
         let rows: BTreeMap<String, Vec<Vec<String>>> = rows.into_iter().filter(|(e, _)| wanted.contains(e)).collect();
-        hand_on(&name, &program, &reads, &rows, &mut facts)?;
+        { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
         hand_versions(&reads, &versions, &mut handed);
         runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began, full_because: Some(full_because), versions });
     }
