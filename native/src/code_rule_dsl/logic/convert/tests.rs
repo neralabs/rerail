@@ -133,6 +133,18 @@ thread_local! {
     static COMPILED: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<crate::code_rule_dsl::model::CompiledCodeRule>>> = Default::default();
 }
 
+/// The suffixes of the files of no grammar W reads as text (its documentation and configuration; never a run's own
+/// `.csv` or `.sqlite` outputs, nor binaries).
+const W_TEXT_SUFFIXES: [&str; 9] = ["md", "markdown", "rst", "txt", "toml", "cfg", "ini", "yaml", "yml"];
+
+/// The `.scope text` setting of a converted program: W's text documents (`W_TEXT_SUFFIXES`, in any case), read
+/// as text only by the corpus runner (`front::Program::text_globs`).
+fn w_text_scope() -> String {
+    let any_case = |s: &str| s.chars().map(|c| format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase())).collect::<String>();
+    let globs = W_TEXT_SUFFIXES.iter().map(|s| format!("\"**/*.{}\"", any_case(s))).collect::<Vec<_>>();
+    format!("text {}", globs.join(", "))
+}
+
 /// One rule file as a program: its scope as path globs and each forbid clause's matcher as rules deriving
 /// `violation(rule, clause, code, path, line)`, under the rule's authored file (`authored()`) where it has one. An
 /// error is the authored file's.
@@ -341,6 +353,8 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
     let text = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let mut prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
+    // W reads its documentation and configuration files as text: the `.scope text` setting (`w_text_scope`).
+    prog.settings.push(("scope".into(), w_text_scope()));
     // The `.references` setting: the graph's configuration over the run's scope.
     if let Some(mut graph) = graphs.into_iter().next() {
         graph.insert("scope".into(), serde_json::json!({"include": include, "exclude": exclude}));
