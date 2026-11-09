@@ -583,10 +583,434 @@ func g6() throws {
   note("\nload avg after G6: \(loadAvg())")
 }
 
+// MARK: - Real workloads W1..W5 (data-layer corpus extracts; see tools/matrix-offload/extract)
+
+let dataDir = ProcessInfo.processInfo.environment["MO_DATA"] ?? "mo-data"
+let pageSize = Int(getpagesize())
+var concurrentMode = false  // wave variant: one concurrent encoder, explicit barriers between dependent dispatches
+
+/// Map a corpus file (copy-on-write, page-rounded) and wrap it as a shared MTLBuffer without copying.
+struct Mapped { let buf: MTLBuffer; let len: Int }
+func mapFile(_ rel: String) -> Mapped {
+  let path = dataDir + "/" + rel
+  let fd = open(path, O_RDONLY)
+  precondition(fd >= 0, "cannot open \(path) (set MO_DATA)")
+  var st = stat()
+  fstat(fd, &st)
+  let len = Int(st.st_size), mlen = (len + pageSize - 1) / pageSize * pageSize
+  let p = mmap(nil, mlen, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0)!
+  close(fd)
+  precondition(p != MAP_FAILED, "mmap failed for \(path)")
+  let b = dev.makeBuffer(bytesNoCopy: p, length: mlen, options: .storageModeShared, deallocator: { q, l in munmap(q, l) })!
+  return Mapped(buf: b, len: len)
+}
+
+typealias Bind = (MTLBuffer, Int)
+func dsp(_ e: MTLComputeCommandEncoder, _ p: MTLComputePipelineState, _ bufs: [Bind], _ u32: [UInt32] = [],
+         tgs: MTLSize, tpt: MTLSize) {
+  e.setComputePipelineState(p)
+  for (i, b) in bufs.enumerated() { e.setBuffer(b.0, offset: b.1, index: i) }
+  for (j, v) in u32.enumerated() { var x = v; e.setBytes(&x, length: 4, index: bufs.count + j) }
+  e.dispatchThreadgroups(tgs, threadsPerThreadgroup: tpt)
+}
+func bar(_ e: MTLComputeCommandEncoder) { if concurrentMode { e.memoryBarrier(scope: .buffers) } }
+let zeroP = { try! pipe("w_real.metal", "zero_u32") }()
+func zero(_ e: MTLComputeCommandEncoder, _ b: MTLBuffer, _ words: Int) {
+  dsp(e, zeroP, [(b, 0)], [UInt32(words)], tgs: sz((words + 255) / 256), tpt: sz(256))
+}
+
+struct Work {
+  let wl: String, form: String
+  let encode: (MTLComputeCommandEncoder) -> Void
+  let verify: () -> String?  // nil: exact match with the CPU reference and the expected totals
+  let bytes: Double          // bytes moved once: inputs read + outputs written
+  let cpuSec: Double         // single-thread CPU baseline from wN/baseline.txt
+  let cpuForm: String
+  var prep: () -> Void = {}  // poison outputs before a verified run, so stale results cannot pass
+}
+func serial(_ f: @escaping (MTLComputeCommandEncoder) -> Void) -> (MTLCommandBuffer) -> Void {
+  { cb in let e = cb.makeComputeCommandEncoder()!; f(e); e.endEncoding() }
+}
+
+var realRows: [String] = []  // summary table rows
+func runWork(_ w: Work, reps: Int = 7) {
+  w.prep()
+  timeCB(1, warm: 0, serial(w.encode))
+  if let err = w.verify() { note("| \(w.wl) \(w.form) | FAIL: \(err) |"); realRows.append("| \(w.wl) | \(w.form) | FAIL: \(err) | | | | | |"); return }
+  let s = timeCB(reps, serial(w.encode))
+  let gmin = s.map { $0.gpu }.min()!
+  row("\(w.wl) \(w.form) (verified)", s, bytes: w.bytes)
+  realRows.append(String(format: "| %@ | %@ | %.3f / %.3f | %.3f | %.1f MB | %.0f | %@ %.1f ms → %.0fx |", w.wl, w.form, gmin,
+                         med(s.map { $0.gpu }), med(s.map { $0.cpu }), w.bytes / 1e6, w.bytes / (gmin / 1e3) / 1e9,
+                         w.cpuForm, w.cpuSec * 1e3, w.cpuSec / (gmin / 1e3)))
+}
+
+// W5: co-occurrence counts of the top 2048 names (upper triangle of A·Aᵀ over document bitmaps).
+func buildW5() -> [Work] {
+  let a = mapFile("w5/names_bits.u64")
+  let n = 2048, kw = 205
+  precondition(a.len == n * kw * 8)
+  let C = buf(n * n * 2), stats = buf(16)
+  let p = try! pipe("w_real.metal", "bitgram", ["OUT_T": "ushort", "UPPER": "1"])
+  let pa = ptr(a.buf, UInt64.self)
+  var ref = [UInt16](repeating: 0, count: n * n)
+  ref.withUnsafeMutableBufferPointer { r in
+    for i in 0..<n { for j in (i + 1)..<max(i + 1, n) { var c = 0; for w in 0..<kw { c += (pa[i * kw + w] & pa[j * kw + w]).nonzeroBitCount }; r[i * n + j] = UInt16(c) } }
+  }
+  let enc: (MTLComputeCommandEncoder) -> Void = { e in
+    zero(e, stats, 4); bar(e)
+    dsp(e, p, [(a.buf, 0), (a.buf, 0), (C, 0), (stats, 0)], [UInt32(n), UInt32(n), UInt32(kw)], tgs: sz(n / 64, n / 64), tpt: sz(16, 16))
+  }
+  let verify: () -> String? = {
+    let st = ptr(stats, UInt32.self), pc = ptr(C, UInt16.self)
+    if st[1] != 29_397_646 { return "sum \(st[1]) != 29397646" }
+    for i in 0..<n { for j in (i + 1)..<max(i + 1, n) where pc[i * n + j] != ref[i * n + j] { return "cell (\(i),\(j))" } }
+    return nil
+  }
+  return [Work(wl: "W5", form: "bit gram upper triangle, 64x64 tiles, u16 counts out", encode: enc, verify: verify,
+               bytes: Double(n * kw * 8 + n * (n - 1) / 2 * 2), cpuSec: 0.125, cpuForm: "bitmap",
+               prep: { memset(C.contents(), 0xff, n * n * 2) })]
+}
+
+// W1: prefilter overlap counts, documents x rules over rule-name bits.
+func buildW1() -> [Work] {
+  let a = mapFile("w1/docs_bits.u64"), b = mapFile("w1/rules_bits.u64")
+  let n = 13088, m = 444, kw = 12
+  precondition(a.len == n * kw * 8 && b.len == m * kw * 8)
+  let C = buf(n * m), stats = buf(16)
+  let p = try! pipe("w_real.metal", "bitgram", ["OUT_T": "uchar", "UPPER": "0"])
+  let pa = ptr(a.buf, UInt64.self), pb = ptr(b.buf, UInt64.self)
+  var ref = [UInt8](repeating: 0, count: n * m)
+  for i in 0..<n { for j in 0..<m { var c = 0; for w in 0..<kw { c += (pa[i * kw + w] & pb[j * kw + w]).nonzeroBitCount }; ref[i * m + j] = UInt8(c) } }
+  let enc: (MTLComputeCommandEncoder) -> Void = { e in
+    zero(e, stats, 4); bar(e)
+    dsp(e, p, [(a.buf, 0), (b.buf, 0), (C, 0), (stats, 0)], [UInt32(n), UInt32(m), UInt32(kw)],
+        tgs: sz((m + 63) / 64, (n + 63) / 64), tpt: sz(16, 16))
+  }
+  let verify: () -> String? = {
+    let st = ptr(stats, UInt32.self)
+    if st[0] != 1_473_222 { return "nonzero \(st[0]) != 1473222" }
+    if memcmp(C.contents(), ref, n * m) != 0 { return "counts matrix differs" }
+    return nil
+  }
+  return [Work(wl: "W1", form: "dense bit gram 13088x444, u8 counts out", encode: enc, verify: verify,
+               bytes: Double((n + m) * kw * 8 + n * m), cpuSec: 0.0103, cpuForm: "postings",
+               prep: { memset(C.contents(), 0xff, n * m) })]
+}
+
+// W2: within-document equality join (reads x bindings on local name ids).
+struct W2Data { let R: Mapped, B: Mapped, ro: Mapped, bo: Mapped, n: Int, ref: [UInt32] }
+func loadW2() -> W2Data {
+  let R = mapFile("w2/reads.u16"), B = mapFile("w2/binds.u16"), ro = mapFile("w2/reads_off.u64"), bo = mapFile("w2/binds_off.u64")
+  let n = ro.len / 8 - 1
+  let pr = ptr(R.buf, UInt16.self), pb = ptr(B.buf, UInt16.self), por = ptr(ro.buf, UInt64.self), pob = ptr(bo.buf, UInt64.self)
+  var ref = [UInt32](repeating: 0, count: n)
+  var cnt = [UInt32](repeating: 0, count: 65536)
+  for d in 0..<n {
+    for e in Int(pob[d])..<Int(pob[d + 1]) { cnt[Int(pb[e])] += 1 }
+    var s: UInt32 = 0
+    for e in Int(por[d])..<Int(por[d + 1]) { s += cnt[Int(pr[e])] }
+    for e in Int(pob[d])..<Int(pob[d + 1]) { cnt[Int(pb[e])] = 0 }
+    ref[d] = s
+  }
+  precondition(ref.reduce(0) { $0 + UInt64($1) } == 83_066_745)
+  return W2Data(R: R, B: B, ro: ro, bo: bo, n: n, ref: ref)
+}
+func buildW2(_ d: W2Data) -> [Work] {
+  let n = d.n
+  let out = buf(n * 4)
+  let pd = try! pipe("w_real.metal", "w2_direct"), pbr = try! pipe("w_real.metal", "w2_brute")
+  let ins: [Bind] = [(d.R.buf, 0), (d.B.buf, 0), (d.ro.buf, 0), (d.bo.buf, 0)]
+  let inBytes = Double(d.R.len + d.B.len + d.ro.len + d.bo.len)
+  let check: () -> String? = {
+    let po = ptr(out, UInt32.self)
+    var tot: UInt64 = 0
+    for i in 0..<n { if po[i] != d.ref[i] { return "doc \(i): \(po[i]) != \(d.ref[i])" }; tot += UInt64(po[i]) }
+    return tot == 83_066_745 ? nil : "total \(tot)"
+  }
+  let direct = Work(wl: "W2", form: "(b) direct-indexed counts, TG/doc, 2764-entry tg table", encode: { e in
+    dsp(e, pd, ins + [(out, 0)], tgs: sz(n), tpt: sz(256))
+  }, verify: { memset(out.contents(), 0xff, n * 4); return nil }, bytes: inBytes + Double(n * 4), cpuSec: 0.0027, cpuForm: "direct")
+  // brute-force tiles (host framing: the tile list)
+  let c0 = cpuMs()
+  let por = ptr(d.ro.buf, UInt64.self), pob = ptr(d.bo.buf, UInt64.self)
+  var tiles: [UInt32] = []
+  for doc in 0..<n {
+    let r0 = Int(por[doc]), r1 = Int(por[doc + 1]), b0 = Int(pob[doc]), b1 = Int(pob[doc + 1])
+    if r1 == r0 || b1 == b0 { continue }
+    for ri in stride(from: r0, to: r1, by: 1024) { for bi in stride(from: b0, to: b1, by: 512) { tiles += [UInt32(doc), UInt32(ri), UInt32(bi), 0] } }
+  }
+  let tb = buf(tiles.count * 4)
+  memcpy(tb.contents(), tiles, tiles.count * 4)
+  note(String(format: "W2 brute: %d tiles (1024 reads x 512 bindings max), tile list built on host in %.2f ms CPU", tiles.count / 4, cpuMs() - c0))
+  let ntiles = tiles.count / 4
+  let brute = Work(wl: "W2", form: "(a) brute-force tiles, 4.14 G compares", encode: { e in
+    zero(e, out, n); bar(e)
+    dsp(e, pbr, ins + [(tb, 0), (out, 0)], tgs: sz(ntiles), tpt: sz(256))
+  }, verify: check, bytes: inBytes + Double(n * 4 + ntiles * 16), cpuSec: 0.824, cpuForm: "brute")
+  // run direct's verify as a real check (the closure above only poisons the output before the run)
+  let poison: () -> Void = { memset(out.contents(), 0xff, n * 4) }
+  var directChecked = Work(wl: direct.wl, form: direct.form, encode: direct.encode, verify: check, bytes: direct.bytes, cpuSec: direct.cpuSec, cpuForm: direct.cpuForm)
+  var bruteP = brute
+  directChecked.prep = poison; bruteP.prep = poison
+  return [directChecked, bruteP]
+}
+// W2 (c): materialise the 83 M (read, binding) rows: count, scan, scatter.
+func buildW2emit(_ d: W2Data) -> Work {
+  let n = d.n, nb = d.B.len / 2, total = 83_066_745
+  let tot = buf(n * 4), off = buf((n + 1) * 4), SB = buf(nb * 2), rows = buf(total * 8)
+  let pd = try! pipe("w_real.metal", "w2_direct"), ps = try! pipe("w_real.metal", "scan_single"), pe = try! pipe("w_real.metal", "w2_emit")
+  let ins: [Bind] = [(d.R.buf, 0), (d.B.buf, 0), (d.ro.buf, 0), (d.bo.buf, 0)]
+  let enc: (MTLComputeCommandEncoder) -> Void = { e in
+    dsp(e, pd, ins + [(tot, 0)], tgs: sz(n), tpt: sz(256)); bar(e)
+    dsp(e, ps, [(tot, 0), (off, 0)], [UInt32(n)], tgs: sz(1), tpt: sz(1024)); bar(e)
+    dsp(e, pe, ins + [(off, 0), (SB, 0), (rows, 0)], tgs: sz(n), tpt: sz(256))
+  }
+  let verify: () -> String? = {
+    let po = ptr(off, UInt32.self), pr = ptr(rows, UInt32.self), psb = ptr(SB, UInt16.self)
+    let rr = ptr(d.R.buf, UInt16.self), bb = ptr(d.B.buf, UInt16.self), por = ptr(d.ro.buf, UInt64.self), pob = ptr(d.bo.buf, UInt64.self)
+    if po[n] != UInt32(total) { return "row total \(po[n])" }
+    var cnt = [UInt32](repeating: 0, count: 65536)
+    var seen = [Bool](repeating: false, count: 12288)
+    for doc in 0..<n {
+      let r0 = Int(por[doc]), r1 = Int(por[doc + 1]), b0 = Int(pob[doc]), b1 = Int(pob[doc + 1])
+      // SB per document is a permutation of 0..<|binds|
+      for j in 0..<(b1 - b0) { seen[j] = false }
+      for e in b0..<b1 { let j = Int(psb[e]); if j >= b1 - b0 || seen[j] { return "doc \(doc): SB not a permutation" }; seen[j] = true }
+      for e in b0..<b1 { cnt[Int(bb[e])] += 1 }
+      var k = Int(po[doc])
+      // rows in read order: each read's run has exactly cnt[id] rows, each a binding with the same id
+      for e in r0..<r1 {
+        let id = rr[e], c = Int(cnt[Int(id)])
+        for q in 0..<c {
+          let ri = Int(pr[2 * (k + q)]), bj = Int(pr[2 * (k + q) + 1])
+          if ri != e - r0 || bj >= b1 - b0 || bb[b0 + bj] != id { return "doc \(doc) row \(k + q) wrong" }
+        }
+        k += c
+      }
+      if k != Int(po[doc + 1]) { return "doc \(doc) row count" }
+      for e in b0..<b1 { cnt[Int(bb[e])] = 0 }
+    }
+    return nil
+  }
+  // distinctness within a run follows from SB being a permutation and each run being one id's block of SB
+  return Work(wl: "W2", form: "(c) emit 83 M (read, binding) rows: count + scan + scatter", encode: enc, verify: verify,
+              bytes: Double(2 * (d.R.len + d.B.len) + d.ro.len * 2 + d.bo.len * 2 + nb * 2 * 2 + total * 8 + n * 12),
+              cpuSec: 0.2512, cpuForm: "hash emit rows")
+}
+
+// W3: import closure over the condensed DAG.
+func buildW3() -> [Work] {
+  let A = mapFile("w3/cadj_bits.u64"), S = mapFile("w3/comp_sizes.u32")
+  let nr = S.len / 4, kw = 170
+  precondition(A.len == nr * kw * 8 && kw <= 192)
+  let pa = ptr(A.buf, UInt64.self), psz = ptr(S.buf, UInt32.self)
+  // CPU reference: bit-row closure in Tarjan order (successors have smaller indices)
+  var ref = [UInt64](repeating: 0, count: nr * kw)
+  var level = [Int](repeating: 0, count: nr)
+  ref.withUnsafeMutableBufferPointer { r in
+    for c in 0..<nr {
+      for w in 0..<kw {
+        var x = pa[c * kw + w]
+        r[c * kw + w] |= x
+        while x != 0 {
+          let s = w * 64 + x.trailingZeroBitCount; x &= x - 1
+          precondition(s < c, "not sinks-first")
+          level[c] = max(level[c], level[s] + 1)
+          for q in 0..<kw { r[c * kw + q] |= r[s * kw + q] }
+        }
+      }
+    }
+  }
+  var pairsRef: UInt64 = 0
+  for c in 0..<nr {
+    var s: UInt64 = 0
+    for w in 0..<kw { var x = ref[c * kw + w]; while x != 0 { s += UInt64(psz[w * 64 + x.trailingZeroBitCount]); x &= x - 1 } }
+    let sc = UInt64(psz[c]); pairsRef += sc * (s + (sc > 1 ? sc : 0))
+  }
+  precondition(pairsRef == 29_722_613, "CPU reference pairs \(pairsRef)")
+  let nlev = level.max()! + 1
+  let c0 = cpuMs()
+  var order: [UInt32] = [], bounds: [Int] = [0]
+  var byLevel = [[UInt32]](repeating: [], count: nlev)
+  for c in 0..<nr { byLevel[level[c]].append(UInt32(c)) }
+  for l in byLevel { order += l; bounds.append(order.count) }
+  let ob = buf(order.count * 4)
+  memcpy(ob.contents(), order, order.count * 4)
+  note(String(format: "W3: %d components, %d levels (longest path), level list on host %.2f ms CPU; widest level %d rows", nr, nlev, cpuMs() - c0, byLevel.map { $0.count }.max()!))
+  let X = buf(nr * kw * 8), Y = buf(nr * kw * 8), flags = buf(64), pairsOut = buf(nr * 8)
+  let psq = try! pipe("w_real.metal", "w3_square"), plv = try! pipe("w_real.metal", "w3_level"), ppr = try! pipe("w_real.metal", "w3_pairs")
+  let steps = 6
+  let rowTG = sz((nr + 7) / 8), t256 = sz(256)
+  let checkMatrix: (MTLBuffer) -> String? = { M in
+    let pm = ptr(M, UInt64.self)
+    for i in 0..<(nr * kw) where pm[i] != ref[i] { return "closure differs at row \(i / kw)" }
+    let pp = ptr(pairsOut, UInt64.self)
+    var s: UInt64 = 0
+    for i in 0..<nr { s += pp[i] }
+    return s == 29_722_613 ? nil : "pairs \(s)"
+  }
+  let square = Work(wl: "W3", form: "(a) boolean squaring, row-OR, \(steps) steps in one CB, GPU-side fixpoint flag", encode: { e in
+    zero(e, flags, 16 + steps); bar(e)
+    for st in 0..<steps {
+      let src = st == 0 ? A.buf : (st % 2 == 1 ? X : Y), dst = st % 2 == 0 ? X : Y
+      dsp(e, psq, [(src, 0), (dst, 0), (flags, 0)], [UInt32(nr), UInt32(kw), UInt32(st)], tgs: rowTG, tpt: t256); bar(e)
+    }
+    dsp(e, ppr, [(Y, 0), (S.buf, 0), (pairsOut, 0)], [UInt32(nr), UInt32(kw)], tgs: rowTG, tpt: t256)
+  }, verify: {
+    let f = ptr(flags, UInt32.self)
+    let changed = (0..<steps).map { f[$0] }
+    if changed.last != 0 { return "no fixpoint within \(steps) steps: \(changed)" }
+    let ors = (0..<steps).map { Int(f[16 + $0]) }
+    note("W3 squaring: changed flags per step \(changed); rows OR'ed per step \(ors) (each \(kw * 8) B): \(String(format: "%.0f", Double(ors.reduce(0, +) * kw * 8) / 1e6)) MB logical row traffic")
+    return checkMatrix(Y)
+  }, bytes: Double(steps * 2 * nr * kw * 8), cpuSec: 1.5567, cpuForm: "squaring")
+  let wave = Work(wl: "W3", form: "(b) level-wise (\(nlev) dispatches, one per DAG level)", encode: { e in
+    for l in 0..<nlev {
+      let lo = bounds[l], hi = bounds[l + 1]
+      dsp(e, plv, [(A.buf, 0), (X, 0), (ob, 0)], [UInt32(lo), UInt32(hi), UInt32(kw)], tgs: sz((hi - lo + 7) / 8), tpt: t256); bar(e)
+    }
+    dsp(e, ppr, [(X, 0), (S.buf, 0), (pairsOut, 0)], [UInt32(nr), UInt32(kw)], tgs: rowTG, tpt: t256)
+  }, verify: { checkMatrix(X) }, bytes: Double(A.len + nr * kw * 8 + order.count * 4 + nr * 8), cpuSec: 0.0031, cpuForm: "bit-row DAG")
+  let poison: () -> Void = { memset(X.contents(), 0xab, nr * kw * 8); memset(Y.contents(), 0xab, nr * kw * 8); memset(pairsOut.contents(), 0, nr * 8) }
+  var sq = square, wv = wave
+  sq.prep = poison; wv.prep = poison
+  return [sq, wv]
+}
+
+// W4: kind histogram per document.
+func buildW4() -> [Work] {
+  let K = mapFile("kinds.bin")
+  let pk = K.buf.contents()
+  let n = Int(pk.load(as: UInt32.self))
+  let offAt = 4, kAt = 4 + 8 * (n + 1), nk = 115
+  let po = (pk + offAt).assumingMemoryBound(to: UInt32.self), kv = (pk + kAt).assumingMemoryBound(to: UInt16.self)
+  let total = Int(po[2 * n])
+  precondition(total == 22_295_712)
+  var ref = [UInt32](repeating: 0, count: n * nk)
+  for d in 0..<n { for e in Int(po[2 * d])..<Int(po[2 * d + 2]) { ref[d * nk + Int(kv[e])] += 1 } }
+  let H = buf(n * nk * 4)
+  let p1 = try! pipe("w_real.metal", "w4_hist"), p2 = try! pipe("w_real.metal", "w4_hist_sg")
+  let verify: () -> String? = {
+    if memcmp(H.contents(), ref, n * nk * 4) != 0 { return "histogram differs" }
+    let s = ptr(H, UInt32.self); var t: UInt64 = 0; for i in 0..<(n * nk) { t += UInt64(s[i]) }
+    memset(H.contents(), 0xff, n * nk * 4)
+    return t == 22_295_712 ? nil : "checksum \(t)"
+  }
+  memset(H.contents(), 0xff, n * nk * 4)
+  let bytes = Double(total * 2 + (n + 1) * 8 + n * nk * 4)
+  return [p1, p2].enumerated().map { (i, p) in
+    Work(wl: "W4", form: i == 0 ? "TG/doc, one tg atomic histogram, 256 threads" : "TG/doc, 8 per-SIMD-group histograms, 256 threads",
+         encode: { e in dsp(e, p, [(K.buf, kAt), (K.buf, offAt), (H, 0)], [UInt32(nk)], tgs: sz(n), tpt: sz(256)) },
+         verify: verify, bytes: bytes, cpuSec: 0.0202, cpuForm: "direct")
+  }
+}
+
+func realHeader(_ t: String) { header(t, "-") }
+func printRealSummary() {
+  print("\n#### Summary (load avg \(loadAvg()))\n")
+  print("| workload | form | device ms min / med | host CPU ms med | bytes moved | GB/s at min | CPU baseline (1 thread) → speed-up |")
+  print("|---|---|---|---|---|---|---|")
+  for r in realRows { print(r) }
+  realRows = []
+}
+
+func wReal() throws {
+  realHeader("Real workloads W1, W3, W4, W5, W2 (a, b): each verified exactly, then timed")
+  var all: [Work] = []
+  all += buildW1(); all += buildW5(); all += buildW4(); all += buildW3()
+  let w2 = loadW2(); all += buildW2(w2)
+  for w in all { runWork(w) }
+  printRealSummary()
+  // The wave: one form per workload in one command buffer.
+  let pick = [all[0], all[1], all[2], all[5], all[6]]  // W1, W5, W4 (tg), W3 level-wise, W2 direct
+  note("\nwave = " + pick.map { "\($0.wl) \($0.form)" }.joined(separator: "; "))
+  header("Wave framing: W1 + W5 + W4 + W3(b) + W2(b)", "-")
+  // (i) five command buffers, each waited
+  var five: [Sample] = []
+  for r in 0..<8 {
+    var g = 0.0
+    let c0 = cpuMs(), w0 = nowMs()
+    for w in pick {
+      let cb = queue.makeCommandBuffer()!
+      serial(w.encode)(cb); cb.commit(); cb.waitUntilCompleted()
+      g += (cb.gpuEndTime - cb.gpuStartTime) * 1e3
+    }
+    if r > 0 { five.append(Sample(gpu: g, cpu: cpuMs() - c0, wall: nowMs() - w0)) }
+  }
+  row("5 command buffers, each committed and waited (dev = sum)", five)
+  let oneSerial: (MTLCommandBuffer) -> Void = { cb in for w in pick { serial(w.encode)(cb) } }
+  for w in pick { w.prep() }
+  timeCB(1, warm: 0, oneSerial)
+  var bad = pick.compactMap { $0.verify() }
+  row("1 command buffer, one serial encoder per workload\(bad.isEmpty ? " (all verified)" : " FAIL \(bad)")", timeCB(7, oneSerial))
+  concurrentMode = true
+  let oneConc: (MTLCommandBuffer) -> Void = { cb in
+    let e = cb.makeComputeCommandEncoder(dispatchType: .concurrent)!
+    for w in pick { w.encode(e) }
+    e.endEncoding()
+  }
+  for w in pick { w.prep() }
+  timeCB(1, warm: 0, oneConc)
+  bad = pick.compactMap { $0.verify() }
+  row("1 command buffer, one concurrent encoder (barriers only inside W1/W5/W3)\(bad.isEmpty ? " (all verified)" : " FAIL \(bad)")", timeCB(7, oneConc))
+  concurrentMode = false
+  note("\nload avg after real workloads: \(loadAvg())")
+}
+
+func wEmit() throws {
+  realHeader("W2 (c): materialise the (read, binding) rows")
+  let d = loadW2()
+  runWork(buildW2emit(d), reps: 5)
+  printRealSummary()
+}
+
+// Upload / input-residency cost for all corpus inputs used above.
+func wUpload() throws {
+  let files = ["w1/docs_bits.u64", "w1/rules_bits.u64", "w5/names_bits.u64", "w2/reads.u16", "w2/binds.u16", "w2/reads_off.u64",
+               "w2/binds_off.u64", "w3/cadj_bits.u64", "w3/comp_sizes.u32", "kinds.bin"]
+  var total = 0
+  for f in files { var st = stat(); stat(dataDir + "/" + f, &st); total += Int(st.st_size) }
+  print("\n### Input residency: \(files.count) files, \(String(format: "%.1f", Double(total) / 1e6)) MB (page cache warm)  (load avg \(loadAvg()))\n")
+  print("| path | host CPU ms (min of 5) | wall ms (min of 5) | device ms | note |")
+  print("|---|---|---|---|---|")
+  func meas(_ name: String, _ f: () -> [MTLBuffer]) -> [MTLBuffer] {
+    var bc = Double.infinity, bw = Double.infinity, keep: [MTLBuffer] = []
+    for _ in 0..<5 { let c0 = cpuMs(), w0 = nowMs(); keep = f(); bc = min(bc, cpuMs() - c0); bw = min(bw, nowMs() - w0) }
+    print(String(format: "| %@ | %.2f | %.2f | | |", name, bc, bw)); fflush(stdout)
+    return keep
+  }
+  _ = meas("read file + makeBuffer(bytes:) (copy into a new shared buffer)") {
+    files.map { f in let d = FileManager.default.contents(atPath: dataDir + "/" + f)!; return d.withUnsafeBytes { dev.makeBuffer(bytes: $0.baseAddress!, length: d.count, options: .storageModeShared)! } }
+  }
+  _ = meas("makeBuffer(length:) + read(2) straight into contents (one copy)") {
+    files.map { f in
+      var st = stat(); stat(dataDir + "/" + f, &st)
+      let b = buf(Int(st.st_size)); let fd = open(dataDir + "/" + f, O_RDONLY); _ = read(fd, b.contents(), Int(st.st_size)); close(fd); return b
+    }
+  }
+  let mapped = meas("mmap + makeBuffer(bytesNoCopy:) (no copy)") { files.map { mapFile($0).buf } }
+  // first GPU touch of freshly mapped pages: W4 on a fresh mapping vs the same mapping again
+  let K = mapFile("kinds.bin")
+  let n = Int(K.buf.contents().load(as: UInt32.self))
+  let H = buf(n * 115 * 4), p = try pipe("w_real.metal", "w4_hist")
+  let enc = serial { e in dsp(e, p, [(K.buf, 4 + 8 * (n + 1)), (K.buf, 4), (H, 0)], [115], tgs: sz(n), tpt: sz(256)) }
+  let first = timeCB(1, warm: 0, enc)[0], again = timeCB(5, warm: 0, enc).map { $0.gpu }.min()!
+  print(String(format: "| W4 kernel on a fresh no-copy mapping of kinds.bin: first run vs later | %.2f | %.2f | %.3f first / %.3f later | first-touch cost of mapped pages |", first.cpu, first.wall, first.gpu, again))
+  // shared -> private blit of everything
+  let priv = mapped.map { dev.makeBuffer(length: $0.length, options: .storageModePrivate)! }
+  let blit: (MTLCommandBuffer) -> Void = { cb in let e = cb.makeBlitCommandEncoder()!; for (a, b) in zip(mapped, priv) { e.copy(from: a, sourceOffset: 0, to: b, destinationOffset: 0, size: a.length) }; e.endEncoding() }
+  let s = timeCB(5, blit)
+  print(String(format: "| blit all inputs shared → private | %.2f | %.2f | %.3f | %.0f GB/s (read + write) |", med(s.map { $0.cpu }), s.map { $0.wall }.min()!, s.map { $0.gpu }.min()!,
+               2 * Double(total) / (s.map { $0.gpu }.min()! / 1e3) / 1e9))
+  fflush(stdout)
+}
+
 // MARK: - main
 
 note("device: \(dev.name), metal4 family: \(dev.supportsFamily(.metal4)), apple10: \(dev.supportsFamily(.apple10)), maxTG mem: \(dev.maxThreadgroupMemoryLength), recommended working set: \(dev.recommendedMaxWorkingSetSize >> 20) MB")
-let probes: [String: () throws -> Void] = ["g1": g1, "g2": g2, "g3": g3, "g4": g4, "g5": g5, "g6": g6]
+let probes: [String: () throws -> Void] = ["g1": g1, "g2": g2, "g3": g3, "g4": g4, "g5": g5, "g6": g6,
+                                             "real": wReal, "w2emit": wEmit, "upload": wUpload]
 do {
   if probe == "all" { for k in probes.keys.sorted() { try probes[k]!() } } else if let f = probes[probe] { try f() } else { note("unknown probe \(probe)") }
 } catch { note("ERROR: \(error)") }

@@ -634,3 +634,152 @@ multiply-adds on each element that an atomic counts with one add.
   load balancing that was not tested.
 - "GB/s" for pooled bitmaps (G5b) and some gathers is logical traffic, partly served from cache, not DRAM
   traffic.
+
+## Real workloads (data-layer corpus, 13,088 Python documents)
+
+### Intro
+
+The same harness, run on five workloads extracted from the corpus by `tools/matrix-offload/extract`. The
+formats and semantics come from `extract/src/bin/baseline.rs`. Each GPU result is checked **exactly**
+before it is timed: every output cell (W1 counts matrix, W5 upper triangle, W2 per-document counts, W3
+closure matrix, W4 per-document histograms), plus the expected totals:
+
+- W5: Σ = 29,397,646.
+- W1: 1,473,222 nonzero cells.
+- W2: 83,066,745 pairs.
+- W3: 29,722,613 document reach pairs.
+- W4: Σ = 22,295,712.
+
+Outputs are poisoned before every verified run, so stale results cannot pass. The CPU baselines are the
+single-thread CPU times in each `wN/baseline.txt`. Inputs are the corpus files mapped into shared buffers
+with no copy (see "Inputs" below). All runs are warm (`GPUPROBE_WARM_MS=100`), at load average 21 to 90
+(lower than for G1 to G6).
+
+### Summary table
+
+"bytes moved" counts inputs read once plus outputs written once. "vs CPU" compares the device time with the
+named single-thread CPU form.
+
+| workload | GPU form | device ms (min / med) | host CPU ms | bytes moved | GB/s | vs CPU baseline |
+|---|---|---|---|---|---|---|
+| W5 name co-occurrence | bit gram, upper-triangle tiles only, u16 out | 0.379 / 0.380 | 0.11 | 7.6 MB | 20 (compute-bound, 72 Tbit-op/s) | bitmap 125 ms → **330x**; merge 3.4 s → 9,000x |
+| W1 prefilter overlap | dense bit gram 13088 x 444, u8 counts out | 0.077 / 0.077 | 0.09 | 7.1 MB | 92 | postings 10.3 ms → **134x**; dense 26 ms → 335x |
+| W2 equality join, counts | (b) direct-indexed, threadgroup per doc, 2764-entry table | 0.082 / 0.083 | 0.11 | 11.9 MB | 144 | direct 2.7 ms → **33x**; hash 73 ms → 890x |
+| W2 equality join, counts | (a) brute-force tiles (4.14 G compares, 1.9 T/s) | 2.148 / 2.237 | 0.13 | 12.2 MB | 6 | brute 824 ms → 384x; but 26x slower than (b) |
+| W2 equality join, rows | (c) count + scan + scatter, 83 M rows (664.5 MB out) | 6.383 / 6.475 | 0.18 | 694 MB | **109** | hash emit rows 251 ms → **39x** |
+| W3 import closure | (b) level-wise, 35 dispatches (one per DAG level) | 1.052 / 1.069 | 0.14 | 29.6 MB | 28 | bit-row DAG 3.1 ms → **3x** |
+| W3 import closure | (a) boolean squaring, 6 steps in one CB, GPU-side fixpoint | 12.07 / 12.56 | 0.19 | 177 MB (21.2 GB of row reads) | 15 (1.75 TB/s logical, cache-served) | squaring 1.56 s → 129x; semi-naive ~5.4 s → 450x |
+| W4 kind histogram | threadgroup per doc, tg atomics, 256 threads | 0.229 / 0.232 | 0.10 | 50.7 MB | 222 | direct 20.2 ms → **88x**; hash 375 ms → 1,600x |
+| **wave** W1+W5+W4+W3(b)+W2(b) | one command buffer | 1.92 / 1.94 | 0.15 to 0.18 | ~107 MB | | sum of best CPU forms 161 ms → 84x |
+
+### Raw tables
+
+#### Real workloads W1, W3, W4, W5, W2 (a, b): each verified exactly, then timed  (load avg 25 67 91)
+
+| case | dev ms min | dev ms med | host CPU ms med | wall ms min / med | - (at min) | GB/s min / med |
+|---|---|---|---|---|---|---|
+| W1 dense bit gram 13088x444, u8 counts out (verified) | 0.077 | 0.077 | 0.089 | 0.234 / 0.250 | | 92.3 / 92.2 |
+| W5 bit gram upper triangle, 64x64 tiles, u16 counts out (verified) | 0.379 | 0.380 | 0.113 | 0.537 / 0.581 | | 19.9 / 19.9 |
+| W4 TG/doc, one tg atomic histogram, 256 threads (verified) | 0.229 | 0.232 | 0.101 | 0.405 / 0.411 | | 221.7 / 218.9 |
+| W4 TG/doc, 8 per-SIMD-group histograms, 256 threads (verified) | 0.236 | 0.238 | 0.084 | 0.398 / 0.428 | | 214.7 / 212.7 |
+| W3 (a) boolean squaring, row-OR, 6 steps in one CB, GPU-side fixpoint flag (verified) | 12.068 | 12.556 | 0.187 | 12.349 / 12.832 | | 14.6 / 14.1 |
+| W3 (b) level-wise (35 dispatches, one per DAG level) (verified) | 1.052 | 1.069 | 0.137 | 1.232 / 1.283 | | 28.1 / 27.7 |
+| W2 (b) direct-indexed counts, TG/doc, 2764-entry tg table (verified) | 0.082 | 0.083 | 0.107 | 0.225 / 0.261 | | 143.9 / 143.5 |
+| W2 (a) brute-force tiles, 4.14 G compares (verified) | 2.148 | 2.237 | 0.131 | 2.345 / 2.473 | | 5.7 / 5.5 |
+
+##### Summary (load avg 25 67 91)
+
+| workload | form | device ms min / med | host CPU ms med | bytes moved | GB/s at min | CPU baseline (1 thread) → speed-up |
+|---|---|---|---|---|---|---|
+| W1 | dense bit gram 13088x444, u8 counts out | 0.077 / 0.077 | 0.089 | 7.1 MB | 92 | postings 10.3 ms → 134x |
+| W5 | bit gram upper triangle, 64x64 tiles, u16 counts out | 0.379 / 0.380 | 0.113 | 7.6 MB | 20 | bitmap 125.0 ms → 330x |
+| W4 | TG/doc, one tg atomic histogram, 256 threads | 0.229 / 0.232 | 0.101 | 50.7 MB | 222 | direct 20.2 ms → 88x |
+| W4 | TG/doc, 8 per-SIMD-group histograms, 256 threads | 0.236 / 0.238 | 0.084 | 50.7 MB | 215 | direct 20.2 ms → 86x |
+| W3 | (a) boolean squaring, row-OR, 6 steps in one CB, GPU-side fixpoint flag | 12.068 / 12.556 | 0.187 | 176.6 MB | 15 | squaring 1556.7 ms → 129x |
+| W3 | (b) level-wise (35 dispatches, one per DAG level) | 1.052 / 1.069 | 0.137 | 29.6 MB | 28 | bit-row DAG 3.1 ms → 3x |
+| W2 | (b) direct-indexed counts, TG/doc, 2764-entry tg table | 0.082 / 0.083 | 0.107 | 11.9 MB | 144 | direct 2.7 ms → 33x |
+| W2 | (a) brute-force tiles, 4.14 G compares | 2.148 / 2.237 | 0.131 | 12.2 MB | 6 | brute 824.0 ms → 384x |
+
+#### Wave framing: W1 + W5 + W4 + W3(b) + W2(b)  (load avg 25 67 91)
+
+| case | dev ms min | dev ms med | host CPU ms med | wall ms min / med | - (at min) | GB/s min / med |
+|---|---|---|---|---|---|---|
+| 5 command buffers, each committed and waited (dev = sum) | 1.931 | 2.000 | 0.520 | 2.958 / 3.034 | | |
+| 1 command buffer, one serial encoder per workload (all verified) | 1.981 | 2.013 | 0.148 | 2.216 / 2.257 | | |
+| 1 command buffer, one concurrent encoder (barriers only inside W1/W5/W3) (all verified) | 1.915 | 1.936 | 0.181 | 2.185 / 2.256 | | |
+
+load avg after real workloads: 25 67 91
+
+
+#### W2 (c): materialise the (read, binding) rows  (load avg 21 62 89)
+
+| case | dev ms min | dev ms med | host CPU ms med | wall ms min / med | - (at min) | GB/s min / med |
+|---|---|---|---|---|---|---|
+| W2 (c) emit 83 M (read, binding) rows: count + scan + scatter (verified) | 6.383 | 6.475 | 0.178 | 6.599 / 6.708 | | 108.8 / 107.2 |
+
+##### Summary (load avg 21 62 89)
+
+| workload | form | device ms min / med | host CPU ms med | bytes moved | GB/s at min | CPU baseline (1 thread) → speed-up |
+|---|---|---|---|---|---|---|
+| W2 | (c) emit 83 M (read, binding) rows: count + scan + scatter | 6.383 / 6.475 | 0.178 | 694.4 MB | 109 | hash emit rows 251.2 ms → 39x |
+
+
+### Inputs: copy, no-copy, private
+
+#### Input residency: 10 files, 75.9 MB (page cache warm)  (load avg 21 62 89)
+
+| path | host CPU ms (min of 5) | wall ms (min of 5) | device ms | note |
+|---|---|---|---|---|
+| read file + makeBuffer(bytes:) (copy into a new shared buffer) | 10.73 | 10.92 | | |
+| makeBuffer(length:) + read(2) straight into contents (one copy) | 7.61 | 7.62 | | |
+| mmap + makeBuffer(bytesNoCopy:) (no copy) | 0.25 | 0.25 | | |
+| W4 kernel on a fresh no-copy mapping of kinds.bin: first run vs later | 8.51 | 8.55 | 0.267 first / 0.232 later | first-touch cost of mapped pages |
+| blit all inputs shared → private | 0.12 | 1.25 | 0.284 | 536 GB/s (read + write) |
+
+
+Reading:
+
+- **Shared storage avoids the copy, not the cost.** Wrapping the mapped files with
+  `makeBuffer(bytesNoCopy:)` costs 0.25 ms of host CPU for all 76 MB. Copying instead (read plus
+  `makeBuffer(bytes:)`, or read(2) straight into a shared buffer) costs 7.6 to 10.7 ms of CPU, at 7 to 10
+  GB/s. But the first command buffer that touches a fresh mapping pays the page faults and wiring on the
+  host: 8.5 ms of CPU for kinds.bin (44.7 MB), about as much as copying it. Device time is unchanged
+  (0.267 vs 0.232 ms).
+- So the input cost is roughly **one host pass over the bytes (about 5 to 10 GB/s of CPU), paid once per
+  residency**, either as a copy or as first-touch faults. Data the GPU keeps resident across waves pays it
+  once.
+- Private storage is not needed: a blit of everything to private memory runs at 536 GB/s (0.28 ms). G2
+  showed private reads are no faster than shared.
+
+### What the real workloads say
+
+1. **The GPU beats the best single-thread CPU form on every workload, by 3x to 330x in device time.** The
+   largest gains are on the dense restatements, which are compute-bound on the plain ALUs (bit-packed
+   popcount): W5 at 72 Tbit-op/s (330x the CPU bitmap form) and W1 (134x the engine-style postings). W4
+   and W2 counts gain 33x to 88x. Every one of them is far below a millisecond, so at this corpus size
+   **the host round trip (0.13 ms at best, ~1 ms cold) and the per-command-buffer host CPU (~0.1 to
+   0.2 ms) are the same size as the work.**
+2. **Brute force pays only when it is also the right algorithm.** For W2 counts, the direct-indexed table
+   (b) beats the all-pairs tiles (a) by 26x on the GPU, as it does on the CPU (2.7 ms vs 824 ms).
+   Brute-force tiles make sense for keys that cannot be direct-indexed.
+3. **Materialising join rows is a write-bandwidth job.** 83 M rows (664.5 MB) take 6.4 ms, 39x the CPU
+   hash emit, but at only 109 GB/s, about 1/5 of DRAM speed. Each read writes its run of rows serially,
+   which is uncoalesced. A SIMD-cooperative or sorted write should approach ~500 GB/s (about 1.4 ms).
+   This was not done here. At any rate, 664 MB per wave is a big memory bill: prefer counts or semi-join
+   bitmaps where the consumer allows it.
+4. **Closure: a level-wise wavefront in one command buffer beats squaring by 11x.** But it is only 3x the
+   CPU's bit-row DAG closure. Its 35 levels (the longest path) cost 35 dependent dispatches, ~30 µs
+   each, set by the highest-out-degree row in each level. Squaring does 21 GB of row-ORs out of cache in
+   12 ms. Its fixpoint test ran on the GPU (a changed flag per step; steps after convergence just copy),
+   so no host round trip happens per step.
+5. **Batching into one wave works.** All five (one form each) run in one command buffer in 1.9 ms of
+   device time and 2.2 ms wall, with 0.15 to 0.18 ms of host CPU. Five separate command buffers cost
+   about 0.8 ms more wall and 3x the host CPU (0.45 to 0.65 ms). A concurrent encoder gained nothing
+   measurable over serial encoders here (1.92 vs 1.98 ms), because W3's dependent levels dominate.
+6. **Bandwidth is not the limit at this scale.** Only W4 (222 GB/s) and W2 (c) (109 GB/s) move enough
+   bytes to matter, and both sit below the 550 GB/s ceiling. W4 is likely limited by threadgroup-atomic
+   contention on a few dominant kinds; per-SIMD-group sub-histograms did not help (215 GB/s).
+
+Limits: one corpus, warm GPU, page cache warm. Device time excludes the first-touch host cost, which is
+listed separately. W3 (b) takes its level list from the host (0.14 ms CPU). W2 (a) takes a tile list from
+the host (21,245 tiles, 0.7 ms CPU). Both could be built on the GPU and were not.

@@ -22,6 +22,9 @@ threads, and the matrix units (Metal 4 tensor ops via Metal Performance Primitiv
   - `g6_hist.metal`: segmented histograms with threadgroup atomics, per-SIMD-group histograms and device
     atomics. `g6_hist_mm.metal`: the same histogram on the matrix units (one-hot hi x lo int8 tiles built in
     threadgroup memory, accumulated in an MPP cooperative tensor).
+  - `w_real.metal`: the real-workload kernels (W1/W5 bit gram over u64 rows, W2 direct / brute / row
+    emission with a threadgroup scan, W3 squaring and level-wise closure plus the reach-pair count, W4
+    kind histograms).
 
 ## Build
 
@@ -44,7 +47,15 @@ $B $S g4            # matrix units: MPP, simdgroup_matrix, MPS; one-hot shapes
 $B $S g5            # intersections
 $B $S g6            # segmented histogram
 $B $S g4 quick      # smaller sizes / fewer repetitions
+
+# real workloads from the corpus extract (MO_DATA = the extractor's output directory)
+MO_DATA=/path/to/mo-data GPUPROBE_WARM_MS=100 $B $S real     # W1, W5, W4, W3 (a, b), W2 (a, b), then the wave
+MO_DATA=/path/to/mo-data GPUPROBE_WARM_MS=100 $B $S w2emit   # W2 (c): 83 M rows, ~700 MB of buffers
+MO_DATA=/path/to/mo-data $B $S upload                        # input residency: copy vs no-copy vs private
 ```
+
+`real` checks every output cell and the expected totals before timing anything (see `RESULTS-gpu.md`, "Real
+workloads"). It needs about 150 MB of buffers; `w2emit` needs about 700 MB.
 
 Each probe stays under about 30 s of wall time and 1 GB of buffers (the largest are G2's 512 MB read and
 G4's n = 8192 matrices). Environment knobs:
