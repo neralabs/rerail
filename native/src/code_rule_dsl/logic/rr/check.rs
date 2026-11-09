@@ -101,11 +101,16 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             (none(), vs, ready)
         }
         Lit::Atom { rel, args, neg: false } if matches!(rel.as_str(), "match" | "match_all") => {
-            let g = match args.first() {
+            let mut g = match args.first() {
                 Some(Term::Str(re)) => groups(re),
                 _ => none(),
             };
-            let subject: BTreeSet<String> = args.iter().skip(1).flat_map(vars_of).collect();
+            // Positional match_all produces ordinal/start/end; only its subject
+            // must already be bound, as for the named regex captures.
+            if rel == "match_all" && args.len() == 5 {
+                g.extend(args.iter().skip(2).flat_map(vars_of));
+            }
+            let subject: BTreeSet<String> = args.get(1).into_iter().flat_map(vars_of).collect();
             let ready = force || subject.is_subset(bound);
             (g, subject, ready)
         }

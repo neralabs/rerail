@@ -3531,7 +3531,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "217780f880fcf1904ef0f83af9ad1db5cda9d78f7a2672e5f11cb24812b9951c"
+        "sha256": "1eb343eadb8c399b690d6ffa3f6b296078e2d9d5d0aafa5970651cb1a2c82ac4"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -3580,6 +3580,10 @@
       {
         "path": "native/src/content_store/observe.rs",
         "sha256": "95034aae016c04d45b016beff349c167c696767da0bb3dddd6564d69165aeeac"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/rr/check.rs",
+        "sha256": "4c9c48783f5e0d4decfbabb7f89c0ef86b959d3b27841fd50268eb2467a7bd22"
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",

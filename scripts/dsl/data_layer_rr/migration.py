@@ -37,6 +37,8 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/program_facts.rs',
     'native/src/code_rule_dsl/logic/rr/lower.rs',
     'native/src/code_rule_dsl/logic/rr/print.rs',
+    # Ground the positional regex outputs already supported by the runtime.
+    'native/src/code_rule_dsl/logic/rr/check.rs',
     'native/src/code_rule_dsl/logic/plan/corpus/inputs.rs',
     # Shared filesystem metadata for exact, batched data-layer discovery.
     'native/src/code_rule_dsl/logic/plan/corpus.rs',
