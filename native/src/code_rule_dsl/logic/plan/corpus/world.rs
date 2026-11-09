@@ -70,6 +70,8 @@ pub(super) struct World {
     roots: Vec<PathBuf>,
     root: PathBuf,
     dirs: BTreeMap<String, Vec<DirectoryEntry>>,
+    dir_requests: BTreeSet<String>,
+    metadata_requests: BTreeSet<String>,
     files: BTreeMap<String, Vec<String>>,
     host: BTreeMap<String, Option<String>>,
     loads: BTreeMap<String, Loaded>,
@@ -81,7 +83,7 @@ pub(super) struct World {
 
 impl World {
     /// A demanded host value, cached for this execution, including absent values.
-    /// Host values are world inputs, never persisted as program facts or memo keys.
+    /// Host values are world inputs. Dependency snapshots retain only their digests.
     pub(super) fn host(&mut self, key: &str) -> Option<String> {
         self.host_with(key, |key| match key {
             "cpu_count" => cpu_count().map(|n| n.to_string()),
@@ -143,12 +145,14 @@ impl World {
 
     /// A directory's entries, sorted (none when it is refused or missing).
     pub(super) fn dir(&mut self, asked: &str) -> Vec<(String, bool)> {
+        self.dir_requests.insert(asked.to_owned());
         self.read_directory(asked);
         self.dirs.get(asked).into_iter().flatten().map(|e| (e.name.clone(), e.is_dir)).collect()
     }
 
     /// File type, link flag, and followed-target size from that same listing.
     pub(super) fn metadata(&mut self, asked: &str) -> Vec<(String, bool, bool, i64)> {
+        self.metadata_requests.insert(asked.to_owned());
         self.read_directory(asked);
         self.dirs.get(asked).into_iter().flatten().map(|e| (e.name.clone(), e.is_file, e.is_symlink, e.bytes)).collect()
     }
@@ -212,9 +216,18 @@ impl World {
     /// consulted things are all as they were would ask, load and derive the same (`still`).
     pub(super) fn consulted(&self) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
-        for (asked, entries) in &self.dirs {
-            let listing: Vec<(String,bool)> = entries.iter().map(|e| (e.name.clone(),e.is_dir)).collect();
-            out.push(("dir".to_owned(), asked.clone(), listing_digest(&listing)));
+        for asked in &self.dir_requests {
+            if let Some(entries) = self.dirs.get(asked) {
+                out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
+            }
+        }
+        for asked in &self.metadata_requests {
+            if let Some(entries) = self.dirs.get(asked) {
+                out.push(("metadata".to_owned(), asked.clone(), metadata_digest(entries)));
+            }
+        }
+        for (key,value) in &self.host {
+            out.push(("host".to_owned(),key.clone(),host_digest(value.as_deref())));
         }
         for (asked, lines) in &self.files {
             out.push(("file".to_owned(), asked.clone(), lines_digest(lines)));
@@ -232,7 +245,12 @@ impl World {
     pub(super) fn still(&mut self, consulted: &[(String, String, String)]) -> bool {
         consulted.iter().all(|(what, path, digest)| {
             let now = match what.as_str() {
-                "dir" => listing_digest(&self.dir(path)),
+                "dir" | "metadata" => {
+                    self.read_directory(path);
+                    let entries = self.dirs.get(path).map_or(&[][..],Vec::as_slice);
+                    if what == "dir" { listing_digest(entries) } else { metadata_digest(entries) }
+                },
+                "host" => host_digest(self.host(path).as_deref()),
                 "file" => lines_digest(&self.file(path)),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
@@ -288,13 +306,32 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn listing_digest(entries: &[(String, bool)]) -> String {
+fn listing_digest(entries: &[DirectoryEntry]) -> String {
     use sha2::Digest;
     let mut h = sha2::Sha256::new();
-    for (name, is_dir) in entries {
-        h.update(name.as_bytes());
-        h.update([0, u8::from(*is_dir)]);
+    for entry in entries {
+        h.update(entry.name.as_bytes());
+        h.update([0, u8::from(entry.is_dir)]);
     }
+    hex(&h.finalize())
+}
+
+fn metadata_digest(entries: &[DirectoryEntry]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    for entry in entries {
+        h.update(entry.name.as_bytes());
+        h.update([0,u8::from(entry.is_file),u8::from(entry.is_symlink)]);
+        h.update(entry.bytes.to_le_bytes());
+    }
+    hex(&h.finalize())
+}
+
+fn host_digest(value: Option<&str>) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update([u8::from(value.is_some())]);
+    if let Some(value) = value { h.update(value.as_bytes()); }
     hex(&h.finalize())
 }
 
