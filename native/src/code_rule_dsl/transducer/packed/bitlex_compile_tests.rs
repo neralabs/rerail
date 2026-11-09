@@ -305,21 +305,21 @@ fn json_msl_is_one_kernel() {
             assert_eq!(msl.matches("kernel void ").count(), 1);
             let lines = msl.lines().count();
             // A fixed preamble (the kernel's arguments, tables and stores), then a few lines per
-            // instruction.
-            assert!(lines < 200 + 10 * native.insts.len(), "{}-byte {strategy:?}: {lines} lines for {} instructions", width.bytes(), native.insts.len());
+            // instruction in each of three bodies (general, full group, ASCII full group).
+            assert!(lines < 200 + 15 * native.insts.len(), "{}-byte {strategy:?}: {lines} lines for {} instructions", width.bytes(), native.insts.len());
         }
     }
 }
 
 /// A batch (decision 0066): files of several languages, interleaved, each under its own program,
 /// in one launch. Every file's outputs and positions equal its program's CPU interpreter on that
-/// file alone, on the Metal interpreter and on generated MSL at every lane width. With one poll
-/// per predecessor and none after it, groups leave unfinished and the launch is repeated; the
+/// file alone, on the Metal interpreter and on generated MSL at every lane width. With the
+/// default polls it is one launch; with one poll per predecessor and none after it, groups leave unfinished and the launch is repeated; the
 /// results are the same.
 #[test]
 #[cfg(target_os = "macos")]
 fn a_batch_of_files_and_programs_is_one_launch() {
-    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_batch};
+    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_batch};
     let programs = batch_programs();
     let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs()[0]).collect();
     let natives: Vec<native_ir::BlockNative> = programs.iter().map(|p| native_ir::lower(p).expect("lowers").block_programs.remove(0)).collect();
@@ -329,7 +329,7 @@ fn a_batch_of_files_and_programs_is_one_launch() {
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
     for width in LaneWidth::ALL {
         for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes)] {
-            for spins in [64, 0] {
+            for spins in [SPINS, 0] {
                 let run = run_batch(&natives, &files, width, executor, spins).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));
                 if spins > 0 {
                     assert_eq!(run.launches, 1, "{executor:?}, {}-byte lanes", width.bytes());

@@ -491,6 +491,19 @@ pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
 
+/// A survivors rule of a maintained stratum, `h(v..) :- h__old(v..), !h__del(v..)` (decision 0077's rewrite), over
+/// native relations: the kept relation and the deleted one.
+fn survivors(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<(String, String)> {
+    let h = &r.head.rel;
+    let (old, gone) = (format!("{h}__old"), format!("{h}__del"));
+    let vars: Vec<&str> = r.head.args.iter().map(|t| match t { Term::Var(v) => Some(v.as_str()), _ => None }).collect::<Option<_>>()?;
+    let distinct = vars.iter().collect::<BTreeSet<_>>().len() == vars.len();
+    let [Literal::Atom(a), Literal::Atom(b)] = r.body.as_slice() else { return None };
+    (distinct && scc.contains(h) && !a.neg && b.neg && a.rel == old && b.rel == gone && a.args == r.head.args && b.args == r.head.args
+        && native_rels.contains(&old) && native_rels.contains(&gone))
+        .then_some((old, gone))
+}
+
 fn is_join(l: &Literal) -> bool {
     matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. })
 }
@@ -582,19 +595,29 @@ type PlanKey = String;
 /// cheapest start (`SEED`) when searched.
 type Kept = (std::rc::Rc<[Step]>, f64, Option<super::profile::RulePlan>, f64);
 
-/// Plans kept across chunks on this thread while held (a corpus run), none kept at the start.
-pub(in crate::code_rule_dsl) struct KeepPlans;
+/// Plans kept across chunks on this thread while held (a corpus run), none kept at the start; for a session's run
+/// (`across`, the session's generation), the plans its earlier runs kept, put back at the end (decision 0090 step 5).
+pub(in crate::code_rule_dsl) struct KeepPlans(Option<u64>);
+
+thread_local! {
+    /// A session's plans between its runs, with the session's generation: another session's are not taken.
+    static SESSION_PLANS: std::cell::RefCell<Option<(u64, HashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
+}
 
 impl KeepPlans {
-    pub(in crate::code_rule_dsl) fn start() -> Self {
-        PLANS.with(|p| *p.borrow_mut() = Some(HashMap::new()));
-        KeepPlans
+    pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
+        let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
+        PLANS.with(|p| *p.borrow_mut() = Some(kept.unwrap_or_default()));
+        KeepPlans(across)
     }
 }
 
 impl Drop for KeepPlans {
     fn drop(&mut self) {
-        PLANS.with(|p| *p.borrow_mut() = None);
+        let plans = PLANS.with(|p| p.borrow_mut().take());
+        if let (Some(g), Some(plans)) = (self.0, plans) {
+            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans)));
+        }
     }
 }
 
@@ -2653,7 +2676,8 @@ impl Run<'_, '_> {
 
     /// Moves the native set engine's relations among `rels` into their tables (`set_fixpoint_materialize`).
     fn materialize(&mut self, rels: &[String]) -> Result<()> {
-        let held: BTreeSet<String> = rels.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect();
+        // An adopted input is bound as a source too, which SQL reads: it stays native.
+        let held: BTreeSet<String> = rels.iter().filter(|r| self.native_rels.contains(*r) && !self.prog.inputs.contains(*r)).cloned().collect();
         self.ensure(&held)?;
         for r in held {
             self.fx().materialize(&r)?;
@@ -3133,6 +3157,15 @@ impl Run<'_, '_> {
         gates.sort_by(|a, b| (a.1.level, &a.0).cmp(&(b.1.level, &b.0)));
         // A gate's rule only placed it here.
         let rules: Vec<&Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
+        // A maintained stratum's survivors (`h :- h__old, !h__del`, decision 0077): the relation starts as the kept
+        // `h__old` with `h__del`'s rows dead in place (decision 0090 step 4), not derived row by row.
+        // `RERAIL_DRED_COPY`: derive them by the rule (to measure what starting in place saves).
+        let based: BTreeMap<String, (String, String)> = if std::env::var_os("RERAIL_DRED_COPY").is_some() {
+            BTreeMap::new()
+        } else {
+            rules.iter().filter_map(|r| survivors(r, scc, native_rels).map(|od| (r.head.rel.clone(), od))).collect()
+        };
+        let rules: Vec<&Rule> = rules.into_iter().filter(|r| !(based.contains_key(&r.head.rel) && survivors(r, scc, native_rels).is_some())).collect();
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
         let types = |r: &str| typed[r].clone();
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
@@ -3159,6 +3192,10 @@ impl Run<'_, '_> {
             }
         }
         let mut est: HashMap<&str, f64> = HashMap::new();
+        for (h, (old, _)) in &based {
+            let n = super::native::component::held(self.db, old).map_or(0, |o| o.rows());
+            *est.entry(h.as_str()).or_default() += n as f64;
+        }
         let mut orders = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
         // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
@@ -3218,6 +3255,10 @@ impl Run<'_, '_> {
                 let cols = (0..prog.decls[*r].len()).map(|c| self.model.col(r, c)).collect::<Vec<_>>().join(", ");
                 let sql = format!("SELECT {cols} FROM {}", self.model.relation(prog, r, false).render());
                 rel_lines.push(format!("rel {r} {} from {}", types(r), hex(&sql)));
+            } else if let Some((old, gone)) = based.get(*r) {
+                // Its survivors rule is gone: it starts from the kept relation, plus what facts or SQL seeds wrote.
+                let seeded = !(prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r));
+                rel_lines.push(format!("rel {r} {} base {} {}{}", types(r), hex(old), hex(gone), if seeded { " seeded" } else { "" }));
             } else {
                 let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
                 rel_lines.push(format!("rel {r} {}{}", types(r), if empty { " empty" } else { "" }));
@@ -4080,7 +4121,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
+    // Inputs kept in the engine from an earlier run (a session's, decision 0090 step 3) are read in place, as native
+    // relations, with the indexes they have.
+    let adopted: BTreeSet<String> = super::native::component::adopted(db).into_iter().filter(|r| prog.inputs.contains(r)).collect();
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
@@ -4222,6 +4266,8 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 handed.extend(give);
             }
         }
+        // A relation kept for the caller keeps its indexes: a session's next run starts from it (`Rel::based`).
+        let read_out: Vec<String> = read_out.into_iter().filter(|r| !run.model.inputs.kept.contains(r)).collect();
         if !read_out.is_empty() {
             super::native::component::unindex(db, &read_out);
         }
