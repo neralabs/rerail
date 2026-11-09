@@ -34,6 +34,8 @@ pub(super) struct Compiled {
     pub(super) values: Vec<bitlex_compile::Named>,
     /// Tier 1's block program, as assembled.
     pub(super) block: super::block::BlockProgram,
+    /// Each output's label (`bitlex_compile::Compiled::labels`).
+    pub(super) labels: Vec<(String, u16)>,
     /// Tier 1's program as lowered, for its other executors (Metal).
     pub(super) native: super::native_ir::BlockNative,
     /// Tier 1's block program as text, for the profile's operation mix.
@@ -75,7 +77,7 @@ fn compile() -> Result<Compiled, String> {
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program).map_err(|e| format!("lowers: {e:?}"))?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs()[0].clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs()[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
 }
 
 /// `src`'s node table, as tier 2 writes it: from the compiled grammar, or, for a file the grammar
