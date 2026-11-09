@@ -70,6 +70,7 @@ pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
 mod demand;
 mod native_demand;
+mod compose;
 pub(in crate::code_rule_dsl) mod sketch;
 pub(in crate::code_rule_dsl) mod lower;
 
@@ -645,6 +646,7 @@ thread_local! {
 
 impl KeepPlans {
     pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
+        compose::clear();
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
         PLANS.with(|p| *p.borrow_mut() = Some(kept.unwrap_or_default()));
         KeepPlans(across)
@@ -653,6 +655,7 @@ impl KeepPlans {
 
 impl Drop for KeepPlans {
     fn drop(&mut self) {
+        compose::clear();
         let plans = PLANS.with(|p| p.borrow_mut().take());
         if let (Some(g), Some(plans)) = (self.0, plans) {
             SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans)));
@@ -1977,6 +1980,11 @@ impl Model {
                     let lv = if let Term::Var(v) = l { Some(v) } else { None };
                     if *op == "=" && lv.is_some_and(|v| !env.contains_key(v)) {
                         let e = sql_term(r, &env, atoms)?;
+                        // A partial scalar has no binding on failure. CTEs do not have the old
+                        // derived tables' NOT NULL constraints, including for discarded bindings.
+                        if matches!(r, Term::Call(..)) {
+                            wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(e.clone()) });
+                        }
                         env.insert(lv.expect("a variable").clone(), e);
                     } else if *op == "="
                         && let Some(lv) = lv
@@ -2073,6 +2081,9 @@ impl Model {
                     if let Some(bound) = env.get(var) {
                         wh.push(eq(bound.clone(), value));
                     } else {
+                        if matches!(op, AggOp::Min | AggOp::Max) {
+                            wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(value.clone()) });
+                        }
                         env.insert(var.clone(), value);
                     }
                 }
@@ -2206,6 +2217,11 @@ impl Model {
             .enumerate()
             .map(|(i, t)| Ok((sql_term(t, &env, atoms)?, Some(format!("c{i}")))))
             .collect::<Result<Vec<_>>>()?;
+        for (term, (expr, _)) in head.args.iter().zip(&columns) {
+            if matches!(term, Term::Call(..)) {
+                wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(expr.clone()) });
+            }
+        }
         // A safe scalar rule (global aggregates, ground comparisons, or Boolean negation)
         // evaluates once. SQLite permits its SELECT and WHERE without an outer FROM.
         let (from, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.into_iter().unzip();
@@ -4286,7 +4302,6 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_answering(
 }
 
 fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hooks: Hooks<'_>) -> Result<Outcome> {
-    db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register(db)?;
     super::native::register_symbols(db)?;
     super::native::forget_inputs(db);
@@ -4380,6 +4395,27 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
     super::native::aggregation::register_sum(db)?;
+    if inputs.atoms.is_some() && inputs.given.is_some() && PLANS.with(|p|p.borrow().is_some())
+        && hooks.answer.is_none()
+        && compose::accepts(prog)? {
+        let needed=super::front::needed(prog,prog.outputs.iter().chain(&inputs.kept).cloned().collect());
+        let reads:Vec<_>=prog.inputs.iter().filter(|r|needed.contains(*r)).cloned().collect();
+        if let Some(load)=hooks.load.as_deref_mut(){load(&reads)?;}
+        let bindings=crate::code_rule_dsl::facts::vtab::Modules::default();
+        for rel in super::native::component::adopted(db).into_iter().filter(|r|reads.contains(r)) {
+            let held=super::native::component::held(db,&rel).ok_or_else(||Error::Plan(format!("missing retained input {rel}")))?;
+            let source=held.source((0..prog.decls[&rel].len()).map(|c|sql_col(&rel,c)).collect());
+            if !crate::code_rule_dsl::facts::vtab::replace_bound_source(db,&rel,source.clone())?{bindings.bind(db,&rel,source)?;}
+        }
+        let plan=compose::planned(prog,db,inputs)?;
+        let mut out=plan.execute(db,prog,lowered,&mut hooks)?;
+        if let Some(unload)=hooks.unload.as_deref_mut(){unload(&reads)?;}
+        for rel in &sentinels {
+            if let Some(rows)=out.outputs.get_mut(rel){for row in rows {*row=row.split_once('\t').map_or(String::new(),|(_,r)|r.into());}}
+            if let Some(cols)=out.nodes.get_mut(rel){*cols=cols.iter().filter_map(|i|i.checked_sub(1)).collect();}
+        }
+        return Ok(out);
+    }
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
     // positions table (`rdl_int`) is the same for every run.
     let temp: Vec<(String, String, String)> = db

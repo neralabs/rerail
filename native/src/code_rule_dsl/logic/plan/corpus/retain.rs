@@ -422,7 +422,7 @@ mod tests {
             let width=p.decls[name].len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
-        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default()};
+        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default()};
         let result=cut(Some(&kept),key,&p,&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};

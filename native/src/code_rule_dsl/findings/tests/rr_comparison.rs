@@ -81,6 +81,8 @@ fn complete_async_family_authored_rr_corpus_profile() {
     let report_path = PathBuf::from(std::env::var("RERAIL_RR_REPORT").expect("RERAIL_RR_REPORT"));
     let (report, _) = run(&root, &out);
     std::fs::write(report_path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+    let executions: u64=report["report"]["phases"].as_array().unwrap().iter().map(|p|p[4].as_u64().unwrap()).sum();
+    assert!(executions<=100,"whole-job SQL execution budget exceeded: {executions} > 100; profile preserved");
     eprintln!("authored .rr: {} files, {} keys, {} CPU ns, {} wall ns",
         report["report"]["files"],report["keyCount"],report["cpuNs"],report["wallNs"]);
 }

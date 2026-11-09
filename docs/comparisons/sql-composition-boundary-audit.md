@@ -167,3 +167,9 @@ The replacement must enforce these independent requirements:
 - Whole-job measurements accompany prepared-fact comparisons. Compilation and preparation costs remain separate.
 
 No runtime improvement is claimed by this audit. The production path still fails the execution budget.
+
+## Implementation follow-up
+
+The [production composition report](composed-production-queries.md) records the merged implementation and its measured limits.
+It meets the complete-job statement budget by composing within each bounded source batch.
+The two-query whole-corpus target above remains open; the new gate does not claim to enforce that stronger target.

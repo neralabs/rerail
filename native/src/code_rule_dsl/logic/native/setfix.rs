@@ -150,6 +150,14 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Decode a composed output through the shared atom arena, without a SQL query per row.
+pub(in crate::code_rule_dsl) fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
+    let symbols=symbols(conn)?;
+    let s=symbols.read().unwrap();
+    if atom<0 || atom as usize>=s.len(){return Err(err(format!("no symbol {atom}")))}
+    Ok(s.name(atom).to_owned())
+}
+
 /// Appends the symbols pending in `conn`'s database if a flush is due (decision 0049 §4.2): a run's end.
 pub fn flush_symbols(conn: &Connection) -> Result<()> {
     crate::content_store::atoms::Atoms::for_connection(conn).flush_if_due(conn).map_err(|e| err(e.to_string()))

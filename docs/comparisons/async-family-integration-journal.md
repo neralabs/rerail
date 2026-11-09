@@ -410,3 +410,69 @@ Both boundaries need correction; changing only the fallback does not fix the mea
 The existing retained-candidate gate reports the 100-execution budget but does not enforce it.
 The proposed acceptance gate must enforce that budget and require two relational evaluation queries for the complete four-rule job.
 This audit changes documentation only. It uses saved measurements and claims no new runtime result.
+
+## Production composition implementation
+
+Merged integration hub `a27994c6a` as `abf75bb79` after preserving the audit in `e803a0f81`.
+The hub includes the committed executor successor, parser cache, phase checks, and planner sketch work.
+Resolved native exports, demand-first planning, and semantic locality against the hub's worklist implementation.
+The first build also found a merged test initializer missing the new retained-statistics field; corrected that initializer.
+
+Surveyed the executor, cross-file maintenance, shared structural execution, parser, and acceleration branches.
+Keep the hub's source/index/statistics ownership and the executor's frozen relation contracts.
+Do not import incremental support bookkeeping into cold relational queries.
+The executor and cross-file worktrees have uncommitted work; this branch does not modify those files.
+
+The saved baseline fails the new whole-job gate: 3,849 executions exceed 100.
+The failing result is in the external `composed/budget-red.json` artifact directory.
+The full-corpus benchmark now enforces the budget after writing its report.
+
+The implementation builds CTE definitions before executing a statement.
+Constants become query relations; all outputs share a tagged result stream.
+Semantic leaves accept complete IN demands through SQLite's batch virtual-table interface.
+The same statement can therefore compose their results without a host loop over semantic stages.
+Sources still use bounded memory chunks. Initial validation must establish the whole-job budget before any claim of completion.
+
+The initial composed build passes constants, fan-out/fan-in, aggregate, and anti-join tests.
+The real four-rule positive fixture also passes.
+Its full-corpus profile fails the hard budget with 114 executions: 72 composed queries and 42 remaining setup/final-assembly statements.
+Final assembly still takes the old route because it uses input lifecycle hooks.
+The new route now loads those inputs before the complete query and releases them afterward.
+Adopted native inputs bind through the existing source cell, preserving prepared cursors and retained versions.
+
+The first query profile records 5,055,466 evaluation VM instructions.
+This exceeds the previous mostly-native path and remains visible as a regression to investigate.
+The first build also enables `code-rule-profile`; final timing comparisons must use the baseline's default feature set.
+Four qualification consumers rebuild the same IN key set.
+The revised compiler collects a shared demand frame once and passes its handle to native producers.
+The frame's scope ends with the statement, including errors; consumers share immutable keys and keep distinct target predicates.
+Per-input cursor counters and EXPLAIN output supplement the whole-statement profile.
+
+The frame version reaches 80 executions: 72 local queries, one cross query, and seven setup statements.
+It still exports `async_reference` because dead native metadata survives rule pruning.
+Removing that metadata and pruning again after simplification removes the export.
+The next profile passes the complete-job shape gate at 80 executions and 4,944,696 VM instructions.
+That VM count remains above the previous mostly-native path; this is not a performance win claim.
+The input counters identify 65,412 call-site filters and 50,255 text filters inside the composed query.
+
+The broader RR suite finds a separate semantic regression: failed scalar conversion produces a NULL-valued row.
+The previous derived tables discarded these rows through non-null column constraints.
+The new lowering rejects failed computed bindings and computed head values explicitly.
+A focused regression also covers failure when the computed value is later projected away.
+The pre-fix failure is preserved in `scalar-null-red.log`.
+
+The edge jobs match all 178 recorded Ruff findings.
+The original reference comparison retains its four known misses; its failure is not treated as a new engine regression.
+The implementation and remaining whole-corpus and structural-prefix gaps are recorded in `composed-production-queries.md`.
+
+Final validation passes 115 active tests; three pre-existing tests remain ignored.
+All four edge jobs match all 178 recorded Ruff findings.
+The final full profile passes at 80 executions and 4,965,288 VM instructions.
+It compiles the local query once and the cross-file query once; SQLite preparation totals 4.842 ms.
+Three unprofiled runs each execute 80 statements and reuse the prepared-program store.
+Median corpus-run CPU is 13.221 seconds; median wall time is 17.894 seconds.
+The median local phase uses 1.052 CPU seconds. Peak process footprint is about 664 MB.
+The earlier timing series used another merged snapshot and was not interleaved; no causal speed ratio is claimed.
+
+The final source and binary hashes, emitted SQL, EXPLAIN output, cursor counters, failure evidence, and results are checked in under `benchmark/async-family-integration/composed`.
+The remaining SQL VM regression and the two-query whole-corpus target are explicit open items, not passing gates.

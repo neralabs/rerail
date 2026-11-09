@@ -31,6 +31,7 @@ pub(in crate::code_rule_dsl) mod match_all;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod extension;
 pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
+pub(in crate::code_rule_dsl) use setfix::symbol_text;
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
     pub(in crate::code_rule_dsl) use super::setfix::lab;

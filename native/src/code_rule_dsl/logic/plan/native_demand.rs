@@ -171,7 +171,8 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
             },
         )
         .unwrap();
-        for modes in ["program", ""] {
+        for (modes,composed) in [("program",false), ("",false), ("program",true)] {
+            let _plans=composed.then(||plan::KeepPlans::start(None));
             for (source, expected_gets) in [
                 ("import requests as r\nr.get('x')\nr.post('x')\n", 1),
                 ("import requests as r\nr.post('x')\n", 0),

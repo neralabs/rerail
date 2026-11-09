@@ -1100,6 +1100,9 @@ pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
         }
     }
     prog.rules.retain(|r| need.contains(&r.head.rel));
+    // Native metadata owns real dependency edges. A dead producer must not keep its demands
+    // alive in the file-local split or cause them to be exported across every chunk.
+    prog.natives.retain(|rel, _| need.contains(rel));
     prog
 }
 
