@@ -3268,6 +3268,11 @@ exact. The same scope run with them: 1,129 of 1,143 exact, total 13,648; 208 s u
 only files below the model are the four enum files above. A list built by introspection (`test_phase1_case_matrix.py`, 819) has no length; it stays in
 `collect_disabled`.
 
+**The enums need only their documents (2026-11-09).** A scoped run of the four files, plus each enum's re-export
+chain (`data_layer/matching.py` → `l5250_matching/__init__.py` → `l1470_matching_contracts/graph_producer_models.py`;
+`data_layer/versioned_schema.py` → `l7000_versioned_schema/compatibility.py` → `…/versioned_schema.py`;
+`l1500_llm/delegation_consent.py`), counts all four exactly (22, 12, 25, 40): no rule change.
+
 **Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Expected over the whole
 workspace: 1,133 of 1,143, once names over the whole workspace fit the budget (O-names-cost). Known difference from
 the model: a nested Test class reached through two parents counts once (the owner is a node, not a path).
