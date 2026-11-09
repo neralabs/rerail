@@ -44,11 +44,17 @@ pub(in crate::code_rule_dsl) enum Act {
     /// An extra's leaf, deferred: the nodes closed before the next node leave it out, so it goes
     /// where the next token puts it (`with_extras`).
     Extra,
+    /// An extra's leaf, placed now (`with_extras`): no node of the grammar's, so never the node
+    /// made last at its level, which a `wrap` or a `relabel` acts on.
+    ExtraNow,
     /// The innermost open node becomes a `kind` (`retag K A`).
     Retag { kind: u16 },
     /// A node of `kind` around the node just made at this level, open (`wrap K F [as M]`): it
     /// takes that node's field, which takes `field` and, when `moved` is not 0, kind `moved`.
     Wrap { kind: u16, field: u16, moved: u16 },
+    /// The node just made at this level takes `field` and, when `moved` is not 0, kind `moved`
+    /// (`relabel F [as M]`).
+    Relabel { field: u16, moved: u16 },
     /// The token's leaf joins the grammar's leaf before it, as one leaf of `kind`; the extras
     /// between are its text (`merge 'K' A`).
     Merge { kind: u16 },
@@ -100,7 +106,11 @@ pub(super) fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 Act::Wrap { kind, field, moved } => {
                     let _ = write!(acts, " wrap {kind} f {field} as {moved}");
                 }
+                Act::Relabel { field, moved } => {
+                    let _ = write!(acts, " relabel f {field} as {moved}");
+                }
                 Act::Extra => acts.push_str(" extra"),
+                Act::ExtraNow => acts.push_str(" extra now"),
                 Act::Retag { kind } => {
                     let _ = write!(acts, " retag {kind}");
                 }
@@ -127,6 +137,9 @@ enum Wrap {
     /// `wrap K F [as M]`: entered, a node around the node just made at this level; left, it
     /// closes.
     Wrapped { kind: u16, field: u16, moved: u16 },
+    /// `relabel F [as M]`: entered, the node just made at this level takes field `F` and kind
+    /// `M`; no node, so nothing closes.
+    Relabel { field: u16, moved: u16 },
 }
 
 /// A level's expression, inlined; `Tok` and `Call` are positions.
@@ -244,6 +257,13 @@ impl Builder<'_> {
             Gram::Wrap { kind, field, moved, body } => {
                 let w = Wrap::Wrapped {
                     kind: (self.ids.kind)(kind)?,
+                    field: field.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
+                    moved: moved.as_deref().map(|m| (self.ids.kind)(m)).transpose()?.unwrap_or(0),
+                };
+                E::Wrap(w, Box::new(self.expand(level, body, inlining)?))
+            }
+            Gram::Relabel { field, moved, body } => {
+                let w = Wrap::Relabel {
                     field: field.as_deref().map(|f| (self.ids.field)(f)).transpose()?.unwrap_or(0),
                     moved: moved.as_deref().map(|m| (self.ids.kind)(m)).transpose()?.unwrap_or(0),
                 };
@@ -389,6 +409,7 @@ impl Pending {
                 Wrap::Super(s) => self.supers.push(s),
                 Wrap::Retag(kind) => acts.push(Act::Retag { kind }),
                 Wrap::Wrapped { kind, field, moved } => acts.push(Act::Wrap { kind, field, moved }),
+                Wrap::Relabel { field, moved } => acts.push(Act::Relabel { field, moved }),
                 Wrap::Node(kind) => {
                     let p = std::mem::take(self);
                     acts.push(Act::Open { kind, field: p.field, supers: p.supers });
@@ -656,7 +677,6 @@ pub(super) fn with_extras(
     }
     let root = states[0].level;
     let closes = |acts: &[Act]| acts.iter().take_while(|a| **a == Act::Close).count();
-    let leaf = Act::Leaf { field: 0, supers: vec![], kind: 0 };
     let mut new_arms: Vec<ArmRow> = Vec::new();
     // With a whole root, state 0 is like any other: the root is open already.
     let mut s = if whole { 0u16 } else { 1u16 };
@@ -675,7 +695,7 @@ pub(super) fn with_extras(
     }
     if zero_takes {
         for &k in extras {
-            new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), leaf.clone()], to: opened, push: None });
+            new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), Act::ExtraNow], to: opened, push: None });
         }
     }
     }
@@ -754,7 +774,7 @@ pub(super) fn with_extras(
                 })
             };
             let mut acts = vec![Act::Close; m];
-            acts.push(leaf.clone());
+            acts.push(Act::ExtraNow);
             for &k in extras {
                 new_arms.push(ArmRow { from: s, token: k, acts: acts.clone(), to, push: None });
             }
@@ -816,7 +836,7 @@ pub(super) fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -
             Gram::Opt(a) => E::Opt(Box::new(expand(a, classes, sets)?)),
             Gram::Star(a) => E::Star(Box::new(expand(a, classes, sets)?)),
             Gram::Plus(a) => E::Seq(vec![expand(a, classes, sets)?, E::Star(Box::new(expand(a, classes, sets)?))]),
-            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
+            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
         })
     }
     let mut sets = Vec::new();

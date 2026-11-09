@@ -130,6 +130,57 @@ fn a_wrap_goes_before_the_node_it_wraps() {
     assert!(run(&rir::assemble(&first).expect("assembles"), b"a(", &t1).is_err());
 }
 
+/// A root with a leaf, then `(`: the `(` relabels the leaf (`NODE_FIELD m=2`, `RETAG m=2`, the
+/// node made last at the root's level), with no node around it.
+const RELABELLED: &str = "program -
+  mode set=0 query=0
+  block 0 %0 = eq 0x61
+  block 0 output %0
+  block 0 extract %0
+  block 0 mask %0
+  switch 0 at 0 end refuse
+  switch 0 0x61-0x61 @0002
+  switch 1 at 0 end refuse
+  switch 1 0x28-0x28 @0007
+  switch 2 at 0 end @0013
+  0000 TOKEN 0
+  0001 SWITCH T0
+  0002 OPEN #1
+  0003 SPAN 1
+  0004 LEAF #2
+  0005 TOKEN 0
+  0006 SWITCH T1
+  0007 SPAN 1
+  0008 NODE_FIELD m=2 #5
+  0009 RETAG m=2 #4
+  0010 LEAF #6
+  0011 TOKEN 0
+  0012 SWITCH T2
+  0013 ACCEPT 0
+";
+
+/// The relabelled leaf, from the interpreter and from Cranelift; with no node made at the level
+/// before it, refused by both.
+#[test]
+fn a_relabel_acts_on_the_node_made_last() {
+    let p = rir::assemble(RELABELLED).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(rir::assemble(&rir::disassemble(&p, None)).expect("round trips").plain_digest(), p.plain_digest());
+    let t1 = tier1(&[0, 1], &[]);
+    let nodes = run(&p, b"a(", &t1).expect("parses");
+    let got: Vec<(u16, u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.field, n.start, n.end, n.size)).collect();
+    // The root; the leaf, now kind 4 with field 5; the `(`.
+    assert_eq!(got, [(1, 0, 0, 2, 3), (4, 5, 0, 1, 1), (6, 0, 1, 2, 1)]);
+    let native = native_ir::lower(&p).expect("lowers");
+    let compiled = native_cpu_stream::compile(&native).expect("compiles");
+    assert!(compiled.wraps, "the tape has the frames");
+    assert_eq!(compiled.run(b"a(", &t1).expect("parses"), nodes);
+    let first = RELABELLED.replace("  0004 LEAF #2\n", "  0004 RETAG #1\n");
+    let first = rir::assemble(&first).expect("assembles");
+    assert!(run(&first, b"a(", &t1).is_err());
+    let compiled = native_cpu_stream::compile(&native_ir::lower(&first).expect("lowers")).expect("compiles");
+    assert!(compiled.run(b"a(", &t1).is_err());
+}
+
 /// A root over `a a a`, each `a` after the first a call into a level that ends on the token
 /// after: at the stream's end the levels return one after another, each to switch on the end
 /// again (`RETURN m=1`), with no `TOKEN` between.

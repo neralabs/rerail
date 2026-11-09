@@ -1426,8 +1426,8 @@ fn rounds_equal_the_interpreter() {
     let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
     assert_eq!(native.groups.len(), 1, "one group");
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    // One loop in each body: the full blocks' and the last block's.
-    assert_eq!(compiled.round_branches, 2, "one loop a body");
+    // One loop in the full blocks' body (the last block's has its own).
+    assert_eq!(compiled.round_branches, 1, "one loop");
     let block = &p.block_programs()[0];
     let mut text = String::new();
     super::rir::block_rows(&mut text, 0, block);

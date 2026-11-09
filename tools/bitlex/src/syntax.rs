@@ -80,6 +80,9 @@ pub enum Gram {
     /// child of the innermost open node) and what `REST` matches. `K` takes the moved node's
     /// field; the moved node takes field `F` (`_`: none) and, with `as M`, kind `M`.
     Wrap { kind: String, field: Option<String>, moved: Option<String>, body: Box<Gram> },
+    /// `relabel F [as M] REST`: the node just made at this level takes field `F` (`_`: keeps
+    /// its own) and kind `M`, and `REST` follows; no node around it.
+    Relabel { field: Option<String>, moved: Option<String>, body: Box<Gram> },
     /// `A as K`, `A` a token: its leaf has kind `K` (`identifier as variable`).
     As(String, Box<Gram>),
 }
@@ -397,6 +400,15 @@ impl P {
                 let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
                 let body = Box::new(self.gram_seq()?);
                 items.push(Gram::Wrap { kind, field, moved, body });
+                break;
+            }
+            // `relabel F [as M]`: the rest of the sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "relabel") {
+                self.i += 1;
+                let field = Some(self.ident()?).filter(|f| f != "_");
+                let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Relabel { field, moved, body });
                 break;
             }
             let mut item = self.gram_atom()?;

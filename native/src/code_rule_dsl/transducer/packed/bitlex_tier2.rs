@@ -196,12 +196,26 @@ impl Emit<'_> {
                     self.push("LEAF", 1, Arg::Kind(token));
                     continue;
                 }
+                Act::ExtraNow => {
+                    self.push("LEAF", 2, Arg::Kind(token));
+                    continue;
+                }
                 Act::Retag { kind } => {
                     self.push("RETAG", 0, Arg::Kind(kind));
                     continue;
                 }
                 Act::Merge { kind } => {
                     self.push("MERGE", 0, Arg::Kind(kind));
+                    continue;
+                }
+                Act::Relabel { field, moved } => {
+                    // Mode 2: the node made last at this level.
+                    if field != 0 {
+                        self.push("NODE_FIELD", 2, Arg::Field(field));
+                    }
+                    if moved != 0 {
+                        self.push("RETAG", 2, Arg::Kind(moved));
+                    }
                     continue;
                 }
                 Act::Wrap { kind, field, moved } => {

@@ -26,7 +26,10 @@ const SAMPLES: &[(&str, &[&str])] = &[(
     &["\"a\"", "\"\"", "\"x/y.rr\"", "\"a \\\" b\"", "\"\\\\\"", "\"two\nlines\"", "\"// not a comment\"", "\"é\"", "\"\\u{e9}\""],
 ), (
     "comment",
-    &["// c", "//", "// a, (1) é\r", "//// x", "// #include \"y\"", "// /* x", "// \"x"],
+    &["// c", "//", "// a, (1) é\r", "//// x", "// #include \"y\"", "// /* x", "// \"x", "/* c */", "/**/", "/*/", "/* a\n b */", "/* // \" ` */", "/*** x **/"],
+), (
+    "code_literal",
+    &["`a`", "``", "` `", "`\"`", "`//`", "`/*`", "`` a`b ``", "``x``", "``` a `` b ```", "`\\`", "`é`"],
 )];
 
 /// Documents for the rules a random sentence rarely meets, each with the first step that parses
@@ -82,8 +85,30 @@ const CASES: &[(&str, &str)] = &[
     ("r(x) :- s(x), x != 1, 2 < x, \"a\" = y, _ >= f(x), x <= y, z > w.", "04"),
     // A word whose next token decides it, across a comment and a line break.
     ("r(f // c\n (x), k\n: v, w // d\n).", "04"),
-    // A head's modal, an aggregate's word, `-`, `!`: later steps.
+    // Regions, each hiding the others' openers; the first opener wins. `/*/` is a whole block
+    // comment, as the engine reads it.
+    ("r(x). /*/ s(y).", "05"),
+    ("r(x) /* a \" b\n // c */ :- s(\"/* x\", \"// y\").", "05"),
+    ("r(x). // a \" b /* c\ns(y).", "05"),
+    ("r(`a`, `` b`c ``, ``` d `` e ```) :- s(`//`, `\"`, `/*`).", "05"),
+    // A `` closes at the next ``, whatever is between.
+    ("r(o) :- s(o, ``), t(o, ``).", "05"),
+    // Open at the end of the file: the engine refuses it.
+    ("r(x). /* x", "never"),
+    ("r(\"x).", "never"),
+    ("r(`x).", "never"),
+    // A `` with no closing pair is the engine's empty literal, found by a look to the file's
+    // end: the file goes to the engine.
+    ("r(``).", "never"),
+    // Negation, patterns: `!` before an atom, a pattern or a negation, never a comparison.
+    ("r(x) :- !s(x), !!t(x), x ~ `a*`, !y ~ `b`, `c` ~ `d`, \"e\" ~ `f`.", "05"),
+    ("r(x) :- !x = 1.", "never"),
+    // A head's modal: before a word; before a `(` it is the relation.
     ("must r(x) :- s(x).", "05"),
+    ("must r(x), may s(x) :- t(x).\nmust(x).\nmay (x) :- must(x).", "05"),
+    ("must // c\n(x).\nmay /* d */ r(x).", "05"),
+    // An extra between a word and the `(` that wraps it: never the node the wrap moves.
+    ("r(x) :- s // c\n(x), t /* d */ (x).", "05"),
     ("r(n) :- n = count : { s(_) }.", "08"),
     ("r(-1).", "06"),
 ];

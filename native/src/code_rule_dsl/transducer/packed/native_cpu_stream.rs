@@ -17,7 +17,7 @@
 use super::Error;
 
 use super::native_cpu_shape::Step;
-use super::native_ir::{NativeModule, StructuralOperation as Op};
+use super::native_ir::{NativeModule, On, StructuralOperation as Op};
 use super::stream::{ByteSwitch, Node, REFUSE, Refused};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
@@ -543,8 +543,9 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         };
         // Where returns chain, each `RETURN` is a loop's head: a turn pops a call.
         let chains = bounds(native).chains;
-        // Programs without `WRAP` pay nothing for it: no frames, no chains, no reorder.
-        let wrapping = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
+        // Programs without `WRAP` or a `relabel` pay nothing for them: no frames, no chains, no
+        // reorder (which runs only once a wrap was made).
+        let wrapping = framed(words);
 
         f.switch_to_block(entry);
         let ctx = f.block_params(entry)[0];
@@ -850,7 +851,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     put(&mut f, size_c, at, size);
                     f.ins().jump(fall, &[]);
                 }
-                Op::Leaf { kind, deferred } => {
+                Op::Leaf { kind, deferred, extra } => {
                     let pending = if deferred {
                         // The first pending leaf keeps the end of the token before it.
                         let (p, keep, last_end) = (f.use_var(v.pending), f.use_var(v.keep), f.use_var(v.last_end));
@@ -871,7 +872,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     put(&mut f, size_c, nodes, one);
                     if wrapping {
                         put(&mut f, wc(head_c), nodes, zero);
-                        if !deferred {
+                        if !deferred && !extra {
                             // The last node made at the innermost open node's level.
                             let open = f.use_var(v.open);
                             let n1 = f.ins().iadd_imm(nodes, 1);
@@ -883,7 +884,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     f.def_var(v.nodes, nodes);
                     f.ins().jump(fall, &[]);
                 }
-                Op::Retag { kind, moved: true } => {
+                Op::Retag { kind, on: On::Moved } => {
                     let (m, k) = (f.use_var(v.moved), f.ins().iconst(types::I64, i64::from(kind)));
                     put(&mut f, kind_c, m, k);
                     f.ins().jump(fall, &[]);
@@ -936,7 +937,25 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     f.def_var(v.wraps, wraps);
                     f.ins().jump(fall, &[]);
                 }
-                Op::Retag { kind, moved: false } => {
+                Op::Retag { kind, on: On::Made } | Op::NodeField { field: kind, on: On::Made } => {
+                    // The node made last at the innermost open node's level (`relabel`): its
+                    // frame's last, one more than its record (0: none).
+                    let open = f.use_var(v.open);
+                    let last = {
+                        let a = slot(&mut f, wc(flast_c), open);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+                    let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
+                    let bad = f.ins().bor(none, no_last);
+                    guard(&mut f, bad, pc);
+                    let r = f.ins().iadd_imm(last, -1);
+                    let x = f.ins().iconst(types::I64, i64::from(kind));
+                    let col = if matches!(w.operation, Op::Retag { .. }) { kind_c } else { field_c };
+                    put(&mut f, col, r, x);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Retag { kind, on: On::Here } => {
                     // The innermost open node's kind.
                     let open = f.use_var(v.open);
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
@@ -982,8 +1001,8 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     f.def_var(v.pending, zero);
                     f.ins().jump(fall, &[]);
                 }
-                Op::NodeField { field, moved } => {
-                    let last = if moved {
+                Op::NodeField { field, on } => {
+                    let last = if on == On::Moved {
                         f.use_var(v.moved)
                     } else {
                         let nodes = f.use_var(v.nodes);
@@ -1097,8 +1116,14 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     let heads = heads.into_iter().map(|(b, s)| (b.to_string(), s)).collect();
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
-    let wraps = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
+    let wraps = framed(words);
     Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, clif, disassembly, heads })
+}
+
+/// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last
+/// at a level (`On::Made`).
+fn framed(words: &[super::native_ir::StructuralBlock]) -> bool {
+    words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made, .. }))
 }
 
 /// A mask's words for `CompiledStream::call`: word `i` is `words[i * stride]`, `count` of them.

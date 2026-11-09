@@ -54,6 +54,26 @@ pub(super) enum FunctionRef {
     Reduction,
 }
 
+/// The node a `RETAG` or a `NODE_FIELD` acts on, its mode: the innermost open node (a retag's)
+/// or the last node (a field's); the node the last wrap moved; the node made last at the
+/// innermost open node's level (`relabel`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum On {
+    Here = 0,
+    Moved = 1,
+    Made = 2,
+}
+
+impl On {
+    fn of(mode: u8) -> On {
+        match mode {
+            0 => On::Here,
+            1 => On::Moved,
+            _ => On::Made,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StructuralOperation {
     Stop,
@@ -97,21 +117,22 @@ pub(super) enum StructuralOperation {
     Close { this: bool },
     /// A token's leaf; `deferred`: an extra's, left out of the nodes closed before the next
     /// node (docs/parser-generators/24-rr-and-bitlex-plan.md §2.3).
-    Leaf { kind: u16, deferred: bool },
+    /// `extra`: an extra's leaf placed now, never the node made last at its level.
+    Leaf { kind: u16, deferred: bool, extra: bool },
     /// Mark `order` (its bit in mask `mask` at the token's start; at the stream's end, `end`),
     /// if not yet taken nor passed: take it and run the next word; else skip that word.
     Mark { mask: u16, order: u8, end: bool },
     /// The token starts at a bit of mask `mask`: run the next word; else skip it.
     Row { mask: u16 },
-    /// The innermost open node becomes a `kind`; `moved`: the node a wrap moved does.
-    Retag { kind: u16, moved: bool },
+    /// A node becomes a `kind`: the innermost open node, or another (`On`).
+    Retag { kind: u16, on: On },
     /// A node of `kind` around the node last made at this level, open: it takes that node's
     /// field and start (docs/parser-generators/24-rr-and-bitlex-plan.md §2.5).
     Wrap { kind: u16 },
     /// The token's leaf joins the grammar's leaf before it, as one leaf of `kind`.
     Merge { kind: u16 },
-    /// The last node's field; `moved`: the field of the node a wrap moved.
-    NodeField { field: u16, moved: bool },
+    /// A node's field: the last node's, or another's (`On`).
+    NodeField { field: u16, on: On },
     NodeSuper { kind: u16 },
     Push { target: u16 },
     /// To switch on this token again (`again`), or to take the next.
@@ -161,13 +182,13 @@ impl StructuralOperation {
             Self::Word { string, test } => (WORD_IS, u8::from(test), string),
             Self::Open { kind } => (OPEN, 0, kind),
             Self::Close { this } => (CLOSE, u8::from(this), 0),
-            Self::Leaf { kind, deferred } => (LEAF, u8::from(deferred), kind),
+            Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
             Self::Mark { mask, order, end } => (MARK, order | if end { 32 } else { 0 }, mask),
             Self::Row { mask } => (ROW, 0, mask),
-            Self::Retag { kind, moved } => (RETAG, u8::from(moved), kind),
+            Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Wrap { kind } => (WRAP, 0, kind),
             Self::Merge { kind } => (MERGE, 0, kind),
-            Self::NodeField { field, moved } => (NODE_FIELD, u8::from(moved), field),
+            Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
             Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
             Self::Push { target } => (PUSH, 0, target),
             Self::Return { again } => (RETURN, u8::from(again), 0),
@@ -391,13 +412,13 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
             WORD_IS => StructuralOperation::Word { string: operand, test: mode != 0 },
             OPEN => StructuralOperation::Open { kind: operand },
             CLOSE => StructuralOperation::Close { this: mode != 0 },
-            LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode != 0 },
+            LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
             MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0 },
             ROW => StructuralOperation::Row { mask: operand },
-            RETAG => StructuralOperation::Retag { kind: operand, moved: mode != 0 },
+            RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
             WRAP => StructuralOperation::Wrap { kind: operand },
             MERGE => StructuralOperation::Merge { kind: operand },
-            NODE_FIELD => StructuralOperation::NodeField { field: operand, moved: mode != 0 },
+            NODE_FIELD => StructuralOperation::NodeField { field: operand, on: On::of(mode) },
             NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
             PUSH => StructuralOperation::Push { target: operand },
             RETURN => StructuralOperation::Return { again: mode != 0 },

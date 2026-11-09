@@ -49,14 +49,15 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
         // past the file.
         WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 64),
         OPEN | NODE_SUPER => mode == 0,
-        // `m=1`: an extra's leaf, deferred.
-        LEAF => mode <= 1,
+        // `m=1`: an extra's leaf, deferred; `m=2`: an extra's leaf placed now, never the node
+        // made last at its level.
+        LEAF => mode <= 2,
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
         MARK => mode < 64 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
-        // `m=1`: the node a wrap moved.
-        RETAG => mode <= 1,
-        NODE_FIELD => mode <= 1 && operand != 0,
+        // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`).
+        RETAG => mode <= 2,
+        NODE_FIELD => mode <= 2 && operand != 0,
         MERGE | WRAP => mode == 0,
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
@@ -350,6 +351,14 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 }
             }
             RETAG if mode == 1 => nodes[moved].kind = operand,
+            RETAG | NODE_FIELD if mode == 2 => {
+                let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse(pc - 1, "a relabel with no node before it") };
+                if opcode == RETAG {
+                    nodes[r].kind = operand;
+                } else {
+                    nodes[r].field = operand;
+                }
+            }
             RETAG => {
                 let Some(&at) = open.last() else { return refuse(pc - 1, "a retag with no open node") };
                 nodes[at].kind = operand;
@@ -406,6 +415,7 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 }
                 pending = if mode == 1 { pending + 1 } else { 0 };
                 if mode == 0 {
+                    // An extra's (`m=2`) is never the node made last.
                     if let Some(l) = lasts_made.last_mut() {
                         *l = Some((nodes.len(), nodes.len()));
                     }

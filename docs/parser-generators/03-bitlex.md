@@ -83,6 +83,7 @@ directed acyclic graph of mask operations.
 | `scan NAME = count(UP, DOWN) [reset R] max D` | A count that never goes below 0 and is bounded by `D` (§2.7). |
 | `hypotheses NAME split E lanes L … { … }` | Statements evaluated once per lane on every segment; the segment ends pick the lane (§2.7). |
 | `rounds N [until settled] { carry X = E … next X = E … }` | A fixed point, unrolled at most `N` times (§2.7). |
+| `rounds until settled { … }` | The fixed point of a strictly causal body, exact for any input (§2.7). |
 | `block NAME(P, …) { … }`, `block NAME = TEMPLATE(E, …)` | A family of statements with mask parameters, and an instance of it (§2.5). |
 | `machine NAME(P, …) { … }`, `machine NAME = TEMPLATE(EXPR, …)` | A machine with mask parameters, and an instance of it (§2.5). |
 | `ucode over EXPR { class NAME = … }` | Classes of Unicode characters, decoded only where `EXPR` is set (§2.6). |
@@ -99,6 +100,7 @@ directed acyclic graph of mask operations.
 | `'x'`, `NAME`, `f: X`, `A B`, `A \| B`, `[A]`, `A*`, `A+`, `(A)` | In a grammar: a keyword's kind; a token kind, node or choice; field `f` on the node `X` gives; sequence, alternative, optional, repetitions, grouping. |
 | `retag K A`, `merge 'K' A` | In a grammar: entering `A`, the innermost open node becomes a `K`; the token `A`'s leaf and the leaf before it become one leaf of kind `K` (extras between them are its text). |
 | `wrap K F [as M] REST`, `A as K` | In a grammar: a `K` around the last node made at this level, holding it and then `REST`; `K` takes that node's place and field, and the node takes field `F` (`_`: none) and kind `M`. The leaf of token `A` is a `K` (`24-rr-and-bitlex-plan.md` §2.1). |
+| `relabel F [as M] REST` | In a grammar: at the token `REST` starts with, the last node made at this level takes field `F` (`_`: keeps its own) and kind `M`. No node around it. |
 | `extra KIND …` | Nodes of these kinds carry the extra flag. |
 | `mark K = E [, end]`, `hidden K …` | A token of no width before the first grammar token at or after each bit of `E` (and after the last token, with `end`); a hidden mark is skipped where the grammar does not take it (`24-rr-and-bitlex-plan.md` §2.3). |
 
@@ -325,6 +327,33 @@ carry unchanged, it has reached the fixed point, and the names keep that round's
 The lexers use rounds only where the fixed point is unique: every role is decided from bytes
 before it, so by induction from the left there is one self-consistent answer
 (`08-without-automata.md` §3.3, §5.1).
+
+**`rounds until settled { … }`**, with no `N`, makes that rule a check. The body must be
+*strictly causal*:
+
+- every way from a carry to a `next` passes a `prev`, so a byte's next value reads the carries
+  only at bytes before it;
+- no `next(…)` reads a value that depends on a carry (a `next` of raw bytes is fine);
+- the body holds only `mask`, `carry` and `next`.
+
+Then the fixed point is unique, and rounds reach it from the left. Each round makes one more
+bit of a 64-bit block right, so a block settles within 65 rounds, the confirming one included.
+The result does not depend on how the input is cut into blocks. The compiler lowers the body
+to one group of the block program. On the CPU each block runs the group in a loop until no
+carry changes. Most blocks take one or two rounds.
+
+```
+# Strings and `//` comments, each hiding the other's openers.
+mask q0 = quote & ~escaped(backslash)
+rounds until settled {
+  carry hidden = empty
+  mask o_str   = q0 & ~hidden
+  mask o_line  = slash & next(slash) & ~hidden    # next() of raw bytes only
+  mask f_str   = fill(o_str, q0)                  # opener up to its closer
+  mask f_line  = fill(o_line, lf)
+  next hidden  = prev(f_str | f_line)             # after each opener, through its closer
+}
+```
 
 ## 3. Lowering
 

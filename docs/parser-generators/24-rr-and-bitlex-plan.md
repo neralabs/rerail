@@ -60,11 +60,11 @@ Python needs too.
 | | gap | `.rr` needs it for | Python needs it for | addition |
 |---|---|---|---|---|
 | A1 | `scan … = reflect(…)` is not compiled | `"` strings beside backtick literals, the first opener wins | `'` and `"` strings | lower as designed (doc 08 §2.2): a toggle, then a prefix sum mod 3 over two bit planes |
-| A2 | `rounds … until settled` is not compiled | comments that hide quotes; quotes that hide `//` | the same, f-strings | a fixed number of rounds per block, each a copy of the body; a file that does not settle falls back |
+| A2 | `rounds … until settled` is not compiled | comments that hide quotes; quotes that hide `//` | the same, f-strings | a fixed number of rounds per block, each a copy of the body; a file that does not settle falls back. **Done** on the CPU as `rounds until settled` over a strictly causal body (03 §2.7): one group of the block program, a bounded loop per block in Cranelift. Metal refuses a group so far |
 | A3 | `text("…")` is refused | directive words: `.decl` is one token, `.mode` two | keywords in tier 1 | a chain of `next` tests |
 | A4 | a token's kind comes only from its first byte | `:` and `:-`, `<` and `<=` and `<:` | operators | one row per first byte, the longer spellings as keywords. **Done**: a row whose tokens run to their last byte tests each keyword, then takes the plain token |
 | A5 | no wrap: a node cannot start before the token that decides it | `a - b * c`, comparisons, `x ~ \`…\``, `;` | every binary, call and attribute chain | **wrap**: open a node around the last node made at this level (§2.1). **Done** (`wrap K F [as M]`, word `WRAP`) |
-| A6 | no retag: a node's kind is fixed when it opens | `.decl` and `.mode` both open at `.`; an atom and a call look alike until the token after | — | **retag** a node by the next token (§2.1). **Done** for the open node (`retag K A`, word `RETAG`); the node just closed is rr-07's |
+| A6 | no retag: a node's kind is fixed when it opens | `.decl` and `.mode` both open at `.`; an atom and a call look alike until the token after | — | **retag** a node by the next token (§2.1). **Done** for the open node (`retag K A`, word `RETAG`), and for the node made last at the level (`relabel F as M`, words `RETAG m=2`, `NODE_FIELD m=2`: a modal before `(` is the relation) |
 | A7 | no merge: two tokens cannot make one leaf | `.` and `decl` are one `.decl` leaf; `- 1` is one `number` leaf | — | **merge**: the previous leaf and this token become one leaf (§2.1). **Done** (`merge 'K' A`, word `MERGE`): the extras between are the leaf's text |
 | A8 | no opaque nodes | a `{…}` JSON object, a `raw_text`, are one leaf each | — | **opaque** nested nodes: their tokens make one leaf |
 | A9 | newlines are never tokens | a setting ends at its line's end; a declaration's tail is on one line | `NEWLINE` | **hidden tokens**: a token the grammar may name; in a state that does not name it, it is skipped and makes no node |
@@ -274,10 +274,14 @@ The result, checked by a test: JSON's tier 2 has no `ROW` word.
 - line comments `//…`;
 - block comments `/*…*/`.
 
-The first opener wins. The quotes are one `reflect` scan of two kinds. The comments are
-fills from openers found `out` of both kinds. A comment hides the quotes after its opener:
-`rounds` feeds them back until nothing changes. Most blocks settle in one round, and
-the confirming round can be skipped when no comment opener sits beside a quote.
+The first opener wins. Each kind is a `fill` from its opener to its closer, both from raw
+bytes. One carry, the hidden bytes, hides the openers. It runs from the byte after each
+opener through its closer, so it is `prev` of the fills: a strictly causal body, whose
+`rounds until settled` is exact (03 §2.7). No `reflect` is needed. The engine's own readings
+hold too: a block comment ends at the first `*/` from its `/`, so `/*/` is one; n backticks
+end at the next n, whatever is between. Two cases go to the engine. One is a `` `` `` with
+no closing pair, which the engine reads as the empty literal by looking to the file's end.
+The other is a run of four backticks or more.
 
 ## 3. The `.rr` ladder
 
@@ -291,12 +295,12 @@ reference on the corpus.
 | rr-02 | settings: `.mode x`, `.scope "a", "b"`, the line's end, continued after a `,` | A3, A9 |
 | rr-03 | `.decl r(a: t, b: t<u>)` and its tail on the same line | A4 |
 | rr-04 | facts and clauses: heads, `:-`, atoms, numbers, strings, variables, `_`, calls, `n: v`, comparisons of single terms | A5, A11, A12, A18, A19 |
-| rr-05 | `!`, `must`/`may` heads, `~` with backtick literals, strings and comments in either order | A1, A2, A5 |
+| rr-05 | `!`, `must`/`may` heads, `~` with backtick literals, strings, comments and block comments in any order | A2, A5, A6 |
 | rr-06 | arithmetic with precedence, unary `-`, `- 1` as one leaf, `( )`, `@f(…)` | A5, A7, A11 |
 | rr-07 | `;` alternatives, groups, atom or call | A5, A6 |
 | rr-08 | aggregates: `count`, `min`, `max`, `sum`, `mean`, `join … by … sep` | A10 |
 | rr-09 | `.violation` (code, tag, fix, suppress, options), `=>` edits, JSON objects, `.policy {…}` | A8, A10 |
-| rr-10 | `.input`/`.output`, `.type`, `.lattice`, `.pragma`, `.functor`, `.edit`, block comments: all of `.rr` | A8 |
+| rr-10 | `.input`/`.output`, `.type`, `.lattice`, `.pragma`, `.functor`, `.edit`: all of `.rr` | A8 |
 
 At rr-10:
 - every corpus file is parsed by both parsers;

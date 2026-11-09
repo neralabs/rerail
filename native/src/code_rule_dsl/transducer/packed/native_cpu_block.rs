@@ -65,8 +65,9 @@ pub(super) struct CompiledBlock {
     pub(super) ascii_branch: bool,
     /// The gated regions' branches in the function, each body's counted (`native_cpu_lanes::Region`).
     pub(super) gate_branches: usize,
-    /// The fixed points' loops in the function, each body's counted (`block::Group`): one
-    /// branch each, back to the round's head or on.
+    /// The fixed points' loops in the full blocks' bodies (`block::Group`), as the hot loop
+    /// has them: one branch each, back to the round's head or on. The last block's body has its
+    /// own.
     pub(super) round_branches: usize,
     /// The function as Cranelift IR, before code generation.
     pub(super) clif: String,
@@ -1066,7 +1067,9 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             } else {
                 let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii: false, bytes: None });
                 gate_branches += gates;
-                round_branches += rounds.len();
+                if full {
+                    round_branches += rounds.len();
+                }
                 heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
                 (v, packed)
             };
