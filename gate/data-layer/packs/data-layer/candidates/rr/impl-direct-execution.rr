@@ -1,0 +1,85 @@
+.policy "data-layer-impl-direct-execution" revision 1
+.description "Direct database execution outside ServerPlan"
+.language python
+.mode warn
+.scope include "**/*.py"
+// Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_impl_direct_execution.py
+#include "python/ast.rr"
+#include "data-layer/impl-direct-settings.rr"
+
+.decl ide_allowed(path: symbol)
+ide_allowed(p) :- option("argumentPath",p), ide_allowed_file(p).
+ide_allowed(p) :- option("argumentPath",p), ide_allowed_file(a), suffix(cat("/",a),p).
+ide_allowed(p) :- ide_doc(_,p), ide_allowed_file(p).
+ide_allowed(p) :- ide_doc(_,p), ide_allowed_file(a), suffix(cat("/",a),p).
+.decl ide_path(path: symbol)
+ide_path(p) :- option("argumentPath",p).
+ide_path(p) :- ide_doc(_,p).
+.violation IdeBool(at: span, value: number) code "IDE_BOOL" "allowlist result"
+IdeBool(@place("",0),1) :- option("entryPoint","is_allowed_file"), option("argumentPath",p), ide_allowed(p).
+IdeBool(@place("",0),0) :- option("entryPoint","is_allowed_file"), option("argumentPath",p), !ide_allowed(p).
+
+// Discovery consumes every caller root in one request family. Path.rglob does not prune test directories.
+.decl ide_walk(root: symbol, path: symbol)
+ide_walk(p,p) :- env(key,p), prefix("ide.scan.",key).
+ide_walk(root,cat(path,"/",name)) :- ide_walk(root,path), dir_entry(path,name,1), dir_metadata(path,name,_,0,_).
+.decl ide_file(path: symbol)
+ide_file(cat(path,"/",name)) :- ide_walk(_,path), dir_entry(path,name,0), suffix(".py",name).
+load(path,cat("impl-direct:",path),"python") :- ide_file(path).
+.decl ide_doc(d: number, path: symbol)
+ide_doc(d,p) :- option("argumentPath",p), doc(d,"input.py",_), doc_role(d,"primary"), !syntax_error(d,_,_).
+ide_doc(d,@slice(label,12,strlen(label))) :- doc(d,physical,label), prefix("impl-direct:",label), loaded(physical,label,"python"), !syntax_error(d,_,_).
+
+.decl ide_fts(path: symbol)
+ide_fts(path) :- ide_doc(_,path), match_all("(^|/)impl/[^/]+/fts/.*\\.py$",path).
+.decl ide_entry_allowed(path: symbol)
+ide_entry_allowed(path) :- ide_doc(_,path), option("entryPoint",entry), entry != "scan_fts_manager_direct_execution", entry != "scan_fts_manager_source".
+ide_entry_allowed(path) :- ide_fts(path).
+.decl ide_trigger(value: symbol)
+ide_trigger("_execute_direct_internal"). ide_trigger("_fetchone"). ide_trigger("_fetchall").
+ide_trigger("fetchone("). ide_trigger("fetchall("). ide_trigger("execute_grammar_fetch").
+.decl ide_argument_gate()
+ide_argument_gate() :- !option("entryPoint","scan_source").
+ide_argument_gate() :- option("callSource",s), ide_trigger(t), contains(t,s).
+.decl ide_selected(d: number, path: symbol)
+ide_selected(d,p) :- ide_doc(d,p), ide_entry_allowed(p), ide_argument_gate(), source(d,sp), text(sp,s), ide_trigger(t), contains(t,s).
+.decl ide_active(d: number, priority: number, pattern: symbol, attribute: symbol)
+ide_active(d,i,pattern,attribute) :- ide_selected(d,p), !ide_allowed(p), ide_pattern(i,pattern,attribute).
+ide_active(d,i,pattern,attribute) :- ide_selected(d,p), ide_fts(p), ide_pattern(i,pattern,attribute), i < 2.
+
+// Mask the native lexical ranges that Python tokenize masks. Interpolated expressions remain visible.
+.decl ide_ignored(n: node)
+ide_ignored(n) :- ide_selected(d,_), docof(n,d), kind(n,"comment").
+ide_ignored(n) :- ide_selected(d,_), docof(n,d), kind(n,"string"), !fstring(n).
+ide_ignored(n) :- ide_selected(d,_), docof(n,d), kind(n,"string_content").
+.decl ide_ignored_end(n: node, end: span)
+ide_ignored_end(n,e) :- ide_ignored(n), match_all("(?s).*?(?<e>\\z)",n).
+.decl ide_raw_match(d: number, at: span, priority: number)
+.decl ide_masked(at: span)
+ide_masked(m) :- ide_raw_match(d,m,_), ide_ignored(n), docof(n,d), line(m,l), col(m,c), line(n,a), col(n,b), ide_ignored_end(n,e), line(e,z), col(e,q),
+    (l > a ; l = a, c >= b), (l < z ; l = z, c < q).
+
+// Text scanning numbers str.splitlines(), independently of AST's physical line coordinates.
+.decl ide_extra(d: number, separator: span)
+ide_extra(d,s) :- ide_selected(d,_), src_line(d,_,sp), match_all("(?<s>[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}])",sp).
+.decl ide_text_event(d: number, line: number, priority: number)
+ide_text_event(d,l+extra,i) :- ide_raw_match(d,m,i), !ide_masked(m), line(m,l), col(m,c),
+    extra = count : { ide_extra(d,s), line(s,a), col(s,b), (a < l ; a = l, b < c) }.
+.decl ide_text_choice(d: number, line: number, priority: number)
+ide_text_choice(d,l,i) :- ide_text_event(d,l,i), i = min j : { ide_text_event(d,l,j) }.
+
+// AST calls fill lines missed by the text pass, in native Python traversal order.
+.decl ide_ast_event(d: number, line: number, priority: number, visit: number)
+ide_ast_event(d,l,i,v) :- ide_active(d,i,_,attribute), docof(c,d), kind(c,"call"), field(c,"function",raw), unparen(raw,f), kind(f,"attribute"), field(f,"attribute",a), text(a,name), @nfkc(name) = attribute, line(c,l), visit_index(c,v).
+.decl ide_ast_choice(d: number, line: number, priority: number, visit: number)
+ide_ast_choice(d,l,i,v) :- ide_ast_event(d,l,i,v), !ide_text_choice(d,l,_), v = min w : { ide_ast_event(d,l,_,w) }.
+.decl ide_event(d: number, phase: number, ordinal: number, line: number, pattern: symbol)
+ide_event(d,0,l,l,pattern) :- ide_text_choice(d,l,i), ide_pattern(i,pattern,_).
+ide_event(d,1,v,l,pattern) :- ide_ast_choice(d,l,i,v), ide_pattern(i,pattern,_).
+.decl ide_output_path(path: symbol, output: symbol)
+ide_output_path(p,@slice(p,strlen(root)+1,strlen(p))) :- ide_doc(_,p), option("projectRoot",root), prefix(cat(root,"/"),p).
+ide_output_path(p,p) :- ide_doc(_,p), option("projectRoot",root), !prefix(cat(root,"/"),p).
+.decl ide_line(d: number, line: number, value: symbol)
+ide_line(d,l,@replace_all(raw,"\\A[\\x09-\\x0d\\x1c-\\x20\\x85\\xa0\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}]+|[\\x09-\\x0d\\x1c-\\x20\\x85\\xa0\\x{1680}\\x{2000}-\\x{200a}\\x{2028}\\x{2029}\\x{202f}\\x{205f}\\x{3000}]+\\z","")) :- ide_selected(d,_), split_line(d,l,raw).
+.violation IdeRow(at: span, file_order: symbol, phase: number, ordinal: number, file: symbol, line_num: number, line: symbol, pattern: symbol) code "IDE_ROW" "{pattern}: {line}"
+IdeRow(@place(p,l),p,phase,i,output,l,text,pattern) :- ide_doc(d,p), ide_event(d,phase,i,l,pattern), ide_output_path(p,output), ide_line(d,l,text).

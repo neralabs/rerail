@@ -22,6 +22,18 @@ CLASSES = []
 PROPERTIES = {}
 
 
+def comparable(event):
+    """Path.rglob leaves file order unspecified; preserve every ordered file group and raw observation."""
+    import copy
+    import itertools
+    import json
+    value=copy.deepcopy(event)
+    if value['entry'] in {'scan_directory','scan_directories'} and 'return' in value:
+        groups=[list(rows) for _,rows in itertools.groupby(value['return'],key=lambda r:json.dumps(r['fields']['file'],sort_keys=True))]
+        groups.sort(key=lambda rows:json.dumps(rows[0]['fields']['file'],sort_keys=True))
+        value['return']=[row for group in groups for row in group]
+    return value
+
 
 class Contract:
     def __init__(self, args):
@@ -114,7 +126,7 @@ class Contract:
                             expected = [r for r in self.baseline['calls'] if r['test']==event['test']]
                             i = self.observed.get(event['test'], 0)
                             self.observed[event['test']] = i+1
-                            compare(expected[i], event)
+                            compare(comparable(expected[i]), comparable(event))
                 call.__signature__ = signature
                 return call
             self.originals.append((owner, name, original))
