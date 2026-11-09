@@ -11,6 +11,7 @@ import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
 import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
+import { exitWhenParentGone, type ParentWatch } from "./parent-watch.js";
 
 export type HookInput = Record<string, unknown>;
 export type HookOutput = Record<string, unknown>;
@@ -329,7 +330,7 @@ export async function readStdin(stdin: AsyncIterable<Buffer | string> = process.
   return Buffer.concat(chunks).toString("utf8");
 }
 
-export function launchedDirectly(moduleUrl: string): boolean {
+function launchedDirectly(moduleUrl: string): boolean {
   const launchedPath = process.argv[1];
   return launchedPath !== undefined && realpathSync(fileURLToPath(moduleUrl)) === realpathSync(resolve(launchedPath));
 }
@@ -367,4 +368,27 @@ export async function serveHook(
   } catch (error) {
     streams.stderr.write(`rerail hook: ${error instanceof Error ? error.message : String(error)}\n`);
   }
+}
+
+/** What a hook entry uses in place of this process's own: the parent watch's facts and the hook's streams. */
+export interface HookEntryOptions {
+  watch?: ParentWatch;
+  streams?: HookStreams;
+}
+
+/**
+ * A coding agent's hook process, the one call each hook host's entry module makes: when `moduleUrl` is the module node
+ * was started with, it watches the process that started it (`exitWhenParentGone`, which on Windows ends a hook the
+ * agent gave up on, so it stops holding its session's lock) and then serves the hook. Imported, as by tests and the
+ * package index, it does nothing. The watch runs until the process ends: its timer never keeps the process alive, and
+ * a handle still open after the answer then ends with the agent too.
+ */
+export async function serveHookEntry(
+  moduleUrl: string,
+  run: (input: HookInput) => Promise<HookOutput>,
+  options: HookEntryOptions = {},
+): Promise<void> {
+  if (!launchedDirectly(moduleUrl)) return;
+  exitWhenParentGone(options.watch);
+  await serveHook(run, options.streams);
 }
