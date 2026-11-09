@@ -356,12 +356,18 @@ Two changes to how a pass's body is made shrank its code:
   at its slot's offset, not five instructions.
 - **Values in the order they are needed.** Each value is emitted just before the first value
   that reads it, not in the grammar's order. Each slot word is stored where it is made.
+- **The last pass's masks stored where they are made**, cut and shifted there; only a
+  delayed output's held word crosses to the next block. The counted outputs (extracts and
+  totals) are still stored after the body: their bit loop reads the word there.
+- **The block's row of slots is a loop pointer**, as the byte and output pointers are: a
+  slot's load or store is one `[row, #offset]`, with no multiply and no add.
 
 | | instructions | spills |
 |---|---|---|
 | before | 11,568 | 1,831 |
 | loads at their readers | 10,960 | 1,800 |
 | values on demand | 10,180 | 1,011 |
+| last pass's stores at their values; the slot row a loop pointer | 9,549 | 988 |
 
 Tier 1 went from about 500 to about 330 ns a 64-byte block, at a load of 20 to 30.
 

@@ -386,11 +386,26 @@ pub(super) struct At<'a> {
     pub(super) ascii: bool,
     /// The block's byte chunks, when already loaded (for the ASCII test).
     pub(super) bytes: Option<[Option<Value>; 5]>,
-    /// The file's first slot word, and the slots per block (`native_ir::Passes`).
+    /// The block's row of slot words, and the slots per block (`native_ir::Passes`).
     pub(super) scratch: Value,
     pub(super) slots: u16,
     /// Before the last pass: each output's slot, stored where the body makes it.
     pub(super) slot_of: &'a [u16],
+    /// The last pass's mask stores made where the body makes their values (`Sinks`).
+    pub(super) sinks: Option<Sinks<'a>>,
+}
+
+/// The last pass's outputs a body stores where it makes them: each output not counted (an
+/// extract's or a total's word is read after the body), cut to the stream outside full
+/// blocks, at `dst`; a delayed one's word before this one from its held word. The body gives
+/// back in its place nothing (a zero) or, delayed, the word held for the next block.
+#[derive(Clone, Copy)]
+pub(super) struct Sinks<'a> {
+    pub(super) dst: Value,
+    pub(super) stride: i64,
+    pub(super) held_in: &'a [Value],
+    pub(super) delayed: &'a [usize],
+    pub(super) early: &'a [bool],
 }
 
 /// One block's body: every instruction as straight-line bit operations. Gives each output's
@@ -406,14 +421,11 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     let plan = &state.plan;
     let n = native.insts.len();
     let lanes = Lanes::new(&mut *f, native, plan, at.base, at.i, !at.full, at.ascii, at.bytes, c.nibble);
-    // The block's row of slots, made once: each `Load` is one load at its slot's offset.
-    let row = if !at.slot_of.is_empty() || native.insts.iter().any(|i| matches!(i, BlockInst::Load(_))) {
-        let r = f.ins().imul_imm(at.i, 8 * i64::from(at.slots));
-        f.ins().iadd(at.scratch, r)
-    } else {
-        at.scratch
-    };
+    // The block's row of slots, a loop parameter: each `Load` is one load at its slot's offset.
+    let row = at.scratch;
     let mut e = Emit {
+        sinks: at.sinks,
+        sunk: vec![None; native.outputs.len()],
         native,
         state,
         full: at.full,
@@ -447,13 +459,22 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     let mut gates = 0;
     // Each slot word to store (before the last pass), by the value that is it.
     let mut store_at: Vec<Vec<u16>> = vec![Vec::new(); n];
+    let mut sink_at: Vec<Vec<usize>> = vec![Vec::new(); n];
     for (k, &v) in native.outputs.iter().enumerate() {
         if let Some(&slot) = at.slot_of.get(k) {
             store_at[usize::from(v)].push(slot);
         }
     }
+    // The last pass's outputs to store where they are made.
+    if let Some(sk) = at.sinks {
+        for (k, &v) in native.outputs.iter().enumerate() {
+            if sk.early[k] {
+                sink_at[usize::from(v)].push(k);
+            }
+        }
+    }
     if regions == 0 {
-        demand_order(&mut e, &mut *f, &grouped, &store_at);
+        demand_order(&mut e, &mut *f, &grouped, &store_at, &sink_at);
         let rounds = std::mem::take(&mut e.rounds);
         let (outputs, packed) = e.finish(&mut *f);
         return (outputs, packed, 0, rounds);
@@ -508,6 +529,7 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     }
     for x in 0..n {
         e.store(&mut *f, x, &store_at[x]);
+        e.sink(&mut *f, x, &sink_at[x]);
     }
     let rounds = std::mem::take(&mut e.rounds);
     let (outputs, packed) = e.finish(&mut *f);
@@ -519,7 +541,7 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
 /// read, from the values no other reads (the outputs, the carried ones), first to last. In the
 /// program's order a value made early and read late lives through all between, and spills.
 /// Each slot word is stored where it is made.
-fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Option<usize>], store_at: &[Vec<u16>]) {
+fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Option<usize>], store_at: &[Vec<u16>], sink_at: &[Vec<usize>]) {
     let native = e.native;
     let n = native.insts.len();
     let mut read = vec![false; n];
@@ -552,6 +574,7 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
                         e.emit(&mut *f, x);
                         done[x] = true;
                         e.store(&mut *f, x, &store_at[x]);
+                        e.sink(&mut *f, x, &sink_at[x]);
                     }
                     None => {
                         stack.push((node, true));
@@ -569,6 +592,7 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
                     for &m in &native.groups[g].members {
                         done[m] = true;
                         e.store(&mut *f, m, &store_at[m]);
+                        e.sink(&mut *f, m, &sink_at[m]);
                     }
                 }
                 Node::Group(g) => {
@@ -619,6 +643,9 @@ fn live(native: &BlockNative, state: &State, full: bool) -> (Vec<bool>, Vec<bool
 /// The body's emitter: each value's symbol, the carried state being packed, the byte vectors.
 #[derive(Clone)]
 struct Emit<'a, 'b> {
+    sinks: Option<Sinks<'b>>,
+    /// Each output's value given back where the body stored it (`Sinks`).
+    sunk: Vec<Option<Value>>,
     native: &'a BlockNative,
     state: &'a State,
     full: bool,
@@ -986,8 +1013,39 @@ impl Emit<'_, '_> {
         }
     }
 
+    /// Value `x`'s mask stores, as outputs `ks` of the last pass (`Sinks`).
+    fn sink(&mut self, f: &mut FunctionBuilder<'_>, x: usize, ks: &[usize]) {
+        let Some(sk) = self.sinks else { return };
+        for &k in ks {
+            let v = plain(&mut *f, &self.syms, &mut self.values, x);
+            let d = self.native.output_delays[k];
+            let word = if self.full {
+                v
+            } else {
+                let inside = within_word(&mut *f, self.i, self.len, d);
+                f.ins().band(v, inside)
+            };
+            let back = if d == 0 {
+                f.ins().store(stores_flags(), word, sk.dst, 8 * k as i32);
+                f.ins().iconst(types::I64, 0)
+            } else {
+                let h = sk.delayed.iter().position(|&y| y == k).expect("a delayed output");
+                let up = f.ins().ishl_imm(word, 64 - i64::from(d));
+                let before = f.ins().bor(sk.held_in[h], up);
+                f.ins().store(stores_flags(), before, sk.dst, 8 * k as i32 - sk.stride as i32);
+                f.ins().ushr_imm(word, i64::from(d))
+            };
+            self.sunk[k] = Some(back);
+        }
+    }
+
     fn finish(mut self, f: &mut FunctionBuilder<'_>) -> (Vec<Value>, Vec<Value>) {
-        let outputs = self.native.outputs.iter().map(|&v| plain(&mut *f, &self.syms, &mut self.values, usize::from(v))).collect();
+        let outputs = (0..self.native.outputs.len())
+            .map(|k| match self.sunk[k] {
+                Some(v) => v,
+                None => plain(&mut *f, &self.syms, &mut self.values, usize::from(self.native.outputs[k])),
+            })
+            .collect();
         let packed = (0..self.state.words)
             .map(|w| match (self.packed_out[w], self.consts[w]) {
                 (Some(v), 0) => v,
@@ -1248,8 +1306,10 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
         let carried = state.words;
         // Each loop block's parameters: the block index, the byte and output pointers (so that
         // every load and store is `[pointer, #offset]`), the state words, the running counts,
-        // and the delayed outputs' held words.
-        let params = 3 + carried + counted.len() + delayed.len();
+        // the delayed outputs' held words, and the block's row of slots when the pass has any
+        // (a pointer too: each load or store of a slot is one `[row, #offset]`).
+        let rowed = slots > 0;
+        let params = 3 + carried + counted.len() + delayed.len() + usize::from(rowed);
         for b in [body_block, general, head, finish] {
             for _ in 0..params {
                 f.append_block_param(b, types::I64);
@@ -1309,6 +1369,7 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
             .chain(std::iter::repeat_n(zero.into(), carried))
             .chain((0..counted.len()).map(|c| extract_base.get(c).copied().unwrap_or(zero).into()))
             .chain(std::iter::repeat_n(zero.into(), delayed.len()))
+            .chain(rowed.then_some(scratch.into()))
             .collect();
         // Blocks 1 .. len / 64 are full.
         let full_end = f.ins().ushr_imm(len, 6);
@@ -1329,6 +1390,8 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
 
         let stride = 8 * native.outputs.len() as i64;
         let stores = MemFlags::new().with_notrap();
+        // The outputs the body stores where it makes them (`Sinks`): all but the counted.
+        let early: Vec<bool> = (0..native.outputs.len()).map(|k| !counted.contains(&k)).collect();
         // The loops' progress points: the files, the blocks, and each flattening's set bits.
         let mut heads = vec![(row, Step::File), (head, Step::Block), (body_block, Step::Block)];
         for (b, full) in [(body_block, true), (general, false)] {
@@ -1337,7 +1400,10 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
             let (i, base, dst) = (p[0], p[1], p[2]);
             let packed_in = &p[3..3 + carried];
             let counts_in = &p[3 + carried..3 + carried + counted.len()];
-            let held_in = &p[3 + carried + counted.len()..];
+            let held_in = &p[3 + carried + counted.len()..3 + carried + counted.len() + delayed.len()];
+            // The block's row of slots.
+            let scratch = if rowed { p[params - 1] } else { scratch };
+            let sinks = slot_of.is_empty().then_some(Sinks { dst, stride, held_in, delayed: &delayed, early: &early });
             // The full body's one branch: an all-ASCII block runs a body with the values known on
             // ASCII bytes folded (`native_cpu_lanes`), the others the whole body. Both meet before
             // the sinks.
@@ -1351,7 +1417,7 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
                 f.ins().brif(ascii, fast, &[], slow, &[]);
                 for (blk, ascii) in [(fast, true), (slow, false)] {
                     f.switch_to_block(blk);
-                    let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes), scratch, slots, slot_of });
+                    let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes), scratch, slots, slot_of, sinks });
                     gate_branches += gates;
                     round_branches += rounds.len();
                     heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
@@ -1362,7 +1428,7 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
                 let m = f.block_params(merge).to_vec();
                 (m[..n].to_vec(), m[n..].to_vec())
             } else {
-                let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii: false, bytes: None, scratch, slots, slot_of });
+                let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii: false, bytes: None, scratch, slots, slot_of, sinks });
                 gate_branches += gates;
                 if full {
                     round_branches += rounds.len();
@@ -1375,7 +1441,7 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
             let words: Vec<Value> = values
                 .iter()
                 .enumerate()
-                .map(|(k, &v)| if full { v } else {
+                .map(|(k, &v)| if full || (slot_of.is_empty() && early[k]) { v } else {
                     let inside = within_word(&mut f, i, len, native.output_delays[k]);
                     f.ins().band(v, inside)
                 })
@@ -1384,6 +1450,13 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
             let mut held_out = Vec::with_capacity(delayed.len());
             for k in (0..native.outputs.len()).filter(|_| slot_of.is_empty()) {
                 let d = native.output_delays[k];
+                if early[k] {
+                    // Stored by the body; a delayed one's place holds its next held word.
+                    if d > 0 {
+                        held_out.push(values[k]);
+                    }
+                    continue;
+                }
                 if d == 0 {
                     f.ins().store(stores, words[k], dst, 8 * k as i32);
                     continue;
@@ -1413,11 +1486,13 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
             }
             let next = f.ins().iadd_imm(i, 1);
             let (next_base, next_dst) = (f.ins().iadd_imm(base, 64), f.ins().iadd_imm(dst, stride));
+            let next_row = rowed.then(|| f.ins().iadd_imm(scratch, 8 * i64::from(slots)));
             let again: Vec<BlockArg> = [next, next_base, next_dst]
                 .into_iter()
                 .chain(packed_out)
                 .chain(counts_out)
                 .chain(held_out)
+                .chain(next_row)
                 .map(BlockArg::from)
                 .collect();
             if full {
