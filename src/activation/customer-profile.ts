@@ -8,7 +8,8 @@ import {
   verify as verifySignature,
   type webcrypto,
 } from "node:crypto";
-import { readFile, rename, rm, writeFile, mkdir } from "node:fs/promises";
+import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { renameWithRetry } from "../engine/file-replace.js";
 import { join } from "node:path";
 import { z } from "zod";
 import type { DeviceSecretStore } from "./device-keystore.js";
@@ -317,7 +318,7 @@ export class CustomerProfileStore {
         const stored = { schemaVersion: 1 as const, trustRoots, profile: envelope };
         const temporaryPath = `${activationPath}.${process.pid}.${randomUUID()}.tmp`;
         await writeFile(temporaryPath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
-        await rename(temporaryPath, activationPath);
+        await renameWithRetry(temporaryPath, activationPath);
         await this.select(profileName);
         await afterActivation?.();
         return verified;
@@ -341,7 +342,7 @@ export class CustomerProfileStore {
     await mkdir(this.home, { recursive: true, mode: 0o700 });
     const temporaryPath = `${this.activeProfilePath}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporaryPath, `${profileName}\n`, { mode: 0o600 });
-    await rename(temporaryPath, this.activeProfilePath);
+    await renameWithRetry(temporaryPath, this.activeProfilePath);
   }
 
   async remove(profileName: string): Promise<void> {

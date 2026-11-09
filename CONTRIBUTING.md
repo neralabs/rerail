@@ -305,9 +305,9 @@ and `/healthz` report it as `dev` rather than `bundled`.
 Open a pull request against `main` that links its issue, if it has one. Changes are squash-merged after review.
 
 - `npm run check` passes: the type check, the layer boundaries, the repository structure gate, Windows-safe paths,
-  child processes started only through `src/engine/child-process.ts`, and no internal references (ticket IDs, `nera-`
-  names outside the public list). While the pull request stages pack data in a `publish/`, structure metric #3 fails
-  for each such tool-pack until the data is published.
+  child processes started only through `src/engine/child-process.ts`, renames only through `src/engine/file-replace.ts`,
+  and no internal references (ticket IDs, `nera-` names outside the public list). While the pull request stages pack
+  data in a `publish/`, structure metric #3 fails for each such tool-pack until the data is published.
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).

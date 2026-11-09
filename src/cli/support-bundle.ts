@@ -10,7 +10,8 @@
  * file before attaching it. The command only writes a local file; nothing here touches the network.
  */
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { renameWithRetrySync } from "../engine/file-replace.js";
 import { arch, homedir, hostname, platform, release, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
@@ -615,7 +616,7 @@ function writeBundle(output: string, bundle: SupportBundle): void {
   mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
   try {
     writeFileSync(staging, `${JSON.stringify(bundle, null, 2)}\n`, { mode: 0o600 });
-    renameSync(staging, output);
+    renameWithRetrySync(staging, output);
   } finally {
     rmSync(staging, { force: true });
   }

@@ -10,7 +10,6 @@ import {
   readdir,
   readFile,
   realpath,
-  rename,
   rm,
   rmdir,
   symlink,
@@ -592,7 +591,7 @@ export class ManagedUpdater {
       const time = await lstat(path).then(info => info.mtimeMs, () => undefined);
       if (time !== undefined && (newest === undefined || time > newest.time)) newest = { path, time };
     }
-    if (newest !== undefined) await rename(newest.path, this.currentLink).catch(() => undefined);
+    if (newest !== undefined) await renameWithRetry(newest.path, this.currentLink, { platform: this.platform }).catch(() => undefined);
   }
 
   private async syncCurrentLink(target: string): Promise<void> {
@@ -608,19 +607,19 @@ export class ManagedUpdater {
     const temporaryLink = `${this.currentLink}.${process.pid}.${randomUUID()}.tmp`;
     await symlink(linkTarget, temporaryLink, this.platform === "win32" ? "junction" : undefined);
     if (this.platform !== "win32") {
-      await rename(temporaryLink, this.currentLink);
+      await renameWithRetry(temporaryLink, this.currentLink, { platform: this.platform });
       return;
     }
 
     const previousLink = `${this.currentLink}.${process.pid}.${randomUUID()}.old`;
     const hadCurrent = await pathEntryExists(this.currentLink);
     try {
-      if (hadCurrent) await rename(this.currentLink, previousLink);
-      await rename(temporaryLink, this.currentLink);
+      if (hadCurrent) await renameWithRetry(this.currentLink, previousLink, { platform: this.platform });
+      await renameWithRetry(temporaryLink, this.currentLink, { platform: this.platform });
       if (hadCurrent) await unlink(previousLink);
     } catch (error) {
       await unlinkIfPresent(temporaryLink);
-      if (hadCurrent && !(await pathEntryExists(this.currentLink))) await rename(previousLink, this.currentLink);
+      if (hadCurrent && !(await pathEntryExists(this.currentLink))) await renameWithRetry(previousLink, this.currentLink, { platform: this.platform });
       throw error;
     }
   }
@@ -782,18 +781,7 @@ export class ManagedUpdater {
    * few seconds, as npm does, instead of failing the install.
    */
   private async renameStaging(stagingPrefix: string, finalPrefix: string): Promise<void> {
-    const deadline = Date.now() + STAGING_RENAME_RETRY_MS;
-    for (;;) {
-      try {
-        await rename(stagingPrefix, finalPrefix);
-        return;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        const transient = code === "EPERM" || code === "EACCES" || code === "EBUSY";
-        if (this.platform !== "win32" || !transient || Date.now() >= deadline) throw error;
-        await sleep(100);
-      }
-    }
+    await renameWithRetry(stagingPrefix, finalPrefix, { platform: this.platform, retryMs: STAGING_RENAME_RETRY_MS });
   }
 
   /**

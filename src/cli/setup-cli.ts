@@ -1,10 +1,10 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, readdir, realpath, rename, rm, rmdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, realpath, rm, rmdir, unlink, writeFile } from "node:fs/promises";
+import { renameWithRetry } from "../engine/file-replace.js";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createRequire } from "node:module";
 import type * as Sqlite from "node:sqlite";
-import { setTimeout as sleep } from "node:timers/promises";
 import { rulesDashboardUrl, type RulesDashboardScope } from "../api/session-contracts.js";
 import {
   CODING_AGENT_NAMES,
@@ -161,9 +161,8 @@ function backupRoot(now = new Date()): string {
 
 /** Rules and every repository's history, with their SQLite sidecars. */
 const BACKED_UP_DATABASES = ["", "-wal", "-shm"].map(suffix => `${RERAIL_DATABASE_FILE}${suffix}`);
-/** How long a database move waits for Windows to release a lock: 40 attempts, 250 ms apart. */
-const LOCKED_MOVE_ATTEMPTS = 40;
-const LOCKED_MOVE_RETRY_MS = 250;
+/** How long a database move waits for Windows to release a lock. */
+const LOCKED_MOVE_MS = 10_000;
 
 /**
  * After the coding agents are disconnected, nothing reopens the database: stop the daemon, then
@@ -190,18 +189,12 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   for (const name of listed) {
     // Windows keeps a file locked for a moment after the process holding it has exited (and an
     // antivirus scan can hold it too), so a locked move is retried briefly before giving up.
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        await rename(join(home, name), join(target, name));
-        break;
-      } catch (error) {
-        const code = error instanceof Error && "code" in error ? error.code : undefined;
-        // A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
-        if (code === "ENOENT" && /-(wal|shm)$/u.test(name)) break;
-        const locked = process.platform === "win32" && (code === "EBUSY" || code === "EPERM" || code === "EACCES");
-        if (!locked || attempt === LOCKED_MOVE_ATTEMPTS) throw error;
-        await sleep(LOCKED_MOVE_RETRY_MS);
-      }
+    try {
+      await renameWithRetry(join(home, name), join(target, name), { retryMs: LOCKED_MOVE_MS });
+    } catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      // A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
+      if (code !== "ENOENT" || !/-(wal|shm)$/u.test(name)) throw error;
     }
   }
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);

@@ -9,7 +9,8 @@
  * - `<home>/machine-id` (`0600`): a random UUID made once, which names this machine to every remote.
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { renameWithRetrySync } from "../engine/file-replace.js";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "../engine/child-process.js";
@@ -71,7 +72,7 @@ function writePrivate(file: string, content: string): void {
   const temporary = `${file}.${process.pid}.tmp`;
   try {
     writeFileSync(temporary, content, { mode: 0o600 });
-    renameSync(temporary, file);
+    renameWithRetrySync(temporary, file);
   } finally {
     rmSync(temporary, { force: true });
   }

@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { removeScratch, renameWithRetry } from "../../src/engine/file-replace.js";
+import { removeScratch, renameWithRetry, renameWithRetrySync } from "../../src/engine/file-replace.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -42,6 +42,14 @@ describe("renameWithRetry", () => {
     expect(missing.calls()).toBe(1);
   });
 
+  it("fails at once over a folder, which no wait lets Windows replace", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-file-replace-"));
+    roots.push(root);
+    const refused = flakyRename(1_000);
+    await expect(renameWithRetry(join(root, "new.tmp"), root, { platform: "win32", rename: refused.rename })).rejects.toMatchObject({ code: "EPERM" });
+    expect(refused.calls()).toBe(1);
+  });
+
   it("makes a read-only file writable on Windows so it can be replaced", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-file-replace-"));
     roots.push(root);
@@ -50,6 +58,24 @@ describe("renameWithRetry", () => {
     await chmod(target, 0o444);
     await renameWithRetry(join(root, "new.tmp"), target, { platform: "win32", rename: flakyRename(1).rename });
     expect((await stat(target)).mode & 0o200).not.toBe(0);
+  });
+});
+
+describe("renameWithRetrySync", () => {
+  it("retries a held file on Windows for the synchronous writers (daemon holder, remote config, bundles)", () => {
+    let calls = 0;
+    const rename = (): void => {
+      calls += 1;
+      if (calls <= 2) throw held("EBUSY");
+    };
+    renameWithRetrySync("a.tmp", "a", { platform: "win32", rename });
+    expect(calls).toBe(3);
+    let posixCalls = 0;
+    expect(() => renameWithRetrySync("a.tmp", "a", { platform: "linux", rename: () => {
+      posixCalls += 1;
+      throw held("EPERM");
+    } })).toThrow("EPERM");
+    expect(posixCalls).toBe(1);
   });
 });
 

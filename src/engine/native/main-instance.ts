@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { renameWithRetrySync } from "../file-replace.js";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
 import { mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
@@ -97,7 +98,7 @@ export function acquireMainInstance(build: MainRerailBuild, directory: string = 
   try {
     // A refusal may read the record at any moment; the rename keeps it from ever seeing half of one.
     writeFileSync(staged, `${JSON.stringify(holder)}\n`, { mode: 0o600 });
-    renameSync(staged, holderPath);
+    renameWithRetrySync(staged, holderPath);
   } catch (error) {
     rmSync(staged, { force: true });
     lock.release();

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { type FileHandle, lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { type FileHandle, lstat, mkdir, open, rm } from "node:fs/promises";
+import { renameWithRetry } from "../file-replace.js";
 import { openNoFollow } from "../no-follow.js";
 import { keepFolderToOwner, type PrivateFolder } from "./windows-acl.js";
 import { resolve, sep } from "node:path";
@@ -126,7 +127,7 @@ export async function writeLedgerFile(path: string, directory: string, text: str
     } finally {
       await handle.close();
     }
-    await rename(temporary, path);
+    await renameWithRetry(temporary, path);
   } catch (error) {
     await rm(temporary, { force: true });
     throw error;
