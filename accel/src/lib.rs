@@ -19,6 +19,7 @@ pub mod exec;
 pub mod kernel;
 pub mod lanes;
 pub mod price;
+pub mod rows;
 
 #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
 pub mod sme;

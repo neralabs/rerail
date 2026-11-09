@@ -287,7 +287,7 @@ fn embedded_models_load() {
 fn executor_places_on_the_lane() {
     assert!(backend().is_some_and(|b| b.lane() == Lane::Ane));
     let lane: Arc<dyn Backend> = Arc::new(ane());
-    let ex = Executor::with(vec![Arc::new(CpuBackend), lane]);
+    let ex = Executor::with(vec![Arc::new(CpuBackend::default()), lane]);
     let mut rng = Rng(13);
     let b = bits(&mut rng, 200, 1500, 2).fixed();
     let a = bits(&mut rng, 900, 1500, 2);

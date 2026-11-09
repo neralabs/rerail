@@ -67,7 +67,7 @@ pub struct Fixed {
 #[derive(Clone, Debug)]
 pub struct Prices {
     /// Seconds per unit, by form then lane; `None` where the lane has no kernel for the form.
-    per_unit: [[Option<f64>; 4]; 5],
+    per_unit: [[Option<f64>; 4]; 7],
     /// Per lane; for the CPU lane, wall seconds (the cores' time is `per_unit` divided by `cores`).
     pub fixed: [Fixed; 4],
     /// The cores the CPU lane spreads a launch over.
@@ -82,7 +82,7 @@ fn form_index(f: Form) -> usize {
 
 impl Default for Prices {
     fn default() -> Self {
-        let mut per_unit = [[None; 4]; 5];
+        let mut per_unit = [[None; 4]; 7];
         let mut set = |f: Form, l: Lane, s: f64| per_unit[form_index(f)][l.index()] = Some(s);
         // Release builds, per unit at the largest workload of each form (see the module's comment).
         set(Form::BitProduct, Lane::Cpu, 4.1e-12);
@@ -97,6 +97,15 @@ impl Default for Prices {
         set(Form::Histogram, Lane::Gpu, 1.7e-11);
         set(Form::Closure, Lane::Cpu, 7.5e-10);
         set(Form::Closure, Lane::Gpu, 1.7e-10);
+        // Joins, per row of both sides (the relational lab's replay of the Python pack's 232 joins, and the
+        // sort's and probe's host costs, 2026-11-09; host CPU and device together). The cores: a radix sort and a
+        // search, 5.7 ns a row of one core. The GPU's probe: the sort's 1.5 ns a row and the probe's 1.2 ns, about
+        // 1.4 ns a row of both. Its tiles: the host's grouping and packing, 5 ns a row. The pairs (3 ns each on the
+        // GPU) are not known ahead, so not priced.
+        set(Form::Probe, Lane::Cpu, 5.7e-9);
+        set(Form::Probe, Lane::Gpu, 1.4e-9);
+        set(Form::Tile, Lane::Cpu, 5.7e-9);
+        set(Form::Tile, Lane::Gpu, 5e-9);
         Prices {
             per_unit,
             fixed: [

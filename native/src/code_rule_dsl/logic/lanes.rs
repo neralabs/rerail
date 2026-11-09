@@ -14,7 +14,7 @@ use std::sync::{Arc, LazyLock};
 
 static CPU: LazyLock<Executor> = LazyLock::new(|| {
     let all = Executor::new();
-    let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend)];
+    let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default())];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     if all.lanes().contains(&rerail_accel::Lane::Sme) {
         lanes.extend(rerail_accel::sme::backend());

@@ -30,6 +30,26 @@ pub trait Backend: Send + Sync {
     fn can(&self, k: &Kernel) -> bool;
     /// Runs `ks` as one submission. The outputs are in `ks`' order, each equal to [`crate::cpu::run`]'s.
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String>;
+    /// Drops what the lane keeps for the join id `id` (decision 0100 §4).
+    fn forget(&self, _id: u64) {}
+    /// Drops everything the lane keeps (a chunk's end).
+    fn clear(&self) {}
+    /// What the lane keeps, and how it served.
+    fn space(&self) -> SpaceCounts {
+        SpaceCounts::default()
+    }
+}
+
+/// What a lane's space holds and how it served, for the profile (decision 0100 §4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpaceCounts {
+    pub entries: usize,
+    pub bytes: usize,
+    /// Joins whose right side was kept, and joins that built it.
+    pub hits: u64,
+    pub misses: u64,
+    /// Entries dropped for the limit.
+    pub evicted: u64,
 }
 
 /// One kernel to run, optionally pinned to a lane.
@@ -121,7 +141,7 @@ impl Executor {
     /// Every lane this machine has, with the default prices.
     pub fn new() -> Self {
         let present = lanes::present();
-        let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend)];
+        let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default())];
         #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
         if present[Lane::Sme.index()] {
             backends.extend(crate::sme::backend());
@@ -150,6 +170,30 @@ impl Executor {
 
     fn backend(&self, l: Lane) -> Option<&Arc<dyn Backend>> {
         self.backends.iter().find(|b| b.lane() == l)
+    }
+
+    /// Drops what every lane keeps for the join id `id`: its relation changed, or no later launch reads it. A lane
+    /// still running a batch that reads it keeps it until that batch ends.
+    pub fn forget(&self, id: u64) {
+        for b in &self.backends {
+            b.forget(id);
+        }
+    }
+
+    /// Drops everything every lane keeps: the chunk's end.
+    pub fn clear(&self) {
+        for b in &self.backends {
+            b.clear();
+        }
+    }
+
+    /// What each lane keeps, by lane.
+    pub fn space(&self) -> [SpaceCounts; 4] {
+        let mut out = [SpaceCounts::default(); 4];
+        for b in &self.backends {
+            out[b.lane().index()] = b.space();
+        }
+        out
     }
 
     /// Places each launch: `(lane, estimate, fastest)` per launch, in the batch's order.
@@ -267,19 +311,81 @@ impl Default for Executor {
     }
 }
 
-/// The CPU lane: the reference kernels on the rayon pool, the batch's launches in one parallel pass.
-pub struct CpuBackend;
+/// The CPU lane: the reference kernels on the rayon pool, the batch's launches in one parallel pass. Its space keeps
+/// a join's right side sorted by key 0, by the join's id.
+#[derive(Default)]
+pub struct CpuBackend {
+    space: std::sync::Mutex<CpuSpace>,
+}
+
+#[derive(Default)]
+struct CpuSpace {
+    sorted: std::collections::HashMap<u64, (usize, Arc<crate::rows::Keyed>)>,
+    bytes: usize,
+    counts: SpaceCounts,
+}
+
+impl CpuBackend {
+    /// The sort of a join's right side: kept by its id, or made (and kept when it has one).
+    fn keyed(&self, right: &crate::kernel::Keys, id: Option<u64>) -> Result<Arc<crate::rows::Keyed>, String> {
+        let rows = right[0].len();
+        let Some(id) = id else { return Ok(Arc::new(crate::rows::Keyed::new(&right[0]))) };
+        let mut s = self.space.lock().map_err(|_| "the cpu lane's space was poisoned")?;
+        if let Some((n, k)) = s.sorted.get(&id) {
+            if *n != rows {
+                return Err(format!("join: id {id} was kept with {n} rows, now names {rows}"));
+            }
+            let k = Arc::clone(k);
+            s.counts.hits += 1;
+            return Ok(k);
+        }
+        s.counts.misses += 1;
+        drop(s);
+        let k = Arc::new(crate::rows::Keyed::new(&right[0]));
+        let mut s = self.space.lock().map_err(|_| "the cpu lane's space was poisoned")?;
+        // The sort's order, keys and runs.
+        s.bytes += rows * 12 + k.runs.len() * 16;
+        s.sorted.insert(id, (rows, Arc::clone(&k)));
+        Ok(k)
+    }
+
+    fn join(&self, k: &Kernel) -> Result<Output, String> {
+        let Kernel::Join { left, right, right_id, .. } = k else { return Ok(crate::cpu::run(k)) };
+        Kernel::join_shape(left, right)?;
+        let keyed = self.keyed(right, *right_id)?;
+        Ok(Output::Pairs(crate::cpu::join(left, right, Some(&keyed))))
+    }
+}
 
 impl Backend for CpuBackend {
     fn lane(&self) -> Lane {
         Lane::Cpu
     }
-    fn can(&self, _: &Kernel) -> bool {
-        true
+    fn can(&self, k: &Kernel) -> bool {
+        match k {
+            Kernel::Join { left, right, .. } => Kernel::join_shape(left, right).is_ok(),
+            _ => true,
+        }
     }
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
         use rayon::prelude::*;
-        Ok(ks.par_iter().map(|k| crate::cpu::run(k)).collect())
+        ks.par_iter().map(|k| self.join(k)).collect()
+    }
+    fn forget(&self, id: u64) {
+        if let Ok(mut s) = self.space.lock() {
+            if let Some((rows, k)) = s.sorted.remove(&id) {
+                s.bytes -= rows * 12 + k.runs.len() * 16;
+            }
+        }
+    }
+    fn clear(&self) {
+        if let Ok(mut s) = self.space.lock() {
+            s.sorted.clear();
+            s.bytes = 0;
+        }
+    }
+    fn space(&self) -> SpaceCounts {
+        self.space.lock().map(|s| SpaceCounts { entries: s.sorted.len(), bytes: s.bytes, ..s.counts }).unwrap_or_default()
     }
 }
 
