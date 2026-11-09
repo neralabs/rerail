@@ -45,6 +45,9 @@ impl Kept {
     }
 }
 
+/// How many programs' cross-file parts a session keeps (a reader's, and the phases' it reads).
+pub(in crate::code_rule_dsl) const PARTS: usize = 8;
+
 /// What a session keeps of its cross-file part.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Retained {
@@ -55,7 +58,14 @@ pub(in crate::code_rule_dsl) struct Retained {
     rels: HashMap<String, Kept>,
     /// Each input's source, for its deltas next run (stage 2).
     input_srcs: HashMap<String, Arc<dyn Source>>,
+    /// The statistics a run measured of a kept relation, under the name it was bound as (itself, or `r__old`) and
+    /// the relation it is (decision 0094 §4: measured once, while it is kept as it is).
+    measured: HashMap<(String, usize), Measured>,
 }
+
+/// A relation's statistics as bound (`syntax::statistics`), and its counts of the constants rules test it by.
+/// The counts are of the constants tested when they were measured (the third): taken again only for the same.
+pub(in crate::code_rule_dsl) type Measured = (Vec<(String, i64, i64, i64, i64)>, Vec<(String, i64, i64)>, BTreeSet<(usize, i64)>);
 
 /// The key of a cross-file part: the prepared program's key and the part's program as lowered.
 pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: &front::Program) -> [u8; 32] {
@@ -202,6 +212,7 @@ pub(in crate::code_rule_dsl) fn after(
     derived: Vec<(String, usize, Arc<InRel>)>,
     outputs: &BTreeMap<String, (Vec<String>, Vec<usize>)>,
     sources: &[(String, Arc<dyn Source>)],
+    measured: HashMap<(String, usize), Measured>,
 ) -> Retained {
     let mut rels: HashMap<String, Kept> = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
@@ -222,10 +233,28 @@ pub(in crate::code_rule_dsl) fn after(
         rels.insert(rel, k);
     }
     let input_srcs = sources.iter().filter(|(_, s)| !s.columns().is_empty()).map(|(rel, s)| (rel.clone(), Arc::clone(s))).collect();
-    Retained { key, inputs, rels, input_srcs }
+    // Statistics of the relations still kept, as they are.
+    let alive: std::collections::HashSet<usize> = rels.values().map(|k| Arc::as_ptr(&k.rel) as *const u8 as usize).collect();
+    let measured = measured.into_iter().filter(|((_, at), _)| alive.contains(at)).collect();
+    Retained { key, inputs, rels, input_srcs, measured }
 }
 
 impl Retained {
+    /// The statistics measured of kept relation `held` bound as `name`, if a run measured them.
+    pub(in crate::code_rule_dsl) fn measured(&self, name: &str, held: &Arc<InRel>) -> Option<&Measured> {
+        self.measured.get(&(name.to_owned(), Arc::as_ptr(held) as *const u8 as usize))
+    }
+
+    /// Every statistic kept, to be carried to the next run's (`after`).
+    pub(in crate::code_rule_dsl) fn measured_all(&self) -> HashMap<(String, usize), Measured> {
+        self.measured.clone()
+    }
+
+    /// The digest the last run took of an input (`digest`, or a phase export's version).
+    pub(in crate::code_rule_dsl) fn input_digest(&self, rel: &str) -> Option<u64> {
+        self.inputs.get(rel).copied()
+    }
+
     /// Whether the last run's rows of a relation or an input are kept.
     pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
         self.rels.contains_key(rel) || self.input_srcs.contains_key(rel)
