@@ -750,7 +750,7 @@ vals(s, e, v) :- value(n, v), node(_, n, _, s, e).
     assert_eq!(out[1], pairs);
     let regex = w(json!({ "ast": { "language": "python", "rule": { "value": { "regex": "b" } } } }), "a.py", VALUES);
     let regex = csv(regex.iter().map(|f| {
-        let (s, e) = spans(&f);
+        let (s, e) = spans(f);
         format!("{s}\t{e}")
     }));
     assert!(!regex.is_empty());

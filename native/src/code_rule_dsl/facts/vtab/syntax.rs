@@ -1008,8 +1008,11 @@ struct Extra {
     rx_spans: Vec<[i64; 5]>,
     /// A pattern's matches in a line's, node's or capture's text, by pattern and text, for the batch (decision 0081):
     /// each distinct text is scanned once. Each match's groups as (match, group, start, end), offsets in the text.
-    rx_memo: HashMap<(usize, Box<str>), Arc<[(u32, u32, u32, u32)]>>,
+    rx_memo: HashMap<(usize, Box<str>), GroupSpans>,
 }
+
+/// A text's matches of one pattern: each match's groups as (match, group, start, end), offsets in the text.
+type GroupSpans = Arc<[(u32, u32, u32, u32)]>;
 
 /// Regex `k`'s rows: its matches (`matchall_<k>(sp, m)`, when read) and their named groups' spans
 /// (`matchgroup_<k>(sp, m, g, gsp)`, when read; `g` a string index), with one numbering of `m` for both.
@@ -1397,7 +1400,7 @@ impl Extra {
                         continue;
                     }
                     let body = &source[r.clone()];
-                    let found: Arc<[(u32, u32, u32, u32)]> = if memo && body.len() <= core_rr::RX_MEMO_TEXT {
+                    let found: GroupSpans = if memo && body.len() <= core_rr::RX_MEMO_TEXT {
                         match self.rx_memo.get(&(pat as usize, Box::from(body))) {
                             Some(found) => Arc::clone(found),
                             None => {
@@ -1720,8 +1723,8 @@ impl Batch {
             let dialect = if tag == TEXT {
                 None
             } else {
-                if !dialects.contains_key(&tag) {
-                    dialects.insert(tag, Dialect::new(tag)?);
+                if let std::collections::hash_map::Entry::Vacant(e) = dialects.entry(tag) {
+                    e.insert(Dialect::new(tag)?);
                 }
                 Some(&dialects[&tag])
             };

@@ -777,7 +777,7 @@ fn function(rules: &[&Rule], component: &BTreeSet<String>, keyless: &BTreeSet<&s
         .filter(|&j| {
             rules.iter().all(|rule| match rule.head.args.get(j) {
                 Some(Term::Int(_) | Term::Str(_)) => true,
-                Some(Term::Var(v)) => bound_by_atom(*rule, v),
+                Some(Term::Var(v)) => bound_by_atom(rule, v),
                 _ => false,
             })
         })

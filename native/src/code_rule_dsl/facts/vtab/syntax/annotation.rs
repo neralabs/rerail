@@ -77,8 +77,11 @@ pub(super) struct Annotations {
     /// The nested string annotations of each string annotation (by its node), for its guest.
     nested: HashMap<i64, Vec<Nested>>,
     /// Each annotation guest of the batch: the node it stands at, and its string nodes by range in its text.
-    guests: Vec<(i64, HashMap<(u32, u32), i64>)>,
+    guests: Vec<(i64, ByRange)>,
 }
+
+/// String nodes by their range in a text.
+type ByRange = HashMap<(u32, u32), i64>;
 
 impl Annotations {
     pub(super) fn new(reads: &BTreeSet<String>) -> Self {
@@ -91,7 +94,7 @@ impl Annotations {
         let (true, true, Some(dialect)) = (self.string_annotation, python, dialect) else { return Ok(()) };
         // The string hosts of the projection, by range.
         let f = &*p.facts;
-        let by_range: HashMap<(u32, u32), i64> = p
+        let by_range: ByRange = p
             .core
             .iter()
             .enumerate()

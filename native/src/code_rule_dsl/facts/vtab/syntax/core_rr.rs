@@ -665,6 +665,7 @@ impl CoreRows {
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
     /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");

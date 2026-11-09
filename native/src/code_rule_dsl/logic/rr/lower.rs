@@ -55,7 +55,9 @@
 //! `!split_dot(q, _, x)`).
 
 mod core;
-pub(in crate::code_rule_dsl) use self::core::{drop_unread_core, is_core};
+#[cfg(test)]
+pub(in crate::code_rule_dsl) use self::core::drop_unread_core;
+pub(in crate::code_rule_dsl) use self::core::is_core;
 
 use std::collections::{BTreeMap, BTreeSet};
 

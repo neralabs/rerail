@@ -924,10 +924,9 @@ fn souffle_functions_lower() {
     );
     let back = parse(&print(&p).unwrap()).unwrap();
     assert_eq!(difference(&p, &back), None);
-    for (src, what) in [(".decl a(x: symbol)\na(x) :- a(y), x = cat(y).", "cat/1")] {
-        let e = parse(src).unwrap_err().to_string();
-        assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
-    }
+    let (src, what) = (".decl a(x: symbol)\na(x) :- a(y), x = cat(y).", "cat/1");
+    let e = parse(src).unwrap_err().to_string();
+    assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
     // Floats lower; `y + 1.5` over `a` itself would be an unbounded value cycle (`front::cycles`), so `y` is `t`'s.
     for src in [".decl a(x: number)\na(x) :- a(y), x = to_float(\"1\").", ".decl t(y: number)\n.decl a(x: number)\na(x) :- t(y), x = y + 1.5."] {
         parse(src).unwrap_or_else(|e| panic!("{src}: {e}"));

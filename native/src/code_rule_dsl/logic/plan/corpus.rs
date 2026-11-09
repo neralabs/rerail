@@ -2228,7 +2228,7 @@ fn run_observed(
             }
             // W's values and f-string trees are read off the tape, in the file's context: kept only for a program that
             // reads them.
-            let tape = keep_tapes.then(|| (doc, file));
+            let tape = keep_tapes.then_some((doc, file));
             let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
             let digest = core::digest(&facts);
             drop(digest_span);
@@ -2296,7 +2296,7 @@ fn run_observed(
         // from none (no rows, for a rule that reads a document), not an error.
         if !sent {
             sent = true;
-            let built = syntax::with_nearest(&store, Vec::new(), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()));
+            let built = syntax::with_nearest(store, Vec::new(), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()));
             if send.send(built.map(|sources| Some((0, sources, Vec::new(), Vec::new(), Vec::new())))).is_err() {
                 break;
             }
