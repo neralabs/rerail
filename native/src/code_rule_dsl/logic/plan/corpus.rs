@@ -3028,6 +3028,7 @@ fn run_observed(
                     let mut stats = cross_stats;
                     let s = span("bind and measure kept");
                     let clean = cell.as_ref().map(|kept| cut.sources(kept, &part.program)).unwrap_or_default();
+                    let constants = constants_tested(&part.program);
                     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
                         // A derived relation kept is read in place, with its indexes (decision 0090 step 3).
                         if let Some(held) = held {
@@ -3036,7 +3037,7 @@ fn run_observed(
                         let measured = syntax::statistics(source.as_ref());
                         // The constants the rules test it by are counted too: a column measured without them reads as
                         // holding none, so `kind__old(r, identifier)` was planned as one row and drove a delta rule.
-                        let counts = constant_counts(&part.program, &rel, source.as_ref());
+                        let counts = constant_counts(constants.get(rel.as_str()), source.as_ref());
                         stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), counts);
                         modules.bind(&db, &rel, source)?;
                     }
@@ -3507,15 +3508,22 @@ fn run_observed(
 /// A relation's rows after a run: held by the engine (`kept`), or in its table.
 /// How many of `source`'s rows hold each integer constant a rule of `prog` tests `rel`'s columns by, by column name
 /// (the planner's `const_freq`).
-fn constant_counts(prog: &front::Program, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {
-    let mut wanted: BTreeMap<(usize, i64), i64> = BTreeMap::new();
-    for a in prog.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom).filter(|a| a.rel == rel) {
+/// Per relation, the integer constants its atoms test, by column (`constant_counts`'s): one pass over the rules,
+/// not one per relation.
+fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize, i64)>> {
+    let mut by: HashMap<&str, BTreeSet<(usize, i64)>> = HashMap::new();
+    for a in prog.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom) {
         for (c, t) in a.args.iter().enumerate() {
             if let front::Term::Int(v) = t {
-                wanted.insert((c, *v), 0);
+                by.entry(a.rel.as_str()).or_default().insert((c, *v));
             }
         }
     }
+    by
+}
+
+fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {
+    let mut wanted: BTreeMap<(usize, i64), i64> = tested.into_iter().flatten().map(|k| (*k, 0)).collect();
     if wanted.is_empty() {
         return Vec::new();
     }
