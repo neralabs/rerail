@@ -1,5 +1,6 @@
 //! Rust literal values as rustc evaluates them.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::Context;
 use crate::code_rule_dsl::scope::rust::resolve_index;
 use crate::code_rule_dsl::scope::{Form, ScopeTable};
@@ -511,7 +512,7 @@ fn reader<D: Doc>(expr: Expr) -> Reader<D> {
         Expr::Name => |node, reading, context, _| {
             follow_const(node, reading, context).unwrap_or(RustValue::Unknown)
         },
-        Expr::Parens => |node, reading, context, hint| match first_named(node) {
+        Expr::Parens => |node, reading, context, hint| match node.first_named() {
             Some(inner) => eval(&inner, reading, context, hint),
             None => RustValue::Unknown,
         },
@@ -524,13 +525,7 @@ fn reader<D: Doc>(expr: Expr) -> Reader<D> {
     }
 }
 
-fn first_named<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
-    node.children().find(|n| n.is_named())
-}
 
-fn last_named<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
-    node.children().filter(|n| n.is_named()).last()
-}
 
 /// The operators `unary` and `binary` read, by their text; any other is `?`, which neither reads.
 fn operator<D: Doc>(node: &Node<'_, D>) -> &'static str {
@@ -554,7 +549,7 @@ fn unary_parts<'r, D: Doc>(
     let op = node.field("operator").or_else(|| node.children().next())?;
     let arg = node
         .field("argument")
-        .or_else(|| node.children().find(|n| n.is_named()))?;
+        .or_else(|| node.first_named())?;
     let op = operator(&op);
     let operand_hint = hint.filter(|_| matches!(op, "-" | "+" | "!"));
     Some((op, arg, operand_hint))
@@ -675,7 +670,7 @@ fn eval_right<D: Doc>(
 
 /// A cast's operand and the text of its type.
 fn cast_parts<'r, D: Doc>(node: &Node<'r, D>) -> Option<(Node<'r, D>, String)> {
-    let mut named = node.children().filter(|n| n.is_named());
+    let mut named = node.named();
     let value = node.field("value").or_else(|| named.next())?;
     let ty = node.field("type").or_else(|| named.next())?;
     Some((value, ty.text().into_owned()))
@@ -739,7 +734,7 @@ fn block_value<'r, D: Doc>(node: &Node<'r, D>, reading: Reading<'_>) -> Option<N
     if rejected {
         return None;
     }
-    last_named(node)
+    node.last_named()
 }
 
 /// The numeric type `eval` gives `node` without a hint, read from its syntax alone: a suffix, a
@@ -758,13 +753,13 @@ fn static_type<D: Doc>(
     let ty = match expr_of(node) {
         Expr::Number => typed(&literal(node)),
         Expr::Name => const_item(node, reading).and_then(|(_, declared)| declared.hint()),
-        Expr::Parens => first_named(node).and_then(|inner| static_type(&inner, reading, context)),
+        Expr::Parens => node.first_named().and_then(|inner| static_type(&inner, reading, context)),
         Expr::Unary => static_unary(node, reading, context),
         Expr::Binary => static_binary(node, reading, context),
         Expr::Cast => cast_parts(node).and_then(|(_, ty)| cast_type(&ty)),
         Expr::If => static_if(node, reading, context),
         Expr::Block | Expr::Else => {
-            last_named(node).and_then(|last| static_type(&last, reading, context))
+            node.last_named().and_then(|last| static_type(&last, reading, context))
         }
         Expr::Literal | Expr::Other => None,
     };

@@ -14,6 +14,7 @@
 //! `server_graph`): file sets (snapshots, editors, workspaces without host facts) from their own
 //! entries, hosts and the native repository index from the package on disk (`on_disk`).
 
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use ast_grep_language::LanguageExt;
 use indexmap::IndexSet;
@@ -130,7 +131,7 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
             _ => prologue = false,
         }
         match statement.kind().as_ref() {
-            "import_statement" if !has_token(&statement, "type") => {
+            "import_statement" if !statement.has_token("type") => {
                 let source = statement.field("source").or_else(|| {
                     statement
                         .children()
@@ -139,7 +140,7 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
                 });
                 specifiers.extend(source.and_then(|source| literal(&source)));
             }
-            "export_statement" if !has_token(&statement, "type") => {
+            "export_statement" if !statement.has_token("type") => {
                 specifiers.extend(
                     statement
                         .field("source")
@@ -161,8 +162,7 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
             }
             let first = call.field("arguments").and_then(|arguments| {
                 arguments
-                    .children()
-                    .find(|argument| argument.is_named() && argument.kind() != "comment")
+                    .first_code()
             });
             specifiers.extend(
                 first
@@ -178,16 +178,11 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
 /// A directive's text: an expression statement that is only a string literal (comments aside).
 fn directive<D: Doc>(statement: &Node<'_, D>) -> Option<String> {
     let mut named = statement
-        .children()
-        .filter(|child| child.is_named() && child.kind() != "comment");
+        .named_code();
     let string = named.next().filter(|child| child.kind() == "string")?;
     named.next().is_none().then(|| literal(&string)).flatten()
 }
 
-fn has_token<D: Doc>(node: &Node<'_, D>, token: &str) -> bool {
-    node.children()
-        .any(|child| !child.is_named() && child.kind() == token)
-}
 
 /// A string literal's text between its quotes.
 fn literal<D: Doc>(string: &Node<'_, D>) -> Option<String> {

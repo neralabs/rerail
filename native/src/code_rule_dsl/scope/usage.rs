@@ -10,6 +10,7 @@ mod rust;
 use super::{
     Binding, BuildError, DEADLINE_INTERVAL, Form, ImportKind, NodeRef, ScopeKind, ScopeTable,
 };
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::identifier::python_identifier;
 use crate::code_rule_dsl::language::adapter::{Adapter, ScopeRules, with_adapter};
 use ast_grep_core::{Doc, Node};
@@ -677,8 +678,7 @@ fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     let mut node = node.clone();
     while node.kind() == "parenthesized_expression" {
         let mut inner = node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment");
+            .named_code();
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -746,8 +746,7 @@ fn extract<D: Doc>(
 ) -> Result<(), BuildError> {
     steps.take()?;
     let named = || {
-        node.children()
-            .filter(|child| child.is_named() && child.kind() != "comment")
+        node.named_code()
     };
     match node.kind().as_ref() {
         "parenthesized_expression" => match named().collect::<Vec<_>>().as_slice() {
@@ -785,8 +784,7 @@ fn extract<D: Doc>(
                 .field("arguments")
                 .map(|arguments| {
                     arguments
-                        .children()
-                        .filter(|child| child.is_named() && child.kind() != "comment")
+                        .named_code()
                         .map(|argument| unparenthesized(&argument))
                         .collect::<Vec<_>>()
                 })
@@ -797,8 +795,7 @@ fn extract<D: Doc>(
                     let set = display.kind() == "set";
                     if set {
                         for element in display
-                            .children()
-                            .filter(|child| child.is_named() && child.kind() != "comment")
+                            .named_code()
                         {
                             steps.take()?;
                             exports.add(&element);

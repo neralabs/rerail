@@ -16,6 +16,7 @@ use crate::code_rule_dsl::{
     },
     value::NodeRef,
 };
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use std::collections::{BTreeMap, HashSet};
 
@@ -216,8 +217,7 @@ fn unparenthesized<'t, D: Doc>(mut node: Node<'t, D>) -> Result<Node<'t, D>, Rea
             return Ok(node);
         }
         let parts: Vec<_> = node
-            .children()
-            .filter(|n| n.is_named() && n.kind() != "comment")
+            .named_code()
             .collect();
         match parts.as_slice() {
             [inner] => node = inner.clone(),
@@ -692,8 +692,7 @@ mod tests {
             .unwrap();
         assert!(
             parens
-                .children()
-                .filter(|n| n.is_named() && n.kind() != "comment")
+                .named_code()
                 .count()
                 > 1,
             "fixture must retain the named line continuation native unparenthesizing stops at"

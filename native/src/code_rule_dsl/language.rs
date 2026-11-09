@@ -29,6 +29,7 @@
 
 pub(crate) mod adapter;
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::blade::forte::tree::{self as blade_tree, BladeLang};
 use crate::code_rule_dsl::logic::rr::tape as rr_tree;
 use crate::code_rule_dsl::module_path::ModulePath;
@@ -1360,8 +1361,7 @@ mod tests {
             .dfs()
             .filter(|node| node.kind() == "string")
             .map(|node| {
-                node.children()
-                    .filter(|child| child.is_named())
+                node.named()
                     .map(|child| format!("{}:{}", child.kind(), child.text()))
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -1440,8 +1440,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{dialect:?}: {source} has parameters"));
             let function = parameters.parent().expect("parameters have a parent");
             let parameter = parameters
-                .children()
-                .find(|child| child.is_named())
+                .first_named()
                 .unwrap_or_else(|| panic!("{dialect:?}: {source} has a parameter"));
             let pattern = parameter
                 .field("pattern")
@@ -1687,8 +1686,7 @@ mod tests {
             .dfs()
             .filter(|node| node.kind() == "string")
             .map(|node| {
-                node.children()
-                    .filter(|child| child.is_named())
+                node.named()
                     .map(|child| format!("{}:{}", child.kind(), child.text()))
                     .collect::<Vec<_>>()
                     .join(" ")
@@ -2953,8 +2951,7 @@ mod tests {
                 .and_then(|module| module.field("body"))
                 .expect("the module has a body");
             let statements = body
-                .children()
-                .filter(|node| node.is_named())
+                .named()
                 .map(|node| node.kind().into_owned())
                 .collect::<Vec<_>>();
             assert_eq!(statements, ["expression_statement", "statement_block"]);

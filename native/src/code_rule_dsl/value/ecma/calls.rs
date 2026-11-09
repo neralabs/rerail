@@ -5,6 +5,7 @@
 //! `'a'.length`, `/a/g.flags`). A call folds only through a function on eslint-utils' allowlists
 //! (`builtins.rs`, generated from its source) that is implemented here; anything else is unknown.
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
 
 use super::builtins::{BUILTIN_NAMES, CALL_ALLOWED, CALL_PASS_THROUGH, CONSTANTS, GETTER_ALLOWED};
@@ -385,8 +386,7 @@ fn argument_values<D: Doc>(
         }
         if child.kind() == "spread_element" {
             let inner = child
-                .children()
-                .find(|inner| inner.is_named() && inner.kind() != "comment")?;
+                .first_code()?;
             match decode(&inner, context) {
                 Value::Array(items) => values.extend(items),
                 Value::Utf16(units) => {
@@ -440,8 +440,7 @@ fn raw<D: Doc>(template: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         };
         units.extend(chunk(before));
         let Some(expression) = substitution
-            .children()
-            .find(|child| child.is_named() && child.kind() != "comment")
+            .first_code()
         else {
             return Value::Unknown;
         };

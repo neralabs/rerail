@@ -15,6 +15,7 @@
 //! compares by the key PHP coerces it to (`1 == '1' == 1.5 == true`, `null == ''`); anything else
 //! structurally.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::php::{self, Key};
 use super::structure::{Equality, Tok};
 use super::{Context, Value};
@@ -443,8 +444,7 @@ const STATEMENT_LISTS: &[&str] = &[
 /// (`maybeCreateZeroLengthNop`): `{ // c }` is not `{ }`.
 fn trailing_comment<D: Doc>(list: &Node<'_, D>, out: &mut Vec<Tok>) {
     if list
-        .children()
-        .filter(|child| child.is_named())
+        .named()
         .last()
         .is_some_and(|child| trivia(&child))
     {

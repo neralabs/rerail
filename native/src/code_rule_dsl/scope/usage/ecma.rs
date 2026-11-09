@@ -10,6 +10,7 @@ use super::super::{
     Binding, BuildError, Form, MAX_BUILD_DEPTH, MAX_BUILD_STACK_BYTES, NodeRef, ScopeKind,
     ScopeTable, stack_address,
 };
+use crate::code_rule_dsl::tree::Tree;
 use super::{Facts, PrivateDeclaration, PrivateMember, Steps, known};
 use crate::code_rule_dsl::language::kind_ids;
 use ast_grep_core::{Doc, Node};
@@ -117,10 +118,6 @@ const WRAPPERS: &[&str] = &[
     "type_assertion",
 ];
 
-fn named_children<'a, 'r, D: Doc>(node: &'a Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> + 'a {
-    node.children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
-}
 
 fn same<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>) -> bool {
     left.range() == right.range() && left.kind_id() == right.kind_id()
@@ -129,7 +126,7 @@ fn same<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>) -> bool {
 /// The expression inside any parentheses around `node`.
 fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
     while node.kind() == "parenthesized_expression" {
-        let inner = named_children(&node).next();
+        let inner = node.named_code().next();
         match inner {
             Some(inner) => node = inner,
             None => break,
@@ -138,10 +135,6 @@ fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
     node
 }
 
-fn has_token<D: Doc>(node: &Node<'_, D>, tokens: &[&str]) -> bool {
-    node.children()
-        .any(|child| !child.is_named() && tokens.contains(&child.kind().as_ref()))
-}
 
 /// A class member's key: tree-sitter-javascript's `field_definition` names it `property`;
 /// tree-sitter-typescript's `public_field_definition` and both grammars' `method_definition`,
@@ -245,7 +238,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
             self.enter_class_body(&node);
         }
         self.ancestors.push(node.clone());
-        for child in node.children().filter(|child| child.is_named()) {
+        for child in node.named() {
             self.visit(child)?;
         }
         self.ancestors.pop();
@@ -259,10 +252,10 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
     /// it, a getter and setter one member together.
     fn enter_class_body(&mut self, body: &Node<'r, D>) {
         let mut members: HashMap<Box<str>, usize> = HashMap::new();
-        for member in named_children(body) {
+        for member in body.named_code() {
             let definition = match member.kind().as_ref() {
                 "public_field_definition" | "field_definition" => Form::Field,
-                "method_definition" if has_token(&member, &["get", "set"]) => Form::Accessor,
+                "method_definition" if member.has_any_token(&["get", "set"]) => Form::Accessor,
                 "method_definition" => Form::Method,
                 _ => continue,
             };
@@ -275,7 +268,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
             let annotation = member
                 .field("type")
                 .filter(|_| field)
-                .and_then(|annotation| named_children(&annotation).next());
+                .and_then(|annotation| annotation.named_code().next());
             let declaration = PrivateDeclaration {
                 name: NodeRef::of(&name),
                 form: definition,
@@ -441,7 +434,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
         match parent_node.kind().as_ref() {
             "expression_statement" => true,
             "sequence_expression" => {
-                let last = named_children(parent_node).last();
+                let last = parent_node.named_code().last();
                 match last {
                     Some(last) if same(&last, &child) => self.unused_expression(parent),
                     _ => true,
@@ -494,7 +487,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
         let mut for_in_of = false;
         if let Some(parent) = &parent {
             let parent_node = &self.ancestors[parent.0];
-            let logical = has_token(parent_node, &["||=", "&&=", "??="]);
+            let logical = parent_node.has_any_token(&["||=", "&&=", "??="]);
             if assignment_left(parent, &["augmented_assignment_expression"])
                 && !logical
                 && self.unused_expression(parent.0)
@@ -574,7 +567,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
             return false;
         };
         let first = if body.kind() == "statement_block" {
-            named_children(&body).next()
+            body.named_code().next()
         } else {
             Some(body)
         };
@@ -622,7 +615,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
                 }
                 // The queried expression or the predicate's parameter, not its type.
                 "type_query" | "type_predicate" | "asserts" => {
-                    return named_children(ancestor)
+                    return ancestor.named_code()
                         .next()
                         .is_some_and(|first| same(&first, &child));
                 }
@@ -782,7 +775,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
                     break;
                 }
                 "for_in_statement" => {
-                    let declared = has_token(ancestor, &["var", "let", "const"]);
+                    let declared = ancestor.has_any_token(&["var", "let", "const"]);
                     writes += usize::from(is_field("left") && declared);
                     break;
                 }
@@ -842,7 +835,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
                     && (parent.children().any(|child| {
                         child.kind() == "accessibility_modifier"
                             || child.kind() == "override_modifier"
-                    }) || has_token(parent, &["readonly"]))
+                    }) || parent.has_any_token(&["readonly"]))
                 {
                     return true;
                 }
@@ -853,7 +846,7 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
                     .rev()
                     .find(|ancestor| FUNCTIONS.contains(&ancestor.kind().as_ref()))
                     && function.kind() == "method_definition"
-                    && has_token(function, &["set"])
+                    && function.has_any_token(&["set"])
                 {
                     return true;
                 }
@@ -949,11 +942,11 @@ impl<'t, 'r, D: Doc> Walk<'t, 'r, '_, '_, D> {
 /// typescript-eslint's `hasOverridingExportStatement`: an `export { }` list, `export *`,
 /// `export =` or `export default` of a name.
 fn overriding_exports<D: Doc>(block: &Node<'_, D>) -> bool {
-    named_children(block).any(|statement| {
+    block.named_code().any(|statement| {
         if statement.kind() != "export_statement" || statement.field("declaration").is_some() {
             return false;
         }
-        if has_token(&statement, &["default"]) {
+        if statement.has_any_token(&["default"]) {
             return statement
                 .field("value")
                 .is_some_and(|value| value.kind() == "identifier");
@@ -1017,7 +1010,7 @@ fn inside_storable_function<D: Doc>(node: &Node<'_, D>, rhs: (usize, usize)) -> 
         match kind.as_ref() {
             "parenthesized_expression" | "arguments" | "template_substitution" => {}
             "sequence_expression"
-                if !named_children(&current)
+                if !current.named_code()
                     .last()
                     .is_some_and(|last| same(&last, &child)) =>
             {

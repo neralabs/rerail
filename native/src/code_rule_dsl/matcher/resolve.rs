@@ -1,3 +1,4 @@
+use crate::code_rule_dsl::tree::Tree;
 use super::GrammarMatcher;
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
@@ -210,15 +211,14 @@ fn is_strict<D: Doc>(options: &LanguageOptions, node: &Node<'_, D>) -> bool {
 /// Whether a body's directive prologue (its leading string-literal statements) holds
 /// `'use strict'` or `"use strict"`, spelled exactly so.
 fn has_use_strict<D: Doc>(body: &Node<'_, D>) -> bool {
-    for statement in body.children().filter(|child| child.is_named()) {
+    for statement in body.named() {
         match statement.kind().as_ref() {
             "comment" | "hash_bang_line" => continue,
             "expression_statement" => {}
             _ => return false,
         }
         let mut parts = statement
-            .children()
-            .filter(|part| part.is_named() && part.kind() != "comment");
+            .named_code();
         let (Some(literal), None) = (parts.next(), parts.next()) else {
             return false;
         };

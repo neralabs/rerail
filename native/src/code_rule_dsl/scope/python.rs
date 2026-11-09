@@ -1,5 +1,6 @@
 //! Python bindings and references, after Ruff's `Checker` visitor.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::options::{DEFAULT_PYTHON_MINOR, python_builtins};
 use super::{
     Access, Binding, BuildError, Builder, Form, Grammar, Import, ImportKind, NodeRef, Origin,
@@ -211,9 +212,6 @@ fn python() -> &'static Python {
 
 type Visit = Result<(), BuildError>;
 
-fn named<'a, 'r, D: Doc>(node: &'a Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> + 'a {
-    node.children().filter(|child| child.is_named())
-}
 
 fn fields() -> &'static Fields {
     &python().fields
@@ -332,7 +330,7 @@ impl Visitor<'_, '_> {
     }
 
     fn children<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
-        for child in named(node) {
+        for child in node.named() {
             self.visit(&child)?;
         }
         Ok(())
@@ -463,7 +461,7 @@ impl Visitor<'_, '_> {
                 } else {
                     Form::With
                 };
-                for child in named(node) {
+                for child in node.named() {
                     if same(&child, alias.as_ref()) {
                         self.until = handler.as_ref().map(|handler| handler.range().end);
                         let bound = self.targets(&child, node.range().end, site(form, node));
@@ -480,7 +478,7 @@ impl Visitor<'_, '_> {
                 // Ruff binds the name in the declaring scope only; the module is not rebound.
                 let current = self.builder.current;
                 if self.builder.scope(current).kind != ScopeKind::Module {
-                    let names = named(node).filter(|child| self.tag(child) == Tag::Identifier);
+                    let names = node.named().filter(|child| self.tag(child) == Tag::Identifier);
                     for child in names.collect::<Vec<_>>() {
                         let binding = Binding {
                             origin: Origin::Global,
@@ -495,7 +493,7 @@ impl Visitor<'_, '_> {
             }
             Tag::NonlocalStatement => {
                 // Each name also reads the enclosing binding, which Ruff marks used.
-                for child in named(node) {
+                for child in node.named() {
                     if self.tag(&child) != Tag::Identifier {
                         continue;
                     }
@@ -512,7 +510,7 @@ impl Visitor<'_, '_> {
             }
             Tag::If => {
                 let condition = field(node, fields.condition);
-                for child in named(node) {
+                for child in node.named() {
                     if same(&child, condition.as_ref()) || self.tag(&child) == Tag::Comment {
                         self.visit(&child)?;
                     } else {
@@ -524,7 +522,7 @@ impl Visitor<'_, '_> {
                 // The body and the `else` share a branch; each handler and the `finally` get one.
                 let body = field(node, fields.body);
                 let mut shared = None;
-                for child in named(node) {
+                for child in node.named() {
                     match self.tag(&child) {
                         Tag::Comment => self.visit(&child)?,
                         Tag::Else => {
@@ -543,7 +541,7 @@ impl Visitor<'_, '_> {
             }
             Tag::With => {
                 let body = field(node, fields.body);
-                for child in named(node) {
+                for child in node.named() {
                     if same(&child, body.as_ref()) {
                         self.in_branch(None, |visitor| visitor.visit(&child))?;
                     } else {
@@ -552,7 +550,7 @@ impl Visitor<'_, '_> {
                 }
             }
             Tag::Delete => {
-                for child in named(node) {
+                for child in node.named() {
                     self.delete_target(node, &child)?;
                 }
             }
@@ -569,7 +567,7 @@ impl Visitor<'_, '_> {
                 let head = match self.tag(node) {
                     Tag::Call => node.field("function"),
                     Tag::Subscript => node.field("value"),
-                    _ => named(node).next(),
+                    _ => node.named().next(),
                 };
                 let call = self.tag(node) == Tag::Call;
                 let settings = self.settings();
@@ -620,7 +618,7 @@ impl Visitor<'_, '_> {
             }
             Tag::ConditionalExpression => {
                 // `body if test else orelse` runs the test first (Ruff visits it first too).
-                let parts = named(node)
+                let parts = node.named()
                     .filter(|part| self.tag(part) != Tag::Comment)
                     .collect::<Vec<_>>();
                 if let [body, test, rest @ ..] = parts.as_slice() {
@@ -638,7 +636,7 @@ impl Visitor<'_, '_> {
             Tag::CaseClause => {
                 let offset = node.range().start;
                 let consequence = field(node, fields.consequence);
-                for child in named(node) {
+                for child in node.named() {
                     if self.tag(&child) == Tag::CasePattern {
                         self.case_pattern(&child, offset)?;
                     } else if same(&child, consequence.as_ref()) {
@@ -650,7 +648,7 @@ impl Visitor<'_, '_> {
             }
             Tag::DottedName => {
                 // Outside imports and patterns: only the head names a binding.
-                if let Some(head) = named(node).next() {
+                if let Some(head) = node.named().next() {
                     self.visit(&head)?;
                 }
             }
@@ -781,7 +779,7 @@ impl Visitor<'_, '_> {
             }
             Tag::TargetGroup => {
                 self.builder.enter()?;
-                for child in named(target) {
+                for child in target.named() {
                     self.delete_target(statement, &child)?;
                 }
                 self.builder.leave();
@@ -804,7 +802,7 @@ impl Visitor<'_, '_> {
             "parenthesized_expression" | "tuple_pattern"
         ) && !target.children().any(|child| child.kind() == ",")
         {
-            match named(&target)
+            match target.named()
                 .filter(|child| self.tag(child) != Tag::Comment)
                 .collect::<Vec<_>>()
                 .as_slice()
@@ -914,7 +912,7 @@ impl Visitor<'_, '_> {
             }
             Tag::TargetGroup | Tag::ListSplatPattern | Tag::AsPatternTarget | Tag::CasePattern => {
                 self.builder.enter()?;
-                for child in named(node) {
+                for child in node.named() {
                     self.targets(&child, offset, site)?;
                 }
                 self.builder.leave();
@@ -939,7 +937,7 @@ impl Visitor<'_, '_> {
     /// Parameter names of a `parameters` or `lambda_parameters` node, bound at `offset`.
     fn bind_parameters<D: Doc>(&mut self, parameters: &Node<'_, D>, offset: usize) {
         let fields = fields();
-        for parameter in named(parameters) {
+        for parameter in parameters.named() {
             let name = match self.tag(&parameter) {
                 Tag::Identifier => Some(parameter.clone()),
                 Tag::DefaultParameter | Tag::TypedDefaultParameter => {
@@ -947,7 +945,7 @@ impl Visitor<'_, '_> {
                 }
                 Tag::TypedParameter => {
                     let ty = field(&parameter, fields.ty);
-                    named(&parameter).find(|child| !same(child, ty.as_ref()))
+                    parameter.named().find(|child| !same(child, ty.as_ref()))
                 }
                 Tag::ListSplatPattern | Tag::DictionarySplatPattern => Some(parameter.clone()),
                 _ => None,
@@ -957,7 +955,7 @@ impl Visitor<'_, '_> {
                 self.tag(&name),
                 Tag::ListSplatPattern | Tag::DictionarySplatPattern
             ) {
-                named(&name).next()
+                name.named().next()
             } else {
                 Some(name)
             };
@@ -980,7 +978,7 @@ impl Visitor<'_, '_> {
 
     /// Defaults, which run in the enclosing scope when the function is defined.
     fn visit_defaults<D: Doc>(&mut self, parameters: &Node<'_, D>) -> Visit {
-        for parameter in named(parameters) {
+        for parameter in parameters.named() {
             if matches!(
                 self.tag(&parameter),
                 Tag::DefaultParameter | Tag::TypedDefaultParameter
@@ -993,7 +991,7 @@ impl Visitor<'_, '_> {
 
     /// Annotations, which run in the enclosing (or type-parameter) scope.
     fn visit_annotations<D: Doc>(&mut self, parameters: &Node<'_, D>) -> Visit {
-        for parameter in named(parameters) {
+        for parameter in parameters.named() {
             if matches!(
                 self.tag(&parameter),
                 Tag::TypedParameter | Tag::TypedDefaultParameter
@@ -1119,7 +1117,7 @@ impl Visitor<'_, '_> {
         let Some(callable) = callable else {
             return self.visit(&arguments);
         };
-        let items = named(&arguments)
+        let items = arguments.named()
             .filter(|item| self.tag(item) != Tag::Comment)
             .collect::<Vec<_>>();
         // Ruff's `Arguments::args` (positional and starred) and `keywords` (named and `**`).
@@ -1221,13 +1219,13 @@ impl Visitor<'_, '_> {
     /// `NamedTuple("N", [("a", int), ...])`: each two-element display's second element is a type.
     fn named_tuple_fields<D: Doc>(&mut self, display: &Node<'_, D>) -> Visit {
         self.builder.enter()?;
-        for element in named(display)
+        for element in display.named()
             .filter(|element| element.kind() != "comment")
             .collect::<Vec<_>>()
         {
             let pair = matches!(element.kind().as_ref(), "list" | "tuple")
                 .then(|| {
-                    named(&element)
+                    element.named()
                         .filter(|part| self.tag(part) != Tag::Comment)
                         .collect::<Vec<_>>()
                 })
@@ -1248,7 +1246,7 @@ impl Visitor<'_, '_> {
     /// entry's value is one too) or `NamedTuple("N", **{"a": int})` (where it is not).
     fn dictionary_values<D: Doc>(&mut self, display: &Node<'_, D>, splat_is_type: bool) -> Visit {
         self.builder.enter()?;
-        for entry in named(display)
+        for entry in display.named()
             .filter(|entry| entry.kind() != "comment")
             .collect::<Vec<_>>()
         {
@@ -1275,7 +1273,7 @@ impl Visitor<'_, '_> {
             return self.children(node);
         };
         self.visit(&value)?;
-        let slices = named(node)
+        let slices = node.named()
             .filter(|child| child.node_id() != value.node_id() && self.tag(child) != Tag::Comment)
             .collect::<Vec<_>>();
         let kind = self
@@ -1294,7 +1292,7 @@ impl Visitor<'_, '_> {
             Some(SubscriptKind::Annotated) => {
                 // Ruff's slice is a tuple when there are several, or one written in parentheses.
                 let elements = match slices.as_slice() {
-                    [single] if single.kind() == "tuple" => named(single)
+                    [single] if single.kind() == "tuple" => single.named()
                         .filter(|element| self.tag(element) != Tag::Comment)
                         .collect::<Vec<_>>(),
                     [_] => return self.visit(&slices[0]),
@@ -1380,7 +1378,7 @@ impl Visitor<'_, '_> {
         self.builder.push(ScopeKind::TypeParams, owner.range());
         let offset = owner.range().start;
         let fields = fields();
-        for item in named(&list) {
+        for item in list.named() {
             let (parameter, default) = if self.tag(&item) == Tag::TypeDefault {
                 (field(&item, fields.name), field(&item, fields.value))
             } else {
@@ -1388,7 +1386,7 @@ impl Visitor<'_, '_> {
             };
             let inner = parameter.and_then(|parameter| {
                 if self.tag(&parameter) == Tag::Type {
-                    named(&parameter).next()
+                    parameter.named().next()
                 } else {
                     Some(parameter)
                 }
@@ -1399,16 +1397,16 @@ impl Visitor<'_, '_> {
                 Some((inner, Tag::Identifier)) => self.bind_here(inner, offset, None, site),
                 Some((inner, Tag::SplatType)) => {
                     if let Some(name) =
-                        named(inner).find(|child| self.tag(child) == Tag::Identifier)
+                        inner.named().find(|child| self.tag(child) == Tag::Identifier)
                     {
                         self.bind_here(&name, offset, None, site);
                     }
                 }
                 Some((inner, Tag::ConstrainedType)) => {
-                    let mut parts = named(inner);
+                    let mut parts = inner.named();
                     if let Some(name) = parts.next() {
                         let name = if self.tag(&name) == Tag::Type {
-                            named(&name).next()
+                            name.named().next()
                         } else {
                             Some(name)
                         };
@@ -1512,12 +1510,12 @@ impl Visitor<'_, '_> {
 
     /// Names a function body declares `global`, outside nested functions and classes.
     fn declared_globals<D: Doc>(&mut self, node: &Node<'_, D>, names: &mut Vec<String>) -> Visit {
-        for child in named(node) {
+        for child in node.named() {
             match self.tag(&child) {
                 Tag::GlobalStatement => {
                     self.builder.enter()?;
                     names.extend(
-                        named(&child)
+                        child.named()
                             .filter(|name| self.tag(name) == Tag::Identifier)
                             .map(|name| identifier(&name).into_owned()),
                     );
@@ -1599,7 +1597,7 @@ impl Visitor<'_, '_> {
         let mut parameters = None;
         if let Some(left) = field(node, fields.left) {
             let inner = if self.tag(&left) == Tag::Type {
-                named(&left).next()
+                left.named().next()
             } else {
                 Some(left)
             };
@@ -1607,7 +1605,7 @@ impl Visitor<'_, '_> {
                 Some(Tag::Identifier) => name = inner,
                 Some(Tag::GenericType) => {
                     let inner = inner.expect("tagged node");
-                    for child in named(&inner) {
+                    for child in inner.named() {
                         match self.tag(&child) {
                             Tag::Identifier if name.is_none() => name = Some(child),
                             Tag::TypeParameter => parameters = Some(child),
@@ -1636,7 +1634,7 @@ impl Visitor<'_, '_> {
     /// element run in the comprehension's own scope.
     fn comprehension<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = fields();
-        let clauses = named(node)
+        let clauses = node.named()
             .filter(|child| self.tag(child) != Tag::Comment)
             .collect::<Vec<_>>();
         let body = field(node, fields.body);
@@ -1677,7 +1675,7 @@ impl Visitor<'_, '_> {
     }
 
     fn dotted<D: Doc>(&self, node: &Node<'_, D>) -> String {
-        named(node)
+        node.named()
             .map(|part| identifier(&part).into_owned())
             .collect::<Vec<_>>()
             .join(".")
@@ -1704,18 +1702,18 @@ impl Visitor<'_, '_> {
     fn import<D: Doc>(&mut self, node: &Node<'_, D>) {
         let offset = node.range().end;
         let fields = fields();
-        for item in named(node) {
+        for item in node.named() {
             let module = match self.tag(&item) {
                 Tag::DottedName => Some(item.clone()),
                 Tag::AliasedImport => field(&item, fields.name),
                 _ => None,
             };
-            if let Some(head) = module.as_ref().and_then(|module| named(module).next()) {
+            if let Some(head) = module.as_ref().and_then(|module| module.named().next()) {
                 self.seen(node, &identifier(&head));
             }
             match self.tag(&item) {
                 Tag::DottedName => {
-                    if let Some(head) = named(&item).next() {
+                    if let Some(head) = item.named().next() {
                         let text = identifier(&head);
                         let import = Import::Qualified(text.as_ref().into());
                         let site = site(Form::Import, &item);
@@ -1782,7 +1780,7 @@ impl Visitor<'_, '_> {
                 let text = node.text();
                 let prefix = text.chars().take_while(|c| *c == '.' || c.is_whitespace());
                 let level = prefix.filter(|c| *c == '.').count();
-                let after = named(node)
+                let after = node.named()
                     .find(|part| self.tag(part) == Tag::DottedName)
                     .map(|part| self.dotted(&part));
                 (level, after)
@@ -1807,7 +1805,7 @@ impl Visitor<'_, '_> {
         } else {
             ImportKind::Member
         };
-        for item in named(node) {
+        for item in node.named() {
             if same(&item, module_node.as_ref()) {
                 continue;
             }
@@ -1858,7 +1856,7 @@ impl Visitor<'_, '_> {
         self.builder.enter()?;
         match self.tag(node) {
             Tag::CasePattern | Tag::AsPattern => {
-                for child in named(node) {
+                for child in node.named() {
                     if self.tag(&child) == Tag::Identifier {
                         self.capture(&child, offset);
                     } else {
@@ -1867,7 +1865,7 @@ impl Visitor<'_, '_> {
                 }
             }
             Tag::DottedName => {
-                let parts = named(node).collect::<Vec<_>>();
+                let parts = node.named().collect::<Vec<_>>();
                 match parts.as_slice() {
                     [name] => self.capture(name, offset),
                     [head, ..] => self.visit(head)?,
@@ -1878,17 +1876,17 @@ impl Visitor<'_, '_> {
                 let name = if self.tag(node) == Tag::Identifier {
                     Some(node.clone())
                 } else {
-                    named(node).find(|child| self.tag(child) == Tag::Identifier)
+                    node.named().find(|child| self.tag(child) == Tag::Identifier)
                 };
                 if let Some(name) = name {
                     self.capture(&name, offset);
                 }
             }
             Tag::ClassPattern => {
-                let mut parts = named(node);
+                let mut parts = node.named();
                 if let Some(class) = parts.next() {
                     if self.tag(&class) == Tag::DottedName {
-                        if let Some(head) = named(&class).next() {
+                        if let Some(head) = class.named().next() {
                             self.visit(&head)?;
                         }
                     } else {
@@ -1901,7 +1899,7 @@ impl Visitor<'_, '_> {
             }
             Tag::KeywordPattern => {
                 // The first identifier names an attribute.
-                for (index, part) in named(node).enumerate() {
+                for (index, part) in node.named().enumerate() {
                     if index > 0 || self.tag(&part) != Tag::Identifier {
                         self.case_pattern(&part, offset)?;
                     }
@@ -1912,7 +1910,7 @@ impl Visitor<'_, '_> {
                     .field_children("key")
                     .map(|key| key.node_id())
                     .collect::<Vec<_>>();
-                for part in named(node) {
+                for part in node.named() {
                     if keys.contains(&part.node_id()) {
                         self.visit(&part)?;
                     } else {
@@ -1947,7 +1945,7 @@ fn innermost_value<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
 
 /// The named children of a node, comments aside.
 fn elements<'r, D: Doc>(node: &Node<'r, D>) -> Vec<Node<'r, D>> {
-    named(node)
+    node.named()
         .filter(|child| child.kind() != "comment")
         .collect()
 }
@@ -2021,7 +2019,7 @@ fn site<D: Doc>(form: Form, node: &Node<'_, D>) -> Site {
 
 /// An annotation's expression, without the `type` node around it.
 fn annotation_ref<D: Doc>(annotation: &Node<'_, D>) -> NodeRef {
-    let mut inner = named(annotation).filter(|child| child.kind() != "comment");
+    let mut inner = annotation.named().filter(|child| child.kind() != "comment");
     match (inner.next(), inner.next()) {
         (Some(expression), None) if annotation.kind() == "type" => NodeRef::of(&expression),
         _ => NodeRef::of(annotation),
@@ -2106,7 +2104,7 @@ fn keyword_argument<'r, D: Doc>(item: &Node<'r, D>) -> Option<(Option<String>, N
                 .map(|name| identifier(&name).into_owned()),
             item.field("value")?,
         )),
-        "dictionary_splat" => Some((None, named(item).find(|inner| inner.kind() != "comment")?)),
+        "dictionary_splat" => Some((None, item.named().find(|inner| inner.kind() != "comment")?)),
         _ => None,
     }
 }
