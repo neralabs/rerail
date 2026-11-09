@@ -168,13 +168,22 @@ export interface AdapterSession {
   cwd: string;
 }
 
-/** Host hook payloads are untyped JSON; nonblank text is the only accepted field value. */
+/**
+ * Host hook payloads are untyped JSON; nonblank text is the accepted value of a text field. A key that orders events
+ * (`requiredKey`) may come as text or as a whole number, as Claude Code sends MessageDisplay's `index`.
+ */
 export function hookText(host: string) {
   return {
     required(input: Readonly<Record<string, unknown>>, field: string): string {
       const value = input[field];
       if (typeof value !== "string" || value.trim() === "") throw new Error(`${host} hook omitted ${field}`);
       return value;
+    },
+    requiredKey(input: Readonly<Record<string, unknown>>, field: string): string {
+      const value = input[field];
+      if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
+      if (typeof value === "string" && value.trim() !== "") return value;
+      throw new Error(`${host} hook omitted ${field}, or sent it as ${value === null ? "null" : typeof value} rather than text or a whole number`);
     },
     optional(input: Readonly<Record<string, unknown>>, field: string): string | undefined {
       const value = input[field];

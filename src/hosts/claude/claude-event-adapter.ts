@@ -4,7 +4,7 @@ import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession,
 
 export type ClaudeHookInput = Readonly<Record<string, unknown>>;
 
-const { required: requiredText, optional: optionalText } = hookText("Claude");
+const { required: requiredText, requiredKey, optional: optionalText } = hookText("Claude");
 
 /** Hook `cwd` follows `/cd`; CLAUDE_PROJECT_DIR stays the launch root that identifies the session. */
 export function claudeWorkspace(cwd: unknown): string {
@@ -39,7 +39,7 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
   if (hook === "MessageDisplay") {
     return [{
       kind: "assistant-delta",
-      eventId: `${sessionId}:message:${requiredText(input, "message_id")}:${requiredText(input, "index")}`,
+      eventId: `${sessionId}:message:${requiredText(input, "message_id")}:${requiredKey(input, "index")}`,
       sessionId,
       session: descriptor,
       messageId: requiredText(input, "message_id"),
