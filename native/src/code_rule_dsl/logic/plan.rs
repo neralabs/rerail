@@ -197,18 +197,18 @@ pub(in crate::code_rule_dsl) struct Step {
 /// An atom's binding pattern: its relation, and which columns are bound, constants by value (T's `atom_sig`).
 type Sig = (String, Vec<(usize, Option<Constant>)>);
 
-/// The rule an observed fanout belongs to (`Stats::obs`): its head and body as text, hashed. A fanout through a bound
+/// The rule an observed fanout belongs to (`Stats::obs`): its head and body, digested. A fanout through a bound
 /// column depends on which values the rule's bindings bring: `docof($x, $d)` with `$d` bound reads a whole document,
 /// and one rule's bindings fall in 11-node documents while another's fall in documents of thousands of nodes. Pooled
 /// over rules, the first set the second's estimate (`up_once`: 1,285 rows a binding, priced at 10).
 fn obs_rule(head: &Atom, body: &[Literal]) -> u64 {
-    use std::hash::{Hash as _, Hasher as _};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    head.to_string().hash(&mut h);
-    for l in body {
-        l.to_string().hash(&mut h);
-    }
-    h.finish()
+    // The rule's digest (`digest_atom`, `digest_literal`), not its text written out: it is asked at every search.
+    let d = super::derived::digest(|d| {
+        digest_atom(d, head);
+        d.u64(body.len() as u64);
+        body.iter().for_each(|l| digest_literal(d, l));
+    });
+    (d as u64) ^ ((d >> 64) as u64)
 }
 
 fn atom_sig(a: &Atom, bound: &BTreeSet<String>) -> Sig {
@@ -847,6 +847,22 @@ impl Model {
             .collect()
     }
 
+    /// The sizes a live replan reads (`plan_rule_live`): the corpus's nodes and each atom's rows. The delta atom is
+    /// read first and priced by its live size; every later step's rows are per binding of it, so its size scales
+    /// every order alike and does not change which is cheapest. It is left out (one row) unless the body reads its
+    /// relation again: a wave that only grew the delta keeps the plan. Callers read the order only, so the kept
+    /// price is not scaled.
+    pub(in crate::code_rule_dsl) fn live_sizes(&self, body: &[Literal], first: Option<usize>) -> Vec<f64> {
+        let delta_rel = first.and_then(|f| body[f].atom()).map(|a| a.rel.as_str());
+        let once = delta_rel.is_some_and(|d| body.iter().filter(|l| l.atom().is_some_and(|a| a.rel == d)).count() == 1);
+        std::iter::once(self.stats.nodes.max(1.0))
+            .chain(body.iter().enumerate().filter_map(|(i, l)| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(if once && Some(i) == first { 1.0 } else { self.card(&a.rel) }),
+                _ => None,
+            }))
+            .collect()
+    }
+
     /// A stratum's plan searched again from its live counts between waves (`plan_rule_explained`), kept with the
     /// sizes it saw: while no size moved over `PRICE_DRIFT` times, the same search is not made again (decision
     /// 0090 step 5: in a session's run these searches were most of its planning). Outside a corpus run every one
@@ -862,18 +878,7 @@ impl Model {
             return self.plan_inner(prog, head, body, first, None, true);
         }
         let key = self.plan_key("live ", head, body, first);
-        // The delta atom is read first and priced by its live size; every later step's rows are per binding of it,
-        // so its size scales every order alike and does not change which is cheapest. It is left out (one row)
-        // unless the body reads its relation again: a wave that only grew the delta keeps the plan. Callers read
-        // the order only, so the kept price is not scaled.
-        let delta_rel = first.and_then(|f| body[f].atom()).map(|a| a.rel.as_str());
-        let once = delta_rel.is_some_and(|d| body.iter().filter(|l| l.atom().is_some_and(|a| a.rel == d)).count() == 1);
-        let sizes: Vec<f64> = std::iter::once(self.stats.nodes.max(1.0))
-            .chain(body.iter().enumerate().filter_map(|(i, l)| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(if once && Some(i) == first { 1.0 } else { self.card(&a.rel) }),
-                _ => None,
-            }))
-            .collect();
+        let sizes = self.live_sizes(body, first);
         // The last price, and the work of the order when it was searched.
         let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| Some((k.4.clone()?, k.1))));
         if let Some((priced, searched)) = &kept {
@@ -2726,6 +2731,10 @@ impl Run<'_, '_> {
 /// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
 /// skipped.
 fn observe(stats: &mut Stats, rule: u64, order: &[Step], counts: &[(i64, i64)]) {
+    // A probe that ran no step past its first (its delta empty this chunk) observed nothing.
+    if counts.iter().skip(1).all(|&(n_in, _)| n_in == 0) {
+        return;
+    }
     let mut bound = BTreeSet::new();
     for (i, (s, &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
         if i > 0
@@ -2877,6 +2886,12 @@ fn delta_sources(mut x: super::profile::RulePlan, order: &[Step], at: usize, scc
 
 fn shown(order: &[Step]) -> Vec<String> {
     order.iter().map(|s| s.lit.to_string()).collect()
+}
+
+/// Whether two orders of one body are the same: each step's position, literal and mode (what `shown` compared as
+/// text, without writing either out).
+fn same_order(a: &[Step], b: &[Step]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.at == y.at && x.mode == y.mode && x.lit == y.lit)
 }
 
 /// Positive body atoms of `scc`, by body position.
@@ -3660,6 +3675,9 @@ impl Run<'_, '_> {
         }
         let mut probes = Vec::new();
         for r in &rules {
+            // The rule's whole plan, and its spec once one is wanted: one per rule, whichever atom is its delta.
+            let mut whole_plan: Option<Vec<Step>> = None;
+            let mut whole_spec: Option<Option<String>> = None;
             for (ai, a) in recursive(&r.body, scc) {
                 let _span = planning(r, "plan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
@@ -3691,8 +3709,15 @@ impl Run<'_, '_> {
                 let x = x.map(|x| delta_sources(x, &order, at, scc));
                 explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), x, took, 0));
                 // The wave whose delta is all of the relation (it was empty before): any order, the atom read in full.
-                let ((whole, _, _), _) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
-                let wspec = if whole[0].at != ai { self.whole_join_spec(&r.head, &whole, None, &ri, scc, &native_rels) } else { None };
+                if whole_plan.is_none() {
+                    whole_plan = Some(self.model.plan_rule_reused(prog, &r.head, &r.body, None)?.0.0);
+                }
+                let whole = whole_plan.as_ref().expect("planned");
+                let wspec = if whole[0].at != ai {
+                    whole_spec.get_or_insert_with(|| self.whole_join_spec(&r.head, whole, None, &ri, scc, &native_rels)).clone()
+                } else {
+                    None
+                };
                 let mut line = format!("join {} {} {}", ri[&r.head.rel], ri[&a.rel], hex(&spec));
                 if let Some(w) = wspec {
                     line += &format!(" {}", hex(&w));
@@ -3757,6 +3782,9 @@ impl Run<'_, '_> {
         }
         order_rules.extend(probes.iter().map(|p| obs_rule(&p.0.head, &p.0.body)));
         let mut chunk: i64 = 1;
+        // Per probe, the sizes its last live replan read (`live_sizes`).
+        let mut replanned_at: Vec<Option<Vec<f64>>> = vec![None; probes.len()];
+        let keeping_plans = PLANS.with(|p| p.borrow().is_some());
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;
             let f: Vec<&str> = f.split_whitespace().collect();
@@ -3827,13 +3855,22 @@ impl Run<'_, '_> {
                     continue;
                 }
                 let (r, ai) = (probes[k].0, probes[k].1);
+                // No size it reads moved since its last replan: `plan_rule_live` would give the plan it gave then
+                // (kept with those sizes, while plans are kept), which the probe runs.
+                if keeping_plans {
+                    let sizes = self.model.live_sizes(&r.body, Some(ai));
+                    if replanned_at[k].as_ref() == Some(&sizes) {
+                        continue;
+                    }
+                    replanned_at[k] = Some(sizes);
+                }
                 let span = planning(r, "replan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
                 let ((new, _, _), x) = self.model.plan_rule_live(prog, &r.head, &r.body, Some(ai))?;
                 drop(span);
                 let e = &mut explained[nseeds + k];
                 e.3 += if profiling { super::profile::now() - t0 } else { 0.0 };
-                if shown(&new) == shown(&probes[k].2) {
+                if same_order(&new, &probes[k].2) {
                     continue;
                 }
                 e.4 += 1;
@@ -4219,7 +4256,7 @@ impl Run<'_, '_> {
             for k in 0..probes.len() {
                 let (r, ai) = (probes[k].0, probes[k].3);
                 let (new, _, _) = self.model.plan_rule(prog, &r.head, &r.body, Some(ai))?;
-                if shown(&new) == shown(&probes[k].1) {
+                if same_order(&new, &probes[k].1) {
                     continue;
                 }
                 let nat = new.iter().position(|s| s.at == ai).expect("the delta atom");

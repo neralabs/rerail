@@ -1584,6 +1584,25 @@ impl InRel {
     }
     /// For a key of several columns over a view, the most selective column the source indexes (sorted, or by its
     /// lookup) with at most `LEAD_MATCHES` rows a value: its position in `cols`, and whether sorted.
+    /// For a key of several columns of a derived relation (no view), the chain (`chains`) of one of them whose
+    /// postings are short, as `lead` takes a source's own index: (the chain, the key column it is on). `None` when
+    /// no column's chain holds every row or each is long.
+    fn chain_lead(&self, cols: &[usize]) -> Option<(usize, usize)> {
+        const LEAD_MATCHES: usize = 8;
+        if self.view.is_some() || cols.len() < 2 || self.n == 0 {
+            return None;
+        }
+        cols.iter()
+            .enumerate()
+            .filter_map(|(j, &c)| {
+                let i = self.chains.iter().position(|ix| ix.cols == [c])?;
+                let ix = &self.chains[i];
+                (ix.next.len() >= self.n && !ix.table.is_empty()).then(|| (self.n.div_ceil(ix.table.len()), i, j))
+            })
+            .filter(|&(m, _, _)| m <= LEAD_MATCHES)
+            .min()
+            .map(|(_, i, j)| (i, j))
+    }
     fn lead(&self, cols: &[usize]) -> Option<(usize, bool)> {
         const LEAD_MATCHES: usize = 8;
         let v = self.view.as_ref().filter(|_| cols.len() > 1)?;
@@ -1685,6 +1704,10 @@ impl InRel {
                 // `inside_<set>`, `node`, `name`): its candidates, checked against the other keys by the step, not a
                 // hash table of every row.
                 Csr { lead, ..empty(!sorted, sorted) }
+            } else if let Some((chain, lead)) = self.chain_lead(cols) {
+                // The same for a derived relation: one of its key columns' own chains, kept from the waves that made
+                // it, is selective, so no composite index is built.
+                Csr { chain: Some(chain), lead, ..empty(false, false) }
             } else {
                 charge(Unit::IndexEntry, self.len() as u64);
                 Csr::build(self, cols)
@@ -2402,6 +2425,8 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                     if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
                     else if let Some(i) = ix.chain {
                         let index = &rel.chains[i];
+                        // A chain on the key's columns, or on its lead column alone (`chain_lead`: every key is checked).
+                        let key = if index.cols.len() == ix.cols.len() { key } else { &key[ix.lead..=ix.lead] };
                         (Rows::In(rel), index.get(&rel.rows, rel.k, key).map_or(Cands::Slice(&[]), |p| Cands::Chain { head: p.head, next: &index.next, stop: 0 }))
                     }
                     else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[ix.lead]], key[ix.lead]).unwrap_or(&[]))) }
