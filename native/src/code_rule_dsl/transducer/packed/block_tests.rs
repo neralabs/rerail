@@ -111,6 +111,11 @@ impl<'a> Executors<'a> {
                     keep(format!("generated msl, {w}-byte lanes, {strategy:?}"), run_generated_with(&self.native, bytes, width, strategy).map(|(got, _)| got));
                 }
             }
+            // The forward carry (`metal_block_serial`): segments of three blocks, so that a file of
+            // a few blocks has segments that speculate their start and run again.
+            use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+            let file = [block::BatchFile { bytes, program: 0 }];
+            keep("metal forward carry, segments of 3".to_owned(), run_serial_split(&[&self.native], &file, Segments { blocks: 3, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
         }
         #[cfg(not(target_os = "macos"))]
         let _ = metal;
@@ -948,9 +953,9 @@ fn back_fill_round_trips_and_refusals() {
 }
 
 /// `position j`: bit `j` of each byte's place in its file, on every CPU executor and in a batch
-/// (each file from 0); a `prev` of one; it prints and reassembles; Metal refuses it.
+/// (each file from 0), and on Metal; a `prev` of one; it prints and reassembles.
 #[test]
-fn position_planes_equal_the_positions_on_the_cpu_executors() {
+fn position_planes_equal_the_positions_on_every_executor() {
     let planes = [0u8, 3, 5, 6, 7, 9, 10];
     let mut rows = String::from("  block 0 %0 = within\n");
     for (k, j) in planes.iter().enumerate() {
@@ -981,19 +986,13 @@ fn position_planes_equal_the_positions_on_the_cpu_executors() {
     let mut files = inputs();
     files.extend([b"".to_vec(), b"a".to_vec(), vec![b'a'; 63], vec![b'a'; 64], vec![b'a'; 2100], [vec![b'b'; 700], vec![b'a'; 700]].concat()]);
     for bytes in &files {
-        let (got, _) = Executors::new(&p).run(bytes, false);
+        let (got, _) = Executors::new(&p).run(bytes, true);
         for (name, got) in got {
             assert_eq!(got, want(bytes), "{name}, {} bytes", bytes.len());
         }
     }
     let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
     assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
-    #[cfg(target_os = "macos")]
-    {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-        let got = run_generated_with(&native, b"a\"b", LaneWidth::ALL[0], ClassStrategy::ALL[0]).map(|_| ());
-        assert!(matches!(got, Err(Error::UnsupportedBackend)), "Metal: {got:?}");
-    }
 }
 
 /// Carried operations in a chain, each round's carry depending on the one before: the escaped

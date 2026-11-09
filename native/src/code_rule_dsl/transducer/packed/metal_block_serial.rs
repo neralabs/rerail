@@ -85,7 +85,7 @@ impl State {
         let mut words = vec![Vec::new(); self.words];
         let _ = native;
         for &(at, bits, w, first, scan) in &self.parts {
-            let value = if scan { format!("ulong(c{at})") } else { format!("(s{at} >> {}u)", 64 - bits) };
+            let value = if scan { format!("ulong(cy{at})") } else { format!("(s{at} >> {}u)", 64 - bits) };
             words[w].push(format!("({value} << {first}u)"));
         }
         words.iter().enumerate().map(|(w, parts)| format!("{to}[{w}] = {};", if parts.is_empty() { "0ul".to_owned() } else { parts.join(" | ") })).collect::<Vec<_>>().join(" ")
@@ -99,7 +99,7 @@ impl State {
                 let _ = native;
                 let field = format!("(({from}[{w}] >> {first}u) & {:#x}ul)", if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 });
                 if scan {
-                    format!("c{at} = uint({field});")
+                    format!("cy{at} = uint({field});")
                 } else {
                     format!("s{at} = {field} << {}u;", 64 - bits)
                 }
@@ -119,7 +119,7 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
     );
     for &(at, .., scan) in &state.parts {
         if scan {
-            out.push_str(&format!("  uint c{at} = 0u;\n"));
+            out.push_str(&format!("  uint cy{at} = 0u;\n"));
         } else {
             out.push_str(&format!("  ulong s{at} = 0ul;\n"));
         }
@@ -133,7 +133,7 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
     // The scans' carries are exact (`Levels`): from `cw` at the warm-up's first block, set to
     // `cin` at its second part's first, `a`.
     let carries = |x: &str| match levels {
-        Some(levels) => levels.scans.iter().enumerate().filter(|&(i, _)| levels.level[i] > 0).map(|(i, at)| format!(" c{at} = uint(({x} >> {i}u) & 1ul);")).collect::<String>(),
+        Some(levels) => levels.scans.iter().enumerate().filter(|&(i, _)| levels.level[i] > 0).map(|(i, at)| format!(" cy{at} = uint(({x} >> {i}u) & 1ul);")).collect::<String>(),
         None => String::new(),
     };
     out.push_str(&format!(
@@ -174,8 +174,8 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
     }
     for &(at, .., scan) in &state.parts {
         match native.insts[at] {
-            BlockInst::Toggle(_) if scan => tail.push_str(&format!("      c{at} = uint(v{at} >> 63u);\n")),
-            BlockInst::Escaped(_) | BlockInst::Fill(..) if scan => tail.push_str(&format!("      c{at} = o{at};\n")),
+            BlockInst::Toggle(_) if scan => tail.push_str(&format!("      cy{at} = uint(v{at} >> 63u);\n")),
+            BlockInst::Escaped(_) | BlockInst::Fill(..) if scan => tail.push_str(&format!("      cy{at} = o{at};\n")),
             _ => tail.push_str(&format!("      s{at} = v{at};\n")),
         }
     }
@@ -220,7 +220,7 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     // A run again starts at the segment's first block from `given`: lane 0's halos and the scans'
     // carries; its start is written as given.
     for &(at, .., scan) in &state.parts {
-        out.push_str(&if scan { format!("  uint c{at} = 0u;\n") } else { format!("  ulong s{at} = 0ul;\n") });
+        out.push_str(&if scan { format!("  uint cy{at} = 0u;\n") } else { format!("  ulong s{at} = 0ul;\n") });
     }
     out.push_str(&format!("  if (again) {{ {} if (l == 0u) {{ {} }} }}\n", state.unpack(native, "given"), state.pack(native, "rec")));
     // An exact scan is set to `cin` at `aw`: its prefix starts again there, the lanes before
@@ -229,9 +229,9 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     let exact = |at: usize| match levels {
         Some(lv) if lv.level[lv.bit(at)] > 0 => {
             let i = lv.bit(at);
-            (format!("(again ? c{at} : uint((cw >> {i}u) & 1ul))"), Some(("!again && b >= aw".to_owned(), format!("uint((cin >> {i}u) & 1ul)"))))
+            (format!("(again ? cy{at} : uint((cw >> {i}u) & 1ul))"), Some(("!again && b >= aw".to_owned(), format!("uint((cin >> {i}u) & 1ul)"))))
         }
-        _ => (format!("(again ? c{at} : 0u)"), None),
+        _ => (format!("(again ? cy{at} : 0u)"), None),
     };
     let carried = |at: usize, inst: &BlockInst, out: &mut String| match *inst {
         BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, s{a}));\n")),
@@ -260,7 +260,7 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     let mut names = String::new();
     for &(at, .., scan) in &state.parts {
         if scan {
-            names.push_str(&format!(" const uint c{at} = co{at};"));
+            names.push_str(&format!(" const uint cy{at} = co{at};"));
         } else {
             names.push_str(&format!(" const ulong s{at} = v{at};"));
         }
@@ -501,14 +501,14 @@ fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> S
             BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => {
                 let i = levels.bit(at);
                 if levels.level[i] > 0 {
-                    out.push_str(&format!("  uint c{at} = uint((from >> {i}u) & 1ul);\n"));
-                    set.push_str(&format!(" c{at} = uint((cin >> {i}u) & 1ul);"));
+                    out.push_str(&format!("  uint cy{at} = uint((from >> {i}u) & 1ul);\n"));
+                    set.push_str(&format!(" cy{at} = uint((cin >> {i}u) & 1ul);"));
                 } else {
-                    out.push_str(&format!("  uint c{at} = 0u;\n"));
+                    out.push_str(&format!("  uint cy{at} = 0u;\n"));
                 }
                 tail.push_str(&match native.insts[at] {
-                    BlockInst::Toggle(_) => format!("      c{at} = uint(v{at} >> 63u);\n"),
-                    _ => format!("      c{at} = o{at};\n"),
+                    BlockInst::Toggle(_) => format!("      cy{at} = uint(v{at} >> 63u);\n"),
+                    _ => format!("      cy{at} = o{at};\n"),
                 });
             }
             _ => {}
@@ -571,9 +571,9 @@ const NEXT_BLOCK: &str = "    const uint4 c0 = n0, c1 = n1, c2 = n2, c3 = n3;\n\
 fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
     match *inst {
         BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = (v{a} << {k}u) | (s{a} >> {}u);\n", 64 - u32::from(k))),
-        BlockInst::Toggle(a) => out.push_str(&format!("  const ulong v{at} = prefix_xor(v{a}) ^ (0ul - ulong(c{at}));\n")),
-        BlockInst::Escaped(a) => out.push_str(&format!("  uint o{at} = 0u;\n  const ulong v{at} = escaped(v{a}, ulong(c{at}), o{at});\n")),
-        BlockInst::Fill(a, e) => out.push_str(&format!("  uint o{at} = 0u;\n  const ulong v{at} = fill_word(v{a}, v{e}, ulong(c{at}), o{at});\n")),
+        BlockInst::Toggle(a) => out.push_str(&format!("  const ulong v{at} = prefix_xor(v{a}) ^ (0ul - ulong(cy{at}));\n")),
+        BlockInst::Escaped(a) => out.push_str(&format!("  uint o{at} = 0u;\n  const ulong v{at} = escaped(v{a}, ulong(cy{at}), o{at});\n")),
+        BlockInst::Fill(a, e) => out.push_str(&format!("  uint o{at} = 0u;\n  const ulong v{at} = fill_word(v{a}, v{e}, ulong(cy{at}), o{at});\n")),
         _ => unreachable!("a carried instruction"),
     }
 }
@@ -938,7 +938,7 @@ pub(in crate::code_rule_dsl) fn run_serial_split(programs: &[&BlockNative], file
 /// pass, the checks and runs again until every start agrees, then the positions and totals.
 pub(in crate::code_rule_dsl) fn run_serial(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
     // A `back_fill` runs last block to first: a pass this executor does not have yet.
-    if programs.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_) | BlockInst::Position(_)))) {
+    if programs.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;

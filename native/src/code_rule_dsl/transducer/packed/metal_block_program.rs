@@ -122,7 +122,11 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
         BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
         BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
-        BlockInst::Position(_) => unreachable!("refused at `run_batch`: Metal makes no position planes yet"),
+        // `j` in `a`; below 6 the period's pattern in `b` and `imm`.
+        BlockInst::Position(j) => {
+            let pattern = (0..64u32).filter(|i| u32::from(j) < 6 && i >> j & 1 == 1).fold(0u64, |a, i| a | 1 << i);
+            [16, u32::from(j), pattern as u32, (pattern >> 32) as u32]
+        }
         // The period in `a` (`k | r << 8`, never read as a slot: it is clamped), its bits in `b` and `imm`.
         BlockInst::Phase(k, r) => {
             let bits = super::block::period_bits(k);
@@ -195,9 +199,8 @@ pub(in crate::code_rule_dsl) fn run_batch(
 ) -> Result<BatchRun, Error> {
     // A fixed point (`rounds`) is the CPU's for now: each lane would run its rounds in its own
     // frame, within `block::MAX_ROUNDS`, to the same values.
-    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet;
-    // and a position's planes, which need the word's place in its file.
-    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_) | BlockInst::Position(_)))) {
+    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet.
+    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
@@ -1291,9 +1294,16 @@ fn emit(
                 format!("{m}({bits:#018x}ul << (({r}u + {k}u - (({offset}) % {k}u)) % {k}u))")
             }
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
+            // Bit j of each byte's place in its file: below 6 a pattern of period 2^(j+1), from
+            // the word's first byte (a lane's bytes start at a multiple of its width); from 6 on
+            // the same in all of a word's bytes, at most 64 of them.
+            BlockInst::Position(j) if j < 6 => {
+                let pattern = (0..64u32).filter(|i| i >> j & 1 == 1).fold(0u64, |a, i| a | 1 << i);
+                format!("{m}({pattern:#018x}ul >> ulong(({offset}) & 63u))")
+            }
+            BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
             BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
             BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
-        BlockInst::Position(_) => unreachable!("refused at `run_batch`: Metal makes no position planes yet"),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
     }

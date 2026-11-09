@@ -116,6 +116,12 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
         v = M((ulong(s.b) | (ulong(s.imm) << 32u)) << ((r + k - (gl * W) % k) % k));
         break;
       }
+      case 16u: {
+        // `position j`: bit j of each byte's place in its file; below 6 its pattern in b and imm.
+        const uint j = s.a;
+        v = j < 6u ? M((ulong(s.b) | (ulong(s.imm) << 32u)) >> ulong((gl * W) & 63u)) : M(M(0) - M(((gl * W) >> j) & 1u));
+        break;
+      }
       default: break;
     }
     slots[at * 32u + l] = v;
