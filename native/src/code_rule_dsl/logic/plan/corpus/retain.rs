@@ -55,7 +55,12 @@ pub(in crate::code_rule_dsl) struct Retained {
     rels: HashMap<String, Kept>,
     /// Each input's source, for its deltas next run (stage 2).
     input_srcs: HashMap<String, Arc<dyn Source>>,
+    /// Each input's statistics as the run planned it (`Stats::of_relation`): next run's `rel__old`'s, not measured.
+    input_stats: HashMap<String, InputStats>,
 }
+
+/// A relation's statistics by column, and its exact postings by (column, value).
+pub(in crate::code_rule_dsl) type InputStats = (Vec<[i64; 4]>, Vec<(usize, i64, i64)>);
 
 /// The key of a cross-file part: the prepared program's key and the part's program as lowered.
 pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: &front::Program) -> [u8; 32] {
@@ -202,6 +207,7 @@ pub(in crate::code_rule_dsl) fn after(
     derived: Vec<(String, usize, Arc<InRel>)>,
     outputs: &BTreeMap<String, (Vec<String>, Vec<usize>)>,
     sources: &[(String, Arc<dyn Source>)],
+    input_stats: HashMap<String, InputStats>,
 ) -> Retained {
     let mut rels: HashMap<String, Kept> = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
@@ -222,7 +228,7 @@ pub(in crate::code_rule_dsl) fn after(
         rels.insert(rel, k);
     }
     let input_srcs = sources.iter().filter(|(_, s)| !s.columns().is_empty()).map(|(rel, s)| (rel.clone(), Arc::clone(s))).collect();
-    Retained { key, inputs, rels, input_srcs }
+    Retained { key, inputs, rels, input_srcs, input_stats }
 }
 
 impl Retained {
@@ -232,6 +238,10 @@ impl Retained {
     }
     /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
     /// engine's relation for a derived one (to adopt, read in place).
+    /// An input's statistics as the last run planned it.
+    pub(in crate::code_rule_dsl) fn input_stats(&self, rel: &str) -> Option<&InputStats> {
+        self.input_stats.get(rel)
+    }
     pub(in crate::code_rule_dsl) fn old_source(&self, rel: &str, name: &str) -> Option<(Arc<dyn Source>, Option<Arc<InRel>>)> {
         match self.rels.get(rel) {
             Some(k) => Some((k.source(name), Some(Arc::clone(&k.rel)))),

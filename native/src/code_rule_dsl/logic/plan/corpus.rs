@@ -3285,14 +3285,27 @@ fn run_observed(
                         if let Some(held) = held {
                             crate::code_rule_dsl::logic::native::component::adopt(&db, &rel, held);
                         }
-                        let measured = syntax::statistics(source.as_ref());
-                        // The constants the rules test it by are counted too: a column measured without them reads as
-                        // holding none, so `kind__old(r, identifier)` was planned as one row and drove a delta rule.
-                        let counts = constant_counts(constants.get(rel.as_str()), source.as_ref());
-                        stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), counts);
+                        // An input's old rows are its rows of the last run: their statistics are those that run planned with,
+                        // when they cover every constant the rules test it by (decision 0094 §4).
+                        let tested = constants.get(rel.as_str());
+                        let carried = rel.strip_suffix("__old").and_then(|of| cell.as_ref()?.input_stats(of)).filter(|(cols, vals)| {
+                            cols.len() == source.columns().len() && tested.into_iter().flatten().all(|(c, v)| vals.iter().any(|(vc, vv, _)| vc == c && vv == v))
+                        });
+                        if let Some((cols, vals)) = carried {
+                            let names: Vec<String> = (0..cols.len()).map(|c| super::sql_col(&rel, c)).collect();
+                            stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)));
+                        } else {
+                            let measured = syntax::statistics(source.as_ref());
+                            // The constants the rules test it by are counted too: a column measured without them reads as
+                            // holding none, so `kind__old(r, identifier)` was planned as one row and drove a delta rule.
+                            let counts = constant_counts(tested, source.as_ref());
+                            stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), counts);
+                        }
                         modules.bind(&db, &rel, source)?;
                     }
                     drop(s);
+                    // Each input's statistics as this run plans with them: next run's `__old`'s (`retain::InputStats`).
+                    let input_stats: HashMap<String, retain::InputStats> = cross_inputs.iter().filter_map(|(r, src)| Some((r.clone(), stats.of_relation(r, src.columns().len())?))).collect();
                     let derived = cut.derived(&cross.program)?;
                     let mut keep = wanted.clone();
                     // An output is written to its table, where the write phase reads it, and read back from there.
@@ -3481,7 +3494,7 @@ fn run_observed(
                     }
                     drop(s);
                     let s = span("retain");
-                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs);
+                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, input_stats);
                     drop(s);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
                         format!(

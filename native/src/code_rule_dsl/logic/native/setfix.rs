@@ -475,6 +475,8 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                 // query's (an input's, read where it is).
                 // `base`: the relation starts as a kept native relation less another's rows (the survivors of a
                 // maintained stratum, `h__old` less `h__del`), dead in place; else, made from those rows.
+                let what: &'static str = if based.is_some() { "open: survivors" } else if from.is_some() { "open: rows from SQL" } else if !empty { "open: rows from its table" } else { "open: empty" };
+                let _rows = crate::code_rule_dsl::logic::profile::span(move || what.into());
                 if let Some((old, gone)) = based {
                     let (o, g) = { let d = DERIVED.lock().unwrap(); (d.get(&(scope(conn), old.clone())).cloned(), d.get(&(scope(conn), gone.clone())).cloned()) };
                     let (o, g) = (o.ok_or_else(|| err(format!("rel: no native relation {old}")))?, g.ok_or_else(|| err(format!("rel: no native relation {gone}")))?);
@@ -506,7 +508,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                 rels.push(rel);
             }
             "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None, wkey: None }),
-            "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(conn, &unhex(toks[2])?, &mut syms)?), whole: None, wkey: None }),
+            "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join({ let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); parse_join(conn, &unhex(toks[2])?, &mut syms)? }), whole: None, wkey: None }),
             "nowrite" => write = false,
             "request" => requests.push((num(toks[1])?, 0)),
             "produced" => produced.push(num(toks[1])?),
@@ -519,7 +521,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                 let (head, delta) = (num(toks[1])?, num(toks[2])?);
                 let whole = match toks.get(4) { Some(w) => Some(parse_join(conn, &unhex(w)?, &mut syms)?), None => None };
                 let wkey = toks.get(4).map(|w| w.to_string());
-                probes.push(ProbeRule { head, delta, body: Body::Join(parse_join(conn, &unhex(toks[3])?, &mut syms)?), whole, wkey });
+                probes.push(ProbeRule { head, delta, body: Body::Join({ let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); parse_join(conn, &unhex(toks[3])?, &mut syms)? }), whole, wkey });
             }
             "rule" => {
                 let (head, src) = (num(toks[1])?, num(toks[2])?);
@@ -558,6 +560,7 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
             other => return Err(err(format!("unknown spec item {other}"))),
         }
     }
+    let _multi = crate::code_rule_dsl::logic::profile::span(|| "open: indexes".into());
     for r in &mut rels { let n = r.n; r.set_delta(0, n); }   // the first wave reads the seeds as its delta
     for p in &probes {
         if let Body::Join(j) = &p.body { for (r, cols) in &j.multi { rels[*r].add_multi(cols); } }
@@ -1467,6 +1470,8 @@ impl InRel {
         let mask = cols.iter().fold(0u64, |m, &c| m | 1 << c);
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
+            let base = self.base;
+            let _index = crate::code_rule_dsl::logic::profile::span(move || (if base { "open: index of a base input" } else { "open: index of a derived input" }).into());
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
             let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0 };
@@ -1545,6 +1550,7 @@ pub fn keep_inputs(conn: &Connection, changing: Option<std::collections::BTreeSe
 fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel>> {
     let key = (conn.path().unwrap_or_default().to_owned(), spec.to_owned());
     if let Some(r) = INPUTS.lock().unwrap().get(&key) { return Ok(r.clone()); }
+    let _load = crate::code_rule_dsl::logic::profile::span(|| "open: input load".into());
     let parts: Vec<&str> = spec.splitn(4, ':').collect();
     let [which, table, cols, types] = parts[..] else { return Err(err(format!("bad input {spec}"))) };
     let base = which == "b";

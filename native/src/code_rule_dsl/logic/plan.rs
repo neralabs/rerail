@@ -317,6 +317,24 @@ impl Stats {
         self.col.keys().any(|(r, _)| r == rel)
     }
 
+    /// `rel`'s statistics by column (`width` of them), and its exact postings of integer values (`measured`'s
+    /// `vals`, by column), when every column is known: what a session's next run gives `rel__old`, whose rows are
+    /// these (decision 0094 §4: statistics kept like data, not measured again).
+    pub(in crate::code_rule_dsl) fn of_relation(&self, rel: &str, width: usize) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
+        let names: Vec<String> = (0..width).map(|c| sql_col(rel, c)).collect();
+        let cols = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
+        let vals = self
+            .memo
+            .iter()
+            .filter(|((r, _, _), _)| r == rel)
+            .filter_map(|((_, c, v), n)| match v {
+                Constant::Int(v) => Some((names.iter().position(|x| x == c)?, *v, *n)),
+                _ => None,
+            })
+            .collect();
+        Some((cols, vals))
+    }
+
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
     pub(in crate::code_rule_dsl) fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
