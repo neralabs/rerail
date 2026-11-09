@@ -1,9 +1,12 @@
-import { realpathSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import type { ChildProcess } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, resolve, win32 } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { spawn } from "../../engine/child-process.js";
+import { gitExecutable } from "../../engine/git.js";
+import { windowsSystemProgram } from "../../engine/system-programs.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
 import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../../engine/catalog/repository-model.js";
@@ -55,6 +58,56 @@ async function rerailStatus(chunks: Buffer[], validInput: boolean): Promise<stri
   }
 }
 
+/** How the person's previous status line is started: a program, its arguments, and whether Node wraps it in a shell. */
+export interface PreviousStatusSpawn {
+  file: string;
+  args: string[];
+  shell: boolean;
+}
+
+/**
+ * The previous status line runs as Claude Code ran it: through `/bin/sh` on macOS and Linux, which is Node's
+ * `shell: true` there, and through Git Bash on Windows. `shell: true` on Windows is cmd.exe, which reads `~`, single
+ * quotes and `$(...)` as plain text, so a bash status line broke once Rerail wrapped it. Without a Git Bash to find,
+ * cmd.exe is what is left.
+ */
+export function previousStatusSpawn(command: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): PreviousStatusSpawn {
+  const bash = platform === "win32" ? gitBash(env) : undefined;
+  return bash === undefined ? { file: command, args: [], shell: true } : { file: bash, args: ["-c", command], shell: false };
+}
+
+/** Git Bash's bash.exe: `CLAUDE_CODE_GIT_BASH_PATH`, which Claude Code itself honours, else the one beside Rerail's Git. */
+function gitBash(env: NodeJS.ProcessEnv): string | undefined {
+  const named = env.CLAUDE_CODE_GIT_BASH_PATH;
+  if (named !== undefined && named !== "") return named;
+  try {
+    // Git for Windows' `<Git>\bin\bash.exe` sits a folder or two above its git.exe: `cmd\`, `bin\` or `mingw64\bin\`.
+    let folder = win32.dirname(gitExecutable());
+    for (let level = 0; level < 3; level += 1) {
+      const bash = win32.join(folder, "bin", "bash.exe");
+      if (existsSync(bash)) return bash;
+      folder = win32.dirname(folder);
+    }
+  } catch {
+    // No Git: no Git Bash either.
+  }
+  return undefined;
+}
+
+/**
+ * Ends the previous status line and what it started. A POSIX command runs in its own process group, which goes whole.
+ * On Windows killing the shell leaves its children running, so `taskkill /T` ends the tree.
+ */
+function stopPreviousStatus(child: ChildProcess): void {
+  try {
+    if (process.platform !== "win32" && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+    else child.kill("SIGKILL");
+  } catch { /* The command may already have exited. */ }
+  if (process.platform === "win32" && child.pid !== undefined) {
+    spawn(windowsSystemProgram("taskkill.exe"), ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" }).on("error", () => undefined);
+  }
+}
+
 /** Preserve the user's status as a byte stream, including output before errors or timeouts. */
 export async function runClaudeStatus(
   input: Readable = process.stdin,
@@ -81,18 +134,19 @@ export async function runClaudeStatus(
       resolvePrevious();
       return;
     }
-    const child = spawn(previous.command, {
-      shell: true,
+    const plan = previousStatusSpawn(previous.command);
+    const child = spawn(plan.file, plan.args, {
+      shell: plan.shell,
       detached: process.platform !== "win32",
       env: { ...process.env, [PARENT_PROCESS_KEY]: String(process.pid) },
       stdio: ["pipe", "pipe", "ignore"],
     });
     const timer = setTimeout(() => {
-      // Kill the shell's entire group so a grandchild cannot retain stdout indefinitely.
-      try {
-        if (process.platform !== "win32" && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch { /* The command may already have exited. */ }
+      stopPreviousStatus(child);
+      // A process the command started can hold stdout open past the kill (one that left the group, or any child on
+      // Windows); the budget holds without waiting for it to let go.
+      child.stdout.destroy();
+      finish();
     }, STATUS_TIMEOUT_MS);
     child.stdout.on("data", (chunk: Buffer) => {
       if (chunk.length > 0) lastByte = chunk[chunk.length - 1];

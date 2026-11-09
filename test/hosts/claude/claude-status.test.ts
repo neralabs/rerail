@@ -12,7 +12,7 @@ vi.mock("../../../src/presentation/session-presentation.js", () => ({
   fallbackPresentation: (reason: string) => ({ text: reason }),
   formatTerminalStatus: (presentation: { text?: string }) => presentation.text ?? "Rerail | 2 rules | steered 1×",
 }));
-import { runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
+import { previousStatusSpawn, runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -104,6 +104,29 @@ describe("composed Claude status", () => {
     mocks.command.mockReturnValue(nodePredecessor("process.stdout.write('slow status\\n'); setInterval(() => {}, 1000)"));
     const result = await render();
     expect(result.toString()).toBe("slow status\nRerail | 2 rules | steered 1×\n");
+  });
+
+  it("returns within its budget when the prior command leaves a process holding its output", async () => {
+    // The grandchild leaves the command's process group and keeps the stdout pipe for 10 s.
+    const script = "require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], "
+      + "{ detached: true, stdio: ['ignore', 'inherit', 'ignore'] }).unref(); process.stdout.write('held status')";
+    mocks.command.mockReturnValue(nodePredecessor(script));
+    const started = performance.now();
+    const result = (await render()).toString();
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(result).toBe("held status\nRerail | 2 rules | steered 1×\n");
+  }, 15_000);
+
+  it("runs the prior command on Windows through Git Bash, as Claude Code does, not cmd.exe", () => {
+    const command = "bash ~/.claude/statusline.sh";
+    const bash = String.raw`C:\Program Files\Git\bin\bash.exe`;
+    expect(previousStatusSpawn(command, "win32", { CLAUDE_CODE_GIT_BASH_PATH: bash })).toEqual({ file: bash, args: ["-c", command], shell: false });
+    expect(previousStatusSpawn(command, "linux", {})).toEqual({ file: command, args: [], shell: true });
+  });
+
+  it.runIf(process.platform === "win32")("keeps a bash status line working on Windows once Rerail wraps it", async () => {
+    mocks.command.mockReturnValue({ type: "command", command: "printf 'bash %s' \"$((1 + 1))\"" });
+    expect((await render()).toString()).toBe("bash 2\nRerail | 2 rules | steered 1×\n");
   });
 
   it("keeps forwarding input beyond Rerail's JSON budget to the original command", async () => {
