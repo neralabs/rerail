@@ -13,7 +13,7 @@ use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, Evaluation, Metrics, Query};
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
-use crate::code_rule_dsl::soundness::UNREAD;
+use crate::code_rule_dsl::soundness::{SYNTAX_ERRORS, UNREAD};
 use napi::Result;
 use rayon::prelude::*;
 use serde_json::{Value, json};
@@ -363,7 +363,7 @@ fn blind_file(state: &WorkspaceState, file: &FileState) -> Option<Value> {
             ("budget-exceeded" | crate::code_rule_dsl::model::FILE_BUDGET_EXCEEDED, _) => {
                 &mut budget
             }
-            ("source-incomplete", "file has syntax errors" | UNREAD) => &mut syntax,
+            ("source-incomplete", SYNTAX_ERRORS | UNREAD) => &mut syntax,
             _ => return None,
         };
         first.get_or_insert(*message);

@@ -186,6 +186,11 @@ impl ScopeRules for Rust {
         "lifetime",
         "label",
     ];
+    const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    const ATTRIBUTE_KINDS: &'static [&'static str] =
+        &["scoped_identifier", "scoped_type_identifier"];
+    const THIS_KINDS: &'static [&'static str] = &[];
     const PRIVATE_NAME_KINDS: &'static [&'static str] = &[];
     /// `let` and `const` bind by assignment, `static` by itself; items are definitions, `type`
     /// aliases and `use` imports; generic parameters, `Self`, parameters, `for` and `match` (and

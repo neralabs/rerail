@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  RERAIL_HOSTS,
   type RerailHost,
   defaultRerailDatabasePath,
   openRerailDatabase,
@@ -102,7 +103,7 @@ type Evidence = {
   failure?: string;
 };
 
-const HOSTS: readonly RerailHost[] = ["omp", "pi", "claude-code", "codex", "cursor"];
+const HOSTS: readonly RerailHost[] = RERAIL_HOSTS;
 const timeoutSetting = process.env.RERAIL_SMOKE_TIMEOUT_MS ?? "180000";
 const TIMEOUT_MS = Number(timeoutSetting);
 if (!Number.isSafeInteger(TIMEOUT_MS) || TIMEOUT_MS <= 0) {

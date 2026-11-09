@@ -120,7 +120,6 @@ use util::{
 };
 use util::{THREE_VALUED, UNKNOWN};
 pub(super) use value::{Bound, Reading, ValueTest, file_values};
-pub(super) use util::is_comment_kind;
 
 pub(super) use crate::code_rule_dsl::import_target::term::ImportTargetTest;
 #[derive(Clone)]

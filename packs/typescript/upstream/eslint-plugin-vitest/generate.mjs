@@ -32,6 +32,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertCommit,
   assertKnownReportRules,
+  ECMA_EXTENSIONS,
   isVariantPath,
   lint,
   pinnedRequire,
@@ -48,7 +49,6 @@ const TOOL = "eslint-plugin-vitest";
 const PINS = { eslint: "10.0.0", "@vitest/eslint-plugin": "1.6.27", "@typescript-eslint/parser": "8.58.0", tsx: "4.21.0" };
 const CHECKOUT = { repository: "https://github.com/vitest-dev/eslint-plugin-vitest", commit: "aad57d121647efe764463c37414a8cd67ec9cf92" };
 const PREFIX = "vitest/";
-const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
 
 /**

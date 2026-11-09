@@ -470,6 +470,19 @@ fn install_document(
     (version, document)
 }
 
+/// A stored file's source, for a pass over a file whose source was dropped. `path` names it in the
+/// errors.
+pub(super) fn stored_source(
+    store: &ContentStore,
+    stored: &StoredSourceObjects,
+    path: &str,
+) -> Result<String> {
+    let source = store
+        .get_source(stored.source)
+        .map_err(|error| invalid(error.to_string()))?;
+    String::from_utf8(source).map_err(|_| invalid(format!("stored {path} is not UTF-8")))
+}
+
 /// The source of a file whose source was freed while the store was busy (`results_only`), read
 /// back from the worktree when it still hashes to the version the file was evaluated at. `None`
 /// for any other file, outside a Git worktree, or when the worktree's copy changed: the store is
