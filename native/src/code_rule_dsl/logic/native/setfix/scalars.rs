@@ -40,13 +40,14 @@ impl Summary {
 }
 #[derive(Default)]
 struct Memo {
-    epoch: (usize, usize, usize),
+    epoch: (usize, usize, usize, usize),
     groups: HashMap<Vec<i64>, Summary>,
     preferred_value: Option<Arc<Bag>>,
     builds: usize,
     lookups: usize,
 }
-/// An input owns its cache. Component epochs include the visible row range; rebound inputs own a new pool.
+/// An input owns its cache. Component epochs include the visible row range and the rows deleted in place
+/// (`Rel::based`'s dead count, which only grows); rebound inputs own a new pool.
 #[derive(Default)]
 pub(super) struct Pool(Mutex<HashMap<Arc<Bag>, Memo>>);
 impl Pool {
@@ -85,7 +86,7 @@ impl Pool {
         &self,
         bag: &Arc<Bag>,
         key: &[i64],
-        epoch: (usize, usize, usize),
+        epoch: (usize, usize, usize, usize),
         build: impl FnOnce(Option<usize>) -> Summary,
     ) -> Summary {
         let mut selected = bag.clone();
@@ -386,7 +387,7 @@ mod tests {
             result
         };
         for kind in [Kind::Count, Kind::Sum, Kind::Min, Kind::Max] {
-            let s = pool.evaluate(&bag, &[1], (3, 0, 3), build);
+            let s = pool.evaluate(&bag, &[1], (3, 0, 3, 0), build);
             assert_eq!(
                 s.result(kind).unwrap(),
                 Some(match kind {
@@ -398,7 +399,7 @@ mod tests {
             );
         }
         assert_eq!(builds.get(), 1);
-        let s = pool.evaluate(&bag, &[1], (4, 0, 4), build);
+        let s = pool.evaluate(&bag, &[1], (4, 0, 4, 0), build);
         assert_eq!(s.count, 3);
         assert_eq!(
             builds.get(),
@@ -529,6 +530,39 @@ mod tests {
         store.rels[0].set_delta(3, 3);
         assert_eq!(run(&store, &delta), Vec::<i64>::new());
         assert_eq!(run(&store, &full), vec![3, 22, 12]);
+    }
+
+    /// A row deleted in place (`Rel::based`, decision 0090) leaves the relation's length and delta range as they were.
+    /// The fold must skip it, and a group cached before the deletion must not be read after it.
+    #[test]
+    fn component_summaries_skip_and_invalidate_on_rows_deleted_in_place() {
+        let db = connection();
+        let shared = symbols(&db).unwrap();
+        let mut syms = Interner::for_loading(&shared);
+        let mut input = Rel::new("input", b"ii");
+        for row in [[1, 7], [1, 3], [1, 12]] {
+            input.push(&row);
+        }
+        input.set_delta(0, 3);
+        let mut store = Store {
+            rels: vec![input, Rel::new("output", b"iii")],
+            syms: shared,
+        };
+        let full = parse_join(
+            &db,
+            "count c0 i:1 _ v0\nsum c0 i:1 _ 1 v1\nmax c0 i:1 _ 1 v2\nhead v0 v1 v2",
+            &mut syms,
+        )
+        .unwrap();
+        let mut run = |store: &Store, j: &JoinRule| {
+            let mut fresh = vec![Fresh::default(); 2];
+            run_join(j, 1, store, &mut syms, &mut fresh).unwrap();
+            fresh[1].data.clone()
+        };
+        assert_eq!(run(&store, &full), vec![3, 22, 12]);
+        assert!(super::kill(&mut store.rels[0].dead, 2));
+        store.rels[0].ndead += 1;
+        assert_eq!(run(&store, &full), vec![2, 10, 7], "the dead row is in no group, and the cached group is stale");
     }
 
     #[test]
