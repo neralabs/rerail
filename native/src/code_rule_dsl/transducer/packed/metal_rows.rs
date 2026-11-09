@@ -26,7 +26,7 @@
 
 use super::Error;
 use super::block::{BlockOp, BlockProgram, CmpOp, Rhs};
-use super::metal_backend::MappedBuffer;
+use super::metal_sort::Held;
 use super::metal_backend::launch::{commit_checked, gpu_seconds};
 use super::metal_parallel::encode;
 use std::fmt::Write as _;
@@ -44,159 +44,86 @@ pub(in crate::code_rule_dsl) enum Form {
     Low16,
     I32,
     I64,
-    /// The lead column of rows grouped by its value (`Grouping::Key`): the group holds it, a row nothing.
-    Group,
-    /// A dense 16-bit code of a dictionary (`Codes`), shared by every relation it is compared with.
-    Code16,
-}
-
-/// How a relation's rows are grouped: by the lead column's chunk (`v >> 16`, the 16-bit layout of
-/// §6), or by its value (a key run after a sort: an equi-join's partition, decision 0095 §4).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Grouping {
-    Chunk,
-    Key,
-}
-
-/// A dictionary of values, each its rank among them: 16-bit codes, exact while there are at most
-/// 2^16 values. Equality of codes is equality of values for every column coded by one dictionary.
-pub(in crate::code_rule_dsl) struct Codes {
-    map: std::collections::HashMap<i64, u16>,
-}
-
-impl Codes {
-    /// The dictionary of every value of `columns`, or `None` past 2^16 of them.
-    pub(in crate::code_rule_dsl) fn of(columns: &[&[i64]]) -> Option<Codes> {
-        let mut values: Vec<i64> = columns.iter().flat_map(|c| c.iter().copied()).collect();
-        values.sort_unstable();
-        values.dedup();
-        (values.len() <= 1 << 16).then(|| Codes { map: values.into_iter().enumerate().map(|(k, v)| (v, k as u16)).collect() })
-    }
 }
 
 /// A relation's columns on the device, grouped by the lead column's chunk.
 pub(in crate::code_rule_dsl) struct Resident {
-    pub(in crate::code_rule_dsl) grouping: Grouping,
+    /// Each group's chunk and its rows (first, count), in order.
     group_list: Vec<(i64, u32, u32)>,
     pub(in crate::code_rule_dsl) rows: usize,
     pub(in crate::code_rule_dsl) groups: usize,
     pub(in crate::code_rule_dsl) forms: Vec<Form>,
-    /// The bytes the columns take on the device, and as `i64`s.
+    /// The bytes the columns take on the device.
     pub(in crate::code_rule_dsl) bytes: usize,
-    tiles: MappedBuffer,
+    tiles: Held,
     tile_count: usize,
-    highs: MappedBuffer,
-    columns: Vec<MappedBuffer>,
+    highs: Held,
+    columns: Vec<Held>,
     /// Each device row's place in the host's rows.
-    perm: MappedBuffer,
+    perm: Held,
 }
 
 const TILE: usize = 256;
 
-impl Resident {
-    /// `columns` (each `rows` long) on the device, grouped by column 0's chunk.
-    pub(in crate::code_rule_dsl) fn new(columns: &[&[i64]], rows: usize) -> Result<Self, Error> {
-        Self::grouped(columns, rows, Grouping::Chunk, &[])
-    }
+/// `values` (as `T`, each exactly) written into a pooled buffer.
+fn packed<T: Copy>(_device: &metal::Device, values: impl ExactSizeIterator<Item = T>) -> Result<Held, Error> {
+    Held::of(values)
+}
 
-    /// `columns` on the device grouped by column 0 as `grouping` says, column `k` coded by
-    /// `codes[k]` when it has one.
-    pub(in crate::code_rule_dsl) fn grouped(columns: &[&[i64]], rows: usize, grouping: Grouping, codes: &[Option<&Codes>]) -> Result<Self, Error> {
+impl Resident {
+    /// `columns` (each `rows` long) on the device, grouped by column 0's chunk. The host's part: a radix sort of
+    /// the lead's chunks (`rows_sort`), then per column one gather in that order, its form from the gathered
+    /// values (each in its row's chunk; its span), and one pass writing it into its buffer.
+    pub(in crate::code_rule_dsl) fn new(columns: &[&[i64]], rows: usize) -> Result<Self, Error> {
         let device = super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
         let lead = columns.first().ok_or(Error::BackendFailure)?;
-        let shift = match grouping {
-            Grouping::Chunk => 16,
-            Grouping::Key => 0,
-        };
-        let mut perm: Vec<u32> = (0..rows as u32).collect();
-        perm.sort_by_key(|&r| lead[r as usize] >> shift);
-        // Groups: runs of one chunk (or value); tiles: a group's rows 256 at a time.
-        let (mut highs, mut tiles, mut group_of) = (Vec::<i64>::new(), Vec::<[u32; 4]>::new(), vec![0u32; rows]);
-        let mut at = 0;
-        while at < rows {
-            let high = lead[perm[at] as usize] >> shift;
-            let end = at + perm[at..].iter().take_while(|&&r| lead[r as usize] >> shift == high).count();
-            let g = highs.len() as u32;
+        let chunks: Vec<i64> = lead[..rows].iter().map(|&v| v >> 16).collect();
+        let sorted = super::rows_sort::sort(&chunks);
+        let group_list = super::rows_sort::runs(&sorted.keys);
+        // Tiles: a group's rows 256 at a time.
+        let (mut highs, mut tiles) = (Vec::with_capacity(group_list.len()), Vec::<[u32; 4]>::new());
+        for (g, &(high, start, count)) in group_list.iter().enumerate() {
             highs.push(high);
-            group_of[at..end].fill(g);
-            for start in (at..end).step_by(TILE) {
-                tiles.push([g, start as u32, (end - start).min(TILE) as u32, 0]);
+            for s in (start..start + count).step_by(TILE) {
+                tiles.push([g as u32, s, (start + count - s).min(TILE as u32), 0]);
             }
-            at = end;
         }
+        let perm = sorted.perm;
         let mut forms = Vec::with_capacity(columns.len());
         let mut buffers = Vec::with_capacity(columns.len());
         let mut bytes = 0;
-        for (k, c) in columns.iter().enumerate() {
-            let value = |i: usize| c[perm[i] as usize];
-            let code = codes.get(k).copied().flatten();
-            let form = if k == 0 && grouping == Grouping::Key {
-                Form::Group
-            } else if let Some(code) = code {
-                if !(0..rows).all(|i| code.map.contains_key(&value(i))) {
-                    return Err(Error::BackendFailure);
-                }
-                Form::Code16
-            } else if grouping == Grouping::Chunk && (0..rows).all(|i| value(i) >> 16 == highs[group_of[i] as usize]) {
-                Form::Low16
-            } else if (0..rows).all(|i| i32::try_from(value(i)).is_ok()) {
-                Form::I32
+        let mut v: Vec<i64> = Vec::with_capacity(rows);
+        for c in columns {
+            v.clear();
+            v.extend(perm.iter().map(|&r| c[r as usize]));
+            let low16 = v.iter().zip(&sorted.keys).all(|(&x, &h)| x >> 16 == h);
+            let (min, max) = super::rows_sort::span(&v).unwrap_or((0, 0));
+            let (form, buffer) = if low16 {
+                bytes += 2 * rows;
+                (Form::Low16, packed(device, v.iter().map(|&x| x as u16))?)
+            } else if min >= i64::from(i32::MIN) && max <= i64::from(i32::MAX) {
+                bytes += 4 * rows;
+                (Form::I32, packed(device, v.iter().map(|&x| x as i32))?)
             } else {
-                Form::I64
-            };
-            let buffer = match form {
-                Form::Low16 => {
-                    let v: Vec<u16> = (0..rows).map(|i| value(i) as u16).collect();
-                    bytes += 2 * rows;
-                    MappedBuffer::from_slice(device, if v.is_empty() { &[0u16] } else { &v })?
-                }
-                Form::I32 => {
-                    let v: Vec<i32> = (0..rows).map(|i| value(i) as i32).collect();
-                    bytes += 4 * rows;
-                    MappedBuffer::from_slice(device, if v.is_empty() { &[0i32] } else { &v })?
-                }
-                Form::I64 => {
-                    let v: Vec<i64> = (0..rows).map(value).collect();
-                    bytes += 8 * rows;
-                    MappedBuffer::from_slice(device, if v.is_empty() { &[0i64] } else { &v })?
-                }
-                Form::Group => MappedBuffer::from_slice(device, &[0u16])?,
-                Form::Code16 => {
-                    let map = &code.expect("a coded column").map;
-                    let v: Vec<u16> = (0..rows).map(|i| map[&value(i)]).collect();
-                    bytes += 2 * rows;
-                    MappedBuffer::from_slice(device, if v.is_empty() { &[0u16] } else { &v })?
-                }
+                bytes += 8 * rows;
+                (Form::I64, packed(device, v.iter().copied())?)
             };
             forms.push(form);
             buffers.push(buffer);
         }
-        // The groups, on the host for the joins' merge; on the device (the scan's tiles) only by chunk.
-        let mut group_list: Vec<(i64, u32, u32)> = Vec::with_capacity(highs.len());
-        for t in &tiles {
-            match group_list.last_mut() {
-                Some(last) if last.0 == highs[t[0] as usize] => last.2 += t[2],
-                _ => group_list.push((highs[t[0] as usize], t[1], t[2])),
-            }
-        }
-        if grouping == Grouping::Key {
-            tiles.clear();
-            highs.clear();
-        }
         bytes += 8 * highs.len() + 16 * tiles.len();
         let tile_count = tiles.len();
         Ok(Resident {
-            grouping,
             rows,
             groups: group_list.len(),
             group_list,
             forms,
             bytes,
-            tiles: MappedBuffer::from_slice(device, if tiles.is_empty() { &[[0u32; 4]] } else { &tiles })?,
+            tiles: packed(device, tiles.into_iter())?,
             tile_count,
-            highs: MappedBuffer::from_slice(device, if highs.is_empty() { &[0i64] } else { &highs })?,
+            highs: packed(device, highs.into_iter())?,
             columns: buffers,
-            perm: MappedBuffer::from_slice(device, if perm.is_empty() { &[0u32] } else { &perm })?,
+            perm: packed(device, perm.into_iter())?,
         })
     }
 }
@@ -212,9 +139,6 @@ pub(in crate::code_rule_dsl) struct Scanned {
 pub(in crate::code_rule_dsl) fn predicate(program: &BlockProgram, inputs: &[Input], forms: &[Form]) -> Result<String, Error> {
     let shape = program.rows.ok_or(Error::UnsupportedBackend)?;
     if usize::from(shape.columns) != inputs.len() || shape.sets != 0 || program.extracts.len() != 1 {
-        return Err(Error::UnsupportedBackend);
-    }
-    if forms.iter().any(|f| matches!(f, Form::Group | Form::Code16)) {
         return Err(Error::UnsupportedBackend);
     }
     let low16 = |input: Input| matches!(input, Input::Col(g) if forms[g] == Form::Low16);
@@ -287,7 +211,7 @@ pub(in crate::code_rule_dsl) fn predicate(program: &BlockProgram, inputs: &[Inpu
 /// The three kernels of a row program over a resident relation's forms.
 fn source(body: &str, forms: &[Form]) -> String {
     let ty = |f: Form| match f {
-        Form::Low16 | Form::Code16 | Form::Group => "ushort",
+        Form::Low16 => "ushort",
         Form::I32 => "int",
         Form::I64 => "long",
     };
@@ -359,7 +283,7 @@ kernel void rows_scatter(device const Tile* tiles [[buffer(0)]], device const lo
 /// `params` are the program's parameters; each goes to the device as itself, its chunk and its
 /// low bits.
 pub(in crate::code_rule_dsl) fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, params: &[i64]) -> Result<Scanned, Error> {
-    let device = super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     // The launch budget every submission is checked against.
     let _scope = super::metal_backend::launch::LaunchScope::enter();
     let body = predicate(program, inputs, &resident.forms)?;
@@ -368,14 +292,14 @@ pub(in crate::code_rule_dsl) fn scan(program: &BlockProgram, inputs: &[Input], r
     let prefix = super::metal_backend::pipeline_named(&src, "rows_scan")?;
     let scatter = super::metal_backend::pipeline_named(&src, "rows_scatter")?;
     let wide: Vec<i64> = params.iter().flat_map(|&p| [p, p >> 16, p & 0xffff]).chain([0]).collect();
-    let params = MappedBuffer::from_slice(device, &wide)?;
+    let params = Held::of(wide.iter().copied())?;
     let tiles = resident.tile_count;
-    let counts = MappedBuffer::zeroed::<u32>(device, tiles.max(1))?;
-    let offsets = MappedBuffer::zeroed::<u32>(device, tiles + 1)?;
-    let n = MappedBuffer::from_slice(device, &[tiles as u32])?;
+    let counts = Held::new(4 * tiles)?;
+    let offsets = Held::new(4 * (tiles + 1))?;
+    let n = Held::of([tiles as u32].into_iter())?;
     // The outputs are at most the rows.
-    let out = MappedBuffer::zeroed::<u32>(device, resident.rows.max(1))?;
-    let queue = device.new_command_queue();
+    let out = Held::new(4 * resident.rows)?;
+    let queue = super::metal_sort::queue()?;
     let command = queue.new_command_buffer();
     let mut inputs: Vec<&metal::BufferRef> = vec![&resident.tiles.buffer, &resident.highs.buffer, &params.buffer];
     inputs.extend(resident.columns.iter().map(|b| &*b.buffer));
@@ -406,42 +330,26 @@ pub(in crate::code_rule_dsl) struct Joined {
     pub(in crate::code_rule_dsl) compared: u64,
 }
 
-impl Resident {
-    /// Each group's chunk (or key) and its rows (first, count), in order.
-    fn group_rows(&self) -> Vec<(i64, u32, u32)> {
-        self.group_list.clone()
-    }
-}
-
-/// The equi-join of two resident relations on key columns, by brute force within a group
-/// (decision 0095 §4, `tile`): both relations grouped alike by their key 0 (each one's column 0),
-/// so a pair whose key 0 is equal is in one group. Grouped by chunk (a node column in the 16-bit
-/// layout on both sides), a group is a document's rows; grouped by key, a group is a key run,
-/// and key 0 is not compared at all. A threadgroup takes 256 left rows of a group; the group's
-/// right rows come through threadgroup memory 256 at a time (each key 16 bits when both sides
-/// hold it as `Low16` or as codes of one dictionary, else 64), and each thread compares its row
-/// with each. Two passes, count and scatter, with a scan of the threads' counts
-/// between: the pairs in order, sized exactly.
+/// The equi-join of two resident relations on key columns, by brute force within a document (decision 0095 §4,
+/// `tile`): both relations grouped by their key 0 (each one's column 0, a node column in the 16-bit layout on both
+/// sides), so a pair whose key 0 is equal is in one group, a document's rows. A threadgroup takes 256 left rows of
+/// a group; the group's right rows come through threadgroup memory 256 at a time (each key 16 bits when both sides
+/// hold it as `Low16`, else 64), and each thread compares its row with each. Two passes, count and scatter, with a
+/// scan of the threads' counts between: the pairs in order, sized exactly. For a plain equi-join the sort and probe
+/// (`metal_sort`) does only the pairs' work; the tile is for pairs a key cannot find (containment, order).
 pub(in crate::code_rule_dsl) fn tile_join(left: &Resident, lkeys: &[usize], right: &Resident, rkeys: &[usize]) -> Result<Joined, Error> {
-    let device = super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let lead = match left.grouping {
-        Grouping::Chunk => Form::Low16,
-        Grouping::Key => Form::Group,
-    };
-    if lkeys.is_empty() || lkeys.len() != rkeys.len() || lkeys.len() > 3 || lkeys[0] != 0 || rkeys[0] != 0 || left.grouping != right.grouping || left.forms[0] != lead || right.forms[0] != lead {
+    super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    if lkeys.is_empty() || lkeys.len() != rkeys.len() || lkeys.len() > 3 || lkeys[0] != 0 || rkeys[0] != 0 || left.forms[0] != Form::Low16 || right.forms[0] != Form::Low16 {
         return Err(Error::UnsupportedBackend);
     }
     let _scope = super::metal_backend::launch::LaunchScope::enter();
-    if left.grouping == Grouping::Key {
-        return run_join(device, left, lkeys, right, rkeys);
-    }
     // The join's tiles: each left tile of a chunk the right also has, with the right's rows of it.
-    let (lg, rg) = (left.group_rows(), right.group_rows());
+    let (lg, rg) = (&left.group_list, &right.group_list);
     let mut tiles: Vec<[u32; 4]> = Vec::new();
     let mut highs: Vec<i64> = Vec::new();
     let mut compared = 0u64;
     let mut r = 0;
-    for &(high, start, count) in &lg {
+    for &(high, start, count) in lg {
         while r < rg.len() && rg[r].0 < high {
             r += 1;
         }
@@ -454,7 +362,7 @@ pub(in crate::code_rule_dsl) fn tile_join(left: &Resident, lkeys: &[usize], righ
         }
     }
     let ty = |f: Form| match f {
-        Form::Low16 | Form::Code16 | Form::Group => "ushort",
+        Form::Low16 => "ushort",
         Form::I32 => "int",
         Form::I64 => "long",
     };
@@ -463,30 +371,19 @@ pub(in crate::code_rule_dsl) fn tile_join(left: &Resident, lkeys: &[usize], righ
         Form::I32 => format!("long({side}{g}[{row}])"),
         _ => format!("{side}{g}[{row}]"),
     };
-    // A coded column against one that is not: no common value form.
-    if (1..lkeys.len()).any(|i| (left.forms[lkeys[i]] == Form::Code16) != (right.forms[rkeys[i]] == Form::Code16)) {
-        return Err(Error::UnsupportedBackend);
-    }
     let k = lkeys.len();
     let lcols: String = lkeys.iter().enumerate().map(|(i, &c)| format!(", device const {}* l{i} [[buffer({})]]", ty(left.forms[c]), 3 + i)).collect();
     let rcols: String = rkeys.iter().enumerate().map(|(i, &c)| format!(", device const {}* r{i} [[buffer({})]]", ty(right.forms[c]), 3 + k + i)).collect();
     let n = 3 + 2 * k;
-    // Stage the right keys; compare. Each key 16 bits when both sides hold it so in one group's
-    // terms (`Low16` of the chunk, codes of one dictionary), else 64; key 0 grouped by key is the
-    // group's, compared by the grouping.
-    let narrow: Vec<bool> = (0..k).map(|i| {
-        let (a, b) = (left.forms[lkeys[i]], right.forms[rkeys[i]]);
-        a == b && matches!(a, Form::Low16 | Form::Code16 | Form::Group)
-    }).collect();
+    // Stage the right keys; compare. Each key 16 bits when both sides hold it in the chunk's terms
+    // (`Low16`), else 64.
+    let narrow: Vec<bool> = (0..k).map(|i| left.forms[lkeys[i]] == Form::Low16 && right.forms[rkeys[i]] == Form::Low16).collect();
     let (mut stage, mut decl, mut mine) = (String::new(), String::new(), String::new());
     let mut test = String::from("true");
     for i in 0..k {
         let (lf, rf) = (left.forms[lkeys[i]], right.forms[rkeys[i]]);
         let ty = if narrow[i] { "ushort" } else { "long" };
         decl.push_str(&format!("    threadgroup {ty} s{i}[256];\n"));
-        if lf == Form::Group {
-            continue;
-        }
         let (r, l) = if narrow[i] { (format!("r{i}[rs + j]"), format!("l{i}[lrow]")) } else { (full('r', i, rf, "rs + j"), full('l', i, lf, "lrow")) };
         stage.push_str(&format!("        if (j < rc) {{ s{i}[t] = {r}; }}\n"));
         mine.push_str(&format!("    {ty} mine{i} = live ? {l} : 0;\n"));
@@ -559,16 +456,16 @@ kernel void rows_scan(device const uint* counts [[buffer(0)]], device uint* offs
     let prefix = super::metal_backend::pipeline_named(&src, "rows_scan")?;
     let scatter = super::metal_backend::pipeline_named(&src, "tile_scatter")?;
     let threads = tiles.len() * TILE;
-    let tiles_buf = MappedBuffer::from_slice(device, if tiles.is_empty() { &[[0u32; 4]] } else { &tiles })?;
-    let highs_buf = MappedBuffer::from_slice(device, if highs.is_empty() { &[0i64] } else { &highs })?;
-    let unused = MappedBuffer::zeroed::<u32>(device, 1)?;
-    let counts = MappedBuffer::zeroed::<u32>(device, threads.max(1))?;
-    let offsets = MappedBuffer::zeroed::<u32>(device, threads + 1)?;
-    let nbuf = MappedBuffer::from_slice(device, &[threads as u32])?;
+    let tiles_buf = Held::of(tiles.iter().copied())?;
+    let highs_buf = Held::of(highs.iter().copied())?;
+    let unused = Held::new(4)?;
+    let counts = Held::new(4 * threads)?;
+    let offsets = Held::new(4 * (threads + 1))?;
+    let nbuf = Held::of([threads as u32].into_iter())?;
     let mut inputs: Vec<&metal::BufferRef> = vec![&tiles_buf.buffer, &highs_buf.buffer, &unused.buffer];
     inputs.extend(lkeys.iter().map(|&c| &*left.columns[c].buffer));
     inputs.extend(rkeys.iter().map(|&c| &*right.columns[c].buffer));
-    let queue = device.new_command_queue();
+    let queue = super::metal_sort::queue()?;
     // The count pass alone first: the pairs are sized from it.
     let command = queue.new_command_buffer();
     if !tiles.is_empty() {
@@ -582,162 +479,12 @@ kernel void rows_scan(device const uint* counts [[buffer(0)]], device uint* offs
     let mut gpu = gpu_seconds(command);
     // SAFETY: `threads + 1` offsets, written by the scan, read after completion.
     let total = unsafe { *offsets.buffer.contents().cast::<u32>().add(threads) } as usize;
-    let out = MappedBuffer::zeroed::<u32>(device, (2 * total).max(1))?;
+    let out = Held::new(8 * total)?;
     if total > 0 {
         let command = queue.new_command_buffer();
         let mut with = inputs;
         with.extend([&*offsets.buffer, &*left.perm.buffer, &*right.perm.buffer, &*out.buffer]);
         encode(command, &scatter, "tile_scatter", &with, &[], tiles.len(), None);
-        commit_checked(command)?;
-        command.wait_until_completed();
-        gpu += gpu_seconds(command);
-    }
-    // SAFETY: `2 * total` words, written by the scatter.
-    let flat = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), 2 * total) };
-    let pairs = flat.chunks_exact(2).map(|p| (p[0], p[1])).collect();
-    Ok(Joined { pairs, gpu_seconds: gpu, compared })
-}
-
-/// `tile_join` of relations grouped by key: each left row against its key's run on the right. A
-/// key run is often a row or two, so a run is not a threadgroup's: each thread takes a left row
-/// of a matched run (the thread's run found by a binary search of the runs' first threads), and
-/// loops over the right run's rows, comparing the other keys (16 bits when both sides hold codes
-/// of one dictionary, else 64). Every pair compared shares key 0, so the work is the pairs of
-/// key 0 alone. Count, scan and scatter as `tile_join`'s.
-fn run_join(device: &metal::Device, left: &Resident, lkeys: &[usize], right: &Resident, rkeys: &[usize]) -> Result<Joined, Error> {
-    let (lg, rg) = (left.group_rows(), right.group_rows());
-    // The merge of the two sorted key lists: each matched run, its left rows and its right rows.
-    let mut runs: Vec<[u32; 4]> = Vec::new();
-    let mut firsts: Vec<u32> = Vec::new();
-    let (mut threads, mut compared, mut r) = (0u32, 0u64, 0);
-    for &(key, start, count) in &lg {
-        while r < rg.len() && rg[r].0 < key {
-            r += 1;
-        }
-        if r < rg.len() && rg[r].0 == key {
-            runs.push([start, count, rg[r].1, rg[r].2]);
-            firsts.push(threads);
-            threads += count;
-            compared += u64::from(count) * u64::from(rg[r].2);
-        }
-    }
-    let k = lkeys.len();
-    let ty = |f: Form| match f {
-        Form::Code16 | Form::Group | Form::Low16 => "ushort",
-        Form::I32 => "int",
-        Form::I64 => "long",
-    };
-    let value = |side: char, i: usize, f: Form, row: &str| match f {
-        Form::Code16 => format!("{side}{i}[{row}]"),
-        _ => format!("long({side}{i}[{row}])"),
-    };
-    let mut test = String::from("true");
-    for i in 1..k {
-        let (lf, rf) = (left.forms[lkeys[i]], right.forms[rkeys[i]]);
-        if matches!(lf, Form::Low16) || matches!(rf, Form::Low16) {
-            return Err(Error::UnsupportedBackend);
-        }
-        test.push_str(&format!(" && {} == {}", value('l', i, lf, "lrow"), value('r', i, rf, "rrow")));
-    }
-    let cols: String = lkeys.iter().enumerate().map(|(i, &c)| format!(", device const {}* l{i} [[buffer({})]]", ty(left.forms[c]), 4 + i))
-        .chain(rkeys.iter().enumerate().map(|(i, &c)| format!(", device const {}* r{i} [[buffer({})]]", ty(right.forms[c]), 4 + k + i)))
-        .collect();
-    let n = 4 + 2 * k;
-    let src = format!(
-        r#"#include <metal_stdlib>
-using namespace metal;
-struct Run {{ uint ls; uint lc; uint rs; uint rc; }};
-
-// The thread's run: the last whose first thread is at or before it (a bounded binary search).
-static inline uint run_of(device const uint* firsts, uint runs, uint t) {{
-    uint lo = 0, hi = runs;
-    for (uint step = 0; step < 32 && hi - lo > 1; step++) {{
-        uint mid = (lo + hi) / 2;
-        if (firsts[mid] <= t) lo = mid; else hi = mid;
-    }}
-    return lo;
-}}
-
-kernel void run_count(device const Run* runs [[buffer(0)]], device const uint* firsts [[buffer(1)]], constant uint* sizes [[buffer(2)]], constant uint* unused [[buffer(3)]]{cols},
-                      device uint* counts [[buffer({n})]], uint t [[thread_position_in_grid]]) {{
-    if (t >= sizes[1]) return;
-    Run run = runs[run_of(firsts, sizes[0], t)];
-    uint lrow = run.ls + (t - firsts[run_of(firsts, sizes[0], t)]);
-    uint c = 0;
-    for (uint q = 0; q < run.rc; q++) {{
-        uint rrow = run.rs + q;
-        c += uint({test});
-    }}
-    counts[t] = c;
-}}
-
-kernel void run_scatter(device const Run* runs [[buffer(0)]], device const uint* firsts [[buffer(1)]], constant uint* sizes [[buffer(2)]], constant uint* unused [[buffer(3)]]{cols},
-                        device const uint* offsets [[buffer({n})]], device const uint* lperm [[buffer({n1})]], device const uint* rperm [[buffer({n2})]], device uint* out [[buffer({n3})]],
-                        uint t [[thread_position_in_grid]]) {{
-    if (t >= sizes[1]) return;
-    uint g = run_of(firsts, sizes[0], t);
-    Run run = runs[g];
-    uint lrow = run.ls + (t - firsts[g]);
-    uint at = offsets[t];
-    for (uint q = 0; q < run.rc; q++) {{
-        uint rrow = run.rs + q;
-        if ({test}) {{ out[2 * at] = lperm[lrow]; out[2 * at + 1] = rperm[rrow]; at++; }}
-    }}
-}}
-
-kernel void rows_scan(device const uint* counts [[buffer(0)]], device uint* offsets [[buffer(1)]], constant uint* n [[buffer(2)]],
-                      uint t [[thread_index_in_threadgroup]]) {{
-    uint per = (n[0] + 255) / 256;
-    uint lo = min(n[0], t * per), hi = min(n[0], lo + per);
-    uint s = 0;
-    for (uint k = lo; k < hi; k++) s += counts[k];
-    threadgroup uint part[256];
-    part[t] = s;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint base = 0;
-    for (uint k = 0; k < t; k++) base += part[k];
-    for (uint k = lo; k < hi; k++) {{ offsets[k] = base; base += counts[k]; }}
-    if (t == 255) offsets[n[0]] = base;
-}}
-"#,
-        n1 = n + 1,
-        n2 = n + 2,
-        n3 = n + 3,
-    );
-    let count = super::metal_backend::pipeline_named(&src, "run_count")?;
-    let prefix = super::metal_backend::pipeline_named(&src, "rows_scan")?;
-    let scatter = super::metal_backend::pipeline_named(&src, "run_scatter")?;
-    let threads = threads as usize;
-    let runs_buf = MappedBuffer::from_slice(device, if runs.is_empty() { &[[0u32; 4]] } else { &runs })?;
-    let firsts_buf = MappedBuffer::from_slice(device, if firsts.is_empty() { &[0u32] } else { &firsts })?;
-    let sizes = MappedBuffer::from_slice(device, &[runs.len() as u32, threads as u32])?;
-    let unused = MappedBuffer::zeroed::<u32>(device, 1)?;
-    let counts = MappedBuffer::zeroed::<u32>(device, threads.max(1))?;
-    let offsets = MappedBuffer::zeroed::<u32>(device, threads + 1)?;
-    let nbuf = MappedBuffer::from_slice(device, &[threads as u32])?;
-    let mut inputs: Vec<&metal::BufferRef> = vec![&runs_buf.buffer, &firsts_buf.buffer, &sizes.buffer, &unused.buffer];
-    inputs.extend(lkeys.iter().map(|&c| &*left.columns[c].buffer));
-    inputs.extend(rkeys.iter().map(|&c| &*right.columns[c].buffer));
-    let groups = threads.div_ceil(TILE);
-    let queue = device.new_command_queue();
-    let command = queue.new_command_buffer();
-    if threads > 0 {
-        let mut with = inputs.clone();
-        with.push(&counts.buffer);
-        encode(command, &count, "run_count", &with, &[], groups, None);
-        encode(command, &prefix, "rows_scan", &[&counts.buffer, &offsets.buffer, &nbuf.buffer], &[], 1, None);
-    }
-    commit_checked(command)?;
-    command.wait_until_completed();
-    let mut gpu = gpu_seconds(command);
-    // SAFETY: `threads + 1` offsets, written by the scan, read after completion.
-    let total = unsafe { *offsets.buffer.contents().cast::<u32>().add(threads) } as usize;
-    let out = MappedBuffer::zeroed::<u32>(device, (2 * total).max(1))?;
-    if total > 0 {
-        let command = queue.new_command_buffer();
-        let mut with = inputs;
-        with.extend([&*offsets.buffer, &*left.perm.buffer, &*right.perm.buffer, &*out.buffer]);
-        encode(command, &scatter, "run_scatter", &with, &[], groups, None);
         commit_checked(command)?;
         command.wait_until_completed();
         gpu += gpu_seconds(command);

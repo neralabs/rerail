@@ -138,6 +138,10 @@ struct PlacedTotal {
     cpu_estimate: f64,
     gpu_estimate: f64,
     cpu: f64,
+    /// Its join steps by the form placement chose (CPU index, GPU sort and probe, GPU tile): how many, their
+    /// estimate on the CPU's index, and on the form chosen (of the steps estimated under `JOIN_ESTIMATE_CAP`), and
+    /// how many were estimated over it.
+    joins: [(u64, f64, f64, u64); 3],
 }
 
 #[derive(Default)]
@@ -518,7 +522,27 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     t.cpu_estimate += p.cpu_s;
     t.gpu_estimate += p.gpu_s;
     t.cpu += cpu;
+    for c in &p.joins {
+        use crate::code_rule_dsl::logic::plan::placement::JoinForm;
+        let chosen = match c.form {
+            JoinForm::Index => c.index_s,
+            JoinForm::Probe => c.probe_s.unwrap_or(c.index_s),
+            JoinForm::Tile => c.tile_s.unwrap_or(c.index_s),
+        };
+        let e = &mut t.joins[c.form as usize];
+        e.0 += 1;
+        if c.index_s < JOIN_ESTIMATE_CAP {
+            e.1 += c.index_s;
+            e.2 += chosen;
+        } else {
+            e.3 += 1;
+        }
+    }
 }
+
+/// A join step estimated over this many seconds is a planned estimate gone wrong (a cross product priced at 10^20
+/// rows): counted, not summed.
+const JOIN_ESTIMATE_CAP: f64 = 1e3;
 
 /// Where the native strata ran (decision 0095): how many on each backend, the strata the GPU would run cheaper and
 /// the forms it lacks for them, by their CPU. What the device must take on next, and what it would save.
@@ -539,7 +563,7 @@ fn placements(r: &mut String, state: &State) {
         runs - gpu,
         if device { "Metal" } else { "CPU" }
     );
-    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU assumed (2 ns a unit, 0.15 ms a submission) until the relational lab measures it.");
+    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU assumed (2 ns a unit, 0.15 ms a submission) but for join steps, priced on each form from the relational lab's measures.");
     // The strata the GPU would run cheaper in at least one run, and did not.
     let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
     let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
@@ -577,6 +601,17 @@ fn placements(r: &mut String, state: &State) {
     // The strata themselves, costliest first.
     let mut top = cheaper.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
+    // Each join step on the form its prices chose (the lab's measured device prices): what the device's joins would
+    // take on, in strata the device runs once it has their other forms.
+    let joins: Vec<(u64, f64, f64, u64)> = (0..3).map(|f| all.values().fold((0, 0.0, 0.0, 0), |a, t| (a.0 + t.joins[f].0, a.1 + t.joins[f].1, a.2 + t.joins[f].2, a.3 + t.joins[f].3))).collect();
+    if joins.iter().any(|j| j.0 > 0) {
+        use crate::code_rule_dsl::logic::plan::placement::JoinForm;
+        let _ = writeln!(r, "Join steps by the form their prices choose (estimates; the device's prices measured by the relational lab; steps estimated over {JOIN_ESTIMATE_CAP:.0} s counted, not summed):");
+        let _ = writeln!(r, "{:>9} {:>10} {:>10} {:>9}  form", "steps", "index s", "chosen s", "over cap");
+        for (f, form) in [JoinForm::Index, JoinForm::Probe, JoinForm::Tile].into_iter().enumerate() {
+            let _ = writeln!(r, "{:>9} {:>10.3} {:>10.3} {:>9}  {}", joins[f].0, joins[f].1, joins[f].2, joins[f].3, form.name());
+        }
+    }
     let _ = writeln!(r, "Costliest strata the GPU would run cheaper:");
     let _ = writeln!(r, "{:>8} {:>8} {:>12} {:>12} {:>5}  stratum: forms (missing on the GPU)", "cpu s", "gpu s", "planned", "work", "runs");
     for (key, t) in top.iter().take(20) {
