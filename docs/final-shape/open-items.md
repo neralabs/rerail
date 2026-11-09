@@ -3330,9 +3330,16 @@ the wrapper's, in bytes, not the engine's.)
   19.8 s to 66 s, every span growing alike (parsing too). Over the whole workspace that is about 500 s and 270 s.
   Half of `values` (34.6 of 66 s) is parsing and projecting its documents again, as every phase does; then
   `len_num` (0.24 s a chunk, now the domain's join), `posarg` (every call's arguments) and `v_asg`. Peak RSS 578 MB.
-  The rules alone will not bring this within the run budget: what is left is the per-phase re-read of every
-  document (a phase handing its base facts on), and running `values` only on the documents the checked ones
-  import (the demand of spike B, at P1's depth).
+  The tape is memoized across phases and runs (the tape cache): with it on, three phases over 596 files read
+  1,788 documents and parsed 591 (1.75 s). What each phase repeats is the tape's restore (0.7 ms a document), its
+  facts (2 ms) and the batch's projection, the largest; the projection's string table (SipHash) and three
+  per-node `wants` lookups took a fifth to a quarter of it, fixed (`bc4c60651`). Every measurement above and the
+  1,500 s run had the tape cache off (`RERAIL_TAPE_CACHE=off`).
+  `values` keeps reading every document: a phase's exports are keyed by its own inputs, so any reader reuses them;
+  reading only what one reader's documents import would key them by the reader.
+- Whole workspace, tape cache on, cold (2026-11-09 15:03, load 93–138): `struct` ended and was recorded at 13
+  minutes (218,783 granules; tapes for 8,986 files); `values` had not ended at 1,800 s (1,327 s CPU). A warm rerun
+  reuses both.
 
 **Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.
