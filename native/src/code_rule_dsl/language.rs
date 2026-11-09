@@ -243,25 +243,6 @@ impl GrammarDialect {
         GRAMMARS.get(&self)
     }
 
-    /// The kind of the node at the top of every tree the dialect's grammar parses (Python's
-    /// `module`, TypeScript's `program`): the one kind a file holds exactly one node of. `None` for
-    /// a dialect tree-sitter does not parse (Blade).
-    pub(crate) fn root_kind(self) -> Option<u16> {
-        static ROOT_KINDS: std::sync::LazyLock<std::collections::HashMap<GrammarDialect, u16>> =
-            std::sync::LazyLock::new(|| {
-                GrammarDialect::ALL
-                    .iter()
-                    .filter_map(|&dialect| {
-                        let mut parser = tree_sitter::Parser::new();
-                        parser.set_language(dialect.grammar()?).ok()?;
-                        let tree = parser.parse("", None)?;
-                        Some((dialect, tree.root_node().kind_id()))
-                    })
-                    .collect()
-            });
-        ROOT_KINDS.get(&self).copied()
-    }
-
     /// The dialect's kinds and fields: Blade's tree's (Forte, the registry's `parser` `forte`),
     /// else its tree-sitter grammar's.
     pub(crate) fn kinds(self) -> KindCatalog {

@@ -1029,7 +1029,7 @@ fn compile_query_as(
                 }
                 bindable.extend(names.into_iter().map(str::to_owned));
                 if !matches!(matcher, AstMatcher::Never) {
-                    let anchors = Arc::new(AnchorPlan::compile(&matcher, *language));
+                    let anchors = Arc::new(AnchorPlan::compile(&matcher));
                     let three_valued = reads_values(&matcher, &mut BTreeSet::new());
                     let text = (!three_valued)
                         .then(|| RequiredText::of(&matcher).map(Arc::new))

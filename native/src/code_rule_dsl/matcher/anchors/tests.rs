@@ -151,7 +151,7 @@ fn compare_matchers(
     let tape = AstGrep::doc(tape);
     assert_eq!(native.root().dfs().count(), image.primary.node_count());
     for &(rule, matcher) in matchers {
-        let plan = AnchorPlan::compile(matcher, language);
+        let plan = AnchorPlan::compile(matcher);
         let expected = actual(&native, matcher);
         let (native_found, _, native_visited, native_complete, _) =
             selected(&native, matcher, &plan, usize::MAX, || false);
@@ -278,7 +278,7 @@ fn ordered_alternatives_conjunction_pattern_captures_and_unrestricted_branches()
         let matcher =
             compile_rule(rule, GrammarDialect::Python, "test/rule", &mut Vec::new()).unwrap();
         assert_eq!(actual(&native, &matcher), expected);
-        let plan = AnchorPlan::compile(&matcher, GrammarDialect::Python);
+        let plan = AnchorPlan::compile(&matcher);
         let (found, roots, visited, complete, all) =
             selected(&native, &matcher, &plan, usize::MAX, || false);
         assert_eq!(found, expected);
@@ -420,7 +420,7 @@ fn string_comments_unicode_prefixes_long_residue_and_python_variadics() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
+    let plan = AnchorPlan::compile(&matcher);
     let (found, roots, visited, complete, all) =
         selected(&root, &matcher, &plan, usize::MAX, || false);
     assert_eq!(found.len(), 1);
@@ -629,7 +629,7 @@ fn incomplete_index_is_not_a_clean_absence() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
+    let plan = AnchorPlan::compile(&matcher);
     assert!(image.primary.node_count() > 2);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
@@ -666,7 +666,7 @@ fn traversal_polls_closing_nodes_before_another_preorder_batch() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
+    let plan = AnchorPlan::compile(&matcher);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
     for visited in [
@@ -712,7 +712,7 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
+    let plan = AnchorPlan::compile(&matcher);
     let native = AstGrep::doc(native);
     let tape = AstGrep::doc(tape);
     assert!(image.primary.node_count() > 1024);
@@ -775,7 +775,7 @@ where
                 rule.clone()
             };
             let matcher = sibling_matcher(rule.clone(), *root.root().get_doc().get_lang());
-            let plan = AnchorPlan::compile(&matcher, *root.root().get_doc().get_lang());
+            let plan = AnchorPlan::compile(&matcher);
             assert!(plan.exact, "{rule}");
             let index = FileAnchorIndex::build(root, &[&plan], usize::MAX, || false);
             let selection = index.select(&plan);
@@ -923,7 +923,7 @@ fn zero_width_end_sibling_selection_is_linear_in_the_run() {
     }
     for rule in &rules {
         let matcher = sibling_matcher(rule.clone(), GrammarDialect::TypeScript);
-        let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
+        let plan = AnchorPlan::compile(&matcher);
         let index = FileAnchorIndex::build(&native, &[&plan], usize::MAX, || false);
         assert!(index.walked_siblings, "the MISSING `}}` is zero-width");
         reset_walks();
@@ -951,7 +951,7 @@ fn assert_stop_rule_supersets<D: Doc<Source = String, Lang = GrammarDialect>>(
 {
     for rule in rules {
         let matcher = sibling_matcher(rule.clone(), *root.root().get_doc().get_lang());
-        let plan = AnchorPlan::compile(&matcher, *root.root().get_doc().get_lang());
+        let plan = AnchorPlan::compile(&matcher);
         assert!(!plan.exact, "{rule}");
         let index = FileAnchorIndex::build(root, &[&plan], usize::MAX, || false);
         let selection = index.select(&plan);
@@ -1089,11 +1089,48 @@ fn utility_plans_select_as_precisely_as_the_rule_written_inline() {
     }
 }
 
-/// A root gate (`inside` the grammar's root node, to the end, as the Airflow ports' `seen-airflow`
-/// gates a file on an `airflow` import) written through a utility selects the roots the gate
-/// written inline selects: `compile_util` keeps its relations, and those of the utilities under
-/// it, where it reduces any other relation utility to its root kinds (`relation` here, which adds
-/// nothing to the identifier roots it is written over).
+/// The names of the shared utility plans `plan` reaches, outermost first, each by the shape of
+/// its condition: a root gate (`Condition::RootGate`), a kept relation, a same-node condition, or
+/// `always`. A reduced relation utility is not shared, so it is not listed.
+fn utility_conditions(plan: &AnchorPlan) -> Vec<&'static str> {
+    fn collect<'plan>(plan: &'plan AnchorPlan, found: &mut Vec<&'plan AnchorPlan>) {
+        match &plan.condition {
+            Condition::Utility(inner) => {
+                found.push(inner);
+                collect(inner, found);
+            }
+            Condition::All(plans) | Condition::Any(plans) => {
+                for plan in plans {
+                    collect(plan, found);
+                }
+            }
+            Condition::Not(plan)
+            | Condition::Relation { inner: plan, .. }
+            | Condition::RootGate { gated: plan, .. } => collect(plan, found),
+            Condition::Always | Condition::Pattern(_) | Condition::Text { .. } => {}
+        }
+    }
+    let mut found = Vec::new();
+    collect(plan, &mut found);
+    found
+        .iter()
+        .map(|plan| match plan.condition {
+            Condition::RootGate { .. } => "root gate",
+            Condition::Relation { .. } => "relation",
+            Condition::Always => "always",
+            _ => "same-node",
+        })
+        .collect()
+}
+
+/// A root gate (a utility written `inside` the grammar's root node, to the end, as the Airflow
+/// ports' `seen-airflow` gates a file on an `airflow` import) selects the roots the gate written
+/// inline selects: `compile_util` keeps its relations and those of the utilities under it, where
+/// it reduces any other relation utility to its root kinds (`relation` here, which adds nothing to
+/// the identifier roots it is written over). Compilation only sees the kind the gate names: the
+/// same utility written `inside` another kind compiles to the same plan, and the index, which
+/// knows the tree's root, evaluates the one and reduces the other. A utility reached both under
+/// the gate and outside it has a plan for each context.
 #[test]
 fn utility_root_gates_select_as_the_gate_written_inline() {
     let calls: String = (0..200)
@@ -1124,9 +1161,10 @@ fn utility_root_gates_select_as_the_gate_written_inline() {
     let inline_utils = json!({ "leaf": leaf });
     // The gate's `has` sits in a utility of its own, as `seen-airflow` reaches `imports-airflow`.
     let utility = json!({ "kind": "identifier", "regex": "^foo$", "matches": "gate" });
+    let imports_util = json!({ "has": { "stopBy": "end", "matches": "leaf", "inside": { "stopBy": "neighbor", "kind": "string" } } });
     let utils = json!({
         "gate": { "inside": { "stopBy": "end", "kind": "program", "matches": "imports" } },
-        "imports": { "has": { "stopBy": "end", "matches": "leaf", "inside": { "stopBy": "neighbor", "kind": "string" } } },
+        "imports": imports_util,
         "leaf": leaf,
     });
     for (source, expected) in [(calls.as_str(), (0, 0)), (imports.as_str(), (200, 200))] {
@@ -1150,37 +1188,47 @@ fn utility_root_gates_select_as_the_gate_written_inline() {
         selection(json!({ "rule": relation, "utils": relation_utils }), &calls),
         (200, 200)
     );
-    let utilities = |ast: Value| {
-        fn collect<'plan>(plan: &'plan AnchorPlan, found: &mut Vec<&'plan AnchorPlan>) {
-            match &plan.condition {
-                Condition::Utility(inner) => found.push(inner),
-                Condition::All(plans) | Condition::Any(plans) => {
-                    for plan in plans {
-                        collect(plan, found);
-                    }
-                }
-                Condition::Not(plan) | Condition::Relation { inner: plan, .. } => {
-                    collect(plan, found);
-                }
-                Condition::Always | Condition::Pattern(_) | Condition::Text { .. } => {}
-            }
-        }
-        let compiled = compiled(ast);
-        let mut found = Vec::new();
-        collect(&grammar_matchers(&compiled)[0].anchors, &mut found);
-        found
-            .iter()
-            .map(|plan| matches!(plan.condition, Condition::Relation { .. }))
-            .collect::<Vec<_>>()
-    };
-    // The gate's plan is its relation; the reduced utility's is dropped (`Always`, not shared).
+    // The same gate written `inside` a kind that is not the tree's root (no `expression_statement`
+    // holds the import) is reduced by the index to every root, where the gate itself would have
+    // selected none: `foo`'s 200 roots, none of which the rule matches.
+    let not_root = json!({
+        "gate": { "inside": { "stopBy": "end", "kind": "expression_statement", "matches": "imports" } },
+        "imports": imports_util,
+        "leaf": leaf,
+    });
     assert_eq!(
-        utilities(json!({ "rule": utility, "utils": utils })),
-        vec![true]
+        selection(json!({ "rule": utility, "utils": not_root }), &imports),
+        (0, 200),
+        "a gate on another kind is reduced"
+    );
+    // `imports` reached under the gate and directly: the gated copy keeps its `has`, the direct
+    // one is reduced (an identifier has no children, so the rule matches nothing).
+    let both = json!({
+        "kind": "identifier", "regex": "^foo$",
+        "all": [{ "matches": "gate" }, { "matches": "imports" }],
+    });
+    assert_eq!(
+        selection(json!({ "rule": both, "utils": utils }), &calls),
+        (0, 0)
     );
     assert_eq!(
+        selection(json!({ "rule": both, "utils": utils }), &imports),
+        (0, 200)
+    );
+    let utilities = |ast: Value| utility_conditions(&grammar_matchers(&compiled(ast))[0].anchors);
+    // The gate's plan keeps the relation of `imports` beneath it and reaches `leaf`; whether the
+    // kind it names is the root is not a fact of the plan. The reduced utility's plan is dropped
+    // (`Always`, not shared), under the gate or at the top level alike.
+    let gated = vec!["root gate", "relation", "same-node"];
+    assert_eq!(utilities(json!({ "rule": utility, "utils": utils })), gated);
+    assert_eq!(
+        utilities(json!({ "rule": utility, "utils": not_root })),
+        gated
+    );
+    assert_eq!(utilities(json!({ "rule": both, "utils": utils })), gated);
+    assert_eq!(
         utilities(json!({ "rule": relation, "utils": relation_utils })),
-        Vec::<bool>::new()
+        Vec::<&str>::new()
     );
 }
 
@@ -1197,10 +1245,7 @@ fn utility_diamonds_inline_anchor_plans_in_linear_visits() {
         compiled_parameterized_utility_diamonds(DIAMOND_DEPTH),
     ] {
         reset_walks();
-        AnchorPlan::compile(
-            &grammar_matchers(&compiled)[0].matcher,
-            GrammarDialect::TypeScript,
-        );
+        AnchorPlan::compile(&grammar_matchers(&compiled)[0].matcher);
         assert!(
             walks(Walk::AnchorInlining) <= bound,
             "anchor planning inlined {} utilities (bound {bound})",
@@ -1349,7 +1394,7 @@ fn relation_selections_spend_units_on_the_related_nodes_only() {
             &mut Vec::new(),
         )
         .unwrap();
-        let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
+        let plan = AnchorPlan::compile(&matcher);
         let units = |filler: usize| {
             let source = source(filler);
             let native = AstGrep::doc(StrDoc::new(&source, GrammarDialect::TypeScript));
@@ -1395,7 +1440,7 @@ fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
         &mut Vec::new(),
     )
     .unwrap();
-    let plan = AnchorPlan::compile(&matcher, GrammarDialect::TypeScript);
+    let plan = AnchorPlan::compile(&matcher);
     let roots = 8_000;
     let source = (0..roots)
         .map(|n| format!("send(a{n}, {});\n", n % 3))
@@ -1490,5 +1535,73 @@ fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
             reported > 0,
             "{name}: a file with an airflow import still reports"
         );
+    }
+}
+
+/// ANN204, ANN205, ANN206 and ANN401 reach their `seen-builtins` utility (`inside module has
+/// dotted_name ^builtins`, a root gate) only through `static-ref` and `class-ref`: under a `not`
+/// in their first arm (a `staticmethod` / `classmethod` identifier no `builtins` import shadows)
+/// and directly in their second (a name that resolves to the builtin). Those two utilities walk a
+/// relation themselves (their third arm reaches them through a `has` inside parentheses), so
+/// `compile_util` reduces them to their root kinds, gate included: no plan of the four documents
+/// holds the gate, before this change or after it, and selection is sound and complete on a file
+/// with a `builtins` import and on one without.
+#[test]
+fn ann_ports_select_soundly_with_and_without_a_builtins_import() {
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
+    let without = "from typing import Any\n\nclass A:\n    def __init__(self):\n        pass\n\n    @staticmethod\n    def s(x):\n        return x\n\n    @classmethod\n    def c(cls):\n        return cls\n\ndef f(a: Any):\n    return a\n";
+    let with = "import builtins\nfrom typing import Any\n\nclass A:\n    def __init__(self):\n        pass\n\n    @builtins.staticmethod\n    def s(x):\n        return x\n\n    @builtins.classmethod\n    def c(cls):\n        return cls\n\n    @staticmethod\n    def t(x):\n        return x\n\ndef f(a: Any):\n    return a\n";
+    let without = AstGrep::doc(StrDoc::new(without, GrammarDialect::Python));
+    let with = AstGrep::doc(StrDoc::new(with, GrammarDialect::Python));
+    for name in [
+        "ruff-ann204-missing-return-type-special-method",
+        "ruff-ann205-missing-return-type-static-method",
+        "ruff-ann206-missing-return-type-class-method",
+        "ruff-ann401-any-type",
+    ] {
+        let document = std::fs::read_to_string(rules.join(format!("{name}.json"))).unwrap();
+        let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
+            document,
+            "json".to_owned(),
+            crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
+        )
+        .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
+        let grammars: Vec<&GrammarMatcher> = compiled
+            .inner
+            .clauses
+            .iter()
+            .filter_map(|clause| match &clause.kind {
+                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.iter()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert!(!grammars.is_empty(), "{name}: AST clauses");
+        for grammar in &grammars {
+            assert!(
+                !utility_conditions(&grammar.anchors).contains(&"root gate"),
+                "{name}: `static-ref` and `class-ref` are reduced, and the gate with them"
+            );
+        }
+        for (source, label) in [(&without, "without"), (&with, "with")] {
+            let mut reported = 0;
+            for grammar in &grammars {
+                let (found, _, _, complete, _) = selected(
+                    source,
+                    &grammar.matcher,
+                    &grammar.anchors,
+                    usize::MAX,
+                    || false,
+                );
+                assert!(complete, "{name} {label}: the index decides the file");
+                assert_eq!(
+                    found,
+                    actual(source, &grammar.matcher),
+                    "{name} {label} a builtins import: sound selection"
+                );
+                reported += found.len();
+            }
+            assert!(reported > 0, "{name} {label} a builtins import: reports");
+        }
     }
 }

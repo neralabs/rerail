@@ -140,6 +140,16 @@ enum Condition {
     /// of each copying it. Its root kinds stay on the referencing plan, which the enclosing
     /// conjunction may narrow.
     Utility(Arc<AnchorPlan>),
+    /// A root gate: a utility written `inside` one node kind to the end (`seen-airflow`'s `inside
+    /// module has dotted_name ^airflow`), kept whole where `kind` is the tree's root kind and
+    /// reduced to its root kinds elsewhere. Compilation sees the kind the gate names, not the
+    /// grammar's root; the index knows both (`FileAnchorIndex::root_kind`), so it decides: at the
+    /// root it evaluates `gated`, a check of the whole file that lets a rejected file select no
+    /// root, and for any other kind the gate is every root of its scope.
+    RootGate {
+        kind: u16,
+        gated: Box<AnchorPlan>,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -166,60 +176,65 @@ struct Requirement {
 /// `matches` references inlined into one query's plan before the rest fall back to unrestricted.
 const MAX_INLINED_UTILS: usize = 4096;
 
-struct Inlining {
-    /// Utilities whose plan is being compiled: a reference back into one plans as unrestricted,
-    /// a sound superset. Completed plans are reused by every diamond path; a parameterized call
-    /// has the same anchor plan as its utility. A plan is completed per context: under a root
-    /// gate (`root_gate`) it keeps its relations, elsewhere it is reduced.
-    visiting: BTreeSet<usize>,
-    completed: BTreeMap<(usize, bool), AnchorPlan>,
-    budget: usize,
-    /// The kind of the grammar's root node (`GrammarDialect::root_kind`), which a root gate names.
-    root_kind: Option<u16>,
-    /// How many root gates the rule being compiled sits inside.
-    under_root_gate: usize,
+/// The context a utility's plan is compiled in (`compile_util`).
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+enum Context {
+    /// A plan that projects relations is reduced to its root kinds.
+    Reduced,
+    /// Under a root gate, a plan keeps its relations: they run only where the index confirms the
+    /// gate, over the one file the gate admits.
+    UnderRootGate,
 }
 
-/// Whether `rule` is a root gate: `inside`, to the end, a rule anchored on the grammar's root node
-/// (`anchored_at_root`), such as a file-level import gate (`inside module has dotted_name
-/// ^airflow`). `compile_util` keeps a gate's relations through a utility.
-fn root_gate(rule: &AstMatcher, root_kind: Option<u16>) -> bool {
+struct Inlining {
+    /// Utilities whose plan is being compiled: a reference back into one plans as unrestricted,
+    /// a sound superset.
+    visiting: BTreeSet<usize>,
+    /// Completed plans, reused by every diamond path; a parameterized call has the same anchor
+    /// plan as its utility. One per context: a utility reached both under a root gate and outside
+    /// one has a plan for each.
+    completed: BTreeMap<(usize, Context), AnchorPlan>,
+    budget: usize,
+    /// Whether the rule being compiled sits under a root gate.
+    under_root_gate: bool,
+}
+
+/// The kind a root gate names, where `rule` is one: a bare `inside`, to the end, of a rule anchored
+/// on one node kind (`single_kind`), such as a file-level import gate (`inside module has
+/// dotted_name ^airflow`). Only the bare shape counts: `{kind: call, inside: {stopBy: end, kind:
+/// module, ...}}` is a conjunction, reduced like any other relation utility. Whether the kind is
+/// the tree's root kind, which makes the `inside` a gate on the whole file, is the index's to
+/// decide (`Condition::RootGate`).
+fn root_gate(rule: &AstMatcher) -> Option<u16> {
     match rule {
-        AstMatcher::Inside(inner, StopBy::End) => anchored_at_root(inner, root_kind),
-        _ => false,
+        AstMatcher::Inside(inner, StopBy::End) => single_kind(inner),
+        _ => None,
     }
 }
 
-/// Whether `rule` names the grammar's root kind among its same-node terms, so that it matches at
-/// most one node of a file.
-fn anchored_at_root(rule: &AstMatcher, root_kind: Option<u16>) -> bool {
-    let Some(root_kind) = root_kind else {
-        return false;
-    };
+/// The one kind `rule` names among its same-node terms, where it names exactly one.
+fn single_kind(rule: &AstMatcher) -> Option<u16> {
     match rule {
-        AstMatcher::Kind(kind) => kind
-            .potential_kinds()
-            .is_some_and(|kinds| kinds.iter().eq([usize::from(root_kind)])),
-        AstMatcher::All(items) => items
-            .iter()
-            .any(|item| anchored_at_root(item, Some(root_kind))),
-        _ => false,
+        AstMatcher::Kind(kind) => {
+            let kinds = kind.potential_kinds()?;
+            let mut kinds = kinds.iter();
+            let kind = kinds.next()?;
+            kinds.next().is_none().then_some(kind as u16)
+        }
+        AstMatcher::All(items) => items.iter().find_map(single_kind),
+        _ => None,
     }
 }
 
 impl AnchorPlan {
-    pub(in crate::code_rule_dsl) fn compile(
-        matcher: &AstMatcher,
-        language: GrammarDialect,
-    ) -> Self {
+    pub(in crate::code_rule_dsl) fn compile(matcher: &AstMatcher) -> Self {
         Self::compile_in(
             matcher,
             &mut Inlining {
                 visiting: BTreeSet::new(),
                 completed: BTreeMap::new(),
                 budget: MAX_INLINED_UTILS,
-                root_kind: language.root_kind(),
-                under_root_gate: 0,
+                under_root_gate: false,
             },
         )
     }
@@ -234,8 +249,12 @@ impl AnchorPlan {
     }
 
     fn compile_util(util: &UtilRef, inlining: &mut Inlining) -> Self {
-        let under_root_gate = inlining.under_root_gate > 0;
-        if let Some(plan) = inlining.completed.get(&(util.index, under_root_gate)) {
+        let context = if inlining.under_root_gate {
+            Context::UnderRootGate
+        } else {
+            Context::Reduced
+        };
+        if let Some(plan) = inlining.completed.get(&(util.index, context)) {
             return plan.clone();
         }
         if inlining.budget == 0 || !inlining.visiting.insert(util.index) {
@@ -244,47 +263,70 @@ impl AnchorPlan {
         inlining.budget -= 1;
         #[cfg(test)]
         record_walk(Walk::AnchorInlining);
-        let root_gate = util
-            .with_target(|rule| root_gate(rule, inlining.root_kind))
-            .unwrap_or(false);
+        // Under a gate already, the target keeps its relations whatever its shape.
+        let gate = match context {
+            Context::Reduced => util.with_target(root_gate).flatten(),
+            Context::UnderRootGate => None,
+        };
+        let under_gate = gate.is_some() || matches!(context, Context::UnderRootGate);
+        let outside = std::mem::replace(&mut inlining.under_root_gate, under_gate);
         let plan = util
             .with_target(|rule| Self::compile_in(rule, inlining))
             .unwrap_or_else(Self::unrestricted);
+        inlining.under_root_gate = outside;
         // A target whose plan projects relations keeps only its root kinds: those projections
         // scan whole-file postings, and on utilities written to walk a relation (tail positions,
         // enclosing scopes) they cost more than matching the roots the kinds already select.
         // Dropping a condition only widens the plan. Any other condition is kept whole and shared.
         //
-        // A root gate (`inside` the grammar's root node, to the end: `seen-airflow`'s `inside
-        // module has dotted_name ^airflow`) is exempt, as is any utility reached under one: the
-        // gate's relation is evaluated against the file's one root node, so everything beneath it
-        // runs once per file, not once per candidate root, and a file the gate rejects selects no
-        // root at all, which is the point of writing one. Reduced, the gate would read `inside
-        // module`, and select every root.
+        // A root gate is kept whole, and so is every utility reached under it, because a gate can
+        // drop the whole file: a file it rejects selects no root, which is the point of writing
+        // one. Reduced, `seen-airflow` would read `inside module` and select every root. Kept, it
+        // costs what the gate written inline costs: one evaluation of its inner over the whole
+        // file, per file, so a gate that reaches a scope-walking utility pays that utility's
+        // whole-file walk in every file, as it would inline. Whether the kind the gate names is the
+        // tree's root is the index's to confirm (`Condition::RootGate`): compilation sees the kind,
+        // not the grammar's root, and where the index does not confirm it the gate is the reduced
+        // plan.
         let plan = if matches!(plan.condition, Condition::Always) {
             plan
-        } else if plan.projects_relations() && !root_gate && !under_root_gate {
+        } else if !plan.projects_relations() || matches!(context, Context::UnderRootGate) {
+            Self::shared(plan)
+        } else if let Some(kind) = gate {
+            Self::shared(Self {
+                root_kinds: plan.root_kinds.clone(),
+                // A superset where the index does not confirm the gate: never exact.
+                exact: false,
+                condition: Condition::RootGate {
+                    kind,
+                    gated: Box::new(plan),
+                },
+            })
+        } else {
             Self {
                 root_kinds: plan.root_kinds,
                 condition: Condition::Always,
                 exact: false,
             }
-        } else {
-            Self {
-                root_kinds: plan.root_kinds.clone(),
-                exact: plan.exact,
-                condition: Condition::Utility(Arc::new(plan)),
-            }
         };
         inlining.visiting.remove(&util.index);
         inlining
             .completed
-            .insert((util.index, under_root_gate), plan.clone());
+            .insert((util.index, context), plan.clone());
         plan
     }
 
-    /// Whether selecting with this plan walks a relation. A shared utility plan does only under a
-    /// root gate (`root_gate`): any other that would is reduced to its root kinds instead.
+    /// `plan` as the one plan every reference to its utility reaches.
+    fn shared(plan: Self) -> Self {
+        Self {
+            root_kinds: plan.root_kinds.clone(),
+            exact: plan.exact,
+            condition: Condition::Utility(Arc::new(plan)),
+        }
+    }
+
+    /// Whether selecting with this plan walks a relation. A shared utility plan and a root gate
+    /// do not count: the index evaluates them once per selection, and a gate only at the root.
     fn projects_relations(&self) -> bool {
         match &self.condition {
             Condition::Relation { .. } => true,
@@ -295,7 +337,8 @@ impl AnchorPlan {
             Condition::Always
             | Condition::Pattern(_)
             | Condition::Text { .. }
-            | Condition::Utility(_) => false,
+            | Condition::Utility(_)
+            | Condition::RootGate { .. } => false,
         }
     }
 
@@ -397,11 +440,7 @@ impl AnchorPlan {
                     AstMatcher::Precedes(..) => Direction::Precedes,
                     _ => Direction::Follows,
                 };
-                // Utilities under a root gate keep their relations (`compile_util`).
-                let gate = root_gate(matcher, inlining.root_kind);
-                inlining.under_root_gate += usize::from(gate);
                 let inner = Self::compile_in(inner, inlining);
-                inlining.under_root_gate -= usize::from(gate);
                 // A stop rule only shortens the walk, so the unbounded relation is a superset:
                 // sound to select with, but not exact (a `not` over it must not subtract).
                 let bounded = matches!(stop, StopBy::Rule(_));
@@ -487,10 +526,12 @@ impl AnchorPlan {
 
     /// Records the value postings selection reads. `domain` holds the root kinds an enclosing
     /// conjunction imposes on a shared utility plan, which `restrict_root` could not push into
-    /// it; `utilities` visits each shared plan once per domain.
+    /// it; `utilities` visits each shared plan once per domain; `root_kind` is the tree's root
+    /// kind, which decides whether a root gate's inner is read at all.
     fn collect_needs<'plan>(
         &'plan self,
         domain: Option<&BTreeSet<u16>>,
+        root_kind: u16,
         utilities: &mut HashSet<(usize, Option<BTreeSet<u16>>)>,
         needs: &mut [Needs<'plan>],
     ) {
@@ -519,19 +560,27 @@ impl AnchorPlan {
             // `restrict_root` already narrowed these children to this plan's root kinds.
             Condition::All(plans) | Condition::Any(plans) => {
                 for plan in plans {
-                    plan.collect_needs(domain, utilities, needs);
+                    plan.collect_needs(domain, root_kind, utilities, needs);
                 }
             }
-            Condition::Not(plan) => plan.collect_needs(domain, utilities, needs),
+            Condition::Not(plan) => plan.collect_needs(domain, root_kind, utilities, needs),
             // Relations bind other nodes: no root kind domain applies to them.
-            Condition::Relation { inner, .. } => inner.collect_needs(None, utilities, needs),
+            Condition::Relation { inner, .. } => {
+                inner.collect_needs(None, root_kind, utilities, needs);
+            }
             Condition::Utility(plan) => {
                 let mut kinds = domain.cloned();
                 intersect_kinds(&mut kinds, self.root_kinds.as_ref());
                 if utilities.insert((Arc::as_ptr(plan) as usize, kinds.clone())) {
                     #[cfg(test)]
                     record_walk(Walk::AnchorNeeds);
-                    plan.collect_needs(kinds.as_ref(), utilities, needs);
+                    plan.collect_needs(kinds.as_ref(), root_kind, utilities, needs);
+                }
+            }
+            // A gate the index does not confirm reads nothing (`select_complete`).
+            Condition::RootGate { kind, gated } => {
+                if *kind == root_kind {
+                    gated.collect_needs(domain, root_kind, utilities, needs);
                 }
             }
             Condition::Always => {}
@@ -800,7 +849,7 @@ where
         let mut needs: Vec<_> = (0..index.kinds.len()).map(|_| Needs::default()).collect();
         let mut utilities = HashSet::default();
         for plan in plans {
-            plan.collect_needs(None, &mut utilities, &mut needs);
+            plan.collect_needs(None, index.root_kind(), &mut utilities, &mut needs);
         }
         index.complete = index.build_values(&needs, &mut budget_exhausted) && !budget_exhausted();
         index
@@ -870,6 +919,12 @@ where
     }
     pub(in crate::code_rule_dsl) fn kind(&self, ordinal: usize) -> u16 {
         self.entries[ordinal].kind
+    }
+    /// The kind of the tree's root node, the first entry of the preorder: the one kind a file
+    /// holds exactly one node of (Python's `module`, TypeScript's `program`, a Blade tape's
+    /// template), which a root gate must name to gate the file (`Condition::RootGate`).
+    fn root_kind(&self) -> u16 {
+        self.entries[0].kind
     }
 
     #[cfg(feature = "code-rule-profile")]
@@ -1037,6 +1092,9 @@ where
                 .fold(0usize, usize::saturating_add)
                 .min(roots),
             Condition::Relation { inner, .. } => self.estimate(inner, memo).min(roots),
+            Condition::RootGate { kind, gated } if *kind == self.root_kind() => {
+                self.estimate(gated, memo).min(roots)
+            }
             Condition::Utility(inner) => {
                 let key = Arc::as_ptr(inner) as usize;
                 match memo.estimates.get(&key) {
@@ -1103,6 +1161,15 @@ where
                 recursive,
             } => self.relation_selection(scope, inner, *direction, *recursive, memo),
             Condition::Utility(inner) => self.utility_selection(scope, inner, memo),
+            // Naming the root kind, the gate reads the file once, at its root; naming any other,
+            // it is the reduced plan: every root of the scope.
+            Condition::RootGate { kind, gated } => {
+                if *kind == self.root_kind() {
+                    self.select_complete(gated, scope, memo)
+                } else {
+                    Ok(scope)
+                }
+            }
         }
     }
 
