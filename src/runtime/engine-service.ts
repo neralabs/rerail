@@ -16,6 +16,8 @@ import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
 export interface EngineService {
+  /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
+  readonly socketPath: string;
   close(): Promise<void>;
   ingest(
     event: AdapterEvent,
@@ -143,6 +145,13 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
    * standalone service (tests, benchmarks) omits it.
    */
   accessToken?: string;
+  /**
+   * A pipe name to listen on instead when `socketPath`, a Windows named pipe, is held by a process that is not this
+   * home's engine service. Any local user can create a pipe of any name, and `socketPath` is derived from the database
+   * path, which anyone can work out, so without one a pipe made first stops every daemon start. Clients find the pipe
+   * through the state file, never by computing it. A socket path the caller named outright gets none.
+   */
+  pipeFallback?: () => string;
 };
 
 interface EngineRoutingState {
@@ -270,15 +279,81 @@ async function socketAnswers(socketPath: string): Promise<boolean> {
 }
 
 /**
- * Listens on `socketPath`. A daemon killed without cleanup (`kill -9`, a crash) leaves its Unix socket file behind, and
- * binding over it fails with EADDRINUSE: when no process answers on that socket, the file is removed and the bind tried
- * once more; when one does, the error says a live daemon owns it. Windows named pipes leave no file to clear.
+ * Whether this home's engine service answers on the pipe `socketPath`: it takes `accessToken` and refuses the empty
+ * request after it (400). Another user's process holding the name has no such token. Without a token to present, any
+ * holder counts as this home's.
  */
-async function listenOnSocket(server: Server, socketPath: string): Promise<void> {
+async function ownEngineAnswers(socketPath: string, accessToken: string | undefined): Promise<boolean> {
+  if (accessToken === undefined) return true;
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const body = "{}";
+  const outgoing = request({
+    socketPath,
+    method: "POST",
+    path: "/events",
+    agent: false,
+    headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), [DAEMON_ACCESS_HEADER]: accessToken },
+  }, (response) => {
+    response.resume();
+    resolve(response.statusCode === 400);
+  });
+  outgoing.setTimeout(PIPE_PROBE_TIMEOUT_MS, () => outgoing.destroy(new Error("Engine probe timed out")));
+  // A holder that never answers, or hangs up, is not this home's engine; the first verdict wins.
+  outgoing.on("error", () => resolve(false));
+  outgoing.on("close", () => resolve(false));
+  outgoing.end(body);
+  return await promise;
+}
+
+const PIPE_PROBE_TIMEOUT_MS = 2_000;
+
+/** What listening beside a held pipe needs; tests pass their own. */
+export interface HeldPipeListening {
+  listen: (socketPath: string) => Promise<void>;
+  /** Whether this home's engine service answers on the held pipe. */
+  ownEngineAnswers: (socketPath: string) => Promise<boolean>;
+  fallback: (() => string) | undefined;
+}
+
+/**
+ * Where to listen when `pipe` is already held (`cause`, EACCES or EADDRINUSE): on the fallback pipe when the holder is not this
+ * home's engine service, which a second daemon must never start beside. Returns the pipe it listens on.
+ */
+export async function listenBesideHeldPipe(pipe: string, cause: unknown, listening: HeldPipeListening): Promise<string> {
+  if (listening.fallback === undefined) throw cause;
+  if (await listening.ownEngineAnswers(pipe)) {
+    throw new Error(`Rerail's engine pipe ${pipe} is in use by a running daemon; stop it with \`rerail daemon stop\` before starting another.`, { cause });
+  }
+  const fallback = listening.fallback();
+  await listening.listen(fallback);
+  return fallback;
+}
+
+/**
+ * Listens on `socketPath`, and returns where it listens. A daemon killed without cleanup (`kill -9`, a crash) leaves
+ * its Unix socket file behind, and binding over it fails with EADDRINUSE: when no process answers on that socket, the
+ * file is removed and the bind tried once more; when one does, the error says a live daemon owns it. Windows named
+ * pipes leave no file to clear; a held one moves to `pipeFallback` (`listenBesideHeldPipe`).
+ */
+async function listenOnSocket(
+  server: Server,
+  socketPath: string,
+  options: Pick<EngineServiceOptions, "accessToken" | "pipeFallback">,
+): Promise<string> {
   try {
     await listen(server, socketPath);
+    return socketPath;
   } catch (error) {
-    if (isWindowsNamedPipe(socketPath) || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    // libuv creates a pipe's first instance alone, and reports a name another process holds as EACCES or EADDRINUSE.
+    if (isWindowsNamedPipe(socketPath) && (code === "EACCES" || code === "EADDRINUSE")) {
+      return await listenBesideHeldPipe(socketPath, error, {
+        listen: async path => await listen(server, path),
+        ownEngineAnswers: async path => await ownEngineAnswers(path, options.accessToken),
+        fallback: options.pipeFallback,
+      });
+    }
+    if (code !== "EADDRINUSE") throw error;
     // Only a socket is a dead daemon's to clear: anything else at the path is left alone, whatever a probe would say.
     if (!(await lstat(socketPath)).isSocket()) {
       throw new Error(`Rerail's engine socket path ${socketPath} holds something that is not a socket; move it aside before starting the daemon.`, { cause: error });
@@ -290,6 +365,7 @@ async function listenOnSocket(server: Server, socketPath: string): Promise<void>
       if (unlinkError.code !== "ENOENT") throw unlinkError;
     });
     await listen(server, socketPath);
+    return socketPath;
   }
 }
 
@@ -330,7 +406,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
   });
+  let socketPath = options.socketPath;
   const engineService: EngineService = {
+    get socketPath() {
+      return socketPath;
+    },
     ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
     async close() {
       const closed = Promise.withResolvers<void>();
@@ -342,7 +422,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   };
   server.requestTimeout = 30_000;
   try {
-    await listenOnSocket(server, options.socketPath);
+    socketPath = await listenOnSocket(server, options.socketPath, options);
   } catch (error) {
     server.close();
     await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));

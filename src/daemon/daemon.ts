@@ -95,6 +95,11 @@ export interface RerailDaemonOptions {
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
    */
   tls?: DaemonTlsMaterial;
+  /**
+   * Called when a Rerail process asks the daemon to stop (`POST /native/shutdown`, which `rerail daemon stop` sends on
+   * Windows, where no signal reaches a handler). Omitted, the daemon serves no such request.
+   */
+  onShutdownRequest?: () => void;
 }
 
 /** What `--tls-cert` and `--tls-key` name, read: PEM text. */
@@ -302,6 +307,20 @@ function daemonApp({ stores, options, publicHosts, accessToken, nativeToken, ses
   app.use("/mcp", requestBodyLimit(API_BODY_LIMIT_BYTES));
   app.use("/native/*", requestBodyLimit(NATIVE_BODY_LIMIT_BYTES));
   app.get("/healthz", context => context.json(health()));
+  const requestShutdown = options.onShutdownRequest;
+  if (requestShutdown !== undefined) {
+    // The stop Windows has no signal for. The native token is in daemon.json alone, which only this user reads, so a
+    // page holding the dashboard's capability cannot stop the daemon; a browser always sends Origin.
+    app.post("/native/shutdown", (context) => {
+      if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
+      if (!sameSecret(context.req.header("authorization"), `Bearer ${nativeToken}`)) {
+        return context.json({ error: "native-authorization-invalid" }, 403);
+      }
+      // After the answer is on its way: closing the server ends this connection too.
+      setImmediate(requestShutdown);
+      return context.json({ stopping: true }, 202);
+    });
+  }
 
   app.post("/native/session", async (context) => {
     // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
@@ -484,6 +503,10 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
+        // On Windows any local user can create the default pipe first; the engine then listens on a random name.
+        ...(options.kernelSocketPath === undefined
+          ? { pipeFallback: () => `${kernelSocketPath}-${randomBytes(8).toString("hex")}` }
+          : {}),
       });
       started.engineService = engineService;
       const nativeToken = randomBytes(32).toString("hex");
@@ -495,7 +518,7 @@ export class RerailDaemon {
       const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
-        server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
+        server, engineService, kernelSocketPath: engineService.socketPath, stores, options, databasePath, native, ui, workspaceRoot,
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256,
       });
       await daemon.#announce(remembered);
@@ -813,7 +836,11 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`).
   const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
   const databasePath = defaultRerailDatabasePath();
+  // A signal (macOS, Linux) or a shutdown request (Windows, where `process.kill` ends a process without running any
+  // handler) closes the daemon. `rerail daemon stop` kills a daemon that has not stopped within its wait.
+  let shutdown = (): void => undefined;
   const daemon = await RerailDaemon.start({
+    onShutdownRequest: () => shutdown(),
     version: await packageVersion(),
     databasePath,
     workspaceRoot,
@@ -847,7 +874,10 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   for (const skipped of catalog.skipped) {
     process.stdout.write(`rule pack left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}\n`);
   }
-  const shutdown = (): void => {
+  let stopping = false;
+  shutdown = (): void => {
+    if (stopping) return;
+    stopping = true;
     daemon.close().then(
       () => {
         mainInstance?.release();

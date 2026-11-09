@@ -512,6 +512,37 @@ describe("a state file Windows left behind", () => {
     expect(await lookupDaemon(home, windows(["rerail-0123456789abcdef01234567"]))).toMatchObject({ status: "unresponsive" });
   });
 
+  it("asks a Windows daemon to stop over its API before any kill, since no signal reaches its shutdown there", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native" })));
+    let running = true;
+    const requests: Array<{ url: string; method: string; headers: Headers }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: URL, init: RequestInit) => {
+      requests.push({ url: String(url), method: init.method ?? "GET", headers: new Headers(init.headers) });
+      if (String(url).endsWith("/native/shutdown")) {
+        running = false;
+        return Response.json({ stopping: true }, { status: 202 });
+      }
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    const signals: Array<string | number | undefined> = [];
+    const machine = {
+      ...windows(["rerail-0123456789abcdef01234567"]),
+      kill: (_pid: number, signal?: string | number) => {
+        signals.push(signal);
+        if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+    };
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    const shutdown = requests.find(request => request.url.endsWith("/native/shutdown"));
+    expect(shutdown?.method).toBe("POST");
+    expect(shutdown?.headers.get("authorization")).toBe("Bearer native");
+    expect(shutdown?.headers.get("x-rerail-access")).toBe("capability");
+    // process.kill with a signal is TerminateProcess on Windows: the daemon stopped by itself, so none was sent.
+    expect(signals.filter(signal => signal !== 0)).toEqual([]);
+  });
+
   it("counts a recorded cache holder only while a Rerail engine pipe exists on Windows", () => {
     expect(daemonMayHold(DEAD_PID, windows([]))).toBe(false);
     expect(daemonMayHold(DEAD_PID, windows(["other-pipe"]))).toBe(false);

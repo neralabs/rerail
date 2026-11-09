@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { chooseEngineSocketPath, ingestEngineEvent, preparePrivateDirectory, startEngineService } from "../../src/runtime/engine-service.js";
+import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../src/runtime/engine-service.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { startTestRepository } from "../support/started-repository.js";
 
@@ -165,5 +165,32 @@ describe.runIf(process.platform !== "win32")("engine service socket directory", 
     const refusal = chooseEngineSocketPath([join(owned, "engine.sock"), tooLong], process.getuid!() + 1);
     await expect(refusal).rejects.toThrow(new RegExp(`${owned}: it is owned by uid \\d+, not \\d+\\. Another user .*administrator must remove ${owned}`, "u"));
     await expect(refusal).rejects.toThrow(new RegExp(`${tooLong} is \\d+ bytes.*RERAIL_HOME`, "u"));
+  });
+});
+
+describe("an engine pipe another process holds", () => {
+  const PIPE = String.raw`\.\pipe\rerail-0123456789abcdef01234567`;
+  const held = Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" });
+
+  it("listens on the fallback pipe when the holder is not this home's engine, and says where", async () => {
+    const listened: string[] = [];
+    const where = await listenBesideHeldPipe(PIPE, held, {
+      listen: async path => {
+        listened.push(path);
+      },
+      ownEngineAnswers: async () => false,
+      fallback: () => `${PIPE}-89abcdef`,
+    });
+    expect(where).toBe(`${PIPE}-89abcdef`);
+    expect(listened).toEqual([`${PIPE}-89abcdef`]);
+  });
+
+  it("starts no second daemon beside this home's own engine, and keeps the error without a fallback", async () => {
+    const listen = async (): Promise<void> => {
+      throw new Error("must not listen");
+    };
+    await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => true, fallback: () => `${PIPE}-1` }))
+      .rejects.toThrow(/in use by a running daemon/u);
+    await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => false, fallback: undefined })).rejects.toBe(held);
   });
 });

@@ -851,12 +851,38 @@ function signalDaemon(pid: number, signal: string, machine: DaemonMachine): void
   }
 }
 
+/**
+ * Asks the daemon `state` records to close itself over its HTTP API, with its capability and native token; whether it
+ * took the request. On Windows `process.kill` ends a process at once, so this request is the only way the daemon's own
+ * shutdown runs there: requests from other sessions finish, and it removes its state file and main-instance record.
+ */
+async function requestDaemonShutdown(state: DaemonState): Promise<boolean> {
+  if (state.nativeToken === undefined) return false;
+  try {
+    const endpoint = daemonEndpoint(state, "/native/shutdown");
+    const response = await endpoint.fetch(endpoint.url, {
+      method: "POST",
+      headers: { ...endpoint.headers, authorization: `Bearer ${state.nativeToken}` },
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    await response.body?.cancel();
+    return response.status === 202;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stops the daemon `home` records: SIGTERM on macOS and Linux, which runs its shutdown; on Windows, where no signal
+ * reaches a handler, a shutdown request (`requestDaemonShutdown`) first. Either way a daemon still running after
+ * {@link STOP_TIMEOUT_MS} is killed.
+ */
 export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
   const lookup = await lookupDaemon(home, machine);
   if (lookup.status === "absent") return "not-running";
   const pid = lookup.state.pid;
   const alive = (): boolean => processAlive(pid, machine.kill);
-  signalDaemon(pid, "SIGTERM", machine);
+  if (machine.platform !== "win32" || !(await requestDaemonShutdown(lookup.state))) signalDaemon(pid, "SIGTERM", machine);
   const deadline = Date.now() + STOP_TIMEOUT_MS;
   while (alive() && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
   if (alive()) {

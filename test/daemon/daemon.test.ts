@@ -181,6 +181,28 @@ describe("Rerail daemon", () => {
     expect((await getJson(daemon, "/healthz")).body).not.toHaveProperty("nativeToken");
   });
 
+  it("stops on a shutdown request that carries the native token, the stop Windows has no signal for", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const requested = Promise.withResolvers<void>();
+    const onShutdownRequest = vi.fn(() => requested.resolve());
+    const daemon = await start({ onShutdownRequest });
+    const request = (headers: Record<string, string> = {}) => fetch(new URL("/native/shutdown", daemon.url), { method: "POST", headers });
+    const authorization = `Bearer ${daemon.state().nativeToken!}`;
+    expect((await request()).status).toBe(403);
+    expect((await request({ authorization: "Bearer invalid" })).status).toBe(403);
+    // A page holding the dashboard's capability cannot stop the daemon: a browser always sends Origin.
+    expect((await request({ authorization, origin: "http://attacker.test" })).status).toBe(403);
+    expect((await globalThis.fetch(new URL("/native/shutdown", daemon.url), { method: "POST", headers: { authorization } })).status).toBe(401);
+    expect(onShutdownRequest).not.toHaveBeenCalled();
+    const accepted = await request({ authorization });
+    expect(accepted.status).toBe(202);
+    await requested.promise;
+    expect(onShutdownRequest).toHaveBeenCalledTimes(1);
+    // A daemon embedded without a stop handler serves no such request.
+    const embedded = await start({ databasePath: join(root, "embedded.sqlite") });
+    expect((await fetch(new URL("/native/shutdown", embedded.url), { method: "POST", headers: { authorization: `Bearer ${embedded.state().nativeToken!}` } })).status).toBe(405);
+  });
+
   it("serves sessions and paged events read from the session store", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();
