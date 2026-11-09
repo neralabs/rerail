@@ -70,6 +70,12 @@ pub enum Gram {
     Plus(Box<Gram>),
     /// `f: A`: the node `A` gives has field `f`.
     Field(String, Box<Gram>),
+    /// `retag K A`: on entering `A`, the innermost open node becomes a `K` (its kind decided by
+    /// the token `A` starts with).
+    Retag(String, Box<Gram>),
+    /// `merge 'K' A`, `A` a token: its leaf and the leaf just before it become one leaf of kind
+    /// `K`, from the first's start to its end (`.` and `decl`, `.decl`).
+    Merge(String, Box<Gram>),
 }
 
 #[derive(Clone, Debug)]
@@ -410,7 +416,17 @@ impl P {
         if self.eat_p(":") {
             return Ok(Gram::Field(name, Box::new(self.gram_atom()?)));
         }
-        Ok(Gram::Sym(name))
+        match name.as_str() {
+            "retag" => {
+                let kind = self.ident()?;
+                Ok(Gram::Retag(kind, Box::new(self.gram_atom()?)))
+            }
+            "merge" => {
+                let kind = self.kind()?;
+                Ok(Gram::Merge(kind, Box::new(self.gram_atom()?)))
+            }
+            _ => Ok(Gram::Sym(name)),
+        }
     }
 
     // --- expressions ---

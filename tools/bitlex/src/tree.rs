@@ -42,30 +42,38 @@ struct Parser<'a> {
     decl: &'a TreeDecl,
     tokens: &'a [Token],
     out: Vec<Node>,
-    /// The marks' kinds (bit `k`: mark `k`), and which are hidden.
-    marks: &'a [String],
+    /// The kinds the parse looks for ahead, a bit each: the marks (bit `k`: mark `k`), then the
+    /// soft keywords. Which marks are hidden.
+    looks: Vec<String>,
     hidden: u64,
-    /// Each rule's and choice's first marks and whether it may be empty (`first_of`).
+    /// Each rule's and choice's first looks and whether it may be empty (`first_of`).
     named: HashMap<&'a str, (u64, bool)>,
+    /// The rules' nodes open, innermost last (`retag` changes the last's kind).
+    open: Vec<usize>,
 }
 
 impl<'a> Parser<'a> {
-    fn mark_bit(&self, kind: &str) -> u64 {
-        self.marks.iter().position(|m| m == kind).map_or(0, |k| 1 << k)
+    fn look_bit(&self, kind: &str) -> u64 {
+        self.looks.iter().position(|m| m == kind).map_or(0, |k| 1 << k)
     }
 
-    /// The marks `g` may start with, and whether it may match nothing.
+    /// The soft keyword the token at `at` may be taken as, its bit; 0 for none.
+    fn soft_bit(&self, at: usize) -> u64 {
+        self.tokens.get(at).and_then(|t| t.soft.as_deref()).map_or(0, |k| self.look_bit(k))
+    }
+
+    /// The looks `g` may start with, and whether it may match nothing.
     fn first(&self, g: &Gram) -> (u64, bool) {
         match g {
-            Gram::Lit(k) => (self.mark_bit(k), false),
-            Gram::Sym(name) => self.named.get(name.as_str()).copied().unwrap_or((self.mark_bit(name), false)),
+            Gram::Lit(k) => (self.look_bit(k), false),
+            Gram::Sym(name) => self.named.get(name.as_str()).copied().unwrap_or((self.look_bit(name), false)),
             Gram::Seq(items) => self.first_seq(items),
             Gram::Alt(alts) => alts.iter().fold((0, false), |(b, e), a| {
                 let (x, y) = self.first(a);
                 (b | x, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.first(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) => self.first(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) => self.first(a),
         }
     }
 
@@ -91,7 +99,10 @@ impl<'a> Parser<'a> {
                 if let Some((kind, _, body)) = decl.rules.iter().find(|r| &r.0 == name) {
                     let me = self.out.len();
                     self.out.push(Node { kind: kind.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0 });
-                    let next = self.matches(body, at, follow)?;
+                    self.open.push(me);
+                    let next = self.matches(body, at, follow);
+                    self.open.pop();
+                    let next = next?;
                     // Its span is its tokens', marks left out: a rule of marks alone has none.
                     let first = (at..next).find(|&i| !self.tokens[i].mark)?;
                     let last = (at..next).rev().find(|&i| !self.tokens[i].mark)?;
@@ -129,7 +140,11 @@ impl<'a> Parser<'a> {
             }
             Gram::Alt(alts) => {
                 let mark = self.out.len();
-                for a in alts {
+                // A soft keyword: the alternatives that can start with it, where there are any.
+                let soft = self.soft_bit(at);
+                let keyword = soft != 0 && alts.iter().any(|a| self.first(a).0 & soft != 0);
+                let ways: Vec<&Gram> = alts.iter().filter(|a| !keyword || self.first(a).0 & soft != 0).collect();
+                for a in ways {
                     if let Some(p) = self.matches(a, at, follow) {
                         return Some(p);
                     }
@@ -139,6 +154,11 @@ impl<'a> Parser<'a> {
             }
             Gram::Opt(a) => {
                 let mark = self.out.len();
+                // A soft keyword that may come after it and does not start it: past it.
+                let soft = self.soft_bit(at);
+                if soft != 0 && self.first(a).0 & soft == 0 && follow & soft != 0 {
+                    return Some(at);
+                }
                 match self.matches(a, at, follow) {
                     Some(p) => Some(p),
                     None => {
@@ -151,6 +171,11 @@ impl<'a> Parser<'a> {
                 let again = self.first(a).0 | follow;
                 let mut p = if matches!(g, Gram::Plus(_)) { self.matches(a, at, again)? } else { at };
                 loop {
+                    // A soft keyword that may come after it and does not start another: done.
+                    let soft = self.soft_bit(p);
+                    if soft != 0 && self.first(a).0 & soft == 0 && follow & soft != 0 {
+                        return Some(p);
+                    }
                     let mark = self.out.len();
                     match self.matches(a, p, again) {
                         Some(q) if q > p => p = q,
@@ -169,16 +194,37 @@ impl<'a> Parser<'a> {
                 }
                 Some(next)
             }
+            Gram::Retag(kind, a) => {
+                let next = self.matches(a, at, follow)?;
+                let me = *self.open.last()?;
+                self.out[me].kind = kind.clone();
+                Some(next)
+            }
+            Gram::Merge(kind, a) => {
+                // The leaf just before, and the token's: one leaf.
+                let me = self.out.len();
+                let next = self.matches(a, at, follow)?;
+                if me == 0 || self.out.len() != me + 1 || self.out[me].size != 1 || self.out[me - 1].size != 1 {
+                    return None;
+                }
+                let end = self.out[me].end;
+                self.out.pop();
+                let leaf = &mut self.out[me - 1];
+                leaf.kind = kind.clone();
+                leaf.end = end;
+                Some(next)
+            }
         }
     }
 
     /// A token of `kind` at `at`: its leaf (a mark has none), then past the marks that `follow`
     /// does not hold. A hidden one is skipped; one not hidden fails the parse.
     fn token(&mut self, kind: &str, at: usize, follow: u64) -> Option<usize> {
-        let t = self.tokens.get(at).filter(|t| t.kind == kind)?;
+        // Its own kind, or the soft keyword it is.
+        let t = self.tokens.get(at).filter(|t| t.kind == kind || t.soft.as_deref() == Some(kind))?;
         if !t.mark {
             let extra = self.decl.extra.contains(&t.kind);
-            self.out.push(Node { kind: t.kind.clone(), field: None, supertypes: vec![], extra, start: t.start, end: t.end, size: 1 });
+            self.out.push(Node { kind: kind.to_owned(), field: None, supertypes: vec![], extra, start: t.start, end: t.end, size: 1 });
         }
         self.past_marks(at + 1, follow)
     }
@@ -187,7 +233,7 @@ impl<'a> Parser<'a> {
     /// skipped; one not hidden, `None`.
     fn past_marks(&self, mut at: usize, follow: u64) -> Option<usize> {
         while let Some(t) = self.tokens.get(at).filter(|t| t.mark) {
-            let bit = self.mark_bit(&t.kind);
+            let bit = self.look_bit(&t.kind);
             if follow & bit != 0 {
                 break;
             }
@@ -245,10 +291,11 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         return Err("no tokens: the root would be zero-width".into());
     }
     let hidden = decl.marks.iter().enumerate().filter(|(_, m)| decl.hidden.contains(m)).fold(0u64, |h, (k, _)| h | 1 << k);
-    if decl.marks.len() > 64 {
-        return Err("more than 64 marks".into());
+    let looks: Vec<String> = decl.marks.iter().chain(&decl.soft).cloned().collect();
+    if looks.len() > 64 {
+        return Err("more than 64 marks and soft keywords".into());
     }
-    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), marks: &decl.marks, hidden, named: HashMap::new() };
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), open: Vec::new() };
     first_of(&mut p);
     // A whole root is opened at byte 0 and matched by its content, which may be empty. Marks
     // before the first token are kept where the root can start with them.
@@ -294,7 +341,10 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         }
         open.push(i);
     }
+    // Each token's leaf: a merged leaf holds more than one token.
     let leaves: Vec<usize> = (0..out.len()).filter(|&i| out[i].size == 1).collect();
+    let real_tokens: Vec<&Token> = plain.iter().filter(|t| !t.mark).collect();
+    let leaf_of = |k: usize| leaves[leaves.partition_point(|&l| out[l].start <= real_tokens[k].start) - 1];
     let ancestors = |mut i: usize| {
         let mut up = vec![i];
         while parent[i] != usize::MAX {
@@ -304,14 +354,17 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         up
     };
     // Where each goes, in the tree as parsed: (index to insert at, the node it is in).
+    // An extra inside a leaf is part of its text: no node (`usize::MAX`).
     let mut places: Vec<(usize, usize)> = Vec::new();
     for &(k, _) in &extras {
         places.push(if k == 0 {
             (1, 0)
         } else if k == real {
             (out.len(), 0)
+        } else if leaf_of(k - 1) == leaf_of(k) {
+            (usize::MAX, 0)
         } else {
-            let (before, after) = (ancestors(leaves[k - 1]), ancestors(leaves[k]));
+            let (before, after) = (ancestors(leaf_of(k - 1)), ancestors(leaf_of(k)));
             let lca = *before.iter().find(|a| after.contains(a)).expect("the root holds both");
             // Before the child of the common node that holds the token after it.
             let child = after[after.iter().position(|&a| a == lca).expect("an ancestor") - 1];
@@ -322,6 +375,9 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     // place keep their order.
     for (&(k, t), &(at, within)) in extras.iter().zip(&places).rev() {
         let _ = k;
+        if at == usize::MAX {
+            continue;
+        }
         for a in ancestors(within) {
             out[a].size += 1;
         }

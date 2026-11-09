@@ -34,6 +34,9 @@ pub(super) struct Row {
     pub(super) first: ByteSet,
     /// Its keywords: a token whose text is the word has the kind.
     pub(super) keywords: Vec<(Vec<u8>, u16)>,
+    /// Its soft keywords: a token whose text is the word has the kind where an arm takes it, and
+    /// the row's own elsewhere.
+    pub(super) soft: Vec<(Vec<u8>, u16)>,
     /// With a check, the bytes a token passing it can begin with. The check itself is tier 1's
     /// (masks joining the fallback); tier 2 uses the bytes only to tell rows apart.
     pub(super) check: Option<ByteSet>,
@@ -188,6 +191,14 @@ impl Emit<'_> {
                 }
                 Act::Extra => {
                     self.push("LEAF", 1, Arg::Kind(token));
+                    continue;
+                }
+                Act::Retag { kind } => {
+                    self.push("RETAG", 0, Arg::Kind(kind));
+                    continue;
+                }
+                Act::Merge { kind } => {
+                    self.push("MERGE", 0, Arg::Kind(kind));
                     continue;
                 }
             };
@@ -412,7 +423,7 @@ impl Emit<'_> {
                         }
                     }
                 }
-                for (w, k) in &row.keywords {
+                for (w, k) in row.keywords.iter().chain(&row.soft) {
                     if *k == kind && has(&row.first, w[0]) {
                         cands[usize::from(w[0])].push(Cand { arm: a, row: r, word: Some(w.clone()) });
                     }

@@ -55,6 +55,19 @@ const CASES: &[(&str, &str)] = &[
     (".a :-> <=> =>= !=! <:- -> * ; ( ) [ ] @ | % ~ ^ & + / . :", "02"),
     (".a 1a 12 007 a1 _b #include \"x\"", "02"),
     ("#include \"a\" .mode x\n", "02"),
+    // A declaration: `.decl`, one leaf; its columns and types; its tail to its `)`'s line's end.
+    (".decl r(a: number, b: flat<x>) inline\n.decl s()\n", "03"),
+    (".decl r(a: t<>) eqrel, b\n.mode x", "03"),
+    (".decl r(\n  a: t,\n  b: u\n) x\n.mode z", "03"),
+    // `decl` after a line break, or a comment (the leaf's text), after the `.`.
+    (".\ndecl r(a: t)", "03"),
+    (". // c\n decl r(a: t)", "03"),
+    // A soft keyword: a word wherever the grammar does not take the keyword.
+    (".mode decl\n.decl decl(decl: decl)", "03"),
+    // A word a step reserves (a directive it does not parse yet) refuses the file; one that
+    // only begins with it does not. `violation` is 9 bytes: two 8-byte compares.
+    (".mode violations", "02"),
+    (".mode violation", "10"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.

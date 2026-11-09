@@ -139,7 +139,7 @@ impl Lang {
             Gram::Seq(gs) => gs.iter().map(|g| self.cost(g)).fold(0, |a, b| (a + b).min(FAR)),
             Gram::Alt(gs) => gs.iter().map(|g| self.cost(g)).min().unwrap_or(FAR),
             Gram::Opt(_) | Gram::Star(_) => 0,
-            Gram::Plus(g) | Gram::Field(_, g) => self.cost(g),
+            Gram::Plus(g) | Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) => self.cost(g),
         }
     }
 
@@ -169,7 +169,7 @@ impl Lang {
                     self.derive(rng, g, depth, out)
                 }
             }
-            Gram::Field(_, g) => self.derive(rng, g, depth, out),
+            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) => self.derive(rng, g, depth, out),
         }
     }
 
@@ -236,7 +236,7 @@ impl Lang {
                     self.bytes(rng, g, long, out)
                 }
             }
-            Gram::Field(_, g) => self.bytes(rng, g, long, out),
+            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) => self.bytes(rng, g, long, out),
         }
     }
 }

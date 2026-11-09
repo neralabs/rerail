@@ -27,7 +27,7 @@ impl ByteSwitch {
 
 /// Whether a word is one of tier 2's.
 pub(super) fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=ROW).contains(&opcode)
+    (TOKEN..=MERGE).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -44,13 +44,16 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
         EMPTY => mode == 0 && usize::from(operand) < totals,
         SWITCH => mode == 0 && usize::from(operand) < program.switches.len(),
         // `m=1`: a test, which skips the next word where the token is not the string.
-        WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 8),
+        // A word of at most 64 bytes: the CPU compares 8 at a time, unrolled, within the 64 bytes
+        // past the file.
+        WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 64),
         OPEN | NODE_SUPER => mode == 0,
         // `m=1`: an extra's leaf, deferred.
         LEAF => mode <= 1,
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
         MARK => mode < 64 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
+        RETAG | MERGE => mode == 0,
         NODE_FIELD => mode == 0 && operand != 0,
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
@@ -306,6 +309,23 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 if !mask_bit(operand, start) {
                     pc += 1;
                 }
+            }
+            RETAG => {
+                let Some(&at) = open.last() else { return refuse(pc - 1, "a retag with no open node") };
+                nodes[at].kind = operand;
+            }
+            MERGE => {
+                // The grammar's leaf before the pending extras, which are its text.
+                let n = nodes.len();
+                let leaf = n.checked_sub(pending + 1);
+                if leaf.is_none_or(|l| nodes[l].size != 1 || open.last().is_some_and(|&o| o >= l)) {
+                    return refuse(pc - 1, "a merge with no leaf before it");
+                }
+                nodes.truncate(n - pending);
+                pending = 0;
+                let leaf = nodes.last_mut().expect("a leaf");
+                leaf.kind = operand;
+                leaf.end = end;
             }
             OPEN => {
                 pending = 0;

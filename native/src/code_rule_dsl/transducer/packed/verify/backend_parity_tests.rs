@@ -37,7 +37,7 @@ fn the_verifier_and_the_metal_interpreter_share_one_opcode_set() {
     // Tier 2's words (decision 0087) are a program of their own, over the token stream. Metal
     // runs them in phase 6 (doc 17); until then they are the one known gap of F1, named here.
     let tier2: std::collections::BTreeSet<u8> = admitted.iter().copied().filter(|&o| stream::is_stream(o)).collect();
-    assert_eq!(tier2, (TOKEN..=ROW).collect(), "tier 2's words");
+    assert_eq!(tier2, (TOKEN..=MERGE).collect(), "tier 2's words");
     let walker: std::collections::BTreeSet<u8> = admitted.difference(&tier2).copied().collect();
     assert_eq!(walker, OPCODES.into_iter().collect());
     assert_eq!(metal, walker, "an opcode the verifier admits that Metal cannot run, or the reverse");

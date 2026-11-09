@@ -33,7 +33,9 @@ pub struct Token {
     pub kind: String,
     pub start: usize,
     pub end: usize,
-    pub soft: bool,
+    /// A soft keyword's kind: the token keeps its own kind, and the grammar may take it as the
+    /// keyword where it can take the keyword (`tree`).
+    pub soft: Option<String>,
     /// A mark (`mark K = E`): no width, before the token at `start`.
     pub mark: bool,
 }
@@ -52,6 +54,8 @@ pub struct TreeDecl {
     pub hidden: Vec<String>,
     /// The marks' kinds, in the order declared.
     pub marks: Vec<String>,
+    /// The soft keywords' kinds (`keywords K { … } soft { … }`).
+    pub soft: Vec<String>,
 }
 
 pub struct Output {
@@ -170,6 +174,7 @@ impl<'a> Ev<'a> {
         let tokens = ev.finish()?;
         if let Some(tree) = &mut ev.tree {
             tree.marks = ev.marks.iter().map(|m| m.0.clone()).collect();
+            tree.soft = ev.keywords.iter().flat_map(|k| k.2.iter().map(|w| String::from_utf8_lossy(w).into_owned())).collect();
         }
         Ok(Output { tree: ev.tree, tokens, errors: ev.errors, rounds: ev.rounds, vars: ev.vars })
     }
@@ -1030,7 +1035,7 @@ impl<'a> Ev<'a> {
             for j in i..end {
                 covered.set(j)
             }
-            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: false, mark: false });
+            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false });
         }
         // A token that starts inside the one before (tier 2 refuses it too).
         if let Some(w) = toks.windows(2).find(|w| w[1].start < w[0].end) {
@@ -1045,8 +1050,8 @@ impl<'a> Ev<'a> {
                 let text = &self.src[t.start..t.end];
                 if let Some((w, alias)) = words.iter().find(|(w, _)| w == text) {
                     t.kind = alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned());
-                } else if soft.iter().any(|w| w == text) {
-                    t.soft = true;
+                } else if let Some(w) = soft.iter().find(|w| *w == text) {
+                    t.soft = Some(String::from_utf8_lossy(w).into_owned());
                 } else if *required {
                     self.errors.push(format!("{kind} {:?} is no keyword (byte {})", String::from_utf8_lossy(text), t.start));
                 }
@@ -1079,7 +1084,7 @@ impl<'a> Ev<'a> {
         for (t, tok) in toks.into_iter().enumerate() {
             for (k, (kind, _, _)) in self.marks.iter().enumerate() {
                 if before[t][k] {
-                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: false, mark: true });
+                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true });
                 }
             }
             out.push(tok);
@@ -1087,7 +1092,7 @@ impl<'a> Ev<'a> {
         // A bit after the last grammar token's start puts no mark; `, end` puts one at the end.
         for (kind, _, end) in &self.marks {
             if *end {
-                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: false, mark: true });
+                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true });
             }
         }
         Ok(out)
@@ -1164,6 +1169,6 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) => return Err("check: a field in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) => return Err("check: a field, a retag or a merge in a byte grammar".into()),
     })
 }

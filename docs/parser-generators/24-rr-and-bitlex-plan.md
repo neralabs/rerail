@@ -64,16 +64,17 @@ Python needs too.
 | A3 | `text("…")` is refused | directive words: `.decl` is one token, `.mode` two | keywords in tier 1 | a chain of `next` tests |
 | A4 | a token's kind comes only from its first byte | `:` and `:-`, `<` and `<=` and `<:` | operators | one row per first byte, the longer spellings as keywords. **Done**: a row whose tokens run to their last byte tests each keyword, then takes the plain token |
 | A5 | no wrap: a node cannot start before the token that decides it | `a - b * c`, comparisons, `x ~ \`…\``, `;` | every binary, call and attribute chain | **wrap**: open a node at a saved anchor, around what came since (§2.1) |
-| A6 | no retag: a node's kind is fixed when it opens | an atom and a call look alike until the token after | — | **retag** the node just closed, decided by the next token (§2.1) |
-| A7 | no merge: two tokens cannot make one leaf | `- 1` is one `number` leaf | — | **merge**: the previous leaf and this token become one leaf (§2.1) |
+| A6 | no retag: a node's kind is fixed when it opens | `.decl` and `.mode` both open at `.`; an atom and a call look alike until the token after | — | **retag** a node by the next token (§2.1). **Done** for the open node (`retag K A`, word `RETAG`); the node just closed is rr-07's |
+| A7 | no merge: two tokens cannot make one leaf | `.` and `decl` are one `.decl` leaf; `- 1` is one `number` leaf | — | **merge**: the previous leaf and this token become one leaf (§2.1). **Done** (`merge 'K' A`, word `MERGE`): the extras between are the leaf's text |
 | A8 | no opaque nodes | a `{…}` JSON object, a `raw_text`, are one leaf each | — | **opaque** nested nodes: their tokens make one leaf |
 | A9 | newlines are never tokens | a setting ends at its line's end; a declaration's tail is on one line | `NEWLINE` | **hidden tokens**: a token the grammar may name; in a state that does not name it, it is skipped and makes no node |
-| A10 | keywords are reserved everywhere they have rows | `count`, `min`, `code`, `fix` are words elsewhere | soft keywords | **soft keywords**: the keyword's kind only in a state with an arm for it, the word's kind elsewhere |
+| A10 | keywords are reserved everywhere they have rows | `decl` after a statement's `.` only; `count`, `min`, `code`, `fix` are words elsewhere | soft keywords | **soft keywords**: the keyword's kind only in a state with an arm for it, the word's kind elsewhere. **Done** (`keywords K { } soft { … }`) |
 | A11 | a nested level cannot start with another nested call, nor end optionally | `((a + b))`, an aggregate's body | suites, calls | lift both limits in the automaton |
 | A12 | with a tree, a byte in no token is not refused by the compiled path | — | — | refuse it, as the evaluator does |
 | A13 | the file's end is no line break | a setting on the file's last line | NEWLINE at the end | **`mark K = E, end`**: the mark comes after the last token too. **Done** |
 | A14 | an extra's leaf goes where its token is | a comment after a setting's last word | comments, everywhere | **extras placed late** (§2.3). **Done** |
 | A15 | two rows may not begin with one byte | `//` beside the `/` operator | `#` comments, `.` and `...` | **`ROW`**: a word tests a row's start mask at the token's start (§2.4). **Done** |
+| A17 | a keyword is at most 8 bytes | `violation` | `__future__`, `nonlocal` | `WORD` compares up to 64 bytes, 8 at a time, unrolled. **Done** |
 | A16 | which rows a state can meet is not known | — (it keeps `ROW` off JSON's strings) | string prefixes, f-strings | **proofs over the block program and modes from toggles** (§2.4). **Done** |
 
 ### 2.1 Wrap, retag and merge
@@ -95,9 +96,23 @@ choice product = unary (wrap binary_expression left operator: ('*' | '/' | '%') 
   written. A wrap is written at the end of the table with a link to its anchor. The final
   extract pass, which writes the tape, puts each wrap before the node it was anchored at: one
   pass, linear, run only when a wrap was made.
-- **`retag`** changes the kind of the node just closed, and the field of its first child,
-  when the next token decides: a call `f(x)` that a comparison does not follow is an atom.
-- **`merge`** joins the leaf just written and the current token into one leaf.
+- **`retag`** changes a node's kind when the next token decides. `retag K A`: entering `A`,
+  the innermost open node becomes a `K`. A statement opened at `.` is a setting until `decl`
+  makes it a declaration:
+
+  ```
+  node setting = '.' (retag declaration merge '.decl' 'decl' … | name: identifier …)
+  ```
+
+  The node just closed is the other case: a call `f(x)` that a comparison does not follow is
+  an atom (rr-07).
+- **`merge 'K' A`** joins the leaf just written and the token `A` into one leaf of kind `K`.
+  Extras between them are the leaf's text, as the engine has it: `. // c` and then `decl` is
+  one `.decl` leaf. In tier 2 they are the pending extras (§2.3), dropped.
+
+A step reserves the words of what it does not parse yet: `keywords identifier { "edit" ->
+reserved … }`. The grammar never takes `reserved`, so a file with one goes to the engine's
+parser. The last step reserves nothing.
 
 ### 2.3 Line breaks: marks, hidden marks, extras placed late
 

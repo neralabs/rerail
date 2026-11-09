@@ -88,7 +88,7 @@ directed acyclic graph of mask operations.
 | `ucode over EXPR { class NAME = … }` | Classes of Unicode characters, decoded only where `EXPR` is set (§2.6). |
 | `token KIND = start EXPR [through EXPR]` | Tokens of one kind (§2.4). |
 | `munch KIND over EXPR { "…" … }` | Longest-match operator tokens over a run of operator bytes (§2.4). |
-| `keywords KIND { "…" … } [soft { "…" … }] [required]` | Retypes tokens of `KIND` whose text is a keyword. With `required`, a token of `KIND` that is none of them is an error. |
+| `keywords KIND { "…" … } [soft { "…" … }] [required]` | Retypes tokens of `KIND` whose text is a keyword. A soft keyword keeps the token's kind: the tree takes it as the keyword where its grammar can (a quoted `'w'`), and as `KIND` elsewhere. With `required`, a token of `KIND` that is none of them is an error. |
 | `check KIND = G` | Every token of `KIND` (after `keywords`) must match `G` in full, a grammar over its bytes in the tree section's notation (names are byte classes, literals bytes), or the file goes to tree-sitter. Tier 2 runs it in the token's arm, as simdjson's `parse_number` (decision 0086). |
 | `skip EXPR` | Bytes that may belong to no token, such as whitespace. |
 | `error "MESSAGE" when EXPR` | If any bit of `EXPR` is set, the file goes to tree-sitter. |
@@ -97,7 +97,9 @@ directed acyclic graph of mask operations.
 | `node KIND [nested] = G` | A node of `KIND` spans what grammar `G` matches. The first is the root. `nested`: it may contain itself, and runs on a stack frame. |
 | `choice NAME [supertype S] = A \| B …` | No node of its own; each alternative's node is in supertype `S`. |
 | `'x'`, `NAME`, `f: X`, `A B`, `A \| B`, `[A]`, `A*`, `A+`, `(A)` | In a grammar: a keyword's kind; a token kind, node or choice; field `f` on the node `X` gives; sequence, alternative, optional, repetitions, grouping. |
+| `retag K A`, `merge 'K' A` | In a grammar: entering `A`, the innermost open node becomes a `K`; the token `A`'s leaf and the leaf before it become one leaf of kind `K` (extras between them are its text). |
 | `extra KIND …` | Nodes of these kinds carry the extra flag. |
+| `mark K = E [, end]`, `hidden K …` | A token of no width before the first grammar token at or after each bit of `E` (and after the last token, with `end`); a hidden mark is skipped where the grammar does not take it (`24-rr-and-bitlex-plan.md` §2.3). |
 
 ### 2.2 Mask expressions
 

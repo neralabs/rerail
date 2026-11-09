@@ -103,6 +103,9 @@ keywords hash_word { "#include" } required
 token identifier = start alpha & ident & ~prev(ident) last ident & ~next(ident)
 token number     = start digit & num & ~prev(num) last num & ~next(num)
 token punct      = start punct & p_start last p_last
+# The directives' words, which later steps parse (`.decl`, `.edit`, …): reserved, so a file with
+# one goes to the engine's parser.
+keywords identifier { "decl" -> reserved "edit" -> reserved "functor" -> reserved "type" -> reserved "input" -> reserved "output" -> reserved "lattice" -> reserved "pragma" -> reserved "violation" -> reserved "policy" -> reserved }
 keywords punct { "(" ")" "," "." ";" ":" "=" "<" ">" "!" "|" "@" "*" "[" "]" "-" "+" "/" "%" "~" "^" "&" ":-" "=>" "!=" "<=" ">=" "<:" "->" } required
 
 skip code & ws

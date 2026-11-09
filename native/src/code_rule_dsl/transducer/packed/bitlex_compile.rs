@@ -136,6 +136,8 @@ struct Lowering {
     counts: HashMap<String, Count>,
     tokens: Vec<(String, Val, Option<TokenEnd>)>,
     keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
+    /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
+    soft: Vec<(String, Vec<Vec<u8>>)>,
     skip: Option<Val>,
     /// The tree section's rules (`node`, `choice`), in order, and its extra kinds.
     tree: Vec<Stmt>,
@@ -196,6 +198,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         hidden: Vec::new(),
         checks: Vec::new(),
         toggles: Vec::new(),
+        soft: Vec::new(),
     };
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
@@ -226,7 +229,10 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         }
         let (states, mut arms, whole) = {
             let is_token = |name: &str| {
-                token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0)) || is_keyword_kind(&low.keywords, name) || low.marks.iter().any(|m| m.0 == name)
+                token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0))
+                    || is_keyword_kind(&low.keywords, name)
+                    || low.soft.iter().any(|s| s.1.iter().any(|w| w.as_slice() == name.as_bytes()))
+                    || low.marks.iter().any(|m| m.0 == name)
             };
             let kind = |name: &str| id(name);
             let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token };
@@ -257,8 +263,15 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                     keywords.push((word.clone(), id(&name)?));
                 }
             }
+            let mut soft = Vec::new();
+            for (_, words) in low.soft.iter().filter(|s| &s.0 == kind) {
+                for word in words {
+                    soft.push((word.clone(), id(&String::from_utf8_lossy(word))?));
+                }
+            }
             rows.push(bitlex_tier2::Row {
                 kind: if required.contains(kind) { 0 } else { id(kind)? },
+                soft,
                 one_byte: start.v == last.v && start.d == last.d,
                 first: bitlex_prove::first_bytes(&low.program.ops, &low.program.tables, start.v, start.d),
                 keywords,
@@ -449,10 +462,10 @@ impl Lowering {
                     self.tokens.push((kind.clone(), start, through));
                 }
                 Stmt::Keywords { kind, words, soft, required } => {
-                    if !soft.is_empty() {
-                        return Err(format!("keywords {kind}: soft keywords are not compiled yet"));
-                    }
                     self.keywords.push((kind.clone(), words.clone(), *required));
+                    if !soft.is_empty() {
+                        self.soft.push((kind.clone(), soft.clone()));
+                    }
                 }
                 Stmt::Skip(expr) => {
                     let x = self.expr(expr)?;
@@ -1315,7 +1328,9 @@ fn row_modes(
         out
     };
     let rows_of = |kind: u16| -> Vec<usize> {
-        (0..rows.len()).filter(|&r| (rows[r].kind == kind && kind != 0) || rows[r].keywords.iter().any(|k| k.1 == kind)).collect()
+        (0..rows.len())
+            .filter(|&r| (rows[r].kind == kind && kind != 0) || rows[r].keywords.iter().chain(&rows[r].soft).any(|k| k.1 == kind))
+            .collect()
     };
     // The states each level returns to.
     let mut returns: HashMap<u16, Vec<u16>> = HashMap::new();

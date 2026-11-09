@@ -341,6 +341,11 @@ const MARK: u8 = 0x5e;
 /// Runs the next word when the token starts at a bit of mask `operand`, else skips it: which of
 /// two rows beginning with one byte the token is.
 const ROW: u8 = 0x5f;
+/// The innermost open node becomes a node of kind `operand`: its kind decided by this token.
+const RETAG: u8 = 0x60;
+/// The token's leaf joins the grammar's leaf before it (the pending extras between are its text,
+/// dropped): one leaf of kind `operand`, to this token's end.
+const MERGE: u8 = 0x61;
 
 pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;

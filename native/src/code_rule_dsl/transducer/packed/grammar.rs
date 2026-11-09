@@ -42,6 +42,11 @@ pub(in crate::code_rule_dsl) enum Act {
     /// An extra's leaf, deferred: the nodes closed before the next node leave it out, so it goes
     /// where the next token puts it (`with_extras`).
     Extra,
+    /// The innermost open node becomes a `kind` (`retag K A`).
+    Retag { kind: u16 },
+    /// The token's leaf joins the grammar's leaf before it, as one leaf of `kind`; the extras
+    /// between are its text (`merge 'K' A`).
+    Merge { kind: u16 },
 }
 /// A transition: from a state, on a token of a kind, its acts, to a state; `push`: a call, which
 /// enters a nested level and keeps the state to return to.
@@ -86,6 +91,12 @@ pub(super) fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                     let _ = write!(acts, " leaf{}", marks(*field, supers));
                 }
                 Act::Extra => acts.push_str(" extra"),
+                Act::Retag { kind } => {
+                    let _ = write!(acts, " retag {kind}");
+                }
+                Act::Merge { kind } => {
+                    let _ = write!(acts, " merge {kind}");
+                }
             }
         }
         let push = arm.push.map_or(String::new(), |p| format!(" push {p}"));
@@ -101,6 +112,8 @@ enum Wrap {
     Node(u16),
     Field(u16),
     Super(u16),
+    /// `retag K`: entered, the innermost open node becomes a `K`.
+    Retag(u16),
 }
 
 /// A level's expression, inlined; `Tok` and `Call` are positions.
@@ -114,11 +127,13 @@ enum E {
     Wrap(Wrap, Box<E>),
 }
 
-/// A position: the token kind it takes, or the level it calls.
+/// A position: the token kind it takes, or the level it calls; or a token whose leaf merges into
+/// the one before it, as a leaf of `into`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pos {
     Tok(u16),
     Call(usize),
+    Merge { token: u16, into: u16 },
 }
 
 /// A rule of the tree section.
@@ -203,6 +218,15 @@ impl Builder<'_> {
             // `A+` is `A A*`: two copies, each with positions of its own.
             Gram::Plus(a) => E::Seq(vec![self.expand(level, a, inlining)?, E::Star(Box::new(self.expand(level, a, inlining)?))]),
             Gram::Field(f, a) => E::Wrap(Wrap::Field((self.ids.field)(f)?), Box::new(self.expand(level, a, inlining)?)),
+            Gram::Retag(k, a) => E::Wrap(Wrap::Retag((self.ids.kind)(k)?), Box::new(self.expand(level, a, inlining)?)),
+            Gram::Merge(k, a) => {
+                let name = match &**a {
+                    Gram::Lit(n) | Gram::Sym(n) if (self.ids.is_token)(n) => n,
+                    _ => return Err(format!("merge {k:?}: not a token")),
+                };
+                self.positions.push((level, Pos::Merge { token: (self.ids.kind)(name)?, into: (self.ids.kind)(k)? }));
+                E::Tok(self.positions.len() - 1)
+            }
         })
     }
 
@@ -326,6 +350,7 @@ impl Pending {
             match *w {
                 Wrap::Field(f) => self.field = f,
                 Wrap::Super(s) => self.supers.push(s),
+                Wrap::Retag(kind) => acts.push(Act::Retag { kind }),
                 Wrap::Node(kind) => {
                     let p = std::mem::take(self);
                     acts.push(Act::Open { kind, field: p.field, supers: p.supers });
@@ -428,6 +453,16 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
                 Pos::Tok(kind) => {
                     acts.push(Act::Leaf { field: p.field, supers: p.supers });
                     out.push((kind, acts, q, push));
+                }
+                Pos::Merge { token, into } => {
+                    if p.field != 0 || !p.supers.is_empty() {
+                        return Err("a field or a supertype on a merged leaf".into());
+                    }
+                    if acts.iter().any(|a| matches!(a, Act::Close | Act::Open { .. })) {
+                        return Err("a merge after a node opens or closes: it joins the leaf just before".into());
+                    }
+                    acts.push(Act::Merge { kind: into });
+                    out.push((token, acts, q, push));
                 }
                 Pos::Call(rule) => {
                     let child = level_of_rule[&rule];
@@ -639,7 +674,9 @@ pub(super) fn with_extras(
             Some(out)
         };
         let marked = mine.iter().any(|a| marks.contains(&a.token));
-        let early = if marked { through(s).is_some_and(|w| w.iter().all(|&x| x == 0)) } else { ways.iter().all(|&w| w == ways[0]) };
+        // A merge joins the leaf before the extras: they must be pending, to be its text.
+        let merges = mine.iter().any(|a| a.acts.iter().any(|x| matches!(x, Act::Merge { .. })));
+        let early = !merges && if marked { through(s).is_some_and(|w| w.iter().all(|&x| x == 0)) } else { ways.iter().all(|&w| w == ways[0]) };
         let m = if marked { 0 } else { ways[0] };
         if early {
             let to = if m == 0 {
@@ -717,7 +754,7 @@ pub(super) fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -
             Gram::Opt(a) => E::Opt(Box::new(expand(a, classes, sets)?)),
             Gram::Star(a) => E::Star(Box::new(expand(a, classes, sets)?)),
             Gram::Plus(a) => E::Seq(vec![expand(a, classes, sets)?, E::Star(Box::new(expand(a, classes, sets)?))]),
-            Gram::Field(..) => return Err("check: a field in a byte grammar".into()),
+            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) => return Err("check: a field, a retag or a merge in a byte grammar".into()),
         })
     }
     let mut sets = Vec::new();

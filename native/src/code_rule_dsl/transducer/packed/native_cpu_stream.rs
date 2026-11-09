@@ -501,20 +501,23 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     f.ins().jump(fall, &[]);
                 }
                 Op::Word { string, test } => {
-                    // The token's bytes against the string: its length, then one 8-byte load
-                    // (64 readable bytes past the file) masked to the string's length.
+                    // The token's bytes against the string: its length, then an 8-byte load per
+                    // 8 bytes of the string (64 readable bytes past the file, the token starting
+                    // inside it), the last masked to its length. Straight-line: no loop.
                     let text = &native.strings[usize::from(string)];
                     let (start, end) = (f.use_var(v.start), f.use_var(v.end));
                     let n = f.ins().isub(end, start);
-                    let len_ok = f.ins().icmp_imm(IntCC::Equal, n, text.len() as i64);
+                    let mut same = f.ins().icmp_imm(IntCC::Equal, n, text.len() as i64);
                     let addr = f.ins().iadd(bytes, start);
-                    let got = f.ins().load(types::I64, flags, addr, 0);
-                    let mask = if text.len() >= 8 { u64::MAX } else { (1u64 << (8 * text.len())) - 1 };
-                    let got = f.ins().band_imm(got, mask as i64);
-                    let mut want = [0u8; 8];
-                    want[..text.len()].copy_from_slice(text);
-                    let same = f.ins().icmp_imm(IntCC::Equal, got, u64::from_le_bytes(want) as i64);
-                    let same = f.ins().band(same, len_ok);
+                    for (i, chunk) in text.chunks(8).enumerate() {
+                        let got = f.ins().load(types::I64, flags, addr, 8 * i as i32);
+                        let mask = if chunk.len() == 8 { u64::MAX } else { (1u64 << (8 * chunk.len())) - 1 };
+                        let got = f.ins().band_imm(got, mask as i64);
+                        let mut want = [0u8; 8];
+                        want[..chunk.len()].copy_from_slice(chunk);
+                        let eq = f.ins().icmp_imm(IntCC::Equal, got, u64::from_le_bytes(want) as i64);
+                        same = f.ins().band(same, eq);
+                    }
                     if test {
                         let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
                         f.ins().brif(same, fall, &[], skip, &[]);
@@ -631,6 +634,52 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     put(&mut f, size_c, nodes, one);
                     let nodes = f.ins().iadd_imm(nodes, 1);
                     f.def_var(v.nodes, nodes);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Retag { kind } => {
+                    // The innermost open node's kind.
+                    let open = f.use_var(v.open);
+                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+                    guard(&mut f, none, pc);
+                    let top = f.ins().iadd_imm(open, -1);
+                    let at = {
+                        let a = slot(&mut f, open_c, top);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    let k = f.ins().iconst(types::I64, i64::from(kind));
+                    put(&mut f, kind_c, at, k);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Merge { kind } => {
+                    // The grammar's leaf before the pending extras: a leaf, inside the innermost
+                    // open node. The extras are its text: dropped.
+                    let (nodes, pending, open) = (f.use_var(v.nodes), f.use_var(v.pending), f.use_var(v.open));
+                    let kept = f.ins().isub(nodes, pending);
+                    let none = f.ins().icmp_imm(IntCC::Equal, kept, 0);
+                    guard(&mut f, none, pc);
+                    let leaf = f.ins().iadd_imm(kept, -1);
+                    let size = {
+                        let a = slot(&mut f, size_c, leaf);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    let not_leaf = f.ins().icmp_imm(IntCC::NotEqual, size, 1);
+                    guard(&mut f, not_leaf, pc);
+                    let any = f.ins().icmp_imm(IntCC::NotEqual, open, 0);
+                    let top = f.ins().iadd_imm(open, -1);
+                    let top = f.ins().select(any, top, zero);
+                    let o = {
+                        let a = slot(&mut f, open_c, top);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    let inside = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, o, leaf);
+                    let bad = f.ins().band(any, inside);
+                    guard(&mut f, bad, pc);
+                    let k = f.ins().iconst(types::I64, i64::from(kind));
+                    let end = f.use_var(v.end);
+                    put(&mut f, kind_c, leaf, k);
+                    put(&mut f, end_c, leaf, end);
+                    f.def_var(v.nodes, kept);
+                    f.def_var(v.pending, zero);
                     f.ins().jump(fall, &[]);
                 }
                 Op::NodeField { field } => {
