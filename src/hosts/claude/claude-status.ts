@@ -94,18 +94,44 @@ function gitBash(env: NodeJS.ProcessEnv): string | undefined {
   return undefined;
 }
 
+/** Ends the process tree under `pid`, calling `failed` when that could not be done. */
+export type ProcessTreeKill = (pid: number, failed: () => void) => void;
+
+/** `taskkill /T /F`, which walks the tree from `pid`: the process must still be running for it to find the rest. */
+function taskkillTree(pid: number, failed: () => void): void {
+  const taskkill = spawn(windowsSystemProgram("taskkill.exe"), ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
+  taskkill.on("error", failed);
+  taskkill.on("exit", code => {
+    if (code !== 0) failed();
+  });
+}
+
+function killShell(child: Pick<ChildProcess, "kill">): void {
+  try {
+    child.kill("SIGKILL");
+  } catch { /* The command may already have exited. */ }
+}
+
 /**
  * Ends the previous status line and what it started. A POSIX command runs in its own process group, which goes whole.
- * On Windows killing the shell leaves its children running, so `taskkill /T` ends the tree.
+ * On Windows killing a process leaves its children running, and the shell is Git Bash's launcher, which runs the real
+ * bash as its child: `taskkill /T` ends the tree while the launcher still runs, and the launcher alone is killed only
+ * when taskkill fails.
  */
-function stopPreviousStatus(child: ChildProcess): void {
+export function stopPreviousStatus(
+  child: Pick<ChildProcess, "pid" | "kill">,
+  platform: NodeJS.Platform = process.platform,
+  killTree: ProcessTreeKill = taskkillTree,
+): void {
+  if (platform === "win32") {
+    if (child.pid === undefined) killShell(child);
+    else killTree(child.pid, () => killShell(child));
+    return;
+  }
   try {
-    if (process.platform !== "win32" && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+    if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
     else child.kill("SIGKILL");
   } catch { /* The command may already have exited. */ }
-  if (process.platform === "win32" && child.pid !== undefined) {
-    spawn(windowsSystemProgram("taskkill.exe"), ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" }).on("error", () => undefined);
-  }
 }
 
 /** Preserve the user's status as a byte stream, including output before errors or timeouts. */

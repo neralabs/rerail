@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -12,7 +12,7 @@ vi.mock("../../../src/presentation/session-presentation.js", () => ({
   fallbackPresentation: (reason: string) => ({ text: reason }),
   formatTerminalStatus: (presentation: { text?: string }) => presentation.text ?? "Rerail | 2 rules | steered 1×",
 }));
-import { previousStatusSpawn, runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
+import { previousStatusSpawn, runClaudeStatus, stopPreviousStatus } from "../../../src/hosts/claude/claude-status.js";
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -104,6 +104,49 @@ describe("composed Claude status", () => {
     mocks.command.mockReturnValue(nodePredecessor("process.stdout.write('slow status\\n'); setInterval(() => {}, 1000)"));
     const result = await render();
     expect(result.toString()).toBe("slow status\nRerail | 2 rules | steered 1×\n");
+  });
+
+  it("ends the prior command, not just its shell, once it exceeds its execution budget", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "rerail-claude-status-"));
+    const pidFile = join(folder, "pid");
+    try {
+      // On Windows the command runs under Git Bash's launcher, which starts the real bash, which starts node. Git Bash
+      // reads a backslash in its command line as an escape, so the path goes with forward slashes, which node takes.
+      mocks.command.mockReturnValue(nodePredecessor(
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile.replaceAll("\\", "/"))}, String(process.pid)); process.stdout.write('slow status\\n'); setInterval(() => {}, 1000)`,
+      ));
+      expect((await render()).toString()).toBe("slow status\nRerail | 2 rules | steered 1×\n");
+      const pid = Number(await readFile(pidFile, "utf8"));
+      const alive = (): boolean => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const deadline = Date.now() + 5_000;
+      while (alive() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+      const survived = alive();
+      if (survived) process.kill(pid);
+      expect(survived).toBe(false);
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("on Windows ends the status command's tree from the shell while the shell runs, and kills the shell only when that fails", () => {
+    const events: string[] = [];
+    const shell = { pid: 4242, kill: () => events.push("kill shell") > 0 };
+    let failed: (() => void) | undefined;
+    stopPreviousStatus(shell, "win32", (pid, onFailure) => {
+      events.push(`taskkill /T /F /PID ${pid}`);
+      failed = onFailure;
+    });
+    // taskkill /T walks the tree from the pid it is given; once the shell is gone it finds nothing to end.
+    expect(events).toEqual(["taskkill /T /F /PID 4242"]);
+    failed!();
+    expect(events).toEqual(["taskkill /T /F /PID 4242", "kill shell"]);
   });
 
   it("returns within its budget when the prior command leaves a process holding its output", async () => {
