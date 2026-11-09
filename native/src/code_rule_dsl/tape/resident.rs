@@ -68,7 +68,9 @@ pub(in crate::code_rule_dsl) fn layout(bytes: &[u8]) -> Result<Layout, String> {
     if bytes.len() < HEADER || &bytes[..8] != TAPE_MAGIC {
         return Err("wrong tape image magic".into());
     }
-    let widths = [bytes[header::WIDTHS], bytes[header::WIDTHS + 1], bytes[header::WIDTHS + 2]];
+    // A named-only image (RER-131) has the same columns over its named nodes and kept tokens: the records a
+    // named-only document holds in memory, so the device reads it in place.
+    let widths = [bytes[header::WIDTHS] & !NAMED_ONLY, bytes[header::WIDTHS + 1], bytes[header::WIDTHS + 2]];
     if !matches!(widths[0], 2 | 4) || !matches!(widths[1], 2 | 4) || !matches!(widths[2] & !TAIL_FROM_START, 2 | 4) {
         return Err("noncanonical tape image header".into());
     }
