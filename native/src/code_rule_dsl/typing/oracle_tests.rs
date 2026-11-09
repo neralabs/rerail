@@ -1180,10 +1180,15 @@ ats(s, p, l) :- struct__at(s, p, l).
         let _ = std::fs::remove_file(format!("{full_store}.phases"));
         // SAFETY: the spike's thread is the only one running between runs.
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
-        let r = run();
+        let r = crate::code_rule_dsl::logic::plan::corpus::session::full(&run);
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &kept_store) };
         r
     };
+    // `RERAIL_SPIKE_SESSION`: the runs are a session's (decision 0063), as the explorer's are; the full runs are not.
+    let session = std::env::var_os("RERAIL_SPIKE_SESSION").is_some();
+    if session {
+        crate::code_rule_dsl::logic::plan::corpus::session::start(&out.with_extension("session")).unwrap();
+    }
     show("cold", &run());
     show("unchanged", &run());
     let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
@@ -1208,6 +1213,10 @@ ats(s, p, l) :- struct__at(s, p, l).
         let derived = dump();
         let differ: Vec<String> = outputs.iter().filter(|r| kept[*r] != derived[*r]).map(|r| format!("{r} ({} kept, {} derived)", kept[r].len(), derived[r].len())).collect();
         println!("PHASE {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
+    }
+    if session {
+        crate::code_rule_dsl::logic::plan::corpus::session::stop();
+        let _ = std::fs::remove_dir_all(out.with_extension("session"));
     }
     let _ = std::fs::remove_dir_all(&out);
 }
