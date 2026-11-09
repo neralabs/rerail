@@ -628,6 +628,16 @@ impl GitWorkspace {
 /// The result is sorted by path and object identity. The caller can use the
 /// Git object IDs as aliases only after it compares them with evaluated bytes.
 pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
+    discover_in(root, false)
+}
+
+/// [`discover`] for the files under `root` only: HEAD's subtree there, and status over that part of the
+/// worktree. Its trees, base files and overlays are those under `root`; a file elsewhere is none of them.
+pub fn discover_under(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
+    discover_in(root, true)
+}
+
+fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError> {
     let repository = gix::discover(root).map_err(|error| {
         let message = format!("cannot discover Git repository: {error}");
         match error {
@@ -666,15 +676,48 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
     let mut trees = Vec::new();
     let mut base_files = Vec::new();
     let mut nested_paths = BTreeSet::new();
-    visit_tree(
-        &repository,
-        root_tree,
-        "",
-        &ignore,
-        &mut trees,
-        &mut base_files,
-        &mut nested_paths,
-    )?;
+    // Scoped: the root's path in the worktree ("" at the top), its subtree, and a pathspec for status.
+    let scope = if scoped {
+        let canonical = root
+            .canonicalize()
+            .map_err(|error| discovery_error("cannot resolve the root", error))?;
+        canonical
+            .strip_prefix(&worktree)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if scope.is_empty() {
+        visit_tree(
+            &repository,
+            root_tree,
+            "",
+            &ignore,
+            &mut trees,
+            &mut base_files,
+            &mut nested_paths,
+        )?;
+    } else if let Some(entry) = root_tree
+        .lookup_entry_by_path(&scope)
+        .map_err(|error| discovery_error("cannot read HEAD tree", error))?
+        .filter(|entry| entry.mode().is_tree())
+    {
+        let subtree = entry
+            .object()
+            .map_err(|error| discovery_error("cannot read Git subtree", error))?
+            .try_into_tree()
+            .map_err(|error| discovery_error("Git subtree has the wrong object kind", error))?;
+        visit_tree(
+            &repository,
+            subtree,
+            &scope,
+            &ignore,
+            &mut trees,
+            &mut base_files,
+            &mut nested_paths,
+        )?;
+    }
     #[cfg(test)]
     if let Some(hook) = AFTER_HEAD_TREE_VISIT.take() {
         hook();
@@ -694,9 +737,14 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
         .index_worktree_submodules(None)
         .head_tree(head_tree)
         .into_iter(
-            STATUS_EXCLUDES
-                .iter()
-                .map(|pattern| gix::bstr::BString::from(*pattern)),
+            (!scope.is_empty())
+                .then(|| gix::bstr::BString::from(format!(":(top,literal){scope}")))
+                .into_iter()
+                .chain(
+                    STATUS_EXCLUDES
+                        .iter()
+                        .map(|pattern| gix::bstr::BString::from(*pattern)),
+                ),
         )
         .map_err(|error| discovery_error("cannot read Git status", error))?;
     for item in status {

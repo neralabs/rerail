@@ -178,7 +178,7 @@ pub(crate) struct Observer {
     /// The working directory, for relative paths: an entry is kept by its absolute path.
     cwd: PathBuf,
     /// The Git work trees this run has discovered (`git`): a clean file's digest may come from its blob.
-    git: Vec<Arc<crate::git_workspace::GitWorkspace>>,
+    git: Vec<(PathBuf, Arc<crate::git_workspace::GitWorkspace>)>,
 }
 
 fn now_ns() -> i64 {
@@ -357,7 +357,7 @@ impl Observer {
         // Git's work tree root is canonical: so is the path compared with it (one `realpath`, in Git runs only).
         let canonical = if self.git.is_empty() { None } else { std::fs::canonicalize(path).ok() };
         let blob = canonical.as_ref().and_then(|c| {
-            self.git.iter().find_map(|g| {
+            self.git.iter().find_map(|(_, g)| {
                 let relative = c.strip_prefix(&g.worktree_root).ok()?.to_str()?;
                 g.clean_blob_unread(relative)
             })
@@ -384,11 +384,12 @@ impl Observer {
     /// The Git work tree holding `root`, discovered once per run (`None`: not in one, or Git cannot read it).
     pub(crate) fn git(&mut self, root: &Path) -> Option<Arc<crate::git_workspace::GitWorkspace>> {
         let root = std::fs::canonicalize(self.abs(root)).ok()?;
-        if let Some(g) = self.git.iter().find(|g| root.starts_with(&g.worktree_root)) {
+        if let Some((_, g)) = self.git.iter().find(|(under, _)| root.starts_with(under)) {
             return Some(Arc::clone(g));
         }
-        let g = Arc::new(crate::git_workspace::discover(&root).ok()?);
-        self.git.push(Arc::clone(&g));
+        // Only the part of the work tree under `root`: status over a whole large repository costs seconds.
+        let g = Arc::new(crate::git_workspace::discover_under(&root).ok()?);
+        self.git.push((root, Arc::clone(&g)));
         Some(g)
     }
 

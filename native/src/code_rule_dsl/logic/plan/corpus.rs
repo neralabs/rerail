@@ -3931,9 +3931,9 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
         Some("rr") => rr.push(relative),
         _ => text.push(relative),
     };
-    // `RERAIL_FILES=git`: the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
-    // does not ignore), with no walk; the same directories skipped. Elsewhere, or outside a Git work tree, the walk.
-    let git = std::env::var("RERAIL_FILES").is_ok_and(|v| v == "git").then(|| observe(|o| o.git(root))).flatten();
+    // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
+    // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
+    let git = observe(|o| o.git(root));
     if let Some(g) = git {
         let canonical = std::fs::canonicalize(root).map_err(|e| Error::Plan(format!("{}: {e}", root.display())))?;
         let prefix = canonical.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
@@ -4268,7 +4268,7 @@ impl Own {
 #[cfg(test)]
 mod tests {
 
-    /// Phase 0 alone over `RERAIL_P0_ROOT`: the corpus's files (`RERAIL_FILES=git`: from Git, else the walk) and
+    /// Phase 0 alone over `RERAIL_P0_ROOT`: the corpus's files (from Git in a Git work tree, else the walk) and
     /// every Python document's digest, with the observer's counts and the CPU. Run it twice for the warm figure; the
     /// observer's store is `<RERAIL_TAPE_CACHE>.files`.
     #[test]
