@@ -376,6 +376,11 @@ impl Ane {
         }
         // Each launch's share, as the reference gives it.
         let t0 = Instant::now();
+        if let [(a, b, None)] = parts[..] {
+            // One launch's counts: the summed counts themselves, not a copy.
+            *self.last.lock().unwrap() = split;
+            return Ok(vec![Output::Counts { rows: a.rows, cols: b.rows, data: counts }]);
+        }
         let outs: Vec<Output> = parts
             .iter()
             .zip(&starts)
@@ -421,6 +426,10 @@ impl Ane {
 
     /// The partial counts, tile by tile, on IOSurfaces: each tile's rows expanded in place into the pieces' input
     /// surfaces, one prediction, and the outputs read from the surfaces Core ML wrote them into.
+    ///
+    /// The host's part runs on the lane's own thread, not the rayon pool: it is a few ms at the spikes' sizes, and
+    /// the pool's workers spinning between a submission's short parallel steps cost several times that in CPU (W1:
+    /// 4 ms of CPU a submission serial, 30 ms on the pool). The lane is there to free the CPU.
     fn counts_on_surfaces<'b>(
         &self,
         m: &Model,
@@ -451,7 +460,7 @@ impl Ane {
                     let (w0, w1) = t.pieces[p];
                     let (k, stride) = (t.k(p), s.stride);
                     s.write(|buf| {
-                        buf.par_chunks_mut(stride).enumerate().for_each(|(r, row)| {
+                        buf.chunks_mut(stride).enumerate().for_each(|(r, row)| {
                             let g = tile * t.m + r;
                             if g < total {
                                 let (a, i) = row_of(g);
@@ -470,19 +479,16 @@ impl Ane {
                 split.calls += 1;
                 let lo = tile * t.m;
                 let hi = (lo + t.m).min(total);
-                for s in outs {
-                    let stride = s.stride;
-                    s.read(|data| {
-                        counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
-                            for (o, &h) in out.iter_mut().zip(&data[r * stride..r * stride + n]) {
-                                match half_count(h) {
-                                    Some(c) => *o += c,
-                                    None => bad.store(true, Ordering::Relaxed),
-                                }
+                // Every piece's partial counts into a row while the row is in cache.
+                coreml::Surface::read_all(outs, |data| {
+                    for (r, out) in counts[lo * n..hi * n].chunks_mut(n).enumerate() {
+                        for (s, d) in outs.iter().zip(data) {
+                            if !add_counts(out, &d[r * s.stride..r * s.stride + n]) {
+                                bad.store(true, Ordering::Relaxed);
                             }
-                        })
-                    })?;
-                }
+                        }
+                    }
+                })?;
                 split.sum += t0.elapsed().as_secs_f64() - call;
                 if bad.load(Ordering::Relaxed) {
                     return Err("an output was not an exact count".to_string());
@@ -551,11 +557,8 @@ impl Ane {
                 let lo = tile * t.m;
                 let hi = (lo + t.m).min(total);
                 counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
-                    for (o, &h) in out.iter_mut().zip(&data[r * stride..r * stride + n]) {
-                        match half_count(h) {
-                            Some(c) => *o += c,
-                            None => bad.store(true, Ordering::Relaxed),
-                        }
+                    if !add_counts(out, &data[r * stride..r * stride + n]) {
+                        bad.store(true, Ordering::Relaxed);
                     }
                 });
                 Ok(())
@@ -610,7 +613,7 @@ fn expand(words: &[u64], out: &mut [u16]) {
 }
 
 /// An fp16 count as an integer; `None` when it is not a whole number in `0..=EXACT`.
-pub fn half_count(h: u16) -> Option<u32> {
+pub const fn half_count(h: u16) -> Option<u32> {
     if h == 0 {
         return Some(0);
     }
@@ -628,7 +631,32 @@ pub fn half_count(h: u16) -> Option<u32> {
         }
         m >> s
     };
-    (v <= package::EXACT).then_some(v)
+    if v <= package::EXACT { Some(v) } else { None }
+}
+
+/// [`half_count`] of every fp16, `NOT_A_COUNT` where it is `None`: the outputs' conversion is one load an element.
+static HALF_COUNTS: [u16; 1 << 16] = {
+    let mut t = [NOT_A_COUNT; 1 << 16];
+    let mut h = 0;
+    while h < 1 << 16 {
+        if let Some(c) = half_count(h as u16) {
+            t[h] = c as u16;
+        }
+        h += 1;
+    }
+    t
+};
+const NOT_A_COUNT: u16 = u16::MAX;
+
+/// Adds the fp16 counts `src` to `out`; `false` when one of them is not an exact count.
+fn add_counts(out: &mut [u32], src: &[u16]) -> bool {
+    let mut bad = false;
+    for (o, &h) in out.iter_mut().zip(src) {
+        let c = HALF_COUNTS[h as usize];
+        bad |= c == NOT_A_COUNT;
+        *o += c as u32;
+    }
+    !bad
 }
 
 impl Backend for Ane {

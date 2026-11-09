@@ -396,9 +396,31 @@ impl Surface {
         self.locked(0, |p| f(unsafe { std::slice::from_raw_parts_mut(p, self.rows * self.stride) }))
     }
 
-    /// Reads the surface: `f` gets its elements as `write`'s.
-    pub fn read<R>(&self, f: impl FnOnce(&[u16]) -> R) -> Result<R, String> {
-        self.locked(LOCK_READ_ONLY, |p| f(unsafe { std::slice::from_raw_parts(p, self.rows * self.stride) }))
+    /// Reads several surfaces at once: `f` gets each one's elements, as `write`'s, in order.
+    pub fn read_all<R>(surfaces: &[Surface], f: impl FnOnce(&[&[u16]]) -> R) -> Result<R, String> {
+        let mut data = Vec::with_capacity(surfaces.len());
+        let mut r = Ok(());
+        for s in surfaces {
+            let st = unsafe { CVPixelBufferLockBaseAddress(s.pb, LOCK_READ_ONLY) };
+            if st != 0 {
+                r = Err(format!("locking an IOSurface of {} x {}: {st}", s.rows, s.cols));
+                break;
+            }
+            let p = unsafe { CVPixelBufferGetBaseAddress(s.pb) } as *const u16;
+            data.push(p);
+            if p.is_null() {
+                r = Err(format!("an IOSurface of {} x {} has no base address", s.rows, s.cols));
+                break;
+            }
+        }
+        let out = r.map(|()| {
+            let slices: Vec<&[u16]> = surfaces.iter().zip(&data).map(|(s, &p)| unsafe { std::slice::from_raw_parts(p, s.rows * s.stride) }).collect();
+            f(&slices)
+        });
+        for s in &surfaces[..data.len()] {
+            unsafe { CVPixelBufferUnlockBaseAddress(s.pb, LOCK_READ_ONLY) };
+        }
+        out
     }
 
     fn locked<R>(&self, flags: u64, f: impl FnOnce(*mut u16) -> R) -> Result<R, String> {

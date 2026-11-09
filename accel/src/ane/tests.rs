@@ -83,6 +83,13 @@ fn half_counts() {
     assert_eq!(half_count(0x3800), None); // 0.5
     assert_eq!(half_count(0xbc00), None); // -1
     assert_eq!(half_count(0x7c00), None); // inf
+    for h in 0..=u16::MAX {
+        let mut o = [5u32];
+        assert_eq!(add_counts(&mut o, &[h]), half_count(h).is_some(), "{h:#x}");
+        if let Some(c) = half_count(h) {
+            assert_eq!(o[0], 5 + c);
+        }
+    }
     for v in 0..=2048u32 {
         // fp16 of v, built from f32's bits.
         let f = (v as f32).to_bits();
