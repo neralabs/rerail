@@ -239,3 +239,24 @@ Parity test (`facts::vtab::syntax::tests::named_only_documents_project_as_full_o
 
 The facts module's own tests show no new failures. S7 is unchanged at
 519 keys; production restores full documents until step 6.
+
+### 6.1 A whole run on named-only documents
+
+Test builds read `RERAIL_TEST_NAMED_IN_MEMORY=1`. With it set, every
+named-only image is restored named-only, so a whole run shows what
+still reads tokens from the records. It is a probe, not a mode.
+
+S7 with the probe set:
+
+| | Keys |
+|---|---|
+| Full documents | 519 |
+| Named-only documents (interpreter and JIT) | 381 |
+
+The missing keys belong to the packs' forbid-ast clauses: RET505–508,
+E722, B006, B404, SIM118 and others. These clauses run on the
+transducer, whose mode-0 walks still expect token records. Step 3
+fixes that.
+
+The device refuses the named-only document ("noncanonical tape image
+header"). Step 4 fixes that.

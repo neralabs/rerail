@@ -1931,6 +1931,12 @@ impl TapeDoc {
         lines: Arc<LineTable>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
+        // Test builds only, while readers move (t30 §3): `RERAIL_TEST_NAMED_IN_MEMORY=1` restores every named-only
+        // image named-only, to see what a whole run reads.
+        #[cfg(test)]
+        if std::env::var_os("RERAIL_TEST_NAMED_IN_MEMORY").is_some() {
+            return Self::restore_tree_as(source, grammar, image, lines, Shape::Named, budget);
+        }
         Self::restore_tree_as(source, grammar, image, lines, Shape::Full, budget)
     }
 
