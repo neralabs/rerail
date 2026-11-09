@@ -135,26 +135,42 @@ one plan of a stratum:
 - **Join order stays the planner's, with one addition: each join step gets a physical form** (§4). The form is
   chosen from the same estimates, priced for the device, and recorded in the plan so the profile shows it.
 
-### 2. Row code is a side program of the transducer's `Program`
+### 2. Row code: predicates are block programs of `Program`; computed values are the plan's own
 
-What a plan does per row (and per pair of rows) is straight-line code over column values:
+What a plan does per row (and per pair of rows) splits in two by what it produces.
 
-- filters and comparisons (`$site < $b`, `$e < 6917529027641081856`);
-- computed terms (`@doc(n)`, arithmetic, `strlen`, string joins' keys);
-- hash keys for a join or a group;
-- the head's terms;
-- a text test's verdict on an interned string, read from the test's bits (§4).
+**Predicates produce a bit per row.** Comparisons, negations against a bitmap, a text test's verdict, `$e < c`.
+That is the shape of the transducer's **block programs** (`block_programs`, `BlockNative`): branch-free,
+straight-line programs whose values are mask words, one bit per position. Their outputs are masks, and their
+extract pass writes each set bit's position at a running count, carried from block to block. That extract pass is
+the stream compaction a filter needs. So predicates go into `Program` as block programs over **column streams**,
+not byte streams:
 
-This is a **row program**: a side program of `Program`, like `value_programs` and `block_programs`.
+- **New operands.** A column compared with a constant or another column, by lane width (16, 32, 64 bits):
+  `Cmp { col, op, rhs }`. A bit read from a resident bitset at a column's value (a text test's verdicts, a unary
+  node relation): `Bit { set, col }`. They produce a mask word per 64 rows, as `EqByte` does per 64 bytes.
+- **Everything after them is the block program's own:** `And`, `Or`, `AndNot`, `Not`; the extract pass to
+  compact; digest, validate, rir, the interpreter, Cranelift (`native_cpu_block`) and MSL (`metal_block_program`).
+- **The CPU native engine runs the same block program** for its filters, through the interpreter or Cranelift.
+  So a predicate has one meaning on both backends.
 
-- It has its own words in `rir`, a digest, `validate`, the interpreter, `native_ir` lowering, Cranelift, and MSL.
-- On Metal, the generated MSL functions are spliced into the shared kernels (§3), as the tree-walk JIT stitches
-  opcode bodies into one `switch(pc)` (`metal_program_backend.rs`).
-- The CPU native engine runs the same row program, through the interpreter or Cranelift. Its `Step` closures go,
-  so there is one definition of a row's meaning, not two.
+**Computed values produce a word per row.** Arithmetic, `@doc(n)`, `strlen`, a join's or a group's key, the
+head's terms. Nothing in `Program` holds word-valued, per-row code today:
+- value programs are byte DFAs;
+- block programs are masks;
+- tier 2's instructions are a tree's state machine.
 
-**What it may not do:** call Rust, loop per byte, or allocate. A string function that needs a loop is a value
-program (a DFA) or a kernel (§3), not row code.
+Forcing them into one of those would be the "convenience" shape the transducer rules forbid. So computed values
+**do not fit `Program`**. They are the plan's own small expression list:
+
+- typed by lane width;
+- lowered by one generator per target (Cranelift, MSL), not by hand per case;
+- run by the native engine's interpreter as the CPU form.
+
+If the transducer later gains word-valued side programs (doc 23's carried values are close), they move there.
+
+**What row code may not do, in either half:** call Rust, loop per byte, or allocate. A string function that needs
+a loop is a value program (a DFA) or a kernel (§3), not row code.
 
 ### 3. Kernels move the data; they are hand-written and shared
 
@@ -223,20 +239,61 @@ device that would be thousands of command buffers. Instead:
 This changes the wave planner: it orders strata into levels, sizes each level, and records per level what stays
 resident. It does not change who decides: SQL and the planner still choose the frontier and the order (0010).
 
-### 6. Data layout on the device
+### 6. Data layout on the device: 16-bit within a chunk, by Roaring's split
 
-- **Node ids are 32-bit within a chunk.** A chunk is one node space (0024). The id is `(document slot, index)`
-  packed into 32 bits by the chunk's own numbering. The host maps back when it writes exports.
-- **Symbols are 32-bit atom ids.**
-- **Integers are 64-bit only where a column's type says so.** That halves the bandwidth of most joins.
-- **Relations are columns.** They are uploaded once per chunk from the batch's tapes and facts, read in place from
-  slabs where they already are (0032).
+Decision 0045's containers cut the id space into chunks of 2^16 ids, and store a chunk's members by their low 16
+bits. Its census on the 9,010-file repository found **a chunk is almost always one document**: 5 files of 9,010
+are over 2^16 nodes. Metal's registers are natively 16-bit (`ushort`), with twice the lanes per register of a
+32-bit value. So the device stores ids **stratified**, a high part per group of rows and 16 bits per row:
+
+- **Node columns.**
+  - Rows are grouped by chunk, as a sort by the high part already groups them.
+  - Each group carries its chunk (the directory entry) once.
+  - Each row carries its low 16 bits.
+  - A document over 2^16 nodes is several chunks, as in 0045.
+  - Within a group, `within`, `docof` and the document tile (§4) compare `ushort`s.
+- **Node sets** (unary relations, negation's bitmaps) are 0045's containers as they are: arrays of `u16`, bitmaps
+  of 1,024 words, runs of `u16` pairs. A device form of them is 0045 §4.
+- **Symbols.**
+  - A chunk's distinct symbols get a dense local code, 16-bit when the chunk has at most 2^16 of them, with a
+    table back to the store's atom.
+  - Equality joins and group keys compare codes. A text test's verdict is a bit per code.
+  - Order comparisons of symbols (rare) read the atoms.
+- **Integers** keep their declared width. A column whose values fit 16 or 32 bits in a chunk (counts, line
+  numbers) is stored narrow, with the width recorded per chunk.
+- **Results do not change.** Every narrowing is exact and per chunk: a value that does not fit makes the chunk use
+  the wider form. The host maps codes and low bits back when it writes exports, and the findings gate checks it.
+- **Relations are columns**, uploaded once per chunk from the batch's tapes and facts, and read in place from slabs
+  where they already are (0032).
 
 ### 7. The binding rule
 
-Under the Metal binding, a stratum the device cannot run is an error, not a CPU run. It is reported with the step
-it lacks, as the profile's "fell back to SQLite" list reports today. Coverage, measured on the Python pack and the
-data-layer repository, is the progress measure. The CPU binding stays whole, because the CPU is a target too.
+Under the Metal binding, the placement planner (§8) decides each stratum. A stratum the device cannot run yet runs
+on the CPU, and the profile names it with the forms the device lacks. The CPU binding stays whole, because the CPU
+is a target too.
+
+### 8. The placement planner: CPU or GPU per stratum, from statistics and shape
+
+Before a stratum opens, the planner has priced each of its rules: an estimate of its work, in the planner's unit
+(the rows a join step reads), and its steps in order. From those, `plan::placement` decides where the stratum runs:
+
+- **Its shape is the relational forms its plans use:** join, negation, aggregate, string join, comparison, computed
+  term, text test, recursion, tree axis, nearest, `ast` matcher.
+- **Each backend has a price.**
+  - The CPU's is measured: 100 ns per unit of planned work and 0.13 ms per stratum (the Python pack, cold,
+    2026-11-09: 92–109 ns a unit above 10^5 units; 0.13 ms each for the 3,372 strata under 10^3).
+  - The GPU's is assumed until the relational lab measures it: 2 ns a unit and 0.15 ms a submission.
+  - The device wave (§5) divides the submission's cost among a level's strata, and the price will say so once it
+    exists.
+- **The GPU is chosen when it is cheaper by a margin (2x) and the device has every form the stratum uses.** Today
+  it has none, so every stratum runs on the CPU.
+- **The profile says what the device lacks.** Its section "Placement" gives:
+  - the strata the GPU would run cheaper, with the CPU they took against the GPU's estimate;
+  - the forms missing, by the CPU of the strata that need them;
+  - the costliest such strata, with their forms.
+
+  `placement.tsv` has every stratum. That list is the order of work for the device: the form that frees the most
+  CPU comes next.
 
 ## Order of work
 
@@ -268,14 +325,14 @@ sys), GPU time from the command buffers' timestamps (0039), and its occupancy.
 - **The `q6_c4_shadow` strata (four copies, 1.4 s) and `p511_restores` (1.11 s)** multiply rows through `within`
   and `visit_index` with a free node. This is the same pricing question.
 
-## Open questions
+## Answered (the user, 2026-11-09)
 
-1. **Row programs as a side program of `Program`** (§2), rather than a separate IR for the engine. This follows
-   docs/parser-generators/12. Is the transducer's `Program` the right home for relational row code, or should the
-   engine's plan be its own program kind lowered through `native_ir`?
-2. **The binding rule (§7) during the build-up.** Is a run under the Metal binding allowed to report "not on the
-   device yet" for a stratum and stop, or should the build-up run with the CPU for the missing steps, marked as such
-   in the profile, until coverage is complete?
-3. **32-bit node ids within a chunk** (§6) change the engine's id space on the device only. The host keeps
-   `d << 32 | index`. Is that split acceptable, or should the engine move to 32-bit chunk ids on the CPU too?
-4. **Which corpus sets the brute-force bound**: the Python pack, the data-layer repository, or both?
+1. **Row code through `Program`:** "As much as possible I want to share work through Program, but if it doesn't
+   fit then it doesn't fit." Predicates fit as block programs over column streams. Computed values do not, and are
+   the plan's own (§2).
+2. **The binding during the build-up:** a planner decides CPU or GPU per stratum from statistics and shape, and
+   says when GPU support is missing for something that should run there, in the profile (§7, §8).
+3. **32-bit ids within a chunk:** yes, as long as results do not change. Look at the Roaring work for more compact
+   forms, since Metal's registers are natively 16-bit (§6).
+4. **The brute-force bound and the prices** are tuned on the Python pack first, and on the data-layer repository
+   afterwards if wanted.
