@@ -3176,7 +3176,7 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "e3dbedd647348f486c5862603b8f1b2c1d83552e",
+    "upstreamCommit": "8bd924c7220ac21e79b02b25ff1ac8fef1766b7e",
     "status": "Adopting Final 7d1e40073, including observed filesystem and in-memory load exports; native acceptance pending",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
@@ -3301,7 +3301,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "dc82f9918b945e35a76b725b2a1b543d32339a6c987bb836f91ae6ca77d58925"
+        "sha256": "783ddda60b2530ddd1763d5b1ebddf5379875d86d0eb06d357a9df7899250406"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
@@ -3309,7 +3309,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "0b43b4b9908a65c73893e65517506dba1d08f115c0a90199f1e8327c940dc2da"
+        "sha256": "86f44f5eeb39daaf915e36d37831d5bc17460b910d4286d89e456b9a00b8344d"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -3341,30 +3341,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b",
-    "cliArtifact": {
-      "engineCommit": "eae9de404a00d7169c0ab92d95110b8262147ab5",
-      "upstreamCommit": "e3dbedd647348f486c5862603b8f1b2c1d83552e",
-      "sourceTrees": {
-        "native": "e6037935cdd85994e4a1e7bbea6afc2a7d173735",
-        "tools/bitlex": "4abd73b7e2f3bcb7f7f90d9cf3183abbd8edbec1",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "36d03ae745ce0a93a9c95b7f57d15c49f1635bff"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-382ee31b88c36f23",
-      "sha256": "382ee31b88c36f2323514bb972c834414b7fac90e53c4f1d445ff00fe3567c2a",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine"
-      ],
-      "seconds": 41.124
-    }
+    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b"
   },
   "engineSourceSnapshots": [
     {
