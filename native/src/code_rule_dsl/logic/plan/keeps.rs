@@ -38,11 +38,14 @@ use super::super::front::{Atom, Literal, Program, Rule, Term, strata};
 use super::Model;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Inlined when the readers' added work is under this share of the relation's cost stored (decision 0097, set by the
-/// relational lab's comparison: see the decision's "Built").
+/// Inlined when the readers' added work is under this share of the relation's cost stored (decision 0097, "Built":
+/// the relational lab's comparison on the Python pack's fixtures). The estimates are in the planner's units of join
+/// work on both sides, so 1 is the break-even; no case measured was near it.
 pub(super) const ALPHA: f64 = 1.0;
-/// The price of a stored row beyond the work that made it: written, indexed and kept, in units of join work.
-pub(super) const M: f64 = 2.0;
+/// The price of a stored row beyond the work that made it: written, then indexed and read in by each stratum that
+/// reads it, in units of join work. Measured on `module_of` (129 k rows): its readers spent 303 ms more CPU over the
+/// stored rows than inlined, at 0.6 µs per unit of its build's work, about 4 units a row.
+pub(super) const M: f64 = 4.0;
 /// At most this many rules in an inlined relation.
 pub(super) const K: usize = 4;
 /// At most this many reader copies made by inlining one relation.
@@ -118,7 +121,8 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
         };
         let (rows, work) = estimates.get(rel).copied().unwrap_or((0.0, 0.0));
         if forced {
-            lines.push(format!("{rel}: inlined (`.decl … inline`), {copies} reader copies"));
+            let by = if prog.qualified(rel, "inline") { "`.decl … inline`" } else { "RERAIL_INLINE_ONLY" };
+            lines.push(format!("{rel}: inlined ({by}), {copies} reader copies"));
             inline.insert(rel.to_owned());
             continue;
         }
