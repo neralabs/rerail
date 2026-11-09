@@ -522,10 +522,10 @@ const EXIT_DRAIN_MS = 500;
 
 /**
  * Calls `settle` once `child` fails to start, its output closes, or {@link EXIT_DRAIN_MS} after the timeout kills it,
- * whichever comes first. On Windows the process Rerail starts is Git for Windows' `cmd\git.exe` launcher, which runs the
- * real Git as its own child. A timeout kills only the launcher, and the real Git keeps the stdout pipe open until it
- * ends on its own, so waiting for `close` alone would hold the answer past the timeout. A Git that exits by itself is
- * read to the end of its output.
+ * whichever comes first. On Windows the process Rerail starts can still be a launcher that runs the real Git as its own
+ * child (a scoop shim, or Git for Windows' `cmd\git.exe` without its own git.exe beside it; {@link gitBehindLauncher}).
+ * A timeout kills only the launcher, and the real Git keeps the stdout pipe open until it ends on its own, so waiting
+ * for `close` alone would hold the answer past the timeout. A Git that exits by itself is read to the end of its output.
  */
 function settleWhenDone(child: ChildProcess, settle: () => void): void {
   child.on("error", () => settle());
