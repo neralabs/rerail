@@ -135,8 +135,19 @@ pub(super) struct Trace {
 }
 
 impl Trace {
+    pub(in crate::code_rule_dsl::sql_executor) fn retained_explanations(&self) -> Vec<Value> {
+        self.templates.iter().flat_map(|(id,p)|p.operator.run.reductions.iter().flat_map(|s|s.values()).map(move |state| {
+            let mut value=state.explain();
+            value["operator_relation"]=value["relation"].clone();
+            value["relation"]=json!(self.steps[*id].0.output);
+            value
+        })).collect()
+    }
+    pub(in crate::code_rule_dsl::sql_executor) fn scalar_storage_explanations(&self) -> Vec<Value> {
+        self.templates.values().flat_map(|p|p.operator.run.reductions.iter().flat_map(|s|s.storage.iter()).map(|s|json!(s))).collect()
+    }
     pub(in crate::code_rule_dsl::sql_executor) fn explain(&self) -> Value {
-        json!({"scalar_storage_boundary":"Wave gates reuse transitions only for equal input versions, prior summary roots, and pending journals", "summary_transition_proof":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true),"frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"operators":f.operators.iter().map(|op|json!({"active":op.active,"phase_eligible":op.phase_eligible,"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+        json!({"execution_shape":if self.whole {"One retained relation graph, including checked projections"} else {"Retained recursive component"},"public_storage":if self.whole {"SQL result tables; publish actual deltas from retained roots"}else{"SQL-owned component results"},"phase_policy":"Operator-specific boundaries preserve phase composition for compatible neighbors","scalar_storage_boundary":"Wave gates reuse transitions only for equal input versions, prior summary roots, and pending journals", "summary_transition_proof":crate::code_rule_dsl::logic::analysis::scalars::maintenance_equivalent(true,true),"frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"operators":f.operators.iter().map(|op|json!({"active":op.active,"phase_eligible":op.phase_eligible,"boundary":if op.phase_eligible {"Composed support and fold"}else{"Separate retained operator evaluation; shared wave publication"},"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
     }
     pub fn stable_phases(&self, program: &schedule::Program) -> bool {
         self.whole

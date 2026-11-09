@@ -405,6 +405,8 @@ impl Operator {
                     self.initialize(w, store)?;
                 } else {
                     let report = maintenance::maintain(w, &mut self.run, &mut changes, limit)?;
+                    w.reducer_groups += report["reducer_groups"].as_u64().unwrap_or(0);
+                    w.context_rows += report["context_rows"].as_u64().unwrap_or(0);
                     if report["refreshed_strata"] != json!([]) {
                         return Err(error("temporal operator unexpectedly refreshed a stratum"));
                     }

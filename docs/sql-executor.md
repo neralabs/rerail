@@ -296,14 +296,20 @@ Positive tree walks use `positive_waves` and `overdelete_waves`.
 `recursive_partitions` counts partitions rederived across recursive components.
 `reducer_groups` counts processed reducer groups and lattice keys. `context_rows` counts rule contexts reconsidered by this path.
 The batch report includes `inserted_facts`, `deleted_facts`, `migrated_inputs`, and `programs`.
-`run()` reports `preparation`, with initialized relation names, materialized projection count, constant tables, and scratch tables created.
+`run()` reports `preparation`, with initialized relation names, scheduled projection count (`projection_relations`), constant tables, and scratch tables created.
+`materialized_views` remains a compatibility field. Projection rules enter the checked relation graph before execution.
 Change reports retain `initializations` and `migrated_inputs` as empty compatibility fields; `migrated_views` is zero.
 `scratch_tables_created` reports new scratch schemas required by the operation.
 A no-op batch returns no program reports.
 
-`bindRelation()` builds the mutable fact source and its indexes. Initial execution materializes projection views and prepares retained support.
+`bindRelation()` builds the mutable fact source and its indexes. Initial execution prepares projection relations and retained support.
+Projection rules use the same dependency graph and wave gates as other checked relations.
+The executor does not convert live views into a separate maintenance pipeline.
+Public results remain SQL tables, so SQL triggers, indexes, and transactional publication keep their existing behavior.
 These costs remain proportional to input size, distinct values, and positive body combinations, and occur before the first edit.
-A large join can require many retained contexts. Min/max state and related reducer expressions currently keep separate value indexes.
+A large join can require many retained contexts. Compatible reducers share their bag state and value indexes.
+A single eligible count, sum, min, or max uses the same grouped SQL publication protocol as a compatible family.
+Lookup sharing requires its own proof. Dependent, opaque, nullable, and ordered cases preserve their required evaluation boundaries.
 The engine collects statistics on materialized projections before preparing support joins.
 First edits and later updates operate on changed candidates, affected contexts, and retained indexes.
 Typed scratch tables remain empty between operations. An operation reuses existing tables and allocates more only when it exceeds the previous capacity.
@@ -530,7 +536,7 @@ An AST matcher atom must become native match facts before the rule enters this e
 The standalone session does not publish derivation records or replace the product audit path.
 The product path continues to use the same SQL scheduler with its provenance and incremental storage.
 
-## Retained recursive iterations
+## Retained wave execution
 
 Supported recursive lattice and aggregate components now use retained iteration state, including components with proven partition keys.
 Each frame reads preceding-wave versions, so cycles cannot preserve their own initial support.
@@ -555,7 +561,11 @@ Bag-sensitive CTEs and unsupported scalar shapes keep the explicit refresh or pa
 Supported recursive programs construct retained state and publish initial answers through one global wave schedule.
 The schedule preserves dependency gates across components, constant seeds, frontiers, and widening counters.
 Preparation reports `initial_execution: "retained"` for this path and `"cold"` for the established fallback.
-Unsupported mixed programs can still use the cold kernel and separate retained preparation.
+Mixed frames compose compatible support and fold queries around separate operator boundaries.
+A scalar boundary does not force compatible neighbors onto statement-by-statement reconciliation.
+Earlier gate activation accounts for adopted template rows before it computes improvements.
+Specialized walkers, pooled acyclic scalar programs, and unsupported graphs retain their established kernels.
+Explain includes those boundaries and the actual retained operator plans.
 
 Initial loads bulk-build complete-row, primary-key, row-id, and required secondary roots.
 Dense initial joins reuse unchanged rows and tree branches. Sparse edits keep their delta path.
