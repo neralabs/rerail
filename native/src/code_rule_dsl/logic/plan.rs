@@ -70,6 +70,7 @@ pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
 mod demand;
 pub(in crate::code_rule_dsl) mod sketch;
+pub(in crate::code_rule_dsl) mod statkeep;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -250,8 +251,9 @@ pub(in crate::code_rule_dsl) struct Stats {
     indexes: HashMap<String, Vec<Vec<String>>>,
     /// Documents (node-id intervals, `stat_docrange`), if the facts have them.
     docs: Option<i64>,
-    /// Exact postings of the program's constants: (table, column, value) → n.
-    memo: HashMap<(String, String, Constant), i64>,
+    /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
+    /// read without a pass over every table's (`of_relation`, once per input of a session's run).
+    memo: HashMap<String, HashMap<(String, Constant), i64>>,
     steps_cache: RefCell<HashMap<(Option<String>, String), f64>>,
     kindsets: BTreeMap<String, Vec<String>>,
 }
@@ -341,9 +343,10 @@ impl Stats {
         let cols = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
         let vals = self
             .memo
-            .iter()
-            .filter(|((r, _, _), _)| r == rel)
-            .filter_map(|((_, c, v), n)| match v {
+            .get(rel)
+            .into_iter()
+            .flatten()
+            .filter_map(|((c, v), n)| match v {
                 Constant::Int(v) => Some((names.iter().position(|x| x == c)?, *v, *n)),
                 _ => None,
             })
@@ -358,7 +361,7 @@ impl Stats {
             self.col.insert((rel.to_owned(), col), m);
         }
         for (col, v, n) in vals {
-            self.memo.insert((rel.to_owned(), col, Constant::Int(v)), n);
+            self.memo.entry(rel.to_owned()).or_default().insert((col, Constant::Int(v)), n);
         }
     }
 
@@ -433,7 +436,10 @@ impl Stats {
             solving: BTreeSet::new(),
             indexes: HashMap::new(),
             docs: meta.get("docs").copied(),
-            memo: of("val").filter_map(|r| Some(((text(&r[0]), text(&r[1]), sql_constant(&r[3])?), int(&r[2])))).collect(),
+            memo: of("val").filter_map(|r| Some((text(&r[0]), (text(&r[1]), sql_constant(&r[3])?), int(&r[2])))).fold(HashMap::new(), |mut m, (t, k, n)| {
+                m.entry(t).or_insert_with(HashMap::new).insert(k, n);
+                m
+            }),
             steps_cache: RefCell::new(HashMap::new()),
             kindsets: prog.kindsets.clone(),
         })
@@ -441,7 +447,7 @@ impl Stats {
 
     /// Exact postings for a constant probe on an input column; `None` if the column has no statistics.
     fn const_freq(&self, rel: &str, cname: &str, v: &Constant) -> Option<i64> {
-        if let Some(&n) = self.memo.get(&(rel.to_owned(), cname.to_owned(), v.clone())) {
+        if let Some(&n) = self.memo.get(rel).and_then(|m| m.get(&(cname.to_owned(), v.clone()))) {
             return Some(n);
         }
         self.col.contains_key(&(rel.to_owned(), cname.to_owned())).then_some(0)
@@ -494,8 +500,9 @@ impl Stats {
 
 /// The planner's model of the data: statistics, distinct counts, and what the views are.
 pub(in crate::code_rule_dsl) struct Model {
-    /// The program's logical key and scalar analysis, made once per plan and shared (not made again per stratum).
-    pub(in crate::code_rule_dsl) analysis: std::sync::Arc<super::analysis::ProgramAnalysis>,
+    /// The program's logical key and scalar analysis, made once per plan and shared (not made again per stratum),
+    /// when first asked (`analysis`): only the SQL executor reads it, so the native set engine's runs never make it.
+    analysis: std::sync::OnceLock<std::sync::Arc<super::analysis::ProgramAnalysis>>,
     pub(in crate::code_rule_dsl) stats: Stats,
     pub(in crate::code_rule_dsl) ndv: HashMap<(String, usize), f64>,
     /// rel → (node column, document column) for projections of `node(d, n)`: documents are id intervals.
@@ -583,22 +590,6 @@ fn py_set_order(sorted: &[usize]) -> Vec<usize> {
         slots[i] = Some(v);
     }
     slots.into_iter().flatten().collect()
-}
-
-fn combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
-    let mut out = Vec::new();
-    let mut idx: Vec<usize> = (0..k).collect();
-    if k > n {
-        return out;
-    }
-    loop {
-        out.push(idx.clone());
-        let Some(i) = (0..k).rev().find(|&i| idx[i] != i + n - k) else { return out };
-        idx[i] += 1;
-        for j in i + 1..k {
-            idx[j] = idx[j - 1] + 1;
-        }
-    }
 }
 
 /// Above this many join literals a body is ordered greedily, not searched (decision 0038).
@@ -711,6 +702,18 @@ fn skew(rel: &str, c: usize, what: u64) -> f64 {
 pub(in crate::code_rule_dsl) type Plan = (Vec<Step>, f64, f64);
 
 impl Model {
+    /// `prog`'s logical key and scalar analysis (`analysis`), made the first time it is asked for; `prog` is the
+    /// program this model plans.
+    pub(in crate::code_rule_dsl) fn analysis(&self, prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+        std::sync::Arc::clone(self.analysis.get_or_init(|| {
+            let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
+            let analysis = program_analysis(prog);
+            let _explain = super::profile::span(|| "explain analysis".into());
+            analysis.explain();
+            analysis
+        }))
+    }
+
     fn card(&self, rel: &str) -> f64 {
         // `node` is the corpus's nodes, except where a batch binds it: then its estimate is the batch's.
         if rel == "node" && !self.inputs.batch.contains_key(rel) {
@@ -1232,7 +1235,15 @@ impl Model {
         let disconnected = |i: usize, prev: u64, bound: &BTreeSet<String>| {
             !connected(&body[joins[i]], bound) && (0..joins.len()).any(|j| j != i && prev & (1 << j) == 0 && connected(&body[joins[j]], bound))
         };
-        if joins.len() > GREEDY {
+        // The search's variables as bits: a body with more than 128 is ordered greedily, as a long one is.
+        let mut var_ids: BTreeMap<String, usize> = BTreeMap::new();
+        for l in body {
+            for v in l.vars() {
+                let n = var_ids.len();
+                var_ids.entry(v).or_insert(n);
+            }
+        }
+        if joins.len() > GREEDY || var_ids.len() > 128 {
             // Long bodies are ordered greedily (Postgres's `geqo_threshold`): the cheapest connected step next.
             let (mut work, mut rows, mut order, mut bound, mut rest) = best_of.remove(&0).expect("the empty order");
             let mut done: u64 = 0;
@@ -1276,15 +1287,31 @@ impl Model {
         }
         let filters: Vec<usize> = (0..body.len()).filter(|&i| !is_join(&body[i])).collect();
         let halves = |l: &Literal| !(matches!(l, Literal::Cmp { op: "=", .. }) || matches!(l, Literal::Agg { .. }));
+        // Variables as bits (`var_ids`): a subset's bound variables are a mask, and a set of names is made only to
+        // price a join or test a filter the first time its own variables are bound so.
+        let names: Vec<&String> = {
+            let mut n: Vec<(&usize, &String)> = var_ids.iter().map(|(v, k)| (k, v)).collect();
+            n.sort();
+            n.into_iter().map(|(_, v)| v).collect()
+        };
+        let bits_of = |vs: BTreeSet<String>| vs.iter().fold(0u128, |m, v| m | 1u128 << var_ids[v]);
+        let set_of = |b: u128| -> BTreeSet<String> { names.iter().enumerate().filter(|(k, _)| b >> k & 1 == 1).map(|(_, v)| (*v).clone()).collect() };
+        let lit_bits: Vec<u128> = body.iter().map(|l| bits_of(l.vars())).collect();
+        // Whether a filter is ready reads only its own variables (`ready`).
+        let mut readiness: HashMap<(usize, u128), bool> = HashMap::new();
+        let mut ready_at = |f: usize, bound: u128| -> bool {
+            let own = bound & lit_bits[f];
+            *readiness.entry((f, own)).or_insert_with(|| ready(&body[f], &set_of(own)))
+        };
         // A subset's bound variables and how many halving filters it has placed.
-        let closure = |mask: u64| -> (BTreeSet<String>, usize) {
-            let mut bound = BTreeSet::new();
+        let mut closure = |mask: u64| -> (u128, usize) {
+            let mut bound = 0u128;
             if mask == 0 {
                 return (bound, 0);
             }
             for (i, &j) in joins.iter().enumerate() {
                 if mask & (1 << i) != 0 {
-                    bound.extend(body[j].vars());
+                    bound |= lit_bits[j];
                 }
             }
             let mut placed = vec![false; filters.len()];
@@ -1292,9 +1319,9 @@ impl Model {
             while progressed {
                 progressed = false;
                 for (k, &f) in filters.iter().enumerate() {
-                    if !placed[k] && ready(&body[f], &bound) {
+                    if !placed[k] && ready_at(f, bound) {
                         placed[k] = true;
-                        bound.extend(body[f].vars());
+                        bound |= lit_bits[f];
                         progressed = true;
                     }
                 }
@@ -1330,11 +1357,13 @@ impl Model {
                 v.into_iter().collect()
             })
             .collect();
-        let mut prices: HashMap<(usize, u64), Price> = HashMap::new();
-        let mut price = |i: usize, bound: &BTreeSet<String>| -> Price {
-            let vars = &relevant[i];
-            let pattern = vars.iter().enumerate().fold(0u64, |m, (k, v)| if k < 64 && bound.contains(v) { m | 1 << k } else { m });
-            let compute = || match &body[joins[i]] {
+        let relevant: Vec<u128> = relevant.into_iter().map(|v| bits_of(v.into_iter().collect())).collect();
+        let mut prices: HashMap<(usize, u128), Price> = HashMap::new();
+        let mut price = |i: usize, bits: u128| -> Price {
+            let pattern = bits & relevant[i];
+            let compute = || {
+                let bound = &set_of(bits);
+                match &body[joins[i]] {
                 Literal::Atom(a) => Price::Atom(atom_rows(a, bound), doc_range(a, bound).map(|(_, r)| r)),
                 l @ Literal::Nearest { n, a, kindset } => {
                     if !ready(l, bound) {
@@ -1346,10 +1375,8 @@ impl Model {
                     }
                 }
                 _ => Price::No,
+                }
             };
-            if vars.len() > 64 {
-                return compute();
-            }
             *prices.entry((i, pattern)).or_insert_with(compute)
         };
         // `step` (outside a long body's greedy order) from a price.
@@ -1370,18 +1397,27 @@ impl Model {
                 Price::Descend(size) => Some((rows * size, rows * size, Some(Mode::Descend))),
             }
         };
-        let mut cells: HashMap<u64, Cell> = HashMap::new();
-        let mut closed: HashMap<u64, (BTreeSet<String>, usize)> = HashMap::new();
-        cells.insert(0, Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None });
-        closed.insert(0, closure(0));
-        for size in 1..=joins.len() {
-            for subset in combinations(joins.len(), size) {
-                let mask: u64 = subset.iter().map(|&i| 1u64 << i).sum();
+        // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
+        let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
+        let mut closed: Vec<(u128, usize)> = vec![(0, 0); 1 << joins.len()];
+        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None });
+        closed[0] = closure(0);
+        // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
+        // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
+        // joins tried in the same order, so the plan is the same.
+        let mut reached: Vec<u64> = vec![0];
+        for _size in 1..=joins.len() {
+            let mut next: Vec<u64> = reached.iter().flat_map(|&m| (0..joins.len()).filter(move |&j| m & (1 << j) == 0).map(move |j| m | 1 << j)).collect();
+            next.sort_unstable();
+            next.dedup();
+            reached.clear();
+            for mask in next {
+                let subset: Vec<usize> = (0..joins.len()).filter(|&i| mask & (1 << i) != 0).collect();
                 let mut best: Option<Cell> = None;
                 let mine = closure(mask);
                 for i in py_set_order(&subset) {
                     let prev = mask & !(1 << i);
-                    let Some(from) = cells.get(&prev) else { continue };
+                    let Some(from) = cells[prev as usize].as_ref() else { continue };
                     let l = &body[joins[i]];
                     if prev == 0 && !matches!(l, Literal::Atom(_)) {
                         continue; // an anchor is an atom
@@ -1389,8 +1425,8 @@ impl Model {
                     if prev == 0 && first.is_some_and(|f| f != joins[i]) {
                         continue; // semi-naive: the delta first
                     }
-                    let (bound, h_prev) = &closed[&prev];
-                    let Some((w, mut out, mode)) = priced(price(i, bound), from.rows) else { continue };
+                    let (bound, h_prev) = &closed[prev as usize];
+                    let Some((w, mut out, mode)) = priced(price(i, *bound), from.rows) else { continue };
                     candidates += 1;
                     // `close`'s halving filters newly placed by this join.
                     for _ in *h_prev..mine.1 {
@@ -1402,18 +1438,19 @@ impl Model {
                     }
                 }
                 if let Some(b) = best {
-                    cells.insert(mask, b);
-                    closed.insert(mask, mine);
+                    cells[mask as usize] = Some(b);
+                    closed[mask as usize] = mine;
+                    reached.push(mask);
                 }
             }
         }
         // The best orders, rebuilt: the full one, and (for `RDL_EXPLAIN`) the two-join prefixes.
         let rebuild = |mask: u64| -> Option<Best> {
-            let cell = cells.get(&mask)?;
+            let cell = cells[mask as usize].as_ref()?;
             let mut path = Vec::new();
             let mut at = mask;
             while at != 0 {
-                let c = &cells[&at];
+                let c = cells[at as usize].as_ref().expect("a reached subset");
                 path.push((c.last, c.mode));
                 at = c.prev;
             }
@@ -1426,14 +1463,14 @@ impl Model {
             Some((cell.work, cell.rows, order, bound, rest))
         };
         let explain = std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel);
-        for &mask in cells.keys() {
+        for mask in (0..cells.len() as u64).filter(|&m| cells[m as usize].is_some()) {
             if mask == full_mask || (explain && mask.count_ones() == 2) {
                 if let Some(b) = rebuild(mask) {
                     best_of.insert(mask, b);
                 }
             }
         }
-        subsets_reached = cells.len() as u64;
+        subsets_reached = cells.iter().filter(|c| c.is_some()).count() as u64;
         }
         let full: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
         if std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel) {
@@ -1476,7 +1513,8 @@ impl Model {
         };
         // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
         super::profile::work(super::profile::Unit::Candidate, candidates);
-        let explained = (explain && super::profile::on()).then(|| {
+        // Also when the run may use the device: placement prices each join step from these (decision 0095).
+        let explained = (explain && (super::profile::on() || placement::device_on())).then(|| {
             let _explain = super::profile::span(|| "explain record".into());
             // The chosen order step by step, priced as the search priced it.
             let mut bound: BTreeSet<String> = BTreeSet::new();
@@ -1580,14 +1618,63 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
     src
 }
 
+/// `ProgramAnalysis::analyze`'s result for `prog`, kept for the programs analysed last: a session's runs plan the
+/// same programs again (its file-local part every run, a maintained part while the same strata change), and the
+/// analysis is a function of what the digest reads (each relation's columns and lattice keys, the inputs, the
+/// relations with facts, the natives, and the rules in order).
+fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+    type Kept = Vec<(u128, std::sync::Arc<super::analysis::ProgramAnalysis>)>;
+    /// The programs analysed last, newest at the end: a few, as each holds a result per rule.
+    const KEEP: usize = 4;
+    static KEPT: std::sync::Mutex<Kept> = std::sync::Mutex::new(Vec::new());
+    let key = super::derived::digest(|d| {
+        d.u64(prog.decls.len() as u64);
+        for (rel, cols) in &prog.decls {
+            d.str(rel);
+            d.u64(cols.len() as u64);
+            cols.iter().for_each(|(_, t)| d.str(t));
+        }
+        d.u64(prog.lattice.len() as u64);
+        for (rel, l) in &prog.lattice {
+            d.str(rel);
+            d.u64(l.keys as u64);
+        }
+        d.u64(prog.inputs.len() as u64);
+        prog.inputs.iter().for_each(|r| d.str(r));
+        let facts: Vec<&String> = prog.facts.iter().filter(|(_, v)| !v.is_empty()).map(|(r, _)| r).collect();
+        d.u64(facts.len() as u64);
+        facts.iter().for_each(|r| d.str(r));
+        d.u64(prog.natives.len() as u64);
+        prog.natives.keys().for_each(|r| d.str(r));
+        d.u64(prog.rules.len() as u64);
+        for r in &prog.rules {
+            digest_atom(d, &r.head);
+            d.u64(r.body.len() as u64);
+            r.body.iter().for_each(|l| digest_literal(d, l));
+        }
+    });
+    let mut kept = KEPT.lock().unwrap();
+    if let Some(at) = kept.iter().position(|(k, _)| *k == key) {
+        let hit = kept.remove(at);
+        let analysis = std::sync::Arc::clone(&hit.1);
+        kept.push(hit);
+        super::profile::decision("program analysis", || "kept: the same program analysed earlier".into());
+        return analysis;
+    }
+    drop(kept);
+    super::profile::decision("program analysis", || "analysed".into());
+    let analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(prog));
+    let mut kept = KEPT.lock().unwrap();
+    if kept.len() >= KEEP {
+        kept.remove(0);
+    }
+    kept.push((key, std::sync::Arc::clone(&analysis)));
+    analysis
+}
+
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
 fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Model> {
-    let analysis = {
-        let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
-        let analysis = super::analysis::ProgramAnalysis::analyze(prog);
-        analysis.explain();
-        std::sync::Arc::new(analysis)
-    };
+    let analysis = std::sync::OnceLock::new();
     let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut stats = Stats::new(db, prog, &mut inputs)?;
     let mut ndv = HashMap::new();
@@ -3538,13 +3625,20 @@ impl Run<'_, '_> {
             let fillable: BTreeSet<&str> = super::answers::produced(prog).into_iter().flat_map(|(p, r)| [p, r]).collect();
             let mut empty: HashMap<String, bool> = HashMap::new();
             let mut is_empty = |rel: &str| -> bool {
-                if scc.contains(rel) || fillable.contains(rel) || !native_rels.contains(rel) {
+                // An input delta read from the changed documents (`input_delta`) is bound once, before the run; other
+                // inputs may be bound when their first reader runs, so they are not taken as empty.
+                let delta_input = prog.inputs.iter().any(|i| i == rel) && (rel.ends_with("__minus") || rel.ends_with("__plus"));
+                if scc.contains(rel) || fillable.contains(rel) || !(native_rels.contains(rel) || delta_input) {
                     return false;
                 }
                 if let Some(&e) = empty.get(rel) {
                     return e;
                 }
-                let e = super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0);
+                let e = if delta_input {
+                    crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0)
+                } else {
+                    super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0)
+                };
                 empty.insert(rel.to_owned(), e);
                 e
             };
@@ -3635,6 +3729,9 @@ impl Run<'_, '_> {
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
             shape.add(&order, &r.head.args, work, false);
+            if let Some(x) = &x {
+                shape.add_joins(&order, x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
+            }
             let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
                 if answering {
                     let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|a| !scc.contains(a)).collect();
@@ -3688,6 +3785,9 @@ impl Run<'_, '_> {
                 let ((order, work, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
                 shape.add(&order, &r.head.args, work, true);
+                if let Some(x) = &x {
+                    shape.add_joins(&order, x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
+                }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
                     if answering {
@@ -4541,9 +4641,8 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 super::sql::program::physical(&mut p);
             }
             split = p;
-            // The program run is the split one: its analysis is that program's.
-            let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
-            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&split));
+            // The program run is the split one: its analysis is that program's, made when asked.
+            model.analysis = std::sync::OnceLock::new();
             &split
         }
         None => prog,

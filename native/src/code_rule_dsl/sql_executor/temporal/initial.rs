@@ -1,6 +1,30 @@
 //! One global wave schedule constructs the retained state and produces the initial answer.
 use super::*;
 
+pub(in crate::code_rule_dsl::sql_executor) fn eligible(
+    e: &plan::emit::Emitted,
+    producers: &BTreeMap<String, Vec<String>>,
+) -> bool {
+    if !producers.is_empty() || e.queries.iter().any(Option::is_none) || e.program.steps.is_empty() {
+        return false;
+    }
+    let positions = e.program.steps.iter().map(|s|(s.output.as_str(),s.stratum)).collect::<BTreeMap<_,_>>();
+    let recursive = |s:&schedule::Step,q:&Query| s.stratum>0 && q.reads().iter()
+        .filter_map(|r|r.program_relation()).any(|r|positions.get(r)==Some(&s.stratum));
+    let recursive_steps=e.program.steps.iter().zip(&e.queries).filter(|(s,q)|recursive(s,q.as_ref().unwrap())).collect::<Vec<_>>();
+    if recursive_steps.iter().any(|(s,q)|maintenance::barrier(q.as_ref().unwrap()) ||
+        e.program.lattices.iter().any(|(r,_,_)|positions.get(r.as_str())==Some(&s.stratum))) {
+        return true;
+    }
+    // Preserve the specialized walk and partition kernels beyond the checked phase-size boundary.
+    let composable=e.program.steps.len()<=32 && e.queries.iter().flatten().all(|q|q.ctes.is_empty());
+    if !recursive_steps.is_empty() {
+        composable && e.queries.iter().flatten().any(maintenance::barrier)
+    } else {
+        composable && e.program.lattices.is_empty() && !e.views.is_empty()
+    }
+}
+
 pub(in crate::code_rule_dsl::sql_executor) fn run(
     w: &mut Work<'_>,
     store: &versions::Store,
@@ -9,43 +33,9 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
     original: &schedule::Program,
     declared_counts: bool,
 ) -> Result<Option<u32>> {
-    // A SQL producer's query is opaque to the retained waves: such a program runs cold.
-    if !run.producers.is_empty() {
-        return Ok(None);
-    }
+    if !eligible(&run.emitted, &run.producers) { return Ok(None); }
     let e = run.emitted.clone();
-    let outputs = original
-        .relations
-        .iter()
-        .map(|(r, _)| r.clone())
-        .collect::<BTreeSet<_>>();
-    let positions = original
-        .steps
-        .iter()
-        .map(|s| (s.output.clone(), s.stratum))
-        .fold(BTreeMap::new(), |mut m, (r, n)| {
-            m.entry(r)
-                .and_modify(|v: &mut u32| *v = (*v).max(n))
-                .or_insert(n);
-            m
-        });
-    let eligible = original.steps.iter().zip(&e.queries).any(|(s, q)| {
-        s.stratum > 0
-            && q.as_ref().is_some_and(|q| {
-                q.reads()
-                    .iter()
-                    .filter_map(|r| r.program_relation())
-                    .any(|r| positions.get(r) == Some(&s.stratum))
-            })
-            && (original
-                .lattices
-                .iter()
-                .any(|(r, _, _)| positions.get(r) == Some(&s.stratum))
-                || q.as_ref().is_some_and(maintenance::barrier))
-    });
-    if !eligible {
-        return Ok(None);
-    }
+    let outputs = original.relations.iter().map(|(r,_)|r.clone()).collect::<BTreeSet<_>>();
     let steps = e
         .program
         .steps
@@ -145,32 +135,16 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         for (r, spec) in &trace.relations {
             let frame = trace.frames.last().unwrap();
             let _scope = store.activate(frame.scope())?;
-            w.db.execute(
-                &format!(
-                    "INSERT INTO {} SELECT * FROM {}",
-                    quote(r),
-                    quote(&frame.published[r])
-                ),
-                [],
-            )
-            .map_err(error)?;
+            w.db.execute(&format!("INSERT INTO {} SELECT * FROM {}",quote(r),quote(&frame.published[r])),[]).map_err(error)?;
             if spec.widening() {
-                let counters = store.version(&frame.counters[r]);
-                let _public = store.activate(0)?;
-                let table = format!("__sql_changes_{r}");
+                let counters=store.version(&frame.counters[r]);
+                let _public=store.activate(0)?;
+                let table=format!("__sql_changes_{r}");
                 if declared_counts && !store.contains(&table) {
-                    w.db.execute_batch(&format!("DROP TABLE temp.{}", quote(&table)))
-                        .map_err(error)?;
+                    w.db.execute_batch(&format!("DROP TABLE temp.{}",quote(&table))).map_err(error)?;
                 }
-                store.alias_readonly(
-                    w.db,
-                    &table,
-                    counters,
-                    (0..spec.keys)
-                        .map(|c| format!("c{c}"))
-                        .chain(["changes".into()])
-                        .collect(),
-                )?;
+                store.alias_readonly(w.db,&table,counters,
+                    (0..spec.keys).map(|c|format!("c{c}")).chain(["changes".into()]).collect())?;
             }
         }
         attempt.cleanup()?;
@@ -187,6 +161,10 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
             w.summary_reuses += attempt.summary_reuses;
             for (r, v) in versions.published {
                 run.counts.insert(r, v.len() as u64);
+            }
+            let unused = original.relations.iter().flat_map(|(r,_)|[format!("new_{r}"),format!("delta_{r}")]).collect::<BTreeSet<_>>();
+            if !declared_counts {
+                run.objects.retain(|(name,_)|!unused.contains(name));
             }
             run.objects.extend(trace.objects());
             run.temporal.insert(0, trace);
@@ -213,35 +191,14 @@ pub(in crate::code_rule_dsl::sql_executor) fn apply(
 ) -> Result<Value> {
     let mut trace = run.temporal.remove(&0).unwrap();
     let result = (|| {
-        // Base-only projection views remain ordinary retained inputs. They are updated
-        // before the global schedule, matching their original lazy SQL view semantics.
-        let mut views = run.clone();
-        let e = Arc::make_mut(&mut views.emitted);
-        e.program
-            .relations
-            .retain(|(r, _)| !trace.relations.contains_key(r));
-        let keep = e
-            .program
-            .steps
-            .iter()
-            .enumerate()
-            .filter_map(|(id, s)| (!trace.relations.contains_key(&s.output)).then_some(id))
-            .collect::<Vec<_>>();
-        e.program.steps = keep.iter().map(|&i| e.program.steps[i].clone()).collect();
-        e.queries = keep.iter().map(|&i| e.queries[i].clone()).collect();
-        views.reductions = None;
-        views.recursive.clear();
-        let view_names = e
-            .program
-            .relations
-            .iter()
-            .map(|(r, _)| r.clone())
-            .collect::<Vec<_>>();
-        let mut report = maintenance::maintain(w, &mut views, changes, limit)?;
+        let mut report = json!({"positive_waves":0,"overdelete_waves":0,"refreshed_strata":[],"incremental_strata":[],"recursive_partitions":0,"recursive_frames":0,"reducer_groups":0,"context_rows":0,"outputs":{}});
         let store = w
             .versions
             .ok_or_else(|| error("retained initial state requires native storage"))?;
+        let before = (w.reducer_groups,w.context_rows);
         let (deltas, waves) = trace.apply(w, store, changes, limit)?;
+        report["reducer_groups"]=json!(w.reducer_groups-before.0);
+        report["context_rows"]=json!(w.context_rows-before.1);
         let outputs = report["outputs"].as_object_mut().unwrap();
         let mut incremental = Vec::new();
         for (r, d) in deltas {
@@ -255,9 +212,6 @@ pub(in crate::code_rule_dsl::sql_executor) fn apply(
             }
             incremental.push(r.clone());
             changes.insert(r, d);
-        }
-        for r in view_names {
-            run.counts.insert(r.clone(), views.counts[&r]);
         }
         report["positive_waves"] = json!(waves);
         report["recursive_frames"] = json!(waves);

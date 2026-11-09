@@ -1,6 +1,8 @@
 //! Output ownership and transitive invalidation. Persistent user tables are never owned here.
 use super::*;
 mod statistics;
+mod planning;
+pub(super) use planning::normalize_views;
 pub(super) use statistics::Statistics;
 
 #[derive(Clone)]
@@ -99,13 +101,10 @@ impl CodeRuleSqlExecutor {
         &self,
         emitted: &plan::emit::Emitted,
     ) -> Result<Vec<(String, bool)>> {
-        let mut objects: Vec<(String, bool)> = emitted
-            .views
-            .iter()
-            .map(|(name, _)| (name.clone(), false))
-            .collect();
-        for (name, arity) in &emitted.program.relations {
-            if name.starts_with("__") || reserved(name) {
+        let mut objects = Vec::new();
+        let projections = emitted.views.iter().map(|(name,q)| (name.clone(),q.body.columns.len())).collect::<Vec<_>>();
+        for (name, arity) in emitted.program.relations.iter().chain(&projections) {
+            if (name.starts_with("__") && !projections.iter().any(|(r,_)|r==name)) || reserved(name) {
                 return Err(error(format!("{name}: reserved SQL wave relation")));
             }
             if *arity == 0 {

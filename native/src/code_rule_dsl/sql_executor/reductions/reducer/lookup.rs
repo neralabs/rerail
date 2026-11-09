@@ -13,7 +13,7 @@ impl Reducer {
         rule: &Rule,
     ) -> E {
         let mut expression = self.lookup(rule);
-        if self.combined.is_none() || self.dynamic() {
+        if self.combined.as_ref().is_none_or(|s|!s.joined) || self.dynamic() {
             return expression;
         }
         expression.visit_mut(&mut |e| {
@@ -53,7 +53,7 @@ impl Reducer {
         let Some(shared) = &self.combined else {
             return;
         };
-        if !shared.owner || self.dynamic() {
+        if !shared.owner || !shared.joined || self.dynamic() {
             return;
         }
         let alias = format!("rr_summary_{}", shared.members[0]);
@@ -74,9 +74,9 @@ impl Reducer {
         *from += &format!(" LEFT JOIN {} {alias} ON {on}", quote(&self.groups));
     }
     pub(in crate::code_rule_dsl::sql_executor::reductions) fn storage_explain(&self) -> Value {
-        json!({"group":self.groups,"value_index":self.values,"context_consumers":self.pool_consumers,"cross_gate_projection_proven":self.transition_key.is_some(),"lookup_members":self.combined.as_ref().map(|s|&s.members)})
+        json!({"group":self.groups,"value_index":self.values,"context_consumers":self.pool_consumers,"cross_gate_projection_proven":self.transition_key.is_some(),"lookup_members":self.combined.as_ref().map(|s|&s.members),"joined_lookup":self.combined.as_ref().is_some_and(|s|s.joined && !self.dynamic()),"summary_protocol":if self.combined.is_some(){"Grouped SQL publication for one or more consumers"}else{"Specialized ordered or opaque reducer"}})
     }
     pub(in crate::code_rule_dsl::sql_executor::reductions) fn shared_lookup_owner(&self) -> bool {
-        self.combined.as_ref().is_some_and(|s| s.owner)
+        self.combined.as_ref().is_some_and(|s| s.owner && s.joined && !self.dynamic())
     }
 }

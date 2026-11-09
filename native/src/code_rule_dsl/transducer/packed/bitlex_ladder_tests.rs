@@ -502,7 +502,8 @@ pub(super) fn check_shape(name: &str, c: &Compiled) {
     for (b, step) in heads {
         let ok = match step {
             Step::Token | Step::Block | Step::Return => true,
-            Step::Node => c.parser.tier2.wraps,
+            // The table's final pass (parents, extras), and the wraps' placing.
+            Step::Node => true,
             Step::File | Step::Bits | Step::Round => false,
         };
         assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
@@ -563,6 +564,23 @@ pub(super) fn check_ladder(
                 let fell = run.totals.iter().any(|&t| t != 0);
                 differ.push(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));
                 break;
+            }
+            // Tier 2's final pass: each record's parent, the nearest one before it whose range
+            // holds it, and its extra flag, its kind an extra's.
+            if let Ok(cols) = c.parser.columns(&bytes) {
+                let mut open: Vec<usize> = Vec::new();
+                let bad = (0..cols.len()).find(|&i| {
+                    while open.last().is_some_and(|&t| t + cols.size[t] as usize <= i) {
+                        open.pop();
+                    }
+                    let parent = open.last().map_or(native_cpu_stream::NO_PARENT, |&t| t as u32);
+                    open.push(i);
+                    cols.parent[i] != parent || cols.extra[i] != u8::from(extra_ids.contains(&(cols.kind[i] as u16)))
+                });
+                if let Some(i) = bad {
+                    differ.push(format!("{}: record {i}'s parent {} or extra {} is not the table's", show(), cols.parent[i], cols.extra[i]));
+                    break;
+                }
             }
             if let Some(d) = also(name, &c, &bytes, &want) {
                 differ.push(format!("{}:\n  {d}", show()));

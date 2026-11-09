@@ -32,7 +32,7 @@ pub(in crate::code_rule_dsl) struct Emitted {
     pub(in crate::code_rule_dsl) setup: Vec<String>,
     /// Each step's checked query, as `program.steps` (`None`: a relation's constant rows).
     pub(in crate::code_rule_dsl) queries: Vec<Option<Query>>,
-    /// The views among `setup`, each as its query.
+    /// Planner-selected projection queries. Session execution can schedule them as retained relations.
     pub(in crate::code_rule_dsl) views: Vec<(String, Query)>,
     /// The program's inputs, which its statements may read.
     pub(in crate::code_rule_dsl) inputs: Vec<String>,
@@ -221,7 +221,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
     Ok(Emitted {
         value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
-        analysis: std::sync::Arc::clone(&model.analysis),
+        analysis: model.analysis(prog),
         program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
         setup,
         queries,

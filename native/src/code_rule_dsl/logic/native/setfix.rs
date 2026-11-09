@@ -980,6 +980,8 @@ pub(in crate::code_rule_dsl) struct TileCase {
     pub(in crate::code_rule_dsl) left: Vec<Vec<i64>>,
     pub(in crate::code_rule_dsl) right: Vec<Vec<i64>>,
     pub(in crate::code_rule_dsl) right_ids: Vec<u32>,
+    /// The right side's identity: its relation, key columns and column tests (one sort serves every case of it).
+    pub(in crate::code_rule_dsl) right_key: String,
     /// Whether each key holds symbols.
     pub(in crate::code_rule_dsl) symbols: Vec<bool>,
     pub(in crate::code_rule_dsl) pairs: Vec<(u32, u32)>,
@@ -1025,7 +1027,8 @@ pub(in crate::code_rule_dsl) fn tiles(conn: &Connection, name: &str) -> Result<V
         }
         let cpu_seconds = thread_cpu() - c0;
         let symbols = rcols.iter().map(|&c| b.types.get(c) == Some(&b's')).collect();
-        out.push(TileCase { rule: label, left, right, right_ids, symbols, pairs, cpu_seconds });
+        let right_key = format!("{:p} {rcols:?} {bt:?}", Arc::as_ptr(b));
+        out.push(TileCase { rule: label, left, right, right_ids, right_key, symbols, pairs, cpu_seconds });
     }
     Ok(out)
 }
@@ -1728,6 +1731,9 @@ impl InRel {
                 charge(Unit::IndexEntry, self.len() as u64);
                 Csr::build(self, cols)
             };
+            if std::env::var_os("RERAIL_SPIKE_INDEX").is_some() {
+                eprintln!("O125 index base={} took {:.3} ms rows={} cols={cols:?} chain={} source={} sorted={} lead={} view={}", self.base, (thread_cpu() - c0) * 1e3, self.len(), m.chain.is_some(), m.source, m.sorted, m.lead, self.view.is_some());
+            }
             let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
             l.0 += thread_cpu() - c0;
             if std::env::var_os("RDL_PROFILE").is_some() {
@@ -1995,6 +2001,49 @@ struct Sorted { ids: Vec<u32>, keys: Vec<i64>, starts: Vec<u32> }
 impl Sorted {
     fn of(col: &[i64]) -> Sorted {
         charge(Unit::IndexEntry, col.len() as u64);
+        // In each case the rows of a value are in row order, as a stable sort by value leaves them.
+        // A column already in order (a node column of rows in document order): its runs, nothing sorted.
+        if col.is_sorted() {
+            let (mut keys, mut starts) = (Vec::new(), Vec::new());
+            for (i, &v) in col.iter().enumerate() {
+                if keys.last() != Some(&v) {
+                    keys.push(v);
+                    starts.push(i as u32);
+                }
+            }
+            starts.push(col.len() as u32);
+            return Sorted { ids: (0..col.len() as u32).collect(), keys, starts };
+        }
+        // Few values (a kind, a name): counted, the values alone sorted, and each row placed at its value's next slot.
+        let mut counts: rustc_hash::FxHashMap<i64, u32> = rustc_hash::FxHashMap::default();
+        let few = col.len() / 8;
+        for &v in col {
+            *counts.entry(v).or_default() += 1;
+            if counts.len() > few {
+                break;
+            }
+        }
+        if counts.len() <= few {
+            let mut keys: Vec<i64> = counts.keys().copied().collect();
+            keys.sort_unstable();
+            let mut starts = Vec::with_capacity(keys.len() + 1);
+            let mut at = 0u32;
+            for k in &keys {
+                starts.push(at);
+                let n = counts[k];
+                // The value's next slot, counted up from its start as its rows are placed.
+                counts.insert(*k, at);
+                at += n;
+            }
+            starts.push(at);
+            let mut ids = vec![0u32; col.len()];
+            for (r, v) in col.iter().enumerate() {
+                let slot = counts.get_mut(v).expect("counted");
+                ids[*slot as usize] = r as u32;
+                *slot += 1;
+            }
+            return Sorted { ids, keys, starts };
+        }
         // Sorted as (value, row) pairs in place: the same order as rows sorted stably by value, without reading a
         // value through its row id at each comparison.
         let mut pairs: Vec<(i64, u32)> = col.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
@@ -2051,6 +2100,16 @@ pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Ar
     let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
     let mut t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
     t.statistics = Some(std::sync::OnceLock::new());
+    let _ = t.n.set(n);
+    Arc::new(t)
+}
+/// `columns_source`, its statistics given (kept by delta, decision 0096): read as they are, never measured.
+pub fn columns_source_measured(columns: Vec<String>, values: Vec<Option<Vec<i64>>>, statistics: Vec<(String, i64, i64, i64, i64)>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+    let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
+    let mut t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
+    let kept = std::sync::OnceLock::new();
+    let _ = kept.set(statistics);
+    t.statistics = Some(kept);
     let _ = t.n.set(n);
     Arc::new(t)
 }
@@ -2221,7 +2280,7 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
             }
             "cat" => {
                 let (o, a, b) = (tok(toks[1], syms)?, tok(toks[2], syms)?, tok(toks[3], syms)?);
-                let (Some(Key::Slot(o)), Some(a), Some(b)) = (o, a, b) else { return Err(err("bad cat")) };
+                let (Some(Key::Slot(o)), Some(a), Some(b)) = (o, a, b) else { return Err(err(format!("bad cat: {}", toks.join(" ")))) };
                 if !is_bound(&bound, a) || !is_bound(&bound, b) {
                     if !is_bound(&bound, Key::Slot(o)) { return Err(err("cat of an unbound slot")); }
                     let part = |b: &mut Vec<bool>, k: Key| match k {
@@ -2620,6 +2679,40 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
 #[cfg(test)]
 mod posted_tests {
     use super::*;
+
+    /// A column's sorted index is the same whichever way it is built (in order, few values, many): its rows sorted
+    /// stably by value.
+    #[test]
+    fn a_sorted_index_is_its_rows_sorted_stably_by_value() {
+        let mut x: u64 = 7;
+        let mut next = |m: u64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) % m) as i64
+        };
+        let columns: Vec<Vec<i64>> = vec![
+            vec![],
+            vec![5],
+            (0..100).map(|i| i / 3).collect(),
+            (0..1000).map(|_| next(7) - 3).collect(),
+            (0..1000).map(|_| next(1 << 40)).collect(),
+            (0..50).map(|_| next(2)).collect(),
+        ];
+        for col in columns {
+            let got = Sorted::of(&col);
+            let mut ids: Vec<u32> = (0..col.len() as u32).collect();
+            ids.sort_by_key(|&r| col[r as usize]);
+            assert_eq!(got.ids, ids, "{col:?}");
+            let mut keys = col.clone();
+            keys.sort_unstable();
+            keys.dedup();
+            assert_eq!(got.keys, keys);
+            assert_eq!(got.starts.len(), keys.len() + 1);
+            for (i, k) in keys.iter().enumerate() {
+                assert!(got.ids[got.starts[i] as usize..got.starts[i + 1] as usize].iter().all(|&r| col[r as usize] == *k));
+            }
+            assert_eq!(*got.starts.last().unwrap() as usize, col.len());
+        }
+    }
 
     /// Statistics read from a kept relation's postings are those measured from its rows, with dead rows left out.
     #[test]
