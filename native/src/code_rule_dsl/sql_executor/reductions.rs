@@ -7,6 +7,8 @@ use super::super::logic::sql::{
 use super::maintenance::{Delta, Work};
 use super::*;
 mod compose;
+pub(super) mod pool;
+pub(super) mod cold;
 mod fused;
 mod join_tree;
 mod lattice;
@@ -14,6 +16,8 @@ mod maintain;
 mod plan;
 mod reducer;
 mod sums;
+mod scalar_phase;
+mod properties;
 use plan::{Rule, column, integer, names, plain, source};
 use reducer::Reducer;
 
@@ -25,6 +29,8 @@ pub(super) struct Retained {
     rules: Vec<Rule>,
     lattice: Option<lattice::Lattice>,
     pub(super) ready: bool,
+    cold_reuse: crate::code_rule_dsl::logic::analysis::Decision,
+    cold_initialized: bool,
 }
 
 impl Retained {
@@ -59,7 +65,8 @@ impl Retained {
     pub(super) fn clear_contexts(&self, store: &versions::Store) -> Result<()> {
         let mut objects = vec![self.heads.clone()];
         for rule in &self.rules {
-            objects.extend([rule.contexts.clone(), rule.contributions.clone()]);
+            objects.push(rule.contexts.clone());
+            if !rule.contribution_view { objects.push(rule.contributions.clone()); }
             objects.extend(rule.reducers.iter().filter_map(Reducer::dependency_object));
         }
         if let Some(tree) = self.lattice.as_ref().and_then(|l| l.tree.as_ref()) {
@@ -225,7 +232,7 @@ pub(super) fn prepare(
     for state in run.reductions.as_mut().unwrap().values_mut() {
         if !state.ready && potential.contains(&state.output) {
             let _context = w.profile_scope(
-                || json!({"stage":"initialize retained support","relation":state.output}),
+                || json!({"stage":"initialize retained support","relation":state.output,"logicalAnalysis":state.explain()}),
             );
             let _cpu = super::super::logic::profile::span(|| "initialize retained support".into());
             let operation = w.profiler.map(|p| {
@@ -246,7 +253,12 @@ pub(super) fn prepare(
     }
     Ok(initialized)
 }
-pub(super) fn planned(
+pub(super) fn planned(db: &rusqlite::Connection, run: &session::Execution, native: bool) -> Result<pool::Plans> {
+    let mut plans = pool::Plans { states: plan_local(db,run,native)?, storage: vec![] };
+    pool::combine(&mut plans, &run.emitted.queries);
+    Ok(plans)
+}
+fn plan_local(
     db: &rusqlite::Connection,
     run: &session::Execution,
     native: bool,
@@ -316,7 +328,7 @@ pub(super) fn planned(
                 eligible = false;
                 break;
             }
-            match plan::rule(db, output, id, q, native)? {
+            match plan::rule(db, output, id, q, native, &e.analysis.relation_keys)? {
                 Some(rule) => {
                     nonmonotone |= !rule.reducers.is_empty();
                     rules.push(rule);
@@ -330,14 +342,21 @@ pub(super) fn planned(
         if !eligible || (!nonmonotone && !native) {
             continue;
         }
-        let state = Retained {
+        let cold_reuse = cold::eligibility(run, output, &rules, lattice.is_some());
+        let mut state = Retained {
             output: output.clone(),
             heads: format!("__sql_state_{output}_heads"),
             width: *width,
             rules,
             lattice,
             ready: false,
+            cold_reuse,
+            cold_initialized: false,
         };
+        if native && state.can_fuse() {
+            for rule in &mut state.rules { if rule.contribution_storage.decision.proven { rule.reconstruct_contributions(); } }
+        }
+        crate::code_rule_dsl::logic::profile::decision("retained logical analyses", || state.explain().to_string());
         retained.insert(output.clone(), state);
     }
     Ok(retained)
@@ -398,6 +417,11 @@ impl Retained {
                 .map(|i| format!("h{i} INTEGER NOT NULL"))
                 .collect::<Vec<_>>()
                 .join(",");
+            let heads = (0..self.width)
+                .map(|i| format!("h{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            if !rule.contribution_view {
             owned_phase(
                 db,
                 objects,
@@ -416,10 +440,7 @@ impl Retained {
                 &rule.evaluation(&rule.contexts).render(),
                 storage,
             )?;
-            let heads = (0..self.width)
-                .map(|i| format!("h{i}"))
-                .collect::<Vec<_>>()
-                .join(",");
+
             if storage.is_none() {
                 db.execute_batch(&format!(
                     "CREATE INDEX {} ON {}({heads})",
@@ -431,6 +452,12 @@ impl Retained {
                 super::super::facts::vtab::bound_source(db, &rule.contributions)
             {
                 source.prepare_index(&(rule.width..rule.width + self.width).collect::<Vec<_>>());
+            }
+            } else {
+                let columns = rule.contribution_storage.heads.iter().filter_map(|e|match e {
+                    crate::code_rule_dsl::logic::analysis::scalars::Expression::Column(c)=>Some(*c), _=>None,
+                }).collect::<Vec<_>>();
+                rule.index(db,&columns)?;
             }
             for atom in &rule.atoms {
                 rule.index(
@@ -447,7 +474,9 @@ impl Retained {
             if fused {
                 continue;
             }
-            if storage.is_some() {
+            if self.support_uniqueness().proven {
+                insert(db, &self.heads, &self.head_query(&heads, &rule.contribution_source()), storage)?;
+            } else if storage.is_some() {
                 let hjoin = (0..self.width)
                     .map(|i| format!("h.c{i}=d.h{i}"))
                     .collect::<Vec<_>>()
@@ -492,7 +521,7 @@ impl Retained {
                         .map(|i| format!("h{i} AS c{i}"))
                         .collect::<Vec<_>>()
                         .join(",");
-                    format!("SELECT {columns} FROM {}", quote(&rule.contributions))
+                    format!("SELECT {columns} FROM {}", rule.contribution_source())
                 })
                 .collect::<Vec<_>>()
                 .join(" UNION ALL ");
@@ -500,7 +529,7 @@ impl Retained {
             insert(
                 db,
                 &self.heads,
-                &format!("SELECT {cols},count(*) FROM ({queries}) GROUP BY {cols}"),
+                &self.head_query(&cols, &format!("({queries})")),
                 storage,
             )?;
         }
@@ -514,6 +543,9 @@ impl Retained {
         w: &mut Work<'_>,
         changes: &BTreeMap<String, Delta>,
     ) -> Result<(Delta, u64, u64)> {
+        if self.scalar_phase_eligible() && w.versions.is_some() {
+            return scalar_phase::apply(self,w,changes);
+        }
         if self.can_fuse()
             && w.versions.is_some_and(|s| {
                 s.available(&self.output).is_some() && s.available(&self.heads).is_some()

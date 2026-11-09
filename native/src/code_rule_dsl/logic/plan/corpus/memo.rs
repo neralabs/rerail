@@ -71,6 +71,10 @@ pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     hash.update(b"rerail.corpus-local/v2\0");
     hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
     hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    // A memoised row's node ids are those of the scheme it was made under: preorder, or per definition.
+    if crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
+        hash.update(b"node-ids:definition\0");
+    }
     hash.update(program);
     hash.finalize().into()
 }

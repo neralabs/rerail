@@ -459,6 +459,7 @@ impl Stats {
 
 /// The planner's model of the data: statistics, distinct counts, and what the views are.
 pub(in crate::code_rule_dsl) struct Model {
+    pub(in crate::code_rule_dsl) analysis: super::analysis::ProgramAnalysis,
     pub(in crate::code_rule_dsl) stats: Stats,
     pub(in crate::code_rule_dsl) ndv: HashMap<(String, usize), f64>,
     /// rel → (node column, document column) for projections of `node(d, n)`: documents are id intervals.
@@ -1315,6 +1316,12 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
 
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
 fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Model> {
+    let analysis = {
+        let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
+        let analysis = super::analysis::ProgramAnalysis::analyze(prog);
+        analysis.explain();
+        analysis
+    };
     let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut stats = Stats::new(db, prog, &mut inputs)?;
     let mut ndv = HashMap::new();
@@ -1361,7 +1368,7 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
             stats.indexes.insert(rel.clone(), vtab_indexes(rel));
         }
-        return Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived });
+        return Ok(Model { analysis, stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived });
     }
     for rel in &prog.inputs {
         let mut st = db.prepare(&format!("PRAGMA f.table_info({rel})"))?;
@@ -1382,7 +1389,7 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         }
         stats.indexes.insert(rel.clone(), indexes);
     }
-    Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived })
+    Ok(Model { analysis, stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived })
 }
 
 /// T's facts file's indexes, which the base-relation vtabs' lookups mirror.
@@ -1392,7 +1399,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
-        "tree_digest" | "annotation_text" | "annotation_constant_repr" | "call_receiver_text" | "call_text" | "call_function_text" | "decorator_text" | "class_base_text" => &[&["n"], &["s", "n"]],
+        "tree_digest" | "def_digest" | "annotation_text" | "annotation_constant_repr" | "call_receiver_text" | "call_text" | "call_function_text" | "decorator_text" | "class_base_text" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
         "ast_match" => &[&["n"], &["c"]],
         "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],

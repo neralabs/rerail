@@ -38,7 +38,6 @@ pub(super) struct Node<V> {
     pub left: Link<V>,
     pub right: Link<V>,
     pub size: usize,
-    priority: [u8; 32],
     pub digest: [u8; 32],
     hashed: bool,
 }
@@ -66,13 +65,12 @@ impl<V: Clone> Node<V> {
             size: 1 + size(&left) + size(&right),
             left,
             right,
-            priority,
             digest,
             hashed,
         })
     }
     fn before(a: &Self, b: &Self) -> bool {
-        (a.priority, &a.key) < (b.priority, &b.key)
+        (a.key.hash, &a.key) < (b.key.hash, &b.key)
     }
     pub fn split(root: &Link<V>, key: &Key) -> (Link<V>, Option<V>, Link<V>) {
         Self::split_counted(root, key, &mut 0)
@@ -162,7 +160,7 @@ impl<V: Clone> Node<V> {
         }
         if let Some(value) = value.as_ref() {
             let priority = key.hash;
-            if (priority, &key) < (n.priority, &n.key) {
+            if (priority, &key) < (n.key.hash, &n.key) {
                 let (left, _, right) = Self::split(root, &key);
                 return Some(Self::make(key, value.clone(), left, right, hashed));
             }

@@ -207,6 +207,51 @@ impl World {
         Some(loaded)
     }
 
+    /// What the run's requests consulted, each as (what, path, digest): a directory's entries, a file's lines, a
+    /// loaded document's bytes, and for a path refused or missing what is there now (decision 0083 §2). A run whose
+    /// consulted things are all as they were would ask, load and derive the same (`still`).
+    pub(super) fn consulted(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for (asked, entries) in &self.dirs {
+            out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
+        }
+        for (asked, lines) in &self.files {
+            out.push(("file".to_owned(), asked.clone(), lines_digest(lines)));
+        }
+        for path in self.loads.keys() {
+            out.push(("load".to_owned(), path.clone(), bytes_digest(Path::new(path))));
+        }
+        for asked in &self.refused {
+            out.push(("refused".to_owned(), asked.clone(), self.probe(asked)));
+        }
+        out
+    }
+
+    /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike.
+    pub(super) fn still(&mut self, consulted: &[(String, String, String)]) -> bool {
+        consulted.iter().all(|(what, path, digest)| {
+            let now = match what.as_str() {
+                "dir" => listing_digest(&self.dir(path)),
+                "file" => lines_digest(&self.file(path)),
+                "load" => bytes_digest(Path::new(path)),
+                "refused" => self.probe(path),
+                _ => return false,
+            };
+            now == *digest
+        })
+    }
+
+    /// What a refused path is now: outside the roots or missing, a file, or a directory.
+    fn probe(&self, asked: &str) -> String {
+        match self.allowed(asked) {
+            None => "none",
+            Some(p) if p.is_file() => "file",
+            Some(p) if p.is_dir() => "dir",
+            Some(_) => "other",
+        }
+        .to_owned()
+    }
+
     pub(super) fn summary(&self, pauses: usize) -> String {
         let entries: usize = self.dirs.values().map(Vec::len).sum();
         let lines: usize = self.files.values().map(Vec::len).sum();
@@ -236,6 +281,36 @@ fn cpu_count() -> Option<usize> {
 /// A document's path as the content store keys it: a loaded document's canonical path without its root.
 pub(super) fn store_path(path: &str) -> &str {
     path.strip_prefix('/').unwrap_or(path)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn listing_digest(entries: &[(String, bool)]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    for (name, is_dir) in entries {
+        h.update(name.as_bytes());
+        h.update([0, u8::from(*is_dir)]);
+    }
+    hex(&h.finalize())
+}
+
+fn lines_digest(lines: &[String]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    for l in lines {
+        h.update(l.as_bytes());
+        h.update([b'\n']);
+    }
+    hex(&h.finalize())
+}
+
+/// A file's bytes' digest ("" when it cannot be read).
+pub(super) fn bytes_digest(path: &Path) -> String {
+    use sha2::Digest;
+    std::fs::read(path).map(|b| hex(&sha2::Sha256::digest(&b))).unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -336,8 +336,23 @@ struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usi
 
 /// The connection a component or a derived relation belongs to (its handle): two runs in one process (two corpora,
 /// or tests in parallel) name their components and relations alike, and must not see each other's.
+///
+/// A handle is an address, and a closed connection's address is given to the next one opened: what a connection
+/// left here is dropped when it closes (`sqlite3_set_clientdata`'s destructor runs in `sqlite3_close`), so a new
+/// connection at the same address starts with none of it. Without this a second run over the same store read the
+/// first run's fixpoint as its own (a cone's loaded documents counted as the workspace's).
 pub(crate) fn scope(conn: &Connection) -> usize {
-    unsafe { conn.handle() as usize }
+    crate::code_rule_dsl::facts::vtab::connection_scope(conn)
+}
+
+/// Drops what the connection at `at` left: its components and derived relations (`scope`).
+pub(crate) fn forget_scope(at: usize) {
+    if let Ok(mut c) = COMPONENTS.lock() {
+        c.retain(|((s, _), _)| *s != at);
+    }
+    if let Ok(mut d) = DERIVED.lock() {
+        d.retain(|(s, _), _| *s != at);
+    }
 }
 static COMPONENTS: Mutex<Vec<((usize, String), Arc<Mutex<Component>>)>> = Mutex::new(Vec::new());
 fn component(conn: &Connection, name: &str) -> Result<Arc<Mutex<Component>>> {

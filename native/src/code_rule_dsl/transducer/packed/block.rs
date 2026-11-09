@@ -285,17 +285,6 @@ impl ClassTable {
     }
 }
 
-/// A token's `check` (doc 18 §4, decision 0086): straight-line operations over the token's bytes,
-/// 64 at a time with carries, which tier 2's `CHECK` runs, as simdjson's stage 2 parses a
-/// number. Bit `i` is the token's byte `i`, `within 0` its bytes; its one output fails the
-/// token where it has a bit.
-/// No loop over the bytes: the compiler refuses a check that would need one. A token of any
-/// length is checked; none goes to tree-sitter.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) struct CheckRow {
-    pub(super) program: BlockProgram,
-}
-
 /// A block program: its class tables, its operations, the values it outputs, and the outputs
 /// whose positions the extract pass writes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -319,9 +308,6 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
     /// shifts each by its own (decision 0069).
     pub(super) output_delays: Vec<u8>,
-    /// The token checks tier 2's `CHECK` runs (decision 0086). Tier 2 itself is the program's
-    /// words (decision 0087).
-    pub(super) checks: Vec<CheckRow>,
 }
 
 /// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
@@ -367,12 +353,7 @@ impl BlockProgram {
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
-        // A check: a verified straight-line program with one output, and no checks of its own.
-        let checks = self.checks.iter().all(|c| {
-            let q = &c.program;
-            q.verify().is_ok() && q.outputs.len() == 1 && q.extracts.is_empty() && q.totals.is_empty() && q.delay <= 1 && q.checks.is_empty()
-        });
-        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !checks {
+        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay {
             return Err(Error::InvalidTarget(0));
         }
         Ok(())
@@ -418,14 +399,6 @@ impl BlockProgram {
         if (0..self.outputs.len()).any(|k| self.output_delay(k) != self.delay) {
             out.extend_from_slice(b"odelay");
             out.extend((0..self.outputs.len()).map(|k| self.output_delay(k)));
-        }
-        // And the token checks, as their text (`rir`).
-        if !self.checks.is_empty() {
-            out.extend_from_slice(b"checks4");
-            let mut text = String::new();
-            super::rir::tree_rows(&mut text, 0, self);
-            out.extend_from_slice(&(text.len() as u32).to_le_bytes());
-            out.extend_from_slice(text.as_bytes());
         }
         out
     }

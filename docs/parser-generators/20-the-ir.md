@@ -116,7 +116,6 @@ block 0 output %1             (an output at the program's delay)
 block 0 output %2 delay 1     (an output with its own delay)
 block 0 extract %1            (the positions of an output's set bits)
 block 0 delay 2               (outputs are this many bytes late)
-block 0 check 0 …             (a token check: a block program of its own)
 ```
 
 - **Outputs** are the program's results: one mask each.
@@ -125,8 +124,8 @@ block 0 check 0 …             (a token check: a block program of its own)
   past the stream. Each output names its own delay.
 - **Extract** is an output's set bits as ascending `u32` byte positions. These are the
   token stream tier 2 reads: `stream start` and `stream last`.
-- **Checks** are block programs over one token's bytes. Their one output, `fail`,
-  refuses the token where it has a bit.
+- **Checks** have no rows of their own. A Bitlex `check` becomes ordinary
+  operations among the others (§3.4).
 
 The verifier refuses:
 
@@ -134,10 +133,40 @@ The verifier refuses:
 - an output or extract that names no value (an extract must be an output);
 - a table out of range;
 - a `prev` past 63, or a delay past 63;
-- a check that is not one output at delay 1 or less, with no extract and no check of
-  its own.
+- a `check` row, which no longer exists.
 
-### 3.4 The native IR
+### 3.4 A check is masks
+
+A `check` gives the bytes a token must spell, such as JSON's number:
+
+```
+check number = ['-'] ('0' | nonzero digit*) ['.' digit+] [expo ['+' | '-'] digit+]
+```
+
+simdjson checks each number in its second stage, one number at a time. Here the
+check is part of tier 1. It runs over a block's bytes at once, with the rest of
+the block program, and only on blocks that hold a number or the end of one (§6,
+gated regions):
+
+1. The grammar becomes a byte machine: a few states, and arms on byte sets.
+2. Each state gets a mask: the bytes after which a token is in that state.
+3. A state is entered on bytes `B` from states `P` at `B & prev(P, 1)`. It is not
+   entered at a token's first byte, except from the start. Arms into one state on
+   the same bytes share one `prev`.
+4. A self-loop on bytes `L`, such as `digit*`, is a run: `fill(entered, ~L | start)`.
+5. A token is refused where its last byte is in no accepting state. The token's
+   span is filled from the starts the machine takes, and a refused last byte in it
+   joins the fallback, so tier 2's `EMPTY` refuses the file.
+
+A token whose first byte the machine does not take, such as `true`, is left to
+tier 2: its switch takes the keyword or refuses the byte. A machine with a cycle
+through two or more states would need a loop over bytes, so it is refused.
+
+For JSON (ladder step 14) the block program grows from 143 to 205 operations,
+four of them fills, and tier 2 loses its number check. Of the 205, 44 check
+numbers.
+
+### 3.5 The native IR
 
 `BlockNative` has the same operations as `BlockInst`, plus two that only lowering
 makes: `Plane(k)` (bit `k` of each byte) and `PlaneBefore(k)` (the same, one byte
@@ -172,7 +201,6 @@ Each word is 32 bits: an opcode, a mode and a 16-bit operand.
 | `SWITCH T` | goes to `T`'s target for byte `start + offset`, or to its end target | the target is `refuse` |
 | `WORD_IS m=0 S` | — | the token's bytes are not string `S` (8 bytes at most) |
 | `WORD_IS m=1 S` | a test: if the token is not `S`, skips the next word | — |
-| `CHECK C` | runs check `C` over the token | its `fail` output has a bit |
 | `OPEN K` | pushes a node of kind `K` at `start` | — |
 | `CLOSE m` | pops a node; its end is `last_end` (m=0) or `end` (m=1) | no open node |
 | `LEAF K` | a node of kind `K` over the token, size 1 | — |
@@ -200,7 +228,6 @@ Its tables:
 - **Switches:** a target for each of the 256 byte values, an end target, and a byte
   offset. Written as `switch N 0xLO-0xHI TARGET`.
 - **Strings:** `WORD_IS`'s strings.
-- **Checks:** the block program's checks.
 
 The verifier refuses any other word, operands out of range, and any cycle without a
 `TOKEN`. So the machine's only loop is over the stream.
@@ -212,8 +239,7 @@ For `null` and a word `n…`, the `n` arm reads:
 SPAN m=1                 ; the token's end, from tier 1
 WORD_IS m=1 "null"       ; not null: skip the GOTO
 GOTO @null_arm
-CHECK word               ; any other n-token is a word
-LEAF word ...
+LEAF word ...            ; any other n-token is a word
 ```
 
 A keyword the state has no arm for jumps to a `STOP`. Its token has the keyword's
@@ -224,7 +250,6 @@ kind, so the word's arm must not take it.
 | `Program` field | from the compiler | in the digest | in `NativeModule` |
 |---|---|---|---|
 | `block_programs[0]` | tier 1 rows | yes | `block_programs[0]`, a `BlockNative` |
-| `.checks` | the `check` statements | yes | `BlockNative::checks` |
 | `words` | tier 2 | yes | `structural` |
 | `switches` | tier 2's switches | yes | `switches` |
 | `strings` | keywords | yes | `strings` |
@@ -237,12 +262,11 @@ an output by its label.
 
 | part | interpreter | Cranelift | Metal | generic? |
 |---|---|---|---|---|
-| tier 1 operations | yes | per op | per op | yes |
+| tier 1 operations | yes | per op; byte-local ones on byte vectors (below) | per op | yes |
 | output delays | its own undelay | in the loop: a held word per delayed output | `write_output`: two atomic ORs per word | yes |
 | extracts | yes | in the loop: eight set bits at a time | `count_sink`: a look-back sum, then the positions | yes |
 | totals | yes | a running count | `count_sink`; the file's last group writes it | yes |
 | tier 2 words | yes | per word, one function | none | Metal open |
-| `CHECK` | runs the check | the check's block body inlined, a loop over 64-byte blocks | none | Metal open |
 | fallback | `EMPTY` words | `EMPTY` words | tier 1's totals | yes |
 
 The CPU interpreter's undelay is how the interpreter is written: it is the
@@ -251,6 +275,65 @@ reference, not a backend.
 **The compiled path** (`native_cpu_stream::Parser`) is two generated functions: tier
 1's, then tier 2's, reading tier 1's buffers as tier 1 wrote them. No Rust runs
 between the file's bytes and the node table.
+
+**Byte vectors on Cranelift** (`native_cpu_lanes`). Some values depend only on the
+bytes, at most 16 back: byte tests, classes, their logic, and a `prev` of those. On
+Cranelift these stay in 16-byte vectors, as simdjson keeps its classes:
+
+- a table's lookups are made once per 16 bytes, for all of its classes;
+- a `prev` by `k` is a shift by `k` bytes (one `ext`), from the 16 bytes before the
+  block; no carried word. Only where its operand is a mask anyway, for some other
+  reader, is the mask shifted instead;
+- a value becomes a 64-bit mask only where something else reads it, and only in a
+  body where that reader is made.
+
+The block loop also tests each full block for all-ASCII, with the 16 bytes before
+it. That is one branch. On an ASCII block, a second body runs, with the values that
+are always zero on ASCII bytes folded away. For JSON these are the UTF-8 checks.
+
+**Known bits in full blocks.** A full block is inside the file and not its first.
+Its `within`s are all ones, and the block before it is full or the first. The
+lowering follows which bits of each value are known in both kinds of block. A
+value known in every full block is a constant there, a `prev` of one included,
+when the bits it shifts in are known and agree. A value whose readers are all
+constants is not made. For JSON this removes the byte-order mark's chain and the
+check for UTF-8 cut short at the end of the file.
+
+**Gated regions.** simdjson's stage 1 does not look at numbers; its stage 2 checks
+each number it meets. A Bitlex check is masks (§3.4), so it would run on every
+block. A gated region skips that work on a block that has none of it:
+
+- A *gate* is an `and` of a computed mask with a byte class: a number's first byte
+  at a token start, or a `u` after a backslash in a string. The mask must not be the
+  same in every full block, and must not be a byte class itself. A quote, for
+  example, is in nearly every block, so it makes a poor gate.
+- The region is every value that must be zero when the gate is zero and the
+  region's carried bits came in zero: an `and` with such a value, an `and not` of
+  one, an `or` of two, and a `prev`, `fill`, `toggle` or `escaped` of one. It also
+  holds the values only the region reads, its byte classes among them.
+- In a full body the region runs behind one branch, on
+  `gate | (carried bits & the region's fields)`. When it is skipped, its values are
+  zero and its byte classes are never made.
+
+```
+; one region in a full body, as Cranelift IR (shortened)
+v1 = band v_starts, v_number_first    ; the gate
+v2 = band_imm v_carried_3, 0x1c0      ; the region's carried bits
+v3 = bor v1, v2
+brif v3, active, skip
+active:                               ; the number check, then
+    jump after(v_check, v_words)
+skip:                                 ; its values zero, the words as they were
+    jump after(0, v_words_before)
+```
+
+A region must be convex: no value outside it may both read it and be read by it,
+or it could not sit behind one branch. The values after such a path leave the
+region before it is weighed. A region is kept when it skips at least a few masks'
+worth of work, and a test checks that every region keeps its branch.
+
+JSON has three regions: the number check, in two nested parts, and the `\u` check.
+JSON with comments adds a fourth, for comments.
 
 **The shape guard** (`native_cpu_shape`). Each generated Cranelift function is
 checked before code generation, and refused if:
@@ -410,8 +493,9 @@ refuse:
 Tier 1 on Cranelift and on Metal's generated code equals its interpreter. Each step
 also has the promised shape:
 
-- tier 1's block body branches only for its loop and the extracts' flattening;
-- tier 2 loops only over tokens, and over 64-byte blocks inside a `check`;
+- tier 1's block body branches only for its loop, the extracts' flattening and the
+  ASCII test;
+- tier 2 loops only over tokens;
 - neither function calls anything.
 
 The test prints, per step, the grammar's sentences and the mutated copies apart,

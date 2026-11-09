@@ -512,6 +512,9 @@ fn kept(prog: &Program, rel: &str) -> bool {
         || prog.gates.iter().any(|(g, _)| g == rel)
 }
 
+/// The variables of decision 0091's scope guards (`corpus::scoping`): a node's document, `rr_sd0 = @doc($n)`.
+pub(in crate::code_rule_dsl) const GUARD_VAR: &str = "rr_sd";
+
 /// Inlines each one-rule test of one node read only positively (the module's list); returns the relations inlined.
 fn inline_node_tests(prog: &mut Program) -> Vec<String> {
     join_complements(prog);
@@ -523,7 +526,8 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
         let one_node = match rule.head.args.as_slice() {
             [Term::Var(h)] => {
                 let tests_node = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel == "node" && a.args.get(1) == Some(&Term::Var(h.clone()))));
-                let alone = rule.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }) && l.vars().iter().all(|v| v == h));
+                // A scope guard's document (`rr_sd0 = @doc($h)`, decision 0091) is a function of the node.
+                let alone = rule.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }) && l.vars().iter().all(|v| v == h || v.starts_with(GUARD_VAR)));
                 let recursive = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == *rel));
                 (tests_node && alone && !recursive).then(|| rule.body.iter().map(|l| rename_var(l, h, "$h")).collect::<Vec<_>>())
             }
@@ -554,6 +558,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
     }
     // A candidate's body may read another: inline readers in turn until none reads one (each pass removes a level).
     let mut rules = prog.rules.clone();
+    let mut fresh = 0usize;
     for _ in 0..8 {
         let mut changed = false;
         let mut next = Vec::with_capacity(rules.len());
@@ -573,7 +578,16 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
                     continue;
                 };
                 changed = true;
-                let body: Vec<Literal> = bodies[&rel][0].iter().map(|l| rename_var(l, "$h", &t)).collect();
+                // The guard's variables renamed apart: a reader may inline several tests, each with its own.
+                fresh += 1;
+                let apart = |l: &Literal| {
+                    let mut l = rename_var(l, "$h", &t);
+                    for v in l.vars().into_iter().filter(|v| v.starts_with(GUARD_VAR)) {
+                        l = rename_var(&l, &v, &format!("{v}_t{fresh}"));
+                    }
+                    l
+                };
+                let body: Vec<Literal> = bodies[&rel][0].iter().map(apart).collect();
                 let len = body.len();
                 rule.body.splice(at..=at, body);
                 at += len;
@@ -682,6 +696,8 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
                     Literal::Atom(a) if a.rel != rule.head.rel && test(a, &bound) => true,
                     Literal::Atom(a) if !a.neg => functional(a, &bound),
                     Literal::Atom(a) => base_lookup(&a.rel) && l.vars().is_subset(&bound),
+                    // `g = @doc(n)` (decision 0091's scope guards) is a function of a bound node: a lookup.
+                    Literal::Cmp { l: Term::Var(_), op: "=", r: Term::Call(f, xs) } if f == "doc" => xs.iter().all(|x| matches!(x, Term::Var(v) if bound.contains(v))),
                     Literal::Cmp { .. } => l.vars().is_subset(&bound),
                     _ => false,
                 };
@@ -1402,6 +1418,12 @@ pub(in crate::code_rule_dsl) fn merge_identical(prog: &mut Program) -> (usize, u
     let mut report = Report::default();
     merge(prog, &mut report);
     (report.merged.len(), report.shared)
+}
+
+/// The classes of relations equal by their rules (`congruence`), for `corpus::scoping`: whether each policy's copy of
+/// a global relation is one relation.
+pub(in crate::code_rule_dsl) fn identical_classes(prog: &Program) -> Vec<Vec<String>> {
+    congruence(prog, false)
 }
 
 /// The program prefix `combine` gives a program's own relations (`p3_qn`): the namespace of each program's rules.

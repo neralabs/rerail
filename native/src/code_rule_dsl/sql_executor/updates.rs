@@ -235,6 +235,7 @@ impl CodeRuleSqlExecutor {
                     .flat_map(|e| e.objects.iter().cloned())
                     .collect();
                 self.executions = executions;
+                self.catalog_dirty.set(true);
                 let stable_phases = !self.executions.is_empty()
                     && self.executions.iter().all(|run| {
                         run.temporal.len() == 1

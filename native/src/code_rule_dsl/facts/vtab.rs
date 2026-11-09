@@ -245,7 +245,7 @@ impl Modules {
     /// Keep the same binding cell when SQL rollback revives an earlier table instance.
     pub(crate) fn restore_binding(&self,db:&Connection,name:&str,binding:Binding)->Result<()> {
         register(db,name,binding.clone(),true)?;
-        BOUND.lock().insert((unsafe {db.handle()} as usize,name.to_owned()),binding.clone());
+        BOUND.lock().insert((connection_scope(db),name.to_owned()),binding.clone());
         self.bindings.borrow_mut().insert(name.into(),binding);
         Ok(())
     }
@@ -260,7 +260,7 @@ impl Modules {
             stats: Arc::new(Counters::default()),
         };
         register(db, name, binding.clone(), restored)?;
-        BOUND.lock().insert((unsafe { db.handle() } as usize, name.to_owned()), binding.clone());
+        BOUND.lock().insert((connection_scope(db), name.to_owned()), binding.clone());
         bindings.insert(name.into(), binding);
         Ok(())
     }
@@ -297,6 +297,25 @@ impl Drop for Modules {
 
 /// The tables bound on each live connection (by its handle), for readers on that connection that read a source in
 /// place rather than through SQL: the native engine's base inputs (`logic::native`).
+/// The scope of what this process keeps per connection (its handle, an address), with a hook that drops all of it
+/// when the connection closes: the vtab bindings here and the native engine's relations
+/// (`logic::native::forget_scope`). A closed connection's address is reused by the next one opened.
+pub(crate) fn connection_scope(db: &Connection) -> usize {
+    const KEY: &std::ffi::CStr = c"rerail.connection-scope";
+    unsafe extern "C" fn closed(at: *mut std::os::raw::c_void) {
+        let at = at as usize;
+        BOUND.lock().retain(|(h, _), _| *h != at);
+        crate::code_rule_dsl::logic::native::forget_scope(at);
+    }
+    let handle = unsafe { db.handle() };
+    unsafe {
+        if rusqlite::ffi::sqlite3_get_clientdata(handle, KEY.as_ptr()).is_null() {
+            rusqlite::ffi::sqlite3_set_clientdata(handle, KEY.as_ptr(), handle.cast(), Some(closed));
+        }
+    }
+    handle as usize
+}
+
 static BOUND: std::sync::LazyLock<parking_lot::Mutex<HashMap<(usize, String), Binding>>> = std::sync::LazyLock::new(Default::default);
 
 /// The source bound now to the table `name` on `db`'s connection, if one is.

@@ -17,6 +17,7 @@ pub(super) struct Work<'a> {
     pub created: usize,
     pub version_nodes: usize,
     pub preparing: bool,
+    pub summaries: reductions::pool::Cache,
 }
 pub(super) struct Mark {
     used: usize,
@@ -77,6 +78,7 @@ impl<'a> Work<'a> {
             created: 0,
             version_nodes: 0,
             preparing: false,
+            summaries: BTreeMap::new(),
         }
     }
     pub fn allocate(&mut self, definition: String, without_rowid: bool) -> Result<String> {
