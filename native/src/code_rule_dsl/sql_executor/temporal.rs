@@ -2,6 +2,8 @@
 use super::super::logic::sql::select::{Query, Relation as Rel};
 use super::maintenance::{Delta, Work};
 use super::*;
+use crate::code_rule_dsl::logic::native::aggregation::{Grouping, Reduction};
+mod compose;
 mod fold;
 mod frame;
 pub(super) mod initial;
@@ -20,13 +22,22 @@ struct Relation {
     ops: Option<schedule::LatticeOperations>,
 }
 impl Relation {
+    fn grouping(&self) -> Grouping {
+        Grouping {
+            keys: self.keys,
+            reduction: if !self.lattice {
+                Reduction::Opaque
+            } else {
+                self.ops
+                    .as_ref()
+                    .map_or(Reduction::Flat { top: self.top }, |ops| ops.reduction)
+            },
+        }
+    }
     fn aggregate(&self, value: &str) -> String {
         match &self.ops {
             Some(ops) => format!("{}({value})", ops.aggregate),
-            None => format!(
-                "CASE WHEN count(DISTINCT {value})>1 OR max({value})={} THEN {} ELSE min({value}) END",
-                self.top, self.top
-            ),
+            None => crate::code_rule_dsl::logic::sql::lattices::flat_aggregate(value, self.top),
         }
     }
     fn merge(&self, old: &str, new: &str) -> String {
@@ -102,12 +113,39 @@ pub(super) fn delta(
     if let Some(operation) = operation {
         operation.finish(plus.len() + minus.len());
     }
+    let (inserted, deleted) = (plus.len() as u64, minus.len() as u64);
     Ok(Delta {
-        plus: w.rows(old.columns().len(), &plus)?,
-        minus: w.rows(old.columns().len(), &minus)?,
-        inserted: plus.len() as u64,
-        deleted: minus.len() as u64,
+        plus: frozen_rows(w, old.columns().len(), plus)?,
+        minus: frozen_rows(w, old.columns().len(), minus)?,
+        inserted,
+        deleted,
     })
+}
+
+fn frozen_rows(w: &mut Work<'_>, width: usize, rows: Vec<Vec<i64>>) -> Result<String> {
+    let name = w.output_table(width)?;
+    let n = rows.len();
+    let operation = w.profiler.map(|p| {
+        p.operation(
+            "bulk delta storage",
+            ("sql-extension", 0),
+            0,
+            vec![("rows".into(), n as i64)],
+        )
+    });
+    let _cpu = super::super::logic::profile::span(|| "bulk delta storage".into());
+    w.versions
+        .ok_or_else(|| error("temporal rows require native storage"))?
+        .load_scratch(
+            &name,
+            rows.into_iter()
+                .map(|r| r.into_iter().map(Some).collect())
+                .collect(),
+        )?;
+    if let Some(operation) = operation {
+        operation.finish(n);
+    }
+    Ok(name)
 }
 
 #[derive(Clone)]
@@ -124,6 +162,19 @@ pub(super) struct Trace {
 }
 
 impl Trace {
+    pub(in crate::code_rule_dsl::sql_executor) fn explain(&self) -> Value {
+        json!({"scalar_storage_boundary":"Wave gates retain separate input versions and maintenance histories","frames":self.frames.iter().enumerate().map(|(i, f)|json!({"frame":i,"operators":f.operators.iter().map(|op|json!({"active":op.active,"phase_eligible":op.phase_eligible,"analysis":op.logical_analysis.as_ref()})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
+    }
+    pub fn stable_phases(&self, program: &schedule::Program) -> bool {
+        self.whole
+            && !self.frames.is_empty()
+            && program.relations.len() == self.relations.len()
+            && program
+                .relations
+                .iter()
+                .all(|(r, _)| self.relations.contains_key(r))
+            && self.frames.iter().all(|f| f.fused(self.relations.len()))
+    }
     pub fn frames(&self) -> usize {
         self.frames.len()
     }
@@ -154,6 +205,7 @@ impl Trace {
         // the empty final frontier, so extending a later replay does not inherit
         // a large, obsolete frontier from the preceding active wave.
         let mut needs_close = false;
+        let mut diagnostic_rows = vec![];
         while at < self.frames.len() || !pending.is_empty() || needs_close {
             let _context = w.profile_scope(||json!({"stage":if preparing {"recursive initialization"} else {"recursive update"},"component":self.prefix,"frame":at}));
             let _cpu = super::super::logic::profile::span(|| "recursive iteration".into());
@@ -238,7 +290,7 @@ impl Trace {
                     .iter()
                     .map(|&id| self.steps[id].0.output.as_str())
                     .collect::<BTreeSet<_>>();
-                let rows = self
+                let rows: Vec<Vec<SqlValue>> = self
                     .relations
                     .keys()
                     .filter(|r| written.contains(r.as_str()) || had.contains(*r))
@@ -252,13 +304,18 @@ impl Trace {
                         ]
                     })
                     .collect();
-                plan::insert_many(w.db, "INSERT INTO temp.wave_delta(wave,rel,rows)", rows)
-                    .map_err(error)?;
+                diagnostic_rows.extend(rows);
             }
             w.rewind(mark)?;
             needs_close = !active.is_empty();
             at += 1;
         }
+        plan::insert_many(
+            w.db,
+            "INSERT INTO temp.wave_delta(wave,rel,rows)",
+            diagnostic_rows,
+        )
+        .map_err(error)?;
         Ok(waves)
     }
     pub fn objects(&self) -> impl Iterator<Item = (String, bool)> + '_ {
@@ -286,21 +343,39 @@ impl Trace {
                 continue;
             }
             let cols = names("", spec.width);
-            w.db.execute(
-                &format!(
-                    "DELETE FROM {} WHERE ({cols}) IN(SELECT {cols} FROM {})",
-                    quote(r),
-                    d.minus
-                ),
-                [],
-            )
-            .map_err(error)?;
-            w.db.execute(
-                &format!("INSERT INTO {} SELECT * FROM {}", quote(r), d.plus),
-                [],
-            )
-            .map_err(error)?;
+            if d.deleted > 0 {
+                w.db.execute(
+                    &format!(
+                        "DELETE FROM {} WHERE ({cols}) IN(SELECT {cols} FROM {})",
+                        quote(r),
+                        d.minus
+                    ),
+                    [],
+                )
+                .map_err(error)?;
+            }
+            if d.inserted > 0 {
+                w.db.execute(
+                    &format!("INSERT INTO {} SELECT * FROM {}", quote(r), d.plus),
+                    [],
+                )
+                .map_err(error)?;
+            }
             if spec.widening() {
+                let table = format!("__sql_changes_{r}");
+                if store.contains(&table) {
+                    store.alias_readonly(
+                        w.db,
+                        &table,
+                        after.counters[r].clone(),
+                        (0..spec.keys)
+                            .map(|c| format!("c{c}"))
+                            .chain(["changes".into()])
+                            .collect(),
+                    )?;
+                    outputs.insert(r.clone(), d);
+                    continue;
+                }
                 let counts = delta(w, &before.counters[r], &after.counters[r])?;
                 let keys = names("", spec.keys);
                 w.db.execute(

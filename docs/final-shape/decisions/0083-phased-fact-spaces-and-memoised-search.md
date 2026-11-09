@@ -380,7 +380,7 @@ Each spike answers one question that could change the plan, and is tracked as an
    - Success: an edit to one function costs under 5% of a cold run, with no case past the cold run. If not,
      measure support counts per row, then maintenance per component of definitions.
    - Result (O125, closed 2026-11-08, over the last 20 commits and once with typeshed). Delete-and-rederive is
-     right on 18 of 19 commits; the two departures are O133. Over-deletion is mild (1.23–1.35x the rows truly
+     right on 18 of 19 commits; the two departures are O137. Over-deletion is mild (1.23–1.35x the rows truly
      deleted), so support counts are not needed. Two things break the 5% target:
      - preorder ids: a 9-line commit renumbers 17 k nodes and changes 929 k input rows. Per-definition ids
        (§3) cut the renumbering 6–30x;

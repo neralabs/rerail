@@ -64,48 +64,6 @@ impl Work<'_> {
             )
             .map_err(error)
     }
-    pub fn replace_keys(&self, table: &str, keys: &str, width: usize, query: &str) -> Result<()> {
-        let equal = (0..width)
-            .map(|i| format!("r.c{i}=k.c{i}"))
-            .collect::<Vec<_>>()
-            .join(" AND ");
-        let cols = (0..width)
-            .map(|i| format!("c{i}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        if self.preparing
-            && let Some(store) = self.versions
-            && let Some(old) = store.available(table)
-            && old.len() >= 512
-            && store.scratch_len(keys) >= old.len().div_ceil(2)
-        {
-            let op = self.profiler.map(|p| {
-                p.operation(
-                    "bulk relational storage",
-                    ("sql-extension", 0),
-                    0,
-                    vec![("old".into(), old.len() as i64)],
-                )
-            });
-            store.select_available(self.db,table,&format!("SELECT r.* FROM {} r WHERE NOT EXISTS(SELECT 1 FROM {} k WHERE {equal}) UNION ALL {query}",quote(table),quote(keys)),false,true)?;
-            if let Some(op) = op {
-                op.finish_unobserved();
-            }
-            return Ok(());
-        }
-        self.db
-            .execute(
-                &format!(
-                    "DELETE FROM {} WHERE ({cols}) IN(SELECT {cols} FROM {})",
-                    quote(table),
-                    quote(keys)
-                ),
-                [],
-            )
-            .map_err(error)?;
-        self.insert(table, query, false)?;
-        Ok(())
-    }
     pub fn table(&mut self, width: usize) -> Result<String> {
         let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
         self.allocate(
@@ -119,6 +77,41 @@ impl Work<'_> {
             ),
             true,
         )
+    }
+    pub fn output_table(&mut self, width: usize) -> Result<String> {
+        let cols = (0..width).map(|i| format!("c{i}")).collect::<Vec<_>>();
+        self.allocate_readonly(format!(
+            "{},PRIMARY KEY({})",
+            cols.iter()
+                .map(|c| format!("{c} INTEGER NOT NULL"))
+                .collect::<Vec<_>>()
+                .join(","),
+            cols.join(",")
+        ))
+    }
+    pub fn readonly_rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
+        let Some(store) = self.versions else {
+            return self.rows(width, rows);
+        };
+        let name = self.output_table(width)?;
+        let op = self.profiler.map(|p| {
+            p.operation(
+                "bulk delta storage",
+                ("sql-extension", 0),
+                0,
+                vec![("rows".into(), rows.len() as i64)],
+            )
+        });
+        store.load_scratch(
+            &name,
+            rows.iter()
+                .map(|r| r.iter().copied().map(Some).collect())
+                .collect(),
+        )?;
+        if let Some(op) = op {
+            op.finish(rows.len());
+        }
+        Ok(name)
     }
     pub fn rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
         let name = self.table(width)?;
@@ -212,6 +205,9 @@ impl Work<'_> {
 pub(super) fn track_views(w: &mut Work<'_>, run: &mut session::Execution) -> Result<usize> {
     let e = Arc::make_mut(&mut run.emitted);
     let views = std::mem::take(&mut e.views);
+    if views.is_empty() {
+        return Ok(0);
+    }
     let mut names = BTreeSet::new();
     for (name, q) in &views {
         let width = q.body.columns.len();
@@ -445,6 +441,13 @@ pub(super) fn maintain(
     changes: &mut BTreeMap<String, Delta>,
     limit: u32,
 ) -> Result<Value> {
+    let previous = std::mem::take(&mut w.summaries);
+    let result = maintain_pass(w, run, changes, limit);
+    w.summaries = previous;
+    result
+}
+fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
+    changes: &mut BTreeMap<String, Delta>, limit: u32) -> Result<Value> {
     if run.temporal.contains_key(&0) {
         return temporal::initial::apply(w, run, changes, limit);
     }

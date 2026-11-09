@@ -25,6 +25,7 @@ use crate::code_rule_dsl::waves::schedule;
 
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Emitted {
+    pub(in crate::code_rule_dsl) analysis: std::sync::Arc<super::super::analysis::ProgramAnalysis>,
     pub(in crate::code_rule_dsl) program: schedule::Program,
     /// Statements the steps read besides the program's relations: `rdl_int`, then the views.
     pub(in crate::code_rule_dsl) setup: Vec<String>,
@@ -41,6 +42,9 @@ impl Emitted {
     /// are rewritten through the checked query tree; SQL literals and user SQL are untouched.
     pub(in crate::code_rule_dsl) fn for_session(&mut self, namespace: &str, bound: &BTreeSet<String>) {
         let names: BTreeMap<String, String> = self.views.iter().filter(|(rel,_)|bound.contains(rel)).map(|(rel, _)| (rel.clone(), format!("__sql_{namespace}_{rel}"))).collect();
+        for (old, new) in &names {
+            if let Some(keys) = self.analysis.relation_keys.get(old).cloned() { std::sync::Arc::make_mut(&mut self.analysis).relation_keys.insert(new.clone(), keys); }
+        }
         let old: HashSet<String> = self.views.iter().map(|(rel, q)| view_sql(rel, q)).collect();
         self.setup.retain(|sql| !old.contains(sql));
         let rewrite = |query: &mut Query| {
@@ -214,6 +218,7 @@ pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:
     }
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
     Ok(Emitted {
+        analysis: std::sync::Arc::clone(&model.analysis),
         program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
         setup,
         queries,
@@ -254,7 +259,7 @@ pub(in crate::code_rule_dsl) fn emit_program(
 /// relation of its own stratum or a later one (recursion), reads a walk or constant rows, or the
 /// program has lattices.
 pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
-    let Emitted { program, setup, queries, views, inputs } = emitted;
+    let Emitted { analysis, program, setup, queries, views, inputs } = emitted;
     let fail = |message: String| Error::Plan(format!("{}: {message}", program.name));
     if !program.lattices.is_empty() {
         return Err(fail("a lattice needs the fixpoint".to_owned()));
@@ -334,7 +339,7 @@ pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result
         steps: vec![schedule::Step { output: output.to_owned(), stratum: 0, reads: Vec::new(), sql }],
         ..program
     };
-    Ok(Emitted { program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs })
+    Ok(Emitted { analysis, program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs })
 }
 
 /// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.

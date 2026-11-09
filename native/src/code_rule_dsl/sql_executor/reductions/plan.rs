@@ -11,6 +11,14 @@ pub(super) struct Atom {
 }
 #[derive(Clone)]
 pub(super) struct Rule {
+    pub step: usize,
+    pub contribution_storage: crate::code_rule_dsl::logic::analysis::storage::Projection,
+    pub contribution_view: bool,
+    contribution_query: Option<Arc<str>>,
+    pub uniqueness: Arc<crate::code_rule_dsl::logic::analysis::keys::Proof>,
+    pub scalar_analysis: Arc<crate::code_rule_dsl::logic::analysis::scalars::Analysis>,
+    pub initial_evaluation: crate::code_rule_dsl::logic::analysis::Decision,
+    pub evaluation_order: crate::code_rule_dsl::logic::analysis::Decision,
     pub contexts: String,
     pub contributions: String,
     pub width: usize,
@@ -107,6 +115,7 @@ pub(super) fn rule(
     id: usize,
     q: &Query,
     native: bool,
+    known: &crate::code_rule_dsl::logic::analysis::keys::Keys,
 ) -> Result<Option<Rule>> {
     if !q.ctes.is_empty() {
         return Ok(None);
@@ -114,6 +123,7 @@ pub(super) fn rule(
     let mut atoms = Vec::new();
     let mut fields_by_name = BTreeMap::new();
     let mut width = 0;
+    let mut input_columns = vec![];
     for (at, item) in q.body.from.iter().enumerate() {
         let relation = match &item.relation {
             // The splitter reads this closed integer domain. It participates in contexts
@@ -128,6 +138,7 @@ pub(super) fn rule(
             return Ok(None);
         }
         let columns = fields(db, &item.relation)?;
+        input_columns.push(columns.clone());
         for (i, c) in columns.iter().enumerate() {
             fields_by_name.insert((item.alias.clone(), c.clone()), width + i);
         }
@@ -171,6 +182,42 @@ pub(super) fn rule(
         };
         sites.push(reducer);
     }
+    let scalar_analysis = reducer::combined::plan(&mut sites, &fields_by_name);
+    let outer_expressions = expressions(&q.body)
+        .iter()
+        .map(|e| {
+            let mut outer = (*e).clone();
+            outer.visit_mut(&mut |e| {
+                if sites.iter().any(|r| r.original == *e) {
+                    *e = integer(0);
+                }
+            });
+            crate::code_rule_dsl::logic::sql::properties::expression(&outer, &fields_by_name)
+        })
+        .collect::<Vec<_>>();
+    let initial_evaluation = scalar_analysis.initial_evaluation(&outer_expressions);
+    let evaluation_order = scalar_analysis.evaluation_order(&outer_expressions);
+    let contribution_storage = crate::code_rule_dsl::logic::analysis::storage::projection(
+        width.max(1),
+        q.body
+            .columns
+            .iter()
+            .map(|(e, _)| {
+                crate::code_rule_dsl::logic::sql::properties::expression(e, &fields_by_name)
+            })
+            .collect(),
+        q.body
+            .predicates
+            .iter()
+            .chain(q.body.from.iter().flat_map(|f| match &f.join {
+                Join::On(on) => on.as_slice(),
+                Join::Cross => &[],
+            }))
+            .map(|e| crate::code_rule_dsl::logic::sql::properties::expression(e, &fields_by_name))
+            .collect(),
+    );
+    let uniqueness =
+        crate::code_rule_dsl::logic::sql::properties::projection(q, &input_columns, known).unique();
     let mut context = q.clone();
     context.body.distinct = true;
     context.body.columns = q
@@ -200,6 +247,14 @@ pub(super) fn rule(
         }
     }
     let mut rule = Rule {
+        step: id,
+        contribution_storage,
+        contribution_view: false,
+        contribution_query: None,
+        uniqueness: Arc::new(uniqueness),
+        scalar_analysis: Arc::new(scalar_analysis),
+        initial_evaluation,
+        evaluation_order,
         contexts: format!("{prefix}_contexts"),
         contributions: format!("{prefix}_contributions"),
         width,
@@ -209,53 +264,70 @@ pub(super) fn rule(
         evaluation: q.clone(),
         fields: fields_by_name,
     };
-    let mut evaluation = q.clone();
-    replace(&mut evaluation.body, &mut |e| {
-        if let Some(reducer) = rule.reducers.iter().find(|r| r.original == *e) {
-            *e = reducer.lookup(&rule);
-        }
-        if let E::Qualified { alias, column } = e
-            && let Some(i) = rule.fields.get(&(alias.clone(), column.clone()))
-        {
-            *e = plan::column("rr_context", &format!("c{i}"));
-        }
-    });
-    for (head, _) in evaluation.body.columns.clone() {
-        evaluation.body.predicates.push(E::Unary {
-            operator: U::IsNotNull,
-            input: Box::new(head),
-        });
-    }
-    let mut columns = (0..width)
-        .map(|i| {
-            (
-                column("rr_context", &format!("c{i}")),
-                Some(format!("c{i}")),
-            )
-        })
-        .collect::<Vec<_>>();
-    columns.extend(
-        evaluation
-            .body
-            .columns
-            .into_iter()
-            .enumerate()
-            .map(|(i, (e, _))| (e, Some(format!("h{i}")))),
-    );
-    evaluation.body.columns = columns;
-    evaluation.body.distinct = false;
-    // Preserve ON predicates when replacing the positive join with its retained context.
-    for item in &evaluation.body.from {
-        if let Join::On(on) = &item.join {
-            evaluation.body.predicates.extend(on.iter().cloned());
-        }
-    }
-    evaluation.body.from = vec![];
-    rule.evaluation = evaluation;
+    rule.rewrite(q);
     Ok(Some(rule))
 }
 
 impl Rule {
+    pub fn rewrite(&mut self, q: &Query) {
+        let mut evaluation = q.clone();
+        replace(&mut evaluation.body, &mut |e| {
+            if let Some(reducer) = self.reducers.iter().find(|r| r.original == *e) {
+                *e = reducer.joined_lookup(self);
+            }
+            if let E::Qualified { alias, column } = e
+                && let Some(i) = self.fields.get(&(alias.clone(), column.clone()))
+            {
+                *e = plan::column("rr_context", &format!("c{i}"));
+            }
+        });
+        for (head, _) in evaluation.body.columns.clone() {
+            evaluation.body.predicates.push(E::Unary {
+                operator: U::IsNotNull,
+                input: Box::new(head),
+            });
+        }
+        let mut columns = (0..self.width)
+            .map(|i| {
+                (
+                    column("rr_context", &format!("c{i}")),
+                    Some(format!("c{i}")),
+                )
+            })
+            .collect::<Vec<_>>();
+        columns.extend(
+            evaluation
+                .body
+                .columns
+                .into_iter()
+                .enumerate()
+                .map(|(i, (e, _))| (e, Some(format!("h{i}")))),
+        );
+        evaluation.body.columns = columns;
+        evaluation.body.distinct = false;
+        // Preserve ON predicates when replacing the positive join with its retained context.
+        for item in &evaluation.body.from {
+            if let Join::On(on) = &item.join {
+                evaluation.body.predicates.extend(on.iter().cloned());
+            }
+        }
+        evaluation.body.from = vec![];
+        self.evaluation = evaluation;
+        if self.contribution_view {
+            self.reconstruct_contributions();
+        }
+    }
+    pub fn reconstruct_contributions(&mut self) {
+        self.contribution_view = true;
+        self.contribution_query =
+            Some(format!("({})", self.evaluation(&self.contexts).render()).into());
+    }
+    pub fn contribution_source(&self) -> std::borrow::Cow<'_, str> {
+        self.contribution_query.as_deref().map_or_else(
+            || std::borrow::Cow::Owned(quote(&self.contributions)),
+            std::borrow::Cow::Borrowed,
+        )
+    }
     pub fn in_context(&self, e: &E, context: &str) -> E {
         let mut expression = e.clone();
         expression.visit_mut(&mut |e| {
@@ -277,10 +349,20 @@ impl Rule {
     }
     pub fn evaluation(&self, table: &str) -> Query {
         let mut query = self.evaluation.clone();
+        let mut projections = vec!["rr_input.*".into()];
+        let mut from = format!("{} rr_input", quote(table));
+        for reducer in &self.reducers {
+            reducer.append_join(self, &mut projections, &mut from);
+        }
+        let source = if projections.len() == 1 {
+            quote(table)
+        } else {
+            format!("(SELECT {} FROM {from})", projections.join(","))
+        };
         query.body.from = vec![FromItem::cross(
             Rel::Bound {
                 rel: table.into(),
-                table: quote(table),
+                table: source,
             },
             "rr_context",
         )];
@@ -296,9 +378,7 @@ impl Rule {
         if columns.is_empty() || columns.iter().copied().eq(0..columns.len()) {
             return Ok(());
         }
-        if let Some(source) = super::super::super::facts::vtab::bound_source(db, &self.contexts)
-            .filter(|s| s.writable())
-        {
+        if let Some(source) = super::super::super::facts::vtab::bound_source(db, &self.contexts) {
             source.prepare_index(&columns);
             return Ok(());
         }

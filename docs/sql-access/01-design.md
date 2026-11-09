@@ -40,9 +40,9 @@ The gaps:
 
 ## 1. The catalog: rules and relations as data
 
-**Built (step 1, `sql_executor/catalog.rs`).** These are temporary tables of the executor session,
-rebuilt from the retained programs after every run, removal and reset. Every program the session
-retains is one `execution`:
+**Built (step 1, `sql_executor/catalog.rs`).** These are temporary tables of the executor session.
+Queries that mention catalog objects refresh invalidated metadata on demand.
+Runs, removals, resets, and successful fact edits invalidate it. Each retained program is one `execution`:
 
 ```text
 rr_relation(execution, name, kind, arity, stratum, output, file_local, view)
@@ -52,9 +52,12 @@ rr_rule(rule, execution, ord, head, text)
 rr_atom(rule, ord, kind, relation, negated, aggregate, text)
   -- kind: atom | aggregate | compare | nearest | ast
 rr_plan(execution, step, stratum, output, reads, sql)  -- reads: a JSON array
+rr_analysis(execution, analysis)  -- JSON: logical proofs and retained execution choices
 ```
 
 `rr_plan` holds the program's wave steps, which `wave_step` keeps only until the next run.
+`rr_analysis` includes inferred keys, witness uniqueness, scalar compatibility decisions, and the executor's retained choices.
+`CodeRuleSqlExecutor.explain()` returns these analyses without executing SQL or requiring profiling.
 
 The `rr_` prefix is reserved: a program cannot declare a relation named `rr_…`.
 

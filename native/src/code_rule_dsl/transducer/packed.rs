@@ -248,6 +248,8 @@ mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
+mod native_cpu_lanes;
+mod native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
 mod output;
@@ -265,6 +267,7 @@ pub(in crate::code_rule_dsl) mod rir;
 mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
 pub(in crate::code_rule_dsl) mod block;
+pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
@@ -274,6 +277,12 @@ mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
+#[cfg(test)]
+mod bitlex_corpus_tests;
+#[cfg(test)]
+mod bitlex_ladder_tests;
+#[cfg(test)]
+mod bitlex_json_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
 mod block_monoid;
 mod block_plan;
@@ -307,12 +316,12 @@ const REPEAT_END: u8 = 0x23;
 const FORK: u8 = 0x30;
 const GOTO: u8 = 0x31;
 const EMIT: u8 = 0x40;
-// Tier 2's words, over the token stream (decision 0079, `stream`).
+// Tier 2's words, over the token stream (decision 0087, `stream`).
 const TOKEN: u8 = 0x50;
 const SWITCH: u8 = 0x51;
 /// `WORD` in `rir`.
 const WORD_IS: u8 = 0x52;
-const CHECK: u8 = 0x53;
+// 0x53 was `CHECK`, a token's check run per token: a check is tier 1's masks (doc 18 §4).
 const OPEN: u8 = 0x54;
 const CLOSE: u8 = 0x55;
 const LEAF: u8 = 0x56;
@@ -322,6 +331,8 @@ const PUSH: u8 = 0x59;
 const RETURN: u8 = 0x5a;
 const ACCEPT: u8 = 0x5b;
 const SPAN: u8 = 0x5c;
+/// Refuses unless one of tier 1's totals is zero: the fallback.
+const EMPTY: u8 = 0x5d;
 
 pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;
@@ -831,7 +842,7 @@ pub(in crate::code_rule_dsl) struct Program {
     /// Block programs, the side programs over source bytes (`block`), as `value_programs` are
     /// the side programs over a node's text.
     block_programs: Vec<block::BlockProgram>,
-    /// Tier 2's switch tables (`SWITCH`, decision 0079).
+    /// Tier 2's switch tables (`SWITCH`, decision 0087).
     switches: Vec<stream::ByteSwitch>,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
@@ -1004,6 +1015,8 @@ pub(in crate::code_rule_dsl) enum Error {
     /// pools do not.
     WalkFrames,
     BackendFailure,
+    /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
+    RefusedShape(String),
 }
 
 #[derive(Clone, Copy)]
@@ -2353,7 +2366,7 @@ impl Program {
         {
             return Err(Error::InvalidOperand(0));
         }
-        // A tier-2 program (decision 0079): its own words and rules.
+        // A tier-2 program (decision 0087): its own words and rules.
         if self.words.iter().any(|&w| stream::is_stream(split(w).0)) {
             for (pc, &w) in self.words.iter().enumerate() {
                 let (opcode, mode, operand) = split(w);

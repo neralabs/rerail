@@ -9,6 +9,9 @@ mod updates;
 mod temporal;
 mod profiling;
 mod initial;
+mod cte;
+mod analysis;
+mod sharing;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();
@@ -542,6 +545,7 @@ a(x) :- b(x).
 /// A corpus run's per-file memo is readable from a session without evaluating anything: the run's exported
 /// relations under their declared columns, and each file's document key with its path.
 #[test]
+#[cfg(feature = "tape-cache")]
 fn a_corpus_runs_memoised_rows_bind_by_name_from_their_frames() {
     // A text no other test parses, so this run writes its own memo entries.
     let marker = format!("# {:?}\n", std::time::SystemTime::now());

@@ -48,10 +48,144 @@ pub(in crate::code_rule_dsl) fn library() -> PathBuf {
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib"))
 }
 
-/// A program's `.rr` text, which includes nothing.
+/// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:
+/// `core.rr` first unless the text is in T's shape, each file once, includes first. A text that includes nothing is
+/// read as it is, without `core.rr`.
 pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
+    parse_with(src, true)
+}
+
+/// A program's `.rr` text as `parse` reads it, but with only its libraries' declarations, not their clauses: what a
+/// run that holds the libraries once (decision 0089 §5) needs of a program that adds to no library relation. Its own
+/// rules are lowered against the library's names; the library's rules are the run's, lowered once.
+pub(in crate::code_rule_dsl) fn parse_own(src: &str) -> Result<Program, Error> {
+    parse_with(src, false)
+}
+
+fn parse_with(src: &str, clauses: bool) -> Result<Program, Error> {
     let statements = from_tape::statements(src, &tape(src))?;
-    lower::lower(statements)
+    if !statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
+        return lower::lower(statements);
+    }
+    let (mut files, own) = resolve(statements)?;
+    // The text's own rules and declarations; its facts may be the runner's (`env`, decision 0089 §1).
+    let checked: Vec<syntax::Statement> = own.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { body, .. } if body.is_empty())).cloned().collect();
+    // `core.rr`'s names, unless the text is in T's shape and reads no `core.rr` (`resolve`).
+    let reads_core = files.first().is_some_and(|(path, _)| path.ends_with("core.rr"));
+    check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
+    // Lowering reads one kind of clause statically: a kind set's (`fscope("module")`, `lfscope(k) :- fscope(k)`),
+    // whose relation has one column. Those are kept; the rest are the run's.
+    if !clauses {
+        let unary: std::collections::BTreeSet<String> = files
+            .iter()
+            .flat_map(|(_, statements)| statements)
+            .filter_map(|(item, _)| match item {
+                syntax::Item::Decl { name, cols, .. } if cols.len() == 1 => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        for (_, statements) in &mut files {
+            statements.retain(|(item, _)| match item {
+                syntax::Item::Clause { heads, .. } => heads.iter().all(|h| unary.contains(&h.rel)),
+                _ => true,
+            });
+        }
+    }
+    files.push((PathBuf::from("<program>"), own));
+    lower::lower(files.into_iter().flat_map(|(_, statements)| statements).collect())
+}
+
+/// A program text's library modules (decision 0089): the files its `#include`s name, as `parse` reads them, and
+/// what the text itself declares and derives. `None` for a text that includes nothing (a printed program).
+#[derive(Clone, Debug)]
+pub(in crate::code_rule_dsl) struct Modules {
+    /// Each library file, includes first: its canonical path, its bytes' digest and the relations it declares.
+    pub files: Vec<(PathBuf, [u8; 32], std::collections::BTreeSet<String>)>,
+    /// The relations the text's own clauses derive or state facts of.
+    pub heads: std::collections::BTreeSet<String>,
+    /// The relations the text itself declares.
+    pub declared: std::collections::BTreeSet<String>,
+}
+
+pub(in crate::code_rule_dsl) fn modules(src: &str) -> Result<Option<Modules>, Error> {
+    let statements = from_tape::statements(src, &tape(src))?;
+    if !statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
+        return Ok(None);
+    }
+    let (files, own) = resolve(statements)?;
+    let declares = |statements: &[syntax::Statement]| -> std::collections::BTreeSet<String> {
+        statements
+            .iter()
+            .filter_map(|(item, _)| match item {
+                syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let heads = own
+        .iter()
+        .flat_map(|(item, _)| match item {
+            syntax::Item::Clause { heads, edits, .. } if edits.is_empty() => heads.iter().map(|h| h.rel.clone()).collect(),
+            _ => Vec::new(),
+        })
+        .collect();
+    let mut out = Vec::new();
+    for (path, statements) in &files {
+        let (_, file) = read(path)?;
+        out.push((path.clone(), file.sha256.unwrap_or_default(), declares(statements)));
+    }
+    Ok(Some(Modules { files: out, heads, declared: declares(&own) }))
+}
+
+/// The library files `paths` (canonical, includes first, as `Modules::files` lists them) as one program, lowered
+/// once for every program of a run that includes them (decision 0089). Kept for the process by the files' digests.
+pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Program, Error> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static LIBRARIES: OnceLock<Mutex<HashMap<Vec<(PathBuf, [u8; 32])>, Program>>> = OnceLock::new();
+    let mut files = Vec::new();
+    let mut key = Vec::new();
+    for path in paths {
+        let (statements, file) = read(path)?;
+        key.push((path.clone(), file.sha256.unwrap_or_default()));
+        files.push((path.clone(), statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect()));
+    }
+    let cache = LIBRARIES.get_or_init(Default::default);
+    if let Some(program) = cache.lock().expect("the lowered libraries").get(&key) {
+        crate::code_rule_dsl::prof::count("rr.library_reused", 1);
+        return Ok(program.clone());
+    }
+    check_names(&files, false)?;
+    let program = lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?;
+    let mut kept = cache.lock().expect("the lowered libraries");
+    if kept.len() >= 8 {
+        kept.clear();
+    }
+    kept.insert(key, program.clone());
+    Ok(program)
+}
+
+/// `statements`' `#include`s resolved in the library: its files (`core.rr` first unless the statements are in T's
+/// shape, each once, includes first) and the statements without the includes.
+fn resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syntax::Statement>), Error> {
+    let (includes, own): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let t_shape = own.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
+    let (mut out, mut read_files, mut seen) = (Vec::new(), Vec::new(), Vec::new());
+    if t_shape {
+        seen.push(core);
+    } else {
+        visit(&core, &mut out, &mut read_files, &mut seen)?;
+    }
+    for (item, line) in includes {
+        let syntax::Item::Include(name) = item else { unreachable!("an include") };
+        let path = library().join(&name);
+        if !path.exists() {
+            return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
+        }
+        visit(&path, &mut out, &mut read_files, &mut seen)?;
+    }
+    Ok((out, own))
 }
 
 /// A `.rr` file's tree, as its tape holds it (decision 0061): its nodes in preorder, comments as extras, and an ERROR
@@ -117,7 +251,7 @@ pub(in crate::code_rule_dsl) fn metadata(program: &Program) -> Result<serde_json
 /// A lowered program run over files a caller gives (a test's), not found by walking a repository: its
 /// `.scope` filter on findings is taken out, as `.scope given` leaves it out when lowering.
 pub(in crate::code_rule_dsl) fn files_given(program: &mut Program) {
-    let filter = ["rr_scope_drop", "rr_scope_in"];
+    let filter = ["rr_scope_drop", "rr_scope_in", "rr_report_in"];
     program.rules.retain(|r| !filter.contains(&r.head.rel.as_str()));
     for r in &mut program.rules {
         r.body.retain(|l| !l.atom().is_some_and(|a| filter.contains(&a.rel.as_str())));
@@ -184,13 +318,37 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
         return Ok((program.clone(), files.clone()));
     }
     let (statements, files) = program(path)?;
+    check_names(&statements, false)?;
+    // The relations an included file declares are the library's: canonical, one copy however many policies of a
+    // combined run include it (decision 0091). Printed as `.global library …`, so a program's text keeps that.
+    let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    let library: Vec<String> = statements
+        .iter()
+        .filter(|(file, _)| *file != core && *file != key)
+        .flat_map(|(_, statements)| statements)
+        .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name.clone()) } else { None })
+        .collect();
+    let mut program = lower::lower(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
+    if !library.is_empty() {
+        program.settings.push((super::front::GLOBAL.to_owned(), format!("{} {}", super::front::LIBRARY, library.join(", "))));
+    }
+    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
+    Ok((program, files))
+}
+
+/// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0047), and names
+/// starting `rr_`, but in the engine's own library programs.
+fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
     // `core.rr`'s relations are the engine's (decision 0047): no other file declares or derives one.
     let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
+    // From `core.rr` among the files, else (`core_unlisted`: the program reads it) as `core_names` reads it.
+    let listed = statements.iter().any(|(file, _)| *file == core);
     let engine: std::collections::BTreeSet<&String> = statements
         .iter()
         .filter(|(file, _)| *file == core)
         .flat_map(|(_, statements)| statements)
         .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name) } else { None })
+        .chain(core_names().iter().filter(|_| core_unlisted && !listed))
         .filter(|name| !LIBRARY_DERIVED.contains(&name.as_str()))
         .collect();
     for (file, statements) in statements.iter().filter(|(file, _)| *file != core) {
@@ -220,9 +378,7 @@ pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<L
             }
         }
     }
-    let program = lower::lower(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
-    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
-    Ok((program, files))
+    Ok(())
 }
 
 fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
@@ -275,36 +431,39 @@ fn stored_statements(path: &Path, src: String) -> Result<Vec<syntax::Statement>,
 
 type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 
+/// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
+/// probed, to `read_files`.
+fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>) -> Result<(), Error> {
+    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    if seen.contains(&path) {
+        return Ok(());
+    }
+    seen.push(path.clone());
+    let (statements, file) = read(&path)?;
+    read_files.push(file);
+    let (includes, rest): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+    for (item, line) in includes {
+        let syntax::Item::Include(name) = item else { unreachable!("an include") };
+        let in_library = library().join(&name);
+        let beside = path.parent().map(|d| d.join(&name)).unwrap_or_default();
+        let found = if in_library.exists() {
+            in_library
+        } else {
+            read_files.push(LibraryFile { path: in_library, sha256: None });
+            beside
+        };
+        if !found.exists() {
+            return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
+        }
+        visit(&found, out, read_files, seen)?;
+    }
+    out.push((path, rest));
+    Ok(())
+}
+
 /// A file and everything it includes, each once, includes first: (path, statements without the
 /// includes); and every library file read or probed, in reading order.
 fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
-    fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>) -> Result<(), Error> {
-        let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-        if seen.contains(&path) {
-            return Ok(());
-        }
-        seen.push(path.clone());
-        let (statements, file) = read(&path)?;
-        read_files.push(file);
-        let (includes, rest): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
-        for (item, line) in includes {
-            let syntax::Item::Include(name) = item else { unreachable!("an include") };
-            let in_library = library().join(&name);
-            let beside = path.parent().map(|d| d.join(&name)).unwrap_or_default();
-            let found = if in_library.exists() {
-                in_library
-            } else {
-                read_files.push(LibraryFile { path: in_library, sha256: None });
-                beside
-            };
-            if !found.exists() {
-                return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
-            }
-            visit(&found, out, read_files, seen)?;
-        }
-        out.push((path, rest));
-        Ok(())
-    }
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
     // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries

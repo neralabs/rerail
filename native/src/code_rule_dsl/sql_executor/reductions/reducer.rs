@@ -1,6 +1,8 @@
 //! Group counts, exact sums, and indexed value multiplicities.
 use super::*;
 mod dependencies;
+mod lookup;
+pub(super) mod combined;
 #[derive(Clone, Copy)]
 enum Kind {
     Count,
@@ -12,6 +14,8 @@ enum Kind {
 }
 #[derive(Clone)]
 pub(super) struct Reducer {
+    combined: Option<combined::Shared>,
+    pool_consumers: usize,
     pub original: E,
     kind: Kind,
     pub relation: String,
@@ -263,6 +267,8 @@ impl Reducer {
         };
         let native_keys = native && outer_keys.iter().any(|e| !matches!(e, E::Qualified { .. }));
         Ok(Some(Self {
+            combined: None,
+            pool_consumers: 1,
             original: original.clone(),
             kind,
             relation: relation.into(),
@@ -299,6 +305,7 @@ impl Reducer {
         rule: &Rule,
         storage: Option<&versions::Store>,
     ) -> Result<()> {
+        if self.combined.as_ref().is_some_and(|c| !c.owner) { return Ok(()); }
         if self.dynamic() {
             return self.initialize_dependencies(db, rule, storage);
         }
@@ -339,7 +346,7 @@ impl Reducer {
             .join(",");
         db.execute_batch(&format!(
             "CREATE INDEX {} ON {}({columns})",
-            quote(&format!("{}_contexts", self.groups)),
+            quote(&self.combined.as_ref().map_or_else(||format!("{}_contexts",self.groups),|s|format!("{}_s{}_contexts",rule.contexts,s.members[0]))),
             quote(&rule.contexts)
         ))
         .map_err(error)
@@ -374,6 +381,8 @@ impl Reducer {
                         name: "rr_sum_value",
                         arguments: vec![column(alias, "high"), column(alias, "value")],
                     }
+                } else if self.combined.is_some() {
+                    column(alias, match self.kind { Kind::Count => "n", Kind::Min => "minimum", Kind::Max => "maximum", _ => "value" })
                 } else {
                     column(alias, "value")
                 },
@@ -414,6 +423,7 @@ impl Reducer {
         objects: &mut Vec<(String, bool)>,
         storage: Option<&versions::Store>,
     ) -> Result<()> {
+        if let Some(shared) = &self.combined { return combined::initialize(self, shared, db, objects, storage); }
         let keys = self.keys();
         let cols = names("", keys);
         let value = format!("c{keys}");
@@ -479,6 +489,7 @@ impl Reducer {
         w: &mut Work<'_>,
         changes: &BTreeMap<String, Delta>,
     ) -> Result<Option<(String, u64)>> {
+        if let Some(shared) = &self.combined { return combined::apply(self, shared, w, changes); }
         let Some(delta) = changes
             .get(&self.relation)
             .filter(|d| d.inserted + d.deleted > 0)

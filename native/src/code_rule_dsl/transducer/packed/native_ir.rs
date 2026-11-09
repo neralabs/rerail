@@ -2,7 +2,7 @@ use super::{
     ABSENT_FIELD, ASSERT, CAPTURE, CHILD, DESCEND, EMIT, FIELD, FIRST, FLAGS, FOLLOWING, FORK,
     GOTO, KIND, LAST, NEXT, PARENT, Program, REPEAT_BEGIN, REPEAT_BUMP, REPEAT_END, RESTORE_CURSOR,
     SAVE_CURSOR, SIZE, STOP, SUPERTYPE, TEXT, split,
-    ACCEPT, CHECK, CLOSE, LEAF, NODE_FIELD, NODE_SUPER, OPEN, PUSH, RETURN, SPAN, SWITCH, TOKEN, WORD_IS,
+    ACCEPT, CLOSE, EMPTY, LEAF, NODE_FIELD, NODE_SUPER, OPEN, PUSH, RETURN, SPAN, SWITCH, TOKEN, WORD_IS,
     value::{CaptureProgram, ValueProgram},
 };
 
@@ -81,12 +81,17 @@ pub(super) enum StructuralOperation {
     Fork { greedy: bool, target: u16 },
     Goto { target: u16 },
     Emit { label: u16, output: FunctionRef },
-    // Tier 2's words over the token stream (decision 0079, `stream`).
-    Token,
+    // Tier 2's words over the token stream (decision 0087, `stream`).
+    /// The next start of tier 1's extract `extract`.
+    Token { extract: u16 },
     Switch { table: u16 },
+    /// The token's end: `len` bytes, or (`last`) one past the next position of extract `len`.
     Span { last: bool, len: u16 },
-    Word { string: u16 },
-    Check { check: u16 },
+    /// Refuses unless tier 1's total `total` is zero.
+    Empty { total: u16 },
+    /// The token's bytes against a string: refuse where they differ, or with `test`, skip the
+    /// next word.
+    Word { string: u16, test: bool },
     Open { kind: u16 },
     /// At the end of this token (`this`), or of the one before.
     Close { this: bool },
@@ -134,11 +139,11 @@ impl StructuralOperation {
             Self::Fork { greedy, target } => (FORK, u8::from(greedy), target),
             Self::Goto { target } => (GOTO, 0, target),
             Self::Emit { label, .. } => (EMIT, 0, label),
-            Self::Token => (TOKEN, 0, 0),
+            Self::Token { extract } => (TOKEN, 0, extract),
+            Self::Empty { total } => (EMPTY, 0, total),
             Self::Switch { table } => (SWITCH, 0, table),
             Self::Span { last, len } => (SPAN, u8::from(last), len),
-            Self::Word { string } => (WORD_IS, 0, string),
-            Self::Check { check } => (CHECK, 0, check),
+            Self::Word { string, test } => (WORD_IS, u8::from(test), string),
             Self::Open { kind } => (OPEN, 0, kind),
             Self::Close { this } => (CLOSE, u8::from(this), 0),
             Self::Leaf { kind } => (LEAF, 0, kind),
@@ -359,11 +364,11 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
                 label: operand,
                 output: FunctionRef::Output,
             },
-            TOKEN => StructuralOperation::Token,
+            TOKEN => StructuralOperation::Token { extract: operand },
+            EMPTY => StructuralOperation::Empty { total: operand },
             SWITCH => StructuralOperation::Switch { table: operand },
             SPAN => StructuralOperation::Span { last: mode != 0, len: operand },
-            WORD_IS => StructuralOperation::Word { string: operand },
-            CHECK => StructuralOperation::Check { check: operand },
+            WORD_IS => StructuralOperation::Word { string: operand, test: mode != 0 },
             OPEN => StructuralOperation::Open { kind: operand },
             CLOSE => StructuralOperation::Close { this: mode != 0 },
             LEAF => StructuralOperation::Leaf { kind: operand },
@@ -430,15 +435,21 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
 pub(super) struct BlockNative {
     pub tables: Vec<super::block::ClassTable>,
     pub insts: Vec<BlockInst>,
+    /// The values written as masks. Output `k` is value `outputs[k]` at delay
+    /// `output_delays[k]`: every backend writes the stream's mask, bit `p` the value's bit
+    /// `p + d`, cut at the stream's end. No host step shifts it.
     pub outputs: Vec<u16>,
-    /// The outputs (indexes into `outputs`) whose positions the extract pass writes.
+    /// The outputs (indexes into `outputs`) whose positions the extract pass writes: each set
+    /// bit of the stream's mask as its byte position, in order, at the offset of the bits before
+    /// it (a running count, carried from block to block).
     pub extracts: Vec<usize>,
+    /// The outputs (indexes into `outputs`) counted: each file's number of set bits in the
+    /// stream's mask, the same running count's final value.
+    pub totals: Vec<usize>,
     /// How many bytes past the stream the program runs (`block::BlockProgram::delay`).
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
     pub output_delays: Vec<u8>,
-    /// The token checks tier 2's `CHECK` runs (decision 0078), lowered.
-    pub checks: Vec<BlockNative>,
 }
 
 /// An instruction of a block body.
@@ -476,6 +487,8 @@ pub(super) enum BlockInst {
     Fill(u16, u16),
     /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
     Within(u8),
+    /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
+    Phase(u8, u8),
 }
 
 impl BlockInst {
@@ -517,6 +530,7 @@ impl BlockNative {
                 BlockOp::Escaped(a) => BlockInst::Escaped(a),
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
+                BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
             })
             .collect();
         Self {
@@ -524,9 +538,9 @@ impl BlockNative {
             insts,
             outputs: program.outputs.clone(),
             extracts: program.extract_outputs(),
+            totals: program.total_outputs(),
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
-            checks: program.checks.iter().map(|c| BlockNative::lower(&c.program)).collect(),
         }
     }
 
@@ -589,9 +603,9 @@ impl BlockNative {
             insts: f.insts,
             outputs: self.outputs.iter().map(|&v| at[usize::from(v)]).collect(),
             extracts: self.extracts.clone(),
+            totals: self.totals.clone(),
             delay: self.delay,
             output_delays: self.output_delays.clone(),
-            checks: self.checks.iter().map(BlockNative::planes_form).collect(),
         }
     }
 }

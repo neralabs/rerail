@@ -100,8 +100,23 @@ Overdeleted rows cover every row that lost all its derivations, so a survivor ho
 that uses a gained row at some position, by induction on the derivation, so the insert rules reach it. Within a
 recursive stratum, `h__del` and `h__ins` are recursive too; the engine evaluates them semi-naively, as any stratum.
 
-A stratum with an aggregate, a native operator, a lattice, an `ast` or `nearest` literal, or a changed read whose
-old rows were not kept is derived again from its inputs, its rules unchanged. Its rows then give the deltas to the
+An aggregate over a changed relation `a` is a position by its groups. Its correlated variables `g` (the atom's
+variables but the aggregated ones) over `a`'s rows gone and new are the groups whose value may have changed:
+
+```text
+grp(g)       :- a__minus(..).      grp(g) :- a__plus(..).
+overdelete   h__del(..) :- grp(g), B over old rows       // the aggregate over a__old
+insert       h__ins(..) :- grp(g), B over new rows
+```
+
+A head row that read an unchanged group read the same value before and after, so the other positions' rules
+cover it, with the aggregate over old rows in their overdeletes. A group that loses its last row (`count … = 0`)
+is in `a__minus`. This is the SQL executor's partition-scoped rederivation at group grain, not its counting: a
+changed group's value is computed again over its rows, which costs the group's rows, not the delta's. Aggregation
+is never recursive (`front::Error::AggregationInRecursion`), so the aggregated relation is an earlier stratum's or an input.
+
+A stratum with a native operator, a lattice, an `ast` or `nearest` literal, or a changed read whose old rows were
+not kept is derived again from its inputs, its rules unchanged. Its rows then give the deltas to the
 strata after it, as a maintained stratum's do. An empty delta derives nothing after it.
 
 Kept for this: each input's rows, as columns, after the derived relations in the same budget (§1). An unchanged
@@ -114,6 +129,9 @@ Measured:
   the recursive one included, and the findings equal a full run's each time.
 - Test `a_session_runs_the_cross_file_strata_an_edit_changed` (pack rules B301 and B307): every stratum that ran was
   maintained.
+- Test `a_session_maintains_a_cross_file_aggregate`: a module's importers counted (`n = count`) and modules that
+  import nothing (`count … = 0`), over four edits that raise and lower the counts to none. All 11 strata are
+  maintained each time, none derived again, and the findings equal a full run's.
 
 ## What the prior work says
 
@@ -146,10 +164,11 @@ Sibling branches (surveyed 2026-11-08):
 ## Open
 
 - Inputs are digested whole each run, and a maintained stratum's deltas, survivors and copies scan whole relations
-  (O(rows)). Per-file deltas (ledger #14) would make both O(changed). Today the saving is in joins: a changed stratum
+  (O(rows)); O125 measured this at 2.5–4x a cold cross part on `calls.rr`. Decision 0090 sets the way out. Per-file deltas (ledger #14) would make both O(changed). Today the saving is in joins: a changed stratum
   joins only its deltas, where it would otherwise derive everything again.
-- Counting (aggregates) is not ported: an aggregate's stratum is derived again. The spec's threshold (§21.8: a delta
-  past a share of the relation derives again) is not applied.
+- Aggregates are maintained by changed groups, not counted: a group with many rows costs them all on any change.
+  Incremental reducers (the SQL executor's counts, sums and min/max multiplicities) would make it O(delta). The
+  spec's threshold (§21.8: a delta past a share of the relation derives again) is not applied.
 - The run still makes the part's views, tables and plans each time, and replays memoised exports into `x`; a session
   could keep the connection and `x` too.
 - Programs with gates, and typing programs with bounded rounds, run whole.

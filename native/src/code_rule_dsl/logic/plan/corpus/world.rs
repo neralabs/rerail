@@ -11,39 +11,41 @@
 //! were loaded, by that path. A loaded document is evaluated like any other.
 //!
 //! Reading `dir_entry` or `file_line` asks for it: `rr::lower` derives `rr_dir_req(dir)` and `rr_file_req(path)` from
-//! the literals that bind the key, as `parsed` asks for a guest (decision 0055). The runner answers in rounds
-//! ([`discover`]): the program, cut to its requests, runs over the corpus and the documents loaded so far; the
-//! directories and files asked for are read and the loads taken; and it runs again, until a round asks for nothing
-//! new or [`ROUNDS`] is reached. The run proper then reads the answers as facts, over the corpus and the loaded
-//! documents, and writes no rows for the loaded ones (they are not the corpus's findings).
+//! the literals that bind the key, as `parsed` asks for a guest (decision 0055). The requests are answered inside the
+//! fixpoint (decision 0065 §2a): the cross-file part's cone of requests runs first and pauses for each wave's new
+//! requests; a directory is listed, a file read and a document loaded (through the chunk path, as any file is), and
+//! the answers are the next wave's rows. The rest of the cross-file part then runs once over every document. This
+//! module is the part that touches the file system: what may be read, reading it, and naming a loaded document.
 //!
 //! Only paths under the corpus root, or under a directory a setting names (`env(k, v)` with v a directory, relative
 //! to the root or absolute), are read. A path elsewhere, or missing, has no entries or lines.
 
-use super::{Error, Result, front};
+use super::front;
 use crate::code_rule_dsl::logic::rr::WORLD;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// Rounds of requests: an import chain deeper than this is not followed. A guard, as `guests::DEPTH` is.
-pub(super) const ROUNDS: usize = 24;
 /// Documents loaded at most, unless `env("load.budget", n)` says otherwise.
 const BUDGET: usize = 4000;
-/// The request relations, and the relation of loads.
-const LOAD: &str = "load";
-const LOADED: &str = "loaded";
-
-/// The option a run of [`discover`] gives the runs it makes: `"discover"` for a round, `"final"` for the run proper.
-pub(super) const OPTION: &str = "world";
+/// The request of a load, and the relation of what was loaded.
+pub(super) const LOAD: &str = "load";
+pub(super) const LOADED: &str = "loaded";
 
 /// Whether the program reads the file system or loads documents.
 pub(super) fn wanted(prog: &front::Program) -> bool {
     prog.rules.iter().any(|r| r.head.rel == LOAD || WORLD.iter().any(|(_, d)| *d == r.head.rel))
 }
 
-/// The requests a round's program answers: its outputs (those it derives).
-pub(super) fn requests(prog: &front::Program) -> Vec<String> {
-    WORLD.iter().map(|(_, d)| *d).chain([LOAD]).filter(|r| prog.rules.iter().any(|x| x.head.rel == *r)).map(str::to_owned).collect()
+/// The requests a program makes, each with what answers it, before a load's per-file rows are added
+/// (`corpus::loading`): a directory's entries, a file's lines and a load's `loaded` row.
+pub(super) fn answers(prog: &front::Program) -> BTreeMap<String, Vec<String>> {
+    WORLD
+        .iter()
+        .map(|(rel, req)| (*req, *rel))
+        .chain([(LOAD, LOADED)])
+        .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req))
+        .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
+        .collect()
 }
 
 /// A loaded document: its path as the rule gave it, and the module it is.
@@ -92,173 +94,127 @@ impl World {
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
     }
 
-    /// Answers a round's requests (its `<rel>.csv` in `dir`); whether anything is new.
-    pub(super) fn answer(&mut self, dir: &Path, grammar: &str, corpus: &BTreeSet<String>) -> Result<bool> {
-        let lines = |rel: &str| -> Result<Vec<String>> {
-            let p = dir.join(format!("{rel}.csv"));
-            if !p.exists() {
-                return Ok(Vec::new());
-            }
-            Ok(std::fs::read_to_string(&p).map_err(|e| Error::Plan(format!("{}: {e}", p.display())))?.lines().map(str::to_owned).collect())
+    /// A directory's entries, sorted (none when it is refused or missing).
+    pub(super) fn dir(&mut self, asked: &str) -> Vec<(String, bool)> {
+        if let Some(entries) = self.dirs.get(asked) {
+            return entries.clone();
+        }
+        let Some(path) = self.allowed(asked) else {
+            self.refused.insert(asked.to_owned());
+            return Vec::new();
         };
-        let mut grew = false;
-        for asked in lines("rr_dir_req")? {
-            if self.dirs.contains_key(&asked) || self.refused.contains(&asked) {
-                continue;
-            }
-            grew = true;
-            let Some(path) = self.allowed(&asked) else {
-                self.refused.insert(asked);
-                continue;
-            };
-            let mut entries: Vec<(String, bool)> = std::fs::read_dir(&path)
-                .map(|it| it.filter_map(|e| e.ok()).map(|e| (e.file_name().to_string_lossy().into_owned(), e.path().is_dir())).collect())
-                .unwrap_or_default();
-            entries.sort();
-            self.dirs.insert(asked, entries);
-        }
-        for asked in lines("rr_file_req")? {
-            if self.files.contains_key(&asked) || self.refused.contains(&asked) {
-                continue;
-            }
-            grew = true;
-            let text = self.allowed(&asked).and_then(|p| std::fs::read_to_string(p).ok());
-            let Some(text) = text else {
-                self.refused.insert(asked);
-                continue;
-            };
-            let text = text.replace("\r\n", "\n").replace('\r', "\n");
-            self.files.insert(asked, text.split_terminator('\n').map(str::to_owned).collect());
-        }
-        for row in lines(LOAD)? {
-            let c: Vec<&str> = row.splitn(3, '\t').collect();
-            let [asked, module, g] = c.as_slice() else { continue };
-            if corpus.contains(*asked) || self.refused.contains(*asked) {
-                continue;
-            }
-            // A loaded document is named by its canonical path: the same file is one document, and its key and memo
-            // entries are the same in every workspace.
-            let Some(path) = self.allowed(asked).filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
-                self.dropped += 1;
-                self.refused.insert((*asked).to_owned());
-                continue;
-            };
-            if self.loads.contains_key(&path) {
-                continue;
-            }
-            if *g != grammar || self.loads.len() >= self.budget {
-                self.dropped += 1;
-                self.refused.insert((*asked).to_owned());
-                continue;
-            }
-            grew = true;
-            self.loads.insert(path.clone(), Loaded { path, module: (*module).to_owned(), grammar: (*g).to_owned() });
-        }
-        Ok(grew)
+        let mut entries: Vec<(String, bool)> = std::fs::read_dir(&path)
+            .map(|it| it.filter_map(|e| e.ok()).map(|e| (e.file_name().to_string_lossy().into_owned(), e.path().is_dir())).collect())
+            .unwrap_or_default();
+        entries.sort();
+        self.dirs.insert(asked.to_owned(), entries.clone());
+        entries
     }
 
-    /// The answers as rows (JSON: a relation's rows, each a list of strings and numbers), for the relations the
-    /// program declares. Rows, not `.rr` text: parsing thousands of facts was most of a round.
-    pub(super) fn facts(&self, prog: &front::Program) -> serde_json::Value {
-        use serde_json::json;
-        let mut out = serde_json::Map::new();
-        if prog.decls.contains_key("dir_entry") {
-            let rows: Vec<_> = self.dirs.iter().flat_map(|(dir, entries)| entries.iter().map(move |(name, is_dir)| json!([dir, name, i64::from(*is_dir)]))).collect();
-            out.insert("dir_entry".into(), rows.into());
+    /// A file's lines (none when it is refused or missing).
+    pub(super) fn file(&mut self, asked: &str) -> Vec<String> {
+        if let Some(lines) = self.files.get(asked) {
+            return lines.clone();
         }
-        if prog.decls.contains_key("file_line") {
-            let rows: Vec<_> = self.files.iter().flat_map(|(path, lines)| lines.iter().enumerate().map(move |(i, l)| json!([path, i + 1, l]))).collect();
-            out.insert("file_line".into(), rows.into());
-        }
-        if prog.decls.contains_key(LOADED) {
-            out.insert(LOADED.into(), self.loads.values().map(|l| json!([l.path, l.module, l.grammar])).collect::<Vec<_>>().into());
-        }
-        serde_json::Value::Object(out)
+        let Some(text) = self.allowed(asked).and_then(|p| std::fs::read_to_string(p).ok()) else {
+            self.refused.insert(asked.to_owned());
+            return Vec::new();
+        };
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        let lines: Vec<String> = text.split_terminator('\n').map(str::to_owned).collect();
+        self.files.insert(asked.to_owned(), lines.clone());
+        lines
     }
 
-    /// The options of a run over the answers so far: `round` is `"discover"` or `"final"`.
-    pub(super) fn options(&self, base: &serde_json::Value, prog: &front::Program, round: &str) -> serde_json::Value {
-        let mut o = base.as_object().cloned().unwrap_or_default();
-        o.insert(OPTION.into(), round.into());
-        o.insert("worldFacts".into(), self.facts(prog).into());
-        o.insert("loadedFiles".into(), self.loads.values().map(|l| serde_json::json!([l.path, l.module])).collect::<Vec<_>>().into());
-        serde_json::Value::Object(o)
+    /// A load's document: the file's canonical path, when it is new, allowed, in the run's grammar and within the
+    /// budget. A file of the corpus is a document already, so its load takes nothing. A loaded document is named by
+    /// its canonical path: the same file is one document, and its key and memo entries are the same in every
+    /// workspace.
+    /// The corpus's documents as canonical paths, as `load` compares them, with their given names too.
+    pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = &'a String>) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for p in paths {
+            if let Ok(c) = std::fs::canonicalize(self.root.join(p)) {
+                out.insert(c.to_string_lossy().into_owned());
+            }
+            out.insert(p.clone());
+        }
+        out
     }
 
-    /// The answers and what they were read from, for the store: discovery is a derivation (decision 0065 §2). Each
-    /// loaded file's content digest is kept, and whether each refused path existed, so [`World::holds`] can check them.
-    pub(super) fn record(&self, rounds: usize) -> String {
-        use serde_json::json;
-        let digest = |p: &str| std::fs::read(p).ok().map(|b| hex_sha(&b));
-        let refused: Vec<_> = self.refused.iter().map(|p| json!([p, self.allowed(p).is_some_and(|q| q.exists())])).collect();
-        json!({
-            "rounds": rounds,
-            "dirs": self.dirs.iter().map(|(d, e)| json!([d, e])).collect::<Vec<_>>(),
-            "files": self.files.iter().map(|(p, l)| json!([p, l])).collect::<Vec<_>>(),
-            "loads": self.loads.values().map(|l| json!([l.path, l.module, l.grammar, digest(&l.path)])).collect::<Vec<_>>(),
-            "refused": refused,
-            "dropped": self.dropped,
+    pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
+        if corpus.contains(asked) || self.refused.contains(asked) {
+            return None;
+        }
+        let Some(path) = self.allowed(asked).filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
+            self.dropped += 1;
+            self.refused.insert(asked.to_owned());
+            return None;
+        };
+        // `corpus` is canonical (`canonical_corpus`): a workspace file reached through an import is not loaded again.
+        if corpus.contains(&path) || self.loads.contains_key(&path) {
+            return None;
+        }
+        if grammar != run_grammar || self.loads.len() >= self.budget {
+            self.dropped += 1;
+            self.refused.insert(asked.to_owned());
+            return None;
+        }
+        let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
+        self.loads.insert(path, loaded.clone());
+        Some(loaded)
+    }
+
+    /// What the run's requests consulted, each as (what, path, digest): a directory's entries, a file's lines, a
+    /// loaded document's bytes, and for a path refused or missing what is there now (decision 0083 §2). A run whose
+    /// consulted things are all as they were would ask, load and derive the same (`still`).
+    pub(super) fn consulted(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for (asked, entries) in &self.dirs {
+            out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
+        }
+        for (asked, lines) in &self.files {
+            out.push(("file".to_owned(), asked.clone(), lines_digest(lines)));
+        }
+        for path in self.loads.keys() {
+            out.push(("load".to_owned(), path.clone(), bytes_digest(Path::new(path))));
+        }
+        for asked in &self.refused {
+            out.push(("refused".to_owned(), asked.clone(), self.probe(asked)));
+        }
+        out
+    }
+
+    /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike.
+    pub(super) fn still(&mut self, consulted: &[(String, String, String)]) -> bool {
+        consulted.iter().all(|(what, path, digest)| {
+            let now = match what.as_str() {
+                "dir" => listing_digest(&self.dir(path)),
+                "file" => lines_digest(&self.file(path)),
+                "load" => bytes_digest(Path::new(path)),
+                "refused" => self.probe(path),
+                _ => return false,
+            };
+            now == *digest
         })
-        .to_string()
     }
 
-    /// The world [`World::record`] wrote, over `root` and `prog`'s settings, if what it read is unchanged: every
-    /// directory lists as it did, every file reads as it did, every loaded file has its digest, and every refused
-    /// path exists or not as it did. Returns it with its rounds.
-    pub(super) fn recall(root: &Path, prog: &front::Program, text: &str) -> Option<(World, usize)> {
-        let v: serde_json::Value = serde_json::from_str(text).ok()?;
-        let mut world = World::new(root, prog);
-        let strs = |v: &serde_json::Value| v.as_str().map(str::to_owned);
-        for d in v["dirs"].as_array()? {
-            let entries: Vec<(String, bool)> = d[1].as_array()?.iter().filter_map(|e| Some((strs(&e[0])?, e[1].as_bool()?))).collect();
-            world.dirs.insert(strs(&d[0])?, entries);
+    /// What a refused path is now: outside the roots or missing, a file, or a directory.
+    fn probe(&self, asked: &str) -> String {
+        match self.allowed(asked) {
+            None => "none",
+            Some(p) if p.is_file() => "file",
+            Some(p) if p.is_dir() => "dir",
+            Some(_) => "other",
         }
-        for f in v["files"].as_array()? {
-            world.files.insert(strs(&f[0])?, f[1].as_array()?.iter().filter_map(strs).collect());
-        }
-        let mut digests = Vec::new();
-        for l in v["loads"].as_array()? {
-            let loaded = Loaded { path: strs(&l[0])?, module: strs(&l[1])?, grammar: strs(&l[2])? };
-            digests.push((loaded.path.clone(), strs(&l[3])));
-            world.loads.insert(loaded.path.clone(), loaded);
-        }
-        let refused: Vec<(String, bool)> = v["refused"].as_array()?.iter().filter_map(|r| Some((strs(&r[0])?, r[1].as_bool()?))).collect();
-        world.refused = refused.iter().map(|(p, _)| p.clone()).collect();
-        world.dropped = v["dropped"].as_u64()? as usize;
-        // What was read is as it was.
-        for (dir, entries) in &world.dirs {
-            let Some(path) = world.allowed(dir) else { return None };
-            let mut now: Vec<(String, bool)> = std::fs::read_dir(&path).ok()?.filter_map(|e| e.ok()).map(|e| (e.file_name().to_string_lossy().into_owned(), e.path().is_dir())).collect();
-            now.sort();
-            if &now != entries {
-                return None;
-            }
-        }
-        for (file, lines) in &world.files {
-            let text = std::fs::read_to_string(world.allowed(file)?).ok()?;
-            let text = text.replace("\r\n", "\n").replace('\r', "\n");
-            if text.split_terminator('\n').ne(lines.iter().map(String::as_str)) {
-                return None;
-            }
-        }
-        for (path, digest) in &digests {
-            if std::fs::read(path).ok().map(|b| hex_sha(&b)) != *digest {
-                return None;
-            }
-        }
-        for (path, existed) in &refused {
-            if world.allowed(path).is_some_and(|q| q.exists()) != *existed {
-                return None;
-            }
-        }
-        Some((world, v["rounds"].as_u64()? as usize))
+        .to_owned()
     }
 
-    pub(super) fn summary(&self, rounds: usize) -> String {
+    pub(super) fn summary(&self, pauses: usize) -> String {
         let entries: usize = self.dirs.values().map(Vec::len).sum();
         let lines: usize = self.files.values().map(Vec::len).sum();
         format!(
-            "{rounds} rounds of requests: {} directories ({entries} entries), {} files ({lines} lines), {} documents loaded; {} paths refused or missing, {} loads not taken",
+            "requests answered in {pauses} pauses of the fixpoint: {} directories ({entries} entries), {} files ({lines} lines), {} documents loaded; {} paths refused or missing, {} loads not taken",
             self.dirs.len(),
             self.files.len(),
             self.loads.len(),
@@ -268,27 +224,37 @@ impl World {
     }
 }
 
-/// Adds the rows `facts` gives ([`World::facts`]) to `prog`'s facts.
-pub(super) fn add_facts(prog: &mut front::Program, facts: Option<&serde_json::Value>) {
-    for (rel, rows) in facts.and_then(|f| f.as_object()).into_iter().flatten() {
-        let rows = rows.as_array().into_iter().flatten().filter_map(|r| r.as_array()).map(|r| {
-            r.iter().map(|v| v.as_i64().map_or_else(|| front::Value::Str(v.as_str().unwrap_or_default().to_owned()), front::Value::Int)).collect::<Vec<_>>()
-        });
-        prog.facts.entry(rel.clone()).or_default().extend(rows);
-    }
-}
-
 /// A document's path as the content store keys it: a loaded document's canonical path without its root.
 pub(super) fn store_path(path: &str) -> &str {
     path.strip_prefix('/').unwrap_or(path)
 }
 
-/// The loaded documents an option names: path and module.
-pub(super) fn loaded_files(options: &serde_json::Value) -> Vec<(String, String)> {
-    options.get("loadedFiles").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| Some((v.get(0)?.as_str()?.to_owned(), v.get(1)?.as_str()?.to_owned()))).collect()
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn hex_sha(bytes: &[u8]) -> String {
-    use sha2::Digest as _;
-    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+fn listing_digest(entries: &[(String, bool)]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    for (name, is_dir) in entries {
+        h.update(name.as_bytes());
+        h.update([0, u8::from(*is_dir)]);
+    }
+    hex(&h.finalize())
+}
+
+fn lines_digest(lines: &[String]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    for l in lines {
+        h.update(l.as_bytes());
+        h.update([b'\n']);
+    }
+    hex(&h.finalize())
+}
+
+/// A file's bytes' digest ("" when it cannot be read).
+pub(super) fn bytes_digest(path: &Path) -> String {
+    use sha2::Digest;
+    std::fs::read(path).map(|b| hex(&sha2::Sha256::digest(&b))).unwrap_or_default()
 }

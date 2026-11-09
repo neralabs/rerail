@@ -222,9 +222,15 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
     split_located(prog).0
 }
 
+/// The inputs whose rows are the run's options (`facts::repository::options`): the same beside every chunk and the
+/// cross-file part, and named by the corpus memo's key (`corpus::memo::with_options`), so constants to the split.
+pub(crate) fn option_input(rel: &str) -> bool {
+    matches!(rel, "option" | "option_item")
+}
+
 /// Derived relations made from the program's constants alone (`la_side_queue(x) :- la_set("…", x)`): every rule
-/// reads only facts, other such relations and comparisons. They are constants to the split, like facts: a rule
-/// reading one joins no document by it, and both parts derive them.
+/// reads only facts, the run's options (`option_input`), other such relations and comparisons. They are constants to
+/// the split, like facts: a rule reading one joins no document by it, and both parts derive them.
 pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
     use crate::code_rule_dsl::logic::front::Literal;
     let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
@@ -237,7 +243,7 @@ pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Prog
                 prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
                     r.body.iter().all(|l| match l {
                         Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                            constant.contains(&a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
+                            constant.contains(&a.rel) || option_input(&a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
                         }
                         Literal::Cmp { .. } => true,
                         _ => false,
@@ -253,13 +259,15 @@ pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Prog
     }
 }
 
-/// The rule's `a = b` between two variables.
+/// The rule's `a = b` between two variables, and its `d = @doc(n)` (decision 0091's scope guards): d is n's
+/// document, so the two place one document, as a document column and a node of one atom do.
 fn var_equalities(rule: &crate::code_rule_dsl::logic::front::Rule) -> Vec<(String, String)> {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     rule.body
         .iter()
         .filter_map(|l| match l {
             Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => Some((a.clone(), b.clone())),
+            Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Call(f, xs) } if f == "doc" && let [Term::Var(b)] = xs.as_slice() => Some((a.clone(), b.clone())),
             _ => None,
         })
         .collect()
@@ -424,14 +432,20 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
         let width = prog.decls.get(*rel).map_or(0, Vec::len);
         locations.insert((*rel).to_owned(), (0..width).collect());
     }
+    // Each relation's rules, found once (a pack's program has tens of thousands).
+    let mut rules_of: BTreeMap<&str, Vec<&crate::code_rule_dsl::logic::front::Rule>> = BTreeMap::new();
+    for r in &prog.rules {
+        rules_of.entry(r.head.rel.as_str()).or_default().push(r);
+    }
     while changed {
         changed = false;
         for rel in &derived {
-            let rules: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == *rel).collect();
+            let rules = rules_of.get(*rel).map(Vec::as_slice).unwrap_or_default();
+            let vars: Vec<BTreeSet<String>> = rules.iter().map(|r| location_vars(r, &locations)).collect();
             let kept: Vec<usize> = locations[*rel]
                 .iter()
                 .copied()
-                .filter(|&c| rules.iter().all(|r| matches!(r.head.args.get(c), Some(Term::Var(v)) if location_vars(r, &locations).contains(v))))
+                .filter(|&c| rules.iter().zip(&vars).all(|(r, vs)| matches!(r.head.args.get(c), Some(Term::Var(v)) if vs.contains(v))))
                 .collect();
             if kept != locations[*rel] {
                 locations.insert((*rel).to_owned(), kept);
@@ -494,7 +508,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
                     }
                     Literal::Cmp { .. } => continue,
                 };
-                let constant = (!derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel)) || constants.contains(&atom.rel);
+                let constant = (!derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel)) || constants.contains(&atom.rel) || option_input(&atom.rel);
                 // A tape operation's rows (decision 0058 §4) are made in the chunk that asked: they place nothing.
                 let chunk_value = !derived.contains(atom.rel.as_str()) && CHUNK_VALUES.contains(&atom.rel.as_str());
                 if constant || chunk_value || test_relation(&atom.rel) || filters.contains(&atom.rel) || filters.contains(&rule.head.rel) {
@@ -669,79 +683,112 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
 }
 
 /// The base relations the cross-file part can take as a semi-join: of each, a chunk keeps only the rows of the nodes
-/// its exports' rows hold, not every node's. Sound when every node the cross part reads comes from an export: it
-/// reads no base relation but node attributes (`docof`, `line`, `text`, `node`: a node `n` and no other node), and
-/// each such read looks up a node that a positive read of another relation in the same body binds. A node of a
-/// cross-file relation then traces back to an export's row (by induction over its rules); a finding's decoding
-/// reads the nodes of the findings, which are such nodes too. `None` where a cross rule reads them otherwise
-/// (`node(d, n, ...)` enumerating a document's nodes, `child(p, c)` reaching nodes no export holds): every row is
-/// kept.
+/// its exports' rows hold, not every node's. Decided per relation, so that in a pack one policy's cross-file rule that
+/// walks the tree does not make every other policy's lookups hold every node's rows.
+///
+/// A node attribute (`docof`, `line`, `text`, `node`: a node `n` and no other node) can be a semi-join when every read
+/// of it looks up a node that is *held*: bound, in the same body, by a positive read of a relation whose nodes all trace
+/// back to an export's row. Nodes that do not trace back are *tainted*. They come from a base relation that reaches
+/// nodes and is not an attribute (`child(p, c)`, `within`), from a native step over one (`dfs_first`), from an
+/// attribute read with an unbound node (`node(d, n, ...)` enumerating a document's nodes: that attribute is then kept
+/// whole), and from any relation a rule derives from such nodes. A finding's decoding reads `node` of the findings'
+/// nodes, so `node` is kept whole when a tainted relation is an output. The sets shrink to a fixpoint. `Some` always:
+/// the empty set where no attribute qualifies.
 ///
 /// On the full data-layer tree, `lazy-architecture`'s cross part held 673 MB of these for about ten thousand
-/// lookups.
+/// lookups; on 200 files, the 66-rule pack's held 1.1M rows of each of `line`, `col` and `docof`, because one rule's
+/// walk turned the semi-join off for all of them.
 pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base: &[String]) -> Option<std::collections::BTreeSet<String>> {
-    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     // Each attribute relation's node column: the base ones, and a view the cross part derives from one
     // (`kind($n, $k) :- node(_, $n, $k, _, _)`), keyed where the node lands in its head.
-    // A base attribute is a relation of a node `n` and values that are no nodes (`line`, `text`, `node` itself),
-    // which a chunk filters by its `n` column.
     let mut key: BTreeMap<String, usize> = BTreeMap::new();
     for rel in base {
         let (Some(columns), Some(types)) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel), cross.decls.get(rel)) else { continue };
         let Some(k) = columns.iter().position(|c| *c == "n") else { continue };
-        let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && matches!(t.as_str(), "node" | "loc" | "span"));
+        // Another column of nodes: by its type, or by its name where the type is a number (`tape`'s parent `par`, an
+        // ancestor `a`, `ast_match`'s pattern root `p`, `host_node`'s host `h`); a walk up `tape(p, par)` reaches
+        // parents no export holds.
+        let others_nodes = types.iter().enumerate().any(|(i, (_, t))| i != k && (matches!(t.as_str(), "node" | "loc" | "span") || matches!(columns[i], "par" | "a" | "p" | "h")));
         if !others_nodes && columns.len() == types.len() {
             key.insert(rel.clone(), k);
         }
     }
-    let mut views: BTreeSet<String> = BTreeSet::new();
+    // A view's base: a view is a semi-join exactly when its base is.
+    let mut view_of: BTreeMap<String, String> = BTreeMap::new();
     for rule in &cross.rules {
         let [Literal::Atom(a)] = rule.body.as_slice() else { continue };
         let Some(Term::Var(n)) = key.get(&a.rel).and_then(|&k| a.args.get(k)).filter(|_| !a.neg) else { continue };
         let Some(at) = rule.head.args.iter().position(|t| matches!(t, Term::Var(v) if v == n)) else { continue };
         let sole = cross.rules.iter().filter(|r| r.head.rel == rule.head.rel).count() == 1;
-        if sole && !key.contains_key(&rule.head.rel) {
+        if sole && !key.contains_key(&rule.head.rel) && !view_of.contains_key(&a.rel) {
             key.insert(rule.head.rel.clone(), at);
-            views.insert(rule.head.rel.clone());
+            view_of.insert(rule.head.rel.clone(), a.rel.clone());
         }
     }
-    // A base relation without a node column (`doc`, a repository file's) reaches no node.
+    let root = |rel: &str| view_of.get(rel).cloned().unwrap_or_else(|| rel.to_owned());
+    // A relation with no node column reaches no node.
     let reaches_nodes = |rel: &str| cross.decls.get(rel).is_none_or(|cols| cols.iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span")));
-    // A native step (`dfs_first`) over a base relation's nodes reaches nodes no export holds.
-    if cross.natives.values().flat_map(|n| n.reads()).any(|r| base.iter().any(|b| b == r) && reaches_nodes(r)) {
-        return None;
-    }
-    let mut held = BTreeSet::new();
-    for rule in cross.rules.iter().filter(|r| !views.contains(&r.head.rel)) {
-        // The variables a positive read of a relation not a node attribute binds.
-        let bound: BTreeSet<&String> = rule
-            .body
-            .iter()
-            .filter_map(|l| match l {
-                Literal::Atom(a) if !a.neg && !key.contains_key(&a.rel) => Some(a),
-                _ => None,
-            })
-            .flat_map(|a| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }))
-            .collect();
-        for l in &rule.body {
-            let a = match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => a,
-                _ => continue,
-            };
-            let attribute = key.get(&a.rel);
-            if attribute.is_none() && (!base.iter().any(|b| *b == a.rel) || !reaches_nodes(&a.rel)) {
-                continue;
-            }
-            let k = *attribute?;
-            match a.args.get(k) {
-                Some(Term::Var(v)) if bound.contains(v) => {}
-                _ => return None,
+    let is_base = |rel: &str| base.iter().any(|b| b == rel);
+    // The attributes still taken as semi-joins (by their base relation), and the relations whose nodes may not trace
+    // back to an export.
+    let mut semi: BTreeSet<String> = key.keys().filter(|r| !view_of.contains_key(*r)).cloned().collect();
+    let mut tainted: BTreeSet<String> = BTreeSet::new();
+    loop {
+        let (semi_before, tainted_before) = (semi.len(), tainted.len());
+        // A source of tainted nodes: a base relation that reaches nodes and is no attribute, or a tainted relation.
+        let source = |a: &Atom, tainted: &BTreeSet<String>| !a.neg && !key.contains_key(&a.rel) && (tainted.contains(&a.rel) || (is_base(&a.rel) && reaches_nodes(&a.rel)));
+        for (rel, native) in &cross.natives {
+            for r in native.reads() {
+                if key.contains_key(r) && semi.remove(&root(r)) {
+                }
+                if tainted.contains(r) || (is_base(r) && reaches_nodes(r)) || key.contains_key(r) {
+                    tainted.insert(rel.clone());
+                }
             }
         }
+        for rule in cross.rules.iter().filter(|r| !view_of.contains_key(&r.head.rel)) {
+            // Held variables: bound by a positive read of a relation that is no attribute and holds no tainted node.
+            let positive: Vec<&Atom> = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).filter(|a| !a.neg).collect();
+            let vars = |a: &Atom| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).collect::<Vec<_>>();
+            // A variable equal to a held one is held; one equal to a loose one is loose (`m = n`).
+            let equal = var_equalities(rule);
+            let mut held: BTreeSet<String> = positive.iter().filter(|a| !key.contains_key(&a.rel) && !source(a, &tainted)).flat_map(|a| vars(a)).collect();
+            close_under(&mut held, &equal);
+            let mut loose: BTreeSet<String> = positive.iter().filter(|a| source(a, &tainted)).flat_map(|a| vars(a)).collect();
+            for l in &rule.body {
+                let (a, in_agg) = match l {
+                    Literal::Atom(a) => (a, false),
+                    Literal::Agg { atom: a, .. } => (a, true),
+                    _ => continue,
+                };
+                let Some(&k) = key.get(&a.rel) else { continue };
+                match a.args.get(k) {
+                    Some(Term::Var(v)) if held.contains(v) => {}
+                    found => {
+                        // A lookup of a node that may not be held, or an enumeration: the attribute is kept whole.
+                        semi.remove(&root(&a.rel));
+                        // Its node, not held, is tainted or new (an enumeration).
+                        if let (Some(Term::Var(v)), false, false) = (found, a.neg, in_agg) {
+                            loose.insert(v.clone());
+                        }
+                    }
+                }
+            }
+            close_under(&mut loose, &equal);
+            let head_tainted = rule.head.args.iter().any(|t| matches!(t, Term::Var(v) if loose.contains(v) && !held.contains(v)));
+            if head_tainted {
+                tainted.insert(rule.head.rel.clone());
+            }
+        }
+        if cross.outputs.iter().any(|o| tainted.contains(o)) && semi.remove("node") {
+        }
+        if semi.len() == semi_before && tainted.len() == tainted_before {
+            break;
+        }
     }
-    held.extend(key.into_keys().filter(|r| !views.contains(r)));
-    Some(held)
+    Some(semi)
 }
 
 /// Whether a rule outside the chunks reads a base relation.

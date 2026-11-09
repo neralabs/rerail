@@ -1,6 +1,7 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
 //! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
 
+pub use super::logic::profile::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
@@ -190,6 +191,16 @@ pub fn convert_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
 pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
     serde_json::Value::Array(paths.iter().map(|path| {
         match super::logic::rr::read_file(path) {
+            // A program the reader passes still has to type: each variable one domain (a kind, a name, …), as a run
+            // checks when it plans (`plan::lower::domains`). A run would stop there, so the check does too.
+            Ok((program, _)) if let Err(error) = super::logic::rr::print(&program)
+                .map_err(|e| e.to_string())
+                .and_then(|text| super::logic::plan::corpus::combine(&[text.as_str()], "").map_err(|e| e.to_string()))
+                // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
+                .and_then(|combined| super::logic::plan::lower::domains(&super::logic::front::prune(combined)).map(|_| ()).map_err(|e| e.to_string())) =>
+            {
+                serde_json::json!({"path": path, "status": "types-failed", "error": error})
+            }
             Ok((program, files)) => serde_json::json!({
                 "path": path, "status": "reader-passed", "rules": program.rules.len(),
                 "outputs": program.outputs,
@@ -314,9 +325,37 @@ pub fn program_text(path: &std::path::Path) -> Result<String, String> {
     if !policy && !text.lines().any(|l| l.trim_start().starts_with("#include")) {
         return Ok(text);
     }
-    let program = super::logic::rr::parse_file(path)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    super::logic::rr::print(&program).map_err(|error| format!("{}: {error}", path.display()))
+    // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a run
+    // however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
+    let mut seen = Vec::new();
+    let own = module_text(path, &text, &mut seen)?;
+    if policy && !own.lines().any(|l| l.trim_start().starts_with("#include")) {
+        return Ok(format!("#include \"core.rr\"\n{own}"));
+    }
+    Ok(own)
+}
+
+/// `text` (the file `path`'s) with each `#include` of a file beside it, not in the library, written in, each once.
+fn module_text(path: &std::path::Path, text: &str, seen: &mut Vec<std::path::PathBuf>) -> Result<String, String> {
+    let library = super::logic::rr::library();
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let name = line.trim_start().strip_prefix("#include").and_then(|rest| rest.split('"').nth(1));
+        match name {
+            Some(name) if !library.join(name).exists() => {
+                let beside = path.parent().map(|d| d.join(name)).unwrap_or_default();
+                let canonical = beside.canonicalize().map_err(|e| format!("{}: #include {name:?}: {e}", path.display()))?;
+                if !seen.contains(&canonical) {
+                    seen.push(canonical);
+                    let inner = std::fs::read_to_string(&beside).map_err(|e| format!("{}: {e}", beside.display()))?;
+                    out.push_str(&module_text(&beside, &inner, seen)?);
+                }
+            }
+            _ => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 /// The run's settings (t21 E4): `key=value` lines of `<root>/rerail.env` (blank lines and `#` comments
@@ -343,6 +382,8 @@ pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
         let l = l.trim_start();
         l.strip_prefix(".decl").is_some_and(|r| r.trim_start().strip_prefix("env").is_some_and(|r| r.trim_start().starts_with('(')))
     });
+    // A text in module form (decision 0089) reads `core.rr`, which declares `env`.
+    let declares = declares || program.lines().any(|l| l.trim_start().starts_with("#include"));
     if !declares || settings.is_empty() {
         return program.to_owned();
     }
@@ -531,6 +572,20 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             .filter(|path| path.extension().is_some_and(|x| x == "rr"))
             .collect();
         files.sort();
+        // A file another one `#include`s is a library of it (`…confusables.rr`), not a program of its own: alone it
+        // has neither the declarations it reads nor the rules that fill its inputs.
+        let included: std::collections::BTreeSet<std::ffi::OsString> = files
+            .iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .flat_map(|text| {
+                text.lines()
+                    .filter_map(|l| l.trim().strip_prefix("#include"))
+                    .filter_map(|rest| rest.trim().strip_prefix('"')?.strip_suffix('"').map(|p| Path::new(p).file_name().map(ToOwned::to_owned)))
+                    .flatten()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
         files.iter().map(|path| crate::tools::program_text(path)).collect::<Result<Vec<_>, _>>()?
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]

@@ -16,6 +16,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 mod catalog;
+mod compiler;
+mod explain;
 mod constants;
 // A row of a corpus binding is `PROBE | document << 32 | row`: a 64-bit target only.
 #[cfg(target_pointer_width = "64")]
@@ -25,6 +27,7 @@ mod indexes;
 mod live;
 mod maintenance;
 mod overlay;
+mod phase;
 mod producers;
 mod profiling;
 mod recursive;
@@ -32,6 +35,8 @@ mod reductions;
 mod scratch;
 mod temporal;
 mod updates;
+#[cfg(feature = "headless")]
+mod verification;
 mod versions;
 mod walks;
 use super::logic::sql::lattices;
@@ -77,7 +82,10 @@ pub struct CodeRuleSqlExecutor {
     scratch: scratch::Pool,
     versions: versions::Store,
     next_trace: usize,
-    #[cfg(test)]
+    stats_ready: std::cell::Cell<bool>,
+    catalog_dirty: std::cell::Cell<bool>,
+    control_ready: std::cell::Cell<bool>,
+    #[cfg(any(test, feature = "headless"))]
     cold_oracle: bool,
 }
 
@@ -107,7 +115,10 @@ impl CodeRuleSqlExecutor {
             scratch: scratch::Pool::default(),
             versions: versions::Store::default(),
             next_trace: 0,
-            #[cfg(test)]
+            stats_ready: std::cell::Cell::new(false),
+            catalog_dirty: std::cell::Cell::new(true),
+            control_ready: std::cell::Cell::new(false),
+            #[cfg(any(test, feature = "headless"))]
             cold_oracle: false,
         })
     }
@@ -434,9 +445,15 @@ impl CodeRuleSqlExecutor {
                 .map(|(name, _)| (name.clone(), program::logical_arity(&program, name)))
                 .collect();
             let (emitted, _) = this.compile(program, &dialect)?;
-            serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program, "logical_arities":arities,"indexes":indexes::wanted(&emitted)}))
+            serde_json::to_string(&json!({"setup": emitted.setup, "program": emitted.program, "logical_arities":arities,"indexes":indexes::wanted(&emitted),"analysis":emitted.analysis.as_ref()}))
                 .map_err(error)
         })
+    }
+
+    /// Logical proofs and executor choices for all retained programs, without evaluating facts.
+    #[napi]
+    pub fn explain(&self) -> Result<String> {
+        self.profiled_read("explain", |this| serde_json::to_string(&this.explain_value()).map_err(error))
     }
 
     /// Run the emitted SQL waves to a fixpoint. The returned plan can be inspected or replayed;
@@ -485,6 +502,7 @@ impl CodeRuleSqlExecutor {
         max_rows: Option<u32>,
     ) -> Result<String> {
         self.profiled_read("query", |this| {
+            this.ensure_catalog(&sql)?;
             let parameters: Vec<Value> =
                 serde_json::from_str(parameters_json.as_deref().unwrap_or("[]")).map_err(error)?;
             let parameters = parameters
@@ -592,177 +610,6 @@ impl CodeRuleSqlExecutor {
         Ok(())
     }
 
-    /// Lower and emit a program. Its SQL producers' steps are added last; their relations are
-    /// returned beside the program, each with the session inputs its query reads.
-    fn compile(&self, mut program: front::Program, dialect: &str) -> Result<(plan::emit::Emitted, BTreeMap<String, Vec<String>>)> {
-        let producers = producers::take(&mut program)?;
-        let _scope = profiling::scope(&self.db, "compile");
-        for name in &program.inputs {
-            if let Some((arity, types)) = self.input_shapes.get(name)
-                && let Some(cols) = program.decls.get(name)
-            {
-                if program::logical_arity(&program, name) != *arity {
-                    return Err(error(format!(
-                        "{name}: input logical arity differs from its declaration"
-                    )));
-                }
-                if let Some(types) = types {
-                    for ((_, declared), actual) in cols.iter().zip(types) {
-                        let actual = match actual.as_str() {
-                            "number" => "int",
-                            "symbol" => "sym",
-                            "loc" => "node",
-                            other => other,
-                        };
-                        if actual != declared {
-                            return Err(error(format!(
-                                "{name}: bound {actual} column differs from declared {declared}"
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-        program::physical(&mut program);
-        // The file front end includes all of core.rr. An extension needs bindings only for
-        // inputs its retained rules or outputs actually read, not every possible core family.
-        let read: BTreeSet<String> = program
-            .rules
-            .iter()
-            .flat_map(|r| {
-                r.body
-                    .iter()
-                    .filter_map(front::Literal::atom)
-                    .map(|a| a.rel.clone())
-            })
-            .chain(program.outputs.iter().cloned())
-            .collect();
-        let unused: Vec<String> = program
-            .inputs
-            .iter()
-            .filter(|name| !read.contains(*name))
-            .cloned()
-            .collect();
-        for name in unused {
-            program.inputs.retain(|input| *input != name);
-            program.decls.remove(&name);
-            program.facts.remove(&name);
-        }
-        let mut lattice_operations = BTreeMap::new();
-        for (name, lattice) in &program.lattice {
-            if lattice.lattice() == "flat" {
-                continue;
-            }
-            let mut ops = lattices::specification(lattice.lattice())
-                .or_else(|| self.lattice_extensions.get(lattice.lattice()).cloned())
-                .or_else(|| lattices::registered(&self.db, lattice.lattice()).ok())
-                .ok_or_else(|| {
-                    error(format!(
-                        "{name}: register SQL operations for lattice {}",
-                        lattice.lattice()
-                    ))
-                })?;
-            ops.after = lattice.widen;
-            if ops.after.is_some() && ops.widen.is_none() {
-                return Err(error(format!(
-                    "{name}: this lattice needs a registered widening function"
-                )));
-            }
-            lattice_operations.insert(name.clone(), ops);
-        }
-        let tops = program
-            .lattice
-            .iter()
-            .map(|(name, l)| {
-                (
-                    name.clone(),
-                    (
-                        l.keys,
-                        lattice_operations
-                            .get(name)
-                            .map_or(super::logic::native::TOP, |ops| ops.top),
-                    ),
-                )
-            })
-            .collect();
-        program::tops(&mut program, &tops)?;
-        let dialect = super::language::dialect_by_label(dialect)
-            .ok_or_else(|| error(format!("unknown dialect: {dialect}")))?;
-        let lowered = plan::lower::lower(&program, dialect, &mut |names| {
-            self.store
-                .intern_atoms(names)
-                .map_err(|e| plan::Error::Plan(e.to_string()))
-        })
-        .map_err(error)?;
-        let mut batch = HashMap::new();
-        let has_wave_stats: bool = self
-            .db
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name = 'wave_stats')",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(error)?;
-        for name in &lowered.program.inputs {
-            if !identifier(name) || reserved(name) {
-                return Err(error(format!("invalid input relation: {name}")));
-            }
-            let statement = self
-                .db
-                .prepare(&format!("SELECT * FROM {}", quote(name)))
-                .map_err(error)?;
-            let columns = statement.column_names();
-            if columns.len() != lowered.program.decls[name].len() {
-                return Err(error(format!(
-                    "{name}: input arity differs from its declaration"
-                )));
-            }
-            let source = select::Source::positional(name, &columns);
-            let rows = match self.inputs.get(name) {
-                Some(source) => source.estimated_len() as f64,
-                // Planning reads recorded counts, never rescans an input table. An arbitrary
-                // SQL table with no recorded count gets an estimate; this changes plans only.
-                None if self.executions.iter().any(|e| e.counts.contains_key(name)) => {
-                    self.executions
-                        .iter()
-                        .rev()
-                        .find_map(|e| e.counts.get(name))
-                        .copied()
-                        .unwrap() as f64
-                }
-                None if has_wave_stats => self
-                    .db
-                    .query_row(
-                        "SELECT rows FROM temp.wave_stats WHERE tbl = ?1",
-                        [name],
-                        |r| r.get::<_, i64>(0),
-                    )
-                    .optional()
-                    .map_err(error)?
-                    .map_or(1_000.0, |n| n as f64),
-                None => 1_000.0,
-            };
-            batch.insert(name.clone(), (source, rows));
-        }
-        let mut emitted =
-            plan::emit::emit(&lowered, &self.db, "main", "sql-extension", None, &batch)
-                .map_err(error)?;
-        use sha2::Digest;
-        let key = format!(
-            "{:x}",
-            sha2::Sha256::digest(format!("{program:?}:{dialect:?}"))
-        );
-        lattices::transfers(&mut emitted, &tops);
-        emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
-        walks::optimize(&mut emitted);
-        emitted.program.lattice_operations = lattice_operations;
-        let other = producers::steps(&self.db, &mut emitted, &program, &producers)?;
-        // A table a query reads that is a session input is watched under the input's own name.
-        let inputs = |name: &String| self.inputs.keys().find(|i| i.eq_ignore_ascii_case(name)).cloned();
-        let producers = other.into_iter().map(|(rel, reads)| (rel, reads.iter().filter_map(inputs).collect())).collect();
-        Ok((emitted, producers))
-    }
-
     fn run_program(
         &mut self,
         program: front::Program,
@@ -778,61 +625,7 @@ impl CodeRuleSqlExecutor {
             .collect();
         let (emitted, producers) = self.compile(program, dialect)?;
         let indexes = indexes::wanted(&emitted);
-        let mut objects: Vec<(String, bool)> = emitted
-            .views
-            .iter()
-            .map(|(name, _)| (name.clone(), false))
-            .collect();
-        for (name, arity) in &emitted.program.relations {
-            if name.starts_with("__") || reserved(name) {
-                return Err(error(format!("{name}: reserved SQL wave relation")));
-            }
-            if *arity == 0 {
-                return Err(error("SQL wave relations need at least one column"));
-            }
-            objects.extend([
-                (name.clone(), true),
-                (format!("new_{name}"), true),
-                (format!("delta_{name}"), true),
-            ]);
-            if emitted
-                .program
-                .lattice_operations
-                .get(name)
-                .is_some_and(|ops| ops.after.is_some())
-            {
-                objects.push((format!("__sql_changes_{name}"), true));
-            }
-        }
-        let mut unique = BTreeSet::new();
-        let owned: BTreeSet<_> = self
-            .generated
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect();
-        for (name, _) in &objects {
-            if !identifier(name)
-                || name.to_ascii_lowercase().starts_with("wave_")
-                || name.to_ascii_lowercase().starts_with("rdl_")
-                || name.eq_ignore_ascii_case("atoms")
-                || !unique.insert(name.to_ascii_lowercase())
-            {
-                return Err(error(format!(
-                    "invalid or overlapping wave relation: {name}"
-                )));
-            }
-            let exists: bool = self.db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name = ?1 COLLATE NOCASE UNION ALL SELECT 1 FROM temp.sqlite_schema WHERE name = ?1 COLLATE NOCASE)", [name], |r| r.get(0)).map_err(error)?;
-            if (exists && !owned.contains(name.as_str()))
-                || self
-                    .inputs
-                    .keys()
-                    .any(|input| input.eq_ignore_ascii_case(name))
-            {
-                return Err(error(format!(
-                    "{name}: SQL output already exists; rebind inputs to clear derived results"
-                )));
-            }
-        }
+        let objects = self.output_objects(&emitted)?;
         self.db
             .execute_batch("SAVEPOINT sql_extension_run")
             .map_err(error)?;
@@ -842,7 +635,11 @@ impl CodeRuleSqlExecutor {
         }
         let trace_namespace = self.next_trace;
         self.next_trace += 1;
-        let previous = (self.generated.clone(), self.executions.clone());
+        let previous = (
+            self.generated.clone(),
+            self.executions.clone(),
+            self.control_ready.get(),
+        );
         let mut affected: BTreeSet<usize> = self
             .executions
             .iter()
@@ -870,7 +667,20 @@ impl CodeRuleSqlExecutor {
             self.clear_control()?;
             self.db.reset_execution();
             let _budget = limits.enter(&self.db)?;
+            let needs_integers = emitted
+                .queries
+                .iter()
+                .flatten()
+                .chain(emitted.views.iter().map(|(_, q)| q))
+                .any(constants::uses_integer_domain);
             for statement in &emitted.setup {
+                let setup = statement.trim_start();
+                if !needs_integers
+                    && (setup.starts_with("CREATE TEMP TABLE rdl_int(")
+                        || setup.starts_with("INSERT INTO rdl_int "))
+                {
+                    continue;
+                }
                 // The split-position table is invariant across programs in this session.
                 if statement.starts_with("CREATE TEMP TABLE rdl_int")
                     && self.db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name = 'rdl_int')", [], |r| r.get::<_, bool>(0)).map_err(error)?
@@ -879,8 +689,18 @@ impl CodeRuleSqlExecutor {
                 }
                 self.db.execute_batch(statement).map_err(error)?;
             }
-            schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
+            let minimal_setup =
+                emitted.views.is_empty() && emitted.queries.iter().all(Option::is_some);
+            if minimal_setup {
+                schedule::declare_outputs(&self.db, &emitted.program).map_err(error)?;
+            } else {
+                schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
+            }
+            self.control_ready.set(true);
             for (table, columns) in &indexes {
+                if minimal_setup && !emitted.program.relations.iter().any(|(r, _)| r == table) {
+                    continue;
+                }
                 session::index(&self.db, table, columns).map_err(error)?;
             }
             self.db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS wave_stats(tbl TEXT PRIMARY KEY,rows INTEGER NOT NULL) WITHOUT ROWID").map_err(error)?;
@@ -936,7 +756,7 @@ impl CodeRuleSqlExecutor {
             }
             drop(projections_scope);
             work.rewind(projection_mark)?;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "headless"))]
             let native_initial = if self.cold_oracle {
                 None
             } else {
@@ -946,23 +766,40 @@ impl CodeRuleSqlExecutor {
                     &mut execution,
                     trace_namespace,
                     &emitted.program,
+                    !minimal_setup,
                 )?
             };
-            #[cfg(not(test))]
+            #[cfg(not(any(test, feature = "headless")))]
             let native_initial = temporal::initial::run(
                 &mut work,
                 &self.versions,
                 &mut execution,
                 trace_namespace,
                 &emitted.program,
+                !minimal_setup,
             )?;
             let mut initializations = Vec::new();
             let waves = if let Some(waves) = native_initial {
                 waves
             } else {
                 let _scope = profiling::scope(&self.db, "cold execution");
-                let waves = schedule::execute_declared(&self.db, &emitted.program, max_waves)
-                    .map_err(error)?;
+                if minimal_setup {
+                    schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
+                    for (table, columns) in &indexes {
+                        session::index(&self.db, table, columns).map_err(error)?;
+                    }
+                }
+                #[cfg(any(test, feature = "headless"))]
+                let retain = !self.cold_oracle;
+                #[cfg(not(any(test, feature = "headless")))]
+                let retain = true;
+                let waves = if retain {
+                    let (waves, initialized) = reductions::cold::execute(&self.db, &mut work, &mut execution, max_waves)?;
+                    initializations = initialized;
+                    waves
+                } else {
+                    schedule::execute_declared(&self.db, &emitted.program, max_waves).map_err(error)?
+                };
                 let mut stats = self
                     .db
                     .prepare("SELECT tbl,rows FROM wave_stats")
@@ -976,13 +813,11 @@ impl CodeRuleSqlExecutor {
                         execution.counts.insert(r, n as u64);
                     }
                 }
-                #[cfg(test)]
-                let retain = !self.cold_oracle;
-                #[cfg(not(test))]
-                let retain = true;
                 if retain {
                     let _support = profiling::scope(&self.db, "support preparation");
-                    initializations = walks::prepare(&mut work, &mut execution, None)?;
+                    let walks = walks::prepare(&mut work, &mut execution, None)?;
+                    if !walks.is_empty() { reductions::cold::after_walks(&work, &mut execution)?; }
+                    initializations.extend(walks);
                     let mut potential = execution.inputs.clone();
                     initializations.extend(reductions::prepare(
                         &mut work,
@@ -1028,6 +863,7 @@ impl CodeRuleSqlExecutor {
                     .execute_batch("ROLLBACK TO sql_extension_run; RELEASE sql_extension_run");
                 self.generated = previous.0;
                 self.executions = previous.1;
+                self.control_ready.set(previous.2);
                 self.db.reset_execution();
                 native_rollback?;
                 return Err(e);
@@ -1036,9 +872,10 @@ impl CodeRuleSqlExecutor {
         self.scratch = pool;
         self.generated.extend(execution.objects.iter().cloned());
         self.executions.push(execution);
+        self.stats_ready.set(true);
         self.refresh_catalog()?;
         serde_json::to_string(
-            &json!({"waves": waves, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes,"preparation":preparation}),
+            &json!({"waves": waves, "outputs": outputs, "setup": emitted.setup, "program": emitted.program,"logical_arities":arities,"indexes":indexes,"preparation":preparation,"analysis":emitted.analysis.as_ref()}),
         )
         .map_err(error)
     }
@@ -1069,33 +906,6 @@ impl CodeRuleSqlExecutor {
         self.scratch.clear(&self.db, &self.versions)?;
         self.db.reset_execution();
         self.refresh_catalog()
-    }
-
-    fn clear_control(&self) -> Result<()> {
-        for name in [
-            "wave_step",
-            "wave_read",
-            "wave_delta",
-            "wave_pending",
-            "wave_after",
-            "wave_document",
-            "wave_stats",
-        ] {
-            self.db
-                .execute_batch(&format!("DROP TABLE IF EXISTS temp.{name}"))
-                .map_err(error)?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for CodeRuleSqlExecutor {
-    fn drop(&mut self) {
-        let _scope = profiling::scope(&self.db, "reset");
-        self.db.profile_checkpoint();
-        let _ = self.db.remove_bindings();
-        let _ = crate::content_store::atoms::Atoms::for_connection(&self.db).flush(&self.db);
-        self.db.profile_checkpoint();
     }
 }
 

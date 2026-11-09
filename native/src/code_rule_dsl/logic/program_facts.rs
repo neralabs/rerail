@@ -81,6 +81,8 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("doc_scoped", &["p:sym"]),
         ("doc_scope", &["p:sym", "k:int"]),
         ("doc_scope_glob", &["p:sym", "k:int", "side:int", "i:int", "glob:sym"]),
+        // `text_globs`: `.scope text`'s, in order.
+        ("text_glob", &["p:sym", "i:int", "glob:sym"]),
     ];
     SCHEMA
         .iter()
@@ -304,14 +306,17 @@ impl Writer<'_> {
                 }
             }
         }
+        for (i, g) in prog.text_globs.iter().enumerate() {
+            self.row("text_glob", vec![n(i), s(g)]);
+        }
         for (span, text) in &prog.rx_spans {
             // Kinds and captures carry their names after a unit separator.
             let span = match span {
                 SpanIn::Source => "source".to_owned(),
                 SpanIn::Line => "line".to_owned(),
                 SpanIn::Comment => "comment".to_owned(),
-                SpanIn::Kinds(kinds) => std::iter::once("kinds").chain(kinds.iter().map(String::as_str)).collect::<Vec<_>>().join("\u{1f}"),
-                SpanIn::Capture(pattern, group) => format!("capture\u{1f}{group}\u{1f}{pattern}"),
+                SpanIn::Kind(k) => format!("kind:{k}"),
+                SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
             };
             self.row("rx_span", vec![s(&span), s(text)]);
         }
@@ -568,14 +573,18 @@ impl<'a> Reader<'a> {
             prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
         }
         for row in self.get("rx_span") {
+            // `kind:K`, and `capture:G:P` (a group is a name, so the pattern is what follows its colon).
             let named = text(&row[0])?;
-            let span = match named.split('\u{1f}').collect::<Vec<_>>().as_slice() {
-                ["source"] => SpanIn::Source,
-                ["line"] => SpanIn::Line,
-                ["comment"] => SpanIn::Comment,
-                ["kinds", kinds @ ..] => SpanIn::Kinds(kinds.iter().map(|k| (*k).to_owned()).collect()),
-                ["capture", group, ..] => SpanIn::Capture(named.splitn(3, '\u{1f}').nth(2).unwrap_or_default().to_owned(), (*group).to_owned()),
-                _ => return Err(bad(format!("no span {named}"))),
+            let span = match named.split_once(':') {
+                None if named == "source" => SpanIn::Source,
+                None if named == "line" => SpanIn::Line,
+                None if named == "comment" => SpanIn::Comment,
+                Some(("kind", k)) => SpanIn::Kind(k.to_owned()),
+                Some(("capture", rest)) => match rest.split_once(':') {
+                    Some((g, p)) => SpanIn::Capture(p.to_owned(), g.to_owned()),
+                    None => return Err(bad(format!("no span {named:?}"))),
+                },
+                _ => return Err(bad(format!("no span {named:?}"))),
             };
             prog.rx_spans.insert((span, text(&row[1])?));
         }
@@ -592,6 +601,9 @@ impl<'a> Reader<'a> {
             };
             prog.doc_scopes = Some(scopes.into_values().map(|(w, o)| (ordered_globs(w), ordered_globs(o))).collect());
         }
+        let mut text_globs = self.get("text_glob").iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?;
+        text_globs.sort();
+        prog.text_globs = text_globs.into_iter().map(|(_, g)| g).collect();
         Ok(prog)
     }
 
@@ -730,9 +742,12 @@ mod tests {
         let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
         for scopes in [None, Some(vec![(vec!["impl/**".to_owned(), "api/**".to_owned()], vec!["**/tests/**".to_owned()]), (vec![], vec![])])] {
             prog.doc_scopes = scopes.clone();
+            prog.text_globs = if scopes.is_some() { vec!["**/*.md".to_owned(), "docs/*.rst".to_owned()] } else { Vec::new() };
             let mut facts = super::Facts::new();
             super::write(&mut facts, "p", &prog);
-            assert_eq!(super::program(&facts, "p").unwrap().doc_scopes, scopes);
+            let back = super::program(&facts, "p").unwrap();
+            assert_eq!(back.doc_scopes, scopes);
+            assert_eq!(back.text_globs, prog.text_globs);
         }
     }
 }

@@ -1,6 +1,6 @@
 # 0054: `match_all`, and captures that are spans
 
-Status: accepted (2026-11-06; built and tested; `match_all` over a node's own text is still refused, O80)
+Status: accepted (2026-11-06; built and tested; `match_all` over a node's own text since 2026-11-08, decision 0081)
 
 ## Intro
 
@@ -109,6 +109,7 @@ neither the test nor its negation.
 
 ## Open
 
-- `match_all` over a node's own text, with captures as spans, is refused by name. It would need the node's byte
-  range scanned, and 0041/0042 forbid a scan per node. A rule can read the node's `text` and match the symbol.
-- Text matching per file is a host regex here. 0041's chunked device automata are not used for `rx_span`.
+- ~~`match_all` over a node's own text, with captures as spans, is refused by name.~~ Closed by decision 0081
+  §1–§2: over a node of a kind, or an earlier capture, each distinct text matched once per batch.
+- ~~Text matching per file is a host regex here.~~ Decision 0081 §3: a source or line pattern is a block program
+  marking where a match can end, run before the host regex; its device launch is not wired yet.

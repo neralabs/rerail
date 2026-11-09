@@ -154,3 +154,45 @@ fn bulk_load_matches_sql_ignore_and_builds_the_same_merkle_root() {
         );
     }
 }
+
+#[test]
+fn empty_patch_publishes_canonical_roots_with_sparse_row_ids_and_indexes() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let store = Store::default();
+    store
+        .create(&db, "empty_patch", Schema::integers(2, 1))
+        .unwrap();
+    let empty = store.version("empty_patch");
+    let rows = (0..10000)
+        .rev()
+        .map(|i| vec![Some(i), Some(i % 13)])
+        .collect::<Vec<_>>();
+    let keys = rows.iter().map(|r| r[..1].to_vec()).collect();
+    let patched = empty.patched_rows(keys, rows.clone(), false).unwrap();
+    let loaded = empty.loaded(rows, false, false).unwrap();
+    assert!(patched.same(&loaded));
+    for row in [0, 1, 8000, 9999] {
+        assert_eq!(patched.row_id(row), loaded.row_id(row));
+    }
+    assert_eq!(patched.lookup(1, &[3]), loaded.lookup(1, &[3]));
+    assert!(
+        empty
+            .patched_rows(vec![vec![Some(1)]], vec![vec![Some(2), Some(4)]], false)
+            .is_err()
+    );
+    assert!(
+        empty
+            .patched_rows(vec![vec![Some(1)]], vec![vec![Some(1), None]], false)
+            .is_err()
+    );
+    assert!(
+        empty
+            .patched_rows(
+                vec![vec![Some(1)]],
+                vec![vec![Some(1), Some(4)], vec![Some(1), Some(5)]],
+                false
+            )
+            .is_err()
+    );
+    assert_eq!(store.version("empty_patch").len(), 0);
+}

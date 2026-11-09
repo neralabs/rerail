@@ -375,7 +375,9 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
         for (p, exits) in last(&e) {
             edges.push(Edge { from: Some(p), exits, enters: vec![], to: None });
         }
-        if nullable(&e) {
+        // The root may be empty: a file without tokens goes to tree-sitter (its start state has
+        // no end), as the reference's root is never zero-width. A nested node may not.
+        if l != 0 && nullable(&e) {
             return Err(format!("node {} may be empty", b.rules[r].kind));
         }
         levels.push(Level { kind: (ids.kind)(&b.rules[r].kind)?, edges });
@@ -515,11 +517,107 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
     Ok((states, arms))
 }
 
+/// The extras (`extra K`): tokens the grammar does not name, which may come between any two
+/// others. Each goes where tree-sitter's parser puts it: in the lowest node holding the tokens
+/// on either side, after the nodes that end before it. A state's arms close those nodes when
+/// the next token comes; so an extra arm closes them first, writes the extra's leaf, and goes on
+/// in a copy of the state without those closes. That needs every way on from the state to close
+/// the same number: where they differ, the extra's place depends on the token after it, and the
+/// state has no extra arm (the file goes to tree-sitter). So too a nested level that may end
+/// where it could go on.
+///
+/// A state takes extras only where `apart(token, extra)` for each of its tokens: tier 2 tells a
+/// token's row by its first byte, so an extra there must not begin as one of the state's tokens
+/// (inside a string, say, where tier 1 makes no comment).
+///
+/// In state 0 nothing is open: the extra arm opens the root first (so the root starts at the
+/// extra) and goes on in a copy of state 0 whose arms do not open it.
+pub(super) fn with_extras(
+    mut states: Vec<StateRow>,
+    mut arms: Vec<ArmRow>,
+    extras: &[u16],
+    apart: &dyn Fn(u16, u16) -> bool,
+) -> Result<(Vec<StateRow>, Vec<ArmRow>), String> {
+    if extras.is_empty() {
+        return Ok((states, arms));
+    }
+    if let Some(a) = arms.iter().find(|a| extras.contains(&a.token)) {
+        return Err(format!("extra kind {} is a token of the grammar too", a.token));
+    }
+    if arms.iter().any(|a| a.to == 0 || a.push == Some(0)) {
+        return Err("extras with the root's start state entered again: not compiled yet".into());
+    }
+    let root = states[0].level;
+    let closes = |acts: &[Act]| acts.iter().take_while(|a| **a == Act::Close).count();
+    let leaf = Act::Leaf { field: 0, supers: vec![] };
+    let mut new_arms: Vec<ArmRow> = Vec::new();
+    // State 0: its arms all open the root first.
+    let first: Vec<&ArmRow> = arms.iter().filter(|a| a.from == 0).collect();
+    let open_root = match first.first().and_then(|a| a.acts.first()) {
+        Some(o @ Act::Open { kind, .. }) if *kind == root && first.iter().all(|a| a.acts.first() == Some(o)) => o.clone(),
+        _ => return Err("extras where state 0's arms do not all open the root: not compiled yet".into()),
+    };
+    let zero_takes = first.iter().all(|a| extras.iter().all(|&k| apart(a.token, k)));
+    let opened = states.len() as u16;
+    states.push(states[0].clone());
+    for a in first.iter().map(|a| (*a).clone()).collect::<Vec<_>>() {
+        arms.push(ArmRow { from: opened, acts: a.acts[1..].to_vec(), ..a });
+    }
+    if zero_takes {
+        for &k in extras {
+            new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), leaf.clone()], to: opened, push: None });
+        }
+    }
+    // Every other state, and the copies made on the way.
+    let mut copies: HashMap<(u16, usize), u16> = HashMap::new();
+    let mut s = 1u16;
+    while usize::from(s) < states.len() {
+        let mine: Vec<ArmRow> = arms.iter().filter(|a| a.from == s).cloned().collect();
+        let nested = states[usize::from(s)].level != root;
+        let end = states[usize::from(s)].end;
+        // A nested state with no arms ends its level at once, taking no token.
+        if mine.is_empty() && nested || (nested && end.is_some()) {
+            s += 1;
+            continue;
+        }
+        if !mine.iter().all(|a| extras.iter().all(|&k| apart(a.token, k))) {
+            s += 1;
+            continue;
+        }
+        let mut ways: Vec<usize> = mine.iter().map(|a| closes(&a.acts)).collect();
+        ways.extend(end.map(usize::from));
+        let m = ways[0];
+        if ways.iter().all(|&w| w == m) {
+            let to = if m == 0 {
+                s
+            } else {
+                *copies.entry((s, m)).or_insert_with(|| {
+                    let c = states.len() as u16;
+                    states.push(StateRow { level: states[usize::from(s)].level, end: end.map(|e| e - m as u8) });
+                    for a in &mine {
+                        arms.push(ArmRow { from: c, acts: a.acts[m..].to_vec(), ..a.clone() });
+                    }
+                    c
+                })
+            };
+            let mut acts = vec![Act::Close; m];
+            acts.push(leaf.clone());
+            for &k in extras {
+                new_arms.push(ArmRow { from: s, token: k, acts: acts.clone(), to, push: None });
+            }
+        }
+        s += 1;
+    }
+    arms.extend(new_arms);
+    arms.sort_by_key(|a| a.from);
+    Ok((states, arms))
+}
+
 /// A `check`'s grammar over a token's bytes to a byte state machine (doc 18 §4): its names are
 /// byte classes, its literals bytes. Glushkov's positions, each a set of bytes; then a state per
 /// set of positions reached (subset construction), the arms from one state on disjoint bytes.
-/// State 0 is the start. The token's arm runs it over the token's bytes, as simdjson's stage 2
-/// parses a number; a byte with no arm, or an end outside an accepting state, refuses.
+/// State 0 is the start. The compiler makes a mask per state, over every byte of the file at
+/// once (`bitlex_compile`); a byte with no arm, or an end outside an accepting state, refuses.
 pub(super) fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -> Result<(Vec<bool>, Vec<(u16, [u64; 4], u16)>), String> {
     fn set(ranges: &[(u32, u32)]) -> [u64; 4] {
         let mut s = [0u64; 4];
@@ -656,158 +754,3 @@ fn merge(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> (Vec<bool>, Vec<(u16
     (order.iter().map(|&s| accept[s]).collect(), out)
 }
 
-/// A check's byte machine as straight-line operations over the token's bytes (doc 18 §4,
-/// decision 0078): no loop over the bytes, as simdjson's `parse_number` has none. Bit `i` is the
-/// token's byte `i`; `within` is the token's bytes. A token of any length runs it 64 bytes at a
-/// time, `prev` and `fill` carrying from word to word, as tier 1 runs over a file. The machine is on one path, so per state:
-///
-/// - `e`: where it enters the state (the token's first byte for the start);
-/// - a self-loop on bytes `L` keeps it there over a run: `q = fill(e, ~prev(L, 1))`, and it
-///   leaves at `x = q & ~L`, the first byte not in `L` (or the token's end);
-/// - without one, `x = e`;
-/// - each other arm on bytes `B` enters its state at `prev(x & B, 1)`.
-///
-/// The output fails where some `x` has a byte no arm takes, or is the end outside an accepting
-/// state; it is one byte late (`delay 1`), so a failure at the end is the last byte's. A cycle through two or more states would need a loop over the bytes: refused.
-pub(super) fn check_program(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> Result<super::block::BlockProgram, String> {
-    use super::block::{BlockOp, BlockProgram, ClassTable};
-    let n = accept.len();
-    let mut p = BlockProgram::default();
-    let mut seen: HashMap<BlockOp, u16> = HashMap::new();
-    let mut op = |p: &mut BlockProgram, o: BlockOp| -> u16 {
-        *seen.entry(o).or_insert_with(|| {
-            p.ops.push(o);
-            (p.ops.len() - 1) as u16
-        })
-    };
-    // A byte set: one `eq`, or a class of its own table (products of nibble sets, eight a table).
-    let mut sets: HashMap<[u64; 4], u16> = HashMap::new();
-    let mut set_op = |p: &mut BlockProgram, op: &mut dyn FnMut(&mut BlockProgram, BlockOp) -> u16, s: [u64; 4]| -> Result<u16, String> {
-        if let Some(&v) = sets.get(&s) {
-            return Ok(v);
-        }
-        let bytes: Vec<u8> = (0..=255u8).filter(|&b| s[usize::from(b / 64)] >> (b % 64) & 1 == 1).collect();
-        let v = if bytes.len() == 1 {
-            op(p, BlockOp::Eq(bytes[0]))
-        } else {
-            let mut products: Vec<(u16, u16)> = Vec::new();
-            for h in 0..16u8 {
-                let lo = bytes.iter().filter(|&&b| b >> 4 == h).fold(0u16, |a, &b| a | 1 << (b & 15));
-                if lo == 0 {
-                    continue;
-                }
-                match products.iter_mut().find(|x| x.1 == lo) {
-                    Some(x) => x.0 |= 1 << h,
-                    None => products.push((1 << h, lo)),
-                }
-            }
-            if products.len() > 8 {
-                return Err("a byte set of more than eight nibble products".into());
-            }
-            let mut t = ClassTable::default();
-            for (k, &(hi, lo)) in products.iter().enumerate() {
-                for i in 0..16 {
-                    if hi >> i & 1 == 1 {
-                        t.hi[i] |= 1 << k;
-                    }
-                    if lo >> i & 1 == 1 {
-                        t.lo[i] |= 1 << k;
-                    }
-                }
-            }
-            p.tables.push(t);
-            let bits = ((1u16 << products.len()) - 1) as u8;
-            op(p, BlockOp::Class { table: (p.tables.len() - 1) as u16, bits })
-        };
-        sets.insert(s, v);
-        Ok(v)
-    };
-    // The states in an order where every arm but a self-loop goes forward.
-    let mut order = Vec::new();
-    let mut indegree = vec![0usize; n];
-    for a in arms.iter().filter(|a| a.0 != a.2) {
-        indegree[usize::from(a.2)] += 1;
-    }
-    let mut ready: Vec<usize> = (0..n).filter(|&s| indegree[s] == 0).collect();
-    while let Some(s) = ready.pop() {
-        order.push(s);
-        for a in arms.iter().filter(|a| usize::from(a.0) == s && a.0 != a.2) {
-            let t = usize::from(a.2);
-            indegree[t] -= 1;
-            if indegree[t] == 0 {
-                ready.push(t);
-            }
-        }
-    }
-    if order.len() != n || order.first() != Some(&0) {
-        return Err("its state machine has a cycle through two or more states, which needs a loop over the bytes: refused".into());
-    }
-    let within = op(&mut p, BlockOp::Within(0));
-    let shifted_within = op(&mut p, BlockOp::Prev(within, 1));
-    let end = op(&mut p, BlockOp::AndNot(shifted_within, within));
-    let mut enter: Vec<Option<u16>> = vec![None; n];
-    // The token's first byte: not a `const`, which would start it again in every 64 bytes.
-    enter[0] = Some(op(&mut p, BlockOp::AndNot(within, shifted_within)));
-    // Failures inside the token, and at its end; both brought to one byte late, so the end's is
-    // the last byte's (the output's delay is 1).
-    let mut fail_in: Option<u16> = None;
-    let mut fail_end: Option<u16> = None;
-    let join = |p: &mut BlockProgram, op: &mut dyn FnMut(&mut BlockProgram, BlockOp) -> u16, acc: &mut Option<u16>, v: u16| {
-        *acc = Some(match *acc {
-            Some(a) => op(p, BlockOp::Or(a, v)),
-            None => v,
-        });
-    };
-    for &s in &order {
-        let Some(e) = enter[s] else { continue };
-        let own: Vec<&(u16, [u64; 4], u16)> = arms.iter().filter(|a| usize::from(a.0) == s).collect();
-        let x = match own.iter().find(|a| usize::from(a.2) == s) {
-            Some(lp) => {
-                let l = set_op(&mut p, &mut op, lp.1)?;
-                let l = op(&mut p, BlockOp::And(l, within));
-                let stay = op(&mut p, BlockOp::Prev(l, 1));
-                let leave = op(&mut p, BlockOp::Not(stay));
-                let q = op(&mut p, BlockOp::Fill(e, leave));
-                op(&mut p, BlockOp::AndNot(q, l))
-            }
-            None => e,
-        };
-        let mut taken: Option<u16> = None;
-        for a in own.iter().filter(|a| usize::from(a.2) != s) {
-            let b = set_op(&mut p, &mut op, a.1)?;
-            let at = op(&mut p, BlockOp::And(x, b));
-            let at = op(&mut p, BlockOp::And(at, within));
-            let next = op(&mut p, BlockOp::Prev(at, 1));
-            let t = usize::from(a.2);
-            enter[t] = Some(match enter[t] {
-                Some(v) => op(&mut p, BlockOp::Or(v, next)),
-                None => next,
-            });
-            taken = Some(match taken {
-                Some(v) => op(&mut p, BlockOp::Or(v, b)),
-                None => b,
-            });
-        }
-        // A byte no arm takes, inside the token; the end, outside an accepting state.
-        let inside = op(&mut p, BlockOp::And(x, within));
-        let bad = match taken {
-            Some(t) => op(&mut p, BlockOp::AndNot(inside, t)),
-            None => inside,
-        };
-        join(&mut p, &mut op, &mut fail_in, bad);
-        if !accept[s] {
-            let at_end = op(&mut p, BlockOp::And(x, end));
-            join(&mut p, &mut op, &mut fail_end, at_end);
-        }
-    }
-    let late = op(&mut p, BlockOp::Prev(fail_in.expect("the start state"), 1));
-    let fail = match fail_end {
-        Some(e) => op(&mut p, BlockOp::Or(late, e)),
-        None => late,
-    };
-    p.outputs = vec![fail];
-    p.delay = 1;
-    p.output_delays = vec![1];
-    p.verify().map_err(|_| "its operations do not verify".to_owned())?;
-    Ok(p)
-}

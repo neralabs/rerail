@@ -29,12 +29,8 @@ pub(in crate::code_rule_dsl) struct Session {
     #[cfg(test)]
     thread: std::thread::ThreadId,
     pub(super) memo: memo::Held,
-    /// The thread that started it: in tests, which run in parallel in one process, a session is its own test's.
-    #[cfg(test)]
-    owner: std::thread::ThreadId,
-    /// The cross-file part as the last run left it (decision 0077), by its program's key: an edit runs the strata
-    /// whose inputs changed.
-    pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
+    /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed.
+    pub(super) cross: Mutex<Option<super::retain::Retained>>,
 }
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
@@ -48,11 +44,13 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = dir.join("session.sqlite");
     let store = ContentStore::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    *session = Some(Session { path, store, memo: Default::default(), cross: Default::default(),
+    *session = Some(Session {
+        path,
+        store,
+        memo: Default::default(),
+        cross: Mutex::new(None),
         #[cfg(test)]
         thread: std::thread::current().id(),
-        #[cfg(test)]
-        owner: std::thread::current().id(),
     });
     Ok(())
 }
@@ -103,7 +101,7 @@ impl Held {
     /// Whether a run on this thread is the session's: always, outside tests.
     fn ours(_session: &Session) -> bool {
         #[cfg(test)]
-        return _session.owner == std::thread::current().id();
+        return _session.thread == std::thread::current().id();
         #[cfg(not(test))]
         true
     }
@@ -121,6 +119,7 @@ mod tests {
     /// a third, after an edit, evaluates the edited file only, and every run's findings are a fresh run's.
     #[test]
     fn a_session_reruns_what_an_edit_changed() {
+        let _session = super::super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let base = std::env::temp_dir().join(format!("rerail-session-{}", std::process::id()));
         let (src, out) = (base.join("src"), base.join("out"));
@@ -270,6 +269,75 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// A cross-file stratum with aggregates is maintained by its changed groups (decision 0077 §3): a module's
+    /// importers counted, up and down to none, give a full run's findings.
+    #[test]
+    fn a_session_maintains_a_cross_file_aggregate() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-count-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("hub.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-import-hub" revision 1
+.description "An import of a module two files import, and an import of a module that imports nothing."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl fan(b: number, n: number)
+fan(b, n) :- doc(b, _, _), n = count : { dep(_, b) }.
+.decl leaf(b: number)
+leaf(b) :- doc(b, _, _), count : { dep(b, _) } = 0.
+.violation HUB(at: node) code "HUB" "An import of a module two or more files import."
+HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, n), n >= 2.
+.violation LEAF(at: node) code "LEAF" "An import of a module that imports nothing."
+LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from c import x\n"), ("b.py", "from c import y\n"), ("c.py", "from d import z\n"), ("d.py", "x = 1\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let findings = || {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        };
+        let full = || {
+            full(run);
+            findings()
+        };
+        start(&base.join("session")).unwrap();
+        run();
+        assert_eq!(findings(), full());
+        assert!(findings().iter().any(|r| r.contains("HUB")) && findings().iter().any(|r| r.contains("LEAF")), "{:?}", findings());
+        let edits: [(&str, &str); 4] = [
+            ("b.py", "x = 2\n"),
+            ("d.py", "from a import w\n"),
+            ("b.py", "from c import y\nfrom d import q\n"),
+            ("d.py", "x = 1\n"),
+        ];
+        let mut maintained = 0;
+        for (path, text) in edits {
+            std::fs::write(src.join(path), text).unwrap();
+            let report = run();
+            let got = findings();
+            assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
+            eprintln!("{path}: {:?} strata run, {:?} maintained (recursive, derived again); {} findings", report.cross_strata, report.cross_maintained, got.len());
+            assert_eq!(report.cross_maintained.2, 0, "no stratum is derived again");
+            maintained += report.cross_maintained.0;
+        }
+        assert!(maintained > 0);
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// A negation with a wildcard, `!dep(a, _)`, over a relation that loses one of two rows: the negation still fails
     /// (spike O125). Delete-and-rederive's insert rule must test it over the new rows, not take the lost row for it.
     #[test]
@@ -320,6 +388,78 @@ LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
         }
         assert!(maintained > 0, "the negation's stratum is maintained");
         stop();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Where a session's run spends its CPU (decision 0090, step 1): each linear cost's span, for a one-file edit
+    /// over `RERAIL_SESSION_COST_FILES` modules (default 400) in an import chain, with reachability and counts.
+    /// A measurement, not a check: `cargo test … session_costs -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn session_costs() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let n: usize = std::env::var("RERAIL_SESSION_COST_FILES").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
+        let base = std::env::temp_dir().join(format!("rerail-session-costs-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("costs.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-session-costs" revision 1
+.description "Imports that close a cycle, and imports of modules many files import."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl reach(a: number, b: number)
+reach(a, b) :- dep(a, b).
+reach(a, c) :- reach(a, b), dep(b, c).
+.decl fan(b: number, n: number)
+fan(b, n) :- doc(b, _, _), n = count : { dep(_, b) }.
+.violation CYC(at: node) code "CYC" "An import that closes a cycle."
+CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+.violation HUB(at: node) code "HUB" "An import of a module four or more files import."
+HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
+"#,
+        )
+        .unwrap();
+        // Module i imports i+1 and i/7: a chain, with hubs, so reach is quadratic in a window only.
+        let module = |i: usize, extra: &str| format!("from m{} import x\nfrom m{} import y\n{extra}def f{i}(a):\n    return a\n", (i + 1) % (n + 1), i / 7);
+        for i in 0..n {
+            std::fs::write(src.join(format!("m{i}.py")), module(i, "")).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        crate::code_rule_dsl::logic::profile::set(true);
+        let show = |what: &str, report: &super::super::Report| {
+            let spans = crate::code_rule_dsl::logic::profile::spans();
+            let cross: f64 = spans.iter().filter(|(p, _)| p.ends_with("/cross") || p.as_str() == "cross").map(|(_, t)| t.total).sum();
+            eprintln!("{what}: strata {:?}, maintained {:?}; cross {cross:.3} s CPU", report.cross_strata, report.cross_maintained);
+            for (path, t) in spans.iter().filter(|(p, _)| p.split_once("session/").is_some_and(|(_, rest)| !rest.contains('/'))) {
+                eprintln!("    {:>7.3} s  {path}", t.total);
+            }
+            // The costliest strata, and their parts: loading inputs and indexes, and the joins.
+            let mut strata: Vec<(&String, f64)> = spans.iter().filter(|(p, _)| p.contains("session/plan and evaluate/stratum ") && p.matches('/').count() == 3).map(|(p, t)| (p, t.total)).collect();
+            strata.sort_by(|a, b| b.1.total_cmp(&a.1));
+            for (path, total) in strata.into_iter().take(4) {
+                let part = |name: &str| spans.get(&format!("{path}/native/{name}")).map_or(0.0, |t| t.total);
+                eprintln!("    {total:>7.3} s  {}: open {:.3} s, joins {:.3} s", path.rsplit('/').next().unwrap_or(""), part("engine open (load inputs, build indexes)"), part("engine run (joins)"));
+            }
+        };
+        start(&base.join("session")).unwrap();
+        let r = run();
+        show("first run", &r);
+        for (k, (i, extra)) in [(n / 2, "z = 1\n"), (n / 3, "from m0 import q\n"), (n / 2, "")].into_iter().enumerate() {
+            std::fs::write(src.join(format!("m{i}.py")), module(i, extra)).unwrap();
+            let r = run();
+            show(&format!("edit {k} (m{i})"), &r);
+        }
+        stop();
+        let r = run();
+        show("cold run, no session", &r);
+        crate::code_rule_dsl::logic::profile::set(false);
         let _ = std::fs::remove_dir_all(&base);
     }
 }

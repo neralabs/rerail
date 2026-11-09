@@ -17,12 +17,6 @@ use std::collections::{BTreeMap, HashSet};
 /// When it changes, the old number joins `RETIRED_CORPUS_MEMO_SCHEMAS` only if its rows could outlive their plans
 /// (they cannot since decision 0053: the plan names the engine build, and dead plans are collected).
 const SCHEMA: u32 = 5;
-
-/// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
-/// file hands on its base rows as an evaluated one does.
-pub(super) fn base_key(rel: &str) -> String {
-    format!("base:{rel}")
-}
 const _: () = {
     let retired = crate::content_store::RETIRED_CORPUS_MEMO_SCHEMAS;
     let mut i = 0;
@@ -31,6 +25,12 @@ const _: () = {
         i += 1;
     }
 };
+
+/// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
+/// file hands on its base rows as an evaluated one does.
+pub(super) fn base_key(rel: &str) -> String {
+    format!("base:{rel}")
+}
 
 /// What the chunks handed on for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -71,6 +71,10 @@ pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     hash.update(b"rerail.corpus-local/v2\0");
     hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
     hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    // A memoised row's node ids are those of the scheme it was made under: preorder, or per definition.
+    if crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
+        hash.update(b"node-ids:definition\0");
+    }
     hash.update(program);
     hash.finalize().into()
 }
@@ -86,6 +90,15 @@ pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Progr
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-program/v3\0");
     hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
+    hash.finalize().into()
+}
+
+/// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
+pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-options/v1\0");
+    hash.update(digest);
+    hash.update(options.to_string().as_bytes());
     hash.finalize().into()
 }
 
