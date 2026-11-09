@@ -1,6 +1,6 @@
 # 0096: Planner statistics are kept in the store, maintained by the deltas that change the rows
 
-Status: proposed (2026-11-09). Design only; nothing built.
+Status: proposed (2026-11-09). Design only; nothing built. The approximate variant (last sections) is recommended over the exact one.
 
 ## Intro
 
@@ -156,8 +156,132 @@ same `Stats` fields through `Totals::apply`, which stays as the single conversio
 3. Build the per-file cross store (rows in SQLite, keyed by file and program). An unchanged file is not replayed.
 4. Derived relations, once the core has relations with deletes.
 
-## Open
+## Approximate counts: an exploration
 
-- Whether a value column of very many distinct values (interned names) should keep exact `stat_value` rows or
-  a linear sketch. An AMS sketch estimates `sq` and supports deletes. Exact counts are the default until a
-  measurement says otherwise.
+Planner statistics only have to be good enough to choose a join order. They are pure overhead: no finding
+depends on them, and the memo key does not include them (`memo::plan_digest` hashes the build, the grammar,
+the node-id scheme and the program, and nothing else). So the question is what the cheapest structure is that
+keeps the estimates within a small factor, supports deletes, and is bounded in size.
+
+### What exact costs, measured
+
+The struct phase's exports over 84 files plus typeshed hold 245,681 cells across 9 relations and 26 columns.
+Exact per-value counts for them are 89,705 `(rel, col, value)` rows, so the statistics would be 37% of the data
+they describe. They also grow with the repository. The skew is extreme: in `binds.c3` one value of 4,891 holds
+3,137 of 11,534 rows, and that one value is almost all of `sq` (fan 864.6). Any structure has to get the heavy
+values right and may be rough on the tail.
+
+### The candidate: two linear sketches per column
+
+A *linear* sketch is a fixed array of counters. Each value updates a few counters by +1 on insert and −1 on
+delete. The sketch of a multiset is the sum of its values' updates, so:
+
+- **Deletes are exact.** Removing a row undoes its insert to the bit. After any order of inserts and deletes
+  the counters equal those of the final multiset. The sketch is history-independent, as "two loads equal one
+  load" asks (spike D S124).
+- **Parts add and subtract.** Two documents' sketches sum to the sketch of both. A document's minus is the
+  negation of its old sketch.
+- **The size is fixed** whatever the repository's size.
+
+The two sketches:
+
+```text
+sq  (fanout = sq / rows): AMS / Count-Sketch.
+    d rows of w signed counters; value v adds ±1 (sign from its hash) at column h_i(v) of row i.
+    sq ≈ median over i of Σ_j t[i][j]²            // unbiased per row; the median tames outliers
+    A heavy value lands whole in one counter, so it is never sampled away.
+
+ndv: levelled counting bitmap (an L0 sketch).
+    level(v) = trailing zeros of hash(v), so level ≥ L is a 2^-L sample of the distinct values.
+    Each level has m counters; v adds ±1 at slot g(v) of its level.  // counters, not bits: deletes work
+    ndv ≈ 2^L · (−m · ln(empty/m)) at the lowest L whose levels ≥ L leave ≥ 30% of slots empty.
+```
+
+`rows` stays an exact counter. `sqd` is exact too: a document's term `Σ_v n_d(v)²` is computed from its rows
+when they are in hand, and subtracted from its old rows when it changes. A node column's `ndv` and `sq` are also
+exact sums, because its values never cross documents.
+
+### Accuracy on the same exports
+
+The simulation is in `docs/final-shape/notes/0096-sketch-sim.py`. For each column it inserts every row, deletes
+a third of them and inserts that third again. The sketch must come out as if built once. The ratio is the
+estimate divided by the exact value:
+
+| Sketch | Size per column | Fanout, worst ratio | ndv, worst ratio |
+| --- | --- | --- | --- |
+| AMS w=64 d=3; ndv m=64 | 768 B + ≤ 1.3 KB (≈10 occupied levels × 128 B) | 1.25× | 1.35× |
+| AMS w=256 d=3; ndv m=128 | 3 KB + ≤ 2.6 KB | 1.12× | 1.41× |
+| ndv from rows²/sq (no sketch) | 0 | — | 442× |
+
+The ndv sizes count only occupied levels. The array has 32 levels, but those above about log₂(ndv/m) are
+empty and are stored sparsely. The third row is the free option, which assumes uniform postings. It rules
+itself out: skew is the normal case here.
+
+Fanout errors of 1.1–1.25× and ndv errors of 1.4× are below the granularity at which these plans differ. The
+join orders that matter differ by 10–1000× in fanout: compare `binds.c2` at 3,942 with `binds.c1` at 14.4. This
+has not been measured on the planner itself. §"Validation" below says how to measure it.
+
+### What stays exact
+
+Some estimates are not served well by a sketch:
+
+- **Few-valued columns (dfreq).** A column keeps exact per-value counts while it has at most 64 distinct
+  values (kinds, flags, `def.c1`, `param.c1`). That is at most 64 rows, and the planner reads them value by
+  value.
+- **The program's constants (`Stats::memo`).** A constant compared in a rule is a point query. A Count-Sketch
+  point query errs by about √sq/w, which can swamp a rare constant. So the constants the planner registers are
+  a watch list with exact counts. A new constant costs one SQL count over its relation's rows when first
+  registered. That is rare: the program changes, not the data.
+
+### Exact versus approximate
+
+| | Exact (`stat_value`) | Approximate (sketches) |
+| --- | --- | --- |
+| Size | grows with distinct values: 37% of the cells here | fixed: ≤ about 2 KB per column |
+| Cost per changed row | one B-tree upsert per value column; a 0↔1 test for ndv | d + 1 counter updates in memory |
+| Write to SQLite | one row per changed value, at random keys | one blob per changed column, rewritten |
+| Cold run (every row new) | builds a table about a third of the data | fixed work per row; nothing grows |
+| Deletes | exact | exact (linear), and history-independent |
+| Memory in a session | one map entry per distinct value | fixed |
+| Accuracy | exact | 1.1–1.4× on the measured exports |
+| Few-valued columns, constants | for free | an exact side table (≤ 64 values; watch list) |
+| Determinism | yes | yes, with fixed hash seeds |
+| Restart (delayed readback) | rows tagged with a version | blobs tagged with a version; the same rule |
+| Complexity | trivial | two small structures plus a switch at 64 values |
+
+What decides it: the statistics are overhead whose only job is ranking join orders. Exact counts pay a cost
+that grows with the repository, at a precision the planner does not use. The sketches make that cost constant.
+The one thing exact gives for free, point counts of particular values, is kept exact where the planner asks for
+it.
+
+### What changes in §1–§3
+
+- `stat_value` keeps only few-valued columns (≤ 64 values) and the watch list.
+- `stat_total` gains a `sketch BLOB` holding the AMS and ndv counters.
+- `stat_part` goes. A document's minus is computed from its old rows, which are always at hand. The phase store
+  holds them per granule. A memo record holds the file's rows and is read once, for the changed file only. That
+  is O(changed), and no per-document statistics are stored. This holds for exact counts as well.
+- The writer updates the sketches from the delta rows in memory (the session holds them, memory ahead). It
+  rewrites the changed columns' blobs in the same transaction as the rows. The version rule of §3 is
+  unchanged.
+
+### Validation (before it is built)
+
+Two checks, both cheap:
+
+1. **Planner sensitivity.** Add a debug knob that multiplies each `fan` and `ndv` by a deterministic per-column
+   factor in [1/1.5, 1.5]. Compare the chosen plans (`RERAIL_DUMP_STATS`, plan dumps) with the exact run, on
+   the struct reader and on the gate's converted rules. If the plans are unchanged, or change with no change in
+   CPU, the sketch sizes above are enough.
+2. **Accuracy at scale.** Run the simulation over base facts (node rows, names) of the 9,010-file repository,
+   where columns have far more distinct values than these exports.
+
+## Recommendation
+
+Approximate, with an exact side for few-valued columns and the watch list:
+
+- AMS w=64 d=3 for `sq`;
+- a levelled counting bitmap, m=64, for `ndv`;
+- exact `rows` and `sqd`.
+
+Keep the exact design as the fallback if the validation shows the planner is sensitive at 1.5×.
