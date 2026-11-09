@@ -2280,8 +2280,18 @@ fn run_observed(
         let doc_at = split.exports.iter().map(|rel| (rel.clone(), lowered.program.decls[rel].iter().position(|(_, t)| t == "node"))).collect();
         // A session's exports counted by file too (0096 step 3). `RERAIL_COUNT_EXPORTS=off` holds every hit's rows
         // again.
-        let count_exports = (session.is_some() && std::env::var("RERAIL_COUNT_EXPORTS").map_or(true, |v| v != "off")).then(|| split.exports.iter().cloned().collect::<Vec<_>>());
-        k.begin(&rels, doc_at, count_exports);
+        // With them each base relation's held columns, and the files' tree counts.
+        let keep = (session.is_some() && std::env::var("RERAIL_COUNT_EXPORTS").map_or(true, |v| v != "off")).then(|| keptstats::Keep {
+            exports: split.exports.iter().cloned().collect(),
+            base: stored
+                .iter()
+                .map(|(rel, names)| {
+                    let all = super::super::sql::select::input_columns(rel).unwrap_or_default();
+                    (rel.clone(), memo::base_key(rel), names.iter().filter_map(|n| all.iter().position(|c| c == n)).collect())
+                })
+                .collect(),
+        });
+        k.begin(&rels, doc_at, keep);
     }
     // The memo hits' exports are not measured while the keeper counts them: their statistics are its (after the chunks).
     let mut hits_unmeasured = false;
@@ -2289,6 +2299,12 @@ fn run_observed(
     // requests has started (its loads read the rows the chunks hold).
     let held_by_count: std::cell::RefCell<Vec<(String, memo::Content, i64)>> = std::cell::RefCell::new(Vec::new());
     let skip_counted = std::cell::Cell::new(true);
+    // The counted rows installed as the run's (`finish`); else the skipped hits whose base rows and tree counts are
+    // taken from the memo after all (with the statistics).
+    let installed = std::cell::Cell::new(false);
+    let given_up: std::cell::RefCell<Vec<(String, memo::Content, i64)>> = std::cell::RefCell::new(Vec::new());
+    // The tree counts of the files the keeper counted that were not skipped: what its sum holds beyond the skipped.
+    let mut own_seen = Own::default();
     let keeper = std::cell::RefCell::new(keeper);
     // The counted exports given up: the hits they held are held from the memo now, as the replay would have.
     let hold_after_all = || -> Result<()> {
@@ -2299,6 +2315,7 @@ fn run_observed(
         if skipped.is_empty() {
             return Ok(());
         }
+        given_up.borrow_mut().extend(skipped.iter().cloned());
         let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the hits' exports after all".into());
         let memo = memo.ok_or_else(|| Error::Plan("counted exports without a memo".to_owned()))?;
         for (path, content, key) in skipped {
@@ -2340,7 +2357,8 @@ fn run_observed(
                         let width = lowered.program.decls[rel].len();
                         exports.borrow_mut().install(rel, width, counted.source(rel, width));
                     }
-                    crate::code_rule_dsl::logic::profile::decision("exports counted by file (0096 step 3)", || format!("{skipped} memo hits' export rows not held again; {} rows counted", counted.rows()));
+                    crate::code_rule_dsl::logic::profile::decision("exports counted by file (0096 step 3)", || format!("{skipped} memo hits neither held again nor counted: {} export rows, {} base rows counted", counted.rows(), k.as_ref().and_then(|k| k.counted_base()).map_or(0, |(b, _)| b.rows())));
+                    installed.set(true);
                     true
                 }
                 _ => false,
@@ -2642,8 +2660,13 @@ fn run_observed(
                     held_by_count.borrow_mut().push((path.clone(), content.expect("checked"), entry.key));
                 }
                 nodes += entry.nodes as usize;
-                own_totals.add(&Own::taken(&entry.rows));
-                for (rel, names) in &stored {
+                // Its tree counts and base rows are the keeper's too, when counted.
+                if !counted {
+                    let own = Own::taken(&entry.rows);
+                    own_totals.add(&own);
+                    own_seen.add(&own);
+                }
+                for (rel, names) in stored.iter().filter(|_| !counted) {
                     let Some((width, values)) = entry.rows.get(&memo::base_key(rel)) else { continue };
                     let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
                     let held = base_rows.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![None; all.len()]));
@@ -3101,6 +3124,7 @@ fn run_observed(
             for (d, path, source_id, _) in &chunk_docs {
                 // Counted in before it is remembered: the content it replaces is the memo's still.
                 if let (Some(k), Some(entry), Some(memo)) = (keeper.borrow_mut().as_mut(), entries.get(d), memo) {
+                    own_seen.add(&Own::taken(&entry.rows));
                     k.file(path, *source_id, *d, entry, &|c, key| memo.lookup(c, world::store_path(path), key, &memo_program).ok().flatten());
                 }
                 let (Some(id), Some(entry)) = (source_id, entries.get(d)) else { continue };
@@ -3396,6 +3420,43 @@ fn run_observed(
             None => finish()?,
         };
         let mut keeper = keeper.into_inner();
+        // The base relations' rows and the tree counts of the hits not held again (0096 step 3): the counted rows are
+        // the run's, and the kept tree counts beyond those of the files it saw. Given up, the skipped hits' are taken
+        // from the memo, as the replay would have.
+        match keeper.as_ref().and_then(|k| k.counted_base().zip(k.counted_own())).filter(|_| installed.get()) {
+            Some(((counted, rels), own)) => {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the counted base rows".into());
+                for (rel, _, from) in rels {
+                    let Some(held) = base_rows.get_mut(rel) else { continue };
+                    let all = super::super::sql::select::input_columns(rel).unwrap_or_default();
+                    let mut columns = counted.columns_each(rel, from.len()).into_iter();
+                    for c in from {
+                        let to = held.0.iter().position(|h| h == all[*c]).ok_or_else(|| Error::Plan(format!("{rel} has no column {}", all[*c])))?;
+                        held.1[to] = Some(columns.next().expect("one a column"));
+                    }
+                }
+                let mut skipped = own.clone();
+                skipped.sub(&own_seen);
+                own_totals.add(&skipped);
+            }
+            None => {
+                let memo = memo.filter(|_| !given_up.borrow().is_empty());
+                for (path, content, key) in std::mem::take(&mut *given_up.borrow_mut()).into_iter().filter(|_| memo.is_some()) {
+                    let entry = memo.expect("checked").lookup(content, world::store_path(&path), key, &memo_program).map_err(|e| Error::Plan(e.to_string()))?.ok_or_else(|| Error::Plan(format!("{path}: its memo entry is gone")))?;
+                    own_totals.add(&Own::taken(&entry.rows));
+                    for (rel, names) in &stored {
+                        let Some((width, values)) = entry.rows.get(&memo::base_key(rel)) else { continue };
+                        let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
+                        let held = base_rows.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![None; all.len()]));
+                        for name in names {
+                            let from = all.iter().position(|c| c == name).filter(|c| *c < *width).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                            let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                            held.1[to].get_or_insert_with(Vec::new).extend(values.iter().skip(from).step_by(*width).copied());
+                        }
+                    }
+                }
+            }
+        }
         // The exports' statistics as kept by file: a memo hit's rows are not measured again. An export whose kept rows
         // are not the rows held (a row handed to two files is held once) is measured from the rows held, as is every
         // export when the keeper was given up after the hits went unmeasured.
@@ -5199,6 +5260,33 @@ impl Own {
         self.docs += other.docs;
         for (key, n) in &other.postings {
             *self.postings.entry(key.clone()).or_default() += n;
+        }
+    }
+
+    /// `other` taken away (a file's share counted out): counts that reach 0 are dropped, as a sum without it holds.
+    fn sub(&mut self, other: &Own) {
+        for (k, (n, size)) in &other.kinds {
+            let e = self.kinds.entry(*k).or_default();
+            e.0 -= n;
+            e.1 -= size;
+            if *e == (0, 0) {
+                self.kinds.remove(k);
+            }
+        }
+        for (e, n) in &other.edges {
+            let c = self.edges.entry(*e).or_default();
+            *c -= n;
+            if *c == 0 {
+                self.edges.remove(e);
+            }
+        }
+        self.docs -= other.docs;
+        for (key, n) in &other.postings {
+            let c = self.postings.entry(key.clone()).or_default();
+            *c -= n;
+            if *c == 0 {
+                self.postings.remove(key);
+            }
         }
     }
 

@@ -35,13 +35,25 @@ pub(super) struct Keeper {
     exports: Option<super::exports::Counted>,
     export_rels: Vec<String>,
     building: bool,
+    /// With the exports: each base relation's held columns, counted by file (`Counted`, a row emitted once per file
+    /// holding it), by (relation, memo key, the columns taken from an entry's row); and the files' tree counts.
+    base_rels: Vec<(String, String, Vec<usize>)>,
+    base: super::exports::Counted,
+    own: super::Own,
+}
+
+/// What a session's keeper keeps of its files beyond their statistics (0096 step 3): the exports, and each base
+/// relation's held columns as (relation, memo key, the columns an entry's row gives).
+pub(super) struct Keep {
+    pub(super) exports: Vec<String>,
+    pub(super) base: Vec<(String, String, Vec<usize>)>,
 }
 
 impl Keeper {
     /// For a run reading `rels`, by entry key: the base relations held (`memo::base_key`, each with every column
     /// `input_columns` names) and the exports (each with its columns `c0…`), and `exports`, each export's column that
     /// names its rows' document (`Keeper::doc_at`).
-    pub(super) fn begin(&mut self, rels: &[(String, Vec<String>)], exports: HashMap<String, Option<usize>>, count_exports: Option<Vec<String>>) {
+    pub(super) fn begin(&mut self, rels: &[(String, Vec<String>)], exports: HashMap<String, Option<usize>>, keep: Option<Keep>) {
         self.doc_at = exports;
         self.seen.clear();
         self.failed = None;
@@ -55,15 +67,18 @@ impl Keeper {
             self.rels.entry(rel.clone()).or_insert_with(|| RelStats::new(columns.clone()));
         }
         // The exports counted while the files counted are the same ones; else counted again from every file.
-        match count_exports {
-            Some(names) => {
-                if self.exports.is_none() || self.export_rels != names || self.docs.is_empty() {
+        match keep {
+            Some(Keep { exports: names, base }) => {
+                if self.exports.is_none() || self.export_rels != names || self.base_rels != base || self.docs.is_empty() {
                     self.exports = Some(super::exports::Counted::default());
+                    self.base = super::exports::Counted::default();
+                    self.own = super::Own::default();
                     self.building = true;
                 } else {
                     self.building = false;
                 }
                 self.export_rels = names;
+                self.base_rels = base;
             }
             None => {
                 self.exports = None;
@@ -86,6 +101,16 @@ impl Keeper {
     /// The exports counted, after a run whose every file was counted (`end` gave the statistics).
     pub(super) fn counted_exports(&self) -> Option<&super::exports::Counted> {
         self.exports.as_ref().filter(|_| self.failed.is_none())
+    }
+
+    /// With `counted_exports`: the base relations' columns counted, by (relation, the columns' order in `base_rels`).
+    pub(super) fn counted_base(&self) -> Option<(&super::exports::Counted, &[(String, String, Vec<usize>)])> {
+        self.counted_exports().map(|_| (&self.base, self.base_rels.as_slice()))
+    }
+
+    /// With `counted_exports`: the counted files' tree counts, summed.
+    pub(super) fn counted_own(&self) -> Option<&super::Own> {
+        self.counted_exports().map(|_| &self.own)
     }
 
     /// Whether this run has given the keeper up.
@@ -138,10 +163,21 @@ impl Keeper {
     /// counted out is not held.
     fn patch_exports(&mut self, path: &str, entry: &memo::Entry, sign: i64) {
         let Some(counted) = self.exports.as_mut() else { return };
-        let ok = self.export_rels.iter().all(|rel| match entry.rows.get(rel) {
+        let mut ok = self.export_rels.iter().all(|rel| match entry.rows.get(rel) {
             Some((width, values)) => counted.patch(rel, *width, values, sign),
             None => true,
         });
+        for (rel, key, from) in &self.base_rels {
+            let Some((width, values)) = entry.rows.get(key) else { continue };
+            if from.iter().any(|c| c >= width) {
+                ok = false;
+                break;
+            }
+            let projected: Vec<i64> = values.chunks_exact(*width).flat_map(|row| from.iter().map(|c| row[*c])).collect();
+            ok &= self.base.patch(rel, from.len(), &projected, sign);
+        }
+        let own = super::Own::taken(&entry.rows);
+        if sign > 0 { self.own.add(&own) } else { self.own.sub(&own) }
         if !ok {
             self.fail(format!("{path}: an export row counted out that the counted exports do not hold"));
         }

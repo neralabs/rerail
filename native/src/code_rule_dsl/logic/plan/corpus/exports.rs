@@ -240,6 +240,26 @@ impl Counted {
         crate::code_rule_dsl::logic::native::component::columns_source(names, values.into_iter().map(Some).collect())
     }
 
+    /// Export `rel`'s rows as columns, each row as many times as files hold it (a base relation's rows, which are
+    /// not kept once as an export's are).
+    pub(super) fn columns_each(&self, rel: &str, width: usize) -> Vec<Vec<i64>> {
+        let mut out = vec![Vec::new(); width];
+        if let Some(held) = self.rels.get(rel).filter(|h| h.columns.len() == width) {
+            // Mostly each row once: the columns as they are.
+            if held.counts.iter().all(|&n| n == 1) {
+                return held.columns.clone();
+            }
+            for (id, &n) in held.counts.iter().enumerate() {
+                for _ in 0..n {
+                    for (c, col) in out.iter_mut().enumerate() {
+                        col.push(held.columns[c][id]);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Rows held, over every export.
     pub(super) fn rows(&self) -> usize {
         self.rels.values().map(|r| r.counts.len()).sum()
