@@ -342,7 +342,7 @@ joined(value) :- value = join name by rank sep "," : { item(1, name, "keep", ran
 .output joined
 "#).unwrap();
     let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-    let lowered = crate::code_rule_dsl::logic::plan::lower::lower(&program,python,&mut |texts| store.intern_atoms(texts).map_err(|e| crate::code_rule_dsl::logic::Error::Plan(e.to_string()))).unwrap();
+    let lowered = crate::code_rule_dsl::logic::plan::lower::lower(&program,python,&mut |texts| store.intern_atoms(texts).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()))).unwrap();
     let outcome = crate::code_rule_dsl::logic::plan::run_atoms_native(&lowered,&db,"main","program").unwrap();
     assert!(outcome.native.contains(&"joined".to_owned()),"{:?}",outcome.native);
     assert_eq!(outcome.outputs["joined"],["x4,x9"]);
