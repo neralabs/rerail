@@ -3586,16 +3586,16 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "2c6ee3568474fbe77d599a6403f5972350f34741",
-      "upstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a",
+      "engineCommit": "8b4d59c05930fb9bd9d631900b09e0160a1bffe9",
+      "upstreamCommit": "49f791af10b888b722784a713c911fa1f68c2e6e",
       "sourceTrees": {
-        "native": "4237268254b3c30b779eaa4945203ccc5b0ced3e",
+        "native": "45ee37d6b24c45166d909c6088167107470ff405",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-3b770a2b3d625130",
-      "sha256": "3b770a2b3d625130871eac5061b7be21b550b82b38f44271de88eeecc86d6167",
+      "path": ".rerail/modern-engine-alignment/cli-bee7e88b2f8269f4",
+      "sha256": "bee7e88b2f8269f48f87a10fee64d419c950179e274d92d7c14fa829824f35f1",
       "command": [
         "cargo",
         "build",
@@ -3604,10 +3604,9 @@
         "--features",
         "headless",
         "--bin",
-        "rerail-engine",
-        "--release"
+        "rerail-engine"
       ],
-      "seconds": 684.182
+      "seconds": 39.19
     },
     "previousUpstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a"
   },

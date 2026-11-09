@@ -154,7 +154,7 @@ class Contract:
         if self.args.entries:
             if not self.baseline:raise ValueError('Record the full source suite before selecting native helper slices')
             wanted=set(self.args.entries.split(','))
-            selected=[item for item in selected if (calls:=[r for r in self.baseline['calls'] if r['test']==item.nodeid]) and all(r['entry'] in wanted for r in calls)]
+            selected=[item for item in selected if ((calls:=[r for r in self.baseline['calls'] if r['test']==item.nodeid]) or self.args.module_assertions) and all(r['entry'] in wanted for r in calls)]
         self.selected=[item.nodeid for item in selected]
         items[:]=selected
 
@@ -188,6 +188,7 @@ class Contract:
         result = dict(format='rerail.impl-direct-execution-original-contracts/v1', sourcePin=PIN, commit=PIN,
             pytest_exit_code=int(code), exitCode=int(code), oracle=self.backend is None, source_mismatches=[],
             fullMigrationAcceptance=False, mode=self.args.mode if self.backend else 'source', part=self.args.part, parts=self.args.parts, collected=self.collected, selectedCases=self.selected, selectedEntries=self.args.entries,
+            moduleAssertions=self.args.module_assertions,
             cases=self.cases, calls=self.calls, events=[], missingResults=missing,
             semanticFallbacks=self.fallbacks, hostProtocolCalls=self.host_protocol_calls, harnessFiles=self.harness,
             sourceFiles={n: sha((self.args.source/n).read_bytes()) for n in
@@ -205,6 +206,7 @@ def main():
     for name in ['source', 'out', 'baseline', 'engine', 'rule-root']:
         parser.add_argument('--'+name, type=Path, required=name in ['source', 'out'])
     parser.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot')
+    parser.add_argument('--module-assertions',action='store_true',help='Include original module and passive DTO assertions after native configuration binding')
     parser.add_argument('--entries',help='Explicit native helper slice; does not certify the complete original suite')
     parser.add_argument('--part', type=int, default=0)
     parser.add_argument('--parts', type=int, default=1)

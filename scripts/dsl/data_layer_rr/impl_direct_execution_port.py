@@ -8,6 +8,16 @@ def install(suite, module):
         options['env']=['ide.api=true',*options.get('env',[])]
         return suite.native('impl_direct_execution', entry, list(files), options)
 
+    settings=rows('configuration')
+    if not settings or any(row['code']!='IDE_SETTING' for row in settings):
+        raise ValueError('Native direct-execution configuration is missing')
+    def setting(name):
+        return [r['parameters']['value'] for r in sorted(settings,key=lambda r:r['parameters']['ordinal']) if r['parameters']['setting']==name]
+    for name,key,kind in [('ALLOWED_FILES','allowed_file',set),('ALLOWED_DIR_PATTERNS','allowed_dir_pattern',list),('DIRECT_EXECUTION_PATTERNS','direct_pattern',list),('FTS_MANAGER_DIRECT_EXECUTION_PATTERNS','fts_pattern',list)]:
+        values=setting(key)
+        if not values:raise ValueError('Native configuration omits '+name)
+        suite.replace(module,name,kind(values))
+
     def allowed(path):
         result = rows('is_allowed_file', options=dict(argumentPath=str(path)))
         if len(result) != 1 or result[0]['code'] != 'IDE_BOOL':
