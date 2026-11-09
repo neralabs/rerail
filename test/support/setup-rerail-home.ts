@@ -4,11 +4,15 @@ import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { watchRealAgentSettings } from "./user-home.js";
 
 const priorRerailHome = process.env.RERAIL_HOME;
 const priorContentStorePath = process.env.RERAIL_CONTENT_STORE_PATH;
 const priorUserHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 const priorGitConfig = join(homedir(), ".gitconfig");
+// The person's own agent settings, watched for this file's whole run: a test that writes a temp folder into them
+// fails the run rather than leaving the person's coding agents pointing at a folder that is about to be deleted.
+const realSettingsLeaks = watchRealAgentSettings(homedir(), tmpdir());
 const rerailHome = mkdtempSync(join(tmpdir(), "rerail-vitest-home-"));
 const contentStoreDirectory = mkdtempSync(join(tmpdir(), "rerail-vitest-store-"));
 const userHome = mkdtempSync(join(tmpdir(), "rerail-vitest-user-"));
@@ -65,6 +69,10 @@ async function stopProcess(pid: number): Promise<void> {
 
 afterAll(async () => {
   try {
+    const leaked = realSettingsLeaks();
+    if (leaked.length > 0) {
+      throw new Error(`A test wrote temp folders into the real coding agent settings: ${leaked.join(", ")}. Restore them with rerail install --refresh, and move the test's home with stubUserHome.`);
+    }
     const stranded = strandedDaemons();
     if (stranded.length > 0) {
       for (const daemon of stranded) await stopProcess(daemon.pid);
