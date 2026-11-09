@@ -443,7 +443,13 @@ HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
             // The costliest strata, and their parts: loading inputs and indexes, and the joins.
             let mut strata: Vec<(&String, f64)> = spans.iter().filter(|(p, _)| p.contains("session/plan and evaluate/stratum ") && p.matches('/').count() == 3).map(|(p, t)| (p, t.total)).collect();
             strata.sort_by(|a, b| b.1.total_cmp(&a.1));
-            for (path, total) in strata.into_iter().take(4) {
+            // `RERAIL_SESSION_COST_SPANS`: every span of the session's run past 0.1 s, at any depth.
+            if std::env::var_os("RERAIL_SESSION_COST_SPANS").is_some() {
+                for (path, t) in spans.iter().filter(|(p, t)| p.contains("session/") && t.total > 0.1) {
+                    eprintln!("    {:>7.3} s  {}", t.total, path.split_once("session/").map_or(path.as_str(), |(_, r)| r));
+                }
+            }
+            for (path, total) in strata.into_iter().take(12) {
                 let part = |name: &str| spans.get(&format!("{path}/native/{name}")).map_or(0.0, |t| t.total);
                 eprintln!("    {total:>7.3} s  {}: open {:.3} s, joins {:.3} s", path.rsplit('/').next().unwrap_or(""), part("engine open (load inputs, build indexes)"), part("engine run (joins)"));
             }

@@ -15,10 +15,20 @@
 //! ```text
 //! overdelete  h__del(..) :- B over old rows, k as its loss     (q__del, r__minus; a negated !n as n__plus)
 //! survivors   h(..)      :- h__old(..), !h__del(..).
-//! rederive    h(..)      :- h__del(..), B over new rows.
+//! rederive    h__redo(..) :- h__del(..), B over new rows.        h(..) :- h__redo(..).
 //! insert      h__ins(..) :- B over new rows, k as its gain     (q__ins, r__plus; a negated !n as n__minus, !n)
 //!             h(..)      :- h__ins(..).
 //! ```
+//!
+//! A maintained relation's net deltas, for the strata after it, are made from those three, each a delta's size: a
+//! row gone was overdeleted and neither rederived nor inserted, a row new was inserted and not there before.
+//!
+//! ```text
+//! h__minus(..) :- h__del(..), !h__redo(..), !h__ins(..).
+//! h__plus(..)  :- h__ins(..), !h__old(..).
+//! ```
+//!
+//! An input's, or a stratum's derived again, are a diff of its old and new rows (`r__minus`, `r__plus` above).
 //!
 //! An overdeleted row is a superset of the rows that lost every derivation; a survivor holds in the new rows. A new
 //! row not among the old has a derivation using a gained row at some position, by induction on its derivation, so
@@ -143,6 +153,8 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let (mut maintained, mut derived_again, mut recursive) = (0, 0, 0);
     let mut again: Vec<(String, &'static str)> = Vec::new();
     let mut fresh: Vec<(String, String)> = Vec::new();
+    // Relations of the strata maintained: their net deltas come from their own del, redo and ins.
+    let mut maint: BTreeSet<String> = BTreeSet::new();
     for scc in dirty {
         let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
         let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
@@ -268,23 +280,34 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             }
             let mut red = vec![atom(named(h, "del"), rule.head.args.clone(), false)];
             red.extend(rule.body.iter().cloned());
-            rules.push(Rule { head: rule.head.clone(), body: red });
+            rules.push(Rule { head: Atom { rel: named(h, "redo"), ..rule.head.clone() }, body: red });
         }
         for rel in scc {
             let width = part.program.decls[rel].len();
             let v = row(width);
             olds.insert(rel.clone());
             rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "old"), v.clone(), false), atom(named(rel, "del"), v.clone(), true)] });
-            rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "ins"), v, false)] });
+            rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "ins"), v.clone(), false)] });
+            rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "redo"), v, false)] });
             fresh.push((rel.clone(), named(rel, "del")));
             fresh.push((rel.clone(), named(rel, "ins")));
+            fresh.push((rel.clone(), named(rel, "redo")));
         }
+        maint.extend(scc.iter().cloned());
         changed.extend(scc.iter().cloned());
     }
     for rel in &deltas {
         let v = row(part.program.decls[rel].len());
-        rules.push(Rule { head: Atom { rel: named(rel, "minus"), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "old"), v.clone(), false), atom(rel.clone(), v.clone(), true)] });
-        rules.push(Rule { head: Atom { rel: named(rel, "plus"), args: v.clone(), neg: false, gated: false }, body: vec![atom(rel.clone(), v.clone(), false), atom(named(rel, "old"), v, true)] });
+        let head = |suffix: &str| Atom { rel: named(rel, suffix), args: v.clone(), neg: false, gated: false };
+        if maint.contains(rel) {
+            // A maintained relation's net change, from its own overdeleted, rederived and inserted rows.
+            let body = vec![atom(named(rel, "del"), v.clone(), false), atom(named(rel, "redo"), v.clone(), true), atom(named(rel, "ins"), v.clone(), true)];
+            rules.push(Rule { head: head("minus"), body });
+            rules.push(Rule { head: head("plus"), body: vec![atom(named(rel, "ins"), v.clone(), false), atom(named(rel, "old"), v.clone(), true)] });
+        } else {
+            rules.push(Rule { head: head("minus"), body: vec![atom(named(rel, "old"), v.clone(), false), atom(rel.clone(), v.clone(), true)] });
+            rules.push(Rule { head: head("plus"), body: vec![atom(rel.clone(), v.clone(), false), atom(named(rel, "old"), v.clone(), true)] });
+        }
         fresh.push((rel.clone(), named(rel, "minus")));
         fresh.push((rel.clone(), named(rel, "plus")));
     }
