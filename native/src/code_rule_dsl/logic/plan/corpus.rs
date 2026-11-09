@@ -36,6 +36,7 @@ mod supports;
 mod retain;
 mod bridge;
 pub(crate) mod phases;
+mod constants;
 pub(in crate::code_rule_dsl) mod inputs;
 pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
 mod world;
@@ -1305,6 +1306,18 @@ fn run_observed(
         }
     };
     add_bridged(&mut prog);
+    // The run's constants (`constants`): derived first, over no documents, and given as facts. In the constants' own
+    // run, its outputs are those relations.
+    let fold_constants = |prog: &mut front::Program| -> Result<Vec<(String, String, String)>> {
+        match options.get(constants::OWN).and_then(|v| v.as_array()) {
+            Some(wanted) => {
+                constants::as_outputs(prog, &wanted.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect::<Vec<_>>());
+                Ok(Vec::new())
+            }
+            None => constants::fold(prog, programs, root, out, modes, binding, chunk_nodes, typing, options),
+        }
+    };
+    let mut folded = fold_constants(&mut prog)?;
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
     // And the values derived from them (`logic::derived`): each chunk's join specs.
@@ -1367,9 +1380,11 @@ fn run_observed(
             prog = combine(programs, &facts)?;
             texts = texts_digest(programs, &facts);
             add_bridged(&mut prog);
+            folded = fold_constants(&mut prog)?;
         }
         declared = d;
     }
+    consulted.extend(folded);
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     external_inputs(&mut prog, root)?;
     // Guest requests (decision 0055) and the file system's (decision 0065 §2a) are outputs, so the program keeps the
