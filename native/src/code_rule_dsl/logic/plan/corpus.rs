@@ -3568,32 +3568,45 @@ fn run_observed(
                     let constants = constants_tested(&part.program);
                     let mut measured_kept = cell.as_ref().map(retain::Retained::measured_all).unwrap_or_default();
                     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
+                        let _bind = crate::code_rule_dsl::logic::profile::span(|| format!("bind {}", if held.is_some() { "kept" } else { "source" }));
                         // A kept relation's statistics, measured when it was first bound so, while it is kept as it is.
                         let tested = constants.get(rel.as_str()).cloned().unwrap_or_default();
-                        let known = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested).cloned());
-                        let (measured, counts) = match known {
-                            Some((measured, counts, _)) => (measured, counts),
-                            None => {
-                                let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
-                                let measured = syntax::statistics(source.as_ref());
-                                // The constants the rules test it by are counted too: a column measured without them
-                                // reads as holding none, so `kind__old(r, identifier)` was planned as one row and drove
-                                // a delta rule.
-                                let counts = constant_counts(constants.get(rel.as_str()), source.as_ref());
-                                if let Some(h) = &held {
-                                    measured_kept.insert((rel.clone(), Arc::as_ptr(h) as *const u8 as usize), (measured.clone(), counts.clone(), tested));
-                                }
-                                (measured, counts)
-                            }
-                        };
+                        // An input's old rows are its rows of the last run: their statistics are those that run planned with,
+                        // when they cover every constant the rules test it by (decision 0094 §4).
+                        let carried = rel.strip_suffix("__old").and_then(|of| cell.as_ref()?.input_stats(of)).filter(|(cols, vals)| {
+                            cols.len() == source.columns().len() && tested.iter().all(|(c, v)| vals.iter().any(|(vc, vv, _)| vc == c && vv == v))
+                        });
                         // A derived relation kept is read in place, with its indexes (decision 0090 step 3).
-                        if let Some(held) = held {
-                            crate::code_rule_dsl::logic::native::component::adopt(&db, &rel, held);
+                        if let Some(held) = &held {
+                            crate::code_rule_dsl::logic::native::component::adopt(&db, &rel, Arc::clone(held));
                         }
-                        stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), counts);
+                        if let Some((cols, vals)) = carried {
+                            let names: Vec<String> = (0..cols.len()).map(|c| super::sql_col(&rel, c)).collect();
+                            stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)));
+                        } else {
+                            let known = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested).cloned());
+                            let (measured, counts) = match known {
+                                Some((measured, counts, _)) => (measured, counts),
+                                None => {
+                                    let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
+                                    let measured = syntax::statistics(source.as_ref());
+                                    // The constants the rules test it by are counted too: a column measured without them
+                                    // reads as holding none, so `kind__old(r, identifier)` was planned as one row and drove
+                                    // a delta rule.
+                                    let counts = constant_counts(constants.get(rel.as_str()), source.as_ref());
+                                    if let Some(h) = &held {
+                                        measured_kept.insert((rel.clone(), Arc::as_ptr(h) as *const u8 as usize), (measured.clone(), counts.clone(), tested));
+                                    }
+                                    (measured, counts)
+                                }
+                            };
+                            stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), counts);
+                        }
                         modules.bind(&db, &rel, source)?;
                     }
                     drop(s);
+                    // Each input's statistics as this run plans with them: next run's `__old`'s (`retain::InputStats`).
+                    let input_stats: HashMap<String, retain::InputStats> = cross_inputs.iter().filter_map(|(r, src)| Some((r.clone(), stats.of_relation(r, src.columns().len())?))).collect();
                     let derived = cut.derived(&cross.program)?;
                     let mut keep = wanted.clone();
                     // An output is written to its table, where the write phase reads it, and read back from there.
@@ -3787,7 +3800,7 @@ fn run_observed(
                     }
                     drop(s);
                     let s = span("retain");
-                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept);
+                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats);
                     drop(s);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
                         format!(
@@ -4108,6 +4121,11 @@ fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::
         return Vec::new();
     }
     let names = source.columns();
+    // A source whose rows do not change keeps its counts (a relation kept from an earlier run, `InRel`).
+    let asked: Vec<(usize, i64)> = wanted.keys().copied().filter(|(c, _)| *c < names.len()).collect();
+    if let Some(counts) = source.value_counts(&asked) {
+        return asked.iter().zip(counts).map(|((c, v), n)| (names[*c].clone(), *v, n)).collect();
+    }
     let by_column: BTreeSet<usize> = wanted.keys().map(|(c, _)| *c).filter(|c| *c < names.len()).collect();
     for c in by_column {
         let mut counts: HashMap<i64, i64> = HashMap::new();

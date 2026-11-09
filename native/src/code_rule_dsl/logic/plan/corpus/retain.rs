@@ -59,11 +59,16 @@ pub(in crate::code_rule_dsl) struct Retained {
     /// The statistics a run measured of a kept relation, under the name it was bound as (itself, or `r__old`) and
     /// the relation it is (decision 0094 §4: measured once, while it is kept as it is).
     measured: HashMap<(String, usize), Measured>,
+    /// Each input's statistics as the run planned it (`Stats::of_relation`): next run's `rel__old`'s, not measured.
+    input_stats: HashMap<String, InputStats>,
 }
 
 /// A relation's statistics as bound (`syntax::statistics`), and its counts of the constants rules test it by.
 /// The counts are of the constants tested when they were measured (the third): taken again only for the same.
 pub(in crate::code_rule_dsl) type Measured = (Vec<(String, i64, i64, i64, i64)>, Vec<(String, i64, i64)>, BTreeSet<(usize, i64)>);
+
+/// A relation's statistics by column, and its exact postings by (column, value).
+pub(in crate::code_rule_dsl) type InputStats = (Vec<[i64; 4]>, Vec<(usize, i64, i64)>);
 
 /// The key of a cross-file part: the prepared program's key and the part's program as lowered.
 pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: &front::Program) -> [u8; 32] {
@@ -215,6 +220,7 @@ pub(in crate::code_rule_dsl) fn after(
     outputs: &BTreeMap<String, (Vec<String>, Vec<usize>)>,
     sources: &[(String, Arc<dyn Source>)],
     measured: HashMap<(String, usize), Measured>,
+    input_stats: HashMap<String, InputStats>,
 ) -> Retained {
     let mut rels: HashMap<String, Kept> = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
@@ -238,7 +244,7 @@ pub(in crate::code_rule_dsl) fn after(
     // Statistics of the relations still kept, as they are.
     let alive: std::collections::HashSet<usize> = rels.values().map(|k| Arc::as_ptr(&k.rel) as *const u8 as usize).collect();
     let measured = measured.into_iter().filter(|((_, at), _)| alive.contains(at)).collect();
-    Retained { key, inputs, rels, input_srcs, measured }
+    Retained { key, inputs, rels, input_srcs, measured, input_stats }
 }
 
 /// `source` (input `rel`), or the last run's source of the same rows: same name, columns and digest, in any kept
@@ -297,6 +303,10 @@ impl Retained {
     }
     /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
     /// engine's relation for a derived one (to adopt, read in place).
+    /// An input's statistics as the last run planned it.
+    pub(in crate::code_rule_dsl) fn input_stats(&self, rel: &str) -> Option<&InputStats> {
+        self.input_stats.get(rel)
+    }
     pub(in crate::code_rule_dsl) fn old_source(&self, rel: &str, name: &str) -> Option<(Arc<dyn Source>, Option<Arc<InRel>>)> {
         match self.rels.get(rel) {
             Some(k) => Some((k.source(name), Some(Arc::clone(&k.rel)))),
@@ -422,7 +432,7 @@ mod tests {
             let width=p.decls[name].len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
-        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default()};
+        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default()};
         let result=cut(Some(&kept),key,&p,&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
