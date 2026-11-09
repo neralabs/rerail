@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
 import { claudeHookEvents, claudeWorkspace } from "./claude-event-adapter.js";
 import {
+  deliveryConflicts,
   deliveryRules,
   holdStopSteers,
   pendingPath,
@@ -13,7 +14,7 @@ import {
   type HookOutput,
   type SteerLines,
 } from "../../harness/hook-adapter.js";
-import { headlineText, sessionStartNote, steerHeadlines, type HeadlineLinkStyle } from "../../engine/code-rule/rerail-steer.js";
+import { conflictLine, headlineText, sessionStartNote, steerHeadlines, type HeadlineLinkStyle } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
 import { terminalDrawsHyperlinks } from "../../presentation/terminal-hyperlinks.js";
 import { colourDepth, rerailMark } from "../../presentation/rerail-mark.js";
@@ -48,12 +49,16 @@ export function supportsClaudeHook(input: HookInput): boolean {
 }
 
 /**
- * The person's lines for `deliveries`, one per rule, as one `systemMessage`. Claude Code prefixes it with
- * `<Event>:<Tool> says:`; with more than one line a leading newline puts that prefix on its own line, so the lines align.
+ * The person's lines for `deliveries`, one per rule and one per conflict a note surfaces, as one `systemMessage`. Claude
+ * Code prefixes it with `<Event>:<Tool> says:`; with more than one line a leading newline puts that prefix on its own
+ * line, so the lines align.
  */
 function steerLines(links: HeadlineLinkStyle, mark: string | undefined): SteerLines {
   return deliveries => {
-    const lines = steerHeadlines(deliveryRules(deliveries)).map(headline => headlineText(headline, links, mark));
+    const lines = [
+      ...steerHeadlines(deliveryRules(deliveries)).map(headline => headlineText(headline, links, mark)),
+      ...deliveryConflicts(deliveries).map(conflict => conflictLine(conflict, links, mark)),
+    ];
     if (lines.length === 0) return {};
     return { systemMessage: lines.length === 1 ? lines[0]! : `\n${lines.join("\n")}` };
   };

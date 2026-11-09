@@ -31,6 +31,13 @@ export const SteerRuleSchema = z.object({
   url: z.string().optional(),
 }).strict();
 
+/** The in-flight conflict a delivery surfaces to the person (`ConflictNotice`). */
+export const ConflictNoticeSchema = z.object({
+  id: z.string().min(1),
+  text: z.string(),
+  url: z.string().optional(),
+}).strict();
+
 const DeliverySchema: z.ZodType<AdapterDelivery> = z.object({
   sessionId: z.string().min(1),
   requested: z.enum(RULE_MODES),
@@ -42,6 +49,7 @@ const DeliverySchema: z.ZodType<AdapterDelivery> = z.object({
   strategy: z.enum(STEER_STRATEGIES).exactOptional(),
   toolCallId: z.string().min(1).exactOptional(),
   rewound: z.array(z.string()).exactOptional(),
+  conflict: ConflictNoticeSchema.exactOptional(),
 }).strict();
 
 const EventFrameSchema = z.object({ event: AdapterEventSchema }).strict();

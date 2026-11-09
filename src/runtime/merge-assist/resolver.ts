@@ -14,23 +14,25 @@ import { gitExecutable } from "../../engine/git.js";
 import { baseDocs, contractBreaks, declaresBreak, reservedClassesOf, sideChanges, sideDiff, type SideChanges } from "../../engine/merge-assist/conflict-evidence.js";
 import { decidePrecedent, type DecisionEntry, decisionInForce, DECISION_ENTRY_FORMAT, type LoggedDecision, newDecisionId, readDecisions } from "../../engine/merge-assist/decision-log.js";
 import {
-  type CheckResult,
   type ConflictRecord,
-  type ContractBreak,
-  decideCriteria,
-  decideHardChecks,
   type DecidingStep,
   otherSide,
-  type Policy,
-  type ReservedClass,
-  reservedHits,
   sanitizeIntent,
   stripCrossReferences,
   SIDES,
   type SideId,
-  type SideMeasures,
   type StepResult,
   type Verdict,
+} from "../../engine/merge-assist/conflict-record.js";
+import {
+  type CheckResult,
+  type ContractBreak,
+  decideCriteria,
+  decideHardChecks,
+  type Policy,
+  type ReservedClass,
+  reservedHits,
+  type SideMeasures,
 } from "../../engine/merge-assist/policy.js";
 import type { AgentJudge } from "./agent-judge.js";
 import { type PanelResult, runPanel } from "./panel.js";
@@ -213,26 +215,6 @@ export function decisionEntryFor(record: ConflictRecord, resolution: Resolution,
       rule: null,
       text: `Follow the design of ${record.sides[winner].ref} (${record.sides[winner].sha.slice(0, 12)}): ${firstLine(record.sides[winner].intent) || "its change"}.`.slice(0, 2_000),
     },
-  };
-}
-
-/** The entry for a person's answer to an escalated conflict: their verdict, the losing side's decision or amendment to follow. */
-export function personDecisionEntry(
-  record: ConflictRecord,
-  input: { verdict: SideId; name: string; reason: string; result: { kind: "amendment" | "decision"; rule: string | null; text: string } },
-  recordedAt: Date = new Date(),
-): DecisionEntry {
-  return {
-    format: DECISION_ENTRY_FORMAT,
-    id: newDecisionId(),
-    recordedAt: recordedAt.toISOString(),
-    conflict: record,
-    step: "escalate",
-    reason: input.reason.slice(0, 4_000),
-    evidence: {},
-    verdict: input.verdict,
-    decidedBy: { kind: "person", name: input.name },
-    result: { kind: input.result.kind, side: otherSide(input.verdict), rule: input.result.rule, text: input.result.text },
   };
 }
 

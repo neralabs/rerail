@@ -7,7 +7,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { BaseDoc } from "../../engine/merge-assist/conflict-evidence.js";
-import { type ConflictRecord, decidePanel, RUBRIC, type RubricItem, type SideId, type StepResult } from "../../engine/merge-assist/policy.js";
+import type { ConflictRecord, SideId, StepResult } from "../../engine/merge-assist/conflict-record.js";
+import { decidePanel, RUBRIC, type RubricItem } from "../../engine/merge-assist/policy.js";
 import { stableJsonText } from "../../engine/stable-json.js";
 import type { AgentJudge } from "./agent-judge.js";
 import { fenceData } from "./judge-prompts.js";

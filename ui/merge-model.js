@@ -1,12 +1,13 @@
 /**
  * Merge Assist's page as pure derivations of `GET /api/merge-assist` (`MergeAssistStatus` in
- * `src/engine/merge-assist/model.ts`), without the DOM: the sections and their order, what the status strip and the
- * readiness checklist say, who is behind a finding, the sidebar's count, and which pull request links are safe to open.
+ * `src/engine/merge-assist/model.ts`), without the DOM: the tabs, the sections and their order, the conflicts and the
+ * decision log, what the status strip and the readiness checklist say, who is behind a finding, the sidebar's count,
+ * and which pull request links are safe to open.
  *
  * Decision text, authors, branch names, titles and links come from other people's branches. Every string here is
  * plain text for a text node; `safePeerUrl` is the only way a peer's link becomes an `href`.
  */
-import { andList, fmt, plural } from "./format.js";
+import { andList, clock, daysAgo, fmt, plural } from "./format.js";
 
 /** The agent CLIs Merge Assist runs for judgment (`JUDGE_RUNNERS`), by the names people know them by. */
 export const RUNNER_NAMES = { claude: "Claude Code", codex: "Codex" };
@@ -94,11 +95,131 @@ export function sectionsOf(status, pending = new Map()) {
   return { talk, review, added, own, notRules };
 }
 
-/** The sidebar's count: decided-differently and needs-review findings waiting for the person; 0 while off. */
+/**
+ * The sidebar's count: what waits for the person, 0 while off. Open conflicts that reach the session (`ambient`),
+ * findings that need review, and decided-differently findings no conflict already carries (each one also becomes a
+ * conflict of kind `decisions`).
+ */
 export function waitingCount(status, pending = new Map()) {
   if (status === null || status === undefined || !status.enabled) return 0;
   const { talk, review } = sectionsOf(status, pending);
-  return talk.length + review.length;
+  const carried = new Set(status.conflicts.filter(c => c.kind === "decisions").map(c => c.theirs.decisionId));
+  const ambient = conflictSections(status, pending).open.filter(c => c.level === "ambient");
+  return ambient.length + review.length + talk.filter(f => !carried.has(f.candidate.id)).length;
+}
+
+/* ---------- conflicts ---------- */
+
+/** The longest decision text a person may save when resolving a conflict (the API's limit). */
+export const DECISION_MAX = 600;
+
+export const KIND_TEXT = { overlap: "Overlapping work", decisions: "Contradicting decisions" };
+export const LEVEL_TEXT = { ambient: "Told your agent and you in the session", logged: "Logged, no interruption" };
+
+const levelRank = conflict => (conflict.level === "ambient" ? 0 : 1);
+
+/**
+ * The Conflicts tab's lists from the status and the writes in flight (`conflict:<id>` → action). `open`: ambient
+ * ones first, then logged, each newest first; one marked Not a conflict leaves at once. `closed`: resolved and
+ * dismissed, as the status orders them. Each item carries `busy` while its write is in flight.
+ */
+export function conflictSections(status, pending = new Map()) {
+  const open = [], closed = [];
+  for (const conflict of status.conflicts) {
+    const action = pending.get(`conflict:${conflict.id}`);
+    if (conflict.status === "open" && action === "dismiss") continue;
+    (conflict.status === "open" ? open : closed).push({ ...conflict, busy: action !== undefined });
+  }
+  open.sort((a, b) => levelRank(a) - levelRank(b) || newestFirst("detectedAt")(a, b));
+  return { open, closed };
+}
+
+export const MERGE_TABS = ["conflicts", "decisions", "log"];
+
+/** The tab shown: the one the person chose, else Conflicts while any is open, else Decisions. */
+export function tabOf(status, chosen, pending = new Map()) {
+  if (MERGE_TABS.includes(chosen)) return chosen;
+  return conflictSections(status, pending).open.length > 0 ? "conflicts" : "decisions";
+}
+
+/** A side's heading: "PR #398 · Tim", or the label alone when no author is known. */
+export const sideHeading = side => (side.author ? `${side.label} · ${side.author}` : side.label);
+
+/** A unified-diff hunk as lines to colour: `add`, `del`, `meta` (headers and `@@`) or `ctx`. */
+export function hunkLines(hunk) {
+  return hunk.replace(/\n$/u, "").split("\n").map(text => {
+    if (text.startsWith("+++") || text.startsWith("---") || text.startsWith("@@")) return { kind: "meta", text };
+    if (text.startsWith("+")) return { kind: "add", text };
+    if (text.startsWith("-")) return { kind: "del", text };
+    return { kind: "ctx", text };
+  });
+}
+
+const RESOLVED_HOW = { mine: () => "Kept mine", theirs: c => `Took theirs (${c.theirs.label})`, new: () => "New decision", dismiss: () => null };
+
+/**
+ * How a closed conflict ended, for its folded row: `badge` (Resolved by precedent, Resolved, Not a conflict), `how`
+ * ("Took theirs (PR #398)"; `null` when the badge says it all), `who` ("by tbelanger", "by precedent"), and the
+ * decision's `text` and `rule` path.
+ */
+export function resolutionText(conflict) {
+  const r = conflict.resolution;
+  if (r === null) return { badge: conflict.status === "dismissed" ? "Not a conflict" : "Resolved", precedent: false, how: null, who: null, text: null, rule: null, at: null };
+  const precedent = r.by === "precedent";
+  return {
+    badge: r.action === "dismiss" ? "Not a conflict" : precedent ? "Resolved by precedent" : "Resolved",
+    precedent, how: RESOLVED_HOW[r.action](conflict), who: precedent ? "by precedent" : `by ${r.name}`,
+    text: r.text, rule: r.rule, at: r.at,
+  };
+}
+
+/** The decision text an action opens with: that side's summary for Keep mine and Take theirs, empty for a new one. */
+export function draftText(conflict, action) {
+  if (action === "mine") return conflict.mine.summary;
+  if (action === "theirs") return conflict.theirs.summary;
+  return "";
+}
+
+/** Why a draft can't be saved yet, or `null`: it needs 1 to 600 characters. */
+export function draftProblem(text) {
+  const length = text.trim().length;
+  if (length === 0) return "Write the decision first.";
+  if (length > DECISION_MAX) return `${fmt(length - DECISION_MAX)} ${plural(length - DECISION_MAX, "character")} over the ${fmt(DECISION_MAX)}-character limit.`;
+  return null;
+}
+
+/** The body of `PUT /api/merge-assist/conflicts` (without the scope): Not a conflict carries no text. */
+export function resolveBody(conflictId, action, text = "") {
+  return action === "dismiss" ? { conflictId, action } : { conflictId, action, text: text.trim() };
+}
+
+const SAVED_LEAD = { mine: "Kept mine. ", theirs: "Took theirs. ", new: "" };
+
+/** What a conflict action says once it is done (`ignored`: Git ignores `.rerail/candidates/` here), and when it fails. */
+export function conflictToast(conflict, action, text, ignored) {
+  if (action === "dismiss") {
+    return {
+      done: `Marked ${quoted(conflict.title)} as not a conflict. It stays hidden for ${conflict.theirs.label}.`,
+      fail: `Couldn’t mark ${quoted(conflict.title)} as not a conflict`,
+    };
+  }
+  const share = ignored ? "" : " Commit it to share it with teammates.";
+  return {
+    done: `${SAVED_LEAD[action]}Saved ${quoted(text)} as a decision on this branch. It steers your coding agent from its next turn.${share}`,
+    fail: `Couldn’t save the decision for ${quoted(conflict.title)}`,
+  };
+}
+
+/* ---------- the decision log ---------- */
+
+/** The decision log's entries, newest first. */
+export const logEntries = status => [...status.decisionLog.entries].sort(newestFirst("recordedAt"));
+
+/** When an entry was recorded: the time today, else the day ("Nov 3"). */
+export function logWhen(iso) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  return daysAgo(t) === 0 ? clock(t) : new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 /* ---------- the status strip ---------- */

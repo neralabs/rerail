@@ -147,4 +147,77 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
       await runtime.dispose();
     }
   });
+
+  it("finds overlapping work after an edit, without holding the edit's boundary, and gives the agent its note with the person's line", async () => {
+    const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
+    const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
+    const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
+    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, "  shared 10") }, "Share compiled matchers");
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    const noted = Promise.withResolvers<void>();
+    const pendingNotes = service.pendingNotes.bind(service);
+    service.pendingNotes = (sessionId, checkoutPath, inFlight) => {
+      const notes = pendingNotes(sessionId, checkoutPath, inFlight);
+      if (notes.some(note => note.conflict !== undefined)) noted.resolve();
+      return notes;
+    };
+    const runtime = sessionRuntime(ws, service);
+    const session = { host: "claude-code" as const, sessionId: "overlap-session", cwd: ws.repo };
+    const { sessionId } = session;
+    const file = join(ws.repo, "src/api/model.ts");
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await vi.waitFor(async () => expect((await service.status(ws.repo)).lastScan).not.toBeNull(), { timeout: 10_000 });
+      expect((await service.status(ws.repo)).conflicts).toEqual([]);
+      await runtime.ingest({ kind: "call", eventId: "edit", sessionId, toolCallId: "1", toolName: "Write", input: { file_path: file, content: text(12, "  cloned 12") } });
+      writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
+      const deliveries = [...await runtime.ingest({ kind: "result", eventId: "edited", sessionId, toolCallId: "1", toolName: "Write", output: "ok" })];
+      await noted.promise;
+      deliveries.push(...await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." }));
+
+      const [conflict] = (await service.status(ws.repo)).conflicts;
+      expect(deliveries.filter(delivery => delivery.conflict !== undefined)).toEqual([expect.objectContaining({
+        content: expect.stringContaining("Your edit to src/api/model.ts overlaps open work: jbarnes-model (Tim Belanger) Share compiled matchers."),
+        conflict: { id: conflict!.id, text: "your edit overlaps jbarnes-model (Tim Belanger): model.ts" },
+        rules: [],
+      })]);
+      expect(service.pendingNotes(sessionId, ws.repo)).toEqual([]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("gives a running session the decision a person settled a conflict with, at its very next boundary", async () => {
+    const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
+    const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
+    const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
+    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, "  shared 10") }, "Share compiled matchers");
+    writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    const runtime = sessionRuntime(ws, service);
+    const session = { host: "claude-code" as const, sessionId: "running-session", cwd: ws.repo };
+    const { sessionId } = session;
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await vi.waitFor(async () => expect((await service.status(ws.repo)).conflicts).toHaveLength(1), { timeout: 10_000 });
+      // The overlap's note goes out at the next boundary; nothing else is waiting.
+      const before = await runtime.ingest({ kind: "user-prompt", eventId: "first", sessionId, text: "Go on." });
+      expect(before.map(delivery => delivery.content)).toEqual([expect.stringContaining("overlaps open work")]);
+
+      // The person settles it elsewhere (the dashboard, the CLI): no scan or capture runs in the session.
+      const [conflict] = (await service.status(ws.repo)).conflicts;
+      await service.resolveConflict(ws.repo, conflict!.id, "theirs");
+      const after = await runtime.ingest({ kind: "user-prompt", eventId: "second", sessionId, text: "And then?" });
+      expect(after.map(delivery => delivery.content)).toEqual([[
+        "This note comes from Rerail, not the user.",
+        "The user settled a conflict with jbarnes-model with a decision for this branch: \"Share compiled matchers\". It applies from now on.",
+        "Follow it where it applies to your work; your task is unchanged.",
+      ].join("\n")]);
+      expect(await runtime.ingest({ kind: "user-prompt", eventId: "third", sessionId, text: "Thanks." })).toEqual([]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
 });

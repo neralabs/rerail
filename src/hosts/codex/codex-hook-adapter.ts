@@ -1,6 +1,7 @@
 import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
 import { codexHookEvents } from "./codex-event-adapter.js";
 import {
+  deliveryConflicts,
   deliveryRules,
   holdStopSteers,
   pendingPath,
@@ -12,7 +13,7 @@ import {
   type HookOutput,
   type SteerLines,
 } from "../../harness/hook-adapter.js";
-import { headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { conflictLine, headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
 import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
 
 const CODEX_EVENTS: EventTable = {
@@ -37,9 +38,15 @@ export function supportsCodexHook(input: HookInput): boolean {
   return CODEX_EVENTS[requiredText(input, "hook_event_name")] === true;
 }
 
-/** The person's lines, one per rule; Codex draws hook text as plain text with no links, so each prints its `why?` link after it. */
+/**
+ * The person's lines, one per rule and one per conflict a note surfaces; Codex draws hook text as plain text with no
+ * links, so each prints its link after it.
+ */
 const steerLines: SteerLines = deliveries => {
-  const lines = steerHeadlines(deliveryRules(deliveries)).map(headline => headlineText(headline, "plain"));
+  const lines = [
+    ...steerHeadlines(deliveryRules(deliveries)).map(headline => headlineText(headline, "plain")),
+    ...deliveryConflicts(deliveries).map(conflict => conflictLine(conflict, "plain")),
+  ];
   return lines.length === 0 ? {} : { systemMessage: lines.join("\n") };
 };
 

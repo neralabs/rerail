@@ -1,13 +1,14 @@
 /*
  * Merge Assist (views/merge.js): the heading, then off the consent card (what turning it on does, what Rerail found,
- * the button), or on the status strip and the sections (Decided differently, Needs your review, Added from other
- * branches, Decisions on this branch with Not rules folded under it). Sections reuse the shared heading, list card,
- * badge and empty block (base.css); rows are this page's own (class names `m…`).
+ * the button), or on the status strip, the tabs and their panels: Conflicts (cards, then resolved and dismissed ones
+ * folded), Decisions (Decided differently, Needs your review, Added from other branches, Decisions on this branch with
+ * Not rules folded under it) and the Decision log (a table). Sections reuse the shared heading, list card, badge and
+ * empty block (base.css); rows, cards and tabs are this page's own (class names `m…`).
  */
 
 .mpage{margin-top:16px;max-width:960px;--measure:72ch}
 .mpage > div:empty{display:none}
-/* Text read only by a screen reader: the strip's "into", a checklist line's Ready / Note. */
+/* Text read only by a screen reader: the strip's "into", a checklist line's Ready / Note, a conflict side's name. */
 .mpage .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 /* ---- heading ---- */
@@ -102,3 +103,83 @@
 /* ---- the sidebar's count of findings waiting: a filled pill, unlike the packs' muted on-counts ---- */
 .sn-item .n.due{align-self:center;min-width:20px;padding:0 6px;border-radius:var(--pill);background:var(--brand);color:var(--primary-foreground);font-weight:600;line-height:18px;text-align:center}
 .sn-item[aria-current="page"] .n.due{color:var(--primary-foreground);opacity:1}
+
+/* ---- the tabs: Conflicts · N, Decisions, Decision log ---- */
+.mtabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 20px}
+.mtabs[hidden],.mpanel[hidden]{display:none}
+.mtab{padding:5px 14px;border-radius:var(--pill);border:1px solid var(--border);background:var(--card);font-size:13px;font-weight:500;line-height:20px;color:var(--muted-foreground);white-space:nowrap}
+.mtab:hover{background:var(--hover);color:var(--foreground)}
+.mtab[aria-pressed="true"]{background:var(--header);border-color:var(--header);color:var(--background)}
+.mtab[disabled]{opacity:.6}
+
+/* ---- conflict cards: both sides, the evidence, the choices; logged ones muted ---- */
+.mcards{display:grid;gap:12px}
+.mcards[hidden]{display:none}
+.mcard{display:grid;gap:10px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--card-shadow);min-width:0}
+.mcard.ambient{border-left:3px solid var(--warning)}
+.mcard.logged{background:var(--sheet-inset);box-shadow:none}
+.mcard.logged .mctitle,.mcard.logged .msum{color:var(--muted-foreground)}
+.mcard[aria-busy="true"]{opacity:.7}
+.mchead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
+.mctitle{margin:0;flex:1 1 220px;min-width:0;font-size:14px;font-weight:600;line-height:1.4;color:var(--foreground);overflow-wrap:anywhere}
+.mcage{font-size:12px;color:var(--muted-foreground)}
+.badge.mkind.decisions{background:var(--warning-subtle);color:var(--warning-foreground)}
+.badge.mkind.overlap{background:var(--brand-subtle);color:var(--brand-foreground)}
+.mside.mine{border-color:var(--brand-border)}
+.msum{margin:0;font-size:13px;line-height:1.5;color:var(--foreground);overflow-wrap:anywhere}
+.mhunk{margin:8px 0 0;padding:8px 10px;max-height:24em;overflow:auto;font:12px/1.45 var(--font-mono);background:var(--sheet-inset);border:1px solid var(--border);border-radius:var(--radius-lg);white-space:pre-wrap;overflow-wrap:anywhere}
+.mhunk .add{color:var(--success-foreground)}
+.mhunk .del{color:var(--danger-foreground)}
+.mhunk .meta{color:var(--muted-foreground)}
+.mloc{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-top:8px;font-size:12px;color:var(--muted-foreground)}
+.mloc code{font-size:11.5px;overflow-wrap:anywhere}
+.mwhy{margin:0;padding-left:18px;display:grid;gap:3px}
+.mwhy li{overflow-wrap:anywhere}
+.mwhy li::marker{color:var(--muted-foreground)}
+.mlogged{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted-foreground)}
+
+/* The decision text a choice opens: editable, 1 to 600 characters, then Confirm. */
+.meditslot:empty{display:none}
+.medit{display:grid;gap:6px;padding:10px 12px;background:var(--sheet-inset);border:1px solid var(--border);border-radius:var(--radius-lg)}
+.medit .k{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.mdraft{width:100%;min-height:76px;resize:vertical;padding:8px 10px;font:inherit;font-size:13.5px;line-height:1.5;color:var(--foreground);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg)}
+.mdraft[aria-invalid="true"]{border-color:var(--danger-foreground)}
+.mdraft[readonly]{opacity:.7}
+.meditfoot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px}
+.mhint{font-size:12px;color:var(--muted-foreground)}
+.mhint.bad{color:var(--danger-foreground)}
+.meditacts{display:flex;flex-wrap:wrap;gap:8px}
+/* Confirm waits for 1 to 600 characters: dimmed until then, so it never reads as ready. */
+.meditacts .btn:disabled{opacity:.45}
+.mnote2{margin:0;font-size:12px;line-height:1.5;color:var(--muted-foreground)}
+.mnote2 code{font-size:11.5px}
+
+/* Resolved and dismissed, folded: who decided (a person or precedent) and the rule it saved. */
+.badge.mprec{background:var(--success-subtle);color:var(--success-foreground)}
+.badge.mres{background:var(--brand-subtle);color:var(--brand-foreground)}
+.mclosed .mctitle{font-weight:500}
+.mclosed .mq{font-size:13px;font-weight:400}
+code.mrule{font-size:11.5px;overflow-wrap:anywhere}
+.mconf .mfold{margin-top:16px}
+
+/* ---- the decision log ---- */
+.mlogwrap{overflow-x:auto}
+.mlog{width:100%;border-collapse:collapse;font-size:13px;line-height:1.45}
+.mlog th,.mlog td{padding:9px 12px;text-align:left;vertical-align:top;border-top:1px solid var(--border)}
+.mlog thead th{border-top:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+.mlog td{overflow-wrap:anywhere}
+.mlog .mlt{font-weight:500;color:var(--foreground)}
+.mlog .sub{display:block;font-size:12px;color:var(--muted-foreground)}
+.mlog time{white-space:nowrap;color:var(--muted-foreground)}
+.badge.mby.person{background:var(--brand-subtle);color:var(--brand-foreground)}
+.badge.mby.policy{background:var(--success-subtle);color:var(--success-foreground)}
+/* Narrow screens: each entry stacks, its column's name beside each value. */
+@media (max-width:640px){
+  .mlog thead{display:none}
+  .mlog,.mlog tbody,.mlog tr,.mlog td{display:block}
+  .mlog tr{padding:10px 12px;border-top:1px solid var(--border)}
+  .mlog tbody tr:first-child{border-top:0}
+  .mlog td{position:relative;padding:3px 0 3px 84px;border-top:0}
+  .mlog td::before{content:attr(data-label);position:absolute;left:0;top:5px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
+  .mcard{padding:12px}
+}

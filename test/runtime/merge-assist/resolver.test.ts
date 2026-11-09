@@ -10,11 +10,12 @@ import {
   type ConflictRecord,
   defaultPolicy,
   type Policy,
+  personDecisionEntry,
   questionOf,
   readDecisions,
   type SideId,
 } from "../../../src/engine/index.js";
-import { type CheckRunner, createLocalCheckRunner, decisionEntryFor, panelOrder, personDecisionEntry, resolveConflict } from "../../../src/runtime/index.js";
+import { type CheckRunner, createLocalCheckRunner, decisionEntryFor, panelOrder, resolveConflict } from "../../../src/runtime/index.js";
 import { FakeJudge } from "./support/merge-assist-workspace.js";
 
 const roots: string[] = [];

@@ -7,12 +7,10 @@ import {
   decidePanel,
   defaultPolicy,
   parsePolicy,
-  questionOf,
   reservedHits,
-  sanitizeIntent,
   type SideMeasures,
-  stripCrossReferences,
 } from "../../../src/engine/merge-assist/policy.js";
+import { questionOf, sanitizeIntent, stripCrossReferences } from "../../../src/engine/merge-assist/conflict-record.js";
 
 function check(name: string, status: CheckResult["status"], kind: CheckResult["kind"] = "tests"): CheckResult {
   return { name, kind, status, detail: "", log: "" };

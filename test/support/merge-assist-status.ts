@@ -2,7 +2,7 @@
  * A Merge Assist status as the service reports it, and a recording service that answers with it, for the layers that
  * only call the service (API, CLI).
  */
-import type { CandidateState, Finding, FindingAction, MergeAssistStatus } from "../../src/engine/index.js";
+import type { CandidateState, Conflict, ConflictAction, Finding, FindingAction, MergeAssistStatus } from "../../src/engine/index.js";
 import type { MergeAssistActor, MergeAssistError, MergeAssistService } from "../../src/runtime/index.js";
 
 export function sampleFinding(overrides: Partial<Finding> & Pick<Finding, "id" | "tier" | "status">): Finding {
@@ -33,6 +33,29 @@ export function sampleFinding(overrides: Partial<Finding> & Pick<Finding, "id" |
   };
 }
 
+export function sampleConflict(overrides: Partial<Conflict> = {}): Conflict {
+  return {
+    id: "conflict:overlap:0123456789abcdef01234567:89abcdef",
+    kind: "overlap",
+    status: "open",
+    level: "ambient",
+    question: "overlap:0123456789abcdef01234567",
+    title: "model.rs · fn compile",
+    mine: {
+      label: "This branch", ref: "tbelanger/export-api", sha: "1".repeat(40), author: "Tim Belanger", pushedAt: null, url: null,
+      summary: "edits native/src/model.rs", location: "native/src/model.rs:469", hunk: "@@ -469 +469 @@\n-matchers: Vec<GrammarMatcher>,\n+matchers: Vec<GrammarMatcher>, // cloned", decisionId: null,
+    },
+    theirs: {
+      label: "PR #398", ref: "refs/pull/398/head", sha: "2".repeat(40), author: "jbarnes", pushedAt: "2026-11-03T14:00:00Z", url: "https://github.com/acme/app/pull/398",
+      summary: "Share compiled matchers", location: "native/src/model.rs:470", hunk: "@@ -470 +470 @@\n+matchers: Arc<[GrammarMatcher]>,", decisionId: null,
+    },
+    evidence: ["Both sides change native/src/model.rs within 3 lines of each other."],
+    detectedAt: "2026-11-03T14:05:00Z",
+    resolution: null,
+    ...overrides,
+  };
+}
+
 export function sampleStatus(checkout: string, overrides: Partial<MergeAssistStatus> = {}): MergeAssistStatus {
   return {
     repositoryKey: "remote:github.com/acme/app",
@@ -51,6 +74,8 @@ export function sampleStatus(checkout: string, overrides: Partial<MergeAssistSta
     lastScan: { at: "2026-11-03T14:05:00Z", peers: { branches: 2, pullRequests: 1 }, problems: [] },
     own: [],
     findings: [],
+    conflicts: [],
+    decisionLog: { entries: [], problems: [] },
     ...overrides,
   };
 }
@@ -59,7 +84,15 @@ export type ServiceCall =
   | { readonly method: "status" | "scan"; readonly checkout: string }
   | { readonly method: "setEnabled"; readonly checkout: string; readonly enabled: boolean }
   | { readonly method: "setCandidateState"; readonly checkout: string; readonly candidateId: string; readonly state: CandidateState }
-  | { readonly method: "resolveFinding"; readonly checkout: string; readonly findingId: string; readonly action: FindingAction; readonly actor: MergeAssistActor };
+  | { readonly method: "resolveFinding"; readonly checkout: string; readonly findingId: string; readonly action: FindingAction; readonly actor: MergeAssistActor }
+  | {
+    readonly method: "resolveConflict";
+    readonly checkout: string;
+    readonly conflictId: string;
+    readonly action: ConflictAction;
+    readonly text: string | undefined;
+    readonly actor: MergeAssistActor;
+  };
 
 /** Records every call and answers with the status it was given, or throws `failure` when one is set. */
 export class RecordingMergeAssistService implements MergeAssistService {
@@ -94,5 +127,9 @@ export class RecordingMergeAssistService implements MergeAssistService {
 
   resolveFinding(checkout: string, findingId: string, action: FindingAction, actor: MergeAssistActor = "person"): Promise<MergeAssistStatus> {
     return this.#answer({ method: "resolveFinding", checkout, findingId, action, actor });
+  }
+
+  resolveConflict(checkout: string, conflictId: string, action: ConflictAction, text?: string, actor: MergeAssistActor = "person"): Promise<MergeAssistStatus> {
+    return this.#answer({ method: "resolveConflict", checkout, conflictId, action, text, actor });
   }
 }

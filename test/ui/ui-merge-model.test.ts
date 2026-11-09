@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Finding, MergeAssistStatus, OwnDecision } from "../../src/engine/index.js";
 import {
-  authorOf, budgetText, githubText, judgeText, readinessChecks, safePeerUrl, scanSummary, scannedWhat, sectionsOf,
+  authorOf, budgetText, conflictSections, conflictToast, draftProblem, draftText, githubText, hunkLines, judgeText,
+  logEntries, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, tabOf,
   waitingCount, writeError,
 } from "../../ui/merge-model.js";
+import { conflict, logItem, resolved, side } from "./support/merge-conflicts.js";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const at = (minutesAgo: number) => new Date(NOW - minutesAgo * 60_000).toISOString();
@@ -40,6 +42,8 @@ const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   lastScan: { at: at(4), peers: { branches: 3, pullRequests: 2 }, problems: [] },
   own: [],
   findings: [],
+  conflicts: [],
+  decisionLog: { entries: [], problems: [] },
   ...over,
 });
 
@@ -213,5 +217,89 @@ describe("a failed write's reason", () => {
     expect(writeError(refused)).toBe("This finding is no longer open.");
     expect(writeError(new Error("PUT /api/merge-assist/findings answered 500: oops"))).toBe("PUT /api/merge-assist/findings answered 500: oops");
     expect(writeError(new Error("network down"))).toBe("network down");
+  });
+});
+
+describe("conflicts", () => {
+  const conflicts = [
+    conflict("logged-new", { level: "logged", detectedAt: at(1) }),
+    conflict("ambient-old", { detectedAt: at(60) }),
+    resolved("by-precedent", "theirs", "precedent"),
+    conflict("ambient-new", { detectedAt: at(5) }),
+    conflict("dismissed", { status: "dismissed", resolution: { action: "dismiss", by: "person", name: "tbelanger", logId: null, rule: null, text: null, at: at(2) } }),
+  ];
+
+  it("lists open conflicts that reach the session first, then logged ones, each newest first; closed ones as the status orders them", () => {
+    const { open, closed } = conflictSections(status({ conflicts }));
+    expect(open.map(c => c.id)).toEqual(["ambient-new", "ambient-old", "logged-new"]);
+    expect(closed.map(c => c.id)).toEqual(["by-precedent", "dismissed"]);
+    expect(open.every(c => !c.busy)).toBe(true);
+  });
+
+  it("hides a conflict marked as not a conflict at once and keeps one being resolved, busy", () => {
+    const pending = new Map([["conflict:ambient-old", "dismiss"], ["conflict:ambient-new", "theirs"]]);
+    const { open } = conflictSections(status({ conflicts }), pending);
+    expect(open.map(c => [c.id, c.busy])).toEqual([["ambient-new", true], ["logged-new", false]]);
+  });
+
+  it("opens on Conflicts while any is open, else Decisions, and keeps the tab the person chose", () => {
+    expect(tabOf(status({ conflicts }), null)).toBe("conflicts");
+    expect(tabOf(status({ conflicts: [resolved("r", "mine", "person")] }), null)).toBe("decisions");
+    expect(tabOf(status({ conflicts }), "log")).toBe("log");
+    expect(tabOf(status({ conflicts }), "constructor")).toBe("conflicts");
+  });
+
+  it("counts ambient conflicts in the sidebar, and a decided-differently finding only when no conflict carries it", () => {
+    const talk = [finding("carried", "talk", "open"), finding("alone", "talk", "open")];
+    const carrier = conflict("decisions", { kind: "decisions", theirs: side({ label: "jbarnes/x", decisionId: "candidate:carried" }) });
+    // ambient-old, ambient-new, the decisions conflict, and the finding no conflict carries; never the logged one.
+    expect(waitingCount(status({ findings: talk, conflicts: [...conflicts, carrier] }))).toBe(4);
+    expect(waitingCount(status({ conflicts, enabled: false }))).toBe(0);
+  });
+
+  it("says how a closed conflict ended, who decided, and the rule it saved", () => {
+    expect(resolutionText(resolved("p", "theirs", "precedent"))).toMatchObject({
+      badge: "Resolved by precedent", precedent: true, how: "Took theirs (PR #398)", who: "by precedent", rule: ".rerail/candidates/p.json",
+    });
+    expect(resolutionText(resolved("m", "mine", "person"))).toMatchObject({ badge: "Resolved", how: "Kept mine", who: "by tbelanger" });
+    expect(resolutionText(resolved("n", "new", "person"))).toMatchObject({ how: "New decision" });
+    expect(resolutionText(conflicts[4]!)).toMatchObject({ badge: "Not a conflict", how: null, who: "by tbelanger", rule: null });
+  });
+
+  it("opens Keep mine and Take theirs on that side's summary, a new decision empty, and asks for 1 to 600 characters", () => {
+    const c = conflict("c");
+    expect(draftText(c, "mine")).toBe("Clones each matcher per rule copy.");
+    expect(draftText(c, "theirs")).toBe("Shares compiled matchers; no rule copy deep-copies them.");
+    expect(draftText(c, "new")).toBe("");
+    expect(draftProblem("   ")).toBe("Write the decision first.");
+    expect(draftProblem("x".repeat(600))).toBeNull();
+    expect(draftProblem("x".repeat(602))).toBe("2 characters over the 600-character limit.");
+  });
+
+  it("sends the conflict, the action and the trimmed text; Not a conflict sends no text", () => {
+    expect(resolveBody("conflict:q:ab", "theirs", "  Share matchers.  ")).toEqual({ conflictId: "conflict:q:ab", action: "theirs", text: "Share matchers." });
+    expect(resolveBody("conflict:q:ab", "new", "Both, behind a flag.")).toEqual({ conflictId: "conflict:q:ab", action: "new", text: "Both, behind a flag." });
+    expect(resolveBody("conflict:q:ab", "dismiss")).toEqual({ conflictId: "conflict:q:ab", action: "dismiss" });
+  });
+
+  it("says what a resolve did, and suggests committing only when Git does not ignore the candidates", () => {
+    const c = conflict("c");
+    expect(conflictToast(c, "theirs", "Share matchers.", false).done)
+      .toBe("Took theirs. Saved “Share matchers.” as a decision on this branch. It steers your coding agent from its next turn. Commit it to share it with teammates.");
+    expect(conflictToast(c, "mine", "Clone.", true).done).toBe("Kept mine. Saved “Clone.” as a decision on this branch. It steers your coding agent from its next turn.");
+    expect(conflictToast(c, "new", "Both.", true).fail).toBe("Couldn’t save the decision for “Shared matchers c”");
+    expect(conflictToast(c, "dismiss", "", false)).toEqual({
+      done: "Marked “Shared matchers c” as not a conflict. It stays hidden for PR #398.",
+      fail: "Couldn’t mark “Shared matchers c” as not a conflict",
+    });
+  });
+
+  it("colours a hunk's added, removed and header lines", () => {
+    expect(hunkLines("@@ -1 +1 @@\n-old\n+new\n same\n").map(l => l.kind)).toEqual(["meta", "del", "add", "ctx"]);
+  });
+
+  it("lists the decision log newest first", () => {
+    const entries = [logItem("old", at(600)), logItem("new", at(1)), logItem("mid", at(30))];
+    expect(logEntries(status({ decisionLog: { entries, problems: [] } })).map(e => e.id)).toEqual(["new", "mid", "old"]);
   });
 });

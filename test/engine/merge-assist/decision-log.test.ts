@@ -14,7 +14,7 @@ import {
   newDecisionId,
   readDecisions,
 } from "../../../src/engine/merge-assist/decision-log.js";
-import type { ConflictRecord } from "../../../src/engine/merge-assist/policy.js";
+import type { ConflictRecord } from "../../../src/engine/merge-assist/conflict-record.js";
 
 const roots: string[] = [];
 afterEach(async () => {

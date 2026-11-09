@@ -143,7 +143,11 @@ declare module "*/ui/state.js" {
     mergeAssistError: string | null;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
-  export const ui: { filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null; mergePending: Map<string, string>; mergeOpen: Set<string>; mergeSwitching: boolean; mergeScanning: boolean };
+  export const ui: {
+    filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean;
+    selectedSession: string | null; panel: object | null; mergePending: Map<string, string>; mergeOpen: Set<string>; mergeSwitching: boolean; mergeScanning: boolean;
+    mergeTab: "conflicts" | "decisions" | "log" | null; mergeDraft: { id: string; action: "mine" | "theirs" | "new"; text: string } | null;
+  };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
   export function runningCount(): number;
@@ -200,7 +204,7 @@ declare module "*/ui/routes.js" {
   export type ViewName = "overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge";
   export interface Route {
     view: ViewName | null; pack?: string; filterRule?: string; outcome?: "all" | "steered" | "logged";
-    sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean;
+    sessionFilter?: "all" | "corr" | "open"; rule?: string; session?: string; jump?: boolean; conflict?: string;
   }
   export function parseRoute(hash: string): Route;
   export function hashOf(route: Partial<Route>): string;
@@ -314,10 +318,28 @@ declare module "*/ui/merge-model.js" {
   export function readinessChecks(readiness: Status["readiness"]): Array<{ key: string; ok: boolean; text: Segment[]; overview?: boolean }>;
   export function writeError(error: unknown): string;
   export function quoted(text: string): string;
+  type Conflict = import("../../src/engine/index.js").Conflict;
+  type ConflictAction = import("../../src/engine/index.js").ConflictAction;
+  type DecisionLogItem = import("../../src/engine/index.js").DecisionLogItem;
+  export const DECISION_MAX: number;
+  export function conflictSections(status: Status, pending?: Map<string, string>): { open: Array<Conflict & { busy: boolean }>; closed: Array<Conflict & { busy: boolean }> };
+  export function tabOf(status: Status, chosen: string | null, pending?: Map<string, string>): "conflicts" | "decisions" | "log";
+  export function hunkLines(hunk: string): Array<{ kind: "add" | "del" | "meta" | "ctx"; text: string }>;
+  export function resolutionText(conflict: Conflict): {
+    badge: string; precedent: boolean; how: string | null; who: string | null; text: string | null; rule: string | null; at: string | null;
+  };
+  export function draftText(conflict: Conflict, action: "mine" | "theirs" | "new"): string;
+  export function draftProblem(text: string): string | null;
+  export function resolveBody(conflictId: string, action: ConflictAction, text?: string): { conflictId: string; action: ConflictAction; text?: string };
+  export function conflictToast(conflict: Conflict, action: ConflictAction, text: string, ignored: boolean): { done: string; fail: string };
+  export function logEntries(status: Status): DecisionLogItem[];
+  export function logWhen(iso: string): string;
 }
 
 declare module "*/ui/views/merge.js" {
   export const needs: string[];
   export const actions: Record<string, (id?: string, element?: unknown) => Promise<void> | void>;
   export function render(root: unknown): void;
+  export function onInput(element: unknown): void;
+  export function enter(route: { view: string | null; conflict?: string }): void;
 }

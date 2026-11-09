@@ -135,10 +135,17 @@ export const ui = {
   closedEvents: new Set(),
   openFolds: new Set(),
   resumeOpen: false,
-  /** Merge Assist writes in flight: `finding:<id>` → action, `candidate:<id>` → state (`merge-model.js` `sectionsOf`). */
+  /**
+   * Merge Assist writes in flight: `finding:<id>` → action, `candidate:<id>` → state, `conflict:<id>` → action
+   * (`merge-model.js` `sectionsOf`, `conflictSections`).
+   */
   mergePending: new Map(),
-  /** Merge Assist's open disclosures: "notRules", "problems". */
+  /** Merge Assist's open disclosures: "notRules", "problems", "closedConflicts". */
   mergeOpen: new Set(),
+  /** Merge Assist's tab the person chose ("conflicts", "decisions", "log"), or `null` for the default (`tabOf`). */
+  mergeTab: null,
+  /** The decision being written for a conflict: `{ id, action: "mine"|"theirs"|"new", text }`, or `null`. */
+  mergeDraft: null,
   /** Merge Assist being turned on or off, and a Scan now, while their request is out for the repository shown. */
   mergeSwitching: false,
   mergeScanning: false,

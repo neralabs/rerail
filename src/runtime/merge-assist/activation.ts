@@ -279,8 +279,8 @@ function removeUnused(db: RerailDatabase, tx: StateQueries, repositoryKey: Repos
 
 /**
  * Merge Assist turned off for the repository: every rule it applied in any of its checkouts is removed, and so are the
- * findings from other branches and each checkout's scan and activation state. The checkouts' own candidate files, and
- * the record of where each came from, stay.
+ * findings from other branches, the in-flight conflicts (their dismissals included) and each checkout's scan and
+ * activation state. The checkouts' own candidate files, the decision log, and the record of where each came from, stay.
  */
 export function deactivateRepository(db: RerailDatabase, repositoryKey: RepositoryKey): void {
   db.transaction(tx => {
@@ -298,6 +298,7 @@ export function deactivateRepository(db: RerailDatabase, repositoryKey: Reposito
     for (const path of paths) {
       deleteState(tx, STATE_KEYS.activation(path));
       deleteState(tx, STATE_KEYS.scan(path));
+      deleteState(tx, STATE_KEYS.conflicts(path));
     }
   }, { behavior: "immediate" });
 }

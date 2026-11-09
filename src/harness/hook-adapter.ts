@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
-import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } from "../engine/adapter-contract.js";
+import { isSteerRule, type AdapterDelivery, type ConflictNotice, type RerailHost, type SteerRule } from "../engine/adapter-contract.js";
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
@@ -49,6 +49,11 @@ export function deliveryText(deliveries: readonly AdapterDelivery[]): string | u
 /** The rules behind the deliveries `deliveryText` rendered, in order: what the person's lines are built from. */
 export function deliveryRules(deliveries: readonly AdapterDelivery[]): SteerRule[] {
   return deliveries.filter(carriesText).flatMap(delivery => [...delivery.rules]);
+}
+
+/** The conflicts behind the deliveries `deliveryText` rendered, in order: the person's line for each, after the rules'. */
+export function deliveryConflicts(deliveries: readonly AdapterDelivery[]): ConflictNotice[] {
+  return deliveries.filter(carriesText).flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict]));
 }
 
 /** Distinct rule ids behind the deliveries `deliveryText` rendered, so the hook's receipt can credit them. */
@@ -143,7 +148,7 @@ export type SteerLines = (deliveries: readonly AdapterDelivery[]) => { systemMes
  */
 export async function holdStopSteers(path: string, deliveries: readonly AdapterDelivery[]): Promise<AdapterDelivery[]> {
   const held = deliveries.filter(delivery => steers(delivery.requested));
-  await persistPending(path, held.map(delivery => (delivery.rules.length > 0 ? { ...delivery, shown: true as const } : delivery)));
+  await persistPending(path, held.map(delivery => (delivery.rules.length > 0 || delivery.conflict !== undefined ? { ...delivery, shown: true as const } : delivery)));
   return held;
 }
 

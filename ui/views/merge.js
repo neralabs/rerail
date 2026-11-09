@@ -2,24 +2,32 @@
  * Merge Assist (`#merge`) for the scoped checkout. Off: what turning it on does and what Rerail found (the agent CLI,
  * `gh`, whether Git ignores `.rerail/candidates/`, whether rules can steer here), then Turn on Merge Assist. On: the
  * status strip (branch and base, the judging CLI, `gh`, the last scan and its problems, the hourly judgment budget,
- * Scan now and Turn off), then Decided differently, Needs your review, Added from other branches and Decisions on
- * this branch, with the ones marked as not a rule folded under it. The sections come from `merge-model.js`. When the
- * status cannot be read, the page says why and shows nothing to act on until a read succeeds again.
+ * Scan now and Turn off), then three tabs:
+ * - Conflicts: open conflicts as cards (both sides, the evidence, Keep mine, Take theirs, Write a new decision…, Not a
+ *   conflict), logged ones muted, then the resolved and dismissed ones folded. Keep mine, Take theirs and a new
+ *   decision open the decision text in the card; Confirm saves it. Shown first while any conflict is open.
+ * - Decisions: Decided differently, Needs your review, Added from other branches and Decisions on this branch, with
+ *   the ones marked as not a rule folded under it.
+ * - Decision log: every verdict from `refs/rerail/decisions`, newest first.
+ * What each shows comes from `merge-model.js`. When the status cannot be read, the page says why and shows nothing to
+ * act on until a read succeeds again.
  *
- * Decisions, authors, branch names, pull request titles and links are other people's text: every one is a text node
- * (`h()` children), never markup, and a pull request link is an `href` only when `safePeerUrl` accepts it.
+ * Decisions, conflicts, authors, branch names, pull request titles and links are other people's text: every one is a
+ * text node (`h()` children), never markup, and a pull request link is an `href` only when `safePeerUrl` accepts it.
  *
- * Buttons the page keeps busy (Turn on, Scan now, Turn off, a row's actions) are patched in place, never rebuilt for a
- * write in flight or the passing of time, so the focus stays on the button a person used.
+ * Buttons the page keeps busy (Turn on, Scan now, Turn off, the tabs, a row's or card's actions) are patched in place,
+ * never rebuilt for a write in flight or the passing of time, so the focus stays on the button a person used.
  */
-import { h, icon, setAttr, setContent, setText, syncChildren } from "../dom.js";
-import { ago, failed, fmt } from "../format.js";
+import { h, icon, setAttr, setClass, setContent, setText, syncChildren } from "../dom.js";
+import { ago, failed, fmt, stamp, startOfDay } from "../format.js";
 import { data, ui, repoName } from "../state.js";
 import { captureScope, inScope, writeMergeAssist } from "../poll.js";
 import { copyText, invalidate, toast } from "../shell.js";
 import {
-  authorOf, branchText, budgetText, githubText, judgeText, levelText, levelTitle, peerLabel, quoted, readinessChecks,
-  safePeerUrl, scanSummary, scannedWhat, sectionsOf, writeError,
+  DECISION_MAX, KIND_TEXT, LEVEL_TEXT, MERGE_TABS, authorOf, branchText, budgetText, conflictSections, conflictToast,
+  draftProblem, draftText, githubText, hunkLines, judgeText, levelText, levelTitle, logEntries, logWhen, peerLabel,
+  quoted, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, sideHeading,
+  tabOf, writeError,
 } from "../merge-model.js";
 
 export const needs = ["mergeAssist"];
@@ -28,8 +36,11 @@ const SETTINGS = "/api/merge-assist/settings";
 const SCAN = "/api/merge-assist/scan";
 const FINDINGS = "/api/merge-assist/findings";
 const CANDIDATES = "/api/merge-assist/candidates";
+const CONFLICTS = "/api/merge-assist/conflicts";
 
 let page = null;
+/** What the next render focuses: the draft's text once it opens, or the button that opened it once it closes. */
+let focusNext = null;
 
 /* ---------- writes ---------- */
 
@@ -147,6 +158,73 @@ function fold(name) {
   invalidate();
 }
 
+function chooseTab(name) {
+  if (!MERGE_TABS.includes(name)) return;
+  ui.mergeTab = name;
+  invalidate();
+}
+
+/* ---------- conflicts ---------- */
+
+const conflictOf = id => data.mergeAssist?.conflicts.find(c => c.id === id);
+const conflictBusy = id => ui.mergePending.has(`conflict:${id}`);
+/** The button that opens each draft, focused again when the draft closes. */
+const OPENER = { mine: "mamine", theirs: "matheirs", new: "manew" };
+
+/** Keep mine, Take theirs or Write a new decision…: open the decision text in the card, one draft at a time. */
+function openDraft(id, action) {
+  const conflict = conflictOf(id);
+  if (conflict === undefined || conflictBusy(id)) return;
+  ui.mergeTab = "conflicts";
+  ui.mergeDraft = { id, action, text: draftText(conflict, action) };
+  focusNext = { draft: true };
+  invalidate();
+}
+
+function cancelDraft() {
+  const draft = ui.mergeDraft;
+  if (draft === null || conflictBusy(draft.id)) return;
+  ui.mergeDraft = null;
+  focusNext = { id: draft.id, act: OPENER[draft.action] };
+  invalidate();
+}
+
+/**
+ * Resolve conflict `id` with `action` (and the decision `text`). The card stays, busy, until the daemon answers with
+ * the status that shows it resolved; Not a conflict hides it at once and brings it back if the write fails. A failed
+ * save keeps the draft so the person can try again.
+ */
+async function resolveConflict(id, action, text = "") {
+  const key = `conflict:${id}`, conflict = conflictOf(id);
+  if (conflict === undefined || conflictBusy(id)) return;
+  if (action !== "dismiss" && draftProblem(text) !== null) return;
+  const scope = captureScope();
+  const words = conflictToast(conflict, action, text.trim(), data.mergeAssist.readiness.candidatesIgnored);
+  ui.mergeTab = "conflicts";
+  ui.mergePending.set(key, action); invalidate();
+  const status = await write(scope, "PUT", CONFLICTS, resolveBody(id, action, text), words.fail);
+  if (!inScope(scope)) return;
+  ui.mergePending.delete(key);
+  if (status !== null) {
+    toast(words.done);
+    if (ui.mergeDraft?.id === id) ui.mergeDraft = null;
+  }
+  invalidate();
+}
+
+function confirmDraft(id) {
+  const draft = ui.mergeDraft;
+  if (draft?.id === id) return resolveConflict(id, draft.action, draft.text);
+  return undefined;
+}
+
+/** Typing in a draft: kept in `ui.mergeDraft`, so a render patches its counter and Confirm without rebuilding it. */
+export function onInput(el) {
+  if (ui.mergeDraft === null || !el.matches?.("textarea.mdraft")) return;
+  ui.mergeDraft.text = el.value;
+  invalidate();
+}
+
 export const actions = {
   maon: () => setEnabled(true),
   maoff: () => setEnabled(false),
@@ -158,6 +236,13 @@ export const actions = {
   marestore: id => setCandidate(id, "active"),
   macopy: id => copyMessage(id),
   mafold: name => fold(name),
+  matab: name => chooseTab(name),
+  mamine: id => openDraft(id, "mine"),
+  matheirs: id => openDraft(id, "theirs"),
+  manew: id => openDraft(id, "new"),
+  macancel: () => cancelDraft(),
+  maconfirm: id => confirmDraft(id),
+  manotconflict: id => resolveConflict(id, "dismiss"),
 };
 
 /* ---------- pieces ---------- */
@@ -173,15 +258,20 @@ const levelBadge = level => h(`span.badge.mlevel.${level}`, { title: levelTitle(
 /** A time a row shows ("4m ago"); `syncRows` fills it on every render, so it moves on without rebuilding the row. */
 const ageSlot = () => h("span.mago");
 
+/** A peer's pull request link when `safePeerUrl` accepts it for this repository, else `null`. */
+function safeLink(url) {
+  const status = data.mergeAssist;
+  if (status === null) return null;
+  return safePeerUrl(url, { repositoryKey: status.repositoryKey, repository: status.readiness.github.repository });
+}
+
 /**
  * Where a finding came from: the pull request (a link when it is safe to open) and its title, or the branch; then who
  * is behind it: the pull request's author as GitHub reports it, or the author a branch's decision file declares.
  */
 function source(finding) {
   const { peer } = finding;
-  const status = data.mergeAssist;
-  const href = peer.kind === "pull-request" && status !== null
-    ? safePeerUrl(peer.url, { repositoryKey: status.repositoryKey, repository: status.readiness.github.repository }) : null;
+  const href = peer.kind === "pull-request" ? safeLink(peer.url) : null;
   const label = peerLabel(peer);
   const where = href === null
     ? h("span", null, peer.kind === "pull-request" ? label : ["branch ", h("span.mono", null, peer.ref)])
@@ -284,6 +374,151 @@ function notRuleRow(decision) {
     h("div.macts", null, button("", "marestore", decision.id, "Restore", { aria: `Restore ${quoted(decision.decision)}` })));
 }
 
+/* ---------- conflict cards ---------- */
+
+/** A side's change as a diff: added lines green, removed red, headers muted. */
+const hunkBlock = hunk => h("pre.mhunk", null, hunkLines(hunk).map(line => h(`span.${line.kind}`, null, line.text, "\n")));
+
+/** Where a side's change is and when it was pushed. */
+function sideWhere(side) {
+  if (side.location === null && side.pushedAt === null) return null;
+  return h("div.mloc", null,
+    side.location === null ? null : h("code", null, side.location),
+    side.pushedAt === null ? null : h("span", null, `pushed ${stamp(Date.parse(side.pushedAt))}`));
+}
+
+/** One side of a conflict: who (a link when its pull request is safe to open), what, the hunk and where. */
+function sideBox(side, which) {
+  const href = safeLink(side.url);
+  const who = href === null ? sideHeading(side)
+    : [h("a.mlink", { href, target: "_blank", rel: "noopener noreferrer", title: `Open ${side.label} on GitHub` }, side.label), side.author ? ` · ${side.author}` : null];
+  return h(`div.mside.${which}`, null,
+    h("span.k", null, h("span.vh", null, which === "mine" ? "Mine: " : "Theirs: "), who),
+    h("p.msum", null, side.summary),
+    side.hunk ? hunkBlock(side.hunk) : null,
+    sideWhere(side));
+}
+
+function whyConflict(evidence) {
+  if (evidence.length === 0) return null;
+  return h("div.mev", null, h("div.mevb", null,
+    h("span.k", null, "Why Rerail thinks this is a conflict"),
+    h("ul.mwhy", null, evidence.map(line => h("li", null, line)))));
+}
+
+/** The four choices, all alike: the person decides, so none is recommended. */
+function conflictButtons(conflict) {
+  const about = quoted(conflict.title);
+  return [
+    button("", "mamine", conflict.id, "Keep mine", { aria: `Keep mine for ${about}` }),
+    button("", "matheirs", conflict.id, "Take theirs", { aria: `Take theirs for ${about}` }),
+    button("", "manew", conflict.id, "Write a new decision…", { aria: `Write a new decision for ${about}` }),
+    button(".ghost", "manotconflict", conflict.id, "Not a conflict", { aria: `Mark ${about} as not a conflict` }),
+  ];
+}
+
+function conflictCard(conflict) {
+  const logged = conflict.level === "logged";
+  return h(`article.mcard.${conflict.level}`, { "data-kind": conflict.kind },
+    h("div.mchead", null,
+      h(`span.badge.mkind.${conflict.kind}`, null, KIND_TEXT[conflict.kind]),
+      h("h3.mctitle", null, conflict.title),
+      h("span.mcage", null, "Open for ", ageSlot(), logged ? null : [" · ", LEVEL_TEXT.ambient])),
+    h("div.mvs", null, sideBox(conflict.mine, "mine"), sideBox(conflict.theirs, "theirs")),
+    whyConflict(conflict.evidence),
+    h("div.meditslot"),
+    h("div.macts", null, conflictButtons(conflict),
+      logged ? h("span.mlogged", null, icon("logged"), LEVEL_TEXT.logged) : null));
+}
+
+const EDIT_LABEL = { mine: "Keep mine: the decision to save", theirs: "Take theirs: the decision to save", new: "Your new decision" };
+
+/** The decision text a choice opens with; `patchDraft` keeps its counter and Confirm current. */
+function draftEditor(conflict, draft) {
+  const area = h("textarea.mdraft", { id: "ma-draft", rows: 3, "aria-describedby": "ma-draft-hint" });
+  area.value = draft.text;
+  return h("div.medit", null,
+    h("label.k", { for: "ma-draft" }, EDIT_LABEL[draft.action]),
+    area,
+    h("div.meditfoot", null,
+      h("span.mhint", { id: "ma-draft-hint" }),
+      h("span.meditacts", null,
+        h("button.btn.sm.ghost", { "data-act": "macancel", "data-i": conflict.id }, "Cancel"),
+        h("button.btn.sm.solid", { "data-act": "maconfirm", "data-i": conflict.id }, "Confirm"))),
+    h("p.mnote2", null, "Saved as a decision on this branch in ", h("code", null, ".rerail/candidates/"), " and recorded in the decision log."));
+}
+
+function draftHint(text) {
+  if (text.trim() === "") return `1 to ${fmt(DECISION_MAX)} characters.`;
+  return draftProblem(text) ?? `${fmt(text.trim().length)} of ${fmt(DECISION_MAX)} characters.`;
+}
+
+/** A card's draft: built when it opens, then patched (counter, Confirm, busy) so typing never rebuilds it. */
+function patchDraft(node, conflict) {
+  const draft = ui.mergeDraft?.id === conflict.id ? ui.mergeDraft : null;
+  for (const [action, act] of Object.entries(OPENER)) {
+    setAttr(node.querySelector(`button[data-act="${act}"]`), "aria-expanded", draft?.action === action ? "true" : "false");
+  }
+  const slot = node.querySelector(".meditslot");
+  setContent(slot, draft === null ? "" : draft.action, () => (draft === null ? null : draftEditor(conflict, draft)));
+  if (draft === null) return;
+  const area = slot.querySelector("textarea");
+  const problem = draftProblem(draft.text), invalid = problem !== null && draft.text.trim() !== "";
+  setText(slot.querySelector(".mhint"), draftHint(draft.text));
+  setClass(slot.querySelector(".mhint"), "bad", invalid);
+  setAttr(area, "aria-invalid", invalid ? "true" : null);
+  setAttr(area, "readonly", conflict.busy);
+  setAttr(slot.querySelector('button[data-act="maconfirm"]'), "disabled", problem !== null || conflict.busy || ui.mergeSwitching);
+}
+
+/** What a card shows, for its key: a change rebuilds the card. Its age, busy state and draft are patched. */
+const conflictContent = c => [c.status, c.level, c.kind, c.title, c.mine, c.theirs, c.evidence];
+
+function syncCards(list, items) {
+  syncChildren(list, items, c => `${c.id}\u0000${JSON.stringify(conflictContent(c))}`, conflictCard, (node, conflict) => {
+    setAttr(node, "aria-busy", conflict.busy ? "true" : null);
+    for (const b of node.querySelectorAll("button[data-act]")) setAttr(b, "disabled", conflict.busy || ui.mergeSwitching);
+    setText(node.querySelector(".mago"), ago(Date.parse(conflict.detectedAt)).replace(/ ago$/u, ""));
+    patchDraft(node, conflict);
+  });
+}
+
+/** A resolved or dismissed conflict, folded: how it ended, who decided (a person or precedent), and the rule path. */
+function closedRow(conflict) {
+  const r = resolutionText(conflict);
+  const tone = r.badge === "Not a conflict" ? "" : r.precedent ? ".mprec" : ".mres";
+  return h("article.mrow.mclosed", null,
+    h("div.mchead", null, h(`span.badge${tone}`, null, r.badge), h("h3.mctitle", null, conflict.title)),
+    r.text === null ? null : h("p.mq", null, r.text),
+    h("div.mmeta", null,
+      r.how === null ? null : h("span", null, r.how),
+      r.who === null ? null : h("b.mauthor", null, r.who),
+      r.at === null ? null : ageSlot(),
+      h("span", null, `with ${sideHeading(conflict.theirs)}`),
+      r.rule === null ? null : h("code.mrule", { title: "The decision saved on this branch" }, r.rule)));
+}
+
+/* ---------- the decision log ---------- */
+
+const LOG_COLUMNS = ["When", "Title", "Outcome", "By", "Rule"];
+
+function logRow(entry) {
+  const at = Date.parse(entry.recordedAt);
+  return h("tr", null,
+    h("td", { "data-label": "When" }, h("time", { datetime: entry.recordedAt, title: Number.isNaN(at) ? null : stamp(at) }, logWhen(entry.recordedAt))),
+    h("td", { "data-label": "Title" }, h("span.mlt", null, entry.title), entry.text === null ? null : h("span.sub", null, entry.text)),
+    h("td", { "data-label": "Outcome" }, entry.outcome),
+    h("td", { "data-label": "By" }, h(`span.badge.mby.${entry.by.kind}`, null, entry.by.name)),
+    h("td", { "data-label": "Rule" }, entry.rule === null ? h("span.sub", { "aria-label": "None" }, "—") : h("code.mrule", null, entry.rule)));
+}
+
+function logTable(entries) {
+  return h("div.list.mlogwrap", null, h("table.mlog", null,
+    h("caption.vh", null, "Decision log, newest first"),
+    h("thead", null, h("tr", null, LOG_COLUMNS.map(name => h("th", { scope: "col" }, name)))),
+    h("tbody", null, entries.map(logRow))));
+}
+
 /**
  * Reconcile one list's rows: a row is rebuilt only when what it shows changes (its key holds that), and patched for
  * its write in flight and its age (`when`, an ISO time), so neither a poll nor a click moves focus off a button whose
@@ -305,18 +540,54 @@ function slot(name) {
   return { root: h("section.msec", { "data-section": name }, head, list, empty), head, list, empty };
 }
 
+/** A folded list whose summary opens it (`mafold` with `name`), kept open across renders in `ui.mergeOpen`. */
+function foldedList(name) {
+  const list = h("div.list.mlist"), summary = h("summary", { "data-act": "mafold", "data-i": name });
+  return { root: h("details.mfold", null, summary, h("div.in", null, list)), summary, list };
+}
+
+const TAB_LABEL = { conflicts: "Conflicts", decisions: "Decisions", log: "Decision log" };
+
+/** The tabs: toggle buttons over the three panels, patched in place (`renderTabs`). */
+function buildTabs() {
+  const buttons = {}, panels = {};
+  for (const name of MERGE_TABS) {
+    buttons[name] = h("button.mtab", { "data-act": "matab", "data-i": name, "aria-controls": `ma-panel-${name}` }, TAB_LABEL[name]);
+    panels[name] = h("div.mpanel", { id: `ma-panel-${name}`, role: "region", "aria-label": TAB_LABEL[name] });
+  }
+  const conflictCount = h("span.mtabn");
+  buttons.conflicts.append(conflictCount);
+  const tabs = h("div.mtabs", { role: "group", "aria-label": "Merge Assist views" }, MERGE_TABS.map(name => buttons[name]));
+  return { tabs, buttons, panels, conflictCount };
+}
+
+function buildConflicts(panel) {
+  const head = h("div.ghead"), list = h("div.mcards"), empty = h("div"), closed = foldedList("closedConflicts");
+  panel.append(h("section.msec.mconf", { "data-section": "conflicts" }, head, list, empty, closed.root));
+  return { head, list, empty, closed };
+}
+
+function buildLog(panel) {
+  const head = h("div.ghead"), problems = h("div"), table = h("div"), empty = h("div");
+  panel.append(h("section.msec.mlogsec", { "data-section": "log" }, head, problems, table, empty));
+  return { head, problems, table, empty };
+}
+
 function build() {
   const head = h("div.ghead.mhead", null,
     h("h2", null, "Merge Assist", h("span.badge.mexp", null, "Experimental")),
     h("p.pitch", null, "Decisions you make while steering your coding agent travel with your branch. Rerail compares them with other branches and open pull requests before they merge."));
   const notice = h("div"), off = h("div"), strip = h("div");
+  const tabs = buildTabs();
   const talk = slot("talk"), review = slot("review"), added = slot("added"), own = slot("own");
-  const notRules = h("details.mfold"), notRulesSummary = h("summary", { "data-act": "mafold", "data-i": "notRules" }), notRulesList = h("div.list.mlist");
-  notRules.append(notRulesSummary, h("div.in", null, notRulesList));
-  own.root.append(notRules);
+  const notRules = foldedList("notRules");
+  own.root.append(notRules.root);
+  tabs.panels.decisions.append(talk.root, review.root, added.root, own.root);
   page = {
-    root: h("div.mpage", null, head, notice, off, strip, talk.root, review.root, added.root, own.root),
-    notice, off, strip, talk, review, added, own, notRules, notRulesSummary, notRulesList,
+    root: h("div.mpage", null, head, notice, off, strip, tabs.tabs, MERGE_TABS.map(name => tabs.panels[name])),
+    notice, off, strip, tabs, talk, review, added, own,
+    notRules: notRules.root, notRulesSummary: notRules.summary, notRulesList: notRules.list,
+    conflicts: buildConflicts(tabs.panels.conflicts), log: buildLog(tabs.panels.log),
     // Built with the consent card and the strip; patched in place on every render.
     onButton: null, stripWhen: null, scanButton: null, offButton: null,
   };
@@ -418,14 +689,15 @@ function renderHead(s, title, count, lead) {
   ]);
 }
 
+const emptyBlock = empty => h("div.list", null, h("div.empty", null, h("h3", null, empty.title), empty.lines.map(line => h("p", null, segments(line)))));
+
 function renderSection(s, { show, title, items, lead, row, content, when = null, empty = null }) {
   setAttr(s.root, "hidden", !show);
   if (!show) return;
   renderHead(s, title, items.length, lead);
   setAttr(s.list, "hidden", items.length === 0);
   syncRows(s.list, items, row, content, when);
-  setContent(s.empty, JSON.stringify(items.length === 0 ? empty : null), () => (items.length > 0 || empty === null ? null
-    : h("div.list", null, h("div.empty", null, h("h3", null, empty.title), empty.lines.map(line => h("p", null, segments(line)))))));
+  setContent(s.empty, JSON.stringify(items.length === 0 ? empty : null), () => (items.length > 0 || empty === null ? null : emptyBlock(empty)));
 }
 
 /** What a finding row shows, for its key: a change rebuilds the row. Its age is patched in place (`syncRows`). */
@@ -479,6 +751,112 @@ function renderSections(status) {
   syncRows(page.notRulesList, notRules, notRuleRow, d => [d.decision, d.level, d.scope]);
 }
 
+/** The tabs while on: the one shown pressed and its panel alone visible; Conflicts carries its open count. */
+function renderTabs(status) {
+  const on = status !== null && status.enabled;
+  const { tabs, buttons, panels, conflictCount } = page.tabs;
+  setAttr(tabs, "hidden", !on);
+  const shown = on ? tabOf(status, ui.mergeTab, ui.mergePending) : null;
+  for (const name of MERGE_TABS) {
+    setAttr(buttons[name], "aria-pressed", shown === name ? "true" : "false");
+    setAttr(buttons[name], "disabled", ui.mergeSwitching);
+    setAttr(panels[name], "hidden", shown !== name);
+  }
+  const open = on ? conflictSections(status, ui.mergePending).open.length : 0;
+  setText(conflictCount, open === 0 ? "" : ` · ${fmt(open)}`);
+}
+
+function conflictsEmpty(status, closed) {
+  const scan = status.lastScan;
+  const lines = [scan === null
+    ? ["Rerail looks for conflicts on every scan and after your coding agent’s edits: work on other branches and open pull requests that overlaps yours, and decisions that contradict this branch’s."]
+    : [`Rerail compared this branch with ${scannedWhat(scan)} ${ago(Date.parse(scan.at))} and found nothing waiting for you.`]];
+  lines.push(["When work overlaps, it shows here and you decide: keep yours, take theirs, or write a new decision."]);
+  if (closed > 0) lines.push(["Earlier ones are under Resolved and dismissed."]);
+  return { title: "No open conflicts", lines };
+}
+
+const closedContent = c => [c.status, c.title, c.theirs.label, c.theirs.author, c.resolution];
+
+function renderConflicts(status) {
+  const on = status !== null && status.enabled;
+  const { open, closed } = on ? conflictSections(status, ui.mergePending) : { open: [], closed: [] };
+  const c = page.conflicts;
+  renderHead(c, "Open conflicts", open.length,
+    ["Work in flight that overlaps yours. Rerail never picks a side: what you choose is saved as a decision on this branch and recorded in the decision log."]);
+  setAttr(c.list, "hidden", open.length === 0);
+  syncCards(c.list, open);
+  const empty = on && open.length === 0 ? conflictsEmpty(status, closed.length) : null;
+  setContent(c.empty, JSON.stringify(empty), () => (empty === null ? null : emptyBlock(empty)));
+  setAttr(c.closed.root, "hidden", closed.length === 0);
+  setAttr(c.closed.root, "open", ui.mergeOpen.has("closedConflicts"));
+  setText(c.closed.summary, `Resolved and dismissed (${fmt(closed.length)})`);
+  syncRows(c.closed.list, closed, closedRow, closedContent, x => x.resolution?.at ?? x.detectedAt);
+}
+
+const LOG_EMPTY = {
+  title: "No decisions logged yet",
+  lines: [["When you resolve a conflict, or an earlier decision answers one, the verdict is recorded here and in ", { code: "refs/rerail/decisions" }, ", which every checkout of this repository reads."]],
+};
+
+function renderLogProblems(problems) {
+  setContent(page.log.problems, JSON.stringify(problems), () => (problems.length === 0 ? null
+    : h("div.welcome.warn.mnote", { role: "status" }, icon("steered", 14),
+      h("div", null, h("b", null, "Part of the decision log could not be read."), h("ul.mbul", null, problems.map(p => h("li", null, p)))))));
+}
+
+function renderLog(status) {
+  const on = status !== null && status.enabled;
+  const entries = on ? logEntries(status) : [];
+  const l = page.log;
+  renderHead(l, "Decision log", entries.length,
+    ["Every verdict on a conflict, newest first: yours and precedent’s. It lives in ", { code: "refs/rerail/decisions" }, ", which every checkout reads."]);
+  renderLogProblems(on ? status.decisionLog.problems : []);
+  setContent(l.table, JSON.stringify([entries, startOfDay()]), () => (entries.length === 0 ? null : logTable(entries)));
+  setContent(l.empty, JSON.stringify(on && entries.length === 0), () => (on && entries.length === 0 ? emptyBlock(LOG_EMPTY) : null));
+}
+
+/** After a draft opens, its text; after one closes, the button that opened it. */
+function applyFocus() {
+  const target = focusNext;
+  focusNext = null;
+  if (target === null) return;
+  const el = target.draft
+    ? page.conflicts.list.querySelector("textarea.mdraft")
+    : [...page.conflicts.list.querySelectorAll(`button[data-act="${target.act}"]`)].find(b => b.dataset.i === target.id);
+  el?.focus();
+}
+
+/** The conflict a link names (`#merge?conflict=<id>`, the session's line), until a status shows whether it is here. */
+let reveal = null;
+
+export function enter(route) {
+  if (route.conflict === undefined) return;
+  reveal = route.conflict;
+  ui.mergeTab = "conflicts";
+}
+
+/** Which conflict to bring into view this render, once the status is in; a closed one opens its fold. */
+function revealTarget(status) {
+  if (reveal === null || status === null) return null;
+  const found = status.enabled ? status.conflicts.find(c => c.id === reveal) : undefined;
+  reveal = null;
+  if (found === undefined) return null;
+  if (found.status !== "open") ui.mergeOpen.add("closedConflicts");
+  return found;
+}
+
+/** Scroll the linked conflict's card (or folded row) into view and focus it, so a screen reader starts there. */
+function showConflict(conflict) {
+  if (conflict === null) return;
+  const list = conflict.status === "open" ? page.conflicts.list : page.conflicts.closed.list;
+  const node = [...list.children].find(n => n.dataset.key?.startsWith(`${conflict.id}\u0000`));
+  if (node === undefined) return;
+  setAttr(node, "tabindex", "-1");
+  node.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  node.focus({ preventScroll: true });
+}
+
 export function render(root) {
   if (page === null || page.root.parentNode !== root) {
     build();
@@ -486,8 +864,14 @@ export function render(root) {
   }
   // After a failed read the page says why and offers nothing to act on: the last status may no longer hold.
   const status = data.mergeAssistError === null ? data.mergeAssist : null;
+  const linked = revealTarget(status);
   renderNotice(status);
   renderOff(status);
   renderStrip(status);
+  renderTabs(status);
+  renderConflicts(status);
   renderSections(status);
+  renderLog(status);
+  applyFocus();
+  showConflict(linked);
 }

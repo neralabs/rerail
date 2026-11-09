@@ -1,7 +1,6 @@
 /**
  * Merge Assist's facade: what the runtime, the API and the CLI call for one checkout. See docs/merge-assist-v1-build.md.
  */
-import { userInfo } from "node:os";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { RerailHost } from "../../engine/adapter-contract.js";
@@ -12,10 +11,13 @@ import { gitText } from "../../engine/git.js";
 import { baseBranch, currentBranch, githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
 import { candidateHash, candidatesInForce, type Candidate, type CandidateState } from "../../engine/merge-assist/candidate.js";
 import { candidatesIgnored, committedCandidates, readWorktreeCandidates, writeWorktreeCandidate } from "../../engine/merge-assist/candidate-files.js";
+import { decisionLogItems, orderConflicts } from "../../engine/merge-assist/conflicts.js";
+import { readDecisions } from "../../engine/merge-assist/decision-log.js";
 import {
   findingSchema,
   githubReadinessSchema,
   lastScanSchema,
+  type ConflictAction,
   type Finding,
   type FindingAction,
   type FindingStatus,
@@ -29,8 +31,12 @@ import { mergeAssistItems, repositories, type MergeAssistItemRow } from "../../e
 import { activationFailures, deactivateRepository, itemRuleId, ownRuleId, reconcileCheckout, rulesActive } from "./activation.js";
 import { createAgentJudge, type AgentJudge } from "./agent-judge.js";
 import { captureCorrections, type CaptureResult, type SessionEventSource } from "./capture.js";
-import { createGithubClient, type GithubClient } from "./github.js";
+import { detectConflicts } from "./conflict-detect.js";
+import { answerConflict } from "./conflict-resolve.js";
+import { readConflicts, replaceConflict } from "./conflict-store.js";
+import { createGithubClient, type GithubClient, type PullRequestSummary } from "./github.js";
 import { markNotesDelivered, pendingNotes, type PendingNote } from "./notes.js";
+import { authorName, osUser, personName } from "./people.js";
 import { scanPeers, type ItemEvidence } from "./scan.js";
 import { STATE_KEYS, deleteState, isoSeconds, readState, writeState } from "./state.js";
 
@@ -62,6 +68,12 @@ export interface MergeAssistService {
    * still open: dismissing an applied one would undo it, which is the person's call.
    */
   resolveFinding(checkoutPath: string, findingId: string, action: FindingAction, actor?: MergeAssistActor): Promise<MergeAssistStatus>;
+  /**
+   * Settle an open in-flight conflict: keep this branch's side, take theirs, write a new decision (`text` required),
+   * or dismiss it as not a conflict. Each verdict appends to the decision log and writes a decision on this branch.
+   * Only a person decides: a coding agent is refused.
+   */
+  resolveConflict(checkoutPath: string, conflictId: string, action: ConflictAction, text?: string, actor?: MergeAssistActor): Promise<MergeAssistStatus>;
 }
 
 /** A session's capture request: its id and host, the checkout it runs in, and where its stored events are read. */
@@ -84,6 +96,11 @@ export interface MergeAssistRuntime extends MergeAssistService {
   pendingNotes(sessionId: string, checkoutPath: string, inFlight?: ReadonlySet<string>): PendingNote[];
   /** Record notes as handed to the session, once a delivery took them. */
   markNotesDelivered(sessionId: string, checkoutPath: string, marks: readonly string[]): void;
+  /**
+   * The agent edited files in the checkout: find its in-flight conflicts again, at most once per
+   * {@link CONFLICT_DETECT_INTERVAL_MS} per checkout. Resolves to whether it ran.
+   */
+  detectAfterEdit(checkoutPath: string): Promise<boolean>;
 }
 
 export interface MergeAssistServiceOptions {
@@ -102,25 +119,15 @@ export interface MergeAssistServiceOptions {
 const GITHUB_READINESS_MS = 5 * 60_000;
 /** A scan marked running for longer than this was cut short (its process died); another may start. */
 const SCAN_STALE_MS = 10 * 60_000;
+/** The least time between two detections of a checkout's conflicts after the agent's edits. */
+export const CONFLICT_DETECT_INTERVAL_MS = 30_000;
+/** How long a listing of open pull requests is reused for finding conflicts; a scan lists them afresh. */
+const PULLS_REUSE_MS = 5 * 60_000;
 const TIER_ORDER: Readonly<Record<FindingTier, number>> = { talk: 0, review: 1, absorb: 2 };
 
 const githubCacheSchema = z.object({ at: z.number(), readiness: githubReadinessSchema });
 const scanningSchema = z.object({ since: z.number() });
 const findingEvidenceSchema = findingSchema.shape.evidence;
-
-/** A login or name as a candidate's `author` accepts it: letters, digits, spaces and `. _ @ -`, up to 64. */
-function authorName(text: string | undefined): string | undefined {
-  const cleaned = (text ?? "").normalize("NFC").replace(/[^\p{L}\p{N} ._@-]+/gu, "").replace(/^[^\p{L}\p{N}]+/u, "").slice(0, 64).trim();
-  return cleaned === "" ? undefined : cleaned;
-}
-
-function osUser(): string | undefined {
-  try {
-    return userInfo().username;
-  } catch {
-    return undefined;
-  }
-}
 
 class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #options: MergeAssistServiceOptions;
@@ -132,6 +139,10 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #scans = new Map<string, Promise<void>>();
   /** `gh auth status` runs in this process, by repository; concurrent status reads share one. */
   readonly #githubReads = new Map<string, Promise<GithubReadiness>>();
+  /** When this process last found a checkout's conflicts after an edit, by checkout. */
+  readonly #detectedAt = new Map<string, number>();
+  /** The open pull requests this process last listed, by repository, and when. */
+  readonly #pulls = new Map<string, { at: number; pulls: Promise<readonly PullRequestSummary[]> }>();
 
   constructor(options: MergeAssistServiceOptions) {
     this.#options = options;
@@ -267,6 +278,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
           githubReadiness: () => this.#githubReadiness(checkout.repositoryKey, true),
           now: this.#now,
         });
+        await this.#detect(checkout);
         await this.#reconcile(checkout);
       } finally {
         deleteState(this.#db, markKey);
@@ -275,6 +287,38 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     })();
     this.#scans.set(path, work);
     return work;
+  }
+
+  /** The open pull requests for finding conflicts: the listing of the last five minutes, else read now; none without `gh`. */
+  #openPulls(checkout: CheckoutContext): Promise<readonly PullRequestSummary[]> {
+    const repository = githubRepositoryOf(checkout.repositoryKey);
+    if (repository === null) return Promise.resolve([]);
+    const cached = this.#pulls.get(checkout.repositoryKey);
+    if (cached !== undefined && this.#now() - cached.at < PULLS_REUSE_MS) return cached.pulls;
+    const pulls = this.#githubReadiness(checkout.repositoryKey, false)
+      .then(readiness => (readiness.state === "signed-in" ? this.#githubClient.openPullRequests(repository) : []))
+      .catch((): PullRequestSummary[] => []);
+    this.#pulls.set(checkout.repositoryKey, { at: this.#now(), pulls });
+    return pulls;
+  }
+
+  /** Find the checkout's in-flight conflicts; apply what precedent decided for this branch. */
+  async #detect(checkout: CheckoutContext): Promise<void> {
+    const pulls = await this.#openPulls(checkout);
+    const decided = await detectConflicts({ database: this.#db, checkout, pulls, now: this.#now });
+    if (decided) await this.#reconcile(checkout);
+  }
+
+  /** This branch's in-flight conflicts as the status lists them, and the decision log newest first. */
+  async #conflictsView(root: string): Promise<Pick<MergeAssistStatus, "conflicts" | "decisionLog">> {
+    const stored = readConflicts(this.#db, root);
+    const log = await readDecisions(root);
+    const titles = new Map(stored.map(entry => [entry.conflict.question, entry.conflict.title]));
+    const mine = currentBranch(root) ?? gitText(root, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]) ?? null;
+    return {
+      conflicts: orderConflicts(stored.map(entry => entry.conflict)),
+      decisionLog: { entries: decisionLogItems(log.entries, mine, titles), problems: log.problems },
+    };
   }
 
   async status(checkoutPath: string): Promise<MergeAssistStatus> {
@@ -331,6 +375,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       lastScan: readState(db, STATE_KEYS.scan(root), lastScanSchema) ?? null,
       own,
       findings,
+      ...await this.#conflictsView(root),
     };
   }
 
@@ -390,6 +435,33 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     this.#db.update(mergeAssistItems).set({ status: next, evidence, updatedAt: this.#now() }).where(eq(mergeAssistItems.id, item.id)).run();
     await this.#reconcile(checkout);
     return await this.status(root);
+  }
+
+  async resolveConflict(checkoutPath: string, conflictId: string, action: ConflictAction, text?: string, actor: MergeAssistActor = "person"): Promise<MergeAssistStatus> {
+    const checkout = this.#enabledCheckout(checkoutPath);
+    const root = checkout.checkoutPath;
+    if (actor === "agent") {
+      throw new MergeAssistError("invalid-state", "The person decides in-flight conflicts, not a coding agent. Tell them about it in one line; they resolve it on the Merge Assist page.");
+    }
+    const stored = readConflicts(this.#db, root).find(entry => entry.conflict.id === conflictId);
+    if (stored === undefined) throw new MergeAssistError("not-found", `This checkout has no conflict ${conflictId}.`);
+    if (stored.conflict.status !== "open") throw new MergeAssistError("invalid-state", `Conflict ${conflictId} is already ${stored.conflict.status}.`);
+    if (action === "new" && (text ?? "").trim() === "") throw new MergeAssistError("invalid-state", "A new decision needs its text.");
+    const context = { database: this.#db, checkout, now: this.#now };
+    const answered = await answerConflict(context, stored, { action, text, name: personName(root) });
+    this.#db.transaction(tx => replaceConflict(tx, root, answered, this.#now()), { behavior: "immediate" });
+    if (action !== "dismiss") await this.#reconcile(checkout);
+    return await this.status(root);
+  }
+
+  async detectAfterEdit(checkoutPath: string): Promise<boolean> {
+    const checkout = lookupCheckout(this.#db, checkoutPath);
+    if (checkout === undefined || !mergeAssistEnabled(this.#db, checkout.repositoryKey)) return false;
+    const last = this.#detectedAt.get(checkout.checkoutPath);
+    if (last !== undefined && this.#now() - last < CONFLICT_DETECT_INTERVAL_MS) return false;
+    this.#detectedAt.set(checkout.checkoutPath, this.#now());
+    await this.#detect(checkout);
+    return true;
   }
 
   async openSession(checkoutPath: string, host: RerailHost): Promise<void> {

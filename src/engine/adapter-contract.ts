@@ -274,6 +274,8 @@ export interface AdapterDelivery {
    */
   toolCallId?: string;
   rewound?: readonly string[];
+  /** The in-flight conflict a Merge Assist note surfaces: the person's line for it (`conflictLine`); never the agent's text. */
+  conflict?: ConflictNotice;
 }
 
 /** One rule a delivery steered (or logged) about, for the person's line and the dashboard; the coding agent never reads it. */
@@ -283,6 +285,14 @@ export interface SteerRule {
   /** Where the rule comes from (`steerOrigin`'s sentence); absent when unknown. */
   readonly origin?: string | undefined;
   /** The rule's dashboard page, once a coding agent's adapter knows the dashboard (`linkDeliveries`). */
+  readonly url?: string | undefined;
+}
+
+/** A conflict a delivery surfaces to the person: its id, the line's words, and its card's page once an adapter links it. */
+export interface ConflictNotice {
+  readonly id: string;
+  /** `your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher`. */
+  readonly text: string;
   readonly url?: string | undefined;
 }
 
