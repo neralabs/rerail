@@ -149,7 +149,12 @@ pub(crate) fn thread_usage() -> (f64, f64) {
     {
         (crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64(), 0.0)
     }
-    #[cfg(not(any(target_os = "macos", target_family = "wasm")))]
+    #[cfg(windows)]
+    {
+        let (user, kernel) = crate::code_rule_dsl::prof::windows_cpu(true);
+        (user.as_secs_f64(), kernel.as_secs_f64())
+    }
+    #[cfg(not(any(target_os = "macos", target_family = "wasm", windows)))]
     {
         let mut u: libc::rusage = unsafe { std::mem::zeroed() };
         unsafe { libc::getrusage(libc::RUSAGE_THREAD, &mut u) };
@@ -164,7 +169,13 @@ pub(crate) fn usage() -> (f64, f64, f64) {
     {
         (crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64(), 0.0, 0.0)
     }
-    #[cfg(not(target_family = "wasm"))]
+    // Windows: the process's user and kernel CPU, and its peak working set.
+    #[cfg(windows)]
+    {
+        let (user, kernel) = crate::code_rule_dsl::prof::windows_cpu(false);
+        (user.as_secs_f64(), kernel.as_secs_f64(), crate::code_rule_dsl::prof::windows_peak_working_set() as f64 / 1e6)
+    }
+    #[cfg(unix)]
     {
         let mut u: libc::rusage = unsafe { std::mem::zeroed() };
         unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
