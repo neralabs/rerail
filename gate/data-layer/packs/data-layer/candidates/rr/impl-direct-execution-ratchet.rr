@@ -18,6 +18,15 @@ ir_count(k,to_number(v)) :- ir_counts_object(), ir_integer(_,k,v,"",""), ir_coun
 .input ir_meta_type(IO=json, filename="baseline.json", path="/_metadata", projection="type")
 .decl ir_root_type(value: symbol)
 .input ir_root_type(IO=json, filename="baseline.json", projection="type")
+.decl ir_root_json(value: symbol)
+.input ir_root_json(IO=json, filename="baseline.json", projection="json")
+.decl ir_root_class(value: symbol)
+ir_root_class("list") :- ir_root_type("array").
+ir_root_class("str") :- ir_root_type("string").
+ir_root_class("NoneType") :- ir_root_type("null").
+ir_root_class("bool") :- ir_root_type("boolean").
+ir_root_class("int") :- ir_root_type("number"), ir_root_json(raw), @count_matches("[.eE]",raw) = 0.
+ir_root_class("float") :- ir_root_type("number"), ir_root_json(raw), @count_matches("[.eE]",raw) > 0.
 .decl ir_signature(value: symbol)
 .input ir_signature(IO=json, filename="baseline.json", path="/_metadata/signature")
 .decl ir_current(key: symbol, value: number)
@@ -69,7 +78,7 @@ IrResult(@place("",0),0) :- ir_problem(_).
 IrResult(@place("",0),0) :- ir_ready(), ir_current_base(_,c,b), c > b.
 IrResult(@place("",0),1) :- ir_ready(), n = count : { ir_current_base(_,c,b), c > b }, n = 0.
 .violation IrError(at: span, error_type: symbol, detail: symbol) code "IR_ERROR" "{detail}"
-IrError(@place("",0),"AttributeError","'list' object has no attribute 'get'") :- ir_root_type("array").
+IrError(@place("",0),"AttributeError",cat("'",t,"' object has no attribute 'get'")) :- ir_root_class(t).
 IrError(@place("",0),t,e) :- first = min i : { ir_conversion_error(i,_,_) }, ir_conversion_error(first,t,e).
 IrError(@place("",0),"NotImplementedError",cat("Native JSON diagnostic compatibility remains unimplemented: ",e)) :- option("missingBaseline","0"), input_error("baseline.json",k,e), k != "missing", !ir_load_error(_), !ir_problem(_), !ir_conversion_error(_,_,_).
 

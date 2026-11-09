@@ -2382,7 +2382,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution-ratchet.rr",
-      "sha256": "e02cc93f1f1372e12b54eecbe81243cdfce2e4b2180272d9f4563250de59a7ce",
+      "sha256": "a48dbf6b2f188f3c2b26fb25dcf1b6c8feed26dfbacd97f5acf1f778779967dd",
       "origin": "authored",
       "repairs": [
         {
@@ -2394,6 +2394,11 @@
           "before": "e32438bc09fa1b466217e83aa6dfecaa82ae1c9532b7dfa8c1c6715b71fd176f",
           "after": "e02cc93f1f1372e12b54eecbe81243cdfce2e4b2180272d9f4563250de59a7ce",
           "reason": "Native JSON coercion, parse diagnostics, and exact ratchet baseline actions"
+        },
+        {
+          "before": "e02cc93f1f1372e12b54eecbe81243cdfce2e4b2180272d9f4563250de59a7ce",
+          "after": "a48dbf6b2f188f3c2b26fb25dcf1b6c8feed26dfbacd97f5acf1f778779967dd",
+          "reason": "Preserve Python AttributeError for all JSON scalar roots, driven by the boundary corpus"
         }
       ]
     }
