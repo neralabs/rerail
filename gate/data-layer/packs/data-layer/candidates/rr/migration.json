@@ -3493,7 +3493,18 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "219657a9a698f5a7198c9f42ee295d169d960aaf"
+    "upstreamMerge": "219657a9a698f5a7198c9f42ee295d169d960aaf",
+    "adoptionAudit": {
+      "format": "rerail.engine-cohort-adoption/v1",
+      "upstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a",
+      "engineCommit": "1f71cfcb3cc36588211366962bf9dedb91513fea",
+      "sourceTrees": {
+        "native": "4237268254b3c30b779eaa4945203ccc5b0ced3e",
+        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
+        "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
+      }
+    }
   },
   "engineSourceSnapshots": [
     {
