@@ -13,11 +13,16 @@ from migration import ROOT,PIN,git,sha,write_json
 from replay import write_fixture,execute_workspace
 
 
-def case(name,files):return dict(id=name,files=[dict(path=p,source=t) for p,t in files.items()])
+def case(name,files,trigger=True):
+    files=dict(files)
+    if trigger:files.setdefault('scripts/lint_imperative_private_functions.py','# plugin trigger\n')
+    return dict(id=name,files=[dict(path=p,source=t) for p,t in files.items()])
 
 
 CASES=[
     case('empty',{}),
+    case('plugin-absent',{'impl/a.py':'def public(c): c.execute()\n'},False),
+    case('wrong-plugin-file',{'scripts/lint_other.py':'# not this plugin\n','impl/a.py':'def public(c): c.execute()\n'},False),
     case('direct',{'impl/a.py':'def public(c): c.execute()\n'}),
     case('private-eager',{'impl/connection.py':'def _connect(): pass\n'}),
     case('random-private',{'impl/a.py':'def _helper(): pass\n'}),
