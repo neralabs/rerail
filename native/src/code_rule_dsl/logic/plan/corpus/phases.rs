@@ -40,6 +40,34 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 
 const SEP: &str = "__";
 
+thread_local! {
+    /// The phases whose runs are under way on this thread, outermost first: a phase reading a later phase's export
+    /// runs that phase inside its own run, so a phase met again is a cycle.
+    static RUNNING: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Marks `name`'s run under way until dropped.
+struct Running;
+impl Running {
+    fn enter(name: &str) -> Result<Running> {
+        RUNNING.with(|r| {
+            let mut r = r.borrow_mut();
+            if r.iter().any(|n| n == name) {
+                return Err(Error::Plan(format!("phases read each other: {} -> {name}", r.join(" -> "))));
+            }
+            r.push(name.to_owned());
+            Ok(Running)
+        })
+    }
+}
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING.with(|r| {
+            r.borrow_mut().pop();
+        });
+    }
+}
+
 /// The export a phase names its definitions in, with their digests.
 const UNITS: &str = "unit";
 
@@ -134,6 +162,8 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
     let (mut facts, mut runs) = (Facts::new(), Vec::new());
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
     for (name, reads) in wanted(prog, dir.as_deref())? {
+        // An earlier phase that reads a phase of its own runs that one first, inside its run (struct, then types).
+        let _running = Running::enter(&name)?;
         let src = source(&name, dir.as_deref())?.expect("a phase program");
         let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
         let declared = declared(&program).ok_or_else(|| Error::Plan(format!("{name}.rr: no `.phase {name}`")))?;
@@ -168,7 +198,10 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // The phase's run: its own program, its own scratch, its exports written as its outputs.
         let out = scratch.join(format!("phase-{name}"));
         let text = format!("{src}\n.output {}\n", declared.exports.join(", "));
-        let key = run_key(&text, root, options);
+        // The earlier phases this one reads, run (or kept) first: their exports are part of what it consulted, so an
+        // upstream change is a new key (types over struct: a changed struct export runs types again).
+        let (upstream, _) = self::facts(&program, root, scratch, modes, binding, chunk_nodes, typing, options)?;
+        let key = run_key(&format!("{text}\n{}", digest_facts(&upstream)), root, options);
         // Unchanged since its last run (everything it consulted as it was): its exports are the last run's, kept.
         let checking = super::thread_usage();
         if let Some(rows) = reuse(&name, &key, &text, root, typing, options, &declared.exports)? {
@@ -413,6 +446,20 @@ fn hand_on(name: &str, program: &Program, reads: &[(String, String)], rows: &BTr
         }
     }
     Ok(())
+}
+
+/// A digest of the rows earlier phases hand on.
+fn digest_facts(facts: &Facts) -> String {
+    let mut h = Sha256::new();
+    for (rel, rows) in facts {
+        h.update(rel.as_bytes());
+        h.update([0]);
+        for row in rows {
+            h.update(format!("{row:?}").as_bytes());
+            h.update([1]);
+        }
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// What a phase's run is keyed by, beside what it consults: its program, the run's options, the root, the engine and
@@ -664,6 +711,56 @@ at(n, s) :- kind(n, "function_definition"), field(n, "name", i), text(i, s).
         assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "m\nm.f\nm.g\nm.h\n");
         write("a.py", "def f():\n    x = 1\n    return x\n\ndef h():\n    pass\n");
         assert_eq!(fresh(&text), (1, 1, 1, 0), "g removed: the module changed, g gone, g's granule gone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Phases chain: a phase may read an earlier phase's exports (0083: struct, then types, then the analysis), and
+    /// the reader sees only the last phase's. Phases that read each other are refused, not run forever.
+    #[test]
+    fn a_phase_reads_an_earlier_phase_and_a_cycle_is_refused() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("phases-chain");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, phases) = (dir.join("src"), dir.join("phases"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&phases).unwrap();
+        std::fs::write(src.join("a.py"), "class A:\n    pass\n\nclass B(A):\n    pass\n").unwrap();
+        let p1 = r#"
+#include "core.rr"
+.phase p1
+.export def, base
+.decl def(s: symbol, k: symbol)
+def(x, "class") :- kind(n, "class_definition"), field(n, "name", i), text(i, x).
+.decl base(s: symbol, b: symbol)
+base(x, b) :- kind(n, "class_definition"), field(n, "name", i), text(i, x), field(n, "superclasses", l), child(l, e, _), text(e, b).
+"#;
+        // The typing phase reads only p1's exports: the classes' ancestors, as a later phase would read them.
+        let p2 = r#"
+.phase p2
+.export anc
+.decl p1__def(s: symbol, k: symbol)
+.decl p1__base(s: symbol, b: symbol)
+.decl anc(s: symbol, a: symbol)
+anc(s, a) :- p1__base(s, a), p1__def(a, _).
+anc(s, a) :- anc(s, b), p1__base(b, a).
+"#;
+        std::fs::write(phases.join("p1.rr"), p1).unwrap();
+        std::fs::write(phases.join("p2.rr"), p2).unwrap();
+        let out = dir.join("out");
+        let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
+        let run = |text: &str| crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options);
+        let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl p2__anc(s: symbol, a: symbol)\n.decl r(s: symbol, a: symbol)\nr(s, a) :- p2__anc(s, a).\n.output r\n").unwrap()).unwrap();
+        run(&reader).unwrap();
+        assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "B\tA\n");
+        // p1 changed (its program: no class has a base now): p2, which reads it, is not kept.
+        std::fs::write(phases.join("p1.rr"), p1.replace("text(e, b).", "text(e, b), b = \"none\".")).unwrap();
+        run(&reader).unwrap();
+        assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "", "p2 run again over p1's new exports");
+        // p1 reading p2's export: each runs the other first.
+        std::fs::write(phases.join("p1.rr"), format!("{p1}\n.decl p2__anc(s: symbol, a: symbol)\n.decl seen(s: symbol)\nseen(s) :- p2__anc(s, _).\n.output seen\n")).unwrap();
+        let err = run(&reader).err().expect("a cycle refused").to_string();
+        assert!(err.contains("phases read each other"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
