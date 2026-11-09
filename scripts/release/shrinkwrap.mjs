@@ -11,6 +11,15 @@ export const SHRINKWRAP_FILE = "npm-shrinkwrap.json";
 /** Flags npm computes for the whole workspace tree; the shrinkwrap sets `optional` again for the shipped tree alone. */
 const TREE_FLAGS = new Set(["dev", "devOptional", "optional", "peer"]);
 
+/**
+ * Set on every dependency's entry. npm runs `node-gyp rebuild` for a package with a `binding.gyp` and no install script
+ * unless its package.json says `gypfile: false`, but it reads a shrinkwrapped dependency from its entry here, and the
+ * entries npm writes never carry that field. Without this, `npx @neralabs/rerail setup` compiles better-sqlite3, which
+ * ships prebuilt binaries and says `gypfile: false` itself, and fails where no compiler is installed (node:24-slim).
+ * The managed install runs no install script, so every shipped dependency already works prebuilt and none needs a build.
+ */
+const NO_SOURCE_BUILD = { gypfile: false };
+
 /** The lockfile location npm resolves `name` to from the package at `from`: its own node_modules, then each parent's. */
 function resolveLocation(packages, from, name) {
   let base = from;
@@ -80,7 +89,7 @@ export function shrinkwrapFrom(manifest, lock) {
   const packages = { "": shipped };
   for (const [location, entry] of Object.entries(lock.packages)) {
     if (!all.has(location)) continue;
-    const kept = Object.fromEntries(Object.entries(entry).filter(([key]) => !TREE_FLAGS.has(key)));
+    const kept = { ...Object.fromEntries(Object.entries(entry).filter(([key]) => !TREE_FLAGS.has(key))), ...NO_SOURCE_BUILD };
     packages[location] = required.has(location) ? kept : { ...kept, optional: true };
   }
   return { name: manifest.name, version: manifest.version, lockfileVersion: 3, requires: true, packages };
