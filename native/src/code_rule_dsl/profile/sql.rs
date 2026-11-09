@@ -138,6 +138,7 @@ struct State {
     ids: HashMap<String, usize>,
     queries: Vec<Value>,
     sql_time: Timing,
+    operator_time: Timing,
     totals: [u64; 6],
     error: Option<String>,
     events: usize,
@@ -306,6 +307,7 @@ impl Profiler {
             query,
             previous: Some(previous),
             sql_time: state.sql_time,
+            operator_time: state.operator_time,
             started: Started::now(),
             start_ns: now(),
             rows: None,
@@ -410,6 +412,7 @@ pub(in crate::code_rule_dsl) struct Operation<'a> {
     query: usize,
     previous: Option<Value>,
     sql_time: Timing,
+    operator_time: Timing,
     started: Started,
     start_ns: u64,
     rows: Option<usize>,
@@ -432,10 +435,17 @@ impl Drop for Operation<'_> {
         let elapsed = self.started.elapsed();
         let mut state = self.profiler.state.borrow_mut();
         let sql = state.sql_time.since(self.sql_time);
+        let children = state.operator_time.since(self.operator_time);
+        let own = Timing {
+            wall: elapsed.wall.saturating_sub(sql.wall).saturating_sub(children.wall),
+            cpu: elapsed.cpu.saturating_sub(sql.cpu).saturating_sub(children.cpu),
+        };
+        state.operator_time.add(own);
         let context = self.profiler.context.lock().clone();
         state.write(json!({"kind":"operator","query":self.query,"startNs":self.start_ns,
             "wallNs":elapsed.wall,"cpuNs":elapsed.cpu,
-            "selfWallNs":elapsed.wall.saturating_sub(sql.wall),"selfCpuNs":elapsed.cpu.saturating_sub(sql.cpu),
+            "selfWallNs":own.wall,"selfCpuNs":own.cpu,
+            "childOperatorWallNs":children.wall,"childOperatorCpuNs":children.cpu,
             "rows":self.rows,"completed":self.completed,"context":context,
             "thread":format!("{:?}",std::thread::current().id())}));
         *self.profiler.context.lock() = self.previous.take().unwrap_or(Value::Null);

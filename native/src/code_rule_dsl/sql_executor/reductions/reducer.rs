@@ -60,7 +60,7 @@ impl Reducer {
                         arguments,
                     } if arguments.len() == 2 && arguments[1] == integer(0) => {
                         let E::Call {
-                            name: "sum",
+                            name: "sum" | "rr_exact_sum",
                             arguments,
                         } = &arguments[0]
                         else {

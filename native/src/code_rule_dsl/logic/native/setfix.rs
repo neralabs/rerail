@@ -36,6 +36,9 @@
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
+mod scalars;
+mod liveness;
+use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, VTab, VTabConnection, VTabCursor, VTabKind};
@@ -216,12 +219,12 @@ impl Index {
 /// exactly its matches rather than the shortest single-column list.
 /// `dead`: rows deleted but kept in place (`based`), which every reader skips; `ndead` of them.
 struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i64>, set: HashTable<u32>, stored: usize, lo: usize, hi: usize,
-             wave: u32, idx: Vec<Index>, dead: Vec<u64>, ndead: usize }
+             wave: u32, idx: Vec<Index>, dead: Vec<u64>, ndead: usize, summaries: scalars::Pool }
 impl Rel {
     fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         let idx = (0..k).map(|c| Index { cols: vec![c], table: HashTable::new(), next: Vec::new() }).collect();
-        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0 }
+        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0, summaries: Default::default() }
     }
     /// A relation that starts as `old` (a kept one: its rows, dedup set and indexes, copied as memory, not hashed
     /// again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the first wave's
@@ -265,7 +268,7 @@ impl Rel {
                 p.dlen = p.len;
             }
         }
-        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead })
+        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead, summaries: Default::default() })
     }
     #[inline]
     fn dead(&self, id: u32) -> bool {
@@ -597,6 +600,13 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
     let (nrels, symbols) = { let s = comp.store.read().unwrap(); (s.rels.len(), Arc::clone(&s.syms)) };
+    {
+        let store=comp.store.read().unwrap();
+        for probe in &comp.probes {
+            if let Body::Join(join)=&probe.body {scalars::register(&join.steps,Some(&store));}
+            if let Some(join)=&probe.whole {scalars::register(&join.steps,Some(&store));}
+        }
+    }
     let mut stmts = Vec::new();
     for p in &comp.probes { stmts.push(match &p.body { Body::Sql(sql) => Some(conn.prepare(sql)?), Body::Join(_) => None }); }
     let (mut waves, mut visits, mut runs, mut skips) = (0u32, 0u64, 0u64, 0u64);
@@ -661,7 +671,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
                 eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {d}", store.rels[p.head].table);
             }
-            let n = run_join(j, p.head, store, &mut syms, &mut fresh);
+            let n = run_join(j, p.head, store, &mut syms, &mut fresh)?;
             visits += n;
             per[pi].0 += tp.elapsed().as_secs_f64();
             per[pi].1 += n;
@@ -1085,7 +1095,8 @@ pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base:
                    set: HashTable<u32>, dead: Vec<u64>, ndead: usize,
                    /// Each column's statistics (`syntax::measured`), measured when first asked: a kept relation's rows
                    /// do not change, so a session's later runs read them, not measure them again (0094 §4).
-                   measured: std::sync::OnceLock<Vec<[i64; 4]>> }
+                   measured: std::sync::OnceLock<Vec<[i64; 4]>>,
+                   summaries: scalars::Pool }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
 pub struct View { src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
@@ -1399,7 +1410,7 @@ impl InRel {
     /// A component's relation at its fixpoint, its rows and indexes moved.
     fn moved(rel: Rel) -> InRel {
         InRel { k: rel.k, n: rel.n, rows: rel.data, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx,
-                set: rel.set, dead: rel.dead, ndead: rel.ndead, measured: Default::default() }
+                set: rel.set, dead: rel.dead, ndead: rel.ndead, measured: Default::default(), summaries: rel.summaries }
     }
     /// A whole view's rows are its source's, counted when first asked: a source that makes its rows on lookup
     /// (`syntax::within`) makes them all only for a scan.
@@ -1522,7 +1533,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(0, Vec::len);
-            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default() });
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default(), summaries: Default::default() });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if std::env::var_os("RDL_PROFILE").is_some() {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
@@ -1538,7 +1549,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default() });
+    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default(), summaries: Default::default() });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;
@@ -1564,6 +1575,7 @@ fn view(conn: &Connection, table: &str, cols: &str) -> Option<View> {
         let need: Vec<&str> = cols.split(',').chain(filtered).collect();
         stored_table(conn, schema, name, &need)?
     };
+    let src=src.frozen().unwrap_or(src);
     let names = src.columns();
     let column = |c: &str| names.iter().position(|n| n == c.trim());
     let cols: Vec<usize> = cols.split(',').map(column).collect::<Option<_>>()?;
@@ -1749,6 +1761,7 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
 enum Key { Slot(usize), Const(i64) }
 enum Src { Delta(usize), Full(usize), FullMulti(usize, Vec<usize>), In(Arc<InRel>, Arc<Csr>) }
 enum Step {
+    Unused { proof: crate::code_rule_dsl::logic::analysis::Decision },
     /// Key columns (bound), columns that bind a slot, and column pairs that must be equal (a variable repeated in
     /// the atom, first seen here).
     Atom { src: Src, neg: bool, keys: Vec<(usize, Key)>, binds: Vec<(usize, usize)>, tests: Vec<(usize, usize)> },
@@ -1757,10 +1770,9 @@ enum Step {
     Split { whole: Key, a: Option<usize>, b: Option<usize>, ka: Key, kb: Key },
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
-    Count { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, out: usize, bind: bool },
-    /// `out = min col : { atom }` (`max` when `max`): the least (greatest) value of column `col` over the atom's
-    /// matching rows; no rows, no binding.
-    Extreme { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, col: usize, out: usize, bind: bool, max: bool },
+    /// Direct non-null scalar. The shared logical proof selects a bag; the source owns versioned summaries.
+    Scalar { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, col: Option<usize>,
+        kind: ScalarKind, out: usize, bind: bool, bag: Option<Arc<scalars::Bag>> },
     Let { a: usize, b: Key },
     Ne { a: Key, b: Key },
     /// `out = @f(args)` for a `strings::functions` function: text arguments are symbols' names, a text result is
@@ -1799,16 +1811,20 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
         let toks: Vec<&str> = line.split_whitespace().collect();
         let is_bound = |b: &Vec<bool>, k: Key| match k { Key::Slot(s) => b.get(s).copied().unwrap_or(false), Key::Const(_) => true };
         match toks[0] {
-            "pos" | "neg" | "count" | "min" | "max" | "strjoin" => {
-                let (neg, count, extreme, sjoin) = (toks[0] == "neg", toks[0] == "count", matches!(toks[0], "min" | "max"), toks[0] == "strjoin");
-                // `min <src> <atom tokens> <column> <out>`: the aggregated column's token is `_`. `strjoin <src> <atom
-                // tokens> <x column:symbol> <by columns:symbol, comma-separated, or -> <sep> <out>`: x's and the by
-                // columns' tokens are `_`.
+            "pos" | "neg" | "count" | "sum" | "min" | "max" | "strjoin" => {
+                let (neg, count, extreme, sjoin) = (toks[0] == "neg", toks[0] == "count", matches!(toks[0], "sum" | "min" | "max"), toks[0] == "strjoin");
+                // Scalar value columns use `_` tokens. A strjoin additionally carries value,
+                // ordering, separator, and output tokens after the atom columns.
                 if sjoin && toks.len() < 7 { return Err(err("bad strjoin")); }
                 let atoks = if count { &toks[2..toks.len() - 1] } else if extreme { &toks[2..toks.len() - 2] } else if sjoin { &toks[2..toks.len() - 4] } else { &toks[2..] };
                 let count = count || sjoin;
                 let (mut keys, mut binds, mut tests) = (Vec::new(), Vec::new(), Vec::new());
+                let mut locals=HashMap::default();
                 for (col, t) in atoks.iter().enumerate() {
+                    if (count || extreme) && let Some(local)=t.strip_prefix('a') {
+                        if let Some(previous)=locals.insert(local,col) {tests.push((col,previous));}
+                        continue;
+                    }
                     match tok(t, syms)? {
                         None => {}
                         Some(k) if is_bound(&bound, k) => keys.push((col, k)),
@@ -1858,15 +1874,16 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     steps.push(Step::StrJoin { src, keys, tests, x, by, sep, out: o, bind });
                 } else if extreme {
                     let col = num(toks[toks.len() - 2])?;
+                    if col >= atoks.len() { return Err(err("native scalar value column is out of range")); }
                     let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad min or max")) };
                     let bind = !is_bound(&bound, Key::Slot(o));
                     grow(&mut bound, o); bound[o] = true;
-                    steps.push(Step::Extreme { src, keys, tests, col, out: o, bind, max: toks[0] == "max" });
+                    steps.push(Step::Scalar { src, keys, tests, col: Some(col), out: o, bind, kind: match toks[0] {"sum"=>ScalarKind::Sum,"min"=>ScalarKind::Min,_=>ScalarKind::Max}, bag: None });
                 } else if count {
                     let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad count")) };
                     let bind = !is_bound(&bound, Key::Slot(o));
                     grow(&mut bound, o); bound[o] = true;
-                    steps.push(Step::Count { src, keys, tests, out: o, bind });
+                    steps.push(Step::Scalar { src, keys, tests, col: None, out: o, bind, kind: ScalarKind::Count, bag: None });
                 } else {
                     steps.push(Step::Atom { src, neg, keys, binds, tests });
                 }
@@ -1979,14 +1996,16 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
     if out.iter().any(|t| match t { Term::Slot(s) => unbound(*s), Term::Cat(a, b) => unbound(*a) || unbound(*b), Term::Const(_) => false }) {
         return Err(err(format!("a head reads a slot its body does not bind: {spec}")));
     }
+    liveness::sums(&mut steps,&out);
+    scalars::plan(&mut steps);
     let counts = steps.iter().map(|_| Default::default()).collect();
     Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
-fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> u64 {
+fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> Result<u64> {
     struct Ctx<'a> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
-                     key: Vec<i64>, row: Vec<i64> }
+                     key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)> }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -2002,9 +2021,19 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
         }
     }
     fn go<'a>(cx: &mut Ctx<'a>, i: usize, slots: &mut [i64]) {
+        if cx.error.is_some() { return; }
         let (j, store): (&'a JoinRule, &'a Store) = (cx.j, cx.store);
         if i > 0 { let c = &j.counts[i - 1][1]; c.set(c.get() + 1); }
         if let Some(c) = j.counts.get(i) { c[0].set(c[0].get() + 1); }
+        // Keep exact sums until a predicate, lookup, function, or emitted head
+        // observes the binding. A later filter can remove a row before that use.
+        if !cx.pending.is_empty() {
+            if let Some((_,value))=cx.pending.iter().find(|(slot,_)|j.steps.get(i).map_or_else(
+                ||j.out.iter().any(|term|matches!(term,Term::Slot(s) if s==slot)||matches!(term,Term::Cat(a,b) if a==slot||b==slot)),
+                |step|step.observes(*slot))) {
+                cx.error=Some(super::aggregation::sum_value(*value).unwrap_err());return;
+            }
+        }
         let Some(step) = j.steps.get(i) else {
             cx.row.clear();
             for o in &j.out {
@@ -2066,19 +2095,47 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 });
                 if exists && found != *neg { go(cx, i + 1, slots); }
             }
-            Step::Count { src, keys, tests, out, bind } => {
+            Step::Scalar { src, keys, tests, col, kind, out, bind, bag } => {
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
-                let (rows, cands) = candidates(src, store, &cx.key, keys);
-                let mut n = 0i64;
-                cands.any(|id| {
-                    if rows.dead(id) { return false; }
-                    let row = rows.row(id);
-                    if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { n += 1 }
-                    false
-                });
-                if *bind { slots[*out] = n } else if slots[*out] != n { return }
-                go(cx, i + 1, slots);
+                let build = |value: Option<usize>| {
+                    let _cpu=crate::code_rule_dsl::logic::profile::span(||"native scalar summary fold".into());
+                    let mut inspected=0;
+                    let (rows, cands) = candidates(src, store, &cx.key, keys);
+                    let mut summary = scalars::Summary::default();
+                    cands.any(|id| {
+                        inspected+=1;
+                        if rows.dead(id) { return false; }
+                        let row = rows.row(id);
+                        if keys.iter().all(|&(c,k)| row.at(c)==val(slots,k)) && tests.iter().all(|&(c,c0)| row.at(c)==row.at(c0)) {
+                            summary.add(value.map(|c| row.at(c)));
+                        }
+                        false
+                    });
+                    charge(Unit::Value,inspected);
+                    summary
+                };
+                let summary = if let Some(bag) = bag {
+                    let (pool, epoch) = match src {
+                        Src::In(rel, _) => (&rel.summaries, (rel.len(),0,rel.len())),
+                        Src::Full(r) | Src::FullMulti(r, _) => {let rel=&store.rels[*r]; (&rel.summaries,(rel.n,0,rel.n))},
+                        Src::Delta(r) => {let rel=&store.rels[*r]; (&rel.summaries,(rel.n,rel.lo,rel.hi))},
+                    };
+                    pool.evaluate(bag, &cx.key, epoch, build)
+                } else { build(*col) };
+                if *kind==ScalarKind::Sum && *bind {
+                    cx.pending.retain(|(slot,_)|slot!=out);
+                    if let Ok(value)=i64::try_from(summary.sum) {slots[*out]=value;}
+                    else {slots[*out]=0;cx.pending.push((*out,summary.sum));}
+                    go(cx,i+1,slots);return;
+                }
+                let v = match summary.result(*kind) {
+                    Ok(Some(v)) => v,
+                    Ok(None) => return,
+                    Err(e) => {cx.error=Some(e); return;}
+                };
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i+1, slots);
             }
             Step::StrJoin { src, keys, tests, x, by, sep, out, bind } => {
                 // Numbers before symbols, as SQL's `rr_join` sorts them (a column holds one or the other).
@@ -2103,24 +2160,6 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 let sep = cx.syms.name(*sep).to_string();
                 let joined = got.into_iter().map(|(_, v)| v).collect::<Vec<_>>().join(&sep);
                 let v = cx.syms.id(&joined);
-                if *bind { slots[*out] = v } else if slots[*out] != v { return }
-                go(cx, i + 1, slots);
-            }
-            Step::Extreme { src, keys, tests, col, out, bind, max } => {
-                cx.key.clear();
-                cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
-                let (rows, cands) = candidates(src, store, &cx.key, keys);
-                let mut best: Option<i64> = None;
-                cands.any(|id| {
-                    if rows.dead(id) { return false; }
-                    let row = rows.row(id);
-                    if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) {
-                        let v = row.at(*col);
-                        best = Some(best.map_or(v, |b| if *max { b.max(v) } else { b.min(v) }));
-                    }
-                    false
-                });
-                let Some(v) = best else { return };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
             }
@@ -2183,12 +2222,19 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 };
                 if hit == *want { go(cx, i + 1, slots) }
             }
-            Step::Let { a, b } => { slots[*a] = val(slots, *b); go(cx, i + 1, slots) }
+            Step::Unused {..}=>go(cx,i+1,slots),
+            Step::Let { a, b } => {
+                let pending=if let Key::Slot(source)=b {cx.pending.iter().find(|(slot,_)|slot==source).map(|(_,v)|*v)} else {None};
+                cx.pending.retain(|(slot,_)|slot!=a);
+                if let Some(value)=pending {cx.pending.push((*a,value));}
+                slots[*a] = val(slots, *b); go(cx, i + 1, slots)
+            }
             Step::In { a, set, want } => if set.contains(&val(slots, *a)) == *want { go(cx, i + 1, slots) },
         }
     }
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new() };
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new() };
     let mut slots = vec![0i64; j.nslots];
     go(&mut cx, 0, &mut slots);
-    cx.n
+    scalars::explain(&j.steps,store);
+    match cx.error {Some(e)=>Err(e),None=>Ok(cx.n)}
 }

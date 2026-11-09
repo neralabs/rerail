@@ -26,7 +26,7 @@ pub(super) struct Retained {
     output: String,
     heads: String,
     width: usize,
-    rules: Vec<Rule>,
+    rules: Arc<Vec<Rule>>,
     lattice: Option<lattice::Lattice>,
     pub(super) ready: bool,
     cold_reuse: crate::code_rule_dsl::logic::analysis::Decision,
@@ -64,7 +64,7 @@ impl Retained {
     /// Drop support for an empty positive body, retaining global scalar input indexes.
     pub(super) fn clear_contexts(&self, store: &versions::Store) -> Result<()> {
         let mut objects = vec![self.heads.clone()];
-        for rule in &self.rules {
+        for rule in self.rules.iter() {
             objects.push(rule.contexts.clone());
             if !rule.contribution_view { objects.push(rule.contributions.clone()); }
             objects.extend(rule.reducers.iter().filter_map(Reducer::dependency_object));
@@ -189,7 +189,7 @@ fn equal(a: &str, b: &str, width: usize) -> String {
         .join(" AND ")
 }
 fn execute(db: &rusqlite::Connection, sql: &str) -> Result<usize> {
-    db.execute(sql, []).map_err(error)
+    db.prepare_cached(sql).map_err(error)?.execute([]).map_err(error)
 }
 fn temporary(w: &mut Work<'_>, width: usize, extra: &str, keys: Option<usize>) -> Result<String> {
     let mut definition = schema(width);
@@ -347,14 +347,14 @@ fn plan_local(
             output: output.clone(),
             heads: format!("__sql_state_{output}_heads"),
             width: *width,
-            rules,
+            rules: Arc::new(rules),
             lattice,
             ready: false,
             cold_reuse,
             cold_initialized: false,
         };
         if native && state.can_fuse() {
-            for rule in &mut state.rules { if rule.contribution_storage.decision.proven { rule.reconstruct_contributions(); } }
+            for rule in Arc::make_mut(&mut state.rules) { if rule.contribution_storage.decision.proven { rule.reconstruct_contributions(); } }
         }
         crate::code_rule_dsl::logic::profile::decision("retained logical analyses", || state.explain().to_string());
         retained.insert(output.clone(), state);
@@ -396,7 +396,7 @@ impl Retained {
             storage,
             fused,
         )?;
-        for rule in &self.rules {
+        for rule in self.rules.iter() {
             for reducer in &rule.reducers {
                 reducer.initialize(db, objects, storage)?;
             }
