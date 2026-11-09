@@ -640,7 +640,7 @@
       "violation": {
         "code": "LIFECYCLE_HOOK_HIDES_DEPS",
         "anchor": "witness.start",
-        "message": "$HOOK runs once on mount, so dependency checks miss what its callback reads: use useEffect and list those values as its dependencies."
+        "message": "$HOOK runs once on mount, so dependency checks miss what its callback reads. If these values can change while mounted, use useEffect and list them as its dependencies; if reading them once is intended, keep $HOOK (on React 19.2+, useEffectEvent makes that explicit)."
       }
     }
   ]
