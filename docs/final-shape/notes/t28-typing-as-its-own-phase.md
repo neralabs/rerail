@@ -134,7 +134,7 @@ Against Jedi over the 84 files (dev build, load 15–30), with each run's store 
 | documents in the analysis run | 267 | 84 |
 
 No call is answered worse than calls_cx answers it: no line has more "no edge" or "another definition" answers.
-86 calls calls_cx left unknown are now decided, and 17 it decided are now unknown. Those 17 are mostly generics
+97 calls that calls_cx does not agree on now agree, and 16 it agreed on are now unknown. Those 16 are mostly generics
 instantiated through a library class (`Mapping.get`, `Future.result`, `IO.fileno` on `open()`'s overloads), which
 P3 does not do yet.
 
@@ -156,7 +156,7 @@ Faults found on the way, all fixed:
 ### P3 still to come
 
 - Generic instantiation through a library's classes (`list[C]`'s `__iter__`, `dict[str, C].get`, the `gpar`,
-  `wbind` and `fbind` machinery on stub nodes): needs P2's schemes. These are the 17 calls above.
+  `wbind` and `fbind` machinery on stub nodes): needs P2's schemes. These are most of the 16 calls above.
 - Overloads fitted by arity. Today the returns of every overload are taken, and any open one makes the call open.
 - `async def` in stubs: struct does not mark it, so an awaited library call's value is typed as its return.
 - The cross-file memo per import component (`RERAIL_PYTHON_CROSS_MEMO`) is not used with P3 yet; the runs above are
