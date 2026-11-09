@@ -45,6 +45,48 @@ async function json(path: string): Promise<unknown> {
   return JSON.parse(await readFile(resolve(path), "utf8"));
 }
 
+/** A plugin root under a Windows profile folder with a space, as Claude Code hands it to Git Bash. */
+const SPACED_CLAUDE_ROOT = "C:/Users/Jane Doe/.claude/plugins/cache/neralabs/rerail/0.1.3";
+/** A plugin root under a Windows profile folder with a space, as Codex writes it into a hook command. */
+const SPACED_CODEX_ROOT = String.raw`C:\Users\Jane Doe\.codex\plugins\cache\rerail`;
+
+/**
+ * The words POSIX sh makes of `command` once each `${NAME}` in it expands from `env`: double quotes group, and an
+ * unquoted expansion splits at blanks. Enough of sh for a hook command line.
+ */
+function shWords(command: string, env: Readonly<Record<string, string>>): string[] {
+  const words: string[] = [];
+  let word: string | undefined;
+  let quoted = false;
+  const end = (): void => {
+    if (word !== undefined) words.push(word);
+    word = undefined;
+  };
+  for (let index = 0; index < command.length; index++) {
+    const expansion = /^\$\{(\w+)\}/u.exec(command.slice(index));
+    if (expansion !== null) {
+      index += expansion[0].length - 1;
+      const value = env[expansion[1]!] ?? "";
+      if (quoted) word = (word ?? "") + value;
+      else {
+        value.split(/[ \t\n]/u).forEach((field, at) => {
+          if (at > 0) end();
+          if (field !== "") word = (word ?? "") + field;
+        });
+      }
+      continue;
+    }
+    const character = command[index]!;
+    if (character === '"') {
+      quoted = !quoted;
+      word ??= "";
+    } else if (!quoted && /\s/u.test(character)) end();
+    else word = (word ?? "") + character;
+  }
+  end();
+  return words;
+}
+
 describe("supported host plugin manifests", () => {
   it("publishes native OMP and Pi extension manifests", async () => {
     const manifest = PackageSchema.parse(await json("package.json"));
@@ -176,7 +218,13 @@ describe("supported host plugin manifests", () => {
     for (const [event, groups] of Object.entries(claude.hooks)) {
       expect(groups).toHaveLength(1);
       expect(groups[0]!.matcher).toBe(/^(Pre|Post)Tool/.test(event) ? "" : undefined);
-      expect(groups[0]!.hooks).toEqual([{ type: "command", command: "node ${CLAUDE_PLUGIN_ROOT}/dist/hosts/claude/claude-hook.js" }]);
+      expect(groups[0]!.hooks).toEqual([{ type: "command", command: "node \"${CLAUDE_PLUGIN_ROOT}/dist/hosts/claude/claude-hook.js\"" }]);
+      // Claude Code on Windows sets the root with forward slashes and lets Git Bash expand it, and a local account's
+      // profile folder may hold a space: the path must stay one word.
+      for (const hook of groups[0]!.hooks) {
+        expect(shWords(hook.command, { CLAUDE_PLUGIN_ROOT: SPACED_CLAUDE_ROOT }))
+          .toEqual(["node", `${SPACED_CLAUDE_ROOT}/dist/hosts/claude/claude-hook.js`]);
+      }
     }
 
     const codex = HooksSchema.parse(await json("hooks/codex.json"));
@@ -184,8 +232,13 @@ describe("supported host plugin manifests", () => {
     for (const [event, groups] of Object.entries(codex.hooks)) {
       expect(groups).toEqual([{
         ...(event === "PostToolUse" ? { matcher: "" } : {}),
-        hooks: [{ type: "command", command: "node \"$PLUGIN_ROOT/dist/hosts/codex/codex-hook.js\"" }],
+        hooks: [{ type: "command", command: "node \"${PLUGIN_ROOT}/dist/hosts/codex/codex-hook.js\"" }],
       }]);
+      // Codex replaces only `${PLUGIN_ROOT}` in the text; a bare `$PLUGIN_ROOT` would reach cmd.exe or PowerShell on
+      // Windows, which never expand it.
+      for (const hook of groups[0]!.hooks) {
+        expect(hook.command.replaceAll("${PLUGIN_ROOT}", SPACED_CODEX_ROOT)).toBe(`node "${SPACED_CODEX_ROOT}/dist/hosts/codex/codex-hook.js"`);
+      }
     }
   });
 });
