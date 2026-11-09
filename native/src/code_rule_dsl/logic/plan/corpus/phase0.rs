@@ -213,6 +213,11 @@ fn derive(seeds: &[Seed]) -> Result<Graph> {
     let mut text = String::from_utf8(bytes).map_err(|e| PlanError::Plan(format!("{}: {e}", bootstrap.display())))?;
     text.push_str("\n// The engine's builtin facts.\n");
     text.push_str(&format!("env(\"rerail.lib\", {}).\n", quote(&lib.to_string_lossy())));
+    // The library's parent is a root too: packs include their tables beside the library (`#include
+    // "../packs/python/….names.rr"`), which the resolver before phase 0 read, and the loader confines reads to roots.
+    if let Some(parent) = lib.parent() {
+        text.push_str(&format!("env(\"rerail.library_parent\", {}).\n", quote(&parent.to_string_lossy())));
+    }
     let mut dirs = std::collections::BTreeSet::new();
     for (k, seed) in seeds.iter().enumerate() {
         match seed {
