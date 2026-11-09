@@ -169,6 +169,12 @@ impl Placement {
     }
 }
 
+/// The GPU's price, in seconds, of `runs` submissions doing `work` units in all: what the work a stratum did would
+/// have cost on the device (the profile's check on the planned estimate).
+pub(in crate::code_rule_dsl) fn gpu_price(runs: u64, work: f64) -> f64 {
+    GPU_PER_SUBMISSION * runs as f64 + GPU_PER_WORK * work
+}
+
 /// Places a stratum of `shape`.
 pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     let cpu_s = CPU_PER_STRATUM + CPU_PER_WORK * shape.work;

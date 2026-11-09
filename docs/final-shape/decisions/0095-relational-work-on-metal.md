@@ -304,8 +304,8 @@ Before a stratum opens, the planner has priced each of its rules: an estimate of
    - Measure the data-layer repository's profile the same way.
 1. **Row programs.** The side program, with rir, validate, digest, interpreter and Cranelift. The CPU native engine
    runs filters and computed terms through it. Gate: identical findings.
-2. **Residency and `scan`/`count`/`scatter`.** The chunk's relations as 32-bit columns on the device, and plain joins
-   by index and hash.
+2. **Residency and `scan`/`count`/`scatter`.** The chunk's relations as stratified columns on the device (a
+   chunk's high part once, 16 bits a row: §6), and plain joins by index and hash.
 3. **`tile`.** Brute force per document, priced by the planner. First targets: `up_once`, `p511_restores`,
    `q6_c4_shadow`.
 4. **Negation, then aggregates (`sort`, `group`).**
@@ -319,11 +319,41 @@ sys), GPU time from the command buffers' timestamps (0039), and its occupancy.
 
 ## Found on the way (CPU, independent of the device)
 
-- **`up_once` binds `site` by `docof` before `binding`.** 4.2 M rows came from 3,268, at 2.25 s. Why the
-  planner put `docof($site, d)` first, with `site` free, is not yet checked. The likely cause is how it prices a
-  `docof` atom whose node column is free.
+- **`up_once` binds `site` by `docof` before `binding`.**
+  - 4.2 M rows came from 3,268, at 2.25 s. `docof($site, d)` with `d` bound was priced at 10 rows a binding, and
+    read 1,285.
+  - The price came from **observed fanouts pooled over every rule** (decision 0038's observations, keyed by
+    relation and bound columns only).
+  - One rule's 84,281 bindings fell in documents of about 11 nodes, and other rules saw 170–1,700. A fanout through
+    a bound document depends on which documents a rule's bindings fall in.
+  - Observations are now kept per rule. A rule learns from its own runs, and otherwise reads the statistics: the
+    size-weighted nodes per document.
+  - With that change (cold, load 138–170), `up_once` starts from `binding`, and its largest step is 6,126 rows.
+  - The placed strata's CPU fell from 24.3 s to 21.6 s, and instructions from 744 G to 728 G, with the same
+    findings.
+  - The two `q6_c4_shadow` strata over 4 M units rose from 0.54 s to 0.84 s each: they did better on the pooled
+    price. This is open.
 - **The `q6_c4_shadow` strata (four copies, 1.4 s) and `p511_restores` (1.11 s)** multiply rows through `within`
   and `visit_index` with a free node. This is the same pricing question.
+
+- **The first placement report** (Python pack, cold, 2026-11-09, load 108–150; 74.6 s user + 6.4 s sys):
+  - 5,104 strata, 11,914 runs, 24.3 s CPU, all on the CPU.
+  - The GPU would be cheaper for 1,393 strata, which took 21.9 s.
+  - Every one of them needs joins. 628 also need comparisons (15.6 s), 579 negation (14.5 s), 384 computed terms
+    (5.4 s), 118 aggregates (4.2 s), 125 recursion (3.8 s) and 72 text tests (0.5 s).
+  - So step 2 (plain joins) is a precondition for every stratum, and comparisons and negation come right after it.
+- **Planned work can be far from the work done.**
+  - `up_once` was planned at 66,959 units and did 8.5 M. A few strata were planned at 10^20 units or more, from
+    cross products that met no rows.
+  - The profile prices the GPU at the work done, and marks strata whose estimate is off by 10x or more.
+  - Placement before the run reads the plan's estimate. A replan from observed fanouts (decision 0038's
+    observations) is what corrects it.
+- **A text-test result changed with the merges, toward ruff.**
+  - RUF001 now reports `flake8_simplify/SIM401.py:62`, and ruff reports it too.
+  - Ruff also reports line 43, which we still miss. The two strings differ only by a final `ß`, and we find 2 of
+    the 5 `ℝ` on line 62.
+  - This looks like an offset problem in `match_all` over non-ASCII spans. It is open, and the reference findings
+    are not updated for it.
 
 ## Answered (the user, 2026-11-09)
 
