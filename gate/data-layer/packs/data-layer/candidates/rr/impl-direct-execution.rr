@@ -76,15 +76,43 @@ ide_ignored(n) :- ide_selected(d,_), docof(n,d), kind(n,"string_content").
 ide_ignored_end(n,e) :- ide_ignored(n), match_all("(?s).*?(?<e>\\z)",n).
 .decl ide_raw_match(d: number, path: symbol, at: span, priority: number)
 .decl ide_masked(at: span)
-ide_masked(m) :- ide_raw_match(d,_,m,_), ide_ignored(n), docof(n,d), line(m,l), col(m,c), line(n,a), col(n,b), ide_ignored_end(n,e), line(e,z), col(e,q),
+ide_masked(m) :- ide_raw_match(d,_,m,_), !ide_has_extra(d), ide_ignored(n), docof(n,d), line(m,l), col(m,c), line(n,a), col(n,b), ide_ignored_end(n,e), line(e,z), col(e,q),
     (l > a ; l = a, c >= b), (l < z ; l = z, c < q).
 
 // Text scanning numbers str.splitlines(), independently of AST's physical line coordinates.
 .decl ide_extra(d: number, separator: span)
 ide_extra(d,s) :- ide_selected(d,_), src_line(d,_,sp), match_all("(?<s>[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}])",sp).
-.decl ide_text_event(d: number, path: symbol, line: number, priority: number)
-ide_text_event(d,p,l+extra,i) :- ide_raw_match(d,p,m,i), !ide_masked(m), line(m,l), col(m,c),
+.decl ide_has_extra(d: number)
+ide_has_extra(d) :- ide_extra(d,_).
+.decl ide_text_line(at: span, line: number)
+ide_text_line(m,l+extra) :- ide_raw_match(d,_,m,_), line(m,l), col(m,c),
     extra = count : { ide_extra(d,s), line(s,a), col(s,b), (a < l ; a = l, b < c) }.
+
+// tokenize's spans use physical lines and character columns. The source then
+// applies them to splitlines() lines. Preserve that mismatch too. Only files
+// with extra split boundaries need character-coordinate preparation.
+.decl ide_point(at: loc)
+ide_point(m) :- ide_raw_match(d,_,m,_), ide_has_extra(d).
+ide_point(n) :- ide_ignored(n), docof(n,d), ide_has_extra(d).
+ide_point(e) :- ide_ignored_end(n,e), docof(n,d), ide_has_extra(d).
+ide_point(s) :- ide_extra(_,s).
+.decl ide_point_line(d: number, line: number)
+ide_point_line(d,l) :- ide_point(p), docof(p,d), line(p,l).
+.decl ide_character(d: number, line: number, byte_column: number)
+ide_character(d,l,b) :- ide_point_line(d,l), src_line(d,l,sp), match_all("(?<character>(?s:.))",sp), col(character,b).
+.decl ide_character_col(at: loc, column: number)
+ide_character_col(p,c) :- ide_point(p), docof(p,d), line(p,l), col(p,b), c = count : { ide_character(d,l,a), a < b }.
+.decl ide_last_separator(at: span, separator: span)
+ide_last_separator(m,s) :- ide_raw_match(d,_,m,_), line(m,l), col(m,c), ide_extra(d,s), line(s,l), col(s,b), b < c,
+    b = max a : { ide_extra(d,t), line(t,l), col(t,a), a < c }.
+.decl ide_text_column(at: span, column: number)
+ide_text_column(m,c) :- ide_raw_match(d,_,m,_), ide_character_col(m,c), !ide_last_separator(m,_).
+ide_text_column(m,c-a-1) :- ide_last_separator(m,s), ide_character_col(m,c), ide_character_col(s,a).
+ide_masked(m) :- ide_raw_match(d,_,m,_), ide_has_extra(d), ide_text_line(m,l), ide_text_column(m,c), text(m,raw),
+    ide_ignored(n), docof(n,d), line(n,a), ide_character_col(n,b), ide_ignored_end(n,e), line(e,z), ide_character_col(e,q),
+    (l > a ; l = a, c+strlen(raw) > b), (l < z ; l = z, c < q).
+.decl ide_text_event(d: number, path: symbol, line: number, priority: number)
+ide_text_event(d,p,l,i) :- ide_raw_match(d,p,m,i), !ide_masked(m), ide_text_line(m,l), ide_line(d,l,trimmed), !prefix("#",trimmed).
 .decl ide_text_choice(d: number, path: symbol, line: number, priority: number)
 ide_text_choice(d,p,l,i) :- ide_text_event(d,p,l,i), i = min j : { ide_text_event(d,p,l,j) }.
 

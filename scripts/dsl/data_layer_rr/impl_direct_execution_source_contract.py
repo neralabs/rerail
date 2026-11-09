@@ -50,7 +50,10 @@ CASES=[case('empty',''),case('clean','pass\n'),
     case('form-feed','\fobj._fetchone()\n'),case('unicode-separator-in-string','"line\u2028text"; obj._fetchone()\n'),
     case('exact-trim','\tobj._fetchone()   \n'),case('long-line','obj._fetchone('+repr('x'*400)+')\n'),
     case('logical-separator-inside-string','"prefix\u2028obj._fetchone()"\n'),
-    case('logical-separator-inside-comment','# prefix\u2028obj._fetchone()\n')]
+    case('logical-separator-inside-comment','# prefix\u2028obj._fetchone()\n'),
+    case('logical-mask-overlap','"prefix\u2028obj._fetchone()"\nxxxx = "x"\n'),
+    case('logical-mask-uses-token-codepoints','"prefix\u2028obj._fetchone()"\néééééé = "x"\n'),
+    case('logical-comment-still-skipped','"a\u2028b"\n# obj._fetchone()\n')]
 
 
 def source_case(module,case):

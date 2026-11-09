@@ -24,6 +24,8 @@ CASES=[dict(id='empty',files=[]),dict(id='clean',files=[dict(path='impl/a.py',so
  dict(id='alias-allowlist-isolation',files=[dict(path='impl/sqlite/a.py',source=BAD),dict(path='impl/sqlite/connection.py',symlink='a.py'),dict(path='impl/sqlite/fts/a.py',symlink='../a.py')]),
  dict(id='patterns-messages',files=[dict(path='impl/a.py',source='obj.fetchall(); obj._fetchone()\nobj.fetchall ()\n'),dict(path='impl/b.py',source='obj._fetchone('+repr('x'*100)+')\n')])]
 
+CASES.append(dict(id='logical-token-coordinates',files=[dict(path='impl/a.py',source='"prefix\u2028obj._fetchone()"\n'),dict(path='impl/b.py',source='"prefix\u2028obj._fetchone()"\néééééé = "x"\n')]))
+
 
 def source_case(module,case):
     from scripts.lint_lib.fact_engine import FactEngine
