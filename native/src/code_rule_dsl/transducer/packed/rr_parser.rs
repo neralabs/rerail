@@ -323,7 +323,8 @@ mod tests {
         v.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
         eprintln!("words: {} lines; machine: {} lines", c.words.lines().count(), c.machine.lines().count());
         eprintln!("{v:?}");
-        eprintln!("first lines:\n{}", c.words.lines().take(60).collect::<Vec<_>>().join("\n"));
+        let at = c.words.lines().position(|l| l.contains("TOKEN")).unwrap_or(0) + 30000;
+        eprintln!("lines:\n{}", c.words.lines().skip(at).take(250).collect::<Vec<_>>().join("\n"));
     }
 
     /// The process's CPU time so far, user and sys: the one thread runs alone.
