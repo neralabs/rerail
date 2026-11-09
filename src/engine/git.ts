@@ -275,10 +275,36 @@ export async function gitExcludeFiles(cwd: string): Promise<string[]> {
   return [resolve(cwd, exclude), resolve(cwd, configured || defaultExcludesFile())];
 }
 
+/**
+ * The home folder Git reads `~/.gitconfig` and `~/.config` from: `HOME` when set. Without it Git for Windows takes
+ * `HOMEDRIVE` and `HOMEPATH` when that folder exists, which on a machine with a home share is not the profile folder
+ * `homedir()` returns, and then the profile folder (`USERPROFILE`). Elsewhere Git takes the account's home.
+ */
+export function gitHome(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  isFolder: (path: string) => boolean = folderExists,
+): string {
+  if (env.HOME !== undefined && env.HOME !== "") return env.HOME;
+  if (platform === "win32" && env.HOMEDRIVE && env.HOMEPATH) {
+    const share = win32.join(env.HOMEDRIVE, env.HOMEPATH);
+    if (isFolder(share)) return share;
+  }
+  return homedir();
+}
+
+function folderExists(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** The file Git reads as `core.excludesFile` when that names none: `git/ignore` in `XDG_CONFIG_HOME`, else in `~/.config`. */
 function defaultExcludesFile(): string {
   const xdg = process.env.XDG_CONFIG_HOME;
-  return join(xdg === undefined || xdg === "" ? join(process.env.HOME ?? homedir(), ".config") : xdg, "git", "ignore");
+  return join(xdg === undefined || xdg === "" ? join(gitHome(), ".config") : xdg, "git", "ignore");
 }
 
 /**
@@ -292,7 +318,7 @@ export async function gitConfigFiles(cwd: string): Promise<string[]> {
   if (local === undefined || local === "") return [];
   const global = process.env.GIT_CONFIG_GLOBAL;
   const globals = global === undefined || global === ""
-    ? [join(process.env.HOME ?? homedir(), ".gitconfig"), join(dirname(defaultExcludesFile()), "config")]
+    ? [join(gitHome(), ".gitconfig"), join(dirname(defaultExcludesFile()), "config")]
     : [global];
   return [...local.split("\n").map(path => resolve(cwd, path)), ...globals.map(path => resolve(cwd, path))];
 }

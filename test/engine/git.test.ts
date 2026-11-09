@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
+  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitHome, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
   runGit,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -193,6 +193,16 @@ describe("gitExcludeFiles", () => {
     vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global"));
     expect((await gitConfigFiles(root)).slice(2)).toEqual([join(home, "global")]);
     expect(await gitConfigFiles(home)).toEqual([]);
+  });
+});
+
+describe("gitHome", () => {
+  it("on Windows without HOME takes HOMEDRIVE and HOMEPATH when that folder exists, as Git for Windows does", () => {
+    const share = { HOMEDRIVE: "H:", HOMEPATH: "\\" };
+    expect(gitHome(share, "win32", path => path === "H:\\")).toBe("H:\\");
+    expect(gitHome(share, "win32", () => false)).toBe(homedir());
+    expect(gitHome({ ...share, HOME: "C:\\Users\\me" }, "win32", () => true)).toBe("C:\\Users\\me");
+    expect(gitHome(share, "linux", () => true)).toBe(homedir());
   });
 });
 
