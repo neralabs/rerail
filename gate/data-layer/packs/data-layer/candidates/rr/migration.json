@@ -1884,7 +1884,7 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
       "origin": "authored",
-      "sha256": "3380ab65acb8ca3857893c50680047921b4093f5a2636777b932e60ddfe2f5b5",
+      "sha256": "14c3eab9b06d592544f5f17d6b420e1bf6dd6256807df0df128eae574995cb9e",
       "importedSha256": "69c287f6eb74fdfeab7e6fa15ef57ec6a8d46d87663933e8535da6c149a37c69",
       "repairs": [
         {
@@ -1911,6 +1911,16 @@
           "before": "57b50347036b7e884af3c279a0bd9fa74d6c95ca11079a5cace197036cbb4f28",
           "after": "3380ab65acb8ca3857893c50680047921b4093f5a2636777b932e60ddfe2f5b5",
           "reason": "Adopt Final core declarations and truthful policy scopes for combined execution"
+        },
+        {
+          "before": "3380ab65acb8ca3857893c50680047921b4093f5a2636777b932e60ddfe2f5b5",
+          "after": "57a998913165c0372c0b3bcbab62fe84052d8a30fef5d7d1640e5bf7718b4ca7",
+          "reason": "Implement source CLI discovery, ordered text/AST strings, and check status from 38 recorded observations"
+        },
+        {
+          "before": "57a998913165c0372c0b3bcbab62fe84052d8a30fef5d7d1640e5bf7718b4ca7",
+          "after": "14c3eab9b06d592544f5f17d6b420e1bf6dd6256807df0df128eae574995cb9e",
+          "reason": "Preserve source layer-root newline restriction in explicit discovery and native CLI"
         }
       ]
     },
@@ -2442,7 +2452,7 @@
       "legacySha256": "a6f3834fc9a74b85e5df4706b13efb0943b6bb0ae82e5e0f59a80f048df53c04",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
-      "ruleSha256": "3380ab65acb8ca3857893c50680047921b4093f5a2636777b932e60ddfe2f5b5"
+      "ruleSha256": "14c3eab9b06d592544f5f17d6b420e1bf6dd6256807df0df128eae574995cb9e"
     },
     {
       "check": "legacy_execution_surfaces",
