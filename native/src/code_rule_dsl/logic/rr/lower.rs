@@ -2597,15 +2597,17 @@ impl Lowerer {
         Ok(vec![out])
     }
 
-    /// A rule that reads no relation (`ok(v) :- m = join …, v = @f(m).`, or an aggregate's helper of comparisons
-    /// only, `{ e = "a", q = @json_str(e) }`) holds once, as in Soufflé: it reads `rr_unit(0)`, one row, since the
-    /// planner starts every body from an atom.
+    /// A rule that reads no relation (an aggregate's helper of comparisons only, `{ e = "a", q = @json_str(e) }`)
+    /// holds once, as in Soufflé: it reads `rr_unit(0)`, one row, since the planner starts every body from an atom.
+    /// A body with an aggregate (`ok(v) :- m = join …, v = @f(m).`) needs none: the planner runs a body of filters and
+    /// aggregates over the relational unit, and the SQL executor maintains it as a scalar rule over its aggregates'
+    /// inputs (a unit atom would hide them from its retained support).
     fn unit(&mut self) {
         const UNIT: &str = "rr_unit";
         let mut used = false;
         for rule in &mut self.prog.rules {
-            // A matcher atom (`ast(…)`) or a walk reads the tree itself.
-            let reads = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Ast { .. } | Literal::Nearest { .. });
+            // A matcher atom (`ast(…)`) or a walk reads the tree itself; an aggregate reads its atom.
+            let reads = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Ast { .. } | Literal::Nearest { .. } | Literal::Agg { .. });
             if !rule.body.iter().any(reads) {
                 rule.body.insert(0, Literal::Atom(Atom { rel: UNIT.to_owned(), args: vec![Term::Int(0)], neg: false, gated: false }));
                 used = true;
