@@ -984,10 +984,11 @@ lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), lmet
 .decl lfit(f: symbol, n: number, w: number)
 lfit(f, n, 0) :- struct__shape(f, r, p, 0), slot(n), r <= n, n <= p.
 lfit(f, n, 1) :- struct__shape(f, _, p, _), slot(n), n <= p.
-// lmethod(f): library function f is defined in a class.
+// lmethod(f): overloaded library function f is defined in a class. Asked only of overloads, so it starts from them:
+// over every library function (splitting each symbol, in every chunk) it was the cold run's costliest stratum.
 .decl lmethod(f: symbol)
-// By its symbol, one row per function (`m.C.get#1` is m.C's): not a join of every class's attributes.
-lmethod(f) :- struct__def(f, "function"), split_dot(f, c, x), !contains(".", x), struct__def(c, "class").
+lmethod(f) :- struct__flag(f, "overload"), struct__member(_, _, f).
+.decl struct__member(c: symbol, x: symbol, t: symbol)
 // A call that no overload fits is open: its overloads say nothing of it.
 .decl lunfit(c: node)
 lunfit(c) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), !lcfn(c, e, _).
@@ -1035,7 +1036,7 @@ lgret(f) :- types__rgen(f, _, _, _).
 lgcall(c, o, f) :- lcfn(c, e, f), lgret(f), attr_of(e, o, _).
 lgcall(c, o, f) :- lical(c, f), lgret(f), icall(c, o, _).
 .decl lclassof(f: symbol, a: symbol)
-lclassof(f, a) :- lgret(f), lmethod(f), split_dot(f, a, x), !contains(".", x).
+lclassof(f, a) :- lgret(f), struct__member(a, _, f).
 // lgpar(c, y, x): at call c, the receiver's generic value binds type variable y (a parameter of the method's class)
 // to annotation x.
 .decl lgpar(c: node, y: symbol, x: node)
