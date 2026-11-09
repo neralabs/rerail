@@ -481,3 +481,54 @@ Implementation commit `90398a0d0` and the integration merge were published to th
 The final ancestry check found that the executor tip's contents were present, but its merge commit was not an ancestor.
 Merge `b34b0376b` records the requested executor tip `735bc4422` and changes no files.
 The tested source hashes remain unchanged. Both requested committed tips now appear in branch ancestry.
+
+## Investigation of the composition regression
+
+The user rejected the VM regression and requested a causal investigation with profiling.
+The change did more than batch existing SQL: it replaced native relational evaluation with SQL evaluation for supported graphs.
+A comparison between historical whole-job timings cannot isolate that change because the merged source and host load also changed.
+
+Added a test-binary-only SQL shape lab over the actual bound production sources.
+It records per-case VM instructions, CPU, preparation, automatic indexes, sorts, input cursor counters, EXPLAIN, and result parity.
+The cases vary join order, CTE materialization, and a duplicate-removal boundary.
+Separate root queries measure inclusive producer costs; their costs are not additive.
+Snapshot cases retain exact structural or semantic rows to measure the downstream query alone.
+Snapshot capture costs are recorded separately and must not be reported as free native production.
+A test-only native execution comparison preserves the same build, prepared program, source bindings, and planner cache.
+The normal production budget test remains unchanged; diagnostic replays use a separate ignored test.
+
+The same-build native/composed comparison completes three alternating pairs.
+Median whole-run CPU is 12.933 versus 13.338 seconds; local user-plus-system CPU is 0.901 versus 1.128 seconds.
+The earlier progress update quoted local user time alone, 0.825 versus 1.028 seconds.
+The VM ratio includes Rust work moved into SQLite, so it is not a CPU ratio.
+
+Exact-input replays identify a lost join order: preserving demand anchors removes the candidate automatic index.
+It reduces attribute candidates from 268,338 to 31,393, and text filters from 49,513 to 31,393.
+Blanket inlining is rejected: it raises VM work from 4.90 million to 75.91 million instructions.
+Snapshot captures isolate downstream costs but do not establish free or equivalent native production.
+
+The positive fixture exposes a separate defect in ASYNC222.
+A constant prefix equality appears after inverse concatenation, causing enumeration of 4,096 positions before filtering.
+Bounded positions improve the experiment; production uses the known nonempty prefix directly.
+The initial focused test bypasses production simplification and fails planning before reaching this lowering.
+The corrected test applies the same simplification and covers Unicode, long prefixes, and an already-bound suffix.
+Review also restricts the optimization to unbound suffixes, preserving the existing bound-suffix check.
+
+The pre-fix profiles fail both new VM ceilings: 4,971,727 on the corpus and 806,490 on the positive fixture.
+The first production correction passes at 3,393,841 and 80,372 respectively.
+The whole-job statement budgets remain 81 and nine. No gate is relaxed.
+All four edge jobs match 178 recorded Ruff findings; the reference's four known misses remain recorded.
+The full-profile query CPU barely changes, so the instruction improvement is not reported as a comparable CPU speedup.
+
+The final build passes all nine composition tests, including the normalized prefix and bound-suffix cases.
+Its full profile passes at 80 executions and 3,389,156 VM instructions; the positive profile remains 80,372 instructions.
+Adaptive batching accounts for the one-chunk difference from the first fixed profile.
+Three alternating before/fixed pairs show local CPU of 1.132 versus 1.111 seconds and whole CPU of 12.920 versus 12.953 seconds.
+The fixes remove SQL waste but do not close the native CPU gap.
+
+A further membership experiment reduces attribute cursor openings from 65,399 to 71, but warm query CPU doubles.
+The native batch lookup still performs separate binary searches per key, while SQL constructs the membership list.
+The result rows remain identical on both the full corpus and positive fixture. The rewrite is rejected.
+Two initial lab launches fail configuration checks: a missing case file and a cache-specific atom literal in a replacement.
+Those attempts are stopped and retained as configuration failures; the valid replacement leaves atom IDs untouched.
+The runner now checks case-file existence and JSON before launching the engine.

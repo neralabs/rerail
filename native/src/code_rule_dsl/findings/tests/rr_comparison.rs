@@ -175,3 +175,14 @@ out(n,q) :- python_qualified(n,q,a_b,c).
     assert_eq!(contracts,BTreeSet::from([("a_b","c"),("a","b_c")]));
     assert_eq!(p.natives.len(),2,"identical contracts should still share one producer");
 }
+
+/// Diagnostic replays deliberately execute additional statements. The production budget test stays unchanged.
+#[test]
+#[ignore = "controlled SQL shape experiments"]
+fn complete_async_family_sql_shape_lab() {
+    let root=PathBuf::from(std::env::var("RERAIL_SHARED_CORPUS").unwrap());
+    let out=PathBuf::from(std::env::var("RERAIL_RR_OUT").unwrap());
+    let path=PathBuf::from(std::env::var("RERAIL_RR_REPORT").unwrap());
+    let (report,_)=run(&root,&out);
+    std::fs::write(path,serde_json::to_string_pretty(&report).unwrap()).unwrap();
+}

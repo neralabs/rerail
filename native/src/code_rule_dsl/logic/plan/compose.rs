@@ -4,6 +4,14 @@ use super::super::sql::ident;
 use super::*;
 
 thread_local! {static CACHE:RefCell<HashMap<[u8;32],Compiled>>=RefCell::new(HashMap::new());}
+pub(super) fn enabled() -> bool {
+    #[cfg(test)]
+    if experiments::native_only() {
+        return false;
+    }
+    true
+}
+
 pub(super) fn clear() {
     CACHE.with(|c| c.borrow_mut().clear());
 }
@@ -265,14 +273,8 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                 if keys_only(rel) {
                     q.body.distinct = false;
                 }
-                for block in q
-                    .ctes
-                    .iter_mut()
-                    .flat_map(|c| &mut c.arms)
-                    .chain([&mut q.body])
-                {
-                    block.sqlite_order();
-                }
+                // Keep the statistics-driven plan's demand anchors. The session-table
+                // sqlite_order policy loses native posting selectivity behind these CTEs.
                 if !q.ctes.is_empty()
                     && rule
                         .body
@@ -395,6 +397,8 @@ impl Compiled {
                 }
             }
         }
+        #[cfg(test)]
+        experiments::replay(self, db, &values)?;
         let mut out = Outcome::default();
         for (rel, rows) in values {
             if self.kept.contains(&rel) {
@@ -493,3 +497,6 @@ impl Compiled {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod experiments;

@@ -4,6 +4,8 @@ The production compiler now builds a complete relational query before it execute
 For supported graphs, logical relations no longer cause separate publication, evaluation, or output-reading statements.
 This change fixes the statement boundary. It does not establish performance parity with the two-query reference.
 
+See [the regression investigation](sql-composition-regression.md) for the measured causes, corrections, and remaining CPU gap.
+
 ## Integration and workstream alignment
 
 Merge `abf75bb79` includes integration hub `a27994c6a`.

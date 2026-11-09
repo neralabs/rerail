@@ -2,6 +2,10 @@ use super::*;
 
 fn compile_text(text: &str) -> (Program, Compiled) {
     let p = super::super::super::rr::parse(text).unwrap();
+    compile_program(p)
+}
+
+fn compile_program(p: Program) -> (Program, Compiled) {
     let (p, _) = sql_kernel::normalize(&p).unwrap();
     assert!(accepts(&p).unwrap());
     let db = Connection::open_in_memory().unwrap();
@@ -185,4 +189,37 @@ admitted(g) :- owner(g), n=max x : {item(g,x)}.
     let out = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
     assert_eq!(out.outputs["minima"], ["1\t7"]);
     assert_eq!(out.outputs["admitted"], ["1"]);
+}
+
+#[test]
+fn a_constant_split_prefix_does_not_enumerate_positions() {
+    for prefix in ["os".to_owned(), "πΩ".to_owned(), "a".repeat(5000)] {
+        let source = format!(
+            r#"
+.decl names(q:symbol)
+names("{prefix}.waitpid"). names("{prefix}.path.waitpid"). names("other.waitpid").
+.decl supplied(q:symbol,x:symbol)
+supplied("{prefix}.waitpid", "waitpid"). supplied("{prefix}.waitpid", "wrong").
+.decl bound(x:symbol)
+bound(x) :- supplied(q,x), split_dot(q, "{prefix}", x).
+.decl result(x:symbol)
+result(x) :- names(q), split_dot(q, "{prefix}", x).
+.output result,bound
+"#
+        );
+        // Production simplification turns constant cat operands into variables with
+        // later equalities. Exercise that normalized form, including text-mode SQL.
+        let mut p = super::super::super::rr::parse(&source).unwrap();
+        super::super::super::simplify::simplify(&mut p);
+        let (p, q) = compile_program(p);
+        assert!(
+            !q.sql.contains("rdl_int"),
+            "a known prefix requires one string test, not a position scan"
+        );
+        let db = Connection::open_in_memory().unwrap();
+        super::super::super::strings::register(&db).unwrap();
+        let rows = q.execute(&db, &p, None, &mut Hooks::default()).unwrap();
+        assert_eq!(rows.outputs["result"], ["path.waitpid", "waitpid"]);
+        assert_eq!(rows.outputs["bound"], ["waitpid"]);
+    }
 }

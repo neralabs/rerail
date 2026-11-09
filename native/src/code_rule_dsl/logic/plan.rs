@@ -2001,6 +2001,19 @@ impl Model {
                         let w = inputs.text_of(&env[lv]);
                         let Term::Call(_, parts) = r else { unreachable!() };
                         let (Term::Var(q), Term::Var(x)) = (&parts[0], &parts[1]) else { unreachable!() };
+                        // A later equality can already constrain the prefix. Enumerating every
+                        // position first both amplifies work and loses prefixes beyond rdl_int's cap.
+                        // Only nonempty constants use this rewrite: an unconstrained reverse cat
+                        // and cat with an empty prefix have different enumeration contracts.
+                        if !env.contains_key(q) && !env.contains_key(x) {
+                            let prefix = order.iter().find_map(|step| match &step.lit {
+                                Literal::Cmp { l: Term::Var(v), op: "=", r } if v == q &&
+                                    (matches!(r, Term::Str(s) if !s.is_empty()) ||
+                                     inputs.atoms.is_some() && matches!(r, Term::Int(n) if *n > 0)) => Some(r),
+                                _ => None,
+                            });
+                            if let Some(prefix) = prefix { env.insert(q.clone(), sql_term(prefix, &env, atoms)?); }
+                        }
                         if let Some(eq_) = env.get(q).map(|e| inputs.text_of(e)) {
                             wh.push(eq(
                                 substr(vec![w.clone(), integer(1), bin(Op::Add, length(&eq_), integer(1))]),
@@ -4397,7 +4410,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     super::native::aggregation::register_sum(db)?;
     if inputs.atoms.is_some() && inputs.given.is_some() && PLANS.with(|p|p.borrow().is_some())
         && hooks.answer.is_none()
-        && compose::accepts(prog)? {
+        && compose::enabled() && compose::accepts(prog)? {
         let needed=super::front::needed(prog,prog.outputs.iter().chain(&inputs.kept).cloned().collect());
         let reads:Vec<_>=prog.inputs.iter().filter(|r|needed.contains(*r)).cloned().collect();
         if let Some(load)=hooks.load.as_deref_mut(){load(&reads)?;}
