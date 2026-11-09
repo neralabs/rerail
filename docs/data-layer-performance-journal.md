@@ -9558,3 +9558,27 @@ The broader detector regression is not accepted: ten shards pass, but two exceed
 Those timeouts remain unresolved. The earlier 102-test checkpoint remains the last assembled original-suite checkpoint.
 The [TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-seven-detectors-tdd.json.gz) records the direct red/green results and timed-out regression commands.
 No repository cold run occurs. The full migration remains incomplete.
+
+### 2026-11-09 — Scanner APIs and demand-bounded helper summaries
+
+The native draft now translates `_scan_source` and `_scan_file`.
+The source scanner retains caller-text gates independently of the supplied AST. Native phase ordinals preserve check order.
+File scanning uses the root engine's parser and preserves the complete parse-error finding.
+A recorded failure proves that embedded annotation errors must not become enclosing-file errors. Primary-document selection repairs that defect.
+
+The [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-scanners-checkpoint.json.gz) audits 136 original tests and 200 complete observations.
+Its detector portion passes 129 tests, including 58 positive detector observations.
+Its scanner portion passes seven tests and eleven observations, including the five-file ratchet assertion.
+All detector shards finish within 115 seconds. The two previously timed-out shards finish in 71.398 and 76.958 seconds.
+
+The test adapter previously requested all 31 checks for tests that called only one or three.
+It now batches the original test's requested API names. Expected findings never enter rule options.
+Global function summaries run only when a requested check consumes them.
+The recorded transport regression rejects cache reuse across changed demand batches.
+The checkpoint auditor accepts pytest's no-tests exit only when the independently derived shard is empty.
+All 173 tooling tests pass. The root engine passes 99 rule tests and two parser tests; two existing helpers remain ignored.
+
+The supplemental scanner corpus still finds a native diagnostic spelling defect in indented-block errors.
+Ten independent parser cases record nine mismatches against Python 3.13. The shared formatter repair remains next.
+Five signature, blocker, legacy-scan, and CLI entry points remain untranslated.
+Production, discovery, controls, updates, seven absent rules, and global migration acceptance remain open.

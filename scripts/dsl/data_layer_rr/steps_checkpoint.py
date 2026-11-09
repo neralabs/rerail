@@ -19,7 +19,7 @@ def assemble(source, reports):
     seen, parts, selected, observations, native_calls = set(), None, [], [], []
     entries = engine = programs = harness = None
     for report in reports:
-        if report['sourcePin'] != PIN or report['exitCode'] != 0:
+        if report['sourcePin'] != PIN or report['exitCode'] not in (0, 5):
             raise ValueError('A native shard failed or used another source')
         if report['semanticFallbacks'] or report['hostProtocolCalls'] or report['missingResults']:
             raise ValueError('A native shard omitted results or invoked source semantics')
@@ -37,6 +37,8 @@ def assemble(source, reports):
         allowed = set(entries.split(','))
         expected_cases = [test for test in source['collected'][identity::parts]
                           if calls.get(test) and all(c['entry'] in allowed for c in calls[test])]
+        if report['exitCode'] == 5 and expected_cases:
+            raise ValueError('Pytest collected no tests for a nonempty assertion shard')
         compare(expected_cases, report['selectedCases'])
         if not report['nativeCalls'] and any(c['entry'] != 'Violation.__init__'
                                              for test in expected_cases for c in calls[test]):

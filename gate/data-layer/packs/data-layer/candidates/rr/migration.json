@@ -2119,7 +2119,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "647c79bc00f977a98006e17a8f56ee9042d7fcc00ec66851bfc15176c39605e3",
+      "sha256": "30dfaa65d6c80152523fef24673b961a22d20304465d892e8d93b97634d285fd",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2182,6 +2182,11 @@
           "before": "6f03fd78209a9be6d985596a3981134a9a2127f933f4e88cb1ac6abe11ab27f9",
           "after": "647c79bc00f977a98006e17a8f56ee9042d7fcc00ec66851bfc15176c39605e3",
           "reason": "Translate callable registries, grammar-less refs, static exceptions, and strict legacy callbacks"
+        },
+        {
+          "before": "647c79bc00f977a98006e17a8f56ee9042d7fcc00ec66851bfc15176c39605e3",
+          "after": "30dfaa65d6c80152523fef24673b961a22d20304465d892e8d93b97634d285fd",
+          "reason": "Translate source/file scanner order and text gates; restrict helper summaries to their demanded consumers"
         }
       ]
     }
@@ -2653,7 +2658,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "647c79bc00f977a98006e17a8f56ee9042d7fcc00ec66851bfc15176c39605e3"
+      "ruleSha256": "30dfaa65d6c80152523fef24673b961a22d20304465d892e8d93b97634d285fd"
     },
     {
       "check": "serverplan_state_tripwires",

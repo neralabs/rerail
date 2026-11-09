@@ -56,3 +56,16 @@ class StepsCheckpointTests(unittest.TestCase):
             else:report[field] = [dict(status='failed')] if field == 'nativeCalls' else ['untranslated']
             with self.subTest(field=field), self.assertRaises(ValueError):
                 assemble(self.source,[report])
+
+    def test_pytest_no_tests_exit_is_valid_only_for_an_empty_selected_shard(self):
+        report = copy.deepcopy(self.report)
+        report.update(exitCode=5, selectedEntries='missing', selectedCases=['unported'])
+        with self.assertRaises(ValueError):
+            assemble(self.source, [report])
+        report.update(selectedEntries='another_entry', selectedCases=[], cases={}, calls=[], nativeCalls=[])
+        result = assemble(self.source, [report])
+        self.assertEqual(0, result['selectedAssertions'])
+        self.assertEqual(self.source['collected'], result['untestedCases'])
+        report.update(selectedEntries='check')
+        with self.assertRaises((AssertionError, ValueError)):
+            assemble(self.source, [report])

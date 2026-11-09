@@ -157,6 +157,9 @@ class Contract:
         self.item = item
         if self.backend:
             self.backend.item = item
+            # Demand contains API names only. Expected findings never enter rule options.
+            self.backend.requested_entries = sorted({c['entry'] for c in self.baseline['calls']
+                if c['test'] == item.nodeid and c['entry'].startswith('check_')})
             # CPython clears a profile callback that raises. A failed test must
             # not disable source-call detection in every subsequent test.
             sys.setprofile(self.guard)

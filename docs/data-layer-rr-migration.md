@@ -2332,3 +2332,10 @@ All 45 supplemental source/native cases and 171 tooling tests pass.
 The [detector TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-seven-detectors-tdd.json.gz) retains complete results.
 Two broader regression shards time out at 115 seconds; that regression is not accepted.
 The last assembled checkpoint remains 102 original tests. Scanner, signature, CLI, and production acceptance remain unfinished.
+
+The [scanner checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-scanners-checkpoint.json.gz) supersedes that coverage count with 136 original tests and 200 observations.
+All 129 selected detector tests and seven file-scanner tests pass. The detector tests include 58 positive observations.
+Requested API names now bound each test batch. Native helper summaries run only for their consuming checks.
+All original-suite shards finish within 115 seconds. No assertion or finding field is removed.
+Supplemental scanner tests expose an indentation-diagnostic spelling gap in the shared native formatter.
+Signature verification, both blocker collectors, legacy scanning, CLI reporting, and full production acceptance remain unfinished.

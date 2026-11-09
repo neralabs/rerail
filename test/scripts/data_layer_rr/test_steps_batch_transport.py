@@ -77,6 +77,19 @@ class StepsBatchTransportTests(unittest.TestCase):
             self.module.check_compile_no_data_branching(Path('a.py'), tree)
         self.assertEqual(1, len(self.backend.calls))
 
+    def test_requested_checks_are_batched_and_part_of_the_cache_boundary(self):
+        tree = ast.parse('value = 1\n')
+        self.backend.requested_entries = ['check_compile_no_data_branching',
+                                          'check_compile_no_object_manipulation']
+        self.module.check_compile_no_data_branching(Path('a.py'), tree)
+        self.module.check_compile_no_object_manipulation(Path('a.py'), tree)
+        self.assertEqual(1, len(self.backend.calls))
+        self.assertEqual(self.backend.requested_entries, self.backend.calls[0][3]['requestedChecks'])
+        self.backend.requested_entries = ['check_can_batch_allowlist']
+        self.module.check_can_batch_allowlist(Path('a.py'), tree)
+        self.assertEqual(2, len(self.backend.calls))
+        self.assertEqual(['check_can_batch_allowlist'], self.backend.calls[1][3]['requestedChecks'])
+
 
 if __name__ == '__main__':
     unittest.main()

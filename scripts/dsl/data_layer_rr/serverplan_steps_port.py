@@ -6,6 +6,21 @@ from pathlib import Path
 from serverplan_steps_contract import FUNCTIONS
 
 
+def scan_rows(rows):
+    """Decode the native scanner's ordered DTOs and error result."""
+    errors = [row for row in rows if row['code'] == 'SSP_ERROR']
+    if errors:
+        if len(rows) != 1:
+            raise ValueError('A scanner error must be the only native result')
+        raise ValueError(errors[0]['parameters']['detail'])
+    if any(row['code'] != 'SSP_ROW' for row in rows):
+        raise ValueError('Unexpected native scanner result')
+    ordered = sorted(rows, key=lambda row: tuple(row['parameters'][k] for k in
+                     ['check_order', 'class_order', 'method_order', 'callback_order', 'node_order', 'suborder']))
+    return [dict(code=row['parameters']['violation_code'], file=row['path'], line=row['line'],
+                 message=row['parameters']['detail']) for row in ordered]
+
+
 def install(suite, module):
     from ast_sources import Sources
     sources = Sources(ast.parse)
@@ -33,18 +48,41 @@ def install(suite, module):
                     fateNames=list(module.POST_OP_FATE_OVERRIDES),
                     fateValues=[value.value for value in module.POST_OP_FATE_OVERRIDES.values()])
 
-    def check(entry, file, tree, **kwargs):
+    def tree_source(tree):
         if tree not in sources.origins:
             raise NotImplementedError('Constructed AST arguments need structured transport')
         origin = sources.origins[tree]
         if tree is not origin.tree or ast.dump(tree, include_attributes=True) != origin.snapshot:
             raise NotImplementedError('Changed AST arguments need structured transport')
+        return origin.source
+
+    def scan_source(file, source, tree=None):
+        settings = dict(options(), argumentPath=str(file), callSource=source,
+                        suppliedTree='0' if tree is None else '1')
+        files = [] if tree is None else [dict(path='input.py', source=tree_source(tree))]
+        rows = suite.native('serverplan_steps', '_scan_source', files, settings)
+        return [module.Violation(v['code'], Path(v['file']), v['line'], v['message']) for v in scan_rows(rows)]
+
+    def scan_file(file):
+        absolute = file if file.is_absolute() else module.ROOT/file
+        rows = suite.native('serverplan_steps', '_scan_file',
+                            [dict(path='input.py', source=absolute.read_text(encoding='utf-8'))],
+                            dict(options(), argumentPath=str(file), inputName=file.name))
+        return [module.Violation(v['code'], Path(v['file']), v['line'], v['message']) for v in scan_rows(rows)]
+
+    def check(entry, file, tree, **kwargs):
+        source = tree_source(tree)
         settings = dict(options(), argumentPath=str(file),
                         strictModulesOnly=str(int(kwargs.get("strict_modules_only", True))))
-        key = (origin.source, json.dumps(settings, sort_keys=True))
+        requested = getattr(suite, 'requested_entries', None)
+        if requested is not None:
+            if entry not in requested:
+                raise ValueError('The original assertion did not request this detector: '+entry)
+            settings['requestedChecks'] = requested
+        key = (source, json.dumps(settings, sort_keys=True))
         if key not in batches:
             batches[key] = suite.native('serverplan_steps', '_all_checks',
-                            [dict(path='input.py', source=origin.source)], settings)
+                            [dict(path='input.py', source=source)], settings)
         rows = batches[key]
         result = []
         for row in sorted(rows, key=lambda r: tuple(r['parameters'][k] for k in
@@ -83,7 +121,11 @@ def install(suite, module):
                    'check_compiled_result_builders_do_not_fail_closed',
                    'check_legacy_postop_user_callable_escape_hatches'}
     for name in FUNCTIONS:
-        if name in implemented:
+        if name == '_scan_source':
+            suite.replace(module, name, scan_source)
+        elif name == '_scan_file':
+            suite.replace(module, name, scan_file)
+        elif name in implemented:
             def bind(entry):
                 return lambda file, tree, **kwargs: check(entry, file, tree, **kwargs)
             suite.replace(module, name, bind(name))
