@@ -3669,7 +3669,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "24dd9ed0c86295a080e9e5db9ba5052440472635b17a6cd4f5429c143ce6d599"
+        "sha256": "685d5ef8f921659dab7cdda67c45bc3aa3384f24f2bbb1d0c0749eb380a43b22"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -3735,9 +3735,9 @@
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
       "upstreamCommit": "7e77fa2ead6148b651731514be9670e15934a288",
-      "engineCommit": "196db6b0b9036fb4f96a3ba89729d1e2c1708103",
+      "engineCommit": "be84e964b0b5c253a0798e83c7481fcd858b63cb",
       "sourceTrees": {
-        "native": "cdbfdfd9f42193f9edc71d78c3e3cc3a55fc8040",
+        "native": "8c4cbf040a17a0363ea3832ac13eef23609061fc",
         "accel": "082f5a84143d8cc8547150d1f617f1cf47ab4887",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
