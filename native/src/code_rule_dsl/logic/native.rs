@@ -378,6 +378,7 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
         Ok(flat_bin(&o, ctx.get(1)?, ctx.get(2)?))
     })?;
     db.create_aggregate_function(c"flat_join", 1, det, FlatJoin)?;
+    aggregation::register_sum(db)?;
     // lattice_fixpoint(p[, target[, lattice[, widen[, binding]]]]): the lattice by declared name (`flat` by
     // default), the changes after which a node widens, and where it solves (`cpu`, the default, or `metal`). A NULL
     // target is the default `<p>_out`.

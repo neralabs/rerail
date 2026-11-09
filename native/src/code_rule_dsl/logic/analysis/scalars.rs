@@ -1,6 +1,17 @@
 //! Compatibility of retained scalar summaries, independent of their storage and evaluator.
 use super::Decision;
 
+pub(in crate::code_rule_dsl) fn unused_sum(bound: bool, observed: bool) -> Decision {
+    Decision::new(
+        !bound && !observed,
+        if !bound && !observed {
+            "An unbound, unobserved sum needs no final range check"
+        } else {
+            "A bound or observed sum retains its range check at the use"
+        },
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub(in crate::code_rule_dsl) enum Expression {
     Column(usize),
