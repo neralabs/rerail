@@ -1,0 +1,7 @@
+.policy "data-layer-execution-authority-bypass" revision 1
+.description "Execution authority boundary use"
+.language python
+.mode block
+.scope include "**/*.py"
+// Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_execution_authority_bypass.py
+.violation AuthRow(at: span, ordinal: number, path: symbol, line: number, code: symbol, message: symbol) code "AUTH_ROW" "{message}"

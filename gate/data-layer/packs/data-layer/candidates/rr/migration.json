@@ -3503,8 +3503,8 @@
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-d8fce2618c054ee1",
-      "sha256": "d8fce2618c054ee112cbbf4fd575930684987fef80edf83ce491ffc3ccdf70f7",
+      "path": ".rerail/modern-engine-alignment/cli-97566d3ce4ce79ac",
+      "sha256": "97566d3ce4ce79aca335fe31f0d686a2207181bf6ea793bd86ebdfe2059bd67d",
       "command": [
         "cargo",
         "build",
@@ -3513,9 +3513,10 @@
         "--features",
         "headless",
         "--bin",
-        "rerail-engine"
+        "rerail-engine",
+        "--release"
       ],
-      "seconds": 97.362
+      "seconds": 914.474
     }
   },
   "engineSourceSnapshots": [
