@@ -1,5 +1,6 @@
-import { appendFileSync, readFileSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { renameWithRetrySync } from "../engine/file-replace.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
@@ -57,7 +58,7 @@ export function recordHookFailure(
         return 0;
       }
     })();
-    if (size > MAX_FAILURE_BYTES) renameSync(path, `${path}.1`);
+    if (size > MAX_FAILURE_BYTES) renameWithRetrySync(path, `${path}.1`);
     const line: HookFailure = { at: now, ...failure, agent: env.AI_AGENT ?? null, rerail: rerailVersion() };
     appendFileSync(path, `${JSON.stringify(line)}\n`, { mode: 0o600 });
   } catch {
