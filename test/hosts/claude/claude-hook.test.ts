@@ -17,6 +17,16 @@ function delivery(requested: AdapterDelivery["requested"], content: string, rule
   return { sessionId: "claude-session", requested, mechanism: "additional-context", content, ruleIds, rules };
 }
 
+/** Serves hook events through the harness entry as the hook process does, collecting each steer receipt's rule ids. */
+function receiptServer(storageRoot: string) {
+  const receipts: Array<readonly string[]> = [];
+  const serve = async (input: HookInput, loop: RerailEventLoop) => JSON.parse((await serveText(
+    parsed => handleClaudeEvent(parsed, loop, storageRoot, { NO_COLOR: "1" }).then(output => bindSteerReceipt(output, (_receipt, ruleIds) => { receipts.push(ruleIds); })),
+    JSON.stringify(input),
+  )).stdout) as unknown;
+  return { receipts, serve };
+}
+
 describe("Claude Code hook without a daemon", () => {
   it("answers {} at once after the session's start, without starting a daemon, so no tool call shows a hook error", async () => {
     const root = await temporaryDirectory();
@@ -60,12 +70,15 @@ describe("Claude Code one-shot hook", () => {
       stop_hook_active: false,
       last_assistant_message: "Done.",
     }, options)).toEqual({});
+    // A Stop after a Stop hook kept the turn going is a turn end of its own, not a duplicate of the first.
+    expect(await runClaudeHook({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true, last_assistant_message: "Fixed." }, options)).toEqual({});
 
     expect(eventRows(root, ["session-start", "user-prompt", "call", "turn-end"])).toEqual([
       ["claude-session:SessionStart", "session-start"],
       ["claude-session:prompt:p1", "user-prompt"],
       ["claude-session:tool-call:tool-1", "call"],
       ["claude-session:turn:p1", "turn-end"],
+      ["claude-session:turn:p1:continued", "turn-end"],
     ]);
   });
 
@@ -154,13 +167,8 @@ describe("Claude Code one-shot hook", () => {
 
   it("gives a turn-end steer to the coding agent at Stop, with the person's line and its count, and nothing at the next prompt", async () => {
     const root = await temporaryDirectory();
-    const storageRoot = join(root, "sessions");
     const common = { session_id: "claude-session", cwd: root };
-    const receipts: Array<readonly string[]> = [];
-    const serve = async (input: HookInput, loop: RerailEventLoop) => JSON.parse((await serveText(
-      parsed => handleClaudeEvent(parsed, loop, storageRoot, { NO_COLOR: "1" }).then(output => bindSteerReceipt(output, (_receipt, ruleIds) => { receipts.push(ruleIds); })),
-      JSON.stringify(input),
-    )).stdout) as unknown;
+    const { receipts, serve } = receiptServer(join(root, "sessions"));
     const turnEnd = [delivery("steer", editSteer("a", "Fix a."), ["a"]), delivery("steer", editSteer("b", "Fix b."), ["b"])];
 
     // Without a daemon the rules stay unlinked, so each line is the header alone; without colour the mark is plain.
@@ -174,6 +182,25 @@ describe("Claude Code one-shot hook", () => {
     expect(await serve({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({}))).toEqual({});
     expect(await serve({ ...common, hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "tool-2", tool_input: { command: "git log" } }, scriptedLoop({}))).toEqual({});
     expect(receipts).toEqual([["a", "b"]]);
+  });
+
+  it("keeps a turn going once: a continued Stop holds its steer, which goes out late with its line and count at the next tool call", async () => {
+    const root = await temporaryDirectory();
+    const common = { session_id: "claude-session", cwd: root };
+    const { receipts, serve } = receiptServer(join(root, "sessions"));
+
+    expect(await serve({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, scriptedLoop({ "turn-end": [delivery("steer", editSteer("a", "Fix a."), ["a"])] })))
+      .toEqual({});
+    expect(receipts).toEqual([]);
+
+    expect(await serve({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {} }, scriptedLoop({}))).toEqual({
+      systemMessage: "◆ R E R A I L · a  steered",
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        additionalContext: editSteer("a", "Fix a.").replace("Rerail found 1 problem in your last edit:", "Rerail finished checking your earlier edits after you moved on:"),
+      },
+    });
+    expect(receipts).toEqual([["a"]]);
   });
 
   it("holds a steer found at the person's prompt, line and all, for the next tool call", async () => {

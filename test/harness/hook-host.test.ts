@@ -114,6 +114,13 @@ describe("hook steers", () => {
     expect(await readPending(path)).toEqual([{ ...older, rules: [] }, { ...older, rules: [{ id: "rule:b", state: "steered" }] }]);
   });
 
+  it("reads a steer the 0.1.2 hook held at Stop, marked shown, as held late, and drops a mark that is not true", async () => {
+    const path = pendingPath(await temporaryDirectory(), "claude-code", "session-1");
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, JSON.stringify([{ ...delivery("old"), shown: true }, { ...delivery("new"), late: true }, { ...delivery("plain"), late: "yes" }]));
+    expect(await readPending(path)).toEqual([{ ...delivery("old"), late: true }, { ...delivery("new"), late: true }, delivery("plain")]);
+  });
+
   it("does not count synchronous, asynchronous or serialization failures", async () => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);

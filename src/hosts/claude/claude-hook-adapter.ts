@@ -3,10 +3,12 @@ import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engi
 import { claudeHookEvents, claudeWorkspace } from "./claude-event-adapter.js";
 import {
   deliveryRules,
+  holdStopSteers,
   pendingPath,
   routeDeliveries,
   steerHookOutput,
   type EventTable,
+  type HeldDelivery,
   type HookInput,
   type HookOutput,
   type SteerLines,
@@ -72,7 +74,7 @@ export interface ClaudeOutputOptions {
  * Steers reach the model as `additionalContext` and the person as one line per rule in `systemMessage` (Claude Code
  * shows it under the tool call, or at the turn's end), in the same output (`steerHookOutput`).
  */
-export function claudeHookOutput(hook: string, deliveries: readonly AdapterDelivery[], { note, links = "hyperlink", mark }: ClaudeOutputOptions = {}): HookOutput {
+export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery[], { note, links = "hyperlink", mark }: ClaudeOutputOptions = {}): HookOutput {
   return steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines(links, mark), note);
 }
 
@@ -91,11 +93,18 @@ export async function handleClaudeEvent(
     await rm(path, { force: true });
     return {};
   }
+  // Rerail keeps a turn going at most once: a Stop that follows a Stop hook's continuation (`stop_hook_active`) holds
+  // its steers, line and all, for the next context event, so writes the turn-end walk keeps finding cannot loop it.
+  if (hook === "Stop" && input.stop_hook_active === true) {
+    await holdStopSteers(path, deliveries);
+    return {};
+  }
   // The runtime records no links; the rules point at this checkout's dashboard only here.
   const cwd = claudeWorkspace(input.cwd);
   const links = terminalDrawsHyperlinks(env) ? "hyperlink" : "plain";
   const mark = rerailMark(colourDepth(env));
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })) : undefined;
   const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
+  // `linkDeliveries` copies each delivery, so a steer the 0.1.2 hook held at `Stop` keeps its `late` mark.
   return claudeHookOutput(hook, await linkDeliveries(routed, cwd), { note, links, mark });
 }

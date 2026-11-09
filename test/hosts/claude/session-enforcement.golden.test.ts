@@ -28,6 +28,6 @@ describe("Claude Code session enforcement golden output", () => {
   });
 
   it("N4c: a turn-end steer goes out at Stop, the line for the person and the block for the agent, which carries on", async () => {
-    await expect(goldenJson(claudeHookOutput("Stop", [NO_EXPLICIT_ANY], { mark: SCENE_MARK }))).toMatchFileSnapshot(`${GOLDEN}/n4c-late-steer-stop.json`);
+    await expect(goldenJson(claudeHookOutput("Stop", [NO_EXPLICIT_ANY], { mark: SCENE_MARK }))).toMatchFileSnapshot(`${GOLDEN}/n4c-turn-end-steer-stop.json`);
   });
 });

@@ -63,14 +63,14 @@ export async function handleCodexEvent(
   const deliveries: AdapterDelivery[] = [];
   for (const event of codexHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
   const path = pendingPath(storageRoot, "codex", sessionId);
-  // The runtime records no links; the rules point at this checkout's dashboard only here.
-  const cwd = requiredText(input, "cwd");
   if (hook === "Stop") {
     await holdStopSteers(path, deliveries);
     return {};
   }
+  // The runtime records no links; the rules point at this checkout's dashboard only here.
+  const cwd = requiredText(input, "cwd");
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "codex", sessionId, await presentedSessionNoteRules({ host: "codex", sessionId, cwd })) : undefined;
-  const routed: HeldDelivery[] = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
+  const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
   // `linkDeliveries` copies each delivery, so a held steer keeps its `late` mark.
   return codexHookOutput(hook, await linkDeliveries(routed, cwd), note);
 }
