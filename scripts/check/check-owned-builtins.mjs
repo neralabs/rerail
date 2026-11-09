@@ -18,6 +18,8 @@
 //   checkout-paths  realpath and realpathSync of node:fs, in the modules that key records by a checkout path (KEYED). On
 //                   Windows the JS realpath keeps the caller's spelling (`c:\work\app`, VS Code's) while Git prints
 //                   `C:/work/app`, so keys resolved both ways never met and no rule ran in the session.
+//   no-follow       constants.O_NOFOLLOW of node:fs, anywhere in src/. Windows has no O_NOFOLLOW, and `flags |
+//                   undefined` adds nothing, so an open meant to refuse a symbolic link followed a planted one there.
 //
 // One walk of each file finds every way to reach a name: an `import` (named, default or namespace), `import x =
 // require(...)`, the module's name as an argument of any call (`require`, `import()`, a `createRequire` result,
@@ -80,6 +82,14 @@ export const RULES = [
     names: ["realpath", "realpathSync"],
     covers: keyed,
     message: "resolves a path with node:fs's realpath; use checkoutRealpath or physicalPath from src/engine/catalog/checkout-control.ts, which spells a Windows path as Git does",
+  },
+  {
+    id: "no-follow",
+    owner: "src/engine/no-follow.ts",
+    modules: FS,
+    names: ["constants.O_NOFOLLOW"],
+    covers: inSrc,
+    message: "reads O_NOFOLLOW, which Windows lacks, so the open follows a symbolic link there; open with openNoFollow or openNoFollowSync from src/engine/no-follow.ts, which refuse one on every platform",
   },
 ].map(rule => ({ ...rule, names: rule.names?.map(name => name.split(".")) }));
 

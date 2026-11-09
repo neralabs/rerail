@@ -45,7 +45,7 @@ const FORMS = {
 };
 
 /** A file each named rule covers, the owner aside. */
-const COVERED = { "file-replace": "src/a.ts", "checkout-paths": "src/engine/catalog/a.ts" };
+const COVERED = { "file-replace": "src/a.ts", "checkout-paths": "src/engine/catalog/a.ts", "no-follow": "src/a.ts" };
 
 describe("check-owned-builtins", () => {
   describe.each(Object.keys(COVERED))("the %s rule", (id) => {
@@ -119,6 +119,7 @@ describe("check-owned-builtins", () => {
       { path: rule("child-process").owner, text: 'import { spawn } from "node:child_process";\nspawn("git", []);\n' },
       { path: rule("file-replace").owner, text: 'import { rename } from "node:fs/promises";\n' },
       { path: rule("checkout-paths").owner, text: 'import { realpathSync } from "node:fs";\n' },
+      { path: rule("no-follow").owner, text: 'import { constants } from "node:fs";\nconst noFollow = constants.O_NOFOLLOW ?? 0;\n' },
       { path: "src/a.ts", text: 'import type { ChildProcess } from "node:child_process";\nimport { type Stats } from "node:fs";\n' },
       { path: "src/b.ts", text: 'type Starter = typeof import("node:child_process").spawn;\nexport type { ChildProcess } from "node:child_process";\n' },
       { path: "src/c.ts", text: 'import { renameWithRetry } from "./engine/file-replace.js";\nawait renameWithRetry("a", "b");\n' },

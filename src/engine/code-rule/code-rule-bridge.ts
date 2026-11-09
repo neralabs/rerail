@@ -1000,7 +1000,9 @@ export class CodeRuleBridge {
     });
     if (existing !== undefined && !existing.isFile()) throw new Error(`${location.path} is not a regular file`);
     const temporary = join(dirname(location.absolute), `.${basename(location.absolute)}.rerail-${randomBytes(6).toString("hex")}.tmp`);
-    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o666);
+    // A new file under a random name: O_CREAT with O_EXCL refuses a name that exists, which POSIX says includes a
+    // symbolic link, so O_NOFOLLOW (which Windows lacks) would add nothing.
+    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o666);
     try {
       try {
         if (existing !== undefined) await handle.chmod(existing.mode & 0o7777);

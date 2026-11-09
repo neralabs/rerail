@@ -12,8 +12,9 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   the Node built-ins only one module in `src/` may use, each in the module that makes it safe on Windows: child
   processes through `src/engine/child-process.ts`, which hides their windows and starts a program only by its
   absolute path; renames through `src/engine/file-replace.ts`, which retries a rename while another process holds the
-  file; and in the modules that key records by a checkout path, realpath through
-  `src/engine/catalog/checkout-control.ts`, which spells a Windows path as Git does), the internal
+  file; in the modules that key records by a checkout path, realpath through
+  `src/engine/catalog/checkout-control.ts`, which spells a Windows path as Git does; and `O_NOFOLLOW` through
+  `src/engine/no-follow.ts`, which refuses a symlink on Windows too), the internal
   reference check (`check-internal-refs.mjs`: no internal ticket ID, and no `nera-` identifier outside its list of
   public ones, in a tracked path or text), the CI path filter check (`check-ci-paths.mjs`: every file the jobs `ci.yml`'s path filters skip import, from the entry
   points it lists, matches their filter) and the licence allowlist.

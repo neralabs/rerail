@@ -1,5 +1,5 @@
 import { constants, existsSync, lstatSync, writeFileSync } from "node:fs";
-import { type FileHandle, open, opendir } from "node:fs/promises";
+import { type FileHandle, opendir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { deserialize, serialize } from "node:v8";
@@ -9,6 +9,7 @@ import type { AuditFailure } from "../engine/audit/audit.js";
 import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { stableJsonText } from "../engine/stable-json.js";
+import { openNoFollow } from "../engine/no-follow.js";
 import {
   eraseFreedPages, openRerailDatabase, openSqliteDatabase, RERAIL_DATABASE_FILE, type RerailDatabase,
 } from "../engine/storage/database.js";
@@ -434,7 +435,7 @@ async function scrubSessionFiles(checkoutPaths: readonly string[]): Promise<Sess
 async function scrubDaemonLog(home: string, report: SessionFilesReport): Promise<number> {
   const path = join(home, DAEMON_LOG_FILE);
   try {
-    const lines = await rewriteAppendedFile(flags => open(path, flags | constants.O_NOFOLLOW), logLine);
+    const lines = await rewriteAppendedFile(flags => openNoFollow(path, flags), logLine);
     if (lines !== undefined) return lines;
     report.skipped.push(`${path} (Rerail kept writing to it)`);
   } catch (error) {

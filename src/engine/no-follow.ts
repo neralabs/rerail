@@ -21,6 +21,7 @@ async function lstatOrMissing(path: string): Promise<BigIntStats | undefined> {
  * undefined` adds nothing, so a planted link was opened as if it were Rerail's own file. There the name is read with
  * lstat before the open, and the opened file is checked to be the one lstat saw, so a link swapped in between is
  * refused too. `noFollow` is the flag to use, 0 where the OS has none; tests pass 0 to take that path on any OS.
+ * `npm run check:owned-builtins` fails on `O_NOFOLLOW` read anywhere else in `src/`.
  */
 export async function openNoFollow(path: string, flags: number, mode?: number, noFollow: number = constants.O_NOFOLLOW ?? 0): Promise<FileHandle> {
   if (noFollow !== 0) return await open(path, flags | noFollow, mode);

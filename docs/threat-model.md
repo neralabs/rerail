@@ -221,9 +221,10 @@ without hooks or network.
 - **Parser budgets.** Files are capped at 1 MB in the bridge; the audit walk caps 32 MB per file, 512 MB total and
   100,000 files. Each clause has node, witness and file budgets. Parsing aborts via tree-sitter's progress callback.
   Value decoding is depth-limited.
-- **Symlinks when reading.** `O_NOFOLLOW`, then a `realpath` containment check, then a `dev`/`ino` recheck. Directory
-  walks skip symlinks. `#writeSource` (rewind) writes with `O_EXCL|O_NOFOLLOW`
-  (`src/engine/code-rule/code-rule-bridge.ts`).
+- **Symlinks when reading.** An open that refuses a symlink (`src/engine/no-follow.ts`: `O_NOFOLLOW`, or on Windows,
+  which has none, an `lstat` before the open and a `dev`/`ino` match after), then a `realpath` containment check, then
+  a `dev`/`ino` recheck. Directory walks skip symlinks. `#writeSource` (rewind) writes a new file under a random name
+  with `O_CREAT|O_EXCL`, which refuses any name that exists (`src/engine/code-rule/code-rule-bridge.ts`).
 - **Git** (`src/engine/git.ts`):
   - Runs the first `git` on `PATH` that is a regular file it may execute, resolved to an absolute path by Rerail (so
     Windows never searches the current folder first), then the usual install locations.
@@ -294,8 +295,8 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch
   (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it is refused.
-- The repository identity file is read with `O_NOFOLLOW` plus size and format checks, and created with `wx`
-  (`src/engine/catalog/repository-identity.ts`).
+- The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
+  and created with `wx` (`src/engine/catalog/repository-identity.ts`).
 - A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
   through a symlink (`src/engine/storage/ledger-paths.ts`).
 
@@ -543,8 +544,8 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
   checkout's ledgers and held steers, and `daemon.log`, then rewrites the database file. Daemon and sessions keep
-  running: ledgers and `daemon.log` are rewritten in place without losing concurrent appends, and held steers under
-  their hook's lock. A failing step (`VACUUM` included) is reported, the rest still run, and the command exits 1.
+  running: ledgers and `daemon.log` are rewritten in place, never through a symlink, without losing concurrent
+  appends, and held steers under their hook's lock. A failing step (`VACUUM` included) is reported, the rest still run, and the command exits 1.
   `rerail update` suggests it once.
 - **Removing everything.** `rerail install --remove --delete-data` deletes the databases, every `~/.rerail-clean-*`
   backup, the content cache and every recorded checkout's `.rerail/sessions`, rather than backing them up.
@@ -608,7 +609,7 @@ and keeps its own `.gitignore`.
 **Mitigated** (`src/engine/storage/ledger-paths.ts`):
 
 - Every folder from the innermost `.rerail` down is checked with `lstat`; a symlink or non-folder is refused. Ledger
-  and pending-steer files open with `O_NOFOLLOW`.
+  and pending-steer files open without following a symlink (`openNoFollow`).
 - A refusal names the path in the daemon log, and the hook fails open.
 - `ignoreInGit` rewrites `.gitignore` whenever it is not Rerail's own `*` file, so a planted `!*` cannot expose ledgers
   to `git add -A`.
