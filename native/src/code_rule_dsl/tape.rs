@@ -1673,14 +1673,34 @@ struct Rec {
     next: u32,
     prev: u32,
     children: u32,
-    extra: bool,
-    error: bool,
-    missing: bool,
-    /// The first child under its field (P's `rec` flag bit 4); read by `index_image`.
-    #[allow(dead_code)]
-    first_field: bool,
-    /// A named-only tape keeps all of this node's tokens (`CODE_TOKENS`): none is recognized.
-    tokens_kept: bool,
+    /// `REC_*` bits.
+    flags: u8,
+}
+
+const REC_EXTRA: u8 = 1;
+const REC_ERROR: u8 = 2;
+const REC_MISSING: u8 = 4;
+/// The first child under its field (P's `rec` flag bit 4); read by `index_image`.
+const REC_FIRST_FIELD: u8 = 8;
+/// A named-only tape keeps all of this node's tokens (`CODE_TOKENS`): none is recognized.
+const REC_TOKENS_KEPT: u8 = 16;
+
+impl Rec {
+    fn extra(&self) -> bool {
+        self.flags & REC_EXTRA != 0
+    }
+    fn error(&self) -> bool {
+        self.flags & REC_ERROR != 0
+    }
+    fn missing(&self) -> bool {
+        self.flags & REC_MISSING != 0
+    }
+    fn first_field(&self) -> bool {
+        self.flags & REC_FIRST_FIELD != 0
+    }
+    fn tokens_kept(&self) -> bool {
+        self.flags & REC_TOKENS_KEPT != 0
+    }
 }
 
 #[derive(Clone)]
@@ -2062,11 +2082,11 @@ impl TapeDoc {
                 next: NONE,
                 prev: NONE,
                 children: 0,
-                extra: code.flags & CODE_EXTRA != 0,
-                error,
-                missing,
-                first_field,
-                tokens_kept: code.flags & CODE_TOKENS != 0,
+                flags: if code.flags & CODE_EXTRA != 0 { REC_EXTRA } else { 0 }
+                    | if error { REC_ERROR } else { 0 }
+                    | if missing { REC_MISSING } else { 0 }
+                    | if first_field { REC_FIRST_FIELD } else { 0 }
+                    | if code.flags & CODE_TOKENS != 0 { REC_TOKENS_KEPT } else { 0 },
             });
             parent_stack.push((index, 0));
         }
@@ -2130,14 +2150,14 @@ impl TapeDoc {
                     .ok()
                     .map(|slot| self.kind_aliases[usize::from(self.kind_overrides[slot].1)].clone());
                 Pending {
-                    kf: if rec.error { ERROR_CODE } else { rec.kind } | (rec.field << 10),
+                    kf: if rec.error() { ERROR_CODE } else { rec.kind } | (rec.field << 10),
                     parent: (rec.parent != NONE).then_some(rec.parent),
                     start: rec.start,
                     length: rec.end - rec.start,
                     size: 1,
-                    extra: rec.extra,
-                    error: rec.error,
-                    missing: rec.missing,
+                    extra: rec.extra(),
+                    error: rec.error(),
+                    missing: rec.missing(),
                     kind_alias: alias,
                     tokens_kept: image.codes[usize::from(image.code_at(index))].flags & CODE_TOKENS != 0,
                 }
@@ -2159,7 +2179,7 @@ impl TapeDoc {
             .iter()
             .enumerate()
             .filter_map(move |(index, rec)| {
-                if index < skip_until || !(rec.error || rec.missing) {
+                if index < skip_until || !(rec.error() || rec.missing()) {
                     return None;
                 }
                 skip_until = index + rec.size as usize;
@@ -2353,9 +2373,9 @@ impl TapeDoc {
     pub(super) fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
-            | (u8::from(rec.extra) << 1)
-            | (u8::from(rec.missing) << 2)
-            | (u8::from(rec.error) << 3)
+            | (u8::from(rec.extra()) << 1)
+            | (u8::from(rec.missing()) << 2)
+            | (u8::from(rec.error()) << 3)
     }
 
     pub(super) fn transducer_span(&self, node: u32) -> Range<usize> {
@@ -2562,7 +2582,7 @@ impl<'a> TapeNode<'a> {
 
     /// Whether this is the first direct child in `field`, as `child_by_field_id` selects it.
     pub(super) fn is_first_field(&self, field: u16) -> bool {
-        self.token.is_none() && field != 0 && self.rec().field == field && self.rec().first_field
+        self.token.is_none() && field != 0 && self.rec().field == field && self.rec().first_field()
     }
 
     fn rec(&self) -> &Rec {
@@ -2595,14 +2615,14 @@ impl<'a> TapeNode<'a> {
             kind: rec.kind,
             field: rec.field,
             alias: self.at(index).kind_alias(),
-            error: rec.error,
-            extra: rec.extra,
+            error: rec.error(),
+            extra: rec.extra(),
         }
     }
     /// Whether this record's children include tokens the records leave out.
     fn recognizes(&self) -> bool {
         self.token.is_none()
-            && self.tokens.is_some_and(|grammar| grammar.recognizes(&self.describe(self.index), self.rec().tokens_kept))
+            && self.tokens.is_some_and(|grammar| grammar.recognizes(&self.describe(self.index), self.rec().tokens_kept()))
     }
     /// This record's stored children, in order.
     fn records(&self) -> Children<'a> {
@@ -2621,7 +2641,7 @@ impl<'a> TapeNode<'a> {
         let mut items = Vec::with_capacity(kids.len() * 2);
         // The fold kept every token it could not rebuild this same way, so this cannot fail on a
         // tape restore accepted; a failure reads the stored children alone.
-        if grammar.sequence(&self.describe(self.index), self.rec().tokens_kept, &described, self.source.as_bytes(), &mut items).is_err() {
+        if grammar.sequence(&self.describe(self.index), self.rec().tokens_kept(), &described, self.source.as_bytes(), &mut items).is_err() {
             return kids.into_iter().map(tokens::Item::Child).collect();
         }
         for item in &mut items {
@@ -2874,13 +2894,13 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.children().all(|child| !child.is_named())
     }
     fn is_extra(&self) -> bool {
-        self.token.is_none() && self.rec().extra
+        self.token.is_none() && self.rec().extra()
     }
     fn is_error(&self) -> bool {
-        self.token.is_none() && self.rec().error
+        self.token.is_none() && self.rec().error()
     }
     fn is_missing(&self) -> bool {
-        self.token.is_none() && self.rec().missing
+        self.token.is_none() && self.rec().missing()
     }
     fn field(&self, name: &str) -> Option<Self> {
         let field = self.grammar.kinds.field_id(name)?;
@@ -2895,7 +2915,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         if field_id == 0 || self.token.is_some() {
             return None;
         }
-        if self.tokens.is_some_and(|grammar| grammar.has_token_field(&self.describe(self.index), self.rec().tokens_kept, field_id)) {
+        if self.tokens.is_some_and(|grammar| grammar.has_token_field(&self.describe(self.index), self.rec().tokens_kept(), field_id)) {
             return self.parts().into_iter().find(|child| child.field_id() == field_id);
         }
         #[cfg(feature = "code-rule-profile")]
