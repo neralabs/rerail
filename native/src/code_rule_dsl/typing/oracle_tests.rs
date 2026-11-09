@@ -1065,6 +1065,45 @@ fn benchmark_python_calls_program_corpus() {
     }
 }
 
+/// t26's first experiment: which rows of `calls_cx`'s run its outputs read. The liveness rules
+/// (`logic::liveness`) are added to the program and run with it over `RERAIL_PYTHON_CALLS_ROOT` with
+/// `RERAIL_PYTHON_TYPESHED`. Printed per relation, most dead rows first: rows, live, keys (first column) and live
+/// keys, and the rows about loaded documents (typeshed's stubs) and the live ones among them.
+#[test]
+#[ignore = "a spike: minutes over the 84-file corpus with typeshed"]
+fn spike_liveness_of_the_calls_program() {
+    use crate::code_rule_dsl::logic::liveness;
+    let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
+    let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
+    let text = format!("{}\n{JEDI_SPANS}", program(&calls_name()));
+    let prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap();
+    let live = liveness::program(&prog);
+    println!("liveness: {} rules over {} relations", live.rules.len(), live.decls.len());
+    let text = format!("{text}\n{}", crate::code_rule_dsl::logic::rr::print(&live).unwrap());
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("liveness");
+    let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
+    println!("{} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    let counts = liveness::read_counts(&std::fs::read_to_string(out.join(format!("{}.csv", liveness::COUNTS))).unwrap());
+    let _ = std::fs::remove_dir_all(&out);
+    let get = |m: &BTreeMap<String, u64>, w: &str| m.get(w).copied().unwrap_or(0);
+    let mut rows: Vec<(&String, &BTreeMap<String, u64>)> = counts.iter().collect();
+    rows.sort_by_key(|(r, m)| (std::cmp::Reverse(get(m, "rows") - get(m, "live").min(get(m, "rows"))), (*r).clone()));
+    println!("{:<28} {:>9} {:>9} {:>6} {:>9} {:>9} {:>9} {:>9}", "relation", "rows", "live", "live%", "keys", "live keys", "library", "lib live");
+    let mut total = [0u64; 6];
+    for (rel, m) in &rows {
+        let v: Vec<u64> = liveness::MEASURES.iter().map(|w| get(m, w)).collect();
+        for (t, x) in total.iter_mut().zip(&v) {
+            *t += x;
+        }
+        if v[0] == 0 {
+            continue;
+        }
+        println!("{:<28} {:>9} {:>9} {:>5.1}% {:>9} {:>9} {:>9} {:>9}", rel, v[0], v[1], 100.0 * v[1] as f64 / v[0] as f64, v[2], v[3], v[4], v[5]);
+    }
+    println!("{:<28} {:>9} {:>9} {:>5.1}% {:>9} {:>9} {:>9} {:>9}", "total", total[0], total[1], 100.0 * total[1] as f64 / total[0].max(1) as f64, total[2], total[3], total[4], total[5]);
+}
+
 /// Spike for decision 0083 §1–3: P1, `struct.rr`, as a phase in its own fact space over the workspace and the library
 /// modules its imports reach, to its fixed point; a reader takes its exports. Cold, unchanged, then each edit of
 /// `RERAIL_SPIKE_EDITS` (E1 a function appended, E2 a comment at the top, E3 a line in a function's body): the
@@ -1076,17 +1115,38 @@ fn spike_phases_struct_over_the_corpus() {
     let root = std::path::PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").expect("RERAIL_PYTHON_CALLS_ROOT"));
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
     let out = std::env::temp_dir().join(format!("rerail-phases-{}", std::process::id()));
+    // The reader hands every export on as an output, so a maintained run and a full one compare row for row.
     let reader = r#"
+.decl struct__unit(s: symbol, h: symbol)
 .decl struct__def(s: symbol, k: symbol)
 .decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
+.decl struct__base(c: symbol, i: number, b: symbol)
+.decl struct__member(c: symbol, x: symbol, t: symbol)
+.decl struct__param(f: symbol, i: number, x: symbol, a: symbol)
+.decl struct__ret(f: symbol, a: symbol)
 .decl struct__module_file(m: symbol, p: symbol)
+.decl struct__at(s: symbol, p: symbol, l: number)
+.decl units(s: symbol, h: symbol)
+units(s, h) :- struct__unit(s, h).
 .decl modules(m: symbol, p: symbol)
 modules(m, p) :- struct__module_file(m, p).
 .decl defs(s: symbol, k: symbol)
 defs(s, k) :- struct__def(s, k).
 .decl imports(m: symbol, x: symbol, t: symbol)
 imports(m, x, t) :- struct__binds(m, x, "import", t).
-.output modules, defs, imports
+.decl bindings(m: symbol, x: symbol, how: symbol, t: symbol)
+bindings(m, x, h, t) :- struct__binds(m, x, h, t).
+.decl bases(c: symbol, i: number, b: symbol)
+bases(c, i, b) :- struct__base(c, i, b).
+.decl members(c: symbol, x: symbol, t: symbol)
+members(c, x, t) :- struct__member(c, x, t).
+.decl params(f: symbol, i: number, x: symbol, a: symbol)
+params(f, i, x, a) :- struct__param(f, i, x, a).
+.decl rets(f: symbol, a: symbol)
+rets(f, a) :- struct__ret(f, a).
+.decl ats(s: symbol, p: symbol, l: number)
+ats(s, p, l) :- struct__at(s, p, l).
+.output units, modules, defs, imports, bindings, bases, members, params, rets, ats
 "#;
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
@@ -1099,8 +1159,36 @@ imports(m, x, t) :- struct__binds(m, x, "import", t).
         println!("PHASE {what}: freshness: definitions {} ({} changed, {} gone); granules {} ({} changed, frontier {}, unattributed {}); bookkeeping {:.2} s",
             p.units.0, p.units.1, p.units.2, p.granules.0, p.granules.1, p.granules.2, p.granules.3, p.bookkeeping);
         let changed: Vec<String> = p.exports.iter().filter(|e| e.2 + e.3 > 0).map(|(rel, n, add, gone)| format!("{rel} {n} (+{add} -{gone})")).collect();
-        println!("PHASE {what}: exports changed: {}", if changed.is_empty() { "none".to_owned() } else { changed.join(", ") });
+        println!("PHASE {what}: exports changed: {}; how: {}", if changed.is_empty() { "none".to_owned() } else { changed.join(", ") }, p.full_because.as_deref().map_or_else(|| p.report.phases.first().map_or("", |x| x.0).to_owned(), |w| format!("in full: {w}")));
+        let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
+        println!("PHASE {what}: parts: {}", parts.join(", "));
+        let outer: Vec<String> = r.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
+        println!("PHASE {what}: the reader's run (phase included): {:.2} s: {}", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>(), outer.join(", "));
     };
+    let outputs = ["units", "modules", "defs", "imports", "bindings", "bases", "members", "params", "rets", "ats"];
+    let dump = || -> BTreeMap<&str, Vec<String>> {
+        outputs.iter().map(|rel| {
+            let mut lines: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            lines.sort();
+            (*rel, lines)
+        }).collect()
+    };
+    // The full run each maintained one is checked against: a store of its own, its phase store removed first.
+    let kept_store = std::env::var("RERAIL_TAPE_CACHE").expect("RERAIL_TAPE_CACHE: the spike keeps phases in a store");
+    let full_store = format!("{kept_store}.full");
+    let full = || {
+        let _ = std::fs::remove_file(format!("{full_store}.phases"));
+        // SAFETY: the spike's thread is the only one running between runs.
+        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
+        let r = crate::code_rule_dsl::logic::plan::corpus::session::full(&run);
+        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &kept_store) };
+        r
+    };
+    // `RERAIL_SPIKE_SESSION`: the runs are a session's (decision 0063), as the explorer's are; the full runs are not.
+    let session = std::env::var_os("RERAIL_SPIKE_SESSION").is_some();
+    if session {
+        crate::code_rule_dsl::logic::plan::corpus::session::start(&out.with_extension("session")).unwrap();
+    }
     show("cold", &run());
     show("unchanged", &run());
     let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
@@ -1120,6 +1208,15 @@ imports(m, x, t) :- struct__binds(m, x, "import", t).
         let before = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, change(&before)).unwrap();
         show(edit, &run());
+        let kept = dump();
+        show(&format!("{edit} full"), &full());
+        let derived = dump();
+        let differ: Vec<String> = outputs.iter().filter(|r| kept[*r] != derived[*r]).map(|r| format!("{r} ({} kept, {} derived)", kept[r].len(), derived[r].len())).collect();
+        println!("PHASE {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
+    }
+    if session {
+        crate::code_rule_dsl::logic::plan::corpus::session::stop();
+        let _ = std::fs::remove_dir_all(out.with_extension("session"));
     }
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1348,6 +1445,11 @@ fn spike_o125_replay() {
             return;
         }
         let spans = crate::code_rule_dsl::logic::profile::spans();
+        // `O125_SPANS_TSV=<dir>`: the step's whole session tree, `<dir>/spans-<step>.tsv` (path, calls, CPU s).
+        if let Some(dir) = std::env::var_os("O125_SPANS_TSV") {
+            let rows: String = spans.iter().filter(|(p, _)| p.contains("session/")).map(|(p, t)| format!("{p}\t{}\t{:.4}\n", t.calls, t.total)).collect();
+            let _ = std::fs::write(PathBuf::from(dir).join(format!("spans-{step:02}.tsv")), rows);
+        }
         let mut by: BTreeMap<String, f64> = BTreeMap::new();
         for (path, t) in spans.iter() {
             let Some((_, rest)) = path.split_once("session/") else { continue };

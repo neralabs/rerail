@@ -73,6 +73,9 @@ fn tuples(source: &dyn Source) -> BTreeSet<Vec<i64>> {
         .collect()
 }
 impl Documents {
+    pub(super) fn verification_files(&self) -> Value {
+        json!(self.files.values().map(|d| json!({"path":d.file.path,"language":d.file.language,"source":d.file.source.as_str()})).collect::<Vec<_>>())
+    }
     fn indexes(&self, changes: &Changes) -> Indexed {
         let mut nodes = 0;
         let mut families = BTreeMap::new();

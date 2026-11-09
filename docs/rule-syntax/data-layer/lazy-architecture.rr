@@ -125,7 +125,8 @@ la_item(f, "intent", c) :- la_call(f, c), la_callee(c, s), suffix("Intent", s).
 la_item(f, "native", c) :- la_call(f, c), la_cleaf(c, x), la_set("IMPERATIVE_NATIVE_ATTRS", x).
 // Strings scanned for Dolt: each str constant mentioning dolt_, dolt log, … (adjacent literals are one; an
 // f-string's literal runs are one each), at the piece it starts in.
-la_item(f, "dolt", at) :- la_scan(f, n), str_part(n, _, v, at, _), la_dolt_text(@lower(v)).
+la_item(f, "dolt", at) :- la_scan(f, n), str_part(n, _, v, at, _), w = @lower(v),
+    (contains("dolt_", w) ; contains("dolt log", w) ; contains("dolt branches", w)).
 la_item(f, "ctx", f) :- la_exec_ctx(f).
 // getattr / object.__getattribute__ of a LazyResult internal on a lazy-like object.
 la_item(f, "internal_read", c) :- la_call(f, c), la_sarg(c, 1, k), la_internal_attr(k), la_callee(c, s), la_getattr(s),
@@ -144,9 +145,8 @@ la_item(f, "reach", c) :- la_call(f, c), la_recv(c, v, "get"), kind(v, "call"), 
 la_ask_gcstr(g) :- la_call(_, c), la_recv(c, v, "get"), kind(v, "call"), field(v, "function", g).
 // @pure_lazy code calling _ensure_internal_raw_access, by its callee string or its call-graph symbol.
 la_item(f, "forbidden", c) :- la_pure(f), la_call(f, c), la_cleaf(c, x), la_set("FORBIDDEN_PURE_LAZY_CALLEE_NAMES", x).
-la_item(f, "forbidden", c) :- la_pure(f), la_call(f, c), la_func(c, g), la_local(f, g, s), la_last(s, x),
+la_item(f, "forbidden", c) :- la_pure(f), la_call(f, c), la_func(c, g), la_local_last(f, g, x),
     la_set("FORBIDDEN_PURE_LAZY_CALLEE_NAMES", x).
-la_lastq(s) :- la_pure(f), la_call(f, c), la_func(c, g), la_local(f, g, s).
 // Terminal hydration helpers, by call-graph symbol (local_callee_calls).
 la_item(f, "hydrate", c) :- la_call(f, c), la_func(c, g), la_local(f, g, s),
     la_set("FORBIDDEN_SERVERPLAN_HYDRATION_HELPERS", s).
@@ -226,10 +226,6 @@ la_ask_local(f, v) :- la_call(f, c), (la_kw(c, "sync_resolve", v) ; la_kw(c, "as
 .decl la_conn_arg(c: node)                             // _first_arg_uses_conn
 la_conn_arg(c) :- la_arg(c, 0, a), la_conn(a).
 la_conn_arg(c) :- la_kw(c, k, v), (k = "owner" ; k = "txn" ; k = "tx" ; k = "conn" ; k = "connection"), la_conn(v).
-.decl la_dolt_text(s: symbol)
-la_dolt_text(s) :- la_item_str(s), (contains("dolt_", s) ; contains("dolt log", s) ; contains("dolt branches", s)).
-.decl la_item_str(s: symbol)
-la_item_str(@lower(v)) :- la_scan(_, n), str_part(n, _, v, _, _).
 .decl la_setattr(s: symbol)
 la_setattr("setattr"). la_setattr("builtins.setattr"). la_setattr("__setattr__"). la_setattr("object.__setattr__").
 
@@ -406,8 +402,7 @@ la_server_phase("post_op").
 .decl la_eager_delegate(s: symbol)
 la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_has(t, "io").
 la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g),
-    la_local(t, g, q), la_last(q, x), la_set("PLAN_IO_NAMES", x).
-la_lastq(q) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g), la_local(t, g, q).
+    la_local_last(t, g, x), la_set("PLAN_IO_NAMES", x).
 
 // LA-008: in a transaction module, f (the last fact named f) and f_async: f uses grammar calls, f_async async
 // plan or grammar calls, each directly or down its calls. At f.

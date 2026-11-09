@@ -640,3 +640,21 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
         assert_eq!(has_text(relation("src_line").value(0, 2)), line_needed, "line: {body}");
     }
 }
+
+/// Node ids per definition (`DefIds`) stay below `SPAN`, the bit `Extra`'s span ids carry: with the most units a
+/// document may have, every slot (and the positions' `SPANS`) with its largest index is under bit 31, so no node's id
+/// equals a span's. One unit more is `Unnumbered::Units`, and the document keeps preorder ids.
+#[test]
+fn definition_slots_stay_below_the_span_bit() {
+    let keys: Vec<String> = std::iter::once(String::new()).chain((1..SPANS).map(|i| format!(".f{i}#0"))).collect();
+    assert_eq!(unit_slots(&keys), Err(Unnumbered::Units(SPANS as usize)));
+    let keys = &keys[..SPANS as usize - 1];
+    let slots = unit_slots(keys).unwrap();
+    assert_eq!(slots[0], 0);
+    assert_eq!(slots.iter().copied().collect::<BTreeSet<u32>>().len(), keys.len(), "slots are distinct");
+    let top = (1 << INDEX_BITS) - 1;
+    for slot in slots.into_iter().chain([SPANS]) {
+        assert!(slot <= SPANS, "slot {slot}");
+        assert_eq!((slot << INDEX_BITS | top) & SPAN, 0, "slot {slot}");
+    }
+}

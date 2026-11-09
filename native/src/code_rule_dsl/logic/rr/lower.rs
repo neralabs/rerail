@@ -2238,6 +2238,7 @@ impl Lowerer {
             "min" => AggOp::Min,
             "max" => AggOp::Max,
             "sum" => AggOp::Sum,
+            "product" => AggOp::Product,
             // With no `sep`, the texts are joined as they are.
             "join" => AggOp::Join { by: by.clone(), sep: sep.clone().unwrap_or_default() },
             // Soufflé's mean is a decimal number, and the engine has none.
@@ -2295,7 +2296,7 @@ impl Lowerer {
                 inner.extend(groups(re));
             }
         }
-        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum) || own(v) || outer.contains(*v)).cloned().collect();
+        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum | AggOp::Product) || own(v) || outer.contains(*v)).cloned().collect();
         if let Some(v) = over.iter().chain(&by).find(|v| !cols.contains(v)) {
             return Err(Error::Syntax(format!("{agg}: {v} is not bound in its body")));
         }
@@ -2370,7 +2371,7 @@ impl Lowerer {
                 Literal::Cmp { l: Term::Var(x), op: "=", r: Term::Str(_) } if x == v => return "sym".to_owned(),
                 Literal::Agg { var, op, over, atom } if var == v => {
                     return match op {
-                        AggOp::Count | AggOp::Sum => "int".to_owned(),
+                        AggOp::Count | AggOp::Sum | AggOp::Product => "int".to_owned(),
                         AggOp::Join { .. } => "sym".to_owned(),
                         AggOp::Min | AggOp::Max => {
                             let col = atom.args.iter().position(|t| over.as_ref().is_some_and(|o| *t == Term::Var(o.clone())));

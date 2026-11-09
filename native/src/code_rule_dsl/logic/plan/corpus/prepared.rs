@@ -414,10 +414,9 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     Ok(prepared_of(&facts, dialect).ok().map(|p| (p, documents)))
 }
 
-/// Stores `prepared` as the program `key` names under `source`: its documents, one a part (`PART_ROWS`), and each
-/// one's tape, the facts read off those tapes, and the pointer to the documents. A program a part of whose tape does
-/// not give back the facts written is not stored, and `None` says so; else the documents' sources, which the run's
-/// manifest names so collection keeps them.
+/// Stores `prepared` as the program `key` names under `source`: its documents, one a part (`PART_ROWS`), each one's
+/// facts, and the pointer to the documents; the documents' sources, which the run's manifest names so collection
+/// keeps them. A document's tape is made when its facts are read and the store has lost them.
 pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], prepared: &Prepared) -> StoreResult<Option<Vec<SourceId>>> {
     super::memo::off();
     let facts = facts_of(prepared);
@@ -426,9 +425,13 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     for part in parts(&facts) {
         let text = program_facts::document(&part, &schema()).map_err(invalid)?;
         let document = super::memo::source(store, &text)?;
-        if document_facts(store, document, Some(&text))?.as_ref() != Some(&part) {
-            return Ok(None);
-        }
+        // The facts read off the document are the part (`a_prepared_program_reads_back_from_its_facts_and_its_tape`
+        // checks the text gives them back): kept as its facts, so the text is not parsed here. A store that lost
+        // them reads them off the tape again (`document_facts`).
+        let set = facts_plan();
+        let encoded = program_facts::encode(&part);
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, encoded.len() as u64);
+        store.put_facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: encoded }], &[])?;
         let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
         entry.extend_from_slice(&digest);
         documents.push(document);

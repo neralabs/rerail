@@ -947,6 +947,55 @@ fn back_fill_round_trips_and_refusals() {
     }
 }
 
+/// `position j`: bit `j` of each byte's place in its file, on every CPU executor and in a batch
+/// (each file from 0); a `prev` of one; it prints and reassembles; Metal refuses it.
+#[test]
+fn position_planes_equal_the_positions_on_the_cpu_executors() {
+    let planes = [0u8, 3, 5, 6, 7, 9, 10];
+    let mut rows = String::from("  block 0 %0 = within\n");
+    for (k, j) in planes.iter().enumerate() {
+        rows += &format!("  block 0 %{} = position {j}\n  block 0 %{} = and %{}, %0\n", 2 * k + 1, 2 * k + 2, 2 * k + 1);
+    }
+    let n = 2 * planes.len() + 1;
+    rows += &format!("  block 0 %{n} = prev %{}, 3\n", 2 * planes.len() - 2);
+    rows += &format!("  block 0 %{} = eq 0x61\n  block 0 %{} = and %{n}, %{}\n", n + 1, n + 2, n + 1);
+    for k in 0..planes.len() {
+        rows += &format!("  block 0 output %{}\n", 2 * k + 2);
+    }
+    rows += &format!("  block 0 output %{}\n", n + 2);
+    let p = program(&rows);
+    let text = rir::disassemble(&p, None);
+    assert!(text.contains("= position 9"), "{text}");
+    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    let block = &p.block_programs()[0];
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let want = |bytes: &[u8]| {
+        let plane = |j: u8| (0..bytes.len()).map(|i| i >> j & 1 == 1).collect::<Vec<bool>>();
+        let mut out: Vec<Vec<u64>> = planes.iter().map(|&j| words_of(&plane(j))).collect();
+        let a = bits(bytes, |x| x == b'a');
+        let late: Vec<bool> = prev_reference(&plane(planes[planes.len() - 2]), 3).iter().zip(&a).map(|(&x, &y)| x && y).collect();
+        out.push(words_of(&late));
+        out
+    };
+    let mut files = inputs();
+    files.extend([b"".to_vec(), b"a".to_vec(), vec![b'a'; 63], vec![b'a'; 64], vec![b'a'; 2100], [vec![b'b'; 700], vec![b'a'; 700]].concat()]);
+    for bytes in &files {
+        let (got, _) = Executors::new(&p).run(bytes, false);
+        for (name, got) in got {
+            assert_eq!(got, want(bytes), "{name}, {} bytes", bytes.len());
+        }
+    }
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
+        let got = run_generated_with(&native, b"a\"b", LaneWidth::ALL[0], ClassStrategy::ALL[0]).map(|_| ());
+        assert!(matches!(got, Err(Error::UnsupportedBackend)), "Metal: {got:?}");
+    }
+}
+
 /// Carried operations in a chain, each round's carry depending on the one before: the escaped
 /// quotes removed before the toggle, then a shift of the result.
 #[test]

@@ -6455,7 +6455,7 @@ A ported rule carries <code>suppress</code>, naming the upstream rule, when its 
 <p class="lede">Deliberate boundaries and measured gaps, grouped by area. None is an open bug.</p>
 <h3 id="limits-matching">Matching, ordering and budgets</h3>
 <ul class="limits">
-<li>Kindless rules test every node, anonymous tokens included: add <code>kind</code> unless the rule targets a token. Abstract kinds are refused.</li>
+<li>Kindless rules test every node, anonymous tokens included: add <code>kind</code> unless the rule targets a token. An abstract kind matches only the nodes the parser reported as its members, which depends on position.</li>
 <li>With a zero-width node in the file, the sibling check is quadratic in one container's siblings; it crosses the 500 ms budget at several thousand.</li>
 <li>Atomic terms run first and never read a relation's capture; the ordered group sorts by dependency; terms reading each other's captures are refused. The <code>all</code> order check refuses only misorders it can prove: a binding outside the rule object excuses a conflict.</li>
 <li>A binding relation's search ends at the first unknown candidate no other term makes false. <code>all</code> goes on past an unknown term; terms mentioning its would-be captures stay open.</li>

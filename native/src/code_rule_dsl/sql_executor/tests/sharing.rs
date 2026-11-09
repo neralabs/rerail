@@ -203,3 +203,23 @@ fn walk_lowering_preserves_pools_shared_with_consumers_initialized_after_cold_ex
         }
     }
 }
+
+#[test]
+fn dependent_consumers_share_bag_storage_with_independent_dependency_indexes() {
+    let (_d, mut e) = executor();
+    bind(&mut e,"event",&["g","v"],json!([[1,3],[1,5],[2,7]]));
+    bind(&mut e,"owner",&["g"],json!([[1],[2]]));
+    let p = ".decl event(g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl result(g:number,n:number,s:number,m:number)\nresult(g,n,s,m) :- owner(g), n=count : {event(g,_)}, s=sum v : {event(n,v)}, m=max v : {event(n,v)}.\n.output result\n";
+    e.run(p.into(),"python".into(),None).unwrap();
+    let explain:Value=serde_json::from_str(&e.explain().unwrap()).unwrap();
+    let rules=&explain["executions"][0]["retained"][0]["rules"][0];
+    assert_eq!(rules["summary_storage"][1]["group"],rules["summary_storage"][2]["group"],"{explain}");
+    for patch in [json!([{"name":"event","insert":[[1,9]]}]),json!([{"name":"event","delete":[[1,3],[2,7]],"insert":[[3,11]]}])] {
+        e.apply_changes(patch.to_string(),None).unwrap();
+        let (_d,mut cold)=executor(); cold.cold_oracle=true;
+        bind(&mut cold,"event",&["g","v"],rows(&e,"SELECT * FROM event"));
+        bind(&mut cold,"owner",&["g"],rows(&e,"SELECT * FROM owner"));
+        cold.run(p.into(),"python".into(),None).unwrap();
+        assert_eq!(rows(&e,"SELECT * FROM result ORDER BY c0"),rows(&cold,"SELECT * FROM result ORDER BY c0"));
+    }
+}

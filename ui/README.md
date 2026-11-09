@@ -24,7 +24,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
   sheet (`pack-panel.js`), and the session timeline (`timeline.js`).
-- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`); `attachments.js` writes
+- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`);
+  `repo-rule-counts.js` reads each repository's rule counts; `attachments.js` writes
   rule pack changes in click order, `rule-remove.js` deletes a rule created by you from the repository (with Undo),
   and `settings-writes.js` writes rule settings.
 - Pure derivations, without the DOM: `derive.js` (a rule's title, mode, scope and a pack's suppression comments),
@@ -32,8 +33,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
   whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules History by rule lists
   under its All · Steered · Logged chips and which one it shows), `sessions-model.js` (a session's events as turns
-  and tool calls), `settings-model.js` (coding agent states and the install date) and `repo-rules.js` (each
-  repository's rule counts for Settings and the repository menu). `format.js` formats numbers and dates; `dom.js`
+  and tool calls), `settings-model.js` (coding agent states and the install date) and `repo-rules.js` (what
+  Settings and the repository menu say of a repository's rule counts). `format.js` formats numbers and dates; `dom.js`
   builds and reconciles elements.
 - `css/base.css` styles the frame and the shared pieces, `css/sheet.css` the sheet, and `css/<view>.css` each view.
   `tokens.generated.css` holds the design tokens, generated from Nera's tokens by `scripts/generate/ui/tokens.mjs`;

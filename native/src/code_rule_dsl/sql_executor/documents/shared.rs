@@ -84,6 +84,7 @@ impl Shared {
     }
 }
 impl Source for Shared {
+    fn revision(&self)->Option<u64> {Some(0)}
     fn columns(&self) -> Vec<String> {
         vec!["v".into(), "t".into()]
     }

@@ -114,7 +114,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         prefix: format!("__it{namespace}_global"),
         emitted: e,
         relations,
-        steps,
+        steps: Arc::new(steps),
         after,
         frames: vec![],
         limit: run.max_waves,
@@ -184,6 +184,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
             w.pool = attempt.pool;
             w.created += attempt.created;
             w.version_nodes += attempt.version_nodes;
+            w.summary_reuses += attempt.summary_reuses;
             for (r, v) in versions.published {
                 run.counts.insert(r, v.len() as u64);
             }

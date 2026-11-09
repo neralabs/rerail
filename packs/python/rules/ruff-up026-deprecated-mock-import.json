@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-up026-deprecated-mock-import",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Use the standard library unittest.mock instead of the separate mock package; it has been built into Python since version 3.3.",
   "scope": {
@@ -401,8 +401,10 @@
                 }
               },
               {
-                "matches": "in-string",
                 "all": [
+                  {
+                    "matches": "in-string"
+                  },
                   {
                     "matches": "anywhere"
                   }

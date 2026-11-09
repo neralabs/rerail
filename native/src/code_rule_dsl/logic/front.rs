@@ -156,6 +156,9 @@ pub(in crate::code_rule_dsl) enum AggOp {
     Max,
     /// `sum x : { … }`: the sum of `x` over the body's rows, 0 when there are none.
     Sum,
+    /// `product x : {…}`: the product of `x` over the rows, 1 over no rows, saturating at i64's range (a count of
+    /// combinations, as pytest's stacked parametrize marks multiply).
+    Product,
     /// `join x by (k, …) sep "s" : { … }`: the distinct `(k, …, x)` rows' `x` texts ordered by `k, …` then `x`
     /// (symbols by code point, numbers by value), separated by `sep`; `""` when there are none.
     Join { by: Vec<String>, sep: String },
@@ -261,6 +264,7 @@ impl fmt::Display for Literal {
                 let op = match op {
                     AggOp::Min => "min",
                     AggOp::Sum => "sum",
+                    AggOp::Product => "product",
                     _ => "max",
                 };
                 write!(f, "${var} = {op} ${} : {{ {atom} }}", over.as_deref().unwrap_or_default())

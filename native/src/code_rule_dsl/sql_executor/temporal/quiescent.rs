@@ -9,7 +9,7 @@ fn aggregate(query: &Query) -> bool {
         // in this SELECT can produce a row from an empty positive body.
         e.visit(&mut |e| {
             if let E::Call { name, arguments } = e {
-                result |= matches!(*name, "count" | "sum" | "rr_join" | "rr_update_sum")
+                result |= matches!(*name, "count" | "sum" | "rr_exact_sum" | "rr_join" | "rr_update_sum")
                     || (matches!(*name, "min" | "max") && arguments.len() == 1);
             }
         });

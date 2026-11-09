@@ -30,7 +30,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isVariantPath, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { codePointColumn, ECMA_EXTENSIONS, isVariantPath, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
 import { variantEntries, writeProvenance } from "../../../scripts/pack-data/provenance.mjs";
 import { expectedFindingsWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
@@ -40,7 +40,6 @@ const VERSIONS = { eslint: "10.11.0", "@typescript-eslint/parser": "8.70.1", "@t
 const CHECKOUTS = {
   "typescript-eslint": { repository: "https://github.com/typescript-eslint/typescript-eslint", commit: "23d38ceeb8fb1237f55cb62fc2b54419e1fa1ed7" },
 };
-const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
 
 function parseArguments(argv) {
@@ -124,15 +123,6 @@ export default {
   return url;
 }
 
-/** ESLint's 1-based UTF-16 column on `line`, as 1-based code points. */
-function codePointColumn(lines, line, column) {
-  const text = lines[line - 1] ?? "";
-  return [...text.slice(0, column - 1)].length + 1;
-}
-
-/** ESLint's line terminators (`\r\n`, `\r`, `\n`, U+2028, U+2029). */
-const splitLines = text => text.split(/\r\n|[\r\n\u2028\u2029]/u);
-
 /** Lints `files` (relative to `cwd`) with `rules` on; returns findings and the files ESLint could not parse. */
 async function lint(cwd, files, rules) {
   const eslint = await ESLint.fromOptionsModule(optionsModule(cwd, rules, files.length > 1000 ? "auto" : "off"));
@@ -143,19 +133,21 @@ async function lint(cwd, files, rules) {
   for (let start = 0; start < files.length; start += chunk) {
     for (const result of await eslint.lintFiles(files.slice(start, start + chunk))) {
       const path = relative(cwd, result.filePath).split(sep).join("/");
-      if (result.messages.some(message => message.fatal)) {
-        unparsed.push(path);
-        continue;
-      }
-      const reported = result.messages.filter(message => wanted.has(message.ruleId));
-      if (reported.length === 0) continue;
-      const lines = splitLines(readFileSync(result.filePath, "utf8"));
-      for (const message of reported) findings.push({ rule: message.ruleId, path, line: message.line, column: codePointColumn(lines, message.line, message.column) });
+      if (result.messages.some(message => message.fatal)) unparsed.push(path);
+      else findings.push(...resultFindings(result, path, wanted));
     }
   }
   const order = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
   findings.sort((left, right) => order(left.path, right.path) || left.line - right.line || left.column - right.column || order(left.rule, right.rule));
   return { findings, unparsed: unparsed.sort(order) };
+}
+
+/** The findings of the `wanted` rules in ESLint's `result` for the file at `path`. */
+function resultFindings(result, path, wanted) {
+  const reported = result.messages.filter(message => wanted.has(message.ruleId));
+  if (reported.length === 0) return [];
+  const text = readFileSync(result.filePath, "utf8");
+  return reported.map(message => ({ rule: message.ruleId, path, line: message.line, column: codePointColumn(text, message.line, message.column) }));
 }
 
 function writeJson(path, value) {

@@ -1133,6 +1133,20 @@ calls(n) :- later(n, _).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A recursive relation with facts whose every rule joins an empty relation of a lower stratum keeps its facts: the
+/// stratum has no rule to run, but its relations are not held empty (`native_stratum_`; the data-layer pack's
+/// `conditional_derived`, a fact and a rule over the classes' bases, where no class has one).
+#[test]
+fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
+    let dir = corpus("facts-empty-joins", &[TREE]);
+    let program = ".decl s(x: number)\ns(n) :- node(_, _, k, n, _), k = \"no_such_kind\".\n\
+                   .decl e(x: number, y: number)\ne(x, y) :- s(x), s(y).\n\
+                   .decl d(x: number)\nd(7).\nd(y) :- d(x), e(x, y).\n\
+                   .decl out(x: number)\nout(x) :- d(x).\n.output out\n";
+    assert_eq!(run(&dir, program, &["out"]), [csv(["7".to_owned()])]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A core relation nothing derives and the runner does not bind is a named error, not the planner's missing
 /// statistics; those that need CPython say so. A program's own input is its business: no such error.
 #[test]
@@ -1142,8 +1156,9 @@ fn an_unbound_relation_is_named() {
     let fails = |out: &str, program: &str| {
         super::run(program, &dir, None, &dir.join(out), "program", Binding::Cpu, 1 << 18).err().map(|e| e.to_string()).unwrap_or_default()
     };
-    let e = fails(".out-git", ".decl v(p: symbol)\nv(p) :- git_tracked(p).\n.output v\n");
-    assert!(e.contains("git_tracked is read, and nothing derives it or binds it"), "{e}");
+    // `git_tracked` is a functor now (`@git_tracked`); `signed_list` is still a core.rr input no producer binds (O80).
+    let e = fails(".out-signed", ".decl v(p: symbol, e: symbol)\nv(p, e) :- signed_list(p, e).\n.output v\n");
+    assert!(e.contains("signed_list is read, and nothing derives it or binds it"), "{e}");
     let e = fails(".out-str", ".decl v(n: node)\nv(n) :- str_part(n, 0, _, _, _).\n.output v\n");
     assert!(e.contains("str_part is read") && e.contains("CPython"), "{e}");
     let e = fails(".out-mine", ".decl mine(n: node)\n.input mine\n.decl v(n: node)\nv(n) :- mine(n).\n.output v\n");

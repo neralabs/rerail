@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
-import type { CheckoutContext, EffectiveRule, RepositoryKey, RepositoryStartState, RepositoryStatus } from "../engine/catalog/repository-model.js";
+import { rerailRunsIn, type CheckoutContext, type EffectiveRule, type RepositoryKey, type RepositoryStartState, type RepositoryStatus } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import {
   checkoutStatus,
@@ -17,6 +17,7 @@ import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { checkouts, events, repositories, sessions } from "../engine/storage/schema.js";
+import { holdsTable } from "../engine/storage/table-probe.js";
 import { clearSetupReview } from "../engine/catalog/setup-review.js";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
@@ -43,9 +44,8 @@ const START_TABLES = [getTableName(repositories), getTableName(checkouts)];
  * Whether the tables a start state is read from are there. A read-only open of a database whose creator has not
  * committed the schema yet sees no table; only a writable open, which waits for the creator, could read it.
  */
-function hasStartTables(database: Pick<RerailDatabase, "all">): boolean {
-  const names = sql.join(START_TABLES.map(name => sql`${name}`), sql`, `);
-  return database.all(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${names})`).length === START_TABLES.length;
+function hasStartTables(database: Pick<RerailDatabase, "$client">): boolean {
+  return START_TABLES.every(table => holdsTable(database.$client, table));
 }
 
 /**
@@ -158,7 +158,7 @@ export class RepositoryStartWatch {
  * that is not set up yet counts: its sessions are recorded, though no rule runs there until it is set up.
  */
 export function isRerailStarted(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
-  return workspaceStartState(workspace, databasePath) !== "stopped";
+  return rerailRunsIn(workspaceStartState(workspace, databasePath));
 }
 
 /** How start and stop name what they changed: the repository, or a worktree of it. */

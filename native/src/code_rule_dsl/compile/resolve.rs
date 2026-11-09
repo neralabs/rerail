@@ -11,7 +11,7 @@ use crate::code_rule_dsl::matcher::{AstMatcher, BindingTest, Resolves, Unresolve
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::scope::{Lookup, php_names};
 use napi::Result;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -405,7 +405,37 @@ fn compile_binding_in<S: ScopeRules>(
     utils: &UtilScope,
     write: bool,
 ) -> Result<AstMatcher> {
-    if occurrence.is_some() {
+    gate_occurrence_and_write::<S>(path, occurrence.is_some(), write)?;
+    let lookup = binding_lookup::<S>(binding, path)?;
+    let destructured_value = gated_destructured_value::<S>(binding, path)?;
+    let filter = compile_filter::<S>(object(binding, path)?, language, path, utils)?;
+    Ok(AstMatcher::Semantic(Semantic::Binding(Box::new(
+        BindingTest {
+            lookup,
+            language,
+            destructured_value: destructured_value.unwrap_or(true),
+            write_last: write,
+            name_kinds: kind_ids_if(write, language, S::NAME_KINDS),
+            reference_kinds: kind_ids(language, S::REFERENCE_KINDS),
+            paren_kinds: kind_ids(language, S::PAREN_KINDS),
+            options: utils.options.clone(),
+            python: utils.python.clone(),
+            filter,
+            site,
+            value,
+            annotation,
+            occurrence,
+        },
+    ))))
+}
+
+/// Gates `resolves.binding.occurrence` and `resolves.write` on the family `S` reads.
+fn gate_occurrence_and_write<S: ScopeRules>(
+    path: &str,
+    occurrence: bool,
+    write: bool,
+) -> Result<()> {
+    if occurrence {
         gate(
             &format!("{path}/occurrence"),
             S::feature(ScopeFeature::Occurrence),
@@ -418,7 +448,11 @@ fn compile_binding_in<S: ScopeRules>(
             S::feature(ScopeFeature::LastWrite),
         )?;
     }
-    let lookup = binding_lookup::<S>(binding, path)?;
+    Ok(())
+}
+
+/// `resolves.binding.destructuredValue`, gated on the family `S` reads.
+fn gated_destructured_value<S: ScopeRules>(binding: &Value, path: &str) -> Result<Option<bool>> {
     let destructured_value = binding.get("destructuredValue").and_then(Value::as_bool);
     if destructured_value.is_some() {
         gate(
@@ -426,29 +460,16 @@ fn compile_binding_in<S: ScopeRules>(
             S::feature(ScopeFeature::DestructuredValue),
         )?;
     }
-    let filter = compile_filter::<S>(object(binding, path)?, language, path, utils)?;
-    Ok(AstMatcher::Semantic(Semantic::Binding(Box::new(
-        BindingTest {
-            lookup,
-            language,
-            destructured_value: destructured_value.unwrap_or(true),
-            write_last: write,
-            name_kinds: if write {
-                kind_ids(language, S::NAME_KINDS)
-            } else {
-                BTreeSet::new()
-            },
-            reference_kinds: kind_ids(language, S::REFERENCE_KINDS),
-            paren_kinds: kind_ids(language, &["parenthesized_expression"]),
-            options: utils.options.clone(),
-            python: utils.python.clone(),
-            filter,
-            site,
-            value,
-            annotation,
-            occurrence,
-        },
-    ))))
+    Ok(destructured_value)
+}
+
+/// The native symbol ids of `kinds` when `asked`; none otherwise.
+fn kind_ids_if(asked: bool, language: GrammarDialect, kinds: &[&str]) -> BTreeSet<u16> {
+    if asked {
+        kind_ids(language, kinds)
+    } else {
+        BTreeSet::new()
+    }
 }
 
 /// Compiles a validated `resolves` for one grammar.
@@ -477,45 +498,94 @@ fn compile_lexical_resolves<S: ScopeRules>(
     options: Option<&Arc<LanguageOptions>>,
     python: Option<&Arc<PythonOptions>>,
 ) -> Result<AstMatcher> {
-    let directives = value.get("directives").is_some();
-    let this_global = value.get("this").is_some();
-    let global_any = value.get("global") == Some(&Value::Bool(true));
-    let import_any = value.get("import") == Some(&Value::Bool(true));
-    let unresolved = match value.get("unresolved") {
-        Some(Value::Bool(true)) => Some(Unresolved::Unbound),
-        Some(_) => Some(Unresolved::Star),
-        None => None,
-    };
-    let before_local = value.get("beforeLocal").is_some();
-    if before_local {
+    let unresolved = gate_lexical_keys::<S>(value, path)?;
+    // Asking about every name needs the declared set: the query's settings or their defaults.
+    let defaults = value.get("global") == Some(&Value::Bool(true)) || unresolved.is_some();
+    let declared_python = defaults.then(|| S::ruff_options(python)).flatten();
+    let python = declared_python.as_ref().or(python);
+    let declared_options = defaults.then(|| S::eslint_options(options)).flatten();
+    let options = declared_options.as_ref().or(options);
+    check_global_keys::<S>(value, path, options, python)?;
+    check_imports::<S>(value, path)?;
+    let resolves = lexical_resolves::<S>(value, language, path, unresolved, options, python)?;
+    Ok(AstMatcher::Semantic(Semantic::Resolves(Box::new(resolves))))
+}
+
+/// Gates the `resolves` keys some lexical family has no counterpart for, and returns what
+/// `unresolved` asks for.
+fn gate_lexical_keys<S: ScopeRules>(value: &Value, path: &str) -> Result<Option<Unresolved>> {
+    if value.get("beforeLocal").is_some() {
         gate_run_on(
             &format!("{path}/beforeLocal"),
             S::feature(ScopeFeature::BeforeLocal),
         )?;
     }
+    let unresolved = gated_unresolved::<S>(value, path)?;
+    // Keys a family without their counterpart refuses (`ScopeRules::feature`).
+    gate_present_keys::<S>(
+        value,
+        path,
+        &[
+            ("sloppyFunctions", ScopeFeature::SloppyFunctions),
+            ("declared", ScopeFeature::Declared),
+            ("relative", ScopeFeature::Relative),
+            ("seenBefore", ScopeFeature::SeenBefore),
+        ],
+    )?;
+    Ok(unresolved)
+}
+
+/// What `resolves.unresolved` asks for, gated on the family `S` reads.
+fn gated_unresolved<S: ScopeRules>(value: &Value, path: &str) -> Result<Option<Unresolved>> {
+    let unresolved = match value.get("unresolved") {
+        Some(Value::Bool(true)) => Some(Unresolved::Unbound),
+        Some(_) => Some(Unresolved::Star),
+        None => None,
+    };
     if unresolved == Some(Unresolved::Star) {
         gate(
             &format!("{path}/unresolved"),
             S::feature(ScopeFeature::StarImports),
         )?;
     }
-    // Keys a family without their counterpart refuses (`ScopeRules::feature`).
-    for (key, feature) in [
-        ("sloppyFunctions", ScopeFeature::SloppyFunctions),
-        ("declared", ScopeFeature::Declared),
-        ("relative", ScopeFeature::Relative),
-        ("seenBefore", ScopeFeature::SeenBefore),
-    ] {
-        if value.get(key).is_some() {
-            gate(&format!("{path}/{key}"), S::feature(feature))?;
+    Ok(unresolved)
+}
+
+/// Gates each key of `features` that `value` holds on its feature, in order.
+fn gate_present_keys<S: ScopeRules>(
+    value: &Value,
+    path: &str,
+    features: &[(&str, ScopeFeature)],
+) -> Result<()> {
+    for (key, feature) in features {
+        if value.get(*key).is_some() {
+            gate(&format!("{path}/{key}"), S::feature(*feature))?;
         }
     }
-    // Asking about every name needs the declared set: the query's settings or their defaults.
-    let defaults = global_any || unresolved.is_some();
-    let declared_python = defaults.then(|| S::ruff_options(python)).flatten();
-    let python = declared_python.as_ref().or(python);
-    let declared_options = defaults.then(|| S::eslint_options(options)).flatten();
-    let options = declared_options.as_ref().or(options);
+    Ok(())
+}
+
+/// Checks the `resolves` keys over globals: `this`, `declared`, `scriptDeclarations` and
+/// `directives`.
+fn check_global_keys<S: ScopeRules>(
+    value: &Value,
+    path: &str,
+    options: Option<&Arc<LanguageOptions>>,
+    python: Option<&Arc<PythonOptions>>,
+) -> Result<()> {
+    check_this::<S>(value, path, options)?;
+    check_declared(value, path, options, python)?;
+    check_script_declarations::<S>(value, path, options)?;
+    gate_present_keys::<S>(value, path, &[("directives", ScopeFeature::GlobalComments)])
+}
+
+/// Gates `this` and refuses it without the `languageOptions` its global object depends on.
+fn check_this<S: ScopeRules>(
+    value: &Value,
+    path: &str,
+    options: Option<&Arc<LanguageOptions>>,
+) -> Result<()> {
+    let this_global = value.get("this").is_some();
     if this_global {
         gate(&format!("{path}/this"), S::feature(ScopeFeature::This))?;
     }
@@ -524,12 +594,32 @@ fn compile_lexical_resolves<S: ScopeRules>(
             "{path}/this: the global object depends on languageOptions.sourceType; declare languageOptions"
         )));
     }
+    Ok(())
+}
+
+/// Refuses `declared` without the settings that declare the globals.
+fn check_declared(
+    value: &Value,
+    path: &str,
+    options: Option<&Arc<LanguageOptions>>,
+    python: Option<&Arc<PythonOptions>>,
+) -> Result<()> {
     let declared = value.get("declared").and_then(Value::as_bool);
     if declared.is_some() && options.is_none() && python.is_none() {
         return Err(invalid(format!(
             "{path}/declared: the declared globals come from languageOptions; declare languageOptions"
         )));
     }
+    Ok(())
+}
+
+/// Gates `scriptDeclarations` and refuses it without the `languageOptions` that say whether a
+/// file is a script.
+fn check_script_declarations<S: ScopeRules>(
+    value: &Value,
+    path: &str,
+    options: Option<&Arc<LanguageOptions>>,
+) -> Result<()> {
     let script_declarations = value.get("scriptDeclarations").is_some();
     if script_declarations {
         gate(
@@ -542,12 +632,11 @@ fn compile_lexical_resolves<S: ScopeRules>(
             "{path}/scriptDeclarations: whether a file is a script comes from languageOptions.sourceType; declare languageOptions"
         )));
     }
-    if directives {
-        gate(
-            &format!("{path}/directives"),
-            S::feature(ScopeFeature::GlobalComments),
-        )?;
-    }
+    Ok(())
+}
+
+/// Gates `import` and `imported` and refuses the names they list in another family's shape.
+fn check_imports<S: ScopeRules>(value: &Value, path: &str) -> Result<()> {
     for key in ["import", "imported"] {
         let Some(listed) = value.get(key) else {
             continue;
@@ -558,127 +647,173 @@ fn compile_lexical_resolves<S: ScopeRules>(
                 "{path}/imported: `imported` matches the names Python's import statements write; a Rust `use` path is no read, and `import` lists the paths reads name through it"
             )));
         }
-        for (index, name) in listed
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .enumerate()
-        {
-            let refusal = if S::IMPORT_PATHS {
-                if name.contains('\\') {
-                    Some(format!(
-                        "`{name}` is a PHP name; Rust paths join identifiers with `::`"
-                    ))
-                } else if name.contains('.') {
-                    Some(format!(
-                        "`{name}` is a dotted name; Rust paths join identifiers with `::`"
-                    ))
-                } else if matches!(name.split("::").next(), Some("self" | "super")) {
-                    Some(format!(
-                        "`{name}` starts at a module; a listed path starts at a crate (`crate::`, `std::`), and reads through `self::` and `super::` are normalised to `crate::` paths"
-                    ))
-                } else {
-                    None
-                }
-            } else if name.contains('\\') {
-                Some(format!(
-                    "`{name}` is a PHP name; Python imports are dotted names"
-                ))
-            } else if name.contains("::") {
-                Some(format!(
-                    "`{name}` is a Rust path; Python imports are dotted names"
-                ))
-            } else {
-                None
-            };
-            if let Some(refusal) = refusal {
-                return Err(invalid(format!("{path}/{key}/{index}: {refusal}")));
-            }
+        check_import_shapes::<S>(listed, path, key)?;
+    }
+    Ok(())
+}
+
+/// Refuses the first name `{path}/{key}` lists in another family's import shape.
+fn check_import_shapes<S: ScopeRules>(listed: &Value, path: &str, key: &str) -> Result<()> {
+    for (index, name) in listed
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .enumerate()
+    {
+        let refusal = if S::IMPORT_PATHS {
+            import_path_refusal(name)
+        } else {
+            dotted_import_refusal(name)
+        };
+        if let Some(refusal) = refusal {
+            return Err(invalid(format!("{path}/{key}/{index}: {refusal}")));
         }
     }
-    let imported = value
-        .get("imported")
-        .map(|imported| names(imported, &format!("{path}/imported"), true))
+    Ok(())
+}
+
+/// Why a family whose imports are paths refuses `name`, if it does.
+fn import_path_refusal(name: &str) -> Option<String> {
+    if name.contains('\\') {
+        Some(format!(
+            "`{name}` is a PHP name; Rust paths join identifiers with `::`"
+        ))
+    } else if name.contains('.') {
+        Some(format!(
+            "`{name}` is a dotted name; Rust paths join identifiers with `::`"
+        ))
+    } else if matches!(name.split("::").next(), Some("self" | "super")) {
+        Some(format!(
+            "`{name}` starts at a module; a listed path starts at a crate (`crate::`, `std::`), and reads through `self::` and `super::` are normalised to `crate::` paths"
+        ))
+    } else {
+        None
+    }
+}
+
+/// Why a family whose imports are dotted names refuses `name`, if it does.
+fn dotted_import_refusal(name: &str) -> Option<String> {
+    if name.contains('\\') {
+        Some(format!(
+            "`{name}` is a PHP name; Python imports are dotted names"
+        ))
+    } else if name.contains("::") {
+        Some(format!(
+            "`{name}` is a Rust path; Python imports are dotted names"
+        ))
+    } else {
+        None
+    }
+}
+
+/// The names `{path}/{key}` lists; none when `listed` is absent.
+fn listed_names<'a>(
+    listed: Option<&'a Value>,
+    path: &str,
+    key: &str,
+    dotted: bool,
+) -> Result<Vec<&'a str>> {
+    Ok(listed
+        .map(|listed| names(listed, &format!("{path}/{key}"), dotted))
         .transpose()?
-        .unwrap_or_default()
+        .unwrap_or_default())
+}
+
+/// `listed_names`, as the set a lexical `Resolves` holds.
+fn listed_name_set(
+    listed: Option<&Value>,
+    path: &str,
+    key: &str,
+    dotted: bool,
+) -> Result<BTreeSet<String>> {
+    Ok(listed_names(listed, path, key, dotted)?
         .into_iter()
         .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
+        .collect())
+}
+
+/// The `Resolves` of a checked lexical `resolves`, with the declared settings it reads.
+fn lexical_resolves<S: ScopeRules>(
+    value: &Value,
+    language: GrammarDialect,
+    path: &str,
+    unresolved: Option<Unresolved>,
+    options: Option<&Arc<LanguageOptions>>,
+    python: Option<&Arc<PythonOptions>>,
+) -> Result<Resolves> {
+    let this_global = value.get("this").is_some();
+    let global_any = value.get("global") == Some(&Value::Bool(true));
+    let import_any = value.get("import") == Some(&Value::Bool(true));
+    let imported = listed_name_set(value.get("imported"), path, "imported", true)?;
     let seen_before = value.get("seenBefore").is_some();
-    let dotted_kinds = if imported.is_empty() || seen_before {
-        BTreeSet::new()
-    } else {
-        kind_ids(language, &["dotted_name"])
-    };
-    let globals = value
-        .get("global")
-        .filter(|_| !global_any)
-        .map(|global| names(global, &format!("{path}/global"), false))
-        .transpose()?
-        .unwrap_or_default()
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-    let imports = value
-        .get("import")
-        .filter(|_| !import_any)
-        .map(|import| names(import, &format!("{path}/import"), true))
-        .transpose()?
-        .unwrap_or_default()
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-    let attribute_kinds = if S::IMPORT_PATHS {
-        kind_ids(language, &["scoped_identifier", "scoped_type_identifier"])
-    } else {
-        kind_ids(language, &["attribute"])
-    };
-    // An import resolves a read's attribute chain too.
+    let dotted_kinds = kind_ids_if(
+        !imported.is_empty() && !seen_before,
+        language,
+        S::DOTTED_NAME_KINDS,
+    );
+    let globals = listed_name_set(
+        value.get("global").filter(|_| !global_any),
+        path,
+        "global",
+        false,
+    )?;
+    let imports = listed_name_set(
+        value.get("import").filter(|_| !import_any),
+        path,
+        "import",
+        true,
+    )?;
+    let attribute_kinds = kind_ids(language, S::ATTRIBUTE_KINDS);
+    let reference_kinds = lexical_reference_kinds::<S>(
+        language,
+        &attribute_kinds,
+        !imports.is_empty() || import_any,
+    );
+    Ok(Resolves {
+        globals,
+        imports,
+        attribute_kinds,
+        directives: value.get("directives").is_some(),
+        language,
+        reference_kinds,
+        paren_kinds: kind_ids(language, S::PAREN_KINDS),
+        options: options.cloned(),
+        python: python.cloned(),
+        this_global,
+        this_scope: value.get("this").and_then(Value::as_str) == Some("globalScope"),
+        sloppy_functions: value.get("sloppyFunctions").is_some(),
+        this_kinds: kind_ids_if(this_global, language, S::THIS_KINDS),
+        imported,
+        declared: value
+            .get("declared")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        script_declarations: value.get("scriptDeclarations").is_some(),
+        prefix: value.get("prefix").is_some(),
+        relative_text: value.get("relative").and_then(Value::as_str) == Some("text"),
+        dotted_kinds,
+        global_any,
+        import_any,
+        unresolved,
+        string_kinds: kind_ids_if(unresolved.is_some(), language, S::ANNOTATION_STRING_KINDS),
+        before_local: value.get("beforeLocal").is_some(),
+        seen_before,
+        item: false,
+    })
+}
+
+/// The kinds of a lexical family's reads; an import resolves a read's attribute chain too.
+fn lexical_reference_kinds<S: ScopeRules>(
+    language: GrammarDialect,
+    attribute_kinds: &BTreeSet<u16>,
+    imports_asked: bool,
+) -> BTreeSet<u16> {
     let mut reference_kinds = kind_ids(language, S::REFERENCE_KINDS);
-    if !imports.is_empty() || import_any {
+    if imports_asked {
         reference_kinds.extend(attribute_kinds.iter().copied());
     }
-    let paren_kinds = kind_ids(language, &["parenthesized_expression"]);
-    let this_kinds = if this_global {
-        kind_ids(language, &["this"])
-    } else {
-        BTreeSet::new()
-    };
-    Ok(AstMatcher::Semantic(Semantic::Resolves(Box::new(
-        Resolves {
-            globals,
-            imports,
-            attribute_kinds,
-            directives,
-            language,
-            reference_kinds,
-            paren_kinds,
-            options: options.cloned(),
-            python: python.cloned(),
-            this_global,
-            this_scope: value.get("this").and_then(Value::as_str) == Some("globalScope"),
-            sloppy_functions: value.get("sloppyFunctions").is_some(),
-            this_kinds,
-            imported,
-            declared: declared.unwrap_or(true),
-            script_declarations,
-            prefix: value.get("prefix").is_some(),
-            relative_text: value.get("relative").and_then(Value::as_str) == Some("text"),
-            dotted_kinds,
-            global_any,
-            import_any,
-            unresolved,
-            string_kinds: if unresolved.is_some() {
-                kind_ids(language, S::ANNOTATION_STRING_KINDS)
-            } else {
-                BTreeSet::new()
-            },
-            before_local,
-            seen_before,
-            item: false,
-        },
-    ))))
+    reference_kinds
 }
 
 /// PHP's superglobals, by the names `resolves.global` lists them (without `$`).
@@ -711,11 +846,16 @@ fn compile_php_resolves<S: ScopeRules>(
     path: &str,
 ) -> Result<AstMatcher> {
     let keys = object(value, path)?;
-    for (key, feature) in FLOW_RESOLVES_FEATURES {
-        if keys.contains_key(*key) {
-            gate(&format!("{path}/{key}"), S::feature(*feature))?;
-        }
-    }
+    gate_present_keys::<S>(value, path, FLOW_RESOLVES_FEATURES)?;
+    let variables_asked = php_variables_asked(keys, path)?;
+    let unresolved = gated_unresolved::<S>(value, path)?;
+    let resolves = php_resolves::<S>(value, language, path, variables_asked, unresolved)?;
+    Ok(AstMatcher::Semantic(Semantic::Resolves(Box::new(resolves))))
+}
+
+/// Whether a PHP `resolves` asks about variables rather than class, function and constant names;
+/// one that asks about both is refused.
+fn php_variables_asked(keys: &Map<String, Value>, path: &str) -> Result<bool> {
     let names_asked = keys.contains_key("import") || keys.contains_key("imported");
     let variables_asked = keys.contains_key("global") || keys.contains_key("unresolved");
     if names_asked && variables_asked {
@@ -723,24 +863,60 @@ fn compile_php_resolves<S: ScopeRules>(
             "{path}: `import` and `imported` resolve class, function and constant names; `global` and `unresolved` resolve variables; one `resolves` asks one of them"
         )));
     }
-    let unresolved = match value.get("unresolved") {
-        Some(Value::Bool(true)) => Some(Unresolved::Unbound),
-        Some(_) => {
-            gate(
-                &format!("{path}/unresolved"),
-                S::feature(ScopeFeature::StarImports),
-            )?;
-            Some(Unresolved::Star)
-        }
-        None => None,
-    };
+    Ok(variables_asked)
+}
+
+/// The `Resolves` of a checked PHP `resolves`.
+fn php_resolves<S: ScopeRules>(
+    value: &Value,
+    language: GrammarDialect,
+    path: &str,
+    variables_asked: bool,
+    unresolved: Option<Unresolved>,
+) -> Result<Resolves> {
     let global_any = value.get("global") == Some(&Value::Bool(true));
-    let globals = value
-        .get("global")
-        .filter(|_| !global_any)
-        .map(|global| names(global, &format!("{path}/global"), false))
-        .transpose()?
-        .unwrap_or_default();
+    let globals = php_superglobals(value.get("global").filter(|_| !global_any), path)?;
+    let import_any = value.get("import") == Some(&Value::Bool(true));
+    let imports = listed_php_names(value.get("import").filter(|_| !import_any), path, "import")?;
+    let imported = listed_php_names(value.get("imported"), path, "imported")?;
+    let reference_kinds = if variables_asked {
+        kind_ids(language, &["variable_name"])
+    } else {
+        kind_ids(language, php_names::REFERENCE_KINDS)
+    };
+    Ok(Resolves {
+        globals: globals.into_iter().map(|name| format!("${name}")).collect(),
+        imports: imports.into_iter().collect(),
+        attribute_kinds: BTreeSet::new(),
+        directives: false,
+        language,
+        reference_kinds,
+        paren_kinds: kind_ids(language, S::PAREN_KINDS),
+        options: None,
+        python: None,
+        this_global: false,
+        this_scope: false,
+        sloppy_functions: false,
+        this_kinds: BTreeSet::new(),
+        imported: imported.into_iter().collect(),
+        declared: true,
+        script_declarations: false,
+        prefix: value.get("prefix").is_some(),
+        relative_text: false,
+        dotted_kinds: BTreeSet::new(),
+        global_any,
+        import_any,
+        unresolved,
+        string_kinds: BTreeSet::new(),
+        before_local: false,
+        seen_before: false,
+        item: false,
+    })
+}
+
+/// The superglobals `{path}/global` lists, refusing the first that is none.
+fn php_superglobals<'a>(listed: Option<&'a Value>, path: &str) -> Result<Vec<&'a str>> {
+    let globals = listed_names(listed, path, "global", false)?;
     if let Some((index, name)) = globals
         .iter()
         .enumerate()
@@ -751,65 +927,27 @@ fn compile_php_resolves<S: ScopeRules>(
             PHP_SUPERGLOBALS.join(", ")
         )));
     }
-    let import_any = value.get("import") == Some(&Value::Bool(true));
-    let listed_names = |key: &str, listed: Option<&Value>| -> Result<Vec<String>> {
-        let listed = listed
-            .map(|listed| names(listed, &format!("{path}/{key}"), true))
-            .transpose()?
-            .unwrap_or_default();
-        if let Some((index, name)) = listed
-            .iter()
-            .enumerate()
-            .find(|(_, name)| name.contains('.') || name.contains("::"))
-        {
-            let shape = if name.contains('.') {
-                "a dotted name"
-            } else {
-                "a Rust path"
-            };
-            return Err(invalid(format!(
-                "{path}/{key}/{index}: `{name}` is {shape}; PHP names join labels with `\\`"
-            )));
-        }
-        Ok(listed.into_iter().map(str::to_owned).collect())
-    };
-    let imports = listed_names("import", value.get("import").filter(|_| !import_any))?;
-    let imported = listed_names("imported", value.get("imported"))?;
-    let reference_kinds = if variables_asked {
-        kind_ids(language, &["variable_name"])
-    } else {
-        kind_ids(language, php_names::REFERENCE_KINDS)
-    };
-    Ok(AstMatcher::Semantic(Semantic::Resolves(Box::new(
-        Resolves {
-            globals: globals.into_iter().map(|name| format!("${name}")).collect(),
-            imports: imports.into_iter().collect(),
-            attribute_kinds: BTreeSet::new(),
-            directives: false,
-            language,
-            reference_kinds,
-            paren_kinds: kind_ids(language, &["parenthesized_expression"]),
-            options: None,
-            python: None,
-            this_global: false,
-            this_scope: false,
-            sloppy_functions: false,
-            this_kinds: BTreeSet::new(),
-            imported: imported.into_iter().collect(),
-            declared: true,
-            script_declarations: false,
-            prefix: value.get("prefix").is_some(),
-            relative_text: false,
-            dotted_kinds: BTreeSet::new(),
-            global_any,
-            import_any,
-            unresolved,
-            string_kinds: BTreeSet::new(),
-            before_local: false,
-            seen_before: false,
-            item: false,
-        },
-    ))))
+    Ok(globals)
+}
+
+/// The PHP names `{path}/{key}` lists, refusing the first in another family's shape.
+fn listed_php_names(listed: Option<&Value>, path: &str, key: &str) -> Result<Vec<String>> {
+    let listed = listed_names(listed, path, key, true)?;
+    if let Some((index, name)) = listed
+        .iter()
+        .enumerate()
+        .find(|(_, name)| name.contains('.') || name.contains("::"))
+    {
+        let shape = if name.contains('.') {
+            "a dotted name"
+        } else {
+            "a Rust path"
+        };
+        return Err(invalid(format!(
+            "{path}/{key}/{index}: `{name}` is {shape}; PHP names join labels with `\\`"
+        )));
+    }
+    Ok(listed.into_iter().map(str::to_owned).collect())
 }
 
 #[cfg(test)]

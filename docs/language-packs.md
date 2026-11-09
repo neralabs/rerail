@@ -55,6 +55,7 @@ Each language family has one adapter type, and every engine call site asks it in
 | `rust` | `rust` | all five | `clippy` |
 | `vue` | `vue` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
 | `sql` | `sql` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
+| `rr` | `rr` (`.rr` rule files, the engine's own grammar `native:rr`) | none: all five `Refused`; rules match its kinds and text | none |
 
 <details>
 <summary>What each concern trait holds</summary>
@@ -356,6 +357,9 @@ Register the language as planned, add its grammar and adapter, then flip capabil
    regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`. Rules and packs can land now.
 2. **Add its grammar.** Vendor or pick one (add a vendored one to `GRAMMARS` in `native/build.rs`). Flip the entry to
    `supported` with each dialect's `variant`, `parser` and `grammar`. The build fails until `adapter::<Family>` exists.
+   Name the language under `ast.languages` in `native/src/code_rule_dsl/capabilities.json` with its grammar (a
+   version, or `native:<id>` for a grammar the engine builds in, as `rr` has), or policies cannot target it; a test
+   holds those keys equal to the registry's supported languages.
 3. **Write its adapter** in its own file, registered by one `mod` and one `pub(crate) use` line in
    `native/src/code_rule_dsl/language/adapter.rs`. A new family's type implements `Adapter` and each concern trait,
    or `Refused` for a concern the language will not have.

@@ -89,6 +89,12 @@ impl ScopeRules for Rr {
     const REDEFINES_SHADOWED: bool = false;
     const REFERENCE_KINDS: &'static [&'static str] = &[];
     const ANNOTATION_STRING_KINDS: &'static [&'static str] = &[];
+    // Main's scope kinds (#462): every dialect's parentheses are `parenthesized_expression`, which `.rr` has too (the
+    // kit's `shared_walks_read_the_kinds_they_named`); it has no dotted names, attributes or `this`.
+    const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    const ATTRIBUTE_KINDS: &'static [&'static str] = &[];
+    const THIS_KINDS: &'static [&'static str] = &[];
     const NAME_KINDS: &'static [&'static str] = &[];
     const PRIVATE_NAME_KINDS: &'static [&'static str] = &[];
     const FORMS: &'static [(&'static str, Form)] = &[];

@@ -113,6 +113,8 @@ impl CodeRuleSqlExecutor {
                 || self.executions.iter().any(|e| e.counts.contains_key(name))
         }) {
             false
+        } else if self.statistics.snapshot().is_some() {
+            true
         } else {
             self.db
                 .query_row(
@@ -152,7 +154,7 @@ impl CodeRuleSqlExecutor {
                 None if has_wave_stats => self
                     .db
                     .query_row(
-                        "SELECT rows FROM temp.wave_stats WHERE tbl = ?1",
+                        "SELECT rows FROM wave_stats WHERE tbl = ?1",
                         [name],
                         |r| r.get::<_, i64>(0),
                     )

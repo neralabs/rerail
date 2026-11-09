@@ -377,19 +377,43 @@ pub(crate) fn comment_body(text: &str) -> &str {
     body.trim()
 }
 
-/// A file's nodes as `shape` numbers them (`node` ids are `key << 32 | local`): each local id's core id and kind name.
-/// For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
-pub(crate) fn numbering(doc: &Document, shape: Shape) -> StoreResult<Vec<(u32, &'static str)>> {
+/// A file's nodes as `shape` numbers them: each local id's core id and kind name, and the way from a node id's low
+/// 32 bits to its local id (they differ when nodes are numbered per definition, `DefIds`). For making guests from
+/// requests that name host nodes (decision 0055, `corpus::guests`).
+pub(crate) struct Numbering {
+    pub(crate) nodes: Vec<(u32, &'static str)>,
+    /// `(low, local)`, ascending, under `DefIds`; `None` when the low bits are the local id.
+    back: Option<Vec<(u32, u32)>>,
+}
+
+impl Numbering {
+    /// The local id of the node whose id's low 32 bits are `low`.
+    pub(crate) fn local(&self, low: u32) -> Option<u32> {
+        match &self.back {
+            None => Some(low),
+            Some(b) => b.binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| b[i].1),
+        }
+    }
+    /// The node whose id's low 32 bits are `low`: its local id, core id and kind.
+    pub(crate) fn at(&self, low: u32) -> Option<(u32, u32, &'static str)> {
+        let l = self.local(low)?;
+        self.nodes.get(l as usize).map(|&(id, k)| (l, id, k))
+    }
+}
+
+pub(crate) fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     // A document read as text only has no nodes.
     if doc.facts.len() == 0 {
-        return Ok(Vec::new());
+        return Ok(Numbering { nodes: Vec::new(), back: None });
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::new(tag)?;
     // In `core.rr`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
     let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&dialect), shape, false, guest);
-    Ok(p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect())
+    let nodes = p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect();
+    // The ids the projection gives (`Projected::id`): per definition where it numbered the document so.
+    Ok(Numbering { nodes, back: p.defs.map(|d| d.back) })
 }
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
@@ -570,7 +594,8 @@ struct Projected {
 /// `core_rr::is_unit`) has a slot, by a hash of its qualified name and its ordinal among same-named units in its
 /// parent; the index counts the unit's own nodes in preorder, then its tokens. An edit inside one function then
 /// renumbers that function's nodes and no other's. Spans that are positions (a document's text, its lines, matches)
-/// are in slot `SPANS`, in order.
+/// are in slot `SPANS`, in order. Slots take 13 bits, so every such id stays below `SPAN` (bit 31), the mark of
+/// `Extra`'s span ids: a node by definition is never read as one of those spans, nor one of them as a node.
 struct DefIds {
     /// The low 32 bits of each node's and token's id, by local id.
     low: Vec<u32>,
@@ -578,9 +603,20 @@ struct DefIds {
     back: Vec<(u32, u32)>,
 }
 
-const SLOT_BITS: u32 = 14;
-const INDEX_BITS: u32 = 32 - SLOT_BITS;
+const INDEX_BITS: u32 = 18;
+const SLOT_BITS: u32 = 31 - INDEX_BITS;
 const SPANS: u32 = (1 << SLOT_BITS) - 1;
+// Every slot, with its largest index, stays below `SPAN`.
+const _: () = assert!(SPANS < SPAN >> INDEX_BITS);
+
+/// Why a document keeps preorder ids when the run numbers nodes per definition.
+#[derive(Debug, PartialEq, Eq)]
+enum Unnumbered {
+    /// More definition units than the slots below `SPANS`.
+    Units(usize),
+    /// A unit with more nodes and tokens than a slot has indexes.
+    Indexes,
+}
 
 /// Whether this process numbers nodes per definition (`RERAIL_NODE_IDS=definition`).
 pub(crate) fn definition_ids() -> bool {
@@ -599,10 +635,35 @@ pub(crate) fn shown_local(low: i64) -> String {
     }
 }
 
+/// The slot of each unit, by its key, in order: the root's is 0, every other's in `1..SPANS` by the key's hash, the
+/// next free one on a collision.
+fn unit_slots(keys: &[String]) -> Result<Vec<u32>, Unnumbered> {
+    if keys.len() >= SPANS as usize {
+        return Err(Unnumbered::Units(keys.len()));
+    }
+    let mut taken = vec![false; SPANS as usize];
+    taken[0] = true;
+    let mut slots = Vec::with_capacity(keys.len());
+    slots.push(0);
+    for k in keys.iter().skip(1) {
+        let mut slot = (u64::from_le_bytes(<sha2::Sha256 as sha2::Digest>::digest(k.as_bytes())[..8].try_into().unwrap()) % u64::from(SPANS - 1)) as u32 + 1;
+        while taken[slot as usize] {
+            slot = slot % (SPANS - 1) + 1;
+        }
+        taken[slot as usize] = true;
+        slots.push(slot);
+    }
+    Ok(slots)
+}
+
 impl DefIds {
-    /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition; `None` when a unit
-    /// would overflow its slot's indexes or there are more units than slots (the document keeps preorder ids).
-    fn new(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Option<Self> {
+    /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition, with `positions` spans
+    /// (its text and lines) in slot `SPANS`; `Unnumbered` when a unit or the positions would overflow a slot's
+    /// indexes or there are more units than slots (the document keeps preorder ids).
+    fn new(p: &Projected, dialect: &Dialect, tokens: &[u32], positions: usize) -> Result<Self, Unnumbered> {
+        if positions > 1 << INDEX_BITS {
+            return Err(Unnumbered::Indexes);
+        }
         let f = &*p.facts;
         let n = p.core.len();
         // Each node's unit: itself when it is one, else its parent's.
@@ -611,44 +672,35 @@ impl DefIds {
         for l in 0..n {
             unit[l] = if l == 0 || core_rr::is_unit(dialect.family, dialect.name(f, p.core[l])) { units.push(l as u32); l as u32 } else { unit[p.parent[l] as usize] };
         }
-        if units.len() >= SPANS as usize {
-            return None;
-        }
         // A unit's key: its parent unit's, its name, and its ordinal among same-named units of that parent.
         let mut key: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
         let mut seen: std::collections::HashMap<(u32, String), u32> = std::collections::HashMap::new();
-        let mut slot_of: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
-        let mut taken = vec![false; SPANS as usize];
-        taken[0] = true;
-        slot_of.insert(0, 0);
+        let mut keys: Vec<String> = Vec::with_capacity(units.len());
         key.insert(0, String::new());
+        keys.push(String::new());
         for &u in units.iter().skip(1) {
             let parent = unit[p.parent[u as usize] as usize];
             let name = core_rr::unit_name(f, dialect, p.core[u as usize]).unwrap_or_default().to_owned();
             let ord = seen.entry((parent, name.clone())).or_insert(0);
             let k = format!("{}.{}#{}", key[&parent], name, *ord);
             *ord += 1;
-            let mut slot = (u64::from_le_bytes(<sha2::Sha256 as sha2::Digest>::digest(k.as_bytes())[..8].try_into().unwrap()) % u64::from(SPANS - 1)) as u32 + 1;
-            while taken[slot as usize] {
-                slot = slot % (SPANS - 1) + 1;
-            }
-            taken[slot as usize] = true;
-            slot_of.insert(u, slot);
-            key.insert(u, k);
+            key.insert(u, k.clone());
+            keys.push(k);
         }
+        let slot_of: std::collections::HashMap<u32, u32> = units.iter().copied().zip(unit_slots(&keys)?).collect();
         let mut next: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
         let mut low = Vec::with_capacity(n + tokens.len());
         for owner in (0..n as u32).map(|l| unit[l as usize]).chain(tokens.iter().map(|&t| unit[t as usize])) {
             let i = next.entry(owner).or_insert(0);
             if *i >= 1 << INDEX_BITS {
-                return None;
+                return Err(Unnumbered::Indexes);
             }
             low.push(slot_of[&owner] << INDEX_BITS | *i);
             *i += 1;
         }
         let mut back: Vec<(u32, u32)> = low.iter().enumerate().map(|(l, &g)| (g, l as u32)).collect();
         back.sort_unstable();
-        Some(DefIds { low, back })
+        Ok(DefIds { low, back })
     }
 }
 
@@ -758,7 +810,7 @@ impl Projected {
                 }
             }
             if definition_ids() && guest.is_none() && let Some(dialect) = dialect {
-                p.defs = DefIds::new(&p, dialect, &token_nodes);
+                p.defs = DefIds::new(&p, dialect, &token_nodes, 1 + lines.count()).ok();
             }
             let tokens = spans.len() as u32;
             // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
@@ -770,7 +822,7 @@ impl Projected {
             p.extra = Some(Box::new(Locs { lines, spans, tokens, host }));
         } else if definition_ids() && guest.is_none() && let Some(dialect) = dialect {
             // T's shape has no token spans: its nodes alone are numbered per definition.
-            p.defs = DefIds::new(&p, dialect, &[]);
+            p.defs = DefIds::new(&p, dialect, &[], 0).ok();
         }
         p
     }
@@ -1221,7 +1273,7 @@ impl Extra {
         let span = |k: u32| key << 32 | i64::from(SPAN | k);
         let source = f.source.as_str();
         if self.comment && let Some(dialect) = dialect {
-            use crate::code_rule_dsl::matcher::is_comment_kind;
+            use crate::code_rule_dsl::language::adapter::is_comment_kind;
             let mut k = 0;
             for id in 0..f.len() as u32 {
                 // A comment kind's node, not inside another (Rust's doc comment parts are not comments).
@@ -2440,10 +2492,15 @@ pub(crate) fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)>
             let mut values: Vec<(i64, i64)> = (0..rows).map(|row| (source.value(row, c), docs[row])).collect();
             values.sort_unstable();
             let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
+            let shadow = crate::code_rule_dsl::logic::plan::sketch::shadowing();
+            let mut sketch = crate::code_rule_dsl::logic::plan::sketch::Sketch::default();
             let mut at = 0;
             while at < values.len() {
                 let v = values[at].0;
                 let end = at + values[at..].partition_point(|x| x.0 == v);
+                if shadow {
+                    sketch.add(v, (end - at) as i64);
+                }
                 ndv += 1;
                 sq += ((end - at) * (end - at)) as i64;
                 let mut d = at;
@@ -2454,6 +2511,9 @@ pub(crate) fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)>
                     d = de;
                 }
                 at = end;
+            }
+            if shadow {
+                crate::code_rule_dsl::logic::plan::sketch::shadow("measured", &name, rows as i64, ndv, sq, &sketch);
             }
             (name, rows as i64, ndv, sq, sqd)
         })

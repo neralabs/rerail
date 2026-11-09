@@ -103,7 +103,7 @@ pub(in crate::code_rule_dsl) fn install(db: &Connection, tables: &BTreeSet<Strin
                         | "rtrim"
                         | "substr"
                         | "substring"
-                        | "sum"
+                        | "sum" | "rr_exact_sum"
                         | "total"
                         | "trim"
                         | "typeof"
