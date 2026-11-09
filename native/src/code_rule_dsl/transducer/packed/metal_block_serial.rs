@@ -260,13 +260,14 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     let mut tail = String::from("  const bool mine = b >= first && b < last;\n");
     for (k, &v) in native.outputs.iter().enumerate() {
         match native.output_delays[k] {
-            0 => tail.push_str(&format!("  const ulong o{k} = select(0ul, stream_cut(v{v}, b, len, 0u), mine);\n")),
+            // Output words are `ow`: `o` is a scan's carry out.
+            0 => tail.push_str(&format!("  const ulong ow{k} = select(0ul, stream_cut(v{v}, b, len, 0u), mine);\n")),
             d => tail.push_str(&format!(
-                "  const ulong w{k} = stream_cut(v{v}, b, len, {d}u), n{k} = ulong(simd_shuffle_down(uint(w{k}), 1u)) | (ulong(simd_shuffle_down(uint(w{k} >> 32u), 1u)) << 32u);\n  const ulong o{k} = select(0ul, (w{k} >> {d}u) | (n{k} << {}u), mine);\n",
+                "  const ulong ww{k} = stream_cut(v{v}, b, len, {d}u), wn{k} = ulong(simd_shuffle_down(uint(ww{k}), 1u)) | (ulong(simd_shuffle_down(uint(ww{k} >> 32u), 1u)) << 32u);\n  const ulong ow{k} = select(0ul, (ww{k} >> {d}u) | (wn{k} << {}u), mine);\n",
                 64 - u32::from(d)
             )),
         }
-        tail.push_str(&format!("  if (mine) out[f.out_base + {k}u * f.groups + b] = o{k};\n"));
+        tail.push_str(&format!("  if (mine) out[f.out_base + {k}u * f.groups + b] = ow{k};\n"));
     }
     // A pass before the last (`native_ir::Passes`): each output to its slot, as made.
     for (k, &slot) in stores.iter().enumerate() {
@@ -275,7 +276,7 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     // The segment's count of each counted output (`counted_outputs`), for the positions' bases
     // and the totals.
     for (c, k) in counted_outputs(native).into_iter().enumerate() {
-        tail.push_str(&format!("  {{ const uint n = simd_sum(uint(popcount(o{k}))); if (l == 0u) counts[{c}u] = n; }}\n"));
+        tail.push_str(&format!("  {{ const uint n = simd_sum(uint(popcount(ow{k}))); if (l == 0u) counts[{c}u] = n; }}\n"));
     }
     // The state after the lane, under the serial names (`State::pack`).
     let mut names = String::new();

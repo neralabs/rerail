@@ -404,6 +404,13 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     let plan = &state.plan;
     let n = native.insts.len();
     let lanes = Lanes::new(&mut *f, native, plan, at.base, at.i, !at.full, at.ascii, at.bytes, c.nibble);
+    // The block's row of slots, made once: each `Load` is one load at its slot's offset.
+    let row = if native.insts.iter().any(|i| matches!(i, BlockInst::Load(_))) {
+        let r = f.ins().imul_imm(at.i, 8 * i64::from(at.slots));
+        f.ins().iadd(at.scratch, r)
+    } else {
+        at.scratch
+    };
     let mut e = Emit {
         native,
         state,
@@ -421,8 +428,7 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
         consts: vec![0; state.words],
         lanes,
         rounds: Vec::new(),
-        scratch: at.scratch,
-        slots: at.slots,
+        row,
     };
     (e.live, e.masked) = live(native, state, at.full);
     let mut grouped: Vec<Option<usize>> = vec![None; n];
@@ -549,8 +555,8 @@ struct Emit<'a, 'b> {
     lanes: Lanes<'a>,
     /// The heads of the fixed points' loops made so far.
     rounds: Vec<cranelift_codegen::ir::Block>,
-    scratch: Value,
-    slots: u16,
+    /// The block's row of slots (`body`).
+    row: Value,
 }
 
 impl Emit<'_, '_> {
@@ -667,11 +673,7 @@ impl Emit<'_, '_> {
             }
             BlockInst::Within(d) => within_word(&mut *f, i, len, d),
             // A slot an earlier pass stored: the block's word, as that pass made it.
-            BlockInst::Load(k) => {
-                let row = f.ins().imul_imm(i, 8 * i64::from(self.slots));
-                let at = f.ins().iadd(self.scratch, row);
-                f.ins().load(types::I64, MemFlags::trusted().with_readonly(), at, 8 * i32::from(k))
-            }
+            BlockInst::Load(k) => f.ins().load(types::I64, MemFlags::trusted().with_readonly(), self.row, 8 * i32::from(k)),
             BlockInst::BackFill(..) => unreachable!("a pass of its own (`native_ir::passes`)"),
             BlockInst::Carry(_) => unreachable!("a carry is its round's head's parameter"),
             BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) => unreachable!("on the vectors"),
