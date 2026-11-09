@@ -28,6 +28,7 @@ use crate::code_rule_dsl::typing::cross_rounds;
 pub(in crate::code_rule_dsl) mod guests;
 mod hiding;
 mod exports;
+mod combined;
 mod scoping;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
@@ -361,12 +362,44 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
         return Ok(program.clone());
     }
-    let program = combine_texts(programs, extra)?;
+    let program = combine_stored(programs, extra, &key)?;
     let mut kept = cache.lock().expect("the combined programs");
     if kept.len() >= KEPT {
         kept.clear();
     }
     kept.insert(key, program.clone());
+    Ok(program)
+}
+
+/// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
+/// §6): keyed by the texts and checked against the library files the combine read.
+fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32]) -> Result<front::Program> {
+    let store = if cfg!(feature = "tape-cache") && programs.len() > 1 && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
+        tape_cache().ok().flatten()
+    } else {
+        None
+    };
+    let Some(store) = store else { return combine_texts(programs, extra) };
+    // The run's one hold on collection (O108) is taken later; this read and write hold it themselves.
+    let _reading = store.hold_collection().map_err(|e| Error::Plan(e.to_string()))?;
+    let found = {
+        let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the combined program, from the store (decision 0094 §6)".into());
+        combined::lookup(&store, key).map_err(|e| Error::Plan(e.to_string()))?
+    };
+    if let Some(program) = found {
+        crate::code_rule_dsl::prof::count("corpus.combined_stored", 1);
+        crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || "read from the store: the same texts, and every library file they read reads the same".into());
+        return Ok(program);
+    }
+    let (program, read) = crate::code_rule_dsl::logic::rr::recording(|| combine_texts(programs, extra));
+    let program = program?;
+    let kept = {
+        let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the combined program in the store".into());
+        combined::remember(&store, key, &read, &program).map_err(|e| Error::Plan(e.to_string()))?
+    };
+    crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || {
+        if kept { format!("combined and kept in the store, with the {} library files it read", read.len()) } else { "combined; not kept: it does not read back as written".into() }
+    });
     Ok(program)
 }
 
@@ -1516,10 +1549,18 @@ fn run_observed(
     // it keeps the run.
     let mut program_sources: Vec<crate::content_store::SourceId> = durable.into_iter().collect();
     // And the plans it is stored under, which the manifest names too: an earlier build's go once no kept run names them.
-    let program_plans: Vec<[u8; 32]> = if durable.is_some() { prepared::plans(&prepared_key) } else { Vec::new() };
+    let mut program_plans: Vec<[u8; 32]> = if durable.is_some() { prepared::plans(&prepared_key) } else { Vec::new() };
+    // The combined program's entry (`combined`), when the store keeps it: the manifest names it too.
+    if durable.is_some()
+        && let Some((source, plan)) = combined::named(store, &texts).map_err(|e| Error::Plan(e.to_string()))?
+    {
+        program_sources.push(source);
+        program_plans.push(plan);
+    }
     let (kept, from) = match (kept, durable) {
         (Some(p), _) => (Some(p), "memory"),
         (None, Some(source)) => {
+            let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the prepared program, from the store (decision 0073)".into());
             let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?.filter(|(p, _)| holds(p));
             (found.map(|(p, documents)| {
                 program_sources.extend(documents);
@@ -1790,6 +1831,27 @@ fn run_observed(
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
     // read back, 0.75 s on Python.)
     let decodes = cross.program.outputs.iter().any(|o| o == "finding");
+    // The text tests (`strtest_<k>(s)`) every cross-file rule reads joined: each positive read's string is bound by
+    // another positive atom of its body, so a test row of a string no file of the run holds derives nothing. A memoised
+    // chunk may then keep a test row it cannot trace to a file's text with every file of the chunk (`memo`).
+    let joined_tests: BTreeSet<String> = {
+        use crate::code_rule_dsl::logic::front::{Literal, Term};
+        use crate::code_rule_dsl::logic::strings::RELATION;
+        let mut tests: BTreeSet<String> = cross.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom())).map(|a| a.rel.clone()).filter(|r| r.starts_with(RELATION)).collect();
+        for rule in &cross.program.rules {
+            for (i, l) in rule.body.iter().enumerate() {
+                let Some(a) = l.atom().filter(|a| !a.neg && a.rel.starts_with(RELATION)) else { continue };
+                let Some(Term::Var(v)) = a.args.first() else { continue };
+                let joined = rule.body.iter().enumerate().any(|(j, m)| {
+                    j != i && matches!(m, Literal::Atom(b) if !b.neg && !b.rel.starts_with(RELATION) && b.args.iter().any(|t| matches!(t, Term::Var(x) if x == v)))
+                });
+                if !joined {
+                    tests.remove(&a.rel);
+                }
+            }
+        }
+        tests
+    };
     let mut stored: Vec<(String, Vec<String>)> = Vec::new();
     // The repository inputs (`facts::repository`) the program reads: made once, bound once beside every chunk's.
     let repository: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>)> = {
@@ -2315,7 +2377,13 @@ fn run_observed(
                 mentioned.extend((0..width).map(|c| rows.value(r, c)));
             }
         };
+        // The chunk's text relations (`strings::TEXT_COLUMNS`), whose strings a text test's rows are: a memoised
+        // chunk attributes each test row to the files whose text holds its string.
+        let mut text_sources: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
         for (rel, source) in sources {
+            if memoised && crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().any(|(r, _)| *r == rel) {
+                text_sources.push((rel.clone(), Arc::clone(&source)));
+            }
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
             // family's first read makes them (decision 0029).
             if !read.contains(&rel) {
@@ -2413,6 +2481,12 @@ fn run_observed(
         // document's by its first location column.
         let mut entries: HashMap<i64, memo::Entry> = if memoised { chunk_docs.iter().map(|(d, _, _, n)| (*d, memo::Entry { nodes: *n, ..memo::Entry::default() })).collect() } else { HashMap::new() };
         let mut attributable = memoised && base_whole && chunk_own.is_some();
+        if memoised && !base_whole {
+            memo_why.insert("a base relation the cross-file part reads has no stored columns".to_owned());
+        }
+        if memoised && chunk_own.is_none() {
+            memo_why.insert("no tree counts measured for the chunk".to_owned());
+        }
         if let (true, Some(chunk)) = (attributable, &chunk_own) {
             // Each document's share of the chunk's tree statistics, by its nodes, as a chunk mix is scaled.
             for entry in entries.values_mut() {
@@ -2504,15 +2578,59 @@ fn run_observed(
                     entry.rows.insert(memo::base_key(rel), (width, Vec::new()));
                 }
             }
+            // A text test's rows are strings (`strtest_<k>(s)`, decision 0037), no document's: each is the files' whose
+            // text holds it. Found once, for the strings the chunk's tests hold.
+            let wanted: std::collections::HashSet<i64> = base_seen
+                .iter()
+                .filter(|(rel, _, _)| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION))
+                .flat_map(|(_, at, source)| { let c = at.first().copied(); (0..source.len()).filter_map(move |r| c.map(|c| source.value(r, c))) })
+                .collect();
+            let mut string_files: HashMap<i64, BTreeSet<i64>> = HashMap::new();
+            if !wanted.is_empty() {
+                for (rel, source) in &text_sources {
+                    let (Some(columns), Some((_, texts))) = (super::super::sql::select::input_columns(rel), crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| r == rel)) else { continue };
+                    let have = source.columns();
+                    let at = |name: &str| have.iter().position(|h| h == name);
+                    let Some(owner) = columns.first().and_then(|c| at(c)) else { continue };
+                    let texts: Vec<usize> = texts.iter().filter_map(|&c| columns.get(c).and_then(|c| at(c))).collect();
+                    for r in 0..source.len() {
+                        for &c in &texts {
+                            let v = source.value(r, c);
+                            if wanted.contains(&v) {
+                                string_files.entry(v).or_default().extend(owners(source.value(r, owner)));
+                            }
+                        }
+                    }
+                }
+            }
             'base: for (rel, at, source) in &base_seen {
+                let strings = rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
                 let key = memo::base_key(rel);
                 // A semi-join's relation: the rows of the nodes the chunk's exports hold, as the cross part keeps.
                 let node = semijoin.contains(rel).then(|| source.columns().iter().position(|h| h == "n")).flatten();
                 for r in (0..source.len()).filter(|&r| node.is_none_or(|n| mentioned.contains(&source.value(r, n)))) {
                     // A row is each of its owners' (a guest's is its host's; a value document's, each asking file's):
                     // rows are sets, so a row kept by several files restores as one.
-                    let files = at.first().map_or_else(Vec::new, |c| owners(source.value(r, *c)));
+                    let files = match at.first() {
+                        // A string of another chunk's file (a path `doc` gives every chunk) is that chunk's to keep.
+                        Some(c) if strings => {
+                            let files: Vec<i64> = string_files.get(&source.value(r, *c)).map_or_else(Vec::new, |f| f.iter().copied().filter(|f| entries.contains_key(f)).collect());
+                            if files.is_empty() && string_files.contains_key(&source.value(r, *c)) {
+                                continue;
+                            }
+                            // A string no file's text holds (a rule made it): every file of the chunk keeps the row,
+                            // where the cross-file rules read the test only joined.
+                            if files.is_empty() && joined_tests.contains(rel.as_str()) {
+                                entries.keys().copied().collect()
+                            } else {
+                                files
+                            }
+                        }
+                        Some(c) => owners(source.value(r, *c)),
+                        None => Vec::new(),
+                    };
                     if files.is_empty() || !files.iter().all(|f| entries.contains_key(f)) {
+                        memo_why.insert(format!("base {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
                         attributable = false;
                         break 'base;
                     }

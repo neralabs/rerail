@@ -3129,7 +3129,7 @@ whether the per-phase figures the budget is checked against should be the proces
 
 ## O143. The Python pack's annotation stratum read every annotation guest once per binding
 
-**Status:** fix in progress (2026-11-08); this entry reserves the number.
+**Status:** closed (2026-11-08).
 
 **What.** On the Python pack (534 programs), the `ann_input/ann_strip/type_app` stratum cost 39 s of about 89 s of
 CPU. The cause was not a collision of guest ids. In every chunk, each `ann_strip` row has its own `t`: the rows equal
@@ -3141,6 +3141,36 @@ their distinct first columns, about 480 to 800 per chunk. The cause was join ord
   number is the relation's size at that moment, not a property of the join.
 - **The result.** Between chunks the replanner moved `parsed` straight after the delta, as a filter. Every delta row
   then read every annotation guest: 10,857 bindings gave 5.4M rows for RUF013 alone.
+
+**The fix** (`5e335eb4d`):
+
+- the guest postings are measured after the guest rounds;
+- an atom that shares no bound variable is priced from its relation, with at least one row per binding.
+
+The run went from about 89 s to 51.6 s of CPU, with identical findings.
+
+**The rest of the run, measured the same day.** The work below brought the pack to 8.7 s warm and 61.3 s cold (CPU,
+user + sys, load 46 to 74), with identical findings:
+
+| What | Before | After | Commit |
+|---|---|---|---|
+| Strata that fell back to SQLite (native steps for calls, arithmetic, `strlen`, computed comparisons, string joins) | 168 strata, 7.4 s | 5 strata, 0.06 s | `152096654` |
+| Exports to the cross-file part, held in memory and read in place instead of copied through `x` | 5.6 s | — | `49035cc90` |
+| A collection lock taken per guest parse; one locate per row instead of per column | 2.6 s (sampled) | — | `92b5bbe2c`, `e88cdd20d` |
+| The per-file memo, which kept no rows on a cold run (text-test rows of other chunks' strings) | 0 of 486 files | 486 of 486 | `6ae30c48a` |
+| The combined program, kept in the store by the module graph (decision 0094 §6) | 6.4 s warm | 0.24 s | `6ae30c48a` |
+| The prepared program's split, kept with it | 0.57 s warm | 0.11 s | `24d05da80` |
+
+What a warm run still spends (8.7 s):
+
+- the cross-file part, 4.5 s: joins 1.75 s and engine open 0.78 s. The 1,473 small strata take 0.63 s in all,
+  about 0.4 ms each.
+- the memo replay, 1.6 s. 0.6 s of it measures the replayed exports again (`Totals::add_rows`).
+- the workers' memo lookups, 0.9 s, mostly zstd and decoding.
+- the prepared program's lookup, 0.56 s.
+
+A warm run with nothing changed still derives the whole cross-file part again. That is 0090's maintenance (an
+empty delta), not a fixed cost.
 
 ## O-p0-cone-output. A relation the request cone derives is written empty as an output
 

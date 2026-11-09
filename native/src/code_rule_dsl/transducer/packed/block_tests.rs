@@ -283,7 +283,7 @@ fn check_lowering(name: &str, p: &Program) {
     // The loop's branch, and two per extract: more than eight bits in the block, and the loop
     // over them eight at a time, which steps its count by 8 and loops on itself.
     let branches = body.iter().filter(|l| opcode(l) == "brif").count();
-    assert_eq!(branches, 1 + 2 * native.extracts.len() + usize::from(compiled.ascii_branch) + compiled.gate_branches, "{name}: the body's only branches are the loop's, the flattening's, the ASCII test's and the gates'");
+    assert_eq!(branches, 1 + 2 * native.extracts.len() + usize::from(compiled.ascii_branch) + compiled.gate_branches + compiled.round_branches, "{name}: the body's only branches are the loop's, the flattening's, the ASCII test's and the gates'");
     for (block, lines) in hot_loop(&compiled.clif).iter().skip(1) {
         if lines.iter().any(|l| opcode(l) == "brif" && l.contains(&format!("{block}("))) {
             assert!(lines.iter().any(|l| opcode(l) == "iadd_imm" && l.split(" ;").next().is_some_and(|l| l.ends_with(", 8"))), "{name}: {block} loops, not eight bits at a time");
@@ -845,6 +845,108 @@ fn fill_lowers_to_straight_bit_operations() {
 "));
 }
 
+// --- Primitive 14: back_fill (carried backward, two operands) --------------------------------
+
+/// `b[i] = s[i] | (b[i + 1] & !e[i])`: from each start back to, not including, the end before.
+fn back_fill_reference(s: &[bool], e: &[bool]) -> Vec<bool> {
+    let mut open = false;
+    let mut out: Vec<bool> = s.iter().zip(e).rev().map(|(&s, &e)| { open = s || (open && !e); open }).collect();
+    out.reverse();
+    out
+}
+
+/// A program with `back_fill`s at two levels, run by the interpreter and by Cranelift (which
+/// runs it in passes): each output equals its reference, over every input and in one batch.
+#[test]
+fn back_fill_equals_reference_on_the_cpu_executors() {
+    // Level 1: back from quotes to backslashes; from quotes, each its own end; with no end.
+    // Then level 2: from a back fill's bytes that are `a`, back to quotes; a `prev` and a
+    // `toggle` of it (carried values of a later pass); and an output of level 0.
+    let rows = "  block 0 %0 = eq 0x22
+  block 0 %1 = eq 0x5c
+  block 0 %2 = back_fill %0, %1
+  block 0 %3 = back_fill %0, %0
+                \x20 block 0 %4 = const 0x0000000000000000
+  block 0 %5 = back_fill %0, %4
+  block 0 %6 = eq 0x61
+  block 0 %7 = and %2, %6
+                \x20 block 0 %8 = back_fill %7, %0
+  block 0 %9 = prev %8, 1
+  block 0 %10 = toggle %8
+                \x20 block 0 output %2
+  block 0 output %3
+  block 0 output %5
+  block 0 output %8
+  block 0 output %9
+  block 0 output %10
+  block 0 output %1
+";
+    let p = program(rows);
+    let block = &p.block_programs()[0];
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let passes = native.passes();
+    // Forward (level 0), back, forward (level 1), back, forward (level 2).
+    let kinds: Vec<bool> = passes.passes.iter().map(|q| matches!(q, native_ir::Pass::Back(_))).collect();
+    assert_eq!(kinds, [false, true, false, true, false], "{passes:?}");
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let want = |bytes: &[u8]| {
+        let (q, b, a) = (bits(bytes, |x| x == b'"'), bits(bytes, |x| x == b'\\'), bits(bytes, |x| x == b'a'));
+        let none = vec![false; bytes.len()];
+        let back = back_fill_reference(&q, &b);
+        let picked: Vec<bool> = back.iter().zip(&a).map(|(&x, &y)| x && y).collect();
+        let second = back_fill_reference(&picked, &q);
+        vec![
+            words_of(&back),
+            words_of(&back_fill_reference(&q, &q)),
+            words_of(&back_fill_reference(&q, &none)),
+            words_of(&second),
+            words_of(&prev_reference(&second, 1)),
+            words_of(&toggle_reference(&second)),
+            words_of(&b),
+        ]
+    };
+    let mut files = inputs();
+    files.extend([b"".to_vec(), b"a\"".to_vec(), b"\\aa\"".to_vec(), [vec![b'a'; 130], b"\"".to_vec()].concat()]);
+    for bytes in &files {
+        let (got, _) = Executors::new(&p).run(bytes, false);
+        for (name, got) in got {
+            assert_eq!(got, want(bytes), "{name}, {} bytes", bytes.len());
+        }
+    }
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
+}
+
+/// `back_fill` prints and reassembles; one in a fixed point is refused; Metal refuses one.
+#[test]
+fn back_fill_round_trips_and_refusals() {
+    let p = program("  block 0 %0 = eq 0x22
+  block 0 %1 = eq 0x5c
+  block 0 %2 = back_fill %0, %1
+  block 0 output %2
+");
+    let text = rir::disassemble(&p, None);
+    assert!(text.contains("%2 = back_fill %0, %1"), "{text}");
+    assert_eq!(rir::assemble(&text).expect("reassembles").canonical_digest("-", b""), p.canonical_digest("-", b""));
+    let rows = "  block 0 %0 = const 0x0000000000000000
+  block 0 %1 = carry %0
+  block 0 %2 = eq 0x22
+  block 0 %3 = back_fill %2, %1
+  block 0 %4 = prev %3, 1
+  block 0 rounds %1 %4
+  block 0 output %4
+";
+    let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
+    assert!(rir::assemble(&text).is_err(), "a back_fill in a fixed point: accepted");
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
+        let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+        let got = run_generated_with(&native, b"a\"b", LaneWidth::ALL[0], ClassStrategy::ALL[0]).map(|_| ());
+        assert!(matches!(got, Err(Error::UnsupportedBackend)), "Metal: {got:?}");
+    }
+}
+
 /// Carried operations in a chain, each round's carry depending on the one before: the escaped
 /// quotes removed before the toggle, then a shift of the result.
 #[test]
@@ -1401,6 +1503,56 @@ fn lanes_equal_the_interpreter() {
         f[at + 1] = 0xa9;
         files.push(f.clone());
         f[at] = b'a';
+        files.push(f);
+    }
+    for f in &files {
+        assert_eq!(compiled.extract(f), block.run_files(&[f]).remove(0), "{:?}", String::from_utf8_lossy(f));
+    }
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
+}
+
+/// A fixed point (`rounds`) compiled equals the interpreter: strings with escapes and `//`
+/// comments, each hiding the other's openers, through one carry, `hidden`, read a byte late.
+/// Each compiled body has one loop for it, a round per pass.
+#[test]
+fn rounds_equal_the_interpreter() {
+    let p = program(concat!(
+        "  block 0 %0 = const 0x0000000000000000\n  block 0 %1 = carry %0\n  block 0 %2 = prev %1, 1\n",
+        "  block 0 %3 = eq 0x22\n  block 0 %4 = eq 0x5c\n  block 0 %5 = escaped %4\n  block 0 %6 = andnot %3, %5\n",
+        "  block 0 %7 = eq 0x2f\n  block 0 %8 = prev %7, 1\n  block 0 %9 = and %7, %8\n  block 0 %10 = eq 0x0a\n",
+        "  block 0 %11 = andnot %9, %2\n  block 0 %12 = fill %11, %10\n  block 0 %13 = andnot %6, %12\n",
+        "  block 0 %14 = toggle %13\n  block 0 %15 = or %12, %14\n",
+        "  block 0 rounds %1 %15\n  block 0 output %15\n  block 0 output %14\n",
+    ));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    assert_eq!(native.groups.len(), 1, "one group");
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    // One loop in the full blocks' body (the last block's has its own).
+    assert_eq!(compiled.round_branches, 1, "one loop");
+    let block = &p.block_programs()[0];
+    let mut text = String::new();
+    super::rir::block_rows(&mut text, 0, block);
+    assert!(text.contains("  block 0 rounds %1 %15\n"), "the group prints: {text}");
+    // Every short string over the bytes that matter, then long ones that cross blocks.
+    let alphabet = b"\"\\/\na";
+    let mut files: Vec<Vec<u8>> = Vec::new();
+    for len in 1..=5u32 {
+        for code in 0..5usize.pow(len) {
+            files.push((0..len).map(|k| alphabet[code / 5usize.pow(k) % 5]).collect());
+        }
+    }
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    for _ in 0..300 {
+        let len = (seed % 400) as usize;
+        let f: Vec<u8> = (0..len)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                alphabet[(seed % 5) as usize]
+            })
+            .collect();
         files.push(f);
     }
     for f in &files {

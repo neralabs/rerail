@@ -36,7 +36,13 @@ pub(super) const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/code_rule
 
 /// The ladder's files, in order.
 fn steps() -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = std::fs::read_dir(DIR)
+    steps_in(DIR)
+}
+
+/// The steps of a ladder in `dir`, in order: its `.bitlex` files (not those of its
+/// subdirectories, which are other ladders).
+pub(super) fn steps_in(dir: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = std::fs::read_dir(dir)
         .expect("the ladder's directory")
         .map(|e| e.expect("an entry").path())
         .filter(|p| p.extension().is_some_and(|x| x == "bitlex"))
@@ -50,12 +56,12 @@ fn steps() -> Vec<(String, String)> {
 }
 
 /// A step's seed, from its name: the same documents whichever steps run.
-fn seed(name: &str) -> u64 {
+pub(super) fn seed(name: &str) -> u64 {
     name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }
 
 /// What a step's documents are drawn from: its tree rules, and its tokens' keywords and checks.
-struct Lang {
+pub(super) struct Lang {
     rules: HashMap<String, Gram>,
     root: String,
     /// A keyword's kind to its bytes (a keyword without `->` is its own kind).
@@ -66,14 +72,20 @@ struct Lang {
     least: HashMap<String, usize>,
     /// Kinds that may come between any two tokens (`extra`).
     extras: Vec<String>,
+    /// Sample texts of token kinds, from the ladder (`check_ladder`): drawn before any other.
+    samples: HashMap<String, Vec<Vec<u8>>>,
+    /// The marks' kinds (`mark K = E`): line breaks, here; a sentence writes one as a `\n`.
+    marks: Vec<String>,
 }
 
 impl Lang {
-    fn of(stmts: &[Stmt]) -> Lang {
+    pub(super) fn of(stmts: &[Stmt]) -> Lang {
         let (mut rules, mut order, mut keywords, mut checks, mut classes) = (HashMap::new(), Vec::new(), HashMap::new(), HashMap::new(), HashMap::new());
         let mut extras = Vec::new();
+        let mut marks = Vec::new();
         for s in stmts {
             match s {
+                Stmt::Mark { kind, .. } => marks.push(kind.clone()),
                 Stmt::Class(n, r) => {
                     classes.insert(n.clone(), r.clone());
                 }
@@ -105,7 +117,7 @@ impl Lang {
                 _ => {}
             }
         }
-        let mut lang = Lang { rules, root: order[0].clone(), keywords, checks, classes, least: HashMap::new(), extras };
+        let mut lang = Lang { rules, root: order[0].clone(), keywords, checks, classes, least: HashMap::new(), extras, samples: HashMap::new(), marks };
         // The fewest tokens of each rule: a fixpoint from "unreachable".
         for _ in 0..32 {
             for name in &order {
@@ -127,7 +139,10 @@ impl Lang {
             Gram::Seq(gs) => gs.iter().map(|g| self.cost(g)).fold(0, |a, b| (a + b).min(FAR)),
             Gram::Alt(gs) => gs.iter().map(|g| self.cost(g)).min().unwrap_or(FAR),
             Gram::Opt(_) | Gram::Star(_) => 0,
-            Gram::Plus(g) | Gram::Field(_, g) => self.cost(g),
+            Gram::Plus(g) | Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.cost(g),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.cost(body),
+            Gram::Balanced { .. } => 2,
+            Gram::Any(_) => 1,
         }
     }
 
@@ -157,7 +172,23 @@ impl Lang {
                     self.derive(rng, g, depth, out)
                 }
             }
-            Gram::Field(_, g) => self.derive(rng, g, depth, out),
+            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.derive(rng, g, depth, out),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.derive(rng, body, depth, out),
+            // A word: a token of most kinds.
+            Gram::Any(_) => out.push(self.token(rng, "identifier")),
+            // The opener, maybe a few tokens and a nested pair, the closer.
+            Gram::Balanced { open, close, .. } => {
+                out.push(self.keyword(rng, open));
+                if !deep {
+                    for _ in 0..rng.below(3) {
+                        out.push(self.token(rng, "identifier"));
+                    }
+                    if rng.below(3) == 0 {
+                        self.derive(rng, rep, depth.saturating_sub(1), out);
+                    }
+                }
+                out.push(self.keyword(rng, close));
+            }
         }
     }
 
@@ -172,6 +203,12 @@ impl Lang {
     /// A token of kind `k`: one its check accepts, one of its keywords, or text.
     fn token(&self, rng: &mut Rng, k: &str) -> Vec<u8> {
         let long = rng.below(12) == 0;
+        if self.marks.iter().any(|m| m == k) {
+            return b"\n".to_vec();
+        }
+        if let Some(s) = self.samples.get(k) {
+            return rng.pick(s).clone();
+        }
         if let Some(c) = self.checks.get(k) {
             let mut out = Vec::new();
             self.bytes(rng, c, long, &mut out);
@@ -218,7 +255,9 @@ impl Lang {
                     self.bytes(rng, g, long, out)
                 }
             }
-            Gram::Field(_, g) => self.bytes(rng, g, long, out),
+            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.bytes(rng, g, long, out),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.bytes(rng, body, long, out),
+            Gram::Balanced { .. } | Gram::Any(_) => {}
         }
     }
 }
@@ -273,6 +312,11 @@ fn comments(kind: &str) -> &'static [(&'static str, bool); 13] {
 /// space where two would run together), then each with one byte changed, dropped or doubled, and
 /// the empty file and one space. With how many come before the mutations.
 fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> (Vec<Vec<u8>>, usize) {
+    documents_with(lang, seed, accepts, b"<>();=#^ \nav9~,eE-{}")
+}
+
+/// `documents`, with the bytes a mutation writes drawn from `alphabet`.
+pub(super) fn documents_with(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool, alphabet: &[u8]) -> (Vec<Vec<u8>>, usize) {
     let mut rng = Rng(0x1add_e700 ^ seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut out: Vec<Vec<u8>> = vec![Vec::new(), b" ".to_vec()];
     let root = Gram::Sym(lang.root.clone());
@@ -303,13 +347,21 @@ fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> (Vec<Ve
         let mut line = false;
         for t in tokens {
             // A line comment ends at the line's end.
-            let space = if line { "\n" } else { *rng.pick(&["", "", " ", "\n", " \t "]) };
-            line = lang.extras.iter().any(|k| comments(k).iter().any(|(c, l)| *l && c.as_bytes() == &t[..]));
+            // With marks, a line break is the grammar's: only a mark's sentence writes one.
+            let spaces: &[&str] = if lang.marks.is_empty() { &["", "", " ", "\n", " \t "] } else { &["", "", " ", " \t "] };
+            let space = if line { "\n" } else { *rng.pick(spaces) };
+            // A line comment: a sample of the extras' table that runs to its line's end, or a
+            // ladder's sample (`check_ladder`) that begins as one.
+            line = lang.extras.iter().any(|k| {
+                let opens = [&b"//"[..], b"--", b"#"].iter().any(|o| t.starts_with(o)) && !t.contains(&b'\n');
+                (lang.samples.contains_key(k) && lang.samples[k].contains(&t) && opens) || COMMENTS.iter().any(|(n, s)| n == k && s.iter().any(|(c, l)| *l && c.as_bytes() == &t[..]))
+            });
             let joins = doc.last().is_some_and(u8::is_ascii_alphanumeric) && t.first().is_some_and(u8::is_ascii_alphanumeric);
             doc.extend(if joins && space.is_empty() { " " } else { space }.as_bytes());
             doc.extend(t);
         }
         doc.extend(if line { "\n" } else { *rng.pick(&["", "\n", " "]) }.as_bytes());
+        let _ = &lang.marks;
         // Sentences the reference accepts, and some it does not (a sample token its lexer
         // refuses, say): the mutations below make many more of those.
         if accepts(&doc) {
@@ -329,7 +381,7 @@ fn documents(lang: &Lang, seed: u64, accepts: &dyn Fn(&[u8]) -> bool) -> (Vec<Ve
         }
         let at = rng.below(d.len() as u64) as usize;
         match rng.below(3) {
-            0 => d[at] = *rng.pick(b"<>();=#^ \nav9~,eE-{}"),
+            0 => d[at] = *rng.pick(alphabet),
             1 => {
                 d.remove(at);
             }
@@ -373,15 +425,29 @@ pub(super) fn compile_step(name: &str, source: &str) -> Compiled {
         bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
     let text = compiled.text();
+    // `RERAIL_LADDER_DUMP`: the program as text, for a step whose name holds it.
+    if std::env::var("RERAIL_LADDER_DUMP").is_ok_and(|d| name.contains(&d)) {
+        eprintln!("{name}:\n{}\n{text}", compiled.machine);
+    }
     let program = rir::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
     let native = native_ir::lower(&program).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
     let parser = native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
     Compiled { stmts, ids, program, native, parser }
 }
 
+/// Why the compiler refuses `source`; `None` where it compiles.
+pub(super) fn compile_error(source: &str) -> Option<String> {
+    let stmts = parse(source).unwrap_or_else(|e| panic!("parses: {e}"));
+    let ids = Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).err()
+}
+
 /// Why the reference sends `bytes` to tree-sitter: its first error, or why the tree does not
 /// parse.
-fn refusal(c: &Compiled, bytes: &[u8]) -> String {
+pub(super) fn refusal(c: &Compiled, bytes: &[u8]) -> String {
     match ::bitlex::eval::Ev::run(&c.stmts, bytes, &HashMap::new()) {
         Err(e) => e,
         Ok(out) if !out.errors.is_empty() => out.errors[0].split(" at ").next().unwrap_or("").to_owned(),
@@ -414,18 +480,32 @@ pub(super) fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
 
 /// The step's shape: tier 1's body branches only for its loop, its extracts' flattening and, when
 /// it has values known on ASCII bytes, one all-ASCII test, and one branch per gated region;
-/// tier 2 loops only over tokens and over a mask's words, 64 bytes a turn (a `check` is tier 1's
-/// masks); nothing calls.
-fn check_shape(name: &str, c: &Compiled) {
-    let block = &c.native.block_programs[0];
-    let body = super::block_tests::body_of(&c.parser.tier1.clif);
-    let branches = body.iter().filter(|l| super::block_tests::opcode(l) == "brif").count();
-    let ascii = usize::from(c.parser.tier1.ascii_branch);
-    assert_eq!(branches, 1 + 2 * block.extracts.len() + ascii + c.parser.tier1.gate_branches, "{name}: tier 1 branches beyond its loop, its flattening, its ASCII test and its gates");
+/// tier 2 loops only over tokens, over a mask's words, 64 bytes a turn (a `check` is tier 1's
+/// masks), over the calls it pops, and (a grammar with wraps) over the node table once, at the
+/// end; nothing calls.
+pub(super) fn check_shape(name: &str, c: &Compiled) {
+    // Each pass of tier 1 (one, without `back_fill`): a forward pass's body as above; a
+    // backward pass's function branches only for its files, its blocks and their ends.
+    for (k, pass) in c.parser.tier1.passes.iter().enumerate() {
+        let branches = |lines: &[String]| lines.iter().filter(|l| super::block_tests::opcode(l) == "brif").count();
+        if pass.back {
+            let lines: Vec<String> = pass.clif.lines().map(|l| l.trim().to_owned()).collect();
+            assert_eq!(branches(&lines), 4, "{name}: tier 1's backward pass {k} branches beyond its loops");
+            continue;
+        }
+        let body = super::block_tests::body_of(&pass.clif);
+        let want = 1 + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches;
+        assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test and its gates");
+    }
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
     for (b, step) in heads {
-        assert!(matches!(step, Step::Token | Step::Block), "{name}: tier 2 loops at {b} over {step:?}");
+        let ok = match step {
+            Step::Token | Step::Block | Step::Return => true,
+            Step::Node => c.parser.tier2.wraps,
+            Step::File | Step::Bits | Step::Round => false,
+        };
+        assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }
     for (tier, asm) in [("tier 1", &c.parser.tier1.disassembly), ("tier 2", &c.parser.tier2.disassembly)] {
         assert!(!asm.contains(" bl ") && !asm.contains("blr") && !asm.contains(" br "), "{name}: {tier} calls or jumps out");
@@ -438,16 +518,35 @@ fn check_shape(name: &str, c: &Compiled) {
 /// and why the reference refused each sentence it refused.
 #[test]
 fn every_step_parses_as_the_reference() {
+    let differ = check_ladder(&steps(), b"<>();=#^ \nav9~,eE-{}", &[], &[], &|_, _, _, _| None);
+    assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
+}
+
+/// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
+/// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
+/// reference's nodes: a difference with another parser, if any. The differences, one per step at
+/// most.
+pub(super) fn check_ladder(
+    steps: &[(String, String)],
+    alphabet: &[u8],
+    samples: &[(&str, &[&str])],
+    fixed: &[&str],
+    also: &dyn Fn(&str, &Compiled, &[u8], &Option<Vec<IdNode>>) -> Option<String>,
+) -> Vec<String> {
     let mut differ: Vec<String> = Vec::new();
-    for (name, source) in &steps() {
+    for (name, source) in steps {
         let c = compile_step(name, source);
         check_shape(name, &c);
-        let lang = Lang::of(&c.stmts);
+        let mut lang = Lang::of(&c.stmts);
+        for (kind, texts) in samples {
+            lang.samples.insert((*kind).to_owned(), texts.iter().map(|t| t.as_bytes().to_vec()).collect());
+        }
         let (mut parsed, mut fell, mut with_extras) = (0usize, 0usize, 0usize);
         let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
         let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
-        let (docs, before) = documents(&lang, seed(name), &|b| reference(&c, b).is_some());
+        let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(&c, b).is_some(), alphabet);
+        docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
         for (i, bytes) in docs.into_iter().enumerate() {
             let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
             let want = reference(&c, &bytes);
@@ -463,6 +562,10 @@ fn every_step_parses_as_the_reference() {
                 let why = stream::run(&c.program, &bytes, &run).err().map(|r| format!("word {}: {}", r.pc, r.why));
                 let fell = run.totals.iter().any(|&t| t != 0);
                 differ.push(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));
+                break;
+            }
+            if let Some(d) = also(name, &c, &bytes, &want) {
+                differ.push(format!("{}:\n  {d}", show()));
                 break;
             }
             let bucket = if i < before { &mut sentences } else { &mut mutations };
@@ -492,7 +595,7 @@ fn every_step_parses_as_the_reference() {
             differ.push(format!("{name}: {parsed} parsed, {fell} to tree-sitter: too few to test"));
         }
     }
-    assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
+    differ
 }
 
 /// Every step's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the

@@ -465,6 +465,43 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
     Ok(())
 }
 
+thread_local! {
+    /// The library files read or probed while `recording` runs on this thread.
+    static READS: std::cell::RefCell<Option<Vec<LibraryFile>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `f`'s result and every library file it read or probed, misses included, each once in reading order: what a
+/// program read from the library, so a later run can tell whether reading it again would read the same (decision
+/// 0094 §6: the loader records what it read).
+pub(in crate::code_rule_dsl) fn recording<T>(f: impl FnOnce() -> T) -> (T, Vec<LibraryFile>) {
+    let outer = READS.with(|r| r.borrow_mut().replace(Vec::new()));
+    let out = f();
+    let read = READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), outer)).unwrap_or_default();
+    // An enclosing recording sees what this one read too.
+    READS.with(|r| {
+        if let Some(outer) = r.borrow_mut().as_mut() {
+            outer.extend(read.iter().cloned());
+        }
+    });
+    let mut seen = std::collections::HashSet::new();
+    (out, read.into_iter().filter(|f| seen.insert(f.path.clone())).collect())
+}
+
+fn noted(file: &LibraryFile) {
+    READS.with(|r| {
+        if let Some(read) = r.borrow_mut().as_mut() {
+            read.push(file.clone());
+        }
+    });
+}
+
+impl LibraryFile {
+    /// Whether the file still reads as recorded: the same bytes, or still no file.
+    pub(in crate::code_rule_dsl) fn unchanged(&self) -> bool {
+        Self::now(&self.path) == *self
+    }
+}
+
 fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
@@ -478,10 +515,13 @@ fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
         && *kept == digest
     {
         crate::code_rule_dsl::prof::count("rr.file_reused", 1);
-        return Ok((statements.clone(), LibraryFile { path: path.to_owned(), sha256: Some(digest) }));
+        let file = LibraryFile { path: path.to_owned(), sha256: Some(digest) };
+        noted(&file);
+        return Ok((statements.clone(), file));
     }
     let (bytes, digest) = super::plan::corpus::observe(|o| o.read(path)).ok_or_else(|| Error::Syntax(format!("{}: cannot read the file", path.display())))?;
     let file = LibraryFile { path: path.to_owned(), sha256: Some(digest) };
+    noted(&file);
     let src = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let statements = stored_statements(path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     cache.lock().expect("the parsed files").insert(path.to_owned(), (digest, statements.clone()));
@@ -533,7 +573,9 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
         let found = if in_library.exists() {
             in_library
         } else {
-            read_files.push(LibraryFile { path: in_library, sha256: None });
+            let miss = LibraryFile { path: in_library, sha256: None };
+            noted(&miss);
+            read_files.push(miss);
             beside
         };
         if !found.exists() {

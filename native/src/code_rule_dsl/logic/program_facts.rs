@@ -85,6 +85,10 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("doc_scope_glob", &["p:sym", "k:int", "side:int", "i:int", "glob:sym"]),
         // `text_globs`: `.scope text`'s, in order.
         ("text_glob", &["p:sym", "i:int", "glob:sym"]),
+        // `ast_patterns`: the tree patterns the program's `ast` atoms match.
+        ("ast_pattern", &["p:sym", "pattern:sym"]),
+        // `answers`: each request relation's answering programs, in order.
+        ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
     ];
     SCHEMA
         .iter()
@@ -310,6 +314,14 @@ impl Writer<'_> {
         }
         for (i, g) in prog.text_globs.iter().enumerate() {
             self.row("text_glob", vec![n(i), s(g)]);
+        }
+        for pattern in &prog.ast_patterns {
+            self.row("ast_pattern", vec![s(pattern)]);
+        }
+        for (req, by) in &prog.answers {
+            for (i, b) in by.iter().enumerate() {
+                self.row("answer", vec![s(req), n(i), s(b)]);
+            }
         }
         for (span, text) in &prog.rx_spans {
             // Kinds and captures carry their names after a unit separator.
@@ -612,6 +624,12 @@ impl<'a> Reader<'a> {
         let mut text_globs = self.get("text_glob").iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?;
         text_globs.sort();
         prog.text_globs = text_globs.into_iter().map(|(_, g)| g).collect();
+        prog.ast_patterns = self.get("ast_pattern").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
+        let mut answers: BTreeMap<String, Vec<(i64, String)>> = BTreeMap::new();
+        for row in self.get("answer") {
+            answers.entry(text(&row[0])?).or_default().push((int(&row[1])?, text(&row[2])?));
+        }
+        prog.answers = answers.into_iter().map(|(req, by)| (req, ordered(by))).collect();
         Ok(prog)
     }
 

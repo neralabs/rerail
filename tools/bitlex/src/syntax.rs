@@ -70,6 +70,59 @@ pub enum Gram {
     Plus(Box<Gram>),
     /// `f: A`: the node `A` gives has field `f`.
     Field(String, Box<Gram>),
+    /// `retag K A`: on entering `A`, the innermost open node becomes a `K` (its kind decided by
+    /// the token `A` starts with).
+    Retag(String, Box<Gram>),
+    /// `merge 'K' A`, `A` a token: its leaf and the leaf just before it become one leaf of kind
+    /// `K`, from the first's start to its end (`.` and `decl`, `.decl`).
+    Merge(String, Box<Gram>),
+    /// `wrap K F [as M] REST…`: a node `K` around the node just made at this level (the last
+    /// child of the innermost open node) and what `REST` matches. `K` takes the moved node's
+    /// field; the moved node takes field `F` (`_`: none) and, with `as M`, kind `M`.
+    Wrap { kind: String, field: Option<String>, moved: Option<String>, body: Box<Gram> },
+    /// `balanced K OPEN CLOSE`: one leaf of kind `K` from an `OPEN` token through its matching
+    /// `CLOSE` (pairs inside counted), every token between part of its text.
+    Balanced { kind: String, open: String, close: String },
+    /// `any [except 'A' …]`: a token of any kind the grammar may see but those listed (marks
+    /// and extras aside); with `merge K` or `as K`, a raw text's.
+    Any(Vec<String>),
+    /// `relabel F [as M] [inner G] REST`: the node just made at this level takes field `F`
+    /// (`_`: keeps its own) and kind `M`, and the node its wrap holds first takes field `G`;
+    /// `REST` follows; no node around it.
+    Relabel { field: Option<String>, moved: Option<String>, inner: Option<String>, body: Box<Gram> },
+    /// `fold K REST`: at the token `REST` starts with, the node open at this level holds two
+    /// leaves and nothing else; they become one leaf of kind `K`, with the first one's field.
+    Fold { kind: String, body: Box<Gram> },
+    /// `A as K`, `A` a token: its leaf has kind `K` (`identifier as variable`).
+    As(String, Box<Gram>),
+    /// `reread R REST`: at the token `REST` starts with, the node just made at this level and
+    /// every node inside it are read by reading `R` (a `reading` statement), as the tree of
+    /// another rule: a cover grammar's node, once the token after it says which it is.
+    Reread { reading: String, body: Box<Gram> },
+}
+
+/// What a `reading` does with a node of a kind it names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReadKind {
+    /// `K` or `K as M`: the node stays, of kind `M` (its own, for `K`); the nodes inside it are
+    /// read too.
+    As(String),
+    /// `K gone`: the node goes, and the nodes inside it take its place; they are read too.
+    Gone,
+    /// `keep K`: the node stays as it is, with every node inside it, unread.
+    Keep,
+}
+
+/// `reading NAME = ITEM, …`: how `reread` reads a node and the nodes inside it. A node of a
+/// kind no item names refuses the file (an extra's leaf aside, which stays as it is). A node
+/// read, not the first, with a field that `field F as G` names takes field `G`.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Reading {
+    pub kinds: Vec<(String, ReadKind)>,
+    pub fields: Vec<(String, String)>,
+    /// `root gone`, `root as M`: what becomes of the node read itself, whatever its kind; the
+    /// kinds then name only the nodes inside it.
+    pub root: Option<ReadKind>,
 }
 
 #[derive(Clone, Debug)]
@@ -88,8 +141,10 @@ pub enum Stmt {
     Reject(String, Expr),
     Exit(String),
     /// At most `n` rounds. `until settled`: a backend may stop once a round changes no carry;
-    /// without it, every round runs. Either way the values are the same.
-    Rounds { n: usize, settle: bool, body: Vec<Stmt> },
+    /// without it, every round runs. Either way the values are the same. With no `n`
+    /// (`rounds until settled`), the fixed point itself: the body must be strictly causal
+    /// (`strictly_causal`), so it always settles, a byte more each round at least.
+    Rounds { n: Option<usize>, settle: bool, body: Vec<Stmt> },
     Carry(String, Expr),
     Next(String, Expr),
     Ucode { over: Expr, classes: Vec<(String, UClass)> },
@@ -109,10 +164,13 @@ pub enum Stmt {
     Tree { name: String, body: Vec<Stmt> },
     /// `node KIND [nested] = G`: a node of the kind spans what `G` matches; the first is the
     /// root. `nested`: it may contain itself, and runs on a stack frame (doc 18 §1).
-    Node { kind: String, nested: bool, body: Gram },
+    /// `whole`: the root spans the whole file, from byte 0, and may hold no token.
+    Node { kind: String, nested: bool, whole: bool, body: Gram },
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
-    Choice { name: String, supertype: Option<String>, body: Gram },
+    /// `choice N [supertype S] [nested] = …`: `nested`, a level of its own, called where it is
+    /// used (it may use itself), with no node of its own.
+    Choice { name: String, supertype: Option<String>, nested: bool, body: Gram },
     /// `check KIND = G`: each token of the kind (after `keywords`) must match `G` over its bytes,
     /// a grammar whose names are byte classes and whose literals are bytes; one that does not
     /// sends the file to tree-sitter. Tier 2 checks it in the token's arm, as simdjson's stage 2
@@ -120,6 +178,22 @@ pub enum Stmt {
     Check { kind: String, body: Gram },
     /// `extra KIND …`: nodes of these kinds carry the extra flag.
     Extra(Vec<String>),
+    /// `mark KIND = E`: a token of no width before the first grammar token that starts at or
+    /// after each bit of `E`; several bits before one token are one mark, and marks of several
+    /// kinds before one token come in the order they are declared. `, end`: the end of the file
+    /// has it too, after the last token.
+    Mark { kind: String, at: Expr, end: bool },
+    /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
+    /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
+    Hidden(Vec<String>),
+    /// `refuse MARK in LEVEL …` (in a tree): a hidden mark that refuses the file between a
+    /// nested level's first token and its last (`json_bad` in a JSON document's levels).
+    Refuse { mark: String, levels: Vec<String> },
+    /// `reading NAME = ITEM, …` (in a tree): a way to read a made node (`reread`).
+    Reading { name: String, reading: Reading },
+    /// `provisional FIELD …` (in a tree): fields a node holds only until a later token decides
+    /// what it is; a node that holds one at the file's end refuses the file.
+    Provisional(Vec<String>),
 }
 
 impl Stmt {
@@ -364,12 +438,50 @@ impl P {
     fn gram_seq(&mut self) -> R<Gram> {
         let mut items = vec![];
         while matches!(self.peek(), Some(Tok::Str(_) | Tok::Ident(_) | Tok::P("(") | Tok::P("["))) {
+            // `wrap K F [as M]`: the rest of the sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "wrap") {
+                self.i += 1;
+                let kind = self.ident()?;
+                let field = Some(self.ident()?).filter(|f| f != "_");
+                let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Wrap { kind, field, moved, body });
+                break;
+            }
+            // `relabel F [as M]`: the rest of the sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "relabel") {
+                self.i += 1;
+                let field = Some(self.ident()?).filter(|f| f != "_");
+                let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
+                let inner = if self.eat_kw("inner") { Some(self.ident()?) } else { None };
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Relabel { field, moved, inner, body });
+                break;
+            }
+            // `reread R`: the rest of the sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "reread") {
+                self.i += 1;
+                let reading = self.ident()?;
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Reread { reading, body });
+                break;
+            }
+            // `fold K`: the rest of the sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "fold") {
+                self.i += 1;
+                let kind = self.kind()?;
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Fold { kind, body });
+                break;
+            }
             let mut item = self.gram_atom()?;
             loop {
                 if self.eat_p("*") {
                     item = Gram::Star(Box::new(item));
                 } else if self.eat_p("+") {
                     item = Gram::Plus(Box::new(item));
+                } else if self.eat_kw("as") {
+                    item = Gram::As(self.kind()?, Box::new(item));
                 } else {
                     break;
                 }
@@ -401,7 +513,35 @@ impl P {
         if self.eat_p(":") {
             return Ok(Gram::Field(name, Box::new(self.gram_atom()?)));
         }
-        Ok(Gram::Sym(name))
+        match name.as_str() {
+            "retag" => {
+                let kind = self.ident()?;
+                Ok(Gram::Retag(kind, Box::new(self.gram_atom()?)))
+            }
+            "merge" => {
+                let kind = self.kind()?;
+                Ok(Gram::Merge(kind, Box::new(self.gram_atom()?)))
+            }
+            "any" => {
+                let mut except = vec![];
+                if self.eat_kw("except") {
+                    while matches!(self.peek(), Some(Tok::Str(_))) {
+                        except.push(self.kind()?);
+                    }
+                    if except.is_empty() {
+                        return self.err("any except 'A' …");
+                    }
+                }
+                Ok(Gram::Any(except))
+            }
+            "balanced" => {
+                let kind = self.kind()?;
+                let open = self.kind()?;
+                let close = self.kind()?;
+                Ok(Gram::Balanced { kind, open, close })
+            }
+            _ => Ok(Gram::Sym(name)),
+        }
     }
 
     // --- expressions ---
@@ -657,12 +797,17 @@ impl P {
                 Stmt::Hyp { name, split, lanes, body: self.block()? }
             }
             "rounds" => {
-                let n = self.int()? as usize;
+                let n = if self.eat_kw("until") {
+                    self.want_kw("settled")?;
+                    return Ok(Stmt::Rounds { n: None, settle: true, body: self.block()? });
+                } else {
+                    self.int()? as usize
+                };
                 let settle = self.eat_kw("until");
                 if settle {
                     self.want_kw("settled")?;
                 }
-                Stmt::Rounds { n, settle, body: self.block()? }
+                Stmt::Rounds { n: Some(n), settle, body: self.block()? }
             }
             "reject" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();
@@ -688,26 +833,107 @@ impl P {
             "node" => {
                 let kind = self.kind()?;
                 let nested = self.eat_kw("nested");
+                let whole = self.eat_kw("whole");
                 self.want_p("=")?;
-                Stmt::Node { kind, nested, body: self.gram()? }
+                Stmt::Node { kind, nested, whole, body: self.gram()? }
             }
             "choice" => {
                 let name = self.ident()?;
                 let supertype = if self.eat_kw("supertype") { Some(self.ident()?) } else { None };
+                let nested = self.eat_kw("nested");
                 self.want_p("=")?;
-                Stmt::Choice { name, supertype, body: self.gram()? }
+                Stmt::Choice { name, supertype, nested, body: self.gram()? }
             }
             "check" => {
                 let kind = self.kind()?;
                 self.want_p("=")?;
                 Stmt::Check { kind, body: self.gram()? }
             }
-            "extra" => {
+            "refuse" => {
+                let mark = self.kind()?;
+                if !self.eat_kw("in") {
+                    return self.err("refuse MARK in LEVEL …");
+                }
+                let mut levels = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    levels.push(self.ident()?);
+                }
+                if levels.is_empty() {
+                    return self.err("refuse MARK in LEVEL …");
+                }
+                Stmt::Refuse { mark, levels }
+            }
+            "reading" => {
+                let name = self.ident()?;
+                self.want_p("=")?;
+                let mut reading = Reading::default();
+                loop {
+                    if self.eat_kw("field") {
+                        let f = self.ident()?;
+                        self.want_kw("as")?;
+                        reading.fields.push((f, self.ident()?));
+                    } else if self.eat_kw("root") {
+                        if reading.root.is_some() {
+                            return self.err("a reading's root twice");
+                        }
+                        reading.root = Some(if self.eat_kw("gone") {
+                            ReadKind::Gone
+                        } else {
+                            self.want_kw("as")?;
+                            ReadKind::As(self.kind()?)
+                        });
+                    } else if self.eat_kw("keep") {
+                        let mut any = false;
+                        while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
+                            reading.kinds.push((self.kind()?, ReadKind::Keep));
+                            any = true;
+                        }
+                        if !any {
+                            return self.err("keep K …");
+                        }
+                    } else {
+                        let k = self.kind()?;
+                        let what = if self.eat_kw("gone") {
+                            ReadKind::Gone
+                        } else if self.eat_kw("as") {
+                            ReadKind::As(self.kind()?)
+                        } else {
+                            ReadKind::As(k.clone())
+                        };
+                        reading.kinds.push((k, what));
+                    }
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+                Stmt::Reading { name, reading }
+            }
+            "provisional" => {
+                let mut fields = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    fields.push(self.ident()?);
+                }
+                if fields.is_empty() {
+                    return self.err("provisional FIELD …");
+                }
+                Stmt::Provisional(fields)
+            }
+            "extra" | "hidden" => {
                 let mut kinds = vec![];
                 while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
                     kinds.push(self.kind()?);
                 }
-                Stmt::Extra(kinds)
+                if kw == "extra" { Stmt::Extra(kinds) } else { Stmt::Hidden(kinds) }
+            }
+            "mark" => {
+                let kind = self.kind()?;
+                self.want_p("=")?;
+                let at = self.expr()?;
+                let end = self.eat_p(",");
+                if end {
+                    self.want_kw("end")?;
+                }
+                Stmt::Mark { kind, at, end }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -860,7 +1086,7 @@ tree json {
         let Some(Stmt::Tree { body, .. }) = stmts.iter().find(|s| matches!(s, Stmt::Tree { .. })) else { panic!("a tree") };
         let lit = |s: &str| Gram::Lit(s.to_owned());
         let sym = |s: &str| Gram::Sym(s.to_owned());
-        assert!(matches!(&body[0], Stmt::Node { kind, nested: false, body: Gram::Sym(v) } if kind == "document" && v == "value"));
+        assert!(matches!(&body[0], Stmt::Node { kind, nested: false, body: Gram::Sym(v), .. } if kind == "document" && v == "value"));
         let Stmt::Node { nested: true, body: object, .. } = &body[1] else { panic!("object: {:?}", body[1]) };
         let pairs = Gram::Seq(vec![sym("pair"), Gram::Star(Box::new(Gram::Seq(vec![lit(","), sym("pair")])))]);
         assert_eq!(object, &Gram::Seq(vec![lit("{"), Gram::Opt(Box::new(pairs)), lit("}")]));
@@ -868,7 +1094,7 @@ tree json {
         assert_eq!(pair, &Gram::Seq(vec![Gram::Field("key".into(), Box::new(sym("string"))), lit(":"), Gram::Field("value".into(), Box::new(sym("value")))]));
         let Stmt::Node { body: string, .. } = &body[4] else { panic!("string") };
         assert_eq!(string, &Gram::Seq(vec![lit("\""), Gram::Star(Box::new(Gram::Alt(vec![sym("string_content"), sym("escape_sequence")]))), lit("\"")]));
-        let Stmt::Choice { name, supertype: Some(s), body: Gram::Alt(alts) } = &body[5] else { panic!("value: {:?}", body[5]) };
+        let Stmt::Choice { name, supertype: Some(s), body: Gram::Alt(alts), .. } = &body[5] else { panic!("value: {:?}", body[5]) };
         assert_eq!((name.as_str(), s.as_str(), alts.len()), ("value", "_value", 7));
         let Stmt::Node { body: Gram::Alt(alts), .. } = &body[6] else { panic!("list") };
         assert_eq!(alts, &vec![Gram::Plus(Box::new(sym("item"))), Gram::Seq(vec![lit("("), lit(")")])]);
@@ -884,4 +1110,92 @@ tree json {
         let errors = |text: &str| crate::eval::Ev::run(&stmts, text.as_bytes(), &tables).expect("runs").errors.len();
         assert_eq!([errors("0 -12 3. 4.50"), errors("01"), errors("-"), errors("1x"), errors("1..2")], [0, 1, 1, 1, 1]);
     }
+}
+
+/// Whether a `rounds` body is strictly causal: each `next X = E` reaches the carries only
+/// through a `prev` (its byte `p` reads them at bytes before `p`), and no `next(…)` reads a
+/// value that a carry reaches. Then a round is right on every byte the round before was, and on
+/// one more: the rounds settle, at most one per byte, and the fixed point is the one value
+/// every byte's left context gives (docs/parser-generators/03-bitlex.md §2.7).
+pub fn strictly_causal(body: &[Stmt]) -> Result<(), String> {
+    use std::collections::{HashMap, HashSet};
+    let carries: HashSet<String> = body.iter().filter_map(|s| if let Stmt::Carry(n, _) = s { Some(n.clone()) } else { None }).collect();
+    // Per name the body defines: the carries it reaches at its own byte or after (`loose`),
+    // and those it reaches at all.
+    let mut loose: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut any: HashMap<String, HashSet<String>> = HashMap::new();
+    fn walk(e: &Expr, carries: &HashSet<String>, loose: &HashMap<String, HashSet<String>>, any: &HashMap<String, HashSet<String>>) -> Result<(HashSet<String>, HashSet<String>), String> {
+        let union = |xs: Vec<(HashSet<String>, HashSet<String>)>| {
+            xs.into_iter().fold((HashSet::new(), HashSet::new()), |(mut l, mut a), (x, y)| {
+                l.extend(x);
+                a.extend(y);
+                (l, a)
+            })
+        };
+        let arg = |a: &Arg| match a {
+            Arg::E(e) => walk(e, carries, loose, any),
+            _ => Ok((HashSet::new(), HashSet::new())),
+        };
+        Ok(match e {
+            Expr::Name(n) if carries.contains(n) => (HashSet::from([n.clone()]), HashSet::from([n.clone()])),
+            Expr::Name(n) => (loose.get(n).cloned().unwrap_or_default(), any.get(n).cloned().unwrap_or_default()),
+            Expr::Empty => (HashSet::new(), HashSet::new()),
+            Expr::Not(a) => walk(a, carries, loose, any)?,
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => union(vec![walk(a, carries, loose, any)?, walk(b, carries, loose, any)?]),
+            Expr::Call(f, args) => {
+                let parts = union(args.iter().map(arg).collect::<Result<_, _>>()?);
+                match f.as_str() {
+                    // `prev(a, k)`, k at least 1: byte `p` reads `a` before `p`.
+                    "prev" => (HashSet::new(), parts.1),
+                    "next" if !parts.1.is_empty() => return Err(format!("`next` of a value a carry reaches ({})", sorted(&parts.1))),
+                    _ => parts,
+                }
+            }
+            Expr::Test { target, arg: a, .. } => {
+                let t = (loose.get(target).cloned().unwrap_or_default(), any.get(target).cloned().unwrap_or_default());
+                let x = match a {
+                    Some(a) => walk(a, carries, loose, any)?,
+                    None => (HashSet::new(), HashSet::new()),
+                };
+                union(vec![t, x])
+            }
+        })
+    }
+    fn sorted(s: &HashSet<String>) -> String {
+        let mut v: Vec<&String> = s.iter().collect();
+        v.sort();
+        v.iter().map(|x| x.as_str()).collect::<Vec<_>>().join(", ")
+    }
+    for s in body {
+        match s {
+            Stmt::Mask(n, e) => {
+                let (l, a) = walk(e, &carries, &loose, &any)?;
+                loose.insert(n.clone(), l);
+                any.insert(n.clone(), a);
+            }
+            Stmt::Reflect { name, a, b, reset, .. } => {
+                let mut l = HashSet::new();
+                let mut all = HashSet::new();
+                for e in [Some(a), Some(b), reset.as_ref()].into_iter().flatten() {
+                    let (x, y) = walk(e, &carries, &loose, &any)?;
+                    l.extend(x);
+                    all.extend(y);
+                }
+                loose.insert(name.clone(), l);
+                any.insert(name.clone(), all);
+            }
+            Stmt::Next(n, e) => {
+                if !carries.contains(n) {
+                    return Err(format!("next {n}: no carry of that name"));
+                }
+                let (l, _) = walk(e, &carries, &loose, &any)?;
+                if !l.is_empty() {
+                    return Err(format!("next {n} reaches {} with no `prev` on the way: the rounds may not settle", sorted(&l)));
+                }
+            }
+            Stmt::Carry(..) => {}
+            other => return Err(format!("in `rounds until settled`, only masks, scans, carries and nexts: {other:?}")),
+        }
+    }
+    Ok(())
 }
