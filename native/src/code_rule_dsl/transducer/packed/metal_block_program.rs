@@ -701,6 +701,10 @@ static inline bool halo_exchange(device atomic_uint* halos, uint g, uint l, ulon
 /// published nothing after `spins` polls; a lane past the exchange's words (`owns` false) has
 /// nothing to do. Every lane of a group polls its own word at once, so an
 /// exchange of many values waits about as long as one.
+///
+/// A table that gives the same carry for either carry in has one state: a group whose own table
+/// is constant publishes it as its inclusive prefix at once, and a look-back stops at the first
+/// constant prefix, since nothing before it changes the carry.
 const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint* rec, uint g, uint stride, uint kind, uint mine, uint spins, bool owns, thread uint& got) {
   got = 0u;
   if (!owns) return true;
@@ -718,7 +722,8 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
     got = x & 0x3ffffffful;
     return (x & HALO_FLAG) != 0u;
   }
-  atomic_store_explicit(&rec[g * stride], CARRY_AGGREGATE | mine, memory_order_relaxed);
+  const bool single = kind == 1u && tapply1(mine, 0u) == tapply1(mine, 1u);
+  atomic_store_explicit(&rec[g * stride], select(CARRY_AGGREGATE, CARRY_INCLUSIVE, single) | mine, memory_order_relaxed);
   uint prefix = select(0u, TID1, kind == 1u);
   for (uint back = 1u; back <= g; back++) {
     uint st = 0u;
@@ -727,7 +732,7 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
     }
     if ((st >> 30u) == 0u) return false;
     prefix = select(prefix + (st & CARRY_VALUE), tcompose1(st & CARRY_VALUE, prefix), kind == 1u);
-    if ((st >> 30u) == 2u) break;
+    if ((st >> 30u) == 2u || (kind == 1u && tapply1(prefix, 0u) == tapply1(prefix, 1u))) break;
   }
   atomic_store_explicit(&rec[g * stride], CARRY_INCLUSIVE | select(prefix + mine, tcompose1(prefix, mine), kind == 1u), memory_order_relaxed);
   got = prefix;
@@ -738,8 +743,9 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
 
 /// How generated MSL treats each carried instruction.
 struct Plan {
-    /// The local `prev`s: of a value of the bytes alone with no `prev` in it; their halo comes
-    /// from the lanes before, by shuffles, the group's warm-up lanes included (`warm_lanes`).
+    /// The local `prev`s: of a value of the bytes alone (local `prev`s of such values included);
+    /// their halo comes from the lanes before, by shuffles, the group's warm-up lanes included
+    /// (`warm_lanes`).
     windowed: Vec<usize>,
     /// The scanned carries (`toggle`, `escaped`, `fill`), in order: a state per group each.
     scanned: Vec<usize>,
@@ -747,6 +753,8 @@ struct Plan {
     halos: Vec<usize>,
     /// The warm-up lanes of each group at the lane width (`warm_lanes`); 0 until `at`.
     warm: usize,
+    /// Each local value's reach: the bytes before it that it reads, through its local `prev`s.
+    reach: Vec<usize>,
     /// Each instruction's level: the exchanges between groups it waits on. A carried
     /// instruction (not windowed) of level `L + 1` is resolved in exchange `L`, with every other
     /// one whose operands are of level `L` at most.
@@ -757,30 +765,28 @@ impl Plan {
     fn new(native: &BlockNative) -> Self {
         let n = native.insts.len();
         let mut local = vec![true; n];
-        let mut has_prev = vec![false; n];
-        let mut plan = Plan { windowed: Vec::new(), scanned: Vec::new(), halos: Vec::new(), warm: 0, level: vec![0; n] };
+        let mut plan = Plan { windowed: Vec::new(), scanned: Vec::new(), halos: Vec::new(), warm: 0, reach: vec![0; n], level: vec![0; n] };
         for at in 0..n {
             let ops = operands(&native.insts[at]);
             let ops_local = ops.iter().all(|&a| local[a]);
-            let ops_prev = ops.iter().any(|&a| has_prev[a]);
+            let reach = ops.iter().map(|&a| plan.reach[a]).max().unwrap_or(0);
             match native.insts[at] {
-                BlockInst::Prev(a, _) if ops_local && !has_prev[usize::from(a)] => {
+                // A `prev` of a local value is local however deep: the warm-up lanes cover its reach.
+                BlockInst::Prev(_, k) if ops_local => {
                     plan.windowed.push(at);
-                    has_prev[at] = true;
+                    plan.reach[at] = reach + usize::from(k);
                 }
                 BlockInst::Prev(..) => {
                     local[at] = false;
-                    has_prev[at] = true;
                     plan.halos.push(at);
                 }
                 ref inst if inst.carried() => {
                     local[at] = false;
-                    has_prev[at] = ops_prev;
                     plan.scanned.push(at);
                 }
                 _ => {
                     local[at] = ops_local;
-                    has_prev[at] = ops_prev;
+                    plan.reach[at] = reach;
                 }
             }
             let below = ops.iter().map(|&a| plan.level[a]).max().unwrap_or(0);
@@ -792,7 +798,8 @@ impl Plan {
 
     /// The plan at lane width `width`: with its warm-up lanes.
     fn at(mut self, native: &BlockNative, width: LaneWidth) -> Self {
-        self.warm = self.windowed.iter().map(|&at| if let BlockInst::Prev(_, k) = native.insts[at] { usize::from(k).div_ceil(width.bytes()) } else { 0 }).max().unwrap_or(0);
+        let _ = native;
+        self.warm = self.windowed.iter().map(|&at| self.reach[at].div_ceil(width.bytes())).max().unwrap_or(0);
         self
     }
 
@@ -808,11 +815,12 @@ impl Plan {
             .collect()
     }
 
-    /// Words per group of the exchanges' records: three per halo, one per scan, and one per
-    /// counted output for the counts' exchange.
+    /// Words per group of the exchanges' records: each exchange's halo words (`halo_words`), one
+    /// per scan, and one per counted output for the counts' exchange.
     fn record_words(&self, native: &BlockNative) -> usize {
         // The extracts' counts; a total is a flag, set without an exchange (`totals_or`).
-        3 * self.halos.len() + self.scanned.len() + native.extracts.len()
+        let halos: usize = self.exchanges().iter().map(|(h, _)| halo_words(native, h).len()).sum();
+        halos + self.scanned.len() + native.extracts.len()
     }
 }
 
@@ -861,6 +869,27 @@ fn workers(groups: usize) -> usize {
 /// The words per group generated MSL keeps of a program's exchanges (`Plan::exchanges`).
 pub(in crate::code_rule_dsl) fn record_words(native: &BlockNative) -> usize {
     Plan::new(native).record_words(native)
+}
+
+/// An exchange's halos packed in words: a `prev` by k reads only the newest k bits of the group
+/// before, so each halo takes k bits of a 30-bit word (the flag is above them), in order. Each
+/// word: its halos, with each one's first bit. The same in every body: a group reads the words
+/// of the group before by place, whatever body that group ran.
+fn halo_words(native: &BlockNative, halos: &[usize]) -> Vec<Vec<(usize, u32)>> {
+    let mut words: Vec<Vec<(usize, u32)>> = Vec::new();
+    let mut used = 30u32;
+    for &at in halos {
+        let BlockInst::Prev(_, k) = native.insts[at] else { unreachable!("a halo is a prev") };
+        let k = u32::from(k);
+        assert!(k <= 30, "a halo's prev reaches at most 30 bytes back");
+        if used + k > 30 {
+            words.push(Vec::new());
+            used = 0;
+        }
+        words.last_mut().expect("a word").push((at, used));
+        used += k;
+    }
+    words
 }
 
 fn operands(inst: &BlockInst) -> Vec<usize> {
@@ -984,14 +1013,20 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
             _ => unreachable!("only windowed prevs are emitted in a level"),
         }));
         let Some((halos, scans)) = exchanges.get(level) else { break };
-        // Each value's words, the same in every lane: three per halo (the group's last 64 bits),
-        // then a scan's aggregate table each.
+        // Each value's words, the same in every lane: the halos' newest bits, packed
+        // (`halo_words`), then a scan's aggregate table each.
+        let packed = halo_words(native, halos);
         let mut words: Vec<String> = Vec::new();
-        for &at in halos {
-            let BlockInst::Prev(a, _) = native.insts[at] else { unreachable!() };
-            out.push_str(&format!("  const ulong last{at} = halo_last(v{a});\n"));
-            words.extend([format!("uint(last{at} & 0x3ffffffful)"), format!("uint((last{at} >> 30u) & 0x3ffffffful)"), format!("uint(last{at} >> 60u)")]);
+        for word in &packed {
+            let mut parts = Vec::new();
+            for &(at, first) in word {
+                let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
+                out.push_str(&format!("  const ulong last{at} = halo_last(v{a});\n"));
+                parts.push(format!("(uint(last{at} >> {}u) << {first}u)", 64 - u32::from(k)));
+            }
+            words.push(parts.join(" | "));
         }
+        let halo_count = packed.len();
         for &at in scans {
             // The lane's table: bit c its carry out for carry in c.
             match native.insts[at] {
@@ -1008,22 +1043,29 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
             out.push_str(&format!("  uint agg{at} = 0u;\n  const uint e{at} = texclusive1(select(2u, tt{at}, keep), l, agg{at});\n"));
             words.push(format!("agg{at}"));
         }
-        // A halo known in this body is published, for a general group after, and not waited on.
-        let known = |j: usize| j < 3 * halos.len() && !matches!(values.insts[halos[j / 3]], BlockInst::Prev(..));
-        let got = exchange_kinds(&mut out, &format!("x{level}"), &words, |j| if known(j) { "3u" } else if j < 3 * halos.len() { "0u" } else { "1u" }.to_owned(), offset, record);
-        for (h, &at) in halos.iter().enumerate() {
-            let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
-            if known(3 * h) {
-                // Its value: a constant, emitted with the next level.
-                continue;
+        // A halo word whose halos are all known in this body is published, for a general group
+        // after, and not waited on.
+        let known = |j: usize| j < halo_count && packed[j].iter().all(|&(at, _)| !matches!(values.insts[at], BlockInst::Prev(..)));
+        let got = exchange_kinds(&mut out, &format!("x{level}"), &words, |j| if known(j) { "3u" } else if j < halo_count { "0u" } else { "1u" }.to_owned(), offset, record);
+        for (j, word) in packed.iter().enumerate() {
+            for &(at, first) in word {
+                let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
+                if !matches!(values.insts[at], BlockInst::Prev(..)) {
+                    // Its value: a constant, emitted with the next level.
+                    continue;
+                }
+                // The group before's newest k bits, at the top of the halo.
+                out.push_str(&format!(
+                    "  const ulong h{at} = ulong(({} >> {first}u) & {}u) << {}u;\n  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l - {}u, h{at}));\n",
+                    got[j],
+                    (1u32 << k) - 1,
+                    64 - u32::from(k),
+                    plan.warm
+                ));
             }
-            out.push_str(&format!(
-                "  const ulong h{at} = ulong({}) | (ulong({}) << 30u) | (ulong({}) << 60u);\n  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l - {}u, h{at}));\n",
-                got[3 * h], got[3 * h + 1], got[3 * h + 2], plan.warm
-            ));
         }
         for (s_, &at) in scans.iter().enumerate() {
-            let cin = format!("tapply1(e{at}, tapply1({}, 0u))", got[3 * halos.len() + s_]);
+            let cin = format!("tapply1(e{at}, tapply1({}, 0u))", got[halo_count + s_]);
             match native.insts[at] {
                 BlockInst::Toggle(a) => out.push_str(&format!("  const {m} v{at} = apply_toggle(v{a}, {cin});\n")),
                 _ => out.push_str(&format!("  const {m} v{at} = select(f{at}_0, f{at}_1, {cin} != 0u);\n")),
