@@ -195,7 +195,7 @@ pub(super) enum Memo<'a> {
 pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
 
 /// A file's content as the memo knows it: its stored source, or (held) its digest.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Content {
     Stored(SourceId),
     Held([u8; 32]),

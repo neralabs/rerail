@@ -61,6 +61,8 @@ pub(in crate::code_rule_dsl) struct Retained {
     measured: HashMap<(String, usize), Measured>,
     /// Each input's statistics as the run planned it (`Stats::of_relation`): next run's `rel__old`'s, not measured.
     input_stats: HashMap<String, InputStats>,
+    /// The documents the run read, and the file-local program their memo entries are under (`input_delta`).
+    docs: (super::input_delta::Docs, [u8; 32]),
 }
 
 /// A relation's statistics as bound (`syntax::statistics`), and its counts of the constants rules test it by.
@@ -221,6 +223,7 @@ pub(in crate::code_rule_dsl) fn after(
     sources: &[(String, Arc<dyn Source>)],
     measured: HashMap<(String, usize), Measured>,
     input_stats: HashMap<String, InputStats>,
+    docs: (super::input_delta::Docs, [u8; 32]),
 ) -> Retained {
     let mut rels: HashMap<String, Kept> = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
@@ -244,7 +247,7 @@ pub(in crate::code_rule_dsl) fn after(
     // Statistics of the relations still kept, as they are.
     let alive: std::collections::HashSet<usize> = rels.values().map(|k| Arc::as_ptr(&k.rel) as *const u8 as usize).collect();
     let measured = measured.into_iter().filter(|((_, at), _)| alive.contains(at)).collect();
-    Retained { key, inputs, rels, input_srcs, measured, input_stats }
+    Retained { key, inputs, rels, input_srcs, measured, input_stats, docs }
 }
 
 /// `source` (input `rel`), or the last run's source of the same rows: same name, columns and digest, in any kept
@@ -304,6 +307,10 @@ impl Retained {
     /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
     /// engine's relation for a derived one (to adopt, read in place).
     /// An input's statistics as the last run planned it.
+    /// The documents the last run read, if under the file-local program `program`.
+    pub(in crate::code_rule_dsl) fn docs(&self, program: &[u8; 32]) -> Option<&super::input_delta::Docs> {
+        (self.docs.1 == *program).then_some(&self.docs.0)
+    }
     pub(in crate::code_rule_dsl) fn input_stats(&self, rel: &str) -> Option<&InputStats> {
         self.input_stats.get(rel)
     }
@@ -432,7 +439,7 @@ mod tests {
             let width=p.decls[name].len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
-        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default()};
+        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),docs:Default::default()};
         let result=cut(Some(&kept),key,&p,&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
