@@ -213,7 +213,8 @@ impl World {
     pub(super) fn consulted(&self) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
         for (asked, entries) in &self.dirs {
-            out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
+            let listing: Vec<(String,bool)> = entries.iter().map(|e| (e.name.clone(),e.is_dir)).collect();
+            out.push(("dir".to_owned(), asked.clone(), listing_digest(&listing)));
         }
         for (asked, lines) in &self.files {
             out.push(("file".to_owned(), asked.clone(), lines_digest(lines)));
@@ -316,6 +317,38 @@ pub(super) fn bytes_digest(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consulted_metadata_rejects_a_changed_file_size() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-metadata-dependency");
+        std::fs::create_dir_all(root.join("pkg")).unwrap();
+        std::fs::write(root.join("pkg/a.py"), "abc").unwrap();
+        let program = front::parse("").unwrap();
+        let mut before = World::new(&root,&program);
+        assert_eq!(before.metadata("pkg")[0].3,3);
+        let consulted = before.consulted();
+        assert!(World::new(&root,&program).still(&consulted));
+        std::fs::write(root.join("pkg/a.py"), "changed size").unwrap();
+        let changed = World::new(&root,&program).still(&consulted);
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(!changed,"a metadata consumer must not retain stale byte weights");
+    }
+
+    #[test]
+    fn consulted_host_inputs_reject_changed_values_and_absence() {
+        for (old,new) in [(Some("first"),Some("second")),(None,Some(""))] {
+            let key = "env:RERAIL_TEST_CONSULTED_HOST";
+            let mut before = World::default();
+            before.host_with(key, |_| old.map(str::to_owned));
+            let consulted = before.consulted();
+            let mut equal = World::default();
+            equal.host_with(key, |_| old.map(str::to_owned));
+            assert!(equal.still(&consulted));
+            let mut changed = World::default();
+            changed.host_with(key, |_| new.map(str::to_owned));
+            assert!(!changed.still(&consulted),"a demanded host answer changed");
+        }
+    }
 
     #[test]
     fn host_values_and_absence_are_read_once_per_execution() {
