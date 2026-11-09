@@ -1,6 +1,11 @@
-//! Block programs on Metal in the CPU's shape: one thread runs a **segment** of a file's 64-byte
-//! blocks in order, the carried state in its registers, as the Cranelift loop does on one core
-//! (`native_cpu_block`). No thread waits on another.
+//! Block programs on Metal with the carry going forward only: a file is cut into **segments** of
+//! 64-byte blocks, and no segment waits on another. A segment runs in one of two forms:
+//!
+//! - in **lanes** (the default): one SIMD group, a block a lane; a `prev` takes the lane
+//!   before's word, a scan its lanes' prefix (`lanes_function`);
+//! - in the CPU's shape (`RERAIL_SERIAL_LANES=0`): one thread runs the blocks in order, the
+//!   carried state in its registers, as the Cranelift loop does on one core
+//!   (`native_cpu_block`).
 //!
 //! The carry goes forward only, by speculation:
 //!
@@ -205,8 +210,10 @@ fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option
 fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<&Levels>) -> String {
     let mut out = format!(
         "static inline void lanes_{p}(device const uint4* bytes, FileRow f, uint first, uint last, bool again, uint warm, uint l,\n\
-         \x20                          device ulong* out, device ulong* rec, thread const ulong* given, ulong cin, device uint* counts) {{\n\
-         \x20 const uint a = again ? first : first - min(first, warm);\n\
+         \x20                          device ulong* out, device ulong* rec, thread const ulong* given, ulong cin, ulong cw, device uint* counts) {{\n\
+         \x20 // `aw` the levels' segment start, where `cin` holds; `a` a warm-up before it, where `cw` holds.\n\
+         \x20 const uint aw = first - min(first, warm);\n\
+         \x20 const uint a = again ? first : aw - min(aw, warm);\n\
          \x20 const uint b = a + l;\n\
          \x20 const uint len = f.len;\n"
     );
@@ -216,16 +223,22 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
         out.push_str(&if scan { format!("  uint c{at} = 0u;\n") } else { format!("  ulong s{at} = 0ul;\n") });
     }
     out.push_str(&format!("  if (again) {{ {} if (l == 0u) {{ {} }} }}\n", state.unpack(native, "given"), state.pack(native, "rec")));
-    let exact = |at: usize| {
-        let from = match levels {
-            Some(lv) if lv.level[lv.bit(at)] > 0 => format!("uint((cin >> {}u) & 1ul)", lv.bit(at)),
-            _ => "0u".to_owned(),
-        };
-        format!("(again ? c{at} : {from})")
+    // An exact scan is set to `cin` at `aw`: its prefix starts again there, the lanes before
+    // it from `cw` (their `prev`s from zero would make it wrong at `aw`, as the levels' passes
+    // never are).
+    let exact = |at: usize| match levels {
+        Some(lv) if lv.level[lv.bit(at)] > 0 => {
+            let i = lv.bit(at);
+            (format!("(again ? c{at} : uint((cw >> {i}u) & 1ul))"), Some(("!again && b >= aw".to_owned(), format!("uint((cin >> {i}u) & 1ul)"))))
+        }
+        _ => (format!("(again ? c{at} : 0u)"), None),
     };
     let carried = |at: usize, inst: &BlockInst, out: &mut String| match *inst {
         BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, s{a}));\n")),
-        _ => lane_scan(at, inst, &exact(at), out),
+        _ => {
+            let (from, reset) = exact(at);
+            lane_scan(at, inst, &from, reset.as_ref().map(|(c, v)| (c.as_str(), v.as_str())), out)
+        }
     };
     let mut tail = String::from("  const bool mine = b >= first && b < last;\n");
     for (k, &v) in native.outputs.iter().enumerate() {
@@ -287,10 +300,22 @@ fn lane_bodies(p: usize, native: &BlockNative, chosen: &[usize], carried: &dyn F
 
 /// Scan `at` in lanes form, its carry into the group's lane 0 `from`: the lanes' tables'
 /// prefix. Defines `v{at}`, its carry out of the lane `co{at}` and the lane's table `tt{at}`.
-fn lane_scan(at: usize, inst: &BlockInst, from: &str, out: &mut String) {
+fn lane_scan(at: usize, inst: &BlockInst, from: &str, reset: Option<(&str, &str)>, out: &mut String) {
+    // With `reset` (a lane condition, a carry): the lanes where it holds take their own prefix,
+    // from the carry, instead.
+    let carry = |at: usize| match reset {
+        None => format!("tapply1(texclusive1(tt{at}, l, agg{at}), {from})"),
+        // Both prefixes in every lane: a SIMD-group function under a branch is not.
+        Some((cond, cin)) => format!(
+            "select(tapply1(texclusive1(tt{at}, l, agg{at}), {from}), tapply1(texclusive1(select(2u, tt{at}, {cond}), l, agr{at}), {cin}), {cond})"
+        ),
+    };
+    let agr = if reset.is_some() { format!("  uint agr{at} = 0u;\n") } else { String::new() };
+    out.push_str(&agr);
     match *inst {
         BlockInst::Toggle(a) => out.push_str(&format!(
-            "  const uint sm{at} = summary_toggle(v{a});\n  const uint tt{at} = sm{at} | ((1u ^ sm{at}) << 1u);\n  uint agg{at} = 0u;\n  const uint ci{at} = tapply1(texclusive1(tt{at}, l, agg{at}), {from});\n  const ulong v{at} = apply_toggle(v{a}, ci{at});\n  const uint co{at} = uint(v{at} >> 63u);\n"
+            "  const uint sm{at} = summary_toggle(v{a});\n  const uint tt{at} = sm{at} | ((1u ^ sm{at}) << 1u);\n  uint agg{at} = 0u;\n  const uint ci{at} = {};\n  const ulong v{at} = apply_toggle(v{a}, ci{at});\n  const uint co{at} = uint(v{at} >> 63u);\n",
+            carry(at)
         )),
         BlockInst::Escaped(_) | BlockInst::Fill(..) => {
             let call = |c: &str, o: &str| match *inst {
@@ -299,9 +324,10 @@ fn lane_scan(at: usize, inst: &BlockInst, from: &str, out: &mut String) {
                 _ => unreachable!(),
             };
             out.push_str(&format!(
-                "  uint o{at}_0 = 0u, o{at}_1 = 0u;\n  const ulong f{at}_0 = {}, f{at}_1 = {};\n  const uint tt{at} = (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u);\n  uint agg{at} = 0u;\n  const uint ci{at} = tapply1(texclusive1(tt{at}, l, agg{at}), {from});\n  const ulong v{at} = select(f{at}_0, f{at}_1, ci{at} != 0u);\n  const uint co{at} = ci{at} != 0u ? o{at}_1 : o{at}_0;\n",
+                "  uint o{at}_0 = 0u, o{at}_1 = 0u;\n  const ulong f{at}_0 = {}, f{at}_1 = {};\n  const uint tt{at} = (o{at}_0 & 1u) | ((o{at}_1 & 1u) << 1u);\n  uint agg{at} = 0u;\n  const uint ci{at} = {};\n  const ulong v{at} = select(f{at}_0, f{at}_1, ci{at} != 0u);\n  const uint co{at} = ci{at} != 0u ? o{at}_1 : o{at}_0;\n",
                 call("0ul", &format!("o{at}_0")),
                 call("1ul", &format!("o{at}_1")),
+                carry(at),
             ));
         }
         _ => unreachable!("a scan"),
@@ -340,13 +366,13 @@ fn lanes_cone_function(p: usize, native: &BlockNative, levels: &Levels, lv: usiz
         _ => {
             let i = levels.bit(at);
             let from = if levels.level[i] > 0 { format!("uint((from >> {i}u) & 1ul)") } else { "0u".to_owned() };
-            lane_scan(at, inst, &from, out);
+            lane_scan(at, inst, &from, None, out);
         }
     };
     let mut tail = String::from("  const bool span = b >= a && b < a_next, span_w = b >= a && b + warm < a_next;\n");
     for &(k, at) in &own {
         let mut scan = String::new();
-        lane_scan(at, &native.insts[at], "0u", &mut scan);
+        lane_scan(at, &native.insts[at], "0u", None, &mut scan);
         tail.push_str(&scan);
         tail.push_str(&format!(
             "  {{ uint g0 = 0u, g1 = 0u; texclusive1(select(2u, tt{at}, span), l, g0); texclusive1(select(2u, tt{at}, span_w), l, g1);\n    if (l == 0u) {{ tab[{}u] = g0; tab[{}u] = g1; }} }}\n",
@@ -374,21 +400,50 @@ struct Levels {
     depth: usize,
 }
 
-/// The scans made exact by levels: `RERAIL_SERIAL_EXACT`, instruction numbers of the planes form
-/// separated by commas, or every scan. The others start from zero at each warm-up, as the
-/// `prev`s do: right when they forget their start within a warm-up.
-fn exact_scans() -> Option<Vec<usize>> {
-    std::env::var("RERAIL_SERIAL_EXACT").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+/// The scans made exact by levels (instruction numbers of the planes form): `RERAIL_SERIAL_EXACT`
+/// (`all` for every scan), or what runs of the program have learned (`LEARNED`), or its
+/// toggles. The others start from zero at each warm-up, as the `prev`s do: right when they
+/// forget their start within a warm-up. A toggle never forgets (its carry is a parity), so it
+/// is exact from the first run.
+fn exact_scans(native: &BlockNative) -> Vec<usize> {
+    let scans = native.insts.iter().enumerate().filter(|(_, i)| matches!(i, BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..)));
+    match std::env::var("RERAIL_SERIAL_EXACT").ok().as_deref() {
+        Some("all") => scans.map(|(at, _)| at).collect(),
+        Some(v) => v.split(',').filter_map(|x| x.trim().parse().ok()).collect(),
+        None => {
+            let learned = LEARNED.lock().ok().and_then(|m| m.get(&fingerprint(native)).cloned()).unwrap_or_default();
+            let mut exact: Vec<usize> = scans.filter(|(_, i)| matches!(i, BlockInst::Toggle(_))).map(|(at, _)| at).collect();
+            exact.extend(learned);
+            exact.sort_unstable();
+            exact.dedup();
+            exact
+        }
+    }
+}
+
+/// The scans each program's runs found speculation wrong for, by the program's fingerprint: a
+/// scan whose speculated start was wrong in more than one segment in `PROMOTE` is made exact in
+/// the program's later runs. A wrong start costs a run again of its segment (and of the ones
+/// after, while its end differs); an exact scan costs a level's pass over every segment.
+static LEARNED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, Vec<usize>>>> = std::sync::LazyLock::new(Default::default);
+const PROMOTE: usize = 1000;
+
+fn fingerprint(native: &BlockNative) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!("{:?}", native.insts).hash(&mut h);
+    h.finish()
 }
 
 impl Levels {
     fn of(native: &BlockNative) -> Self {
+        let exact_set = exact_scans(native);
         let mut lv = vec![0usize; native.insts.len()];
         let mut levels = Levels { scans: Vec::new(), level: Vec::new(), depth: 0 };
         for (at, inst) in native.insts.iter().enumerate() {
             let below = inst.operands().iter().map(|&x| lv[x]).max().unwrap_or(0);
             if matches!(inst, BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..)) {
-                let exact = exact_scans().is_none_or(|e| e.contains(&at));
+                let exact = exact_set.contains(&at);
                 lv[at] = below + usize::from(exact);
                 levels.scans.push(at);
                 levels.level.push(if exact { below + 1 } else { 0 });
@@ -581,8 +636,8 @@ fn generate_serial(programs: &[&BlockNative]) -> (String, usize, usize) {
         r = 2 * most,
         pt = PREFIX_THREADS,
     ));
-    let lane_cases: String = (0..programs.len()).map(|p| format!("      case {p}u: lanes_{p}(bytes, f, seg.y, seg.z, false, q.z, l, out, records + s * {}u, st, cin[s], counts + s * {counted}u); break;\n", 2 * sw)).collect();
-    let again_cases: String = (0..programs.len()).map(|p| format!("      case {p}u: lanes_{p}(bytes, f, seg.y, seg.z, true, q.z, l, out, records + s * {}u, st, cin[s], counts + s * {counted}u); break;\n", 2 * sw)).collect();
+    let lane_cases: String = (0..programs.len()).map(|p| format!("      case {p}u: lanes_{p}(bytes, f, seg.y, seg.z, false, q.z, l, out, records + s * {}u, st, cin[s], cw[s], counts + s * {counted}u); break;\n", 2 * sw)).collect();
+    let again_cases: String = (0..programs.len()).map(|p| format!("      case {p}u: lanes_{p}(bytes, f, seg.y, seg.z, true, q.z, l, out, records + s * {}u, st, cin[s], cw[s], counts + s * {counted}u); break;\n", 2 * sw)).collect();
     let cases: String = (0..programs.len()).map(|p| format!("      case {p}u: serial_{p}(bytes, f, seg.y, seg.z, again, q.z, out, records + s * {}u, st, cin[s], cw[s]); break;\n", 2 * sw)).collect();
     // The positions and totals of each program, from its output words.
     let mut count_cases = String::new();
@@ -663,7 +718,7 @@ fn generate_serial(programs: &[&BlockNative]) -> (String, usize, usize) {
          // The first run in lanes form: one SIMD group a segment (`lanes_function`).\n\
          kernel void lanes_run(device const uint4* s0 [[buffer(0)]], device ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
          \x20   device const uint4* segs [[buffer(3)]], device ulong* records [[buffer(4)]], constant uint4& q [[buffer(7)]],\n\
-         \x20   device const ulong* cin [[buffer(10)]], device uint* counts [[buffer(15)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
+         \x20   device const ulong* cin [[buffer(10)]], device const ulong* cw [[buffer(14)]], device uint* counts [[buffer(15)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
          \x20   device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
          \x20 const uint s = t / {GROUP}u;\n\
          \x20 if (s >= q.x) return;\n\
@@ -677,7 +732,7 @@ fn generate_serial(programs: &[&BlockNative]) -> (String, usize, usize) {
          kernel void lanes_again(device const uint4* s0 [[buffer(0)]], device ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
          \x20   device const uint4* segs [[buffer(3)]], device ulong* records [[buffer(4)]], device const uint* list [[buffer(5)]],\n\
          \x20   device const ulong* given [[buffer(6)]], constant uint4& q [[buffer(7)]], device const ulong* cin [[buffer(10)]],\n\
-         \x20   device const uint* marks [[buffer(12)]], device atomic_uint* hopped [[buffer(13)]], device uint* counts [[buffer(15)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
+         \x20   device const ulong* cw [[buffer(14)]], device const uint* marks [[buffer(12)]], device atomic_uint* hopped [[buffer(13)]], device uint* counts [[buffer(15)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
          \x20   device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {{\n\
          \x20 const uint i = t / {GROUP}u;\n\
          \x20 if (i >= q.x) return;\n\
@@ -811,9 +866,43 @@ fn counted_outputs(native: &BlockNative) -> Vec<usize> {
     native.extracts.iter().chain(&native.totals).copied().collect()
 }
 
-/// Whether the first run is in lanes form (`lanes_function`): `RERAIL_SERIAL_LANES=1`.
+/// Whether the exact scans are left to the runs to learn: no `RERAIL_SERIAL_EXACT`.
+fn exact_unset() -> bool {
+    std::env::var("RERAIL_SERIAL_EXACT").is_err()
+}
+
+/// After a first pass with wrong starts: each program's scans wrong in more than one segment in
+/// `PROMOTE` (their carry bit in the start differs from the end before) join its `LEARNED`.
+fn learn(forms: &[BlockNative], rows: &[FileRow], segs: &[[u32; 4]], records: &[u64], sw: usize) {
+    for (p, native) in forms.iter().enumerate() {
+        let state = State::of(native);
+        let mut wrong = vec![0usize; state.parts.len()];
+        let mut seen = 0usize;
+        for (t, seg) in segs.iter().enumerate() {
+            if seg[3] == 0 || rows[seg[0] as usize].program as usize != p {
+                continue;
+            }
+            seen += 1;
+            let (mine, end) = (&records[t * 2 * sw..], &records[(t - 1) * 2 * sw + sw..]);
+            for (i, &(_, _, w, first, scan)) in state.parts.iter().enumerate() {
+                if scan && (mine[w] >> first) & 1 != (end[w] >> first) & 1 {
+                    wrong[i] += 1;
+                }
+            }
+        }
+        let promoted: Vec<usize> = state.parts.iter().zip(&wrong).filter(|&(_, &n)| n * PROMOTE > seen).map(|(&(at, ..), _)| at).collect();
+        if !promoted.is_empty() {
+            if let Ok(mut m) = LEARNED.lock() {
+                m.entry(fingerprint(native)).or_default().extend(promoted);
+            }
+        }
+    }
+}
+
+/// Whether the runs are in lanes form (`lanes_function`); `RERAIL_SERIAL_LANES=0` runs each
+/// segment in one thread instead.
 fn lanes_on() -> bool {
-    std::env::var("RERAIL_SERIAL_LANES").is_ok_and(|v| v == "1")
+    std::env::var("RERAIL_SERIAL_LANES").map_or(true, |v| v != "0")
 }
 
 /// Threads of each file's prefix of a level (`scan_prefix`): eight SIMD groups.
@@ -915,7 +1004,7 @@ pub(in crate::code_rule_dsl) fn run_serial(programs: &[&BlockNative], files: &[B
     let lanes = lanes_on();
     if lanes {
         // The lanes: the warm-up, the segment, and the block after it for the delayed outputs.
-        assert!(segments.warm >= 1 && segments.blocks + segments.warm < GROUP, "a segment and its warm-up fit a SIMD group");
+        assert!(segments.warm >= 1 && segments.blocks + 2 * segments.warm < GROUP, "a segment and its two warm-ups fit a SIMD group");
     }
     let lanes_run = pipeline_named(&source, "lanes_run").inspect_err(|e| eprintln!("lanes: pipeline: {e:?}"))?;
     let lanes_again = pipeline_named(&source, "lanes_again")?;
@@ -963,7 +1052,7 @@ pub(in crate::code_rule_dsl) fn run_serial(programs: &[&BlockNative], files: &[B
         first.push(Pass { pipeline: &cone_prefix, buffers: with(&[(10, "cins"), (11, "tables"), (14, "cws")]), args: args(0, fit(l)?), groups: files.len(), threads: PREFIX_THREADS });
     }
     if lanes {
-        first.push(Pass { pipeline: &lanes_run, buffers: with(&[(4, "records"), (10, "cins"), (15, "counts")]), args: args(fit(total)?, 0), groups: groups(total * GROUP), threads: THREADS });
+        first.push(Pass { pipeline: &lanes_run, buffers: with(&[(4, "records"), (10, "cins"), (14, "cws"), (15, "counts")]), args: args(fit(total)?, 0), groups: groups(total * GROUP), threads: THREADS });
     } else {
         first.push(Pass { pipeline: &run, buffers: run_buffers.clone(), args: args(fit(total)?, 0), groups: groups(total), threads: THREADS });
     }
@@ -976,23 +1065,10 @@ pub(in crate::code_rule_dsl) fn run_serial(programs: &[&BlockNative], files: &[B
         unsafe { std::ptr::write_bytes(cins.host().cast::<u64>(), 0, total) };
         unsafe { std::ptr::write_bytes(cws.host().cast::<u64>(), 0, total) };
     }
-    if std::env::var("RERAIL_SERIAL_TWICE").is_ok() {
-        // The first pass once before the one timed: its buffers touched, its pipelines warm.
-        encode_passes(&first)?;
-        unsafe { std::ptr::write_bytes(listed.host().cast::<u32>(), 0, 1) };
-        unsafe { std::ptr::write_bytes(cins.host().cast::<u64>(), 0, total) };
-        unsafe { std::ptr::write_bytes(cws.host().cast::<u64>(), 0, total) };
+    let first_seconds = encode_passes(&first)?;
+    if listed.read::<u32>(1)[0] > 0 && exact_unset() {
+        learn(&forms, &rows, &segs, &records.read::<u64>(total * 2 * sw), sw);
     }
-    let first_seconds = match std::env::var("RERAIL_SERIAL_SPLIT").ok().and_then(|v| v.parse::<usize>().ok()) {
-        // Two command buffers, split before pass k: to see what the passes cost together.
-        Some(k) => {
-            let a = encode_passes(&first[..k])?;
-            let b = encode_passes(&first[k..])?;
-            eprintln!("serial: split at {k}: {:.3} + {:.3} ms", a * 1e3, b * 1e3);
-            a + b
-        }
-        None => encode_passes(&first)?,
-    };
     if std::env::var("RERAIL_SERIAL_DEBUG").is_ok() {
         let lv = Levels::of(&forms[0]);
         let sizes: Vec<String> = (1..=lv.depth).map(|l| format!("L{l}: {:?}", lv.at(l).iter().map(|&(_, at)| format!("{:?}", forms[0].insts[at])).collect::<Vec<_>>())).collect();
