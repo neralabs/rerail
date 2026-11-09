@@ -1,0 +1,1 @@
+A dashboard link opened in a browser that has no access yet, such as one copied from a coding agent's session, now shows a page that says so and names the command to run, `rerail manage`, on every view. It used to look like a repository with no rules or sessions, and a rule pack page stayed on "Loading…".

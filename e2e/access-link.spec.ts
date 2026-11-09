@@ -10,8 +10,8 @@ test("a fresh browser needs the dashboard link once, which leaves no capability 
     const page = await context.newPage();
     await page.goto(dashboard);
     await expect(page.locator("#status")).toContainText("Needs the dashboard link");
-    // The page's own files load, but no data: no repository is listed, and a read says what to do.
-    await expect(page.locator("#content")).toContainText("Open the dashboard with rerail manage");
+    // The page's own files load, but no data: no repository is listed, and the page says what to run.
+    await expect(page.locator("#content .access")).toContainText("rerail manage");
     await expect(page.locator("#content [data-repo]")).toHaveCount(0);
 
     const link = new URL(dashboard);
@@ -24,6 +24,26 @@ test("a fresh browser needs the dashboard link once, which leaves no capability 
     await page.goto(`${origin}/#settings`);
     await expect(page.locator("#content [data-repo]").first()).toBeVisible();
     expect(await context.cookies()).toEqual([]);
+  } finally {
+    await context.close();
+  }
+});
+
+// A link without the capability, as copied from a coding agent's session or from another browser's address bar: no
+// view may read as a repository with nothing in it, or load forever.
+test("a link without the capability says what to run on every view, not that the repository is empty", async ({ browser, rerail }) => {
+  const context = await browser.newContext();
+  try {
+    for (const hash of ["overview", "pack/typescript", "history", "sessions"]) {
+      const page = await context.newPage();
+      await page.goto(await rerail.dashboard("mature", { hash }));
+      const content = page.locator("#content");
+      await expect(content.locator(".access"), hash).toContainText("This browser doesn’t have access to Rerail’s data yet.");
+      await expect(content.locator(".access .mono"), hash).toHaveText("rerail manage");
+      await expect(content, hash).not.toContainText("Loading");
+      await expect(content, hash).not.toContainText("Rules on");
+      await page.close();
+    }
   } finally {
     await context.close();
   }
