@@ -31,7 +31,7 @@ def generate(source):
         attribute=pattern.removeprefix('\\.').removesuffix('\\(')
         lines.append(f'ide_pattern({i},{json.dumps(pattern)},{json.dumps(attribute)}).')
         capture='(?<m>'+pattern+')'
-        lines.append(f'ide_raw_match(d,m,{i}) :- ide_active(d,{i},_,_), source(d,sp), match_all({json.dumps(capture)},sp).')
+        lines.append(f'ide_raw_match(d,p,m,{i}) :- ide_active(d,p,{i},_,_), source(d,sp), match_all({json.dumps(capture)},sp).')
     return '\n'.join(lines)+'\n'
 
 

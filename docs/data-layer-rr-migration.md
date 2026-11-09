@@ -2454,3 +2454,25 @@ The authority evidence is now registered in the migration manifest.
 The full assertion gate passes with all seven inventory cases through each native API and six positive original observations.
 Separate reports retain the raw API results; the aggregate receipt retains production, CLI, input-error, control, and update evidence.
 This accepts `execution_authority_bypass` only. It does not accept the other rules or switch the global production path.
+
+### 2026-11-09 — Direct-execution scanner and production translation
+
+The [direct-execution checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-final004-checkpoint.json.gz) binds 385 native executions to the repaired Final `004df7e75` engine.
+All 174 original source tests pass. Native acceptance covers 127 original cases through each API, with 35 positive scanner observations per API.
+Another 55 scanner cases, 19 production cases, eight mutation controls, and fifteen persistent update steps pass.
+The unchanged update preserves timestamps. All 196 tooling tests pass.
+
+The rule preserves text-pattern priority before AST fallback, one finding per line, complete DTO values, and exact message truncation.
+Discovery uses one native demand family for all caller directories. Production uses the source plugin's separate directory exclusions.
+Aliases share parsed data but retain independent allowlist contexts. Facts use component-based path order; production findings retain their separate string sort.
+The source directory API does not specify file enumeration order. Its comparator permits whole-file groups to move and preserves every within-file value and duplicate.
+Three regression tests enforce this boundary.
+
+This rule remains a draft. The receipt lists all 47 original cases outside native acceptance: nine CLI calls and 38 module or DTO cases.
+CLI translation, signing and ratchet workflows, and the full migration gate remain open.
+The inventory now has one accepted rule, 94 drafts, and five absent translations.
+
+The combined acceptance driver reached its 115-second cap after both snapshot shards finished.
+Separately bounded workspace children completed with passing reports; the remaining checks ran independently.
+The receipt records that driver timeout rather than reporting every shell command as successful.
+Final advanced to `49f791af1` during acceptance. This frozen receipt does not certify that newer engine.

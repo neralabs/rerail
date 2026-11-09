@@ -17,9 +17,11 @@ CASES=[dict(id='empty',files=[]),dict(id='clean',files=[dict(path='impl/a.py',so
  dict(id='nested-membership',files=[dict(path='impl/'+p+'/a.py',source=BAD) for p in ['normal','tests','test','conform','venv','.venv','tmp','__pycache__','.git','.hidden','node_modules','.pytest_cache']]),
  dict(id='allowed-files',files=[dict(path=p,source=BAD) for p in ['impl/common/l2200_sql_dialect/sql_connection.py','impl/sqlite/connection.py','impl/sqlite/notallowed.py','impl/sqlite/fts/a.py','impl/sqlite/tests/test_a.py','impl/sqlite/test_a.py']]),
  dict(id='ordered-multiple',files=[dict(path='impl/'+p+'.py',source='obj.fetchall ()\nobj._fetchone()\n') for p in ['z','a','m']]),
+ dict(id='component-path-order',files=[dict(path=p,source=BAD) for p in ['impl/a.py','impl/a/deep.py']]),
  dict(id='syntax-error',files=[dict(path='impl/a.py',source='def :\n'+BAD)]),
  dict(id='hidden-and-extension',files=[dict(path='impl/'+p,source=BAD) for p in ['.py','.hidden.py','normal.py','notes.txt','a.PY','a.pyi']]),
  dict(id='links',files=[dict(path='impl/a.py',source=BAD),dict(path='impl/alias.py',symlink='a.py'),dict(path='impl/sub/a.py',source=BAD),dict(path='impl/link',symlink='sub')]),
+ dict(id='alias-allowlist-isolation',files=[dict(path='impl/sqlite/a.py',source=BAD),dict(path='impl/sqlite/connection.py',symlink='a.py'),dict(path='impl/sqlite/fts/a.py',symlink='../a.py')]),
  dict(id='patterns-messages',files=[dict(path='impl/a.py',source='obj.fetchall(); obj._fetchone()\nobj.fetchall ()\n'),dict(path='impl/b.py',source='obj._fetchone('+repr('x'*100)+')\n')])]
 
 
@@ -37,7 +39,7 @@ def source_case(module,case):
 def native_case(engine,case):
     results=[execute_workspace(engine,RULE,case['files'],options) for options in [{},dict(entryPoint='_production_facts')]]
     production,facts=results;rows=facts['diagnostics']
-    selected=sorted(r['parameters']['path'] for r in rows if r['code']=='IDE_FILE')
+    selected=[r['parameters']['path'] for r in sorted((r for r in rows if r['code']=='IDE_FILE'),key=lambda r:r['parameters']['path_order'])]
     if any(r['code'] not in {'IDE_FILE','IDE_ROW'} for r in rows):raise ValueError('Unexpected native fact output')
     values=[{k:r['parameters'][k] for k in ['file','line_num','line','pattern']} for r in sorted((r for r in rows if r['code']=='IDE_ROW'),key=lambda r:tuple(r['parameters'][k] for k in ['file_order','phase','ordinal']))]
     if any(r['code']!='direct_execution' for r in production['diagnostics']):raise ValueError('Unexpected production finding')

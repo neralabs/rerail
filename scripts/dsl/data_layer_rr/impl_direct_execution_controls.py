@@ -8,14 +8,14 @@ from migration import PIN,compare,read_json,sha,write_json
 
 
 def mutations(text):
-    edits=[('text-priority','pattern-priority','i = min j : { ide_text_event(d,l,j) }','i = max j : { ide_text_event(d,l,j) }'),
-           ('ast-pass','spaced-_fetchone','ide_ast_choice(d,l,i,v) :- ide_ast_event','ide_ast_choice(d,l,i,v) :- 0 = 1, ide_ast_event'),
+    edits=[('text-priority','pattern-priority','i = min j : { ide_text_event(d,p,l,j) }','i = max j : { ide_text_event(d,p,l,j) }'),
+           ('ast-pass','spaced-_fetchone','ide_ast_choice(d,p,l,i,v) :- ide_ast_event','ide_ast_choice(d,p,l,i,v) :- 0 = 1, ide_ast_event'),
            ('masking','string','!ide_masked(m),','0 = 0,'),
            ('allowlist','allowed-connection','!ide_allowed(p), ide_pattern','0 = 0, ide_pattern'),
            ('fts','fts-direct','ide_fts(p), ide_pattern(i,pattern,attribute), i < 2','ide_fts(p), ide_pattern(i,pattern,attribute), i < 0'),
            ('source-gate','source-text-only-gate','ide_entry_allowed(p), ide_argument_gate(),','ide_entry_allowed(p),'),
-           ('ast-order','ast-order','v = min w : { ide_ast_event(d,l,_,w) }','v = max w : { ide_ast_event(d,l,_,w) }'),
-           ('text-before-ast','text-before-earlier-ast','ide_event(d,0,l,l,pattern)','ide_event(d,2,l,l,pattern)')]
+           ('ast-order','ast-order','v = min w : { ide_ast_event(d,p,l,_,w) }','v = max w : { ide_ast_event(d,p,l,_,w) }'),
+           ('text-before-ast','text-before-earlier-ast','ide_event(d,p,0,l,l,pattern)','ide_event(d,p,2,l,l,pattern)')]
     for name,case,old,new in edits:
         if old not in text:raise ValueError('Missing mutation target: '+name)
         yield name,case,text.replace(old,new)

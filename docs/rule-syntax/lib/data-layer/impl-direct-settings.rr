@@ -81,18 +81,18 @@ ide_allowed(p) :- ide_path(p), match_all("(^|/)l3200_metadata/schema_lock\\.py$"
 ide_allowed_pattern("(^|/)l5200_vector_index/content_addressable_pgvector\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)l5200_vector_index/content_addressable_pgvector\\.py$",p).
 ide_pattern(0,"\\._execute_direct_internal\\(","_execute_direct_internal").
-ide_raw_match(d,m,0) :- ide_active(d,0,_,_), source(d,sp), match_all("(?<m>\\._execute_direct_internal\\()",sp).
+ide_raw_match(d,p,m,0) :- ide_active(d,p,0,_,_), source(d,sp), match_all("(?<m>\\._execute_direct_internal\\()",sp).
 ide_pattern(1,"\\._execute_direct_internal_async\\(","_execute_direct_internal_async").
-ide_raw_match(d,m,1) :- ide_active(d,1,_,_), source(d,sp), match_all("(?<m>\\._execute_direct_internal_async\\()",sp).
+ide_raw_match(d,p,m,1) :- ide_active(d,p,1,_,_), source(d,sp), match_all("(?<m>\\._execute_direct_internal_async\\()",sp).
 ide_pattern(2,"\\._fetchone\\(","_fetchone").
-ide_raw_match(d,m,2) :- ide_active(d,2,_,_), source(d,sp), match_all("(?<m>\\._fetchone\\()",sp).
+ide_raw_match(d,p,m,2) :- ide_active(d,p,2,_,_), source(d,sp), match_all("(?<m>\\._fetchone\\()",sp).
 ide_pattern(3,"\\._fetchall\\(","_fetchall").
-ide_raw_match(d,m,3) :- ide_active(d,3,_,_), source(d,sp), match_all("(?<m>\\._fetchall\\()",sp).
+ide_raw_match(d,p,m,3) :- ide_active(d,p,3,_,_), source(d,sp), match_all("(?<m>\\._fetchall\\()",sp).
 ide_pattern(4,"\\.fetchone\\(","fetchone").
-ide_raw_match(d,m,4) :- ide_active(d,4,_,_), source(d,sp), match_all("(?<m>\\.fetchone\\()",sp).
+ide_raw_match(d,p,m,4) :- ide_active(d,p,4,_,_), source(d,sp), match_all("(?<m>\\.fetchone\\()",sp).
 ide_pattern(5,"\\.fetchall\\(","fetchall").
-ide_raw_match(d,m,5) :- ide_active(d,5,_,_), source(d,sp), match_all("(?<m>\\.fetchall\\()",sp).
+ide_raw_match(d,p,m,5) :- ide_active(d,p,5,_,_), source(d,sp), match_all("(?<m>\\.fetchall\\()",sp).
 ide_pattern(6,"\\.execute_grammar_fetchone\\(","execute_grammar_fetchone").
-ide_raw_match(d,m,6) :- ide_active(d,6,_,_), source(d,sp), match_all("(?<m>\\.execute_grammar_fetchone\\()",sp).
+ide_raw_match(d,p,m,6) :- ide_active(d,p,6,_,_), source(d,sp), match_all("(?<m>\\.execute_grammar_fetchone\\()",sp).
 ide_pattern(7,"\\.execute_grammar_fetchall\\(","execute_grammar_fetchall").
-ide_raw_match(d,m,7) :- ide_active(d,7,_,_), source(d,sp), match_all("(?<m>\\.execute_grammar_fetchall\\()",sp).
+ide_raw_match(d,p,m,7) :- ide_active(d,p,7,_,_), source(d,sp), match_all("(?<m>\\.execute_grammar_fetchall\\()",sp).

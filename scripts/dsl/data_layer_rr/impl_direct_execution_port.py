@@ -4,7 +4,9 @@ from pathlib import Path
 
 def install(suite, module):
     def rows(entry, files=(), options=None):
-        return suite.native('impl_direct_execution', entry, list(files), options or {})
+        options=dict(options or {})
+        options['env']=['ide.api=true',*options.get('env',[])]
+        return suite.native('impl_direct_execution', entry, list(files), options)
 
     def allowed(path):
         result = rows('is_allowed_file', options=dict(argumentPath=str(path)))

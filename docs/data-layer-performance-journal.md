@@ -9858,3 +9858,16 @@ The unchanged update preserves timestamps and data. No native rebuild or engine 
 
 The full migration gate remains open; these are rule-specific acceptance results.
 Fetched remote Final `004df7e75`; that tip is already an ancestor of this branch.
+
+### 2026-11-09 — Direct-execution native checkpoint and next engine merge
+
+The [direct-execution receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-final004-checkpoint.json.gz) independently checks 385 native executions on optimized CLI `3b770a2b3d625130`.
+It covers 127 original scanner cases through each API, 55 supplemental cases, 19 production cases, eight controls, and fifteen workspace updates.
+All 196 tooling tests pass. This is rule acceptance work, not a repository CPU benchmark.
+
+Two snapshot shards took about 72 seconds each under concurrent load; each contains 63 or 64 original cases.
+The combined driver timed out at 115 seconds. Its independently bounded workspace children completed; subsequent checks ran as separate commands.
+No command limit was extended. Native CLI and module/DTO acceptance remain unfinished.
+
+Final advanced from `004df7e75` to `49f791af1` during the run.
+The latter changes session delta maintenance in three native files. Commit the frozen evidence, then merge and rebuild before certifying that cohort.
