@@ -314,6 +314,9 @@ pub(crate) fn forget_scope(at: usize) {
     if let Ok(mut d) = DERIVED.lock() {
         d.retain(|(s, _), _| *s != at);
     }
+    if let Ok(mut a) = ADOPTED.lock() {
+        a.retain(|(s, _)| *s != at);
+    }
 }
 static COMPONENTS: Mutex<Vec<((usize, String), Arc<Mutex<Component>>)>> = Mutex::new(Vec::new());
 fn component(conn: &Connection, name: &str) -> Result<Arc<Mutex<Component>>> {
@@ -1103,6 +1106,52 @@ pub fn forget_derived(conn: &Connection) {
     DERIVED.lock().unwrap().retain(|(s, _), _| *s != at);
 }
 
+/// A native relation of `conn`'s run, for a caller that keeps it past the run with the indexes it has (a session's
+/// relations, decision 0090 step 3).
+pub fn held(conn: &Connection, table: &str) -> Option<Arc<InRel>> {
+    DERIVED.lock().unwrap().get(&(scope(conn), table.to_owned())).cloned()
+}
+
+/// Puts a relation kept from an earlier run into `conn`'s next run as the input `table`: its strata read it in place,
+/// with the indexes it has (`r:` sources), not copied into a source and indexed again. The run's planner takes the
+/// names (`adopted`).
+pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
+    let at = scope(conn);
+    DERIVED.lock().unwrap().insert((at, table.to_owned()), rel);
+    ADOPTED.lock().unwrap().insert((at, table.to_owned()));
+}
+
+/// The relations `adopt`ed into `conn`'s next run, taken by its planner.
+pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
+    let at = scope(conn);
+    let mut a = ADOPTED.lock().unwrap();
+    let mine: std::collections::BTreeSet<String> = a.iter().filter(|(s, _)| *s == at).map(|(_, t)| t.clone()).collect();
+    a.retain(|(s, _)| *s != at);
+    mine
+}
+static ADOPTED: Mutex<std::collections::BTreeSet<(usize, String)>> = Mutex::new(std::collections::BTreeSet::new());
+
+impl InRel {
+    /// A relation of `rows` (each of `types.len()` values), for one a run left in a table rather than in the engine.
+    pub fn flat(rows: &[Vec<i64>], types: Vec<u8>) -> Arc<InRel> {
+        let k = types.len();
+        let n = rows.len();
+        let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
+        Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new() })
+    }
+    /// Its rows, as a source of columns `names`.
+    pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+        Arc::new(Derived(Arc::clone(self), Some(names)))
+    }
+    /// Its rows' bytes (its indexes not counted).
+    pub fn bytes(&self) -> usize {
+        self.rows.len() * 8
+    }
+    pub fn rows(&self) -> usize {
+        self.len()
+    }
+}
+
 /// The relations of components run with `nowrite`, by table, until they are materialized.
 static DERIVED: LazyLock<Mutex<HashMap<(usize, String), Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;
@@ -1113,11 +1162,11 @@ const FREQ_NDV: usize = 64;
 /// `c0`, `c1`, ….
 pub fn derived(conn: &Connection, table: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
     let rel = DERIVED.lock().unwrap().get(&(scope(conn), table.to_owned())).cloned()?;
-    Some(Arc::new(Derived(rel)))
+    Some(Arc::new(Derived(rel, None)))
 }
-struct Derived(Arc<InRel>);
+struct Derived(Arc<InRel>, Option<Vec<String>>);
 impl crate::code_rule_dsl::facts::vtab::Source for Derived {
-    fn columns(&self) -> Vec<String> { (0..self.0.k).map(|i| format!("c{i}")).collect() }
+    fn columns(&self) -> Vec<String> { self.1.clone().unwrap_or_else(|| (0..self.0.k).map(|i| format!("c{i}")).collect()) }
     fn len(&self) -> usize { self.0.len() }
     fn estimated_matches(&self, _: usize, _: bool) -> usize { 1 }
     fn indexed(&self, _: usize) -> bool { false }

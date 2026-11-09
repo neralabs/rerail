@@ -2948,7 +2948,11 @@ pub(crate) fn run_with_options(
                     let mut stats = cross_stats;
                     let s = span("bind and measure kept");
                     let clean = cell.as_ref().map(|kept| cut.sources(kept, &part.program)).unwrap_or_default();
-                    for (rel, source) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
+                    for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
+                        // A derived relation kept is read in place, with its indexes (decision 0090 step 3).
+                        if let Some(held) = held {
+                            crate::code_rule_dsl::logic::native::component::adopt(&db, &rel, held);
+                        }
                         let measured = syntax::statistics(source.as_ref());
                         // The constants the rules test it by are counted too: a column measured without them reads as
                         // holding none, so `kind__old(r, identifier)` was planned as one row and drove a delta rule.
@@ -2993,8 +2997,8 @@ pub(crate) fn run_with_options(
                             let new: std::collections::HashSet<Vec<i64>> = if got.kept.contains(rel) { held_rows(&db, &got, rel, width)?.into_iter().collect() } else { Default::default() };
                             let old: std::collections::HashSet<Vec<i64>> = cell
                                 .as_ref()
-                                .and_then(|k| k.old(rel))
-                                .map(|cols| (0..cols.first().map_or(0, Vec::len)).map(|i| cols.iter().map(|c| c[i]).collect()).collect())
+                                .and_then(|k| k.old_rows(rel))
+                                .map(|rows| rows.into_iter().collect())
                                 .unwrap_or_default();
                             let gone = old.difference(&new).count();
                             let fresh = new.difference(&old).count();
@@ -3015,11 +3019,23 @@ pub(crate) fn run_with_options(
                         returns = held_rows(&db, &got, "returns", 2)?;
                     }
                     // A relation of no columns is a flag its rows' count holds, which columns do not: derived again.
+                    // A relation the engine holds is kept as it is, with its indexes (decision 0090 step 3); one the
+                    // run left in a table (an output) is read from there.
                     let rows = derived
                         .iter()
                         .map(|rel| (rel, part.program.decls[rel].len()))
                         .filter(|(_, width)| *width > 0)
-                        .map(|(rel, width)| Ok((rel.clone(), width, held_rows(&db, &got, rel, width)?)))
+                        .map(|(rel, width)| {
+                            let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten();
+                            let held = match held {
+                                Some(h) => h,
+                                None => {
+                                    let types = part.program.decls[rel].iter().map(|(_, t)| if t == "sym" { b's' } else { b'i' }).collect();
+                                    crate::code_rule_dsl::logic::native::component::InRel::flat(&held_rows(&db, &got, rel, width)?, types)
+                                }
+                            };
+                            Ok((rel.clone(), width, held))
+                        })
                         .collect::<Result<Vec<_>>>()?;
                     // `RERAIL_CROSS_DELTA_COUNTS`: the rows the maintained strata overdeleted (`__del`), inserted (`__ins`),
                     // and hold after the run, for measuring delete-and-rederive (spike O125).
@@ -3027,7 +3043,7 @@ pub(crate) fn run_with_options(
                         // [over-deleted, inserted by the insert rules, held after, input and derived-again deltas
                         // (`__minus` + `__plus`), truly deleted, truly inserted].
                         let mut counts = [0usize; 6];
-                        let olds: HashMap<&str, usize> = maintained.sources.iter().map(|(rel, s)| (rel.as_str(), s.len())).collect();
+                        let olds: HashMap<&str, usize> = maintained.sources.iter().map(|(rel, s, _)| (rel.as_str(), s.len())).collect();
                         let derived_here: BTreeSet<&String> = part.program.rules.iter().map(|r| &r.head.rel).collect();
                         let rows_of = |rel: &str| held_rows(&db, &got, rel, part.program.decls[rel].len()).unwrap_or_default();
                         for (rel, cols) in &part.program.decls {
@@ -3078,6 +3094,11 @@ pub(crate) fn run_with_options(
                         vkeep.extend(derived.iter().filter(|rel| !plain.program.outputs.contains(*rel)).cloned());
                         let again = super::run_atoms_native_over(&plain, &db, "main", vstats, vkeep, modes)?;
                         let mut shown = 0;
+                        let rows_of = |h: &Arc<crate::code_rule_dsl::logic::native::component::InRel>, width: usize| -> Vec<Vec<i64>> {
+                            let s = h.source((0..width).map(|c| format!("c{c}")).collect());
+                            (0..s.len()).map(|i| (0..width).map(|c| s.value(i, c)).collect()).collect()
+                        };
+                        let rows: Vec<(String, usize, Vec<Vec<i64>>)> = rows.iter().map(|(r, w, h)| (r.clone(), *w, rows_of(h, *w))).collect();
                         for (rel, width, kept_rows) in &rows {
                             let want: std::collections::HashSet<Vec<i64>> = held_rows(&db, &again, rel, *width)?.into_iter().collect();
                             let have: std::collections::HashSet<Vec<i64>> = kept_rows.iter().cloned().collect();
@@ -3087,8 +3108,8 @@ pub(crate) fn run_with_options(
                                 let old_rows: std::collections::HashSet<Vec<i64>> = maintained
                                     .sources
                                     .iter()
-                                    .find(|(r, _)| *r == format!("{rel}__old"))
-                                    .map(|(_, src)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect()).collect())
+                                    .find(|(r, _, _)| *r == format!("{rel}__old"))
+                                    .map(|(_, src, _)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect()).collect())
                                     .unwrap_or_default();
                                 let (del, ins) = (delta(format!("{rel}__del")), delta(format!("{rel}__ins")));
                                 for row in have.difference(&want).take(3) {
@@ -3108,7 +3129,7 @@ pub(crate) fn run_with_options(
                             let hit = |row: &Vec<i64>| vs.iter().all(|v| row.contains(v));
                             for (rel, width, kept_rows) in &rows {
                                 let fresh = held_rows(&db, &again, rel, *width)?;
-                                let olds = maintained.sources.iter().find(|(r, _)| *r == format!("{rel}__old")).map(|(_, src)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).collect::<Vec<_>>()).unwrap_or_default();
+                                let olds = maintained.sources.iter().find(|(r, _, _)| *r == format!("{rel}__old")).map(|(_, src, _)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).collect::<Vec<_>>()).unwrap_or_default();
                                 let (a, b): (Vec<_>, Vec<_>) = (kept_rows.iter().filter(|r| hit(r)).collect(), fresh.iter().filter(|r| hit(r)).collect());
                                 let del: Vec<_> = verify_deltas.get(&format!("{rel}__del")).map(|d| d.iter().filter(|r| hit(r)).cloned().collect()).unwrap_or_default();
                                 if !a.is_empty() || !b.is_empty() || !olds.is_empty() {
@@ -3118,7 +3139,7 @@ pub(crate) fn run_with_options(
                             for (rel, src) in &cross_inputs {
                                 let w = src.columns().len();
                                 let now: Vec<Vec<i64>> = (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect();
-                                let olds = maintained.sources.iter().find(|(r, _)| *r == format!("{rel}__old")).map(|(_, src)| (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect::<Vec<_>>());
+                                let olds = maintained.sources.iter().find(|(r, _, _)| *r == format!("{rel}__old")).map(|(_, src, _)| (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect::<Vec<_>>());
                                 if !now.is_empty() || olds.as_ref().is_some_and(|o| !o.is_empty()) {
                                     eprintln!("O125_TRACE input {rel}: now {now:?} old {olds:?}");
                                 }

@@ -62,8 +62,9 @@ use std::sync::Arc;
 /// The part as a run evaluates it, the old rows it reads, and how its strata were evaluated.
 pub(in crate::code_rule_dsl) struct Maintained {
     pub(in crate::code_rule_dsl) program: lower::Lowered,
-    /// `r__old` for each changed relation read, from what was kept.
-    pub(in crate::code_rule_dsl) sources: Vec<(String, Arc<dyn Source>)>,
+    /// `r__old` for each changed relation read, from what was kept: a source, and for a derived relation the
+    /// engine's relation, adopted by the caller (read in place).
+    pub(in crate::code_rule_dsl) sources: Vec<(String, Arc<dyn Source>, Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>>)>,
     /// Strata maintained from deltas, and derived again.
     pub(in crate::code_rule_dsl) maintained: usize,
     pub(in crate::code_rule_dsl) derived_again: usize,
@@ -145,7 +146,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         let again = dirty.iter().map(|scc| (scc.iter().next().cloned().unwrap_or_default(), why)).collect();
         return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again });
     };
-    let old = |rel: &str| kept.old(rel).is_some();
+    let old = |rel: &str| kept.has_old(rel);
     let mut changed: BTreeSet<String> = cut.changed.iter().cloned().collect();
     let mut rules: Vec<Rule> = Vec::new();
     let mut olds: BTreeSet<String> = BTreeSet::new();
@@ -313,10 +314,9 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     }
     let mut sources = Vec::new();
     for rel in &olds {
-        let columns = kept.old(rel).expect("a maintained read's old rows");
         // Named as the planner reads its statistics (`sql_col`).
-        let names = (0..columns.len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&named(rel, "old"), c)).collect();
-        sources.push((named(rel, "old"), crate::code_rule_dsl::logic::native::component::columns_source(names, columns.iter().cloned().map(Some).collect())));
+        let (source, held) = kept.old_source(rel, &named(rel, "old")).expect("a maintained read's old rows");
+        sources.push((named(rel, "old"), source, held));
         fresh.push((rel.clone(), named(rel, "old")));
         part.program.inputs.push(named(rel, "old"));
     }

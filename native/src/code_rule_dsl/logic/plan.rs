@@ -2634,7 +2634,8 @@ impl Run<'_, '_> {
 
     /// Moves the native set engine's relations among `rels` into their tables (`set_fixpoint_materialize`).
     fn materialize(&mut self, rels: &[String]) -> Result<()> {
-        let held: BTreeSet<String> = rels.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect();
+        // An adopted input is bound as a source too, which SQL reads: it stays native.
+        let held: BTreeSet<String> = rels.iter().filter(|r| self.native_rels.contains(*r) && !self.prog.inputs.contains(*r)).cloned().collect();
         self.ensure(&held)?;
         for r in held {
             self.fx().materialize(&r)?;
@@ -4012,7 +4013,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
+    // Inputs kept in the engine from an earlier run (a session's, decision 0090 step 3) are read in place, as native
+    // relations, with the indexes they have.
+    let adopted: BTreeSet<String> = super::native::component::adopted(db).into_iter().filter(|r| prog.inputs.contains(r)).collect();
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
