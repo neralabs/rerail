@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 from migration import ROOT,PIN,compare,git,read_json,sha,write_json
-from replay import execute_native
+from replay import execute_native,execute_workspace_context
 
 RULE=ROOT/'gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr'
 
@@ -53,14 +53,17 @@ CASES=[case('empty',''),case('clean','pass\n'),
     case('logical-separator-inside-comment','# prefix\u2028obj._fetchone()\n'),
     case('logical-mask-overlap','"prefix\u2028obj._fetchone()"\nxxxx = "x"\n'),
     case('logical-mask-uses-token-codepoints','"prefix\u2028obj._fetchone()"\néééééé = "x"\n'),
-    case('logical-comment-still-skipped','"a\u2028b"\n# obj._fetchone()\n')]
+    case('logical-comment-still-skipped','"a\u2028b"\n# obj._fetchone()\n'),
+    case('duplicate-directory-demand','obj._fetchone()\n',path='impl/sub/a.py',entry='scan_directories',directories=['impl','impl']),
+    case('overlapping-directory-demands','obj._fetchone()\n',path='impl/sub/a.py',entry='scan_directories',directories=['impl','impl/sub'])]
 
 
 def source_case(module,case):
     with tempfile.TemporaryDirectory(prefix='impl-direct-source-') as temporary:
         root=Path(temporary);path=root/case['path'];path.parent.mkdir(parents=True,exist_ok=True);path.write_text(case['source'])
         func=getattr(module,case['entry'])
-        values=func(path,case.get('callSource',case['source'])) if case['entry'].endswith('_source') or case['entry']=='scan_source' else func(path)
+        if case['entry']=='scan_directories':values=func(root,case['directories'])
+        else:values=func(path,case.get('callSource',case['source'])) if case['entry'].endswith('_source') or case['entry']=='scan_source' else func(path)
         result=[]
         for value in values:
             row=asdict(value);row['file']=str(row['file']).replace(str(root),'$ROOT');result.append(row)
@@ -70,9 +73,17 @@ def source_case(module,case):
 def native_case(engine,case):
     options=dict(entryPoint=case['entry'],argumentPath='$ROOT/'+case['path'],projectRoot='__outside__')
     if 'callSource' in case:options['callSource']=case['callSource']
-    result=execute_native(engine,RULE,[dict(path='input.py',source=case['source'])],options)
+    physical_root=[]
+    if case['entry']=='scan_directories':
+        def settings(root):
+            physical_root.append(str(root))
+            return dict(entryPoint='scan_directories',projectRoot='__outside__',env=['ide.api=true',*['ide.scan.'+str(i)+'='+str(root/directory) for i,directory in enumerate(case['directories'])]])
+        result=execute_workspace_context(engine,RULE,[dict(path=case['path'],source=case['source'])],settings)
+    else:result=execute_native(engine,RULE,[dict(path='input.py',source=case['source'])],options)
     if any(r['code']!='IDE_ROW' for r in result['diagnostics']):raise ValueError('Unexpected scanner result')
-    values=[{k:r['parameters'][k] for k in ['file','line_num','line','pattern']} for r in sorted(result['diagnostics'],key=lambda r:tuple(r['parameters'][k] for k in ['phase','ordinal']))]
+    values=[{k:r['parameters'][k] for k in ['file','line_num','line','pattern']} for r in sorted(result['diagnostics'],key=lambda r:(r['parameters'].get('request_order',0),r['parameters']['file_order'],r['parameters']['phase'],r['parameters']['ordinal']))]
+    if physical_root:
+        for row in values:row['file']=row['file'].replace(physical_root[0],'$ROOT')
     return values,result
 
 
