@@ -54,10 +54,7 @@ pub(in crate::code_rule_dsl::sql_executor::reductions) fn plan(
                     .iter()
                     .map(|e| properties::expression(e, outer))
                     .collect(),
-                non_null: matches!(
-                    value,
-                    scalars::Expression::Column(_) | scalars::Expression::Integer(_)
-                ),
+                non_null: value.non_null(),
                 value,
                 dependent: r.dynamic()
                     || r.outer_keys

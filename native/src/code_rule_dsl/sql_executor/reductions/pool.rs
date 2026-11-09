@@ -123,7 +123,7 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
             rule.rewrite(queries[rule.step].as_ref().unwrap());
         }
     }
-    plans.storage.push(Report { analysis, groups, evaluation_boundary: "One checked execution and initialization generation; wave gates keep independent source histories" });
+    plans.storage.push(Report { analysis, groups, evaluation_boundary: "Bag storage ignores outer lookup dependencies; each consumer keeps its own lookup and dependency index. Cross-gate transitions require equal input snapshots and maintenance cursors" });
 }
 
 /// A maintenance pass keeps immutable dirty-key snapshots across scratch rewinds.

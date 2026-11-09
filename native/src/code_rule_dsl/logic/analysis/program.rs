@@ -17,6 +17,7 @@ pub(in crate::code_rule_dsl) struct ProgramAnalysis {
     pub key_inferences: Vec<KeyInference>,
     pub rules: Vec<RuleAnalysis>,
     pub scalar_storage: bags::Analysis,
+    pub support_uniqueness: BTreeMap<String, super::Decision>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -278,7 +279,16 @@ impl ProgramAnalysis {
                 (bags::Site { rule, head: r.head.clone(), scalar }, input)
             })
         }));
+        let mut producers = BTreeMap::<String,Vec<_>>::new();
+        for rule in &rules {
+            producers.entry(rule.head.clone()).or_default().push((rule.uniqueness.decision.proven,rule.contribution_storage.heads.clone()));
+        }
+        for (rel,rows) in &program.facts {
+            if !rows.is_empty() { producers.entry(rel.clone()).or_default().push((false,vec![])); }
+        }
+        let support_uniqueness = producers.into_iter().map(|(r,p)|(r,keys::union_support(&p))).collect();
         Self {
+            support_uniqueness,
             scalar_storage,
             relation_keys,
             key_inferences,
