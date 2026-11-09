@@ -871,23 +871,36 @@ pub(in crate::code_rule_dsl) fn record_words(native: &BlockNative) -> usize {
     Plan::new(native).record_words(native)
 }
 
+/// A piece of a halo in an exchange word: bits `lo..lo + len` of halo `at`'s newest k bits, at
+/// bit `first` of the word.
+#[derive(Clone, Copy)]
+struct Piece {
+    at: usize,
+    first: u32,
+    lo: u32,
+    len: u32,
+}
+
 /// An exchange's halos packed in words: a `prev` by k reads only the newest k bits of the group
-/// before, so each halo takes k bits of a 30-bit word (the flag is above them), in order. Each
-/// word: its halos, with each one's first bit. The same in every body: a group reads the words
-/// of the group before by place, whatever body that group ran.
-fn halo_words(native: &BlockNative, halos: &[usize]) -> Vec<Vec<(usize, u32)>> {
-    let mut words: Vec<Vec<(usize, u32)>> = Vec::new();
+/// before, so each halo takes k bits of 30-bit words (the flag is above them), in order, split
+/// where a word fills. The same in every body: a group reads the words of the group before by
+/// place, whatever body that group ran.
+fn halo_words(native: &BlockNative, halos: &[usize]) -> Vec<Vec<Piece>> {
+    let mut words: Vec<Vec<Piece>> = Vec::new();
     let mut used = 30u32;
     for &at in halos {
         let BlockInst::Prev(_, k) = native.insts[at] else { unreachable!("a halo is a prev") };
-        let k = u32::from(k);
-        assert!(k <= 30, "a halo's prev reaches at most 30 bytes back");
-        if used + k > 30 {
-            words.push(Vec::new());
-            used = 0;
+        let mut lo = 0u32;
+        while lo < u32::from(k) {
+            if used == 30 {
+                words.push(Vec::new());
+                used = 0;
+            }
+            let len = (u32::from(k) - lo).min(30 - used);
+            words.last_mut().expect("a word").push(Piece { at, first: used, lo, len });
+            used += len;
+            lo += len;
         }
-        words.last_mut().expect("a word").push((at, used));
-        used += k;
     }
     words
 }
@@ -1017,13 +1030,12 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         // (`halo_words`), then a scan's aggregate table each.
         let packed = halo_words(native, halos);
         let mut words: Vec<String> = Vec::new();
+        for &at in halos {
+            let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
+            out.push_str(&format!("  const ulong last{at} = halo_last(v{a}) >> {}u;\n", 64 - u32::from(k)));
+        }
         for word in &packed {
-            let mut parts = Vec::new();
-            for &(at, first) in word {
-                let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
-                out.push_str(&format!("  const ulong last{at} = halo_last(v{a});\n"));
-                parts.push(format!("(uint(last{at} >> {}u) << {first}u)", 64 - u32::from(k)));
-            }
+            let parts: Vec<String> = word.iter().map(|p| format!("(uint((last{} >> {}u) & {}ul) << {}u)", p.at, p.lo, (1u64 << p.len) - 1, p.first)).collect();
             words.push(parts.join(" | "));
         }
         let halo_count = packed.len();
@@ -1045,24 +1057,27 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         }
         // A halo word whose halos are all known in this body is published, for a general group
         // after, and not waited on.
-        let known = |j: usize| j < halo_count && packed[j].iter().all(|&(at, _)| !matches!(values.insts[at], BlockInst::Prev(..)));
+        let known = |j: usize| j < halo_count && packed[j].iter().all(|p| !matches!(values.insts[p.at], BlockInst::Prev(..)));
         let got = exchange_kinds(&mut out, &format!("x{level}"), &words, |j| if known(j) { "3u" } else if j < halo_count { "0u" } else { "1u" }.to_owned(), offset, record);
-        for (j, word) in packed.iter().enumerate() {
-            for &(at, first) in word {
-                let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
-                if !matches!(values.insts[at], BlockInst::Prev(..)) {
-                    // Its value: a constant, emitted with the next level.
-                    continue;
-                }
-                // The group before's newest k bits, at the top of the halo.
-                out.push_str(&format!(
-                    "  const ulong h{at} = ulong(({} >> {first}u) & {}u) << {}u;\n  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l - {}u, h{at}));\n",
-                    got[j],
-                    (1u32 << k) - 1,
-                    64 - u32::from(k),
-                    plan.warm
-                ));
+        for &at in halos {
+            let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
+            if !matches!(values.insts[at], BlockInst::Prev(..)) {
+                // Its value: a constant, emitted with the next level.
+                continue;
             }
+            // The group before's newest k bits, from their pieces, at the top of the halo.
+            let pieces: Vec<String> = packed
+                .iter()
+                .enumerate()
+                .flat_map(|(j, word)| word.iter().filter(|p| p.at == at).map(move |p| (j, *p)))
+                .map(|(j, p)| format!("(ulong(({} >> {}u) & {}u) << {}u)", got[j], p.first, (1u64 << p.len) - 1, p.lo))
+                .collect();
+            out.push_str(&format!(
+                "  const ulong h{at} = ({}) << {}u;\n  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l - {}u, h{at}));\n",
+                pieces.join(" | "),
+                64 - u32::from(k),
+                plan.warm
+            ));
         }
         for (s_, &at) in scans.iter().enumerate() {
             let cin = format!("tapply1(e{at}, tapply1({}, 0u))", got[halo_count + s_]);
