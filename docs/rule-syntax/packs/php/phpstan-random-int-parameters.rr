@@ -1,0 +1,31 @@
+.policy "phpstan-random-int-parameters" revision 2
+.description "Pass random_int() a minimum no greater than its maximum; otherwise it throws at runtime."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/values.rr"
+//   php_int(n, i)   n's value is the integer i (literals, -1, constants and one-write variables)
+//   (php/names) php_call, php_arg, php_named_arg
+
+// PHPStan's RandomIntParametersRule (argument.type, level 5): random_int($min, $max) where $max may be below $min.
+// PHPStan compares integer ranges: a constant is its own range, and random_int(a, b) returns int<a, b>. It reports
+// when the ranges overlap that way, or for ranges unbounded on a side only when it is certain:
+//   random_int(1, 0)                      reported
+//   random_int(0, random_int(-10, 10))    reported: $max may be -10
+//   random_int(random_int(0, 10), random_int(0, 10))    reported: equal ranges may still cross
+//   random_int(0, random_int(0, 10))      not reported
+// Ranges from types (`int<5, max>` in PHPDoc, a parameter's int) are not read, so those calls are not reported.
+.violation random_int(at: node) code "argument.type"
+    "Parameter #1 $min of function random_int expects lower number than parameter #2 $max."
+    suppress phpstan "argument.type"
+random_int(c) :- php_call(c, "random_int"), param(c, 0, "min", a), param(c, 1, "max", b), int_range(a, _, hi),
+    int_range(b, lo, _), lo < hi.
+.decl param(c: node, i: number, p: symbol, e: node)  // e is c's argument for parameter p (position i)
+param(c, i, p, e) :- php_call(c, "random_int"), (p = "min", i = 0 ; p = "max", i = 1),
+    (php_arg(c, i, e) ; php_named_arg(c, p, e)).
+// int_range(e, lo, hi): e is an int from lo to hi.
+.decl int_range(e: node, lo: number, hi: number)
+int_range(e, i, i) :- php_int(e, i).
+int_range(e, lo, hi) :- param(e, 0, "min", a), param(e, 1, "max", b), int_range(a, lo, _), int_range(b, _, hi).

@@ -1,0 +1,53 @@
+.policy "react-no-direct-mutation-state" revision 2
+.description "Update class component state with setState() instead of assigning to this.state outside the constructor; direct mutation doesn't trigger a re-render."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-direct-mutation-state: an assignment or ++/-- whose target is this.state or a member chain on it, in a
+// component: a class component, a createReactClass spec, or a function component (where `this` is rare). The
+// constructor may assign state, except while the plugin thinks a call is open (see constructor_set).
+//   this.state.name = "x";   this.state = {};   this.state.n++;        reported (at the target's object)
+//   constructor() { this.state = { n: 0 }; }                          not: the constructor sets the first state
+//   constructor() { foo(() => { this.state.n = 1; }); }               reported: inside a call
+//   constructor() { fetch(u).then(() => { this.state.n = 1; }); }     not: fetch(u) has ended, clearing the flag
+#include "tsx/react-class.rr"
+
+.violation no_direct_mutation_state(at: node)
+    code "react/no-direct-mutation-state"
+    "Do not mutate state directly. Use setState()."
+    suppress eslint "react/no-direct-mutation-state"
+    suppress oxlint "no-direct-mutation-state"
+no_direct_mutation_state(at) :- mutation(n, at), parent_component(n, k), !constructor_set(n, k), docof(n, d),
+    react_doc(d).
+
+// mutation(n, at): n writes state; at is what the plugin reports. For an assignment, the left side's object:
+// this.state.a.b = 1 gives this.state.a, this.state = x gives this. For ++/--, this.state itself.
+.decl mutation(n: node, at: node)
+mutation(n, at) :- (kind(n, "assignment_expression") ; kind(n, "augmented_assignment_expression")),
+    field(n, "left", l), on_state(l), field(l, "object", at).
+mutation(n, at) :- kind(n, "update_expression"), field(n, "argument", l), on_state(l), state_root(l, at).
+// on_state(l): l is this.state, or a member or index of something on_state: this.state.a, this.state[k].b
+.decl on_state(l: node)
+on_state(l) :- state_read(l).
+on_state(l) :- (kind(l, "member_expression") ; kind(l, "subscript_expression")), field(l, "object", o), deparen(o, p),
+    on_state(p).
+.decl state_root(l: node, r: node)
+state_root(l, l) :- state_read(l).
+state_root(l, r) :- on_state(l), !state_read(l), field(l, "object", o), deparen(o, p), state_root(p, r).
+
+// constructor_set(n, k): n is in k's constructor and the plugin's inCallExpression flag is off there. The flag is
+// set on entering any call of the component and cleared on leaving any call, so it is on when n's nearest
+// enclosing call holds no call that ends before n. One boolean, not a stack:
+//   constructor() { f(); this.state.a = 1; }                 no call around n: off
+//   constructor() { foo(g(), () => { this.state.a = 1; }); }  g() ended inside foo(…): off
+.decl constructor_set(n: node, k: node)
+constructor_set(n, k) :- comp_member(k, m, "constructor"), kind(m, "method_definition"), within(n, m),
+    !call_open(n, k).
+.decl call_open(n: node, k: node)
+call_open(n, k) :- mutation(n, _), parent_component(n, k), nearest(n, c, call_kind), within(c, k), !ended_in(c, n).
+.decl ended_in(c: node, n: node)  // a call inside call c ends before n starts
+ended_in(c, n) :- mutation(n, _), nearest(n, c, call_kind), node(_, n, _, s, _), kind(e, "call_expression"),
+    within(e, c), node(_, e, _, _, ee), ee <= s.
+.decl call_kind(k: symbol)
+call_kind("call_expression").

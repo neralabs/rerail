@@ -1,0 +1,36 @@
+.policy "typescript-eslint-no-useless-empty-export" revision 5
+.description "Remove export {} from TypeScript files that already import or export something; the file is a module already."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+.scope exclude "**/*.d.ts", "**/*.d.mts", "**/*.d.cts"
+
+#include "tsx/ts-b.rr"
+//   definition_file
+#include "tsx/modules.rr"
+//   program
+
+// typescript-eslint's no-useless-empty-export: `export {}` makes a file a module. Next to another import or export
+// it does nothing, and the fix removes it. Only the file's own statements count: the rule also visits module
+// declarations, but reads `body` as a list, which a module's block is not, so `namespace N { export {} }` passes.
+//   export {}; export const a = 1;      import "a"; export {};      → the `export {}` reported
+//   export {}; const a = 1;             export {}; export {} from "x";      fine
+// Declaration files are exempt: there `export {}` stops the file's names from being global. No options.
+.violation no_useless_empty_export(at: node) code "@typescript-eslint/no-useless-empty-export" "Empty export does nothing and can be removed."
+    suppress eslint "@typescript-eslint/no-useless-empty-export"
+    suppress oxlint "no-useless-empty-export"
+    suppress biome "lint/complexity/noUselessEmptyExport"
+    fix safe remove_export "Remove the empty export"
+no_useless_empty_export(e) :- empty_export(b, e), other_port(b, _), docof(b, d), !definition_file(d).
+remove_export(e) :- no_useless_empty_export(e) => delete(e).
+
+// empty_export(b, e): statement e of list b is `export {}` (also `export type {}` and `export {} from "x"`).
+.decl empty_export(b: node, e: node)
+empty_export(b, e) :- stmt_list_of(b), child(b, e, _), kind(e, "export_statement"), child(e, c, _),
+    kind(c, "export_clause"), !has(c, _, "export_specifier").
+// other_port(b, s): any other import or export statement in b, `export = x` and `import x = require()` included.
+.decl other_port(b: node, s: node)
+other_port(b, s) :- stmt_list_of(b), child(b, s, _), (kind(s, "import_statement") ; kind(s, "export_statement")),
+    !empty_export(b, s).
+.decl stmt_list_of(b: node)  // the program
+stmt_list_of(p) :- program(_, p).

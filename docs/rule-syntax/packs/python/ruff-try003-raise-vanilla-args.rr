@@ -1,0 +1,34 @@
+.policy "ruff-try003-raise-vanilla-args" revision 2
+.description "Build exception messages inside a custom exception class instead of passing message text at the raise site; the wording then stays consistent wherever it is raised."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TRY003 (tryceratops): a raise that builds a long message at the raise site. The raised call's first
+// positional argument is a string with whitespace in it (in an f-string, in its literal text only).
+// NotImplementedError is exempt.
+//   raise MyError("Custom message")       ← TRY003
+//   raise MyError(f"bad {x!r} value")     ← TRY003
+//   raise MyError(f"{x} {y}")             ← TRY003: the space between the fields is literal text
+//   raise MyError("single-word")          not reported
+//   raise NotImplementedError("not yet")  not reported
+#include "python/exceptions.rr"
+//   exc_raise(r, e), exc_arg(c, i, a), exc_qual(e, q)
+
+.violation TRY003(at: node) code "TRY003"
+    "Define an exception class that builds this message itself (for example in `__init__`) and raise it with only the varying values. Leave it if a dedicated class would not help callers."
+    suppress ruff "TRY003"
+TRY003(e) :- exc_raise(_, e), kind(e, "call"), exc_arg(e, 0, a), has_space(a), field(e, "function", f),
+    !exc_qual(f, "builtins.NotImplementedError").
+
+// has_space(a): a string literal (or adjacent ones) with a whitespace character in its literal text.
+.decl has_space(a: node)
+has_space(a) :- space_part(a).
+has_space(a) :- kind(a, "concatenated_string"), child(a, p, _), space_part(p).
+.decl space_part(s: node)
+space_part(s) :- string_kind(s, "str"), value(s, v),
+    match("[\\s\\S]*\\s[\\s\\S]*", v).
+// An f-string has no value: its literal pieces are the string_content children (not inside a field), whose
+// escapes (`\n`, `\t`) are whitespace too.
+space_part(s) :- kind(s, "string"), strprefix(s, p), contains("f", p), child(s, c, _), kind(c, "string_content"),
+    (match("[\\s\\S]*\\s[\\s\\S]*", c) ; child(c, x, _), kind(x, "escape_sequence"), match("\\\\[ntrvf]", x)).

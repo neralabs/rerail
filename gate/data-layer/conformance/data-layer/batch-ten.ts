@@ -18,10 +18,29 @@ type Row = Record<string, string | number | null>;
 type Finding = { code: string; message: string; path: string; span: { startLine: number }; variables: { row: Row } };
 const compare = (left: unknown, right: unknown): number => typeof left === "number" && typeof right === "number" ? left - right : Buffer.compare(Buffer.from(String(left)), Buffer.from(String(right)));
 export const canonical = (values: unknown): unknown => Array.isArray(values) ? [...values].sort((a,b) => compare(JSON.stringify(a),JSON.stringify(b))) : values;
+function sqlChoice(value:unknown,rewrite:(sql:string)=>string):unknown{
+ if(typeof value==="string")return rewrite(value);
+ const choice=value as {cases:Record<string,unknown>;default:unknown};
+ return {...choice,cases:Object.fromEntries(Object.entries(choice.cases).map(([key,sql])=>[key,sqlChoice(sql,rewrite)])),default:sqlChoice(choice.default,rewrite)};
+}
+export function observedCode(record:TenRecord,finding:unknown):string{
+ if(typeof finding==="string")return "missing_source";
+ const value=finding as {code?:string;rule?:string};
+ return value.code??value.rule??(record.check==="conditional_architecture"?"CONDA-005":"SIDP001");
+}
+export function positiveFamilies(oracle:TenOracle):{check:string;code:string;record:TenRecord}[]{
+ const families=new Map<string,{check:string;code:string;record:TenRecord}>();
+ for(const record of oracle.records)if(Array.isArray(record.expected))for(const finding of record.expected){
+  const code=observedCode(record,finding);
+  const key=record.check+":"+code;if(!families.has(key))families.set(key,{check:record.check,code,record});
+ }
+ return [...families.values()];
+}
 export function tenResult(record: TenRecord, findings: Finding[]): unknown {
   const rows = findings.map(f => f.variables.row);
   const order = (r: Row) => record.check === "conditional_architecture" ? record.entry==="conditional_architecture_findings"?[r.path,r.line,r.message]:[r.issue,r.path,String(r.line),r.message]
-    : ["hnsw_architecture","bounded_composed_graph_paths","matching_architecture"].includes(record.check) ? [r.path,r.line,r.issue,r.message]
+    : record.check === "matching_architecture" ? record.entry==="_scan_tree"?[r.phase,r.sort_name,r.ordering,r.issue]:[r.path,r.line,r.issue,...(record.entry==="lint"?[r.symbol]:[]),r.phase,r.sort_name,r.ordering]
+    : ["hnsw_architecture","bounded_composed_graph_paths"].includes(record.check) ? [r.path,r.line,r.issue,r.message]
     : record.check === "plan_optimizer_v2" && record.entry === "find_violations" ? [r.path,r.line,r.issue]
     : [r.phase ?? 0,r.sort_name ?? "",r.ordering ?? 0,r.issue];
   rows.sort((a,b) => { const l=order(a),r=order(b); for(let i=0;i<l.length;i++){const n=compare(l[i],r[i]);if(n)return n;} return 0; });
@@ -49,17 +68,26 @@ export function tenResult(record: TenRecord, findings: Finding[]): unknown {
 export class TenReplay {
   private readonly compiled=new Map<string,NativeCompiledCodeRuleDsl>();
   private readonly execution=replayExecution();
-  constructor(private readonly directory="packs/data-layer/rules",private readonly mutant=false){}
+  constructor(private readonly directory="packs/data-layer/rules",private readonly mutant:boolean|string=false){}
   close():void{this.execution.close();}
   async run(oracle:TenOracle,record:TenRecord,mode:"snapshot"|"workspace",production=false,selectionOnly=false):Promise<unknown>{
     const authored=JSON.parse(readFileSync(`${this.directory}/data-layer-${record.check.replaceAll("_","-")}.json`,"utf8"));
     if(selectionOnly){
       if(record.check!=="matching_architecture"||!production)throw new Error("Selection probe requires matching production defaults");
-      const gate=authored.clauses.find((c:{id:string})=>c.id==="matching-file-checks").relational.inputs.gate;
-      authored.clauses=authored.clauses.filter((c:{define?:unknown})=>c.define!==undefined).concat([{id:"selection-observation",relational:{inputs:{gate},query:"SELECT DISTINCT __path path,0 start_byte,0 end_byte FROM gate"},violation:{code:"SELECTION",message:"Selected source",anchor:"witness.span"}}]);
+      const stages=authored.clauses.find((c:{id:string})=>c.id==="matching-file-checks").relational.stages;
+      const parser=stages.find((s:{name:string})=>s.name==="canonical").pythonAst;
+      const roots=parser.roots;
+      // Observe the actual SQL source predicate before AST validity removes files.
+      const inputs={files:{evidence:{as:"file",query:{regex:{source:"file.content",pattern:"(?s)\\A(?P<TEXT>.*)\\z"}},project:{path:"file.path"}}}};
+      const probe=[stages.find((s:{name:string})=>s.name==="matching_parameters"),...(parser.syntax?[{name:"cst",query:"SELECT __path,0 id,'module' kind FROM files"}]:[])];
+      authored.clauses=authored.clauses.filter((c:{define?:unknown})=>c.define!==undefined).concat([{id:"selection-observation",relational:{inputs,stages:probe,query:sqlChoice(roots,sql=>`SELECT DISTINCT __path path,0 start_byte,0 end_byte FROM (${sql})`)},violation:{code:"SELECTION",message:"Selected source",anchor:"witness.span"}}]);
     }
     if(!production)for(const clause of authored.clauses)if(clause.define?.options!==undefined)clause.define.config={...clause.define.config,entryPoint:record.entry,parameters:JSON.stringify(record.parameters)};
-    if(this.mutant)authored.clauses=authored.clauses.filter((c:{define?:unknown})=>c.define!==undefined).concat([{id:"disabled",forbid:{regex:{source:"file.content",pattern:"\\b\\B"}},violation:{code:"CONTROL",message:"Disabled",anchor:"witness.span"}}]);
+    if(this.mutant===true)authored.clauses=authored.clauses.filter((c:{define?:unknown})=>c.define!==undefined).concat([{id:"disabled",forbid:{regex:{source:"file.content",pattern:"\\b\\B"}},violation:{code:"CONTROL",message:"Disabled",anchor:"witness.span"}}]);
+    if(typeof this.mutant==="string"){
+      const literal="'"+this.mutant.replaceAll("'","''")+"'";
+      for(const clause of authored.clauses)if(clause.relational)clause.relational.query=sqlChoice(clause.relational.query,sql=>`SELECT * FROM (${sql}) WHERE issue != ${literal}`);
+    }
     if(!production)authored.scope={include:["**/*"],exclude:[]};
     const program=JSON.stringify(codeRuleSchema.parse(authored));let rule=this.compiled.get(program);
     if(rule===undefined){rule=loadNativeBinding().CodeRuleDslRuntime.compile(program,"json",capabilitiesJson());this.compiled.set(program,rule);}

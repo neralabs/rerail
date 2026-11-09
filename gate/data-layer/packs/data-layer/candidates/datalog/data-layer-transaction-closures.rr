@@ -10,34 +10,34 @@ k0("lambda").
 k1("call").
 .decl k2(kind: symbol)
 k2("function_definition").
-.decl blocked126(low: node, high: node)
-.decl blocked132(low: node, high: node)
+.decl blocked123(low: node, high: node)
+.decl blocked129(low: node, high: node)
+.decl blocked163(low: node, high: node)
 .decl blocked169(low: node, high: node)
-.decl blocked175(low: node, high: node)
-.decl blocked55(low: node, high: node)
-.decl blocked61(low: node, high: node)
+.decl blocked58(low: node, high: node)
+.decl blocked64(low: node, high: node)
 .decl blocked89(low: node, high: node)
 .decl blocked95(low: node, high: node)
 .decl in_scope(d: number)
-.decl m112(n: node)
-.decl m149(n: node)
-.decl m155(n: node)
-.decl m157(n: node)
-.decl m161(n: node)
-.decl m192(n: node)
-.decl m24(n: node)
-.decl m26(n: node)
-.decl m30(n: node)
-.decl m78(n: node)
+.decl m108(n: node)
+.decl m142(n: node)
+.decl m148(n: node)
+.decl m150(n: node)
+.decl m154(n: node)
+.decl m182(n: node)
+.decl m25(n: node)
+.decl m27(n: node)
+.decl m31(n: node)
+.decl m77(n: node)
 .decl out_scope(d: number)
-.decl u119(n: node)
-.decl u153(n: node)
-.decl u162(n: node)
-.decl u22(n: node)
-.decl u31(n: node)
-.decl u48(n: node)
+.decl u115(n: node)
+.decl u146(n: node)
+.decl u155(n: node)
+.decl u23(n: node)
+.decl u32(n: node)
 .decl u5(n: node)
-.decl u82(n: node)
+.decl u50(n: node)
+.decl u81(n: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
@@ -51,46 +51,46 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-m24(n) :- node(_, n, "assignment", _, _).
-m24(n) :- node(_, n, "augmented_assignment", _, _).
-m24(n) :- node(_, n, "for_statement", _, _).
-m24(n) :- node(_, n, "for_in_clause", _, _).
-m26(n) :- node(_, n, "pattern_list", _, _).
-m26(n) :- node(_, n, "tuple_pattern", _, _).
-m26(n) :- node(_, n, "list_pattern", _, _).
-m26(n) :- node(_, n, "tuple", _, _).
-m26(n) :- node(_, n, "list", _, _).
-m26(n) :- node(_, n, "list_splat_pattern", _, _).
-m26(n) :- node(_, n, "parenthesized_expression", _, _).
-m30(n) :- field(v23, "left", n), m24(v23).
-m30(n) :- child(v25, n, _), m26(v25), u22(v25).
-m30(n) :- child(v27, n, _), node(_, v27, "as_pattern_target", _, _), field(v28, "alias", v27), node(_, v28, "as_pattern", _, _), child(v29, v28, _), node(_, v29, "with_item", _, _).
-u22(n) :- m30(n).
-blocked55(low, high) :- inside(low, s, k0), node(_, s, "lambda", _, _), inside(s, high, k2).
-blocked61(low, high) :- inside(low, high, k1), inside(low, s, k2), node(_, s, "function_definition", _, _), node(_, s, _, v62, v63), node(_, high, _, v64, v65), v64 <= v62, v63 <= v65, s != high.
-m78(n) :- child(n, v75, _), node(_, v75, "keyword_argument", _, _), field(v75, "name", v76), node(_, v76, "identifier", _, _), text(v76, v77), v77 = "fn".
-blocked89(low, high) :- inside(low, s, k0), node(_, s, "lambda", _, _), inside(s, high, k2).
-blocked95(low, high) :- inside(low, high, k1), inside(low, s, k2), node(_, s, "function_definition", _, _), node(_, s, _, v96, v97), node(_, high, _, v98, v99), v98 <= v96, v97 <= v99, s != high.
-m112(n) :- child(n, v109, _), node(_, v109, "keyword_argument", _, _), field(v109, "name", v110), node(_, v110, "identifier", _, _), text(v110, v111), v111 = "fn".
-blocked126(low, high) :- inside(low, s, k0), node(_, s, "lambda", _, _), inside(s, high, k2).
-blocked132(low, high) :- inside(low, high, k1), inside(low, s, k2), node(_, s, "function_definition", _, _), node(_, s, _, v133, v134), node(_, high, _, v135, v136), v135 <= v133, v134 <= v136, s != high.
-m149(n) :- child(n, v146, _), node(_, v146, "keyword_argument", _, _), field(v146, "name", v147), node(_, v147, "identifier", _, _), text(v147, v148), v148 = "fn".
-m155(n) :- node(_, n, "assignment", _, _).
-m155(n) :- node(_, n, "augmented_assignment", _, _).
-m155(n) :- node(_, n, "for_statement", _, _).
-m155(n) :- node(_, n, "for_in_clause", _, _).
-m157(n) :- node(_, n, "pattern_list", _, _).
-m157(n) :- node(_, n, "tuple_pattern", _, _).
-m157(n) :- node(_, n, "list_pattern", _, _).
-m157(n) :- node(_, n, "tuple", _, _).
-m157(n) :- node(_, n, "list", _, _).
-m157(n) :- node(_, n, "list_splat_pattern", _, _).
-m157(n) :- node(_, n, "parenthesized_expression", _, _).
-m161(n) :- field(v154, "left", n), m155(v154).
-m161(n) :- child(v156, n, _), m157(v156), u153(v156).
-m161(n) :- child(v158, n, _), node(_, v158, "as_pattern_target", _, _), field(v159, "alias", v158), node(_, v159, "as_pattern", _, _), child(v160, v159, _), node(_, v160, "with_item", _, _).
-u153(n) :- m161(n).
-blocked169(low, high) :- inside(low, s, k0), node(_, s, "lambda", _, _), inside(s, high, k2).
-blocked175(low, high) :- inside(low, high, k1), inside(low, s, k2), node(_, s, "function_definition", _, _), node(_, s, _, v176, v177), node(_, high, _, v178, v179), v178 <= v176, v177 <= v179, s != high.
-m192(n) :- child(n, v189, _), node(_, v189, "keyword_argument", _, _), field(v189, "name", v190), node(_, v190, "identifier", _, _), text(v190, v191), v191 = "fn".
+m25(n) :- node(_, n, "assignment", _, _).
+m25(n) :- node(_, n, "augmented_assignment", _, _).
+m25(n) :- node(_, n, "for_statement", _, _).
+m25(n) :- node(_, n, "for_in_clause", _, _).
+m27(n) :- node(_, n, "pattern_list", _, _).
+m27(n) :- node(_, n, "tuple_pattern", _, _).
+m27(n) :- node(_, n, "list_pattern", _, _).
+m27(n) :- node(_, n, "tuple", _, _).
+m27(n) :- node(_, n, "list", _, _).
+m27(n) :- node(_, n, "list_splat_pattern", _, _).
+m27(n) :- node(_, n, "parenthesized_expression", _, _).
+m31(n) :- field(v24, "left", n), m25(v24).
+m31(n) :- child(v26, n, _), m27(v26), u23(v26).
+m31(n) :- child(v28, n, _), node(_, v28, "as_pattern_target", _, _), field(v29, "alias", v28), node(_, v29, "as_pattern", _, _), child(v30, v29, _), node(_, v30, "with_item", _, _).
+u23(n) :- m31(n).
+blocked58(low, high) :- nearest(low, s, k0), inside(s, high, k2).
+blocked64(low, high) :- nearest(low, s, k2), within(s, high).
+m77(n) :- child(n, v74, _), node(_, v74, "keyword_argument", _, _), field(v74, "name", v75), node(_, v75, "identifier", _, _), text(v75, v76), v76 = "fn".
+blocked89(low, high) :- nearest(low, s, k0), inside(s, high, k2).
+blocked95(low, high) :- nearest(low, s, k2), within(s, high).
+m108(n) :- child(n, v105, _), node(_, v105, "keyword_argument", _, _), field(v105, "name", v106), node(_, v106, "identifier", _, _), text(v106, v107), v107 = "fn".
+blocked123(low, high) :- nearest(low, s, k0), inside(s, high, k2).
+blocked129(low, high) :- nearest(low, s, k2), within(s, high).
+m142(n) :- child(n, v139, _), node(_, v139, "keyword_argument", _, _), field(v139, "name", v140), node(_, v140, "identifier", _, _), text(v140, v141), v141 = "fn".
+m148(n) :- node(_, n, "assignment", _, _).
+m148(n) :- node(_, n, "augmented_assignment", _, _).
+m148(n) :- node(_, n, "for_statement", _, _).
+m148(n) :- node(_, n, "for_in_clause", _, _).
+m150(n) :- node(_, n, "pattern_list", _, _).
+m150(n) :- node(_, n, "tuple_pattern", _, _).
+m150(n) :- node(_, n, "list_pattern", _, _).
+m150(n) :- node(_, n, "tuple", _, _).
+m150(n) :- node(_, n, "list", _, _).
+m150(n) :- node(_, n, "list_splat_pattern", _, _).
+m150(n) :- node(_, n, "parenthesized_expression", _, _).
+m154(n) :- field(v147, "left", n), m148(v147).
+m154(n) :- child(v149, n, _), m150(v149), u146(v149).
+m154(n) :- child(v151, n, _), node(_, v151, "as_pattern_target", _, _), field(v152, "alias", v151), node(_, v152, "as_pattern", _, _), child(v153, v152, _), node(_, v153, "with_item", _, _).
+u146(n) :- m154(n).
+blocked163(low, high) :- nearest(low, s, k0), inside(s, high, k2).
+blocked169(low, high) :- nearest(low, s, k2), within(s, high).
+m182(n) :- child(n, v179, _), node(_, v179, "keyword_argument", _, _), field(v179, "name", v180), node(_, v180, "identifier", _, _), text(v180, v181), v181 = "fn".
 .output violation

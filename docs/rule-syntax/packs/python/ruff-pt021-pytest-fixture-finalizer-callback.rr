@@ -1,0 +1,26 @@
+.policy "ruff-pt021-pytest-fixture-finalizer-callback" revision 2
+.description "Prefer a yield with the cleanup after it over a finalizer callback in a pytest fixture; reserve the callback for fixtures that build resources on demand."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT021 (flake8-pytest-style): a fixture taking `request` that registers cleanup with
+// `request.addfinalizer(…)` instead of yielding and cleaning up after the yield. One finding per fixture, at the
+// last such call Ruff's walk sees (pytest_seen: not in nested defs, not under expressions other than calls).
+//   @pytest.fixture
+//   def db(request):
+//       conn = connect()
+//       request.addfinalizer(conn.close)     ← PT021
+//       return conn
+#include "python/pytest.rr"
+//   pytest_fixture(f, d, e), pytest_seen(f, n), exc_dotted(e, s); names: params(f, x, i)
+
+.violation PT021(at: node) code "PT021"
+    "Return the fixture value with `yield` and move this cleanup, and any other registered finalizer, after it. Keep the callback if cleanup must run even when later setup code raises."
+    suppress ruff "PT021"
+PT021(c) :- finalizer(f, c), !later_finalizer(f, c).
+.decl later_finalizer(f: node, c: node)  // Ruff keeps the last call its walk sees
+later_finalizer(f, c) :- finalizer(f, c), finalizer(f, c2), earlier(c, c2).
+.decl finalizer(f: node, c: node)
+finalizer(f, c) :- pytest_fixture(f, _, _), params(f, "request", _), pytest_seen(f, c), kind(c, "call"),
+    field(c, "function", g), exc_dotted(g, "request.addfinalizer").

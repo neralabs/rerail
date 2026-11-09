@@ -13,7 +13,15 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   CLI. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's pull requests; `npm run check` fails on drift.
 - `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs, and the
   dashboard scenario launcher for design review (`ui-scenario.ts`, `just ui-scenario <scenario>`).
-- `dsl/`: the code-rule DSL benchmark.
+- `dsl/`: the code-rule DSL benchmark, data-layer rule inventory (`data_layer_rule_audit.py`), test survey
+  (`data_layer_test_survey.py`), pytest recorder (`data_layer_record.py`, `--batch 1`, `--batch 2`, `--batch 3`, or `--batch 4`),
+  batch-two analyzer adapters (`data_layer_batch_two.py`), supplemental probe recorder
+  (`data_layer_probe_record.py`), and shared-suite recorder
+  (`data_layer_suite_record.py`, `--batches 1,2,3,4` for forty candidates).
+  Third-batch recording uses `data_layer_batch_three.py`; its probes use `data_layer_probe_three.py`.
+  `data_layer_generate_batch_three.py` regenerates ten policy documents after verifying pinned source and artifacts.
+  Fourth-batch recording uses `data_layer_batch_four.py`; its probes use `data_layer_probe_four.py`.
+  `data_layer_generate_batch_four.py` regenerates its candidates; the fourth-batch report records unresolved gaps.
 - `generate/`: generators of committed engine and host data and the DSL reference page (manifest: `generate/README.md`).
 - `host/`: real-host runs: OMP install, host smoke, lifecycle and auth checks, the Windows install smoke.
 - `pack-data/`: the derivation of the packs' derived test data from their pins (`derive.ts`, `npm run fixtures:derive`),

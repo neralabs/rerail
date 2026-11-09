@@ -262,10 +262,10 @@ const BODY_OPCODES: &[&str] = &[
     "isub", "smin", "smax", "ishl",
     // The extract pass's size: each extract's popcount, summed as the plane is written.
     "popcnt",
-    // Constants, made where they are used (decision 0047): `movi` and literal-pool loads, and
+    // Constants, made where they are used (decision 0069): `movi` and literal-pool loads, and
     // the output words' one pointer (`i * outputs * 8`).
     "splat", "vconst", "imul_imm",
-    // The packed carried state (decision 0048): a field's bits read with a mask.
+    // The packed carried state (decision 0070): a field's bits read with a mask.
     "band_imm",
     // The extracts' flattening (simdjson's): a position per set bit, eight at a time.
     "ctz", "istore32", "icmp_imm", "jump",
@@ -1245,7 +1245,7 @@ fn within_lowers_to_straight_bit_operations() {
     check_lowering("within", &program("  block 0 %0 = within\n  block 0 %1 = eq 0x00\n  block 0 %2 = and %0, %1\n  block 0 output %2\n  block 0 delay 3\n"));
 }
 
-// --- Cranelift's loop keeps simdjson's shape (decision 0047) ------------------------------------
+// --- Cranelift's loop keeps simdjson's shape (decision 0069) ------------------------------------
 
 /// The loop of a compiled block function's machine code: its largest block (the body over one
 /// 64-byte block) and the blocks it branches to that jump back to it (the back edge). The
@@ -1310,11 +1310,11 @@ fn stage1_loop_keeps_values_in_registers() {
     assert_eq!(carried_params(&compiled.clif) - sink_params(&native), words, "stage 1's carried state is not packed");
 }
 
-/// Stage 1's loop is simdjson's size (decision 0049): one reduction per 64-bit mask and one
+/// Stage 1's loop is simdjson's size (decision 0071): one reduction per 64-bit mask and one
 /// lookup per table for every class, at most 150 instructions per 64 bytes.
 #[test]
 #[cfg(target_arch = "aarch64")]
-#[ignore = "red guard (decision 0049): on at step 2, stage 1's codegen"]
+#[ignore = "red guard (decision 0071): on at step 2, stage 1's codegen"]
 fn stage1_loop_is_simdjsons_size() {
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
     let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
@@ -1347,7 +1347,7 @@ fn rir_loop_size() {
     }
 }
 
-/// A program's carried state in bits (decision 0048): one bit per `toggle`, `escaped` and
+/// A program's carried state in bits (decision 0070): one bit per `toggle`, `escaped` and
 /// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
 /// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
 /// costs `k - 1` more. Every executor carries these bits and no more: Cranelift packs them into

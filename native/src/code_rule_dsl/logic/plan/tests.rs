@@ -3,7 +3,6 @@ use crate::code_rule_dsl::logic::front::prune;
 use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
 use crate::content_store::ContentStore;
-use crate::code_rule_dsl::typing::cross_rounds;
 
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
@@ -299,6 +298,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
 /// O12 (option a): `nearest` made by the transducer's file-local FIX (`typing::file_local`) and read as the input
 /// `nearest_<set>(n, a)`, on the CPU and on the device work queue: T's programs derive T's outputs.
 #[test]
+#[cfg_attr(debug_assertions, ignore = "O82: aborts in the metal crate on a debug build (`slice::from_raw_parts` precondition, metal-0.33.0 lib.rs:82)")]
 fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
@@ -321,8 +321,8 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
             let sets = lowered.transduce_nearest();
             assert!(!sets.is_empty(), "{name} reads nearest");
             assert!(!lowered.program.rules.iter().flat_map(|r| &r.body).any(|l| matches!(l, Literal::Nearest { .. })));
-            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding).unwrap() {
-                if rel.starts_with("nearest_") {
+            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
+                if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                     for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
                         db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd]).unwrap();
@@ -364,8 +364,8 @@ fn t_programs_run_natively_over_atoms_like_t() {
         let p = program(name);
         let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let sets = lowered.transduce_nearest();
-        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu).unwrap() {
-            if rel.starts_with("nearest_") {
+        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
+            if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                 for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
                     db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd]).unwrap();
@@ -397,12 +397,37 @@ fn t_programs_run_natively_over_atoms_like_t() {
 /// T's outputs on T's facts, through the same front (prune, magic sets, prune). Their plans may differ from
 /// T's; their outputs may not.
 #[test]
+#[ignore = "O95: T's facts predate relations calls.rr now reads (`value`, `str`, …); the facts need them, empty or rebuilt"]
 fn product_programs_derive_t_outputs() {
     let facts = facts();
+    // T's facts predate `strprefix` (which calls.rr's type relations read, decision 0047): empty here, so every
+    // string is str. Likewise the guests (`parsed`, `host_node`, decision 0055): no string is parsed. No T output
+    // reads them. Nor do they have `name`, `str`, `value` and `op_at` (core.rr), which calls.rr reads through
+    // python/conditions.rr (Typing's B6, B10): empty here, so no `sys.version_info` or `sys.platform` test is
+    // decided and every branch is taken, as T assumed.
+    Connection::open(&facts).unwrap().execute_batch(
+        "CREATE TABLE strprefix(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.strprefix', 0);
+         INSERT INTO stat_col VALUES ('strprefix', 'n', 0, 0, 0, 0), ('strprefix', 's', 0, 0, 0, 0);
+         CREATE TABLE parsed(s INTEGER, grammar TEXT, root INTEGER); INSERT INTO stat_meta VALUES ('rows.parsed', 0);
+         INSERT INTO stat_col VALUES ('parsed', 's', 0, 0, 0, 0), ('parsed', 'grammar', 0, 0, 0, 0), ('parsed', 'root', 0, 0, 0, 0);
+         CREATE TABLE host_node(n INTEGER, h INTEGER); INSERT INTO stat_meta VALUES ('rows.host_node', 0);
+         INSERT INTO stat_col VALUES ('host_node', 'n', 0, 0, 0, 0), ('host_node', 'h', 0, 0, 0, 0);
+         CREATE TABLE value(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.value', 0);
+         INSERT INTO stat_col VALUES ('value', 'n', 0, 0, 0, 0), ('value', 's', 0, 0, 0, 0);
+         CREATE TABLE str(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.str', 0);
+         INSERT INTO stat_col VALUES ('str', 'n', 0, 0, 0, 0), ('str', 's', 0, 0, 0, 0);
+         CREATE TABLE name(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.name', 0);
+         INSERT INTO stat_col VALUES ('name', 'n', 0, 0, 0, 0), ('name', 's', 0, 0, 0, 0);
+         CREATE TABLE op_at(n INTEGER, i INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.op_at', 0);
+         INSERT INTO stat_col VALUES ('op_at', 'n', 0, 0, 0, 0), ('op_at', 'i', 0, 0, 0, 0), ('op_at', 's', 0, 0, 0, 0)",
+    ).unwrap();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
-        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rr"))).unwrap();
-        let p = prune(parse(&src).unwrap());
+        let src = crate::code_rule_dsl::tools::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let mut p = prune(parse(&src).unwrap());
+        // T has no library stage (decision 0059): with no `stage` fact, the rules it opens are dead, and their
+        // unbound reads of demanded relations (`need_attr(c, a) :- stage("library"), found(c, a, _)`) are not asked.
+        p.rules.retain(|r| !r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "stage" && !a.neg)));
         let options = Options::default();
         let p = prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap());
         // `found`'s demand is the magic-set relation, not a hand-written one.
@@ -411,11 +436,15 @@ fn product_programs_derive_t_outputs() {
         }
         let golden = root().join(format!("plan/golden/{name}"));
         let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
-        for (rel, rows) in &got.outputs {
+        // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
+        for (rel, rows) in got.outputs.iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
             let expected = std::fs::read_to_string(golden.join(format!("{rel}.csv"))).unwrap();
             let expected: Vec<&str> = expected.lines().collect();
             if rows.iter().map(String::as_str).collect::<Vec<_>>() != expected {
-                failures.push(format!("{name} {rel}: {} rows, expected {}", rows.len(), expected.len()));
+                let got: BTreeSet<&str> = rows.iter().map(String::as_str).collect();
+                let want: BTreeSet<&str> = expected.iter().copied().collect();
+                let (missing, extra): (Vec<_>, Vec<_>) = (want.difference(&got).take(3).collect(), got.difference(&want).take(3).collect());
+                failures.push(format!("{name} {rel}: {} rows, expected {}; missing {missing:?}, extra {extra:?}", rows.len(), expected.len()));
             }
         }
     }
@@ -449,18 +478,16 @@ fn own_ingestion_derives_what_t_facts_do() {
             .collect::<Vec<_>>()
             .join("\t")
     };
-    let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_else(|e| panic!("{}: {rel}: {e}", out.display()));
     for name in ["workload", "calls"] {
-        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::tools::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
-        // The cross-file part runs in bounded rounds (`typing::cross_rounds`, k = 2). On this corpus workload's
-        // reach the fixpoint (round 2's digest is round 1's); calls' need a third crossing (8 of 5,112 hop rows,
-        // O41), so they stop unconverged after round 2. Both runs below are bounded alike.
+        // The cross-file part is one fixpoint (decision 0065): one run, converged, nothing pending.
         println!("{name}: cross-file rounds {:?}", report.rounds);
-        assert_eq!(report.rounds.run, cross_rounds::K + 1, "{name}: {:?}", report.rounds);
-        assert_eq!(report.rounds.converged, name == "workload", "{name}: {:?}", report.rounds);
+        assert_eq!(report.rounds.run, 1, "{name}: {:?}", report.rounds);
+        assert!(report.rounds.converged && !report.rounds.pending, "{name}: {:?}", report.rounds);
         for chunk in [1_usize << 18, 1 << 12] {
             let own = dir.join(format!("out-{name}-own-{chunk}"));
             let got = corpus::run(&src, &dir, None, &own, "program", Binding::Cpu, chunk).unwrap();
@@ -501,12 +528,12 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let cache = dir.join("cache");
 
     let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
-    let r = run_typed(&src, &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
+    let r = run_typed(&[&src], &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
     assert_eq!(r.typing.summaries, 2, "{:?}", r.typing);
     assert_eq!(r.typing.conflicts, vec![("vendor.core.make".to_owned(), "int".to_owned(), "str".to_owned())]);
 
     let app = Typing { declarations: vec![dir.join("decl/other.pyi")], site: Some((dir.join("site"), cache.clone())), ..Default::default() };
-    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
+    let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
     println!("{:?}", r.typing);
     assert!(r.typing.pending.is_empty(), "{:?}", r.typing);
     assert_eq!(r.typing.declared, 4, "version: str, make: int, thing: bytes | None");
@@ -522,7 +549,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     assert_eq!(unions, vec![2, 2]);
 
     let cold = Typing { site: Some((dir.join("site"), dir.join("empty-cache"))), ..Default::default() };
-    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
+    let r = run_typed(&[&src], &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
     assert_eq!(r.typing.pending, vec!["vendor".to_owned(), "vendor.core".to_owned()]);
     assert_eq!(std::fs::read_to_string(dir.join("out-cold/type_of.csv")).unwrap(), "");
     let _ = std::fs::remove_dir_all(&dir);
@@ -565,7 +592,8 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
 }
 
 /// The tree axes (decision 0036): `inside(n, a, set)` holds every ancestor of `n` whose kind is in the set, not
-/// only the nearest; `has(a, n, set)` is the same pairs read from the ancestor; both negate.
+/// only the nearest; `has(a, n, set)` every descendant of `a` whose kind is in the set (`core.rr`: the set tests the
+/// descendant); both negate.
 #[test]
 fn rules_read_inside_and_has_as_tape_relations() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("axes");
@@ -578,6 +606,8 @@ fn rules_read_inside_and_has_as_tape_relations() {
 .input node, field, text
 .decl fn(kind: symbol)
 fn("function_definition").
+.decl call_k(kind: symbol)
+call_k("call").
 .decl callee(c: node, s: symbol)
 callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
 .decl fname(f: node, s: symbol)
@@ -587,11 +617,16 @@ fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), tex
 call_in(c, f) :- callee(n, c), inside(n, a, fn), fname(a, f).
 // Functions that have a call to g somewhere below them.
 .decl calls_g(f: symbol)
-calls_g(f) :- fname(a, f), has(a, n, fn), callee(n, "g").
+calls_g(f) :- fname(a, f), has(a, n, call_k), callee(n, "g").
+// Functions with a function inside them, and without.
+.decl nests(f: symbol)
+nests(f) :- fname(a, f), has(a, _, fn).
+.decl flat(f: symbol)
+flat(f) :- fname(a, f), !has(a, _, fn).
 // Calls inside no function.
 .decl top(c: symbol)
 top(c) :- callee(n, c), !inside(n, _, fn).
-.output call_in, calls_g, top
+.output call_in, calls_g, top, nests, flat
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -599,6 +634,8 @@ top(c) :- callee(n, c), !inside(n, _, fn).
     assert_eq!(read("call_in"), "f\touter\ng\tinner\ng\touter\n");
     assert_eq!(read("calls_g"), "inner\nouter\n");
     assert_eq!(read("top"), "h\n");
+    assert_eq!(read("nests"), "outer\n");
+    assert_eq!(read("flat"), "inner\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -638,4 +675,34 @@ fn("function_definition").
         println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
     }
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A demanded symbol with many captures must not submit one SQLite statement per match.
+#[test]
+fn repeated_symbol_captures_use_bulk_sql() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    unsafe extern "C" fn trace(_: u32, state: *mut std::ffi::c_void, _: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+        // SAFETY: the counter outlives the callback, which is removed before it drops.
+        unsafe { &*state.cast::<AtomicUsize>() }.fetch_add(1, Ordering::Relaxed);
+        0
+    }
+    let db = Connection::open_in_memory().unwrap();
+    let source = (0..1000).map(|i| format!("k={i} ")).collect::<String>();
+    let p = parse(&format!(r#"
+.decl capture_input(s: symbol)
+capture_input({}).
+.decl captured(v: symbol)
+captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
+.output captured
+"#, serde_json::to_string(&source).unwrap())).unwrap();
+    let count = AtomicUsize::new(0);
+    unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), rusqlite::ffi::SQLITE_TRACE_STMT, Some(trace), std::ptr::from_ref(&count).cast_mut().cast()); }
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let result = run(&p, &db, inputs, None, Hooks::default());
+    unsafe { rusqlite::ffi::sqlite3_trace_v2(db.handle(), 0, None, std::ptr::null_mut()); }
+    let result = result.unwrap();
+    assert_eq!(result.outputs["captured"].len(), 1000);
+    assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
 }

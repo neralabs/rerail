@@ -18,7 +18,7 @@
 
 lexer json
 
-# Two tiers, as simdjson's two stages (docs/final-shape/decisions/0049-two-tiers.md):
+# Two tiers, as simdjson's two stages (docs/final-shape/decisions/0071-two-tiers.md):
 #   - tier 1, every byte: the classes, the string state, each token's first and last byte, and
 #     the errors a byte shows by itself;
 #   - tier 2, every token (the tree section): kinds, keywords, the number check, nesting, keys.

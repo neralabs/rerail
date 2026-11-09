@@ -106,3 +106,44 @@ fn joins_probe_by_key() -> Result<()> {
     assert_eq!(named.counters().candidates.load(Ordering::Relaxed), 2);
     Ok(())
 }
+
+/// Several `=` are one filter: the source's composite order where it keeps one, else a probe of the most
+/// selective column with the rest checked before SQLite sees a row. Both agree with a plain table.
+#[test]
+fn several_equalities_probe_once_and_agree_with_sqlite() -> Result<()> {
+    let db = Connection::open_in_memory()?;
+    let modules = Modules::default();
+    // `a` has 4 values, `b` 50, `c` 2000: no single column but `c` is selective; `a` and `b` together are.
+    let rows: Vec<[i64; 3]> = (0..2000).map(|i| [i % 4, (i / 4) % 50, i]).collect();
+    let mut r = Relation::new(&["a", "b", "c"]);
+    rows.iter().for_each(|row| r.push(row));
+    modules.bind(&db, "probe", Arc::new(r))?;
+    let columns = ["a", "b", "c"].map(str::to_owned).to_vec();
+    let values = (0..3).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+    modules.bind(&db, "ordered", crate::code_rule_dsl::logic::native::component::columns_source(columns, values))?;
+    db.execute_batch("CREATE TABLE plain(a INTEGER, b INTEGER, c INTEGER)")?;
+    for [a, b, c] in &rows {
+        db.execute("INSERT INTO plain VALUES (?1, ?2, ?3)", [a, b, c])?;
+    }
+    for table in ["probe", "ordered"] {
+        let counters = modules.get(table).unwrap();
+        for filter in ["a = 1 AND b = 7", "b = 7 AND a = 1", "a = 1 AND b = 7 AND c = 29", "a = 1 AND b = '7'", "a = 1 AND b = 7.5",
+            "a IN (1, 2) AND b = 7", "a = 3 AND b = 49 AND c > 1000"] {
+            let before = counters.counters().candidates.load(Ordering::Relaxed);
+            let got = ints(&db, &format!("SELECT c FROM {table} WHERE {filter} ORDER BY c"))?;
+            let expected = ints(&db, &format!("SELECT c FROM plain WHERE {filter} ORDER BY c"))?;
+            assert_eq!(got, expected, "{table}: {filter}");
+            let read = counters.counters().candidates.load(Ordering::Relaxed) - before;
+            // An `IN` list is checked by SQLite, not here: `b` = 7's 40 rows reach it.
+            let most = if filter.contains(" IN ") { 40 } else { 20 };
+            assert!(read <= most, "{table}: {filter} read {read} candidates");
+        }
+    }
+    // The bound column of a join is probed, not a constant shared by many rows (`b` = 7 has 40).
+    let plan: Vec<String> = db
+        .prepare("EXPLAIN QUERY PLAN SELECT p.c FROM plain p CROSS JOIN ordered o WHERE o.b = 7 AND o.c = p.c")?
+        .query_map([], |r| r.get(3))?
+        .collect::<Result<_>>()?;
+    assert!(plan.iter().any(|p| p.contains("VIRTUAL TABLE INDEX 4194304:c")), "{plan:?}");
+    Ok(())
+}

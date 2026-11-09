@@ -1,5 +1,5 @@
 // Block programs' Metal interpreter (metal_block_program.rs): a batch of files, each under its own
-// program, in one launch (decision 0044). Each lane owns W consecutive bytes of a file (W = 16, 32
+// program, in one launch (decision 0066). Each lane owns W consecutive bytes of a file (W = 16, 32
 // or 64) and its W-bit word of every value, so a 32-lane SIMD group works on 32 words at once. A
 // group's values are slots of lane words in its worker's scratch, in device memory (decision
 // 0034). Each step runs once; a carried step resolves its carry by look-back (`look_back`,
@@ -139,7 +139,7 @@ static bool interpret_file(device const uint4* bytes, FileRow f, uint g, uint l,
 }
 
 // Persistent workers (decision 0027): each takes group numbers in launch order and interprets
-// its file's program over the group, reading the file in its slab (decision 0045). `p`: the batch's groups, the polls after the first, the
+// its file's program over the group, reading the file in its slab (decision 0067). `p`: the batch's groups, the polls after the first, the
 // most steps of any program.
 #define BATCH_KERNEL(W, M)                                                                                       \
   kernel void block_batch_##W(                                                                                   \

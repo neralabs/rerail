@@ -182,9 +182,9 @@ fn opening_a_store_without_the_facts_tables_adds_them_at_the_same_floor() {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(floor, SCHEMA_VERSION);
-        // The facts memo is additive: it raised no floor (2 is the atom-keyed vocabulary's).
-        assert_eq!(SCHEMA_VERSION, 2);
-        assert_eq!(STORE_FILE_NAME, "content-v2.sqlite");
+        // The facts memo is additive: it raised no floor (3 is the atom segments', decision 0049).
+        assert_eq!(SCHEMA_VERSION, 3);
+        assert_eq!(STORE_FILE_NAME, "content-v3.sqlite");
     }
     assert_eq!(store.get_source(old).unwrap(), b"older source");
     let source = store.put_facts_source(b"older source", content(b"older source"), &[]).unwrap();
@@ -239,4 +239,37 @@ fn a_run_digest_names_the_output_not_the_content() {
     assert_eq!(store.put_facts_memo(key, &set, &results, &[]).unwrap(), None);
     let other = store.put_facts_memo(key, &set, &[result(1, false, b"other")], &completions).unwrap();
     assert_ne!(other, Some(digests[0]));
+}
+
+#[test]
+fn a_memo_row_that_does_not_decode_is_a_miss_and_is_replaced() {
+    // O112: a row whose frame decodes to another length than its metadata fails only its own plans.
+    let (_path, store) = store("undecodable");
+    let bytes = b"x = 1\n";
+    let source = store.put_facts_source(bytes, content(bytes), &[]).unwrap();
+    let set = FactsPlanSet::new(vec![plan(1), plan(2), plan(3)]);
+    let key = FactsMemoKey { source, fact_schema: 7, path: "a.py" };
+    store
+        .put_facts_memo(key, &set, &[result(1, false, b"one"), result(2, false, b"two")], &[completion(2, false, b"c3")])
+        .unwrap();
+    {
+        let connection = store.connection.lock().unwrap();
+        connection
+            .execute("UPDATE facts_results SET raw_length=raw_length+1 WHERE plan_digest=?1", [&plan(1)[..]])
+            .unwrap();
+        connection.execute("UPDATE facts_completions SET raw_length=raw_length+1", []).unwrap();
+    }
+    let read = store.facts_memo(key).unwrap();
+    assert_eq!(read.results.keys().collect::<Vec<_>>(), vec![&plan(2)]);
+    assert!(read.completed.is_empty());
+    assert_eq!(read.run_digest(&set), None);
+
+    // Evaluated again, the clauses' rows replace the bad ones.
+    store
+        .put_facts_memo(key, &set, &[result(1, false, b"one")], &[completion(2, false, b"c3")])
+        .unwrap();
+    let read = store.facts_memo(key).unwrap();
+    assert_eq!(read.results[&plan(1)].entry, b"one");
+    assert_eq!(read.completed[&plan(3)], (false, b"c3".to_vec()));
+    assert!(read.run_digest(&set).is_some());
 }

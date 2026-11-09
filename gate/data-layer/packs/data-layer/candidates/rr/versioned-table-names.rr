@@ -1,0 +1,216 @@
+.policy "data-layer:versioned-table-names" revision 1
+.description "Physical versioned-table names are built only by the two owner modules."
+.language python
+.mode block
+.scope tests false
+// Python linter: scripts/lint_versioned_table_name_manipulation.py. Outside the owners, code may not build a
+// physical table name from a versioned suffix (_sparse, _tip, _staged, _log, _field_deltas):
+//   VTN001  `+`, `%`, `.format`, `.join` or an f-string combines a suffix value
+//   VTN002  bounded_identifier_with_suffix(…, suffix)
+//   VTN003  .removesuffix / .replace with a suffix; or x[:-4], x[:-7], x[:-13] inside derive_versioned_table_names(…)
+//   VTN004  any VersionedTableNames(…) call
+//
+// The hard part is "suffix value". It is a literal suffix, a name currently bound to one, an if-expression of
+// either, or a call of a function currently known to return one. "Currently" is the script's own state: two
+// file-wide maps (names to suffixes, names of suffix producers) written as its visitor walks the file. Every
+// test reads the maps as they are at that node.
+//
+// How to read this file
+//   1. reset(e, x): the events that write name x: assignments, for targets, a def's parameters. Syntax only.
+//   2. last_ev(p, x, e): the latest such event before point p, by visit order (max over syntax).
+//   3. sv(p, v): v is a suffix value at point p. It reads the state at p through last_ev, and the state an
+//      event left depends on sv at that event: recursion, but positive, because every assignment resets the
+//      name whatever it stores. So this needs no `ordered by` (core, addition 6): which event is the latest
+//      is syntax; only what it stored is recursive.
+//   4. at(p, v): which (point, expression) pairs are asked about, so sv is computed only where it is needed.
+//   5. The VTN rules, each one the script's handler for that node kind.
+//
+// Shows: file-global state in visit order with plain recursion; f-string pieces (str_part); dotted call names.
+
+#include "python/ast.rr"
+//   ast_name, assign_target, assign_value, sig_param, str_const, fstring, unparen, call_dotted
+#include "python/calls.rr"
+//   posarg, call_arg
+
+.decl vsuffix(s: symbol)
+vsuffix("_sparse"). vsuffix("_tip"). vsuffix("_staged"). vsuffix("_log"). vsuffix("_field_deltas").
+
+// ---- scope (_is_owner, _is_in_tree_source) ------------------------------------------------------------------------
+// broad_repo_scope without tests: the whole repository, minus test, tests and conform parts.
+.decl checked(d: number)
+checked(d) :- doc(d, p, _), !path_part(d, "conform"),
+    !match(".*(?:^|/)(?:l1000_schema/table_utils|l7000_versioned_schema/versioned_table_info)\\.py", p),
+    !glob("{**/,}{docs,impl/doltdb,impl/mongodb,impl/neo4j}/**", p).
+.decl here(n: node)
+here(n) :- docof(n, d), checked(d).
+
+// ---- 1. events -----------------------------------------------------------------------------------------------------
+// write(w, x, v): assignment w stores value v into name x (`a = b = v` writes a and b; `x: T = v` too; a bare
+// `x: T` is not an event). _record_assignment.
+.decl write(w: node, x: symbol, v: node)
+write(w, x, v) :- assign_target(w, t), ast_name(t, x), assign_value(w, v).
+// elem_name(t, x): a name inside a tuple or list target, at any depth (_clear_target).
+.decl tuple_kind(k: symbol)
+tuple_kind("pattern_list"). tuple_kind("tuple_pattern"). tuple_kind("list_pattern").
+tuple_kind("tuple"). tuple_kind("list"). tuple_kind("expression_list").
+.decl elem_name(t: node, x: symbol)
+elem_name(t, x) :- kind(t, k), tuple_kind(k), child(t, c, _), ast_name(c, x).
+elem_name(t, x) :- kind(t, k), tuple_kind(k), child(t, c, _), elem_name(c, x).
+// param_of(g, x): def g clears its parameter names on entry (_record_suffix_producer).
+.decl param_of(g: node, x: symbol)
+param_of(g, x) :- sig_param(g, _, nm, _, _, _, _), text(nm, x).
+// reset(e, x): every event that writes x. Assignments clear before they store, so each one is a reset even
+// when what it stores is nothing.
+.decl reset(e: node, x: symbol)
+reset(w, x) :- write(w, x, _).
+reset(w, x) :- assign_target(w, t), assign_value(w, _), elem_name(t, x).
+reset(f, x) :- kind(f, "for_statement"), field(f, "left", t), ast_name(t, x).
+reset(f, x) :- kind(f, "for_statement"), field(f, "left", t), elem_name(t, x).
+reset(g, x) :- param_of(g, x).
+
+// ---- 4. demand: the (point, expression) pairs the script evaluates -------------------------------------------------
+// The value of an assignment is evaluated at the assignment, before it applies (earlier is strict). A finding's
+// operands are evaluated at the finding's node, after every event visited before it, its own enclosing
+// assignment included: the visitor handles the Assign before it reaches the value's sub-nodes.
+.decl at(p: node, v: node)
+at(w, v) :- write(w, _, v).
+at(g, rv) :- direct_return(g, rv).
+at(p, m) :- at(p, v), unparen(v, m), m != v.
+at(p, b) :- at(p, v), kind(v, "conditional_expression"), (child(v, b, 0) ; child(v, b, 2)).
+// what "contains a suffix value" looks into: tuple/list/set elements and f-string interpolations
+at(p, e) :- at(p, v), kind(v, k), coll(k), child(v, e, _), !kind(e, "comment").
+at(p, e) :- at(p, v), interp(v, e).
+// need(p, x): name x is read at p.
+.decl need(p: node, x: symbol)
+need(p, x) :- at(p, v), ast_name(v, x).
+need(p, x) :- at(p, v), kind(v, "call"), field(v, "function", fn), ast_name(fn, x).
+
+// ---- 2. the latest event ------------------------------------------------------------------------------------------
+// visit_index counts per document, so both ends are pinned to p's document.
+.decl last_ev(p: node, x: symbol, e: node)
+last_ev(p, x, e) :- need(p, x), docof(p, d),
+    k = max i : { reset(e2, x), docof(e2, d), earlier(e2, p), visit_index(e2, i) },
+    reset(e, x), docof(e, d), visit_index(e, k).
+.decl has_ev(p: node, x: symbol)
+has_ev(p, x) :- last_ev(p, x, _).
+
+// ---- 3. suffix values and the two maps -----------------------------------------------------------------------------
+// sv(p, v): _suffix_value(v) is not None at point p.
+.decl sv(p: node, v: node)
+sv(p, v) :- at(p, v), str_const(v, s), vsuffix(s).
+sv(p, v) :- at(p, v), unparen(v, m), m != v, sv(p, m).
+sv(p, v) :- at(p, v), kind(v, "conditional_expression"), (child(v, b, 0) ; child(v, b, 2)), sv(p, b).
+sv(p, v) :- at(p, v), ast_name(v, x), has_const(p, x).
+sv(p, v) :- at(p, v), kind(v, "call"), field(v, "function", fn), ast_name(fn, x), is_prod(p, x).
+
+// The names map: x holds a suffix at p when its latest event stored one. At a def, its own parameters are
+// already cleared when its returns are read.
+.decl sets_const(e: node, x: symbol)
+sets_const(w, x) :- write(w, x, v), sv(w, v).
+.decl has_const(p: node, x: symbol)
+has_const(p, x) :- last_ev(p, x, e), sets_const(e, x), !param_of(p, x).
+
+// The producers map. An assignment `y = f` with f a producer makes y one; a def whose direct return is a suffix
+// value adds its own name without resetting it, so a later def that returns nothing leaves it in.
+.decl sets_prod(e: node, x: symbol)
+sets_prod(w, x) :- write(w, x, v), ast_name(v, y), is_prod(w, y).
+.decl def_add(g: node, x: symbol)
+def_add(g, x) :- direct_return(g, rv), sv(g, rv), def_name(g, x).
+.decl is_prod(p: node, x: symbol)
+is_prod(p, x) :- last_ev(p, x, e), sets_prod(e, x), !param_of(p, x).
+is_prod(p, x) :- def_add(g, x), earlier(g, p), last_ev(p, x, e), earlier(e, g), !param_of(p, x).
+is_prod(p, x) :- def_add(g, x), earlier(g, p), need(p, x), !has_ev(p, x), !param_of(p, x).
+
+// direct_return(g, rv): `return rv` anywhere under a statement of g's body that is not itself a def or class.
+// ast.walk goes into defs nested deeper (in an if, say), and so does this.
+.decl direct_return(g: node, rv: node)
+direct_return(g, rv) :- kind(g, "function_definition"), field(g, "body", b), child(b, s, _),
+    !kind(s, "function_definition"), !kind(s, "class_definition"), !kind(s, "decorated_definition"),
+    kind(r, "return_statement"), ( r = s ; within(r, s) ), child(r, rv, _), !kind(rv, "comment").
+
+// ---- containment (_contains_versioned_suffix_value, _contains_versioned_suffix_fragment) -------------------------
+.decl coll(k: symbol)
+coll("tuple"). coll("list"). coll("set"). coll("expression_list").
+// interp(s, e): e is an interpolation's expression at the top level of f-string s (format specs not included).
+.decl interp(s: node, e: node)
+interp(s, e) :- fstring(s), child(s, x, _), kind(x, "interpolation"), field(x, "expression", e).
+interp(s, e) :- fstring(s), kind(s, "concatenated_string"), child(s, p, _), child(p, x, _),
+    kind(x, "interpolation"), field(x, "expression", e).
+// csv(p, v): v is, or holds, a suffix value: a literal piece of an f-string counts when it is exactly a suffix.
+.decl csv(p: node, v: node)
+csv(p, v) :- sv(p, v).
+csv(p, v) :- at(p, v), fstring(v), str_part(v, _, s, _, 0), vsuffix(s).
+csv(p, v) :- at(p, v), interp(v, e), csv(p, e).
+csv(p, v) :- at(p, v), kind(v, k), coll(k), child(v, e, _), csv(p, e).
+// frag(p, v): v's string value contains a suffix: a literal with one inside, or a name holding one.
+.decl frag(p: node, v: node)
+frag(p, v) :- at(p, v), str_const(v, s), vsuffix(x), contains(x, s).
+frag(p, v) :- at(p, v), ast_name(v, x), has_const(p, x).
+
+// ---- 5. findings ---------------------------------------------------------------------------------------------------
+.violation VTN001(at: node) "derive the table family with get_versioned_table_names()"
+.violation VTN002(at: node) "only the versioned table-family owner may bound physical names"
+.violation VTN003(at: node) "do not derive one bounded family member from another"
+.violation VTN004(at: node) "construct versioned table families through the canonical derivation API"
+
+// The finding nodes ask about their operands at themselves.
+at(n, o) :- here(n), kind(n, "binary_operator"), (field(n, "left", o) ; field(n, "right", o)).
+at(n, n) :- here(n), fstring(n), !in_concat(n).
+at(n, a) :- here(n), kind(n, "call"), call_arg(n, _, _, a).
+at(n, r) :- here(n), kind(n, "call"), field(n, "function", fn), attr_of(fn, r, "format").
+at(n, e) :- comp_pick(n, c), field(c, "right", it), child(it, e, _).
+
+// on_BinOp. `+`: either side holds a suffix value, or is a comprehension variable over a literal suffix list.
+VTN001(n) :- here(n), kind(n, "binary_operator"), op(n, "+"), (field(n, "left", o) ; field(n, "right", o)),
+    ( csv(n, o) ; comp_suffix(n, o) ).
+// `%`: the left side's string value contains a suffix.
+VTN001(n) :- here(n), kind(n, "binary_operator"), op(n, "%"), field(n, "left", o), frag(n, o).
+
+// on_JoinedStr. Exempt: literal suffixes that are all _log or _field_deltas, unless there is exactly one
+// placeholder (`formatted_count != 1` returns early). So f"{a}_log" is reported and f"{a}{b}_log" is not.
+.decl in_concat(s: node)
+in_concat(s) :- kind(c, "concatenated_string"), child(c, s, _).
+.decl lit_suffix(s: node, x: symbol)
+lit_suffix(s, x) :- fstring(s), str_part(s, _, x, _, 0), vsuffix(x).
+.decl exempt_fstr(s: node)
+exempt_fstr(s) :- lit_suffix(s, _), count : { lit_suffix(s, x), x != "_log", x != "_field_deltas" } = 0,
+    count : { interp(s, _) } != 1.
+VTN001(n) :- here(n), fstring(n), !in_concat(n), !exempt_fstr(n), csv(n, n).
+
+// on_Call. call_dotted is ast_collectors' _dotted_name: `x.VersionedTableNames(…)` is not a match.
+VTN002(n) :- here(n), call_dotted(n, "bounded_identifier_with_suffix"), call_arg(n, _, _, a), sv(n, a).
+VTN003(n) :- here(n), kind(n, "call"), field(n, "function", fn), (attr_of(fn, _, "removesuffix") ;
+    attr_of(fn, _, "replace")), posarg(n, _, a), sv(n, a).
+VTN001(n) :- here(n), kind(n, "call"), field(n, "function", fn), attr_of(fn, r, "format"),
+    ( frag(n, r) ; csv(n, r) ).
+VTN001(n) :- here(n), kind(n, "call"), field(n, "function", fn), attr_of(fn, _, "join"), posarg(n, _, a),
+    csv(n, a).
+VTN004(n) :- here(n), call_dotted(n, "VersionedTableNames").
+
+// on_Subscript: a slice whose upper bound is -4, -7 or -13, anywhere inside derive_versioned_table_names(…).
+VTN003(n) :- here(n), ( n ~ `$O[:-$K]` ; n ~ `$O[$A:-$K]` ; n ~ `$O[:-$K:$S]` ; n ~ `$O[$A:-$K:$S]` ),
+    ( value(K, "4") ; value(K, "7") ; value(K, "13") ),
+    call_dotted(c, "derive_versioned_table_names"), within(n, c).
+
+// _is_comprehension_suffix(o) at BinOp n: o is a name; the innermost comprehension around n whose target is
+// that name and whose iterable is a literal tuple or list decides, by whether one of its items is a suffix
+// value. In ast the element expression is outside ast.comprehension, so only a BinOp in a `for … in` clause or
+// in that clause's `if`s can be inside one.
+.decl in_gen(n: node, c: node)
+in_gen(n, c) :- kind(c, "for_in_clause"), within(n, c).
+in_gen(n, c) :- kind(c, "for_in_clause"), kind(q, "if_clause"), precedes_stop(c, q, "for_in_clause"),
+    within(n, q).
+.decl comp_cand(n: node, x: symbol, c: node)
+comp_cand(n, x, c) :- kind(n, "binary_operator"), op(n, "+"), here(n), in_gen(n, c), field(c, "left", t),
+    ast_name(t, x), field(c, "right", it), (kind(it, "tuple") ; kind(it, "list")).
+.decl comp_pick(n: node, c: node)
+comp_pick(n, c) :- (field(n, "left", o) ; field(n, "right", o)), ast_name(o, x), comp_cand(n, x, c),
+    k = max dd : { comp_cand(n, x, c2), ast_depth(c2, dd) }, ast_depth(c, k).
+.decl comp_suffix(n: node, o: node)
+comp_suffix(n, o) :- (field(n, "left", o) ; field(n, "right", o)), ast_name(o, x), comp_pick(n, c),
+    field(c, "left", t), ast_name(t, x), field(c, "right", it), child(it, e, _), sv(n, e).
+
+// Differences from the script:
+//   CPython merges adjacent string literals into one Constant before the script sees it; str_const and
+//   str_part do the same, so "_t" "ip" is the suffix "_tip" here as there.
+//   A float bound (x[:-4.0]) matches the script's `in {4, 7, 13}` but not value(K, "4"): no such code exists.

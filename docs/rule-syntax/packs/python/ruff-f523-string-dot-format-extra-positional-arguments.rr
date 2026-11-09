@@ -1,0 +1,19 @@
+.policy "ruff-f523-string-dot-format-extra-positional-arguments" revision 2
+.description "Remove positional arguments to str.format() that no placeholder in the string uses; they are silently ignored."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F523 (pyflakes): `S.format(…)` passes a positional argument that no field of S uses. Argument i is used by
+// an index field `{i}`, or by an automatic `{}` when S has more than i of them. A `*args` takes one position and
+// is itself never reported: arguments after it are still checked.
+//   "{0}".format(1, 2)            ← F523: argument 1 is unused
+//   "{}".format(1, 2)             ← F523
+//   "{0}{1}".format(1, *rest)     not reported
+//   "{} {}".format(1, *a, 2)      ← F523: argument 2 is unused
+#include "python/pyflakes-format.rr"
+//   format_call(c, v), brace_auto(v, n), brace_index(v, i), arg_pos(c, i, a)
+
+.violation F523(at: node) code "F523" "`.format` call has unused arguments"
+    suppress ruff "F523"
+F523(c) :- format_call(c, v), brace_auto(v, n), arg_pos(c, i, _), i >= n, !brace_index(v, i).

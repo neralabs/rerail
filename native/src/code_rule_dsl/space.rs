@@ -2,11 +2,11 @@
 //!
 //! The wave's files are concatenated: file `f`'s node `pre` is the space's node `base(f) + pre`.
 //! Every node set of the wave (a prefilter plan's candidates, a label, a kind mask) is one value
-//! over the space, so set algebra is word-parallel over every file at once, on the CPU or on
-//! Metal, and a file's whole set or its complement is a few words, never a list of its nodes.
+//! over the space, so one operation covers every file at once, on the CPU or on Metal.
 //!
-//! Sets are dense bitmaps of `u64` words. Sparse sets (sorted indices, where `bound·32 < n`) and
-//! per-file ranges are representations to come (0024 §1); the operations here are their contract.
+//! Sets are chunked containers per file (decision 0045, `chunked`): an array, a bitmap or runs per
+//! 2^16 positions of a file, so an operation's cost follows the members, not the space. The dense
+//! words over the whole space remain the Metal set steps' layout (`NodeSet::to_words`).
 
 /// Each file's first node in the space and its node count.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -54,13 +54,17 @@ impl NodeSpace {
     }
 }
 
-/// A set of a space's nodes.
+/// The dense form 0024 §1 built: one bit per node of the space. Kept as the reference and the
+/// baseline the containers are measured against (0045).
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct NodeSet {
+pub(in crate::code_rule_dsl) struct DenseSet {
     words: Vec<u64>,
 }
 
-impl NodeSet {
+#[cfg(test)]
+#[allow(dead_code)]
+impl DenseSet {
     pub(in crate::code_rule_dsl) fn empty(space: &NodeSpace) -> Self {
         Self { words: vec![0; space.words()] }
     }
@@ -153,9 +157,20 @@ impl NodeSet {
 
     /// Removes the nodes in `range`.
     pub(in crate::code_rule_dsl) fn clear(&mut self, range: std::ops::Range<u32>) {
-        let mut mask = Self { words: vec![0; self.words.len()] };
-        mask.fill(range);
-        self.difference_with(&mask);
+        let (start, end) = (range.start as usize, range.end as usize);
+        if start >= end {
+            return;
+        }
+        let (first, last) = (start / 64, (end - 1) / 64);
+        let low = u64::MAX << (start % 64);
+        let high = u64::MAX >> (63 - (end - 1) % 64);
+        if first == last {
+            self.words[first] &= !(low & high);
+            return;
+        }
+        self.words[first] &= !low;
+        self.words[first + 1..last].iter_mut().for_each(|word| *word = 0);
+        self.words[last] &= !high;
     }
 
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
@@ -197,6 +212,10 @@ impl NodeSet {
     }
 }
 
+pub(in crate::code_rule_dsl) mod chunked;
+
+pub(in crate::code_rule_dsl) use chunked::{Builder, NodeSet};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,12 +225,11 @@ mod tests {
         let space = NodeSpace::new(vec![3, 0, 70, 5]);
         assert_eq!((space.len(), space.words(), space.base(2), space.base(3)), (78, 2, 3, 73));
         let mut a = NodeSet::empty(&space);
-        a.fill(space.range(2));
+        a.fill_file(&space, 2);
         assert_eq!(a.len(), 70);
-        assert!(a.any_in(space.range(2)) && !a.any_in(space.range(0)) && !a.any_in(space.range(1)));
         let mut b = NodeSet::empty(&space);
-        b.insert(1);
-        b.insert(74);
+        b.insert_file(&space, 3, [1]);
+        b.insert_file(&space, 0, [1]);
         let mut within = NodeSet::all(&space);
         within.within_files(&space, &[&b]);
         assert_eq!(within.iter().collect::<Vec<_>>(), [0, 1, 2, 73, 74, 75, 76, 77]);
@@ -222,5 +240,9 @@ mod tests {
         assert_eq!(union.iter().collect::<Vec<_>>(), [1, 74]);
         assert_eq!(b.file_nodes(&space, 3).collect::<Vec<_>>(), [1]);
         assert_eq!(b.file_nodes(&space, 1).count(), 0);
+        let mut dense = DenseSet::empty(&space);
+        dense.insert(1);
+        dense.insert(74);
+        assert_eq!(NodeSet::from_words(&space, dense.words()), b);
     }
 }

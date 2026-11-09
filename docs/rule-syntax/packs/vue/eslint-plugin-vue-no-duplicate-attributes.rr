@@ -1,0 +1,26 @@
+.policy "eslint-plugin-vue-no-duplicate-attributes" revision 2
+.description "Avoid repeating an attribute on one Vue template element; only class and style may appear twice, once plain and once bound."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/template.rr"
+//   vattr(e, a), vplain(e, a, x), vdir(e, a, d, arg), vdyn(a)
+
+// eslint-plugin-vue's no-duplicate-attributes: an attribute whose name an earlier attribute of the same element
+// already has. Names are plain attributes and v-bind arguments, compared in lower case as the HTML parser keeps
+// them. Options allowCoexistClass and allowCoexistStyle (both true by default): class and style may appear once
+// plain and once bound; two plain or two bound ones are still duplicates.
+//   <div foo="a" :foo="b" />                 :foo is reported
+//   <div class="a" :class="b" />             not reported;  <div :class="a" :class="b" />  the second is
+.violation duplicate_attribute(at: node, x: symbol) code "vue/no-duplicate-attributes" "Duplicate attribute '{x}'."
+    suppress eslint "vue/no-duplicate-attributes"
+duplicate_attribute(a, x) :- attr_named(e, a, x, w), attr_named(e, b, x, v), precedes(b, a), clash(x, v, w).
+// attr_named(e, a, x, how): attribute a of e is named x; how is "plain" or "bound" (v-bind with a static argument).
+.decl attr_named(e: node, a: node, x: symbol, how: symbol)
+attr_named(e, a, @lower(x), "plain") :- vplain(e, a, x).
+attr_named(e, a, @lower(x), "bound") :- vdir(e, a, "bind", x), x != "", !vdyn(a).
+.decl clash(x: symbol, v: symbol, w: symbol)
+clash(x, v, w) :- attr_named(_, _, x, v), attr_named(_, _, x, w), (v = w ; !coexist(x)).
+.decl coexist(x: symbol)
+coexist("class") :- !option("allowCoexistClass", "false").
+coexist("style") :- !option("allowCoexistStyle", "false").

@@ -1,0 +1,24 @@
+// python/version: the Python version the code targets, as Ruff reads it, for every rule gated on a version.
+//
+// Interface
+//   target_minor(m)   the code targets Python 3.m. One row: the policy's `pythonVersion` option ("3.12" or
+//                     "3.12.1"), else, when the option is missing or is no 3.N version, Ruff's default, 3.10.
+//   targets(m)        the target is Python 3.m or later: `targets(9)` holds at 3.9, 3.10, …
+//
+// Python background
+//   Ruff reads the target from `target-version` (or `requires-python`); with neither, 3.10. The JSON policies say
+//   `when: {pythonVersion: {min: "3.9"}}` and read the policy's languageOptions.pythonVersion, default 3.10
+//   (native/src/code_rule_dsl/scope/options.rs, DEFAULT_PYTHON_MINOR). A rule that needs a newer Python than the
+//   target stays silent: `list[int]` is a TypeError on 3.8 at runtime.
+//
+//   # pythonVersion "3.8"
+//   x: List[int] = []           UP006 is silent: !targets(9)
+.decl target_minor(m: number)
+target_minor(to_number(n)) :- option("pythonVersion", v), match("3\\.(?<n>[0-9]+)(\\.[0-9]+)?", v).
+target_minor(10) :- !version_given().
+.decl version_given()  // a usable pythonVersion option
+version_given() :- option("pythonVersion", v), match("3\\.[0-9]+(\\.[0-9]+)?", v).
+.decl targets(m: number)
+targets(m) :- target_minor(t), py_minor(m), m <= t.
+.decl py_minor(m: number)  // the Python 3 minor versions a rule can ask for
+py_minor(0). py_minor(m + 1) :- py_minor(m), m < 20.

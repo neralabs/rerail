@@ -1,0 +1,18 @@
+.policy "ruff-d212-multi-line-summary-first-line" revision 2
+.description "Start a multi-line docstring's summary right after the opening quotes, on the first line."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D212 (pydocstyle): a multi-line docstring whose opening quotes stand alone on their line, so the summary
+// starts on the second line. (D213 is the opposite convention.) Ruff tests the first line of the literal
+// against the openers exactly: `"""` followed by spaces is not alone.
+//   """
+//   Summary.
+//   """                      ← D212
+#include "python/docstrings.rr"
+
+.violation D212(at: node) code "D212"
+    "Move this docstring's summary onto the line with the opening quotes, removing the line break after them."
+    suppress ruff "D212"
+D212(s) :- doc_checked(s), doc_triple(s), doc_body(s, b), match("\\r?\\n[\\s\\S]*", b).

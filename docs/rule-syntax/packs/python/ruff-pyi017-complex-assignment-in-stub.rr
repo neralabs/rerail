@@ -1,0 +1,23 @@
+.policy "ruff-pyi017-complex-assignment-in-stub" revision 2
+.description "Declare each name in a stub file with its own simple assignment instead of chained, unpacking, attribute or item assignments; a stub only declares names."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI017 (flake8-pyi), stubs only: an assignment statement outside functions whose target is not one
+// plain name: an attribute, an item, an unpacking or a chain. Annotated assignments are not checked.
+//   a.b = 1        ← PYI017 (attribute-target)
+//   a, b = 1, 2    ← PYI017 (multiple-targets)
+//   a = b = 1      ← PYI017 (multiple-targets)
+#include "python/typing.rr"
+
+.violation PYI017(at: node, msg: symbol) code "PYI017" "{msg}"
+    suppress ruff "PYI017"
+PYI017(a, "Remove this attribute or item assignment from the stub; declare the name where it lives instead, for example `x: int` in the class body or module that defines `x`.") :-
+    plain_stmt(a), simple_assign(a, t, _), (kind(t, "attribute") ; kind(t, "subscript")).
+PYI017(a, "Split this into one declaration per name, for example `a: int` and `b: int` on separate lines, instead of chaining or unpacking assignment targets.") :-
+    plain_stmt(a), (field(a, "right", r), kind(r, "assignment") ; simple_assign(a, t, _), !plain_target(t, _),
+    !kind(t, "attribute"), !kind(t, "subscript")).
+// plain_stmt(a): an unannotated assignment statement of a stub, outside functions.
+.decl plain_stmt(a: node)
+plain_stmt(a) :- stub_stmt(a), asgstmt(a, _), !field(a, "type", _).

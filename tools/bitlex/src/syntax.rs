@@ -95,7 +95,7 @@ pub enum Stmt {
     Ucode { over: Expr, classes: Vec<(String, UClass)> },
     /// `token K = start S [through T | last L]`: a token at each bit of `S`, running through
     /// `T`'s bytes, or ending at the first bit of `L` at or after its start (a tier-1 mask: no
-    /// fill, docs/final-shape/decisions/0049).
+    /// fill, docs/final-shape/decisions/0071).
     Token { kind: String, start: Expr, through: Option<Expr>, last: Option<Expr> },
     Munch { kind: String, over: Expr, lits: Vec<(Vec<u8>, Option<String>)> },
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
@@ -841,7 +841,7 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
 mod tier2_tests {
     use super::*;
 
-    /// The tier-2 forms of decision 0049, as JSON's tree section writes them.
+    /// The tier-2 forms of decision 0071, as JSON's tree section writes them.
     #[test]
     fn tree_grammar_parses() {
         let src = r#"

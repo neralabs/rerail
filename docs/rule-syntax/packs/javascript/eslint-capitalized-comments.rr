@@ -1,0 +1,56 @@
+.policy "eslint-capitalized-comments" revision 6
+.description "Start every comment with a capital letter; directive comments and comments starting with a URL are skipped."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-text.rr"
+#include "tsx/eslint-a-common.rr"   // upper_first
+//   js_comment(c, t, v), tool_comment(c), token_neighbours(c), follows_comment(c)
+
+// ESLint's capitalized-comments: the first letter of a comment, after spaces and asterisks, is a capital.
+//   // fix this               → Comments should not begin with a lowercase character.  (fix: // Fix this)
+//   // 2 apples  // http://x  // eslint-disable-line     skipped: not a letter, a URL, a tool's comment
+// option: "always" (the default) or "never" (no capital: // Fix this is reported instead).
+// ignorePattern: a regex; a comment whose text (asterisks removed) starts with it is skipped. "line.ignorePattern"
+//   and "block.ignorePattern" set it for one comment type.
+// ignoreInlineComments: skip comments with code (or other comments) on both sides, on their lines: f(/* a */ b).
+// ignoreConsecutiveComments: skip a comment right after another comment, so a sentence may run on.
+.violation capitalized_comments(at: node, msg: symbol) code "capitalized-comments" "{msg}"
+    suppress eslint "capitalized-comments"
+    suppress oxlint "capitalized-comments"
+    fix recase "Change the first letter's case"
+capitalized_comments(c, "Comments should not begin with a lowercase character.") :- first_char(c, x),
+    !option("option", "never"), match("[\\p{Ll}\\p{Lt}]", x).
+capitalized_comments(c, "Comments should not begin with an uppercase character.") :- first_char(c, x),
+    option("option", "never"), x != @lower(x).
+
+// first_char(c, x): the first character of c that is not whitespace or `*`, for a comment the rule checks.
+.decl first_char(c: node, x: symbol)
+first_char(c, @slice(w, 0, 1)) :- js_comment(c, t, v), !tool_comment(c), bare(v, b), !url(b), !ignored(c, t, b),
+    w = @replace_all(b, "\\s", ""), w != "".
+// A lower-case letter is one toLocaleUpperCase changes: Unicode's lower-case and title-case letters (Ll, Lt).
+// upper(x, u): ESLint's toLocaleUpperCase of one character, for the fix. Core has @lower and no @upper (proposed in
+// NOTES); until it has, common's upper_first table does ASCII letters, so `// über` is reported without a fix.
+.decl upper(x: symbol, u: symbol)
+upper(x, u) :- first_char(_, x), upper_first(x, u).
+upper_first_ask(x) :- first_char(_, x).
+.decl bare(v: symbol, b: symbol)  // the comment's value with its asterisks removed
+bare(v, @replace_all(v, "\\*", "")) :- js_comment(_, _, v).
+.decl url(b: symbol)  // starts with something like a URL:  // https://example.com/a
+url(b) :- bare(_, b), match("\\s*[^:/?#\\s]+://[^?#][\\s\\S]*", b).
+.decl ignored(c: node, t: symbol, b: symbol)
+ignored(c, t, b) :- js_comment(c, t, v), bare(v, b), pattern(t, p), match(cat("\\s*(?:", p, ")[\\s\\S]*"), b).
+ignored(c, t, b) :- js_comment(c, t, v), bare(v, b), option("ignoreInlineComments", "true"), token_neighbours(c).
+ignored(c, t, b) :- js_comment(c, t, v), bare(v, b), option("ignoreConsecutiveComments", "true"),
+    follows_comment(c).
+.decl pattern(t: symbol, p: symbol)  // the ignore pattern for comments of type t
+pattern("Line", p) :- option("line.ignorePattern", p).
+pattern("Block", p) :- option("block.ignorePattern", p).
+pattern(t, p) :- option("ignorePattern", p), (t = "Line", !option("line.ignorePattern", _) ;
+    t = "Block", !option("block.ignorePattern", _)).
+
+// The fix rewrites that one letter: `// fix` becomes `// Fix` ("always"), `// Fix` becomes `// fix` ("never").
+recase(c, _) :- match("(?://|/\\*)[\\s*]*(?<L>[^\\s*])[\\s\\S]*", c), text(L, x), !option("option", "never"),
+    upper(x, u) => replace(L, `$u`).
+recase(c, _) :- match("(?://|/\\*)[\\s*]*(?<L>[^\\s*])[\\s\\S]*", c), text(L, x), option("option", "never"),
+    u = @lower(x) => replace(L, `$u`).

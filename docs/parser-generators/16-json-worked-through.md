@@ -1,6 +1,6 @@
 # Parser generators: JSON worked through every level, before building
 
-**Superseded by doc 18 (decision 0051):** the tree section is now a grammar, and tier 2 is its
+**Superseded by doc 18 (decision 0085):** the tree section is now a grammar, and tier 2 is its
 state machine. The start and end rules here (`after`, `before`, `also`, `parent`, code facts)
 and the dataflow built on them are gone; Metal's tier 2 is redone from the state machine
 (doc 17 §6).
@@ -332,7 +332,7 @@ fn json(bytes: &[u8], tape: &mut Tape) -> bool {
     let mut pair_open = false;
     let (mut ord, mut last_u) = (0u32, NONE);       // `ord`; the last U token's kind
     for block in blocks(bytes) {
-        // Tier 1: today's 178-instruction body, unchanged (decision 0049).
+        // Tier 1: today's 178-instruction body, unchanged (decision 0071).
         let m = tier1(block, &mut e, &mut s, &mut h_content, &mut h_word);
         // Tier 2: one case per token kind, in byte order, over the token starts.
         let mut t = m.tokens;

@@ -102,7 +102,7 @@ impl ContentStore {
              ON CONFLICT(workspace_id,path_id) DO UPDATE SET state_id=excluded.state_id,source_id=excluded.source_id,tape_id=excluded.tape_id",
             params![workspace_id.0, path_id, state_id, source_id.map(|id| id.0), tape_id.map(|id| id.0)],
         )?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
@@ -213,7 +213,7 @@ impl ContentStore {
                 params![workspace_id.0, path_id],
             )?;
         }
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 

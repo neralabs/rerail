@@ -56,7 +56,8 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize, usize)>, Error> {
         }
         let start = pos;
         let rest = &src[pos..];
-        if rest.starts_with("//") {
+        // A comment, or an `#include` line: copied as it is, in the gap between statements.
+        if rest.starts_with("//") || rest.starts_with("#include") {
             pos += rest.find('\n').unwrap_or(rest.len());
             continue;
         }
@@ -514,6 +515,14 @@ impl Translator<'_> {
                     names
                 };
                 self.out.push_str(&format!(".pragma \"magic-transform\" {}", quote(&names.join(", "))));
+            }
+            // `.pragma "key" "value"` is `.rr` already.
+            "pragma" => {
+                let (Tok::Str(key), Tok::Str(value)) = (self.peek().clone(), self.peek_at(1).clone()) else {
+                    return self.fail("a pragma's two strings");
+                };
+                self.i += 2;
+                self.out.push_str(&format!(".pragma {} {}", quote(&key), quote(&value)));
             }
             "kindset" => {
                 let name = self.id()?;

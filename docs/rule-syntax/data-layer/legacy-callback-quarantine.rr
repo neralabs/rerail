@@ -1,0 +1,92 @@
+.policy "data-layer:legacy-callback-quarantine" revision 1
+.description "Callback transaction APIs stay quarantined to the public legacy surfaces."
+.language python
+.mode block
+.scope dirs "impl", "data_layer", "services", "l*"
+.scope tests false
+// Python linter: scripts/lint_legacy_callback_quarantine.py. The callback APIs are read / write / read_version /
+// write_version and their `_async` forms; a legacy function is one decorated @legacy_sync, @direct_legacy_async, ….
+//   LCB-010  a def of a callback API that takes a parameter `fn` (not *fn or **fn), not @overload, not marked legacy
+//   LCB-020  a call `recv.read(…)` (any callback API, with at least one argument) on a session- or connection-like
+//            receiver, outside every legacy function
+//   LCB-030  a def of commit_branch / commit_branch_async whose innermost class ends in Connection or ConnectionCore
+//   LCB-031  a call `recv.commit_branch(…)` on a connection-like receiver, outside every legacy function
+// Nothing inside a Protocol class is LCB-010 or LCB-030. A class is a Protocol when a base is named Protocol,
+// bare, dotted or called; `Protocol[T]` is a subscript and does not count, as in the linter.
+// A receiver is judged by its tokens: the names along its chain of attributes, calls and subscripts, lowercased.
+//   def helper(session_handle):
+//       return session_handle.write(fn=lambda txn: None)     LCB-020: `session_handle` is a session token
+
+#include "python/names.rr"
+#include "python/ast.rr"       // chain_step, chain_below, sig_param
+
+.decl lcb_callback(v: symbol)
+lcb_callback("read"). lcb_callback("write"). lcb_callback("read_async"). lcb_callback("write_async").
+lcb_callback("read_version"). lcb_callback("write_version"). lcb_callback("read_version_async").
+lcb_callback("write_version_async").
+.decl lcb_commit(v: symbol)
+lcb_commit("commit_branch"). lcb_commit("commit_branch_async").
+.decl lcb_marker(v: symbol)
+lcb_marker("direct_legacy_sync"). lcb_marker("direct_legacy_async"). lcb_marker("direct_legacy_module_sync").
+lcb_marker("direct_legacy_module_async"). lcb_marker("legacy_sync"). lcb_marker("legacy_async").
+lcb_marker("legacy_module_sync"). lcb_marker("legacy_module_async").
+
+// lcb_dname(e, x): the linter's _decorator_name: a Name, an attribute's last name, a call's callee; else none.
+.decl lcb_dname(e: node, x: symbol)
+lcb_dname(e, x) :- kind(e, "identifier"), text(e, x).
+lcb_dname(e, x) :- kind(e, "attribute"), field(e, "attribute", a), text(a, x).
+lcb_dname(e, x) :- kind(e, "call"), field(e, "function", f), lcb_dname(f, x).
+lcb_dname(e, x) :- kind(e, "parenthesized_expression"), unparen(e, i), lcb_dname(i, x).   // `@(d)`
+
+// lcb_legacy(st): st is the statement of a def marked legacy (the def, or its decorated wrapper).
+.decl lcb_legacy(st: node)
+lcb_legacy(st) :- defstmt(f, st), decorator(f, e), lcb_dname(e, x), lcb_marker(x).
+// lcb_protocol(st): the statement of a class with a base named Protocol.
+.decl lcb_protocol(st: node)
+lcb_protocol(st) :- defstmt(c, st), kind(c, "class_definition"), field(c, "superclasses", bs), child(bs, b, _),
+    !kind(b, "keyword_argument"), lcb_dname(b, "Protocol").
+// lcb_class(c): a class that is not a Protocol; nearest(f, c, lcb_class) is the linter's class stack top.
+.decl lcb_class(c: node)
+lcb_class(c) :- kind(c, "class_definition"), defstmt(c, st), !lcb_protocol(st).
+// lcb_in_legacy(n) / lcb_in_protocol(n): n is anywhere inside a legacy def or a Protocol class.
+.decl lcb_in_legacy(n: node)
+lcb_in_legacy(n) :- within(n, st), lcb_legacy(st).
+.decl lcb_in_protocol(n: node)
+lcb_in_protocol(n) :- within(n, st), lcb_protocol(st).
+
+// lcb_token(r, t): t is one of receiver r's tokens: r and every node along its chain (python/ast chain_step:
+// attribute objects, call functions, subscript values, parentheses), by name or attribute name.
+.decl lcb_token(r: node, t: symbol)
+lcb_token(r, t) :- lcb_recv(_, r, _), lcb_tok1(r, t).
+lcb_token(r, t) :- lcb_recv(_, r, _), chain_below(r, p), lcb_tok1(p, t).
+.decl lcb_tok1(n: node, t: symbol)
+lcb_tok1(n, t) :- kind(n, "identifier"), text(n, t).
+lcb_tok1(n, t) :- kind(n, "attribute"), field(n, "attribute", a), text(a, t).
+// lcb_recv(c, r, m): call c is `r.m(…)`.
+.decl lcb_recv(c: node, r: node, m: symbol)
+lcb_recv(c, r, m) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute"), field(f, "object", r),
+    field(f, "attribute", a), text(a, m), (lcb_callback(m) ; lcb_commit(m)).
+// lcb_argful(c): the call passes something: `f(x)`, `f(k=v)`, `f(*a)`, `f(x for x in y)`.
+.decl lcb_argful(c: node)
+lcb_argful(c) :- field(c, "arguments", al), child(al, a, _), !kind(a, "comment").
+lcb_argful(c) :- field(c, "arguments", g), kind(g, "generator_expression").
+
+.violation LCB_010(at: node, m: symbol) code "LCB-010" "Callback API {m}() must be explicitly marked as legacy/eager."
+LCB_010(f, m) :- def_name(f, m), lcb_callback(m), kind(f, "function_definition"),
+    sig_param(f, _, nm, _, k, _, _), text(nm, "fn"), (k = "posonly" ; k = "pos" ; k = "kwonly"),
+    defstmt(f, st), !lcb_legacy(st), count : { decorator(f, e), lcb_dname(e, "overload") } = 0,
+    !lcb_in_protocol(f).
+
+.violation LCB_020(at: node, m: symbol) code "LCB-020"
+    "Internal call to legacy callback API {m}() is forbidden; use explicit plan scopes or lazy owners instead."
+LCB_020(c, m) :- lcb_recv(c, r, m), lcb_callback(m), lcb_argful(c), !lcb_in_legacy(c),
+    lcb_token(r, t), iglob("{conn,session_handle,version_handle,*session,*connection,*version}", t).
+
+.violation LCB_030(at: node, m: symbol) code "LCB-030"
+    "Production connection class defines connection-level {m}(); publish must live on versioned transactions or plan scopes."
+LCB_030(f, m) :- def_name(f, m), lcb_commit(m), kind(f, "function_definition"), !lcb_in_protocol(f),
+    nearest(f, c, lcb_class), def_name(c, cx), glob("*{Connection,ConnectionCore}", cx).
+
+.violation LCB_031(at: node, m: symbol) code "LCB-031"
+    "Internal call to connection-level {m}() is forbidden; use versioned transaction legacy wrappers or versioned plan scopes."
+LCB_031(c, m) :- lcb_recv(c, r, m), lcb_commit(m), !lcb_in_legacy(c), lcb_token(r, t), iglob("{*conn,*connection}", t).

@@ -17,7 +17,7 @@
 //!   coverage and overlap checks.
 //! - **The tree section** (`docs/parser-generators/18-tree-as-grammar.md`): the grammar's state
 //!   machine (`grammar`), with grammar ids from `Symbols`, lowered to tier 2's words
-//!   (`bitlex_tier2`, decision 0053); tier 1 outputs the stream they read, two extracts.
+//!   (`bitlex_tier2`, decision 0087); tier 1 outputs the stream they read, two extracts.
 //! - **Errors and escapes.** Each mask joins the fallback output (`FALLBACK`); a file with a bit
 //!   of it goes to tree-sitter.
 //!
@@ -64,7 +64,7 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) struct Compiled {
     pub(super) rows: String,
-    /// Tier 2's words (decision 0053), with their strings and switches; `0000 STOP 0` without a
+    /// Tier 2's words (decision 0087), with their strings and switches; `0000 STOP 0` without a
     /// tree section.
     pub(super) words: String,
     /// The tree section's state machine as text (`grammar::text`), which the words are lowered from.
@@ -91,7 +91,7 @@ pub(in crate::code_rule_dsl) struct Symbols<'a> {
     pub(super) field: &'a dyn Fn(&str) -> Option<u16>,
 }
 
-/// The output names of the stream tier 2 reads (decision 0053): every token's first byte, and
+/// The output names of the stream tier 2 reads (decision 0087): every token's first byte, and
 /// the last byte of each token whose arm reads it.
 pub(in crate::code_rule_dsl) const STREAM_START: &str = "stream start";
 pub(in crate::code_rule_dsl) const STREAM_LAST: &str = "stream last";
@@ -110,7 +110,7 @@ struct Val {
     d: u8,
     dirty: bool,
     /// The bytes it holds, when it is a byte class at delay 0 (a function of the byte alone):
-    /// two classes combined are one class, a single bitmask (decision 0047).
+    /// two classes combined are one class, a single bitmask (decision 0069).
     set: Option<ByteSet>,
 }
 
@@ -196,7 +196,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     }
     low.stmts(stmts)?;
     let token_rows = low.tokens()?;
-    // The tree section: its state machine, its checks and tier 2's words (decision 0053), before
+    // The tree section: its state machine, its checks and tier 2's words (decision 0087), before
     // the outputs, since the words' guards join the fallback.
     let has_tree = !low.tree.is_empty();
     let mut tier2: Option<(String, String, Vec<bool>)> = None;
@@ -336,7 +336,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         } else {
             *x
         };
-        // At its own delay: the host shifts each output by its own (decision 0047).
+        // At its own delay: the host shifts each output by its own (decision 0069).
         let v = x.v;
         let k = *index.entry(v).or_insert_with(|| {
             low.program.outputs.push(v);
@@ -908,7 +908,7 @@ impl Lowering {
                 let last = match end {
                     None => start,
                     Some(TokenEnd::Last(l)) => l,
-                    Some(TokenEnd::Through(_)) => return Err(format!("token {kind}: `through` needs a fill; with a tree section write its last byte (`last`, decision 0049)")),
+                    Some(TokenEnd::Through(_)) => return Err(format!("token {kind}: `through` needs a fill; with a tree section write its last byte (`last`, decision 0071)")),
                 };
                 out.push((kind, start, last));
             }

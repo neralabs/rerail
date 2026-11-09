@@ -33,9 +33,50 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("slice", &[Text, Number, Number], Text),
     ("count_matches", &[Text, Text], Number),
     ("sha256", &[Text], Text),
+    ("ed25519_ok", &[Text, Text, Text], Number),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
+    // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
+    ("lower", &[Text], Text),
+    // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
+    ("str_concat", &[Text, Text], Text),
+    // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
+    ("str_cmp", &[Text, Text], Number),
+    // Soufflé's `to_number`: a decimal integer's value; no value for other text.
+    ("to_number", &[Text], Number),
+    // Soufflé's `%`, with no value for a zero divisor.
+    ("mod", &[Number, Number], Number),
+    // Soufflé's floats, as keys that order as the floats do (`float_key`): `to_float`, arithmetic, `to_string`.
+    ("to_float", &[Text], Number),
+    ("float_add", &[Number, Number], Number),
+    ("float_sub", &[Number, Number], Number),
+    ("float_mul", &[Number, Number], Number),
+    ("float_div", &[Number, Number], Number),
+    ("float_str", &[Number], Text),
+    // `.rr`'s `match("(?<x>…)", s)`: the named group's text (`strings::group`), none when the regex does not match.
+    ("rx_group", &[Text, Text, Text], Text),
+    // `.rr`'s integer arithmetic, `strlen` and `to_string`, as the native engine computes them (`native_call`); SQL
+    // lowers the calls to its own operators, and these names give it the same functions. No value on overflow or
+    // for a zero divisor; division truncates, as SQLite's does.
+    ("rr_add", &[Number, Number], Number),
+    ("rr_sub", &[Number, Number], Number),
+    ("rr_mul", &[Number, Number], Number),
+    ("rr_div", &[Number, Number], Number),
+    ("rr_max", &[Number, Number], Number),
+    ("rr_min", &[Number, Number], Number),
+    // Characters, as SQLite's `length` counts a text's.
+    ("rr_strlen", &[Text], Number),
+    ("rr_to_string", &[Number], Text),
 ];
+
+/// The function the native engine computes `.rr`'s call `f` with: `f` itself when it is one of these, or its
+/// `rr_` name (`@add`, `@strlen`, …).
+pub(in crate::code_rule_dsl) fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
+    match f {
+        "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" => signature(&format!("rr_{f}")),
+        _ => signature(f),
+    }
+}
 
 /// A function's name (as SQL names it), arguments and result, if `name` is one of these.
 pub(in crate::code_rule_dsl) fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
@@ -48,7 +89,53 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         let arity = i32::try_from(args.len()).expect("few arguments");
         db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
+    db.create_aggregate_function("rr_join", -1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Join)?;
     Ok(())
+}
+
+/// `core.rr`'s `join x by k sep s` as the SQL aggregate `rr_join(s, x, k, …)`: the distinct (k…, x) rows ordered by
+/// their keys, then x (numbers by value, text by code point, as Python's `sorted`), their x joined by s.
+struct Join;
+
+/// A `rr_join` row's keys and value, ordered as `rr_join` orders them.
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+enum Sortable {
+    Number(f64),
+    Text(String),
+}
+
+fn sortable(v: rusqlite::types::ValueRef<'_>) -> Sortable {
+    use rusqlite::types::ValueRef;
+    match v {
+        ValueRef::Integer(i) => Sortable::Number(i as f64),
+        ValueRef::Real(f) => Sortable::Number(f),
+        ValueRef::Text(t) | ValueRef::Blob(t) => Sortable::Text(String::from_utf8_lossy(t).into_owned()),
+        ValueRef::Null => Sortable::Text(String::new()),
+    }
+}
+
+impl rusqlite::functions::Aggregate<(String, Vec<(Vec<Sortable>, String)>), Option<String>> for Join {
+    fn init(&self, ctx: &mut Context<'_>) -> rusqlite::Result<(String, Vec<(Vec<Sortable>, String)>)> {
+        Ok((ctx.get::<String>(0)?, Vec::new()))
+    }
+
+    fn step(&self, ctx: &mut Context<'_>, acc: &mut (String, Vec<(Vec<Sortable>, String)>)) -> rusqlite::Result<()> {
+        let value = match sortable(ctx.get_raw(1)) {
+            Sortable::Number(f) if f.fract() == 0.0 => format!("{}", f as i64),
+            Sortable::Number(f) => f.to_string(),
+            Sortable::Text(t) => t,
+        };
+        let keys = (2..ctx.len()).map(|i| sortable(ctx.get_raw(i))).collect();
+        acc.1.push((keys, value));
+        Ok(())
+    }
+
+    fn finalize(&self, _: &mut Context<'_>, acc: Option<(String, Vec<(Vec<Sortable>, String)>)>) -> rusqlite::Result<Option<String>> {
+        let Some((sep, mut rows)) = acc else { return Ok(Some(String::new())) };
+        rows.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        rows.dedup();
+        Ok(Some(rows.into_iter().map(|(_, v)| v).collect::<Vec<_>>().join(&sep)))
+    }
 }
 
 fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
@@ -66,7 +153,14 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
             },
         }
     }
-    let t = |i: usize| text[i].as_str();
+    let text: Vec<&str> = text.iter().map(String::as_str).collect();
+    eval(name, &text, &numbers)
+}
+
+/// Function `name` of its text and number arguments, in its signature's order within each kind (`signature`):
+/// the value SQL's function of that name gives, NULL for none. The native engine's `func` step calls it too.
+pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
+    let t = |i: usize| text[i];
     let out = match name {
         "qname" => Some(format!("{}#{}", t(0), t(1))),
         "pkg_up" => Some(pkg_up(t(0), numbers[0])),
@@ -78,12 +172,39 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
         "replace_all" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "convert" => Some(convert(t(0), t(1), t(2))),
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
+        "rx_group" => super::group(t(0), t(1), t(2)),
+        "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
+        "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
+        "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
+        "rr_add" => return numbers[0].checked_add(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_mul" => return numbers[0].checked_mul(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_div" => return numbers[0].checked_div(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_max" => return Value::Integer(numbers[0].max(numbers[1])),
+        "rr_min" => return Value::Integer(numbers[0].min(numbers[1])),
+        "rr_strlen" => return Value::Integer(t(0).chars().count() as i64),
+        "rr_to_string" => Some(numbers[0].to_string()),
+        "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
+        "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
+        "float_add" | "float_sub" | "float_mul" | "float_div" => {
+            let (a, b) = (float_of(numbers[0]), float_of(numbers[1]));
+            let f = match name {
+                "float_add" => a + b,
+                "float_sub" => a - b,
+                "float_mul" => a * b,
+                _ => a / b,
+            };
+            return if f.is_nan() { Value::Null } else { Value::Integer(float_key(f)) };
+        }
+        "float_str" => Some(float_of(numbers[0]).to_string()),
         "count_matches" => return with_regex(t(0), |re| Value::Integer(re.find_iter(t(1)).count() as i64)).unwrap_or(Value::Null),
         "sha256" => {
             use sha2::Digest;
             Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
         }
         "json_str" => Some(json_str(t(0))),
+        "lower" => Some(t(0).to_lowercase()),
+        "str_concat" => Some(format!("{}{}", t(0), t(1))),
         "nfkc" => {
             use unicode_normalization::UnicodeNormalization;
             Some(t(0).nfkc().collect())
@@ -91,6 +212,18 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
         _ => None,
     };
     out.map_or(Value::Null, Value::Text)
+}
+
+/// A float as an integer key that orders as the floats do: its bits, with every bit but the sign flipped for a
+/// negative float; -0.0 is 0.0. The engine's values are integers (decision 0008), so a float column holds these.
+pub(in crate::code_rule_dsl) fn float_key(f: f64) -> i64 {
+    let bits = (if f == 0.0 { 0.0 } else { f }).to_bits() as i64;
+    if bits < 0 { bits ^ i64::MAX } else { bits }
+}
+
+/// The float of a key (`float_key`).
+pub(in crate::code_rule_dsl) fn float_of(key: i64) -> f64 {
+    f64::from_bits((if key < 0 { key ^ i64::MAX } else { key }) as u64)
 }
 
 /// `f(re)` with `re` compiled once per thread; `None` if it does not compile.

@@ -1,0 +1,18 @@
+.policy "ruff-g002-logging-percent-format" revision 2
+.description "Pass values to a logging call as arguments instead of formatting its message with the percent operator; the logger then formats only records it emits."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff G002 (flake8-logging-format): a logging call whose message is a `%` operation. Pass the values as the
+// call's arguments instead; the logger formats them only for records it emits. Any `%` counts, whatever its
+// operands. The message is the first argument (the second for `log`) or `msg=`. Reported at the message.
+//   logging.info("Hello %s" % "World!")              ← G002
+//   logging.log(logging.INFO, "Hello %s" % name)     ← G002
+//   logging.info("Hello %s", "World!")               not reported
+#include "python/logging.rr"
+
+.violation G002(at: node) code "G002"
+    "Pass the values after `%` as logger arguments, e.g. `logger.info(\"x=%s\", x)` not `logger.info(\"x=%s\" % x)`; leave it if `%` is arithmetic or the logger is not from `logging`."
+    suppress ruff "G002"
+G002(e) :- log_msg(_, e), kind(e, "binary_operator"), op(e, "%").

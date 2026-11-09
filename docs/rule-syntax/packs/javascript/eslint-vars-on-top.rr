@@ -1,0 +1,63 @@
+.policy "eslint-vars-on-top" revision 3
+.description "Declare var variables at the top of their function, script or static block; it matches how var is hoisted."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/statements.rr"
+#include "tsx/modules.rr"
+//   var_decl, for_head, keyword, decl_stmt (statements); not_stmt, string_stmt, function_kind (modules)
+
+// ESLint's vars-on-top: a `var` statement must be in the leading run of declarations of a program, a function
+// body or a static block. Directives and imports may come first (not in a static block), and any declaration
+// (var, let, const, an exported one) may come between.
+//   "use strict"; var a; let b; var c;     fine
+//   f(); var a;                            → reported: a statement before it
+//   if (x) { var a; }   for (var i = 0; ; ) {}   for (var k in o) {}   → reported: not directly in the body
+//   class C { static { f(); var a; } }     → reported, with the static-block message
+// `export var a` is checked as the export statement; TypeScript's `declare var a` as a declaration. No options.
+.violation vars_on_top(at: loc, msg: symbol) code "vars-on-top" "{msg}"
+    suppress eslint "vars-on-top"
+    suppress oxlint "vars-on-top"
+    suppress biome "lint/nursery/useVarsOnTop"
+vars_on_top(x, "All 'var' declarations must be at the top of the function scope.") :- var_stmt(x, b),
+    var_list(b, "fn"), !on_top(x, b).
+vars_on_top(x, "Move this var declaration to the top of its static block.") :- var_stmt(x, b), var_list(b, "static"),
+    !on_top(x, b).
+vars_on_top(x, "All 'var' declarations must be at the top of the function scope.") :- var_decl(d, "var"),
+    decl_stmt(d, x), !placed(x).
+vars_on_top(t, "Declare this loop variable with var at the top of the function and reuse it in the for-in head.") :-
+    for_head(f, "var"), keyword(f, t).
+
+// var_stmt(x, b): x is a var statement (or `export var …`) directly in statement list b.
+.decl var_stmt(x: node, b: node)
+var_stmt(x, b) :- var_decl(d, "var"), decl_stmt(d, x), !export_of(x, _), child(b, x, _).
+var_stmt(e, b) :- var_decl(d, "var"), decl_stmt(d, x), export_of(x, e), child(b, e, _).
+.decl export_of(x: node, e: node)
+export_of(x, e) :- kind(e, "export_statement"), field(e, "declaration", x).
+// var_list(b, w): the statement lists a var may head: the program and function bodies ("fn"), static blocks.
+.decl var_list(b: node, w: symbol)
+var_list(b, "fn") :- kind(b, "program").
+var_list(b, "fn") :- kind(b, "statement_block"), field(f, "body", b), kind(f, k), function_kind(k).
+var_list(b, "static") :- kind(b, "statement_block"), field(s, "body", b), kind(s, "class_static_block").
+var_list(b, "static") :- kind(b, "class_static_block").
+.decl placed(x: node)  // x stands directly in such a list, itself or as `export var`
+placed(x) :- var_stmt(x, b), var_list(b, _).
+placed(x) :- export_of(x, e), var_stmt(e, b), var_list(b, _).
+
+// on_top(x, b): every statement of b before x is a declaration, or part of the leading directives and imports.
+.decl on_top(x: node, b: node)
+on_top(x, b) :- var_stmt(x, b), count : { list_stmt(b, s), precedes(s, x), !decl_like(s), !prologue(s, b) } = 0.
+.decl list_stmt(b: node, s: node)
+list_stmt(b, s) :- var_stmt(_, b), child(b, s, _), !not_stmt(s).
+// decl_like(s): ESLint's isVariableDeclaration: var, let, const, `export` of one, `declare` one.
+.decl decl_like(s: node)
+decl_like(s) :- var_decl(d, _), decl_stmt(d, s).
+decl_like(e) :- export_of(x, e), decl_like(x).
+// prologue(s, b): s is a string statement or an import, and only such statements come before it.
+.decl prologue(s: node, b: node)
+prologue(s, b) :- list_stmt(b, s), prologue_like(s), var_list(b, "fn"),
+    count : { list_stmt(b, t), precedes(t, s), !prologue_like(t) } = 0.
+.decl prologue_like(s: node)
+prologue_like(s) :- string_stmt(s, _, _).
+prologue_like(s) :- kind(s, "import_statement").

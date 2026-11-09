@@ -1,0 +1,19 @@
+.policy "ruff-n801-invalid-class-name" revision 2
+.description "Name classes in CapWords style, starting with a capital letter and without underscores between words, as PEP 8 recommends."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N801 (pep8-naming): a class name that, with its leading underscores taken off, does not start with a capital
+// or still contains `_`. Names matching `pep8-naming.ignore-names` are exempt.
+//   class bad_class: ...       ← N801
+//   class _Good: ...           not reported: leading underscores are allowed
+#include "python/naming.rr"
+
+.violation N801(at: node, x: symbol) code "N801"
+    "Rename class `{x}` to CapWords, such as `MyClass`, and update its references; keep the name if callers outside this code import it."
+    suppress ruff "N801"
+N801(nm, x) :- kind(c, "class_definition"), field(c, "name", nm), text(nm, x), !capwords(x), !naming_ignored(x).
+// capwords(x): `_*` then a capital, then no underscore.
+.decl capwords(x: symbol)
+capwords(x) :- naming_word(x), match("_*[A-Z][^_]*", x).

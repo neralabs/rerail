@@ -1,0 +1,27 @@
+.policy "ruff-air302-airflow3-moved-to-provider" revision 3
+.description "Import Airflow hooks, operators and other names that moved into provider packages in Airflow 3.0 from their provider modules; the old core import paths are gone."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff AIR302 (Airflow): a read of an Airflow 2 name that Airflow 3 moved into a provider package. Each read is
+// reported, by its qualified name through imports, at the name or at the attribute's last part; the import
+// statement itself is not. A fallback import in an `except ImportError` handler, whose try imports the new
+// name, is fine.
+//   from airflow.hooks.S3_hook import S3Hook
+//   S3Hook()                       ← AIR302: install apache-airflow-providers-amazon>=1.0.0 and import `S3Hook`
+//                                    from `airflow.providers.amazon.aws.hooks.s3`
+//   try:
+//       from airflow.providers.http.operators.http import HttpOperator
+//   except ModuleNotFoundError:
+//       from airflow.operators.http_operator import SimpleHttpOperator as HttpOperator
+//   HttpOperator()                 not reported: the fallback is guarded
+// Ruff also reads names in string annotations (`x: "S3Hook"`); this rule does not.
+#include "python/misc-airflow.rr"
+#include "../packs/python/ruff-air302-airflow3-moved-to-provider.moved.rr"   // air302_moved(old, p, v, m, x)
+
+.violation AIR302(at: node, q: symbol, p: symbol, v: symbol, m: symbol, x: symbol) code "AIR302"
+    "`{q}` moved into the `{p}` provider in Airflow 3.0: install `apache-airflow-providers-{p}>={v}` and import `{x}` from `{m}` instead."
+    suppress ruff "AIR302"
+AIR302(at, q, p, v, m, x) :- air_ref(e, at, q), air302_moved(q, p, v, m, x), !air_guarded(e, m, x).
+air_needs_guard(e, m, x) :- air_ref(e, _, q), air302_moved(q, _, _, m, x).

@@ -30,10 +30,16 @@ pub(crate) mod producers;
 pub(crate) mod propagate;
 #[allow(dead_code)]
 pub(crate) mod runs;
+#[cfg(test)]
+mod set_census;
 #[allow(dead_code)]
 pub(crate) mod vtab;
+/// `core.rr`'s repository inputs (decision 0046).
+pub(crate) mod repository;
 /// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).
 #[allow(dead_code, unused_imports, clippy::all)]
+// Not in the browser build: it forks and reads macOS process counters.
+#[cfg(not(target_family = "wasm"))]
 pub(crate) mod ygraph;
 
 /// The derivation graph as the push path reads and writes it: the store itself (every write a

@@ -1,0 +1,20 @@
+.policy "eslint-no-void" revision 5
+.description "Avoid the void operator; write undefined directly when you mean it."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-control.rr"
+//   bare
+
+// ESLint's no-void: every `void` expression. `void 0` is an old way to write undefined.
+//   var x = void 0;   f(void g());          → reported
+//   void doSomething();                     → reported, unless allowAsStatement is true
+// allowAsStatement (default false): allow `void` as a whole statement, the idiom that marks a promise as
+// deliberately not awaited. ESTree has no parentheses, so `(void f());` is a statement too.
+.violation no_void(at: node) code "no-void" "Expected 'undefined' and instead saw 'void'."
+    suppress eslint "no-void"
+    suppress oxlint "no-void"
+    suppress biome "lint/complexity/noVoid"
+no_void(v) :- kind(v, "unary_expression"), op(v, "void"), !(option("allowAsStatement", "true"), statement(v)).
+.decl statement(v: node)  // v is an expression statement's whole expression
+statement(v) :- kind(s, "expression_statement"), child(s, e, 0), deparen(e, v).

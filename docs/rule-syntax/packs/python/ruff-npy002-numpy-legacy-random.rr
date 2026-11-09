@@ -1,0 +1,20 @@
+.policy "ruff-npy002-numpy-legacy-random" revision 2
+.description "Use a NumPy random Generator instead of the legacy global-state functions in numpy.random."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff NPY002 (NumPy): a call of a legacy `numpy.random` function, which draws from one hidden global state.
+// `np.random.default_rng()` returns a Generator with the same methods (some renamed). The callee is resolved
+// through imports; the advice depends on the function (the table, generated from the JSON's clauses).
+//   np.random.seed(1337)         ← NPY002: create `rng = np.random.default_rng(1337)`
+//   from numpy.random import randint
+//   randint(0, 10)               ← NPY002: `rng.integers(0, 10)`
+//   rng.integers(0, 10)          not reported
+#include "python/misc2-numpy.rr"
+//   npy_callee(c, e, q)
+#include "../packs/python/ruff-npy002-numpy-legacy-random.methods.rr"   // npy002_method(q, g), npy002_advice(g, m)
+
+.violation NPY002(at: node, msg: symbol) code "NPY002" "{msg}"
+    suppress ruff "NPY002"
+NPY002(e, @replace_all(m, "\\$NAME", x)) :- npy_callee(_, e, q), npy002_method(q, g), npy002_advice(g, m), text(e, x).

@@ -117,3 +117,107 @@ fn text_functors_follow_core_rr() {
     assert_eq!(convert("max_age", "pascalCase", "underscore"), "MaxAge");
     assert_eq!(json_str("a\"b\u{e9}\u{1f600}"), "\"a\\\"b\\u00e9\\ud83d\\ude00\"");
 }
+
+/// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rr`'s `hint`).
+#[test]
+fn globs_nest_alternatives() {
+    let p = "{{versioned,}{databaseconnection,readtransaction},{lazyresult,lazyseq}}";
+    for s in ["ReadTransaction", "VersionedReadTransaction", "LazySeq"] {
+        assert!(super::test("iglob", s, p), "{s}");
+    }
+    for s in ["Versioned", "ReadTransactions", "x"] {
+        assert!(!super::test("iglob", s, p), "{s}");
+    }
+    assert!(super::test("glob", "a,b", "{{a\\,b,c},d}"));
+}
+
+/// Data-layer text scanners copy complete logical lines through shared candidate relations.
+/// These tests must still use the vocabulary batch, including predicates on those aliases.
+#[test]
+fn logical_line_predicates_and_aliases_use_the_vocabulary_batch() {
+    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+.decl split_line(d: number, l: number, t: symbol)
+.input split_line
+.decl candidate(d: number, l: number, t: symbol)
+.decl selected(d: number, l: number, t: symbol)
+.decl finding(d: number, l: number)
+candidate(d,l,t) :- split_line(d,l,t), !prefix("#",t).
+selected(d,l,t) :- candidate(d,l,t).
+finding(d,l) :- selected(d,l,t), contains("inspect",t).
+.output finding
+"##).unwrap();
+    let vocabulary = as_relations(&mut program).unwrap();
+    assert_eq!(vocabulary.tests.len(), 2, "both line predicates must be batched");
+    let rendered = program.rules.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    assert!(!rendered.contains("@prefix") && !rendered.contains("@contains"), "{rendered}");
+    assert_eq!(vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]),
+               [vec![11], vec![11,12]]);
+}
+
+/// A second writer can construct strings that the prepared vocabulary never saw.
+/// Optimising only the first writer would silently discard those findings.
+#[test]
+fn computed_or_fact_writers_prevent_alias_vocabulary_rewrites() {
+    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+.decl split_line(d: number, l: number, t: symbol)
+.input split_line
+.decl combined(t: symbol)
+.decl constant(t: symbol)
+.decl finding(t: symbol)
+combined(t) :- split_line(_,_,t).
+combined(t) :- split_line(_,_,s), t = @dot(s,"added").
+constant("invented").
+constant(t) :- split_line(_,_,t).
+finding(t) :- combined(t), suffix("added",t).
+finding(t) :- constant(t), prefix("invented",t).
+.output finding
+"##).unwrap();
+    let vocabulary = as_relations(&mut program).unwrap();
+    assert!(vocabulary.tests.is_empty(), "all writers must supply prepared vocabulary symbols");
+}
+
+/// The repository's existing public signature verifies without changing signed artifacts.
+#[test]
+fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    functions::register(&db).unwrap();
+    let key = "7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6";
+    let message = r#"{"allowlist":[],"linter":"lint_admin_async_purity","version":1}"#;
+    let signature = "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==";
+    let verify = |k: &str, m: &str, s: &str| {
+        db.query_row("SELECT ed25519_ok(?1,?2,?3)", rusqlite::params![k, m, s], |row| row.get::<_, i64>(0)).unwrap()
+    };
+    assert_eq!(verify(key, message, signature), 1);
+    assert_eq!(verify(key, &message.replace("[]", "[\"added.py\"]"), signature), 0);
+    assert_eq!(verify(key, message, "not base64"), 0);
+    assert_eq!(verify("wrong key", message, signature), 0);
+    assert_eq!(verify(key, message, &signature[..60]), 0);
+    assert_eq!(verify(key, message, &format!("{} \n!?{}", &signature[..20], &signature[20..])), 1);
+    assert_eq!(verify(key, message, &format!("{signature}===")), 1);
+    assert_eq!(verify(key, message, &format!("=={signature}")), 1);
+    assert_eq!(verify(key, message, &format!("{}h==", &signature[..85])), 1);
+    assert_eq!(verify(key, message, &format!("{signature}\u{2603}")), 0);
+}
+
+/// A test of each of a constant table's values (`contains(x, t)` for each surface x) gains the test of the whole
+/// table as one set before it, which the vocabulary answers once per string; the per-value test still decides.
+#[test]
+fn a_test_of_a_constant_tables_values_gains_the_whole_table_as_one_set() {
+    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+.decl split_line(d: number, l: number, t: symbol)
+.input split_line
+.decl table(k: symbol, x: symbol)
+table("dead", "alpha"). table("dead", "beta"). table("live", "gamma").
+.decl surface(x: symbol)
+surface(x) :- table("dead", x).
+.decl finding(d: number, l: number, x: symbol)
+finding(d,l,x) :- split_line(d,l,t), surface(x), contains(x,t).
+.output finding
+"##).unwrap();
+    let vocabulary = as_relations(&mut program).unwrap();
+    let specs: Vec<_> = vocabulary.specs.iter().map(|(op, p)| format!("{op} {p:?}")).collect();
+    assert_eq!(specs, [r#"contains ["alpha", "beta"]"#], "only the dead rows, as one set");
+    let rendered = program.rules.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    assert!(rendered.contains("strtest_") && rendered.contains("@contains"), "the set first, then each value: {rendered}");
+    assert_eq!(vocabulary.rows(&["an alpha".into(), "gamma".into()], &[1, 2]), [vec![1]]);
+}

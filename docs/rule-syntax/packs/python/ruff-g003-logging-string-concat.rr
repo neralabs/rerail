@@ -1,0 +1,17 @@
+.policy "ruff-g003-logging-string-concat" revision 2
+.description "Pass values to a logging call as arguments instead of building its message by string concatenation; the logger then formats only records it emits."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff G003 (flake8-logging-format): a logging call whose message is a `+` operation. Pass the values as the
+// call's arguments instead; the logger formats them only for records it emits. Any `+` counts, whatever its
+// operands. The message is the first argument (the second for `log`) or `msg=`. Reported at the message.
+//   logging.info("Hello" + " " + "World!")           ← G003
+//   logging.info("Hello %s", "World!")               not reported
+#include "python/logging.rr"
+
+.violation G003(at: node) code "G003"
+    "Use a `%s` format string and pass the values as logger arguments, e.g. `logger.info(\"x=%s\", x)`, doubling any literal `%`; leave it if `+` adds numbers or the logger is not from `logging`."
+    suppress ruff "G003"
+G003(e) :- log_msg(_, e), kind(e, "binary_operator"), op(e, "+").

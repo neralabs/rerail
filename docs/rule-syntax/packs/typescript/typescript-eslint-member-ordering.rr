@@ -1,0 +1,253 @@
+.policy "typescript-eslint-member-ordering" revision 3
+.description "Order TypeScript class and interface members by kind: signatures, then fields, constructors, accessors and finally methods, static and public first."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+#include "tsx/eslint-b-objects.rr"
+//   ts_member, ts_member_name, ts_ctor, type_literal; natural_key, nat_ask
+
+// typescript-eslint's member-ordering: the members of a class, interface or type literal come in a set order.
+//   class A { m() {} x = 1; }          x, a field, should come before the method m
+// Each member falls into groups, most specific first: `public-static-field`, `static-field`, `public-field`,
+// `field`. Its rank is the place in the order of the first of its groups the order names. The default order
+// (below) puts index signatures, then fields, static blocks, constructors, accessors, getters, setters and
+// methods, each by static, decorated, instance and abstract, and public before protected, private and #private.
+// Options per kind of body (classes, classExpressions, interfaces, typeLiterals, falling back to default): an
+// order of member types (an entry may be a list of types sharing a rank) or "never", or an object with
+// memberTypes, order (alphabetically, alphabetically-case-insensitive, natural, natural-case-insensitive) and
+// optionalityOrder (optional-first, required-first).
+.violation member_ordering(at: node, msg: symbol) code "@typescript-eslint/member-ordering"
+    "{msg}"
+    suppress eslint "@typescript-eslint/member-ordering"
+member_ordering(at, "Move this member above the members of kinds ordered after it (signatures, fields, constructors, accessors, then methods).") :-
+    out_of_group(m, _), report_at(m, at).
+member_ordering(m, cat("Member ", cat(x, cat(" should be declared before member ", cat(y, "."))))) :- out_of_name(m, x, y).
+member_ordering(m, cat("Member ", cat(x, cat(" should be declared after all ", cat(w, " members."))))) :-
+    out_of_optionality(m, w), member_label(m, x).
+
+// ---- members ---------------------------------------------------------------------------------------------------------
+// mem(b, m, i): member i of body b, which takes its order from config k.
+.decl ordered_body(b: node, k: symbol, modifiers: number)
+ordered_body(b, k, 1) :- (kind(c, "class_declaration") ; kind(c, "abstract_class_declaration")), field(c, "body", b), config("classes", k).
+ordered_body(b, k, 1) :- kind(c, "class"), field(c, "body", b), config("classExpressions", k).
+ordered_body(b, k, 0) :- kind(b, "interface_body"), config("interfaces", k).
+ordered_body(b, k, 0) :- type_literal(b), config("typeLiterals", k).
+.decl mem(b: node, m: node, i: number)
+mem(b, m, i) :- ordered_body(b, k, _), !never(k), ts_member(b, m, i).
+
+// kind_of(m, t): getNodeType. A field holding a function is a method; an overload `m(): void;` in a class has
+// no rank (it is skipped); abstract(m) and the scope come from the modifiers.
+.decl kind_of(m: node, t: symbol)
+kind_of(m, "constructor") :- mem(_, m, _), (ts_ctor(m), kind(m, "method_definition") ; kind(m, "construct_signature")).
+kind_of(m, t) :- mem(_, m, _), (kind(m, "method_definition"), !ts_ctor(m) ; kind(m, "abstract_method_signature") ;
+    kind(m, "method_signature"), !in_class(m)), (op(m, "get"), t = "get" ; op(m, "set"), t = "set" ;
+    !op(m, "get"), !op(m, "set"), t = "method").
+kind_of(m, "call-signature") :- mem(_, m, _), kind(m, "call_signature").
+kind_of(m, "accessor") :- mem(_, m, _), kind(m, "public_field_definition"), op(m, "accessor").
+kind_of(m, "method") :- mem(_, m, _), kind(m, "public_field_definition"), !op(m, "accessor"), !op(m, "abstract"),
+    field(m, "value", v), (kind(v, "arrow_function") ; kind(v, "function_expression")).
+kind_of(m, t) :- mem(_, m, _), (kind(m, "public_field_definition"), !op(m, "accessor"), !fn_field(m) ;
+    kind(m, "property_signature")), (op(m, "readonly"), t = "readonly-field" ; !op(m, "readonly"), t = "field").
+kind_of(m, t) :- mem(_, m, _), kind(m, "index_signature"),
+    (op(m, "readonly"), t = "readonly-signature" ; !op(m, "readonly"), t = "signature").
+kind_of(m, "static-initialization") :- mem(_, m, _), kind(m, "class_static_block").
+.decl fn_field(m: node)
+fn_field(m) :- kind(m, "public_field_definition"), !op(m, "abstract"), field(m, "value", v),
+    (kind(v, "arrow_function") ; kind(v, "function_expression")).
+.decl in_class(m: node)
+in_class(m) :- child(b, m, _), kind(b, "class_body").
+.decl overload(m: node)
+overload(m) :- mem(_, m, _), kind(m, "method_signature"), in_class(m).
+
+.decl scope(m: node, s: symbol)
+scope(m, "static") :- mem(_, m, _), op(m, "static").
+scope(m, "abstract") :- mem(_, m, _), !op(m, "static"), (op(m, "abstract") ; kind(m, "abstract_method_signature")).
+scope(m, "instance") :- mem(_, m, _), !op(m, "static"), !op(m, "abstract"), !kind(m, "abstract_method_signature").
+.decl access(m: node, a: symbol)
+access(m, a) :- mem(_, m, _), child(m, x, _), kind(x, "accessibility_modifier"), text(x, a).
+access(m, "#private") :- mem(_, m, _), !modified(m), hash_named(m).
+access(m, "public") :- mem(_, m, _), !modified(m), !hash_named(m).
+.decl hash_named(m: node)
+hash_named(m) :- field(m, "name", k), kind(k, "private_property_identifier").
+.decl modified(m: node)
+modified(m) :- child(m, x, _), kind(x, "accessibility_modifier").
+// decorated(m, d): d is m's first decorator. A field holds its own; a method's stand before it in the body.
+.decl decorated(m: node, d: node)
+decorated(m, d) :- mem(_, m, _), field(m, "decorator", _), d = min e : { field(m, "decorator", e) }.
+decorated(m, d) :- dec_of(_, m), d = min e : { dec_of(e, m) }.
+.decl dec_of(d: node, m: node)
+dec_of(d, m) :- child(b, d, _), kind(d, "decorator"), mem(b, m, i), d < m, (i = 0 ; after_member(d, b, i)).
+.decl after_member(d: node, b: node, i: number)  // d comes after member i - 1
+after_member(d, b, i) :- child(b, d, _), kind(d, "decorator"), mem(b, _, i), mem(b, o, i - 1), d > o.
+.decl report_at(m: node, at: node)
+report_at(m, d) :- mem(_, m, _), decorated(m, d), !field(m, "decorator", _).
+report_at(m, m) :- mem(_, m, _), (field(m, "decorator", _) ; !decorated(m, _)).
+
+// group(m, p, g): getRank's member groups, p the priority (lower first).
+.decl group(m: node, p: number, g: symbol)
+group(m, p, g) :- ordered_body(b, _, 1), mem(b, m, _), decorated(m, _), kind_of(m, t), access(m, a), dec_kind(t),
+    (p = 0, g = cat(a, cat("-decorated-", t)) ; p = 1, g = cat("decorated-", t) ;
+    t = "readonly-field", (p = 2, g = cat(a, "-decorated-field") ; p = 3, g = "decorated-field")).
+group(m, p, g) :- ordered_body(b, _, 1), mem(b, m, _), kind_of(m, t), !plain_kind(t), t != "constructor", access(m, a),
+    scope(m, s), (p = 10, g = cat(a, cat("-", cat(s, cat("-", t)))) ; p = 11, g = cat(s, cat("-", t)) ;
+    t = "readonly-field", (p = 12, g = cat(a, cat("-", cat(s, "-field"))) ; p = 13, g = cat(s, "-field"))).
+group(m, p, g) :- ordered_body(b, _, 1), mem(b, m, _), kind_of(m, t), !plain_kind(t), access(m, a),
+    (p = 20, g = cat(a, cat("-", t)) ; t = "readonly-field", p = 21, g = cat(a, "-field")).
+group(m, 30, t) :- kind_of(m, t).
+group(m, 31, "signature") :- kind_of(m, "readonly-signature").
+group(m, 31, "field") :- kind_of(m, "readonly-field").
+.decl dec_kind(t: symbol)
+dec_kind("readonly-field"). dec_kind("field"). dec_kind("method"). dec_kind("accessor"). dec_kind("get"). dec_kind("set").
+.decl plain_kind(t: symbol)
+plain_kind("readonly-signature"). plain_kind("signature"). plain_kind("static-initialization").
+
+// rank(m, r): the first of m's groups that the order names, at its place; -1 when none is named, or m is an
+// overload signature.
+.decl rank(m: node, r: number)
+rank(m, r) :- mem(b, m, _), ordered_body(b, k, _), !overload(m), group(m, _, _),
+    p0 = min p : { group(m, p, g), named(k, _, g) }, r = min i : { group(m, p0, g), named(k, i, g) }.
+rank(m, -1) :- mem(_, m, _), (overload(m) ; !has_named(m)).
+.decl has_named(m: node)
+has_named(m) :- mem(b, m, _), ordered_body(b, k, _), group(m, _, g), named(k, _, g).
+
+// ---- the configuration -------------------------------------------------------------------------------------------
+// config(c, k): the options for bodies of kind c: its own, else default's, else the built-in order.
+.decl config(c: symbol, k: symbol)
+config(c, c) :- body_kind(c), user(c).
+config(c, "default") :- body_kind(c), !user(c), user("default").
+config(c, "default_order") :- body_kind(c), !user(c), !user("default").
+.decl body_kind(c: symbol)
+body_kind("classes"). body_kind("classExpressions"). body_kind("interfaces"). body_kind("typeLiterals").
+.decl user(k: symbol)
+user(k) :- (option(x, _) ; option_item(x, _, _)), (body_kind(k) ; k = "default"), (x = k ; prefix(cat(k, "/"), x)).
+.decl never(k: symbol)
+never(k) :- option(k, "never"), !option_item(k, _, _).
+// entry(k, i, v): the order's entries. A list entry comes as its text, `['a', 'b']`. An object without
+// memberTypes under default keeps the built-in order (ESLint merges it into the defaults).
+.decl entry(k: symbol, i: number, v: symbol)
+entry(k, i, v) :- config(_, k), option_item(k, i, v).
+entry(k, i, v) :- config(_, k), option_item(cat(k, "/memberTypes"), i, v).
+entry("default_order", i, v) :- default_order(i, v).
+entry("default", i, v) :- config(_, "default"), !option_item("default", _, _), !option("default", "never"),
+    !option("default/memberTypes", _), default_order(i, v).
+.decl typed_order(k: symbol)
+typed_order(k) :- entry(k, _, _).
+.decl named(k: symbol, i: number, g: symbol)
+named(k, i, g) :- entry(k, i, g), !prefix("[", g).
+named(k, i, g) :- entry(k, i, v), prefix("[", v), group(_, _, g), contains(cat("'", cat(g, "'")), v).
+// shown(k, i, s): an entry as the message names it, `public-static-field` as "public static field".
+.decl shown(k: symbol, i: number, s: symbol)
+shown(k, i, @replace_all(@replace_all(v, "[\\[\\]']", ""), "-", " ")) :- entry(k, i, v).
+.decl sorting(k: symbol, o: symbol)
+sorting(k, o) :- config(_, k), option(cat(k, "/order"), o), o != "as-written".
+
+// default_order(i, v): the default order, 117 entries: each of field, accessor, get, set and method by the 22 ways
+// below, with signatures first, the static block after the fields and the constructors after that.
+.decl default_order(i: number, v: symbol)
+default_order(0, "signature"). default_order(1, "call-signature"). default_order(24, "static-initialization").
+default_order(25, "public-constructor"). default_order(26, "protected-constructor"). default_order(27, "private-constructor").
+default_order(28, "constructor").
+default_order(b + j, cat(w, t)) :- base(t, b), way(j, w).
+.decl base(t: symbol, b: number)
+base("field", 2). base("accessor", 29). base("get", 51). base("set", 73). base("method", 95).
+.decl way(j: number, w: symbol)
+way(0, "public-static-"). way(1, "protected-static-"). way(2, "private-static-"). way(3, "#private-static-").
+way(4, "public-decorated-"). way(5, "protected-decorated-"). way(6, "private-decorated-").
+way(7, "public-instance-"). way(8, "protected-instance-"). way(9, "private-instance-"). way(10, "#private-instance-").
+way(11, "public-abstract-"). way(12, "protected-abstract-"). way(13, "public-"). way(14, "protected-").
+way(15, "private-"). way(16, "#private-"). way(17, "static-"). way(18, "instance-"). way(19, "abstract-").
+way(20, "decorated-"). way(21, "").
+
+// ---- optionality ------------------------------------------------------------------------------------------------------
+// With optionalityOrder the members split where optional ones (`a?`) meet required ones; both halves are then
+// checked apart. Members on the wrong side of the split are reported instead, and nothing else is.
+.decl optional(m: node)
+optional(m) :- mem(_, m, _), op(m, "?").
+.decl first_switch(b: node, s: number)
+first_switch(b, s) :- mem(b, _, _), ordered_body(b, k, _), option(cat(k, "/optionalityOrder"), _),
+    s = min i : { mem(b, m, i), i > 0, mem(b, o, i - 1), flips(m, o) }.
+.decl flips(m: node, o: node)
+flips(m, o) :- mem(b, m, i), mem(b, o, i - 1), (optional(m), !optional(o) ; !optional(m), optional(o)).
+.decl out_of_optionality(m: node, w: symbol)
+out_of_optionality(m, w) :- first_switch(b, _), ordered_body(b, k, _), option(cat(k, "/optionalityOrder"), o), mem(b, m, 0),
+    (o = "optional-first", !optional(m) ; o = "required-first", optional(m)), wording(o, w).
+out_of_optionality(m, w) :- first_switch(b, s), ordered_body(b, k, _), option(cat(k, "/optionalityOrder"), o),
+    !start_wrong(b), mem(b, m, s), mem(b, n, j), j > s, (optional(m), !optional(n) ; !optional(m), optional(n)),
+    wording(o, w).
+.decl start_wrong(b: node)
+start_wrong(b) :- first_switch(b, _), ordered_body(b, k, _), option(cat(k, "/optionalityOrder"), o), mem(b, m, 0),
+    (o = "optional-first", !optional(m) ; o = "required-first", optional(m)).
+.decl wording(o: symbol, w: symbol)
+wording("optional-first", "optional"). wording("required-first", "required").
+// part(m, h): which half m is in (0 when the body is not split).
+.decl part(m: node, h: number)
+part(m, 0) :- mem(b, m, _), !first_switch(b, _).
+part(m, h) :- mem(b, m, i), first_switch(b, s), !split_bad(b), (i < s, h = 0 ; i >= s, h = 1).
+.decl split_bad(b: node)
+split_bad(b) :- out_of_optionality(m, _), mem(b, m, _).
+
+// ---- group order --------------------------------------------------------------------------------------------------
+// out_of_group(m, s): a member before m in its half has a higher rank; s names the lowest such rank, the first
+// one past m's (the rank of the earliest member above it).
+.decl out_of_group(m: node, s: symbol)
+out_of_group(m, s) :- ranked(b, m, i, r, h), ordered_body(b, k, _), typed_order(k),
+    j0 = min j : { ranked(b, _, j, q, h), j < i, q > r }, ranked(b, _, j0, q0, h), shown(k, q0, s).
+.decl ranked(b: node, m: node, i: number, r: number, h: number)
+ranked(b, m, i, r, h) :- mem(b, m, i), rank(m, r), r >= 0, part(m, h).
+.decl unsorted(b: node, h: number)
+unsorted(b, h) :- out_of_group(m, _), ranked(b, m, _, _, h).
+
+// ---- names -------------------------------------------------------------------------------------------------------
+// out_of_name(m, x, y): with an order, m's name x sorts before y, the name just before it in its group. The
+// groups are runs of one rank (when the ranks are in order), the whole half (with no order of member types),
+// or, when the ranks are out of order, upstream's groupMembersByType over the body (below).
+.decl out_of_name(m: node, x: symbol, y: symbol)
+out_of_name(m, x, y) :- before(m, o), member_label(m, x), member_label(o, y), x != y, mem(b, m, _), ordered_body(b, k, _), sorting(k, w),
+    sort_key(w, x, kx), sort_key(w, y, ky), kx < ky.
+out_of_name(m, x, y) :- before(m, o), member_label(m, x), member_label(o, y), x != y, mem(b, m, _), ordered_body(b, k, _),
+    sorting(k, w), prefix("natural", w), sort_key(w, x, k0), sort_key(w, y, k0).  // naturalCompare gives 0
+.decl before(m: node, o: node)
+before(m, o) :- ranked(b, m, i, r, h), ordered_body(b, k, _), typed_order(k), !unsorted(b, h),
+    j0 = max j : { ranked(b, _, j, _, h), j < i }, ranked(b, o, j0, r, h).
+before(m, o) :- mem(b, m, i), ordered_body(b, k, _), !typed_order(k), part(m, h),
+    j0 = max j : { mem(b, p, j), part(p, h), j < i }, mem(b, o, j0).
+before(m, o) :- mem(b, m, i), ordered_body(b, k, _), typed_order(k), unsorted(b, _), in_run(b, i, g),
+    j0 = max j : { in_run(b, j, g), j < i }, mem(b, o, j0).
+// in_run(b, i, g): groupMembersByType. Member i joins the group started at g when its rank repeats the next
+// member's, or the rank of the last such pair before it. The body's last member is never in a group.
+.decl all_rank(b: node, i: number, r: number)
+all_rank(b, i, r) :- mem(b, m, i), rank(m, r).
+.decl pair(b: node, i: number)
+pair(b, i) :- all_rank(b, i, r), all_rank(b, i + 1, r).
+.decl prev_rank(b: node, i: number, r: number)
+prev_rank(b, i, r) :- all_rank(b, i, _), k0 = max k : { pair(b, k), k < i }, all_rank(b, k0, r).
+.decl joins(b: node, i: number)
+joins(b, i) :- all_rank(b, i, _), all_rank(b, i + 1, _), (pair(b, i) ; repeats(b, i)).
+.decl starts(b: node, i: number)
+starts(b, i) :- pair(b, i), !repeats(b, i).
+.decl repeats(b: node, i: number)
+repeats(b, i) :- prev_rank(b, i, r), all_rank(b, i, r).
+.decl in_run(b: node, i: number, g: number)
+in_run(b, i, g) :- joins(b, i), g = max s : { starts(b, s), s <= i }.
+
+// member_label(m, x): getMemberName: a quoted key without its quotes, a #private one without its #; `new` and `call`
+// for construct and call signatures, an index signature's parameter, "static block".
+.decl member_label(m: node, x: symbol)
+member_label(m, "constructor") :- kind_of(m, "constructor"), !kind(m, "construct_signature").
+member_label(m, "new") :- mem(_, m, _), kind(m, "construct_signature").
+member_label(m, "call") :- mem(_, m, _), kind(m, "call_signature").
+member_label(m, "static block") :- mem(_, m, _), kind(m, "class_static_block").
+member_label(m, x) :- mem(_, m, _), kind(m, "index_signature"), field(m, "name", n), text(n, x).
+member_label(m, "(index signature)") :- mem(_, m, _), kind(m, "index_signature"), !field(m, "name", _).
+member_label(m, x) :- mem(_, m, _), !kind_of(m, "constructor"), ts_member_name(m, y, t),
+    (t = "Quoted", x = substr(y, 1, strlen(y) - 2) ; t = "Private", x = substr(y, 1, strlen(y) - 1) ;
+    t != "Quoted", t != "Private", x = y).
+.decl sort_key(w: symbol, x: symbol, k: symbol)
+sort_key("alphabetically", x, x) :- member_label(_, x).
+sort_key("alphabetically-case-insensitive", x, @lower(x)) :- member_label(_, x).
+sort_key("natural", x, k) :- member_label(_, x), natural_key(x, k).
+sort_key("natural-case-insensitive", x, k) :- member_label(_, x), natural_key(@lower(x), k).
+nat_ask(x) :- member_label(_, x), sorting(_, "natural").
+nat_ask(@lower(x)) :- member_label(_, x), sorting(_, "natural-case-insensitive").

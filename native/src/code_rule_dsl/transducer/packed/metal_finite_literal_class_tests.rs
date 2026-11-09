@@ -339,7 +339,7 @@ fn complete_literal_evaluation(base: usize) {
         * files.len();
     assert_eq!(matched, want);
     assert!(matched > 1_000_000);
-    assert!(!trace.is_empty() && trace.len() <= 600);
+    assert!(!trace.is_empty() && trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert!(trace.iter().all(|r| r.encoded
         && r.submitted
         && r.completed

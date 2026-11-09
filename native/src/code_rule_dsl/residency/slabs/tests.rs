@@ -88,7 +88,7 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     let _ = std::fs::remove_file(path);
 }
 
-/// A parser's inputs resident as sources (decision 0045): each file's bytes at a 16-byte offset
+/// A parser's inputs resident as sources (decision 0067): each file's bytes at a 16-byte offset
 /// of a slab, at least 16 bytes of room; asked again, the same sources, not copied again; at most
 /// `MAX_SLABS` slabs bound for them.
 #[test]

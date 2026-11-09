@@ -28,7 +28,7 @@
 // the test* method names of each top-level Test* class that defines neither __init__ nor __new__ (pytest does not
 // collect those). Method names are a set in the script, so a name defined twice counts once.
 .decl conform_test(d: number)
-conform_test(d) :- doc(d, p, _), match("conform/(?:.+/)?test_[^/]*\.py", p).
+conform_test(d) :- doc(d, p, _), match("conform/(?:.+/)?test_[^/]*\\.py", p).
 // stmt_def(b, f): f is a def or class statement of body b, decorated or not, async or not.
 .decl stmt_def(b: node, f: node)
 stmt_def(b, f) :- body_stmt(b, f, _), (kind(f, "function_definition") ; kind(f, "class_definition")).

@@ -106,6 +106,7 @@ function prepareWriter(database: RerailDatabase, path: string): void {
   refuseWhileRestoring(database.$client, path);
   database.run(sql`PRAGMA foreign_keys = ON`);
   database.run(sql`PRAGMA synchronous = FULL`);
+  database.run(sql`PRAGMA secure_delete = ON`);
 }
 
 /** Open the Node-owned SQLite database without applying Rerail's project schema. */
@@ -249,6 +250,24 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
     );
   }
   return openChecked(path, true, migrations, supported);
+}
+
+/**
+ * A read-only open that never changes the file: where `openRerailDatabase({ readonly: true })` would run this build's
+ * schema steps first (a writable open), this refuses, saying so. For commands that only read the person's database
+ * from another build or process (`rerail scan`), so a checkout build never migrates the installed Rerail's file. A
+ * file newer than this build reads, or one this build cannot read at all, is refused as any open refuses it.
+ */
+export function openRerailDatabaseAsIs(path: string): RerailDatabase {
+  const migrations = RERAIL_MIGRATIONS;
+  const database = openChecked(path, true, migrations, schemaVersionOf(migrations));
+  const upgrade = upgradeBeforeReading(path, database, migrations);
+  if (upgrade === undefined) return database;
+  database.$client.close();
+  throw new Error(
+    `${path} needs ${upgrade} before this Rerail can read it, and this command never changes it. Run it with the Rerail `
+      + "this computer runs (rerail), or start Rerail first (rerail daemon start), which upgrades it.",
+  );
 }
 
 /**
@@ -408,10 +427,10 @@ export function resetRepositoryHistory(path: string, repositoryId: string): Hist
 
 /**
  * Delete the execution history recorded under `repositoryIds` (one repository's key, aliases and clone ids) in ONE
- * write transaction. Events, work links, audits, audit requests, and repository audits of those sessions go; ended
- * sessions go with them. Still-running sessions keep their row and runtime ownership claim so live processes carry on
- * recording. Rules, other repositories' history, audit settings, and presentation preferences are untouched. The file
- * is never unlinked or rebuilt, so every connection holding it open keeps working.
+ * write transaction. Events, work links, steer feedback notes, audits, audit requests, and repository audits of those
+ * sessions go; ended sessions go with them. Still-running sessions keep their row and runtime ownership claim so live
+ * processes carry on recording. Rules, other repositories' history, audit settings, and presentation preferences are
+ * untouched. The file is never unlinked or rebuilt, so every connection holding it open keeps working.
  */
 export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds: readonly string[]): HistoryResetReport {
   return database.transaction(() => {
@@ -425,6 +444,8 @@ export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds
       for (const table of schema.SESSION_HISTORY_TABLES) {
         database.run(sql`DELETE FROM ${table} WHERE ${table.sessionId} IN (${schema.sessionsOfRepository(repositoryId)})`);
       }
+      // A note names its repository as well as any session, so one recorded where no session was steered goes too.
+      database.run(sql`DELETE FROM ${schema.steerFeedback} WHERE ${schema.steerFeedback.repositoryId} = ${repositoryId}`);
       const ended = schema.sessionsOfRepository(repositoryId, { ended: true });
       database.run(sql`DELETE FROM ${schema.policySessionOwners} WHERE ${schema.policySessionOwners.sessionId} IN (${ended})`);
       database.run(sql`DELETE FROM ${schema.sessions} WHERE ${schema.sessions.sessionId} IN (${ended})`);
@@ -433,4 +454,12 @@ export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds
     }
     return { sessions, openSessions };
   }, { behavior: "immediate" });
+}
+
+export function eraseFreedPages(database: RerailDatabase): boolean {
+  const client = database.$client;
+  client.pragma("wal_checkpoint(TRUNCATE)");
+  client.exec("VACUUM");
+  const [result] = client.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+  return result !== undefined && result.busy === 0;
 }

@@ -1,5 +1,5 @@
 //! Block programs on Metal (`block`), both ways the transducer runs on the device, each over a
-//! batch of files in one launch (decision 0044):
+//! batch of files in one launch (decision 0066):
 //!
 //! - **the interpreter** (`metal_block_program.metal`): one kernel for any programs, reading each
 //!   program's steps from a table;
@@ -181,7 +181,7 @@ const SLAB_BUFFERS: [u64; crate::code_rule_dsl::residency::slabs::MAX_SLABS] = [
 /// Launches repeated because a look-back ran out of polls.
 pub(in crate::code_rule_dsl) static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Run `files` in one launch, each under `programs[file.program]` (decision 0044). `spins` is the
+/// Run `files` in one launch, each under `programs[file.program]` (decision 0066). `spins` is the
 /// polls of a predecessor after the first; 0 tests the repeated launch.
 pub(in crate::code_rule_dsl) fn run_batch(
     programs: &[&BlockNative],
@@ -204,7 +204,7 @@ pub(in crate::code_rule_dsl) fn run_batch(
         Executor::Generated(_) => forms.iter().map(record_words).collect(),
     };
     let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
-    // The files' bytes, resident in slabs (decision 0045): read in place, at most `MAX_SLABS`
+    // The files' bytes, resident in slabs (decision 0067): read in place, at most `MAX_SLABS`
     // slabs a batch; past that the caller splits the batch.
     let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
     let sources = crate::code_rule_dsl::residency::slabs::admit_sources(&bytes)?;
@@ -533,7 +533,7 @@ pub(in crate::code_rule_dsl) fn generate_with(native: &BlockNative, width: LaneW
 /// A group of programs (each already in the form it runs) as one kernel, `tempo_batch`: a function
 /// per program, `program_P`, that computes each instruction once, in order, with a look-back for
 /// each carried one, and writes the file's outputs and extracts; and persistent workers that take
-/// the batch's groups in order and call their file's program (decision 0044).
+/// the batch's groups in order and call their file's program (decision 0066).
 fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
     let m = width.word();
     let mut helpers = String::new();
@@ -578,7 +578,7 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
          \x20   if (done[t] != 0u) continue;\n\
          \x20   const uint2 fg = group_of[t];\n\
          \x20   const FileRow f = files[fg.x];\n\
-         \x20   // The slab the file's bytes are in (decision 0045): the same in every lane.\n\
+         \x20   // The slab the file's bytes are in (decision 0067): the same in every lane.\n\
          \x20   device const uint4* bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3;\n\
          \x20   bool ok = false;\n\
          \x20   // The same program in every lane: the group holds one file.\n\
@@ -619,7 +619,7 @@ fn batch_helpers() -> String {
 
 /// A file of a batch, and its bytes read in place in its slab: 16-byte chunks from `src16`, zero
 /// at and past its length (a neighbour's bytes never read as its own).
-const FILE_ROW: &str = "// A file of the batch (decision 0044). Lane words are indexed in the file: output k of lane gl at
+const FILE_ROW: &str = "// A file of the batch (decision 0066). Lane words are indexed in the file: output k of lane gl at
 // out_base + k * groups * 32 + gl; carry j of group g at state_base + j * groups + g (a halo's
 // three words from halo_base + (j * groups + g) * 3); counted output c's state of group g at
 // ext_base + c * groups + g, and its total at tot_base + c; extract e's positions from

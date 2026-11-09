@@ -1,4 +1,5 @@
 import { existsSync, statSync } from "node:fs";
+import { readRemoteConfig } from "../runtime/remote-config.js";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { and, eq } from "drizzle-orm";
@@ -277,11 +278,21 @@ async function approveSessions(run: Run, answer: string | undefined, repo: strin
   if (environment.sessionsApproved()) return { answer };
   const form = sessionsQuestion({
     carriedArgs: repo === undefined ? [] : [SETUP_FLAGS.repo, repo],
+    remoteHosts: remoteHostsOf(packsHome(run)),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
   });
   const picked = await choose(run, form, SESSIONS_ANSWERS);
   if (picked === undefined) return halted(run.io);
   return approveSessions(run, picked, repo);
+}
+
+/** The hosts of this home's remotes (`rerail remote`), or null when their configuration cannot be read. */
+function remoteHostsOf(home: string): string[] | null {
+  try {
+    return readRemoteConfig(home).remotes.map(remote => new URL(remote.url).host);
+  } catch {
+    return null;
+  }
 }
 
 /** `""` takes the first answer (the cursor is on it); `2` the second; an answer key itself also works. */

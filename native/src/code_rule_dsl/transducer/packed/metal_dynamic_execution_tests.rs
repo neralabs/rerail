@@ -315,7 +315,7 @@ fn complete_convergence_routing_reaches_terminal_barrier_within_shared_budget() 
         eprintln!("dispatch {}: {record:?}", index + 1);
     }
     assert_eq!(actual, Ok(()));
-    assert!(trace.len() <= 600);
+    assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert!(
         trace
             .iter()
@@ -385,7 +385,7 @@ fn direct_tuples_do_not_reserve_dynamic_seed_state_or_successor_work() {
         "only the one dynamic tuple belongs to seed-state storage"
     );
     assert!(
-        trace.len() <= 600
+        trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT
             && trace
                 .iter()
                 .all(|r| r.encoded && r.submitted && r.completed)
@@ -465,7 +465,7 @@ fn empty_expansions_do_not_reserve_successor_state_for_every_selected_root() {
         Ok(expected),
         "dead expansion inputs cannot exhaust the shared allocation guard"
     );
-    assert!(!trace.is_empty() && trace.len() <= 600);
+    assert!(!trace.is_empty() && trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
     assert!(trace.iter().all(|r| r.encoded
         && r.submitted
         && r.completed
@@ -543,7 +543,7 @@ fn sparse_initial_expansions_preserve_full_ordinals_across_blocks_and_files() {
         let trace = scope.snapshot();
         drop(scope);
         assert_eq!(actual, Ok(expected), "opcode={op}");
-        assert!(!trace.is_empty() && trace.len() <= 600);
+        assert!(!trace.is_empty() && trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
         assert!(trace.iter().all(|r| r.encoded
             && r.submitted
             && r.completed

@@ -34,6 +34,39 @@ struct DemandZeroRegion<T> {
     marker: PhantomData<T>,
 }
 
+// wasm32 has no mmap: the region is a zeroed heap allocation (committed up front, which a browser's linear
+// memory does anyway).
+#[cfg(target_family = "wasm")]
+impl<T> DemandZeroRegion<T> {
+    fn layout(count: usize) -> Result<std::alloc::Layout, Error> {
+        let bytes = count.checked_mul(mem::size_of::<T>()).ok_or(Error::BackendCapacity)?.max(1);
+        std::alloc::Layout::from_size_align(bytes, mem::align_of::<T>().max(16)).map_err(|_| Error::BackendCapacity)
+    }
+
+    fn new(count: usize) -> Result<Self, Error> {
+        let layout = Self::layout(count)?;
+        // SAFETY: the layout has a non-zero size.
+        let raw = unsafe { std::alloc::alloc_zeroed(layout) };
+        let pointer = NonNull::new(raw.cast::<T>()).ok_or(Error::BackendCapacity)?;
+        Ok(Self {
+            pointer,
+            count,
+            mapped_bytes: layout.size(),
+            marker: PhantomData,
+        })
+    }
+}
+
+#[cfg(target_family = "wasm")]
+impl<T> Drop for DemandZeroRegion<T> {
+    fn drop(&mut self) {
+        let layout = Self::layout(self.count).expect("the layout new() allocated with");
+        // SAFETY: allocated by `new` with this layout.
+        unsafe { std::alloc::dealloc(self.pointer.as_ptr().cast(), layout) };
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
 impl<T> DemandZeroRegion<T> {
     fn new(count: usize) -> Result<Self, Error> {
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -86,6 +119,7 @@ impl<T> DerefMut for DemandZeroRegion<T> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl<T> Drop for DemandZeroRegion<T> {
     fn drop(&mut self) {
         unsafe {

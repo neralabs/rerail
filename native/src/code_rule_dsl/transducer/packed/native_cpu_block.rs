@@ -167,7 +167,7 @@ impl Batch {
     }
 }
 
-/// Cranelift over a batch (decision 0044): each file's run under its program, in the files'
+/// Cranelift over a batch (decision 0066): each file's run under its program, in the files'
 /// order; one call of each program's function over all of that program's files.
 pub(super) fn run_batch(programs: &[&CompiledBlock], files: &[BatchFile<'_>]) -> Vec<BlockRun> {
     let mut out: Vec<Option<BlockRun>> = vec![None; files.len()];
@@ -228,7 +228,7 @@ pub(super) struct Field {
     pos: u8,
 }
 
-/// The carried state's layout (decision 0048): its fields, packed first-fit into words.
+/// The carried state's layout (decision 0070): its fields, packed first-fit into words.
 #[derive(Debug)]
 pub(super) struct State {
     fields: Vec<Field>,
@@ -817,7 +817,7 @@ pub(super) fn flatten(f: &mut FunctionBuilder<'_>, m: Value, at: Value, ptr: Val
 /// Compile a block program's native IR.
 pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     // Not optimised: the mid-end's code motion would hoist every vector constant out of the loop,
-    // more than the registers hold, and spill them (decision 0047). The body is already
+    // more than the registers hold, and spill them (decision 0069). The body is already
     // straight-line and deduplicated.
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
@@ -859,7 +859,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let done = f.create_block();
         f.append_block_params_for_function_params(entry);
         f.append_block_param(row, types::I64);
-        // The carried state, packed (decision 0048): each carry holds only its bits, in a field
+        // The carried state, packed (decision 0070): each carry holds only its bits, in a field
         // of a few loop-carried words, never a word per bit.
         let state = State::of(native);
         ascii_branch = state.plan.ascii_branch;
@@ -879,7 +879,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let (arena, rows, nrows, out_all, pos_all, counts_all) =
             (entry_params[0], entry_params[1], entry_params[2], entry_params[3], entry_params[4], entry_params[5]);
         let zero = f.ins().iconst(types::I64, 0);
-        // The constants every block uses, made once. (Others are made where used, decision 0047.)
+        // The constants every block uses, made once. (Others are made where used, decision 0069.)
         let consts = Consts::make(&mut f);
         let no_rows = f.ins().icmp_imm(IntCC::Equal, nrows, 0);
         f.ins().brif(no_rows, done, &[], row, &[zero.into()]);

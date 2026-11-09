@@ -1,0 +1,31 @@
+.policy "eslint-plugin-vue-attribute-hyphenation" revision 2
+.description "Use hyphenated (kebab-case) attribute and prop names, not camelCase, on Vue components and slots in templates."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/template.rr"
+//   vplain(e, a, x), vdir(e, a, d, arg), vdyn(a), vcustom(e), vel_name(e, x), vtag_ignored(e), vkey_text(a, k)
+
+// eslint-plugin-vue's attribute-hyphenation: on a custom component or a <slot>, an attribute or prop name that is
+// not kebab-case. The name is a plain attribute's, or the static argument of v-bind (`:`, `.`) or v-model. Option 1:
+// "always" (the default; a name with an upper-case letter is reported) or "never" (a name with `-` is). Option 2:
+// ignore (more names), ignoreTags (see vtag_ignored). A name that contains data-, aria-, slot-scope, an SVG
+// attribute with mixed case (viewBox, …) or an ignore item is never reported (Array.some over String.includes).
+//   <my-comp myProp="a" :fooBar="b" v-model:modelName="c" />    all three are reported
+//   <my-comp my-prop="a" :[dyn]="b" />   <div myProp="a" />       not reported
+// The plugin's fix renames the key; the policy has none, so none is offered.
+.violation hyphenation(at: node, k: symbol, verb: symbol) code "vue/attribute-hyphenation" "Attribute '{k}' {verb}."
+    suppress eslint "vue/attribute-hyphenation"
+hyphenation(a, k, verb) :- checked(e), prop_name(e, a, x), !ignored(x), wrong(x, verb), vkey_text(a, k).
+.decl checked(e: node)
+checked(e) :- (vcustom(e) ; vel_name(e, "slot")), !vtag_ignored(e).
+.decl prop_name(e: node, a: node, x: symbol)
+prop_name(e, a, x) :- vplain(e, a, x).
+prop_name(e, a, x) :- vdir(e, a, d, x), (d = "bind" ; d = "model"), x != "", !vdyn(a).
+.decl ignored(x: symbol)
+ignored(x) :- prop_name(_, _, x), (prefix_ignored(p) ; vsvg_weird_attr(p) ; option_item("ignore", _, p)), contains(p, x).
+.decl prefix_ignored(p: symbol)
+prefix_ignored("data-"). prefix_ignored("aria-"). prefix_ignored("slot-scope").
+.decl wrong(x: symbol, verb: symbol)
+wrong(x, "must be hyphenated") :- prop_name(_, _, x), !option("option", "never"), @lower(x) != x.
+wrong(x, "can't be hyphenated") :- prop_name(_, _, x), option("option", "never"), contains("-", x).

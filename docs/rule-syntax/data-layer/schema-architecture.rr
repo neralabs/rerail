@@ -1,0 +1,131 @@
+.policy "data-layer:schema-architecture" revision 1
+.description "Schema plans are built, frozen, then materialized: no callbacks, no plan mutation or lazy planning while executing."
+.language python
+.mode block
+.scope include "l2000_connection/**/*.py", "l3200_metadata/**/*.py", "impl/common/l7245_versioned_backends/**/*.py"
+.scope include "impl/common/l2200_sql_dialect/sql_schema_services.py", "impl/common/l2200_sql_dialect/sql_versioning_services.py"
+.scope tests false
+// Two Python linters share the name schema_architecture, over different files.
+// The suite's plugin, scripts/lint_schema_architecture_plugin.py, reads the files under l2000_connection,
+// l3200_metadata and impl/common/l7245_versioned_backends that mention SchemaTransaction, Callable or
+// _schema_operation_plan (its source triggers). For each def f, read as ast.walk(f) reads it (nested defs,
+// parameters, decorators included); f's schema parameters are those annotated with a …SchemaTransaction name:
+//   SAP001  a callable field (`x: Callable[…]`) in a class that has a SchemaOperationKind field
+//   f executes (calls resolve_terminal_sync, execute, resolve_async, …), and then:
+//     SAP002  it mutates the schema plan: `p._schema_operation_plan.….append(…)`, or through an alias
+//             `g = p._schema_operation_plan` taken anywhere in f
+//     SAP005  it calls `p.….x_lazy(…)` on a schema parameter p
+//     SAP004  it calls itself by name (at the def's line)
+//   SAP003  a lambda passed positionally to a method of a schema parameter (whether f executes or not)
+//   SAP000  such a file does not parse (at line 1)
+// The standalone script, scripts/lint_schema_architecture.py, reads six schema files (its TARGETS). Its findings
+// have a rule id and no code, so their code is the check's name and the rule id is a tag:
+//   forbid-schema-planning-callback-field   an annotated `planning_callback` (`x.planning_callback: T` too)
+//   forbid-schema-callback-queues           a call of enqueue_post_ddl, enqueue_post_schema_ddl_flush,
+//                                           enqueue_post_commit_schema_exit or planning_callback
+//   forbid-materialization-plan-mutation    in a def whose own name contains materialize_schema_operation_records,
+//                                           a call of add_operation, flush_schema_plan[_async] or
+//                                           _materialize_schema_operation_records[_async]
+// Names are matched by spelling (Name id or Attribute attr); nothing is resolved. The .scope is the union of the
+// two linters' files; sap_doc and cli_doc below give each half its own. A file outside both is one a caller handed
+// to a linter directly (the linters' tests do), and both halves read it.
+
+#include "python/ast.rr"
+#include "python/calls.rr"
+#include "data-layer/boot-python.rr"     // callee_name, def_walk (ast.walk of a def), ann_word
+
+// ---- files -------------------------------------------------------------------------------------------------------
+.decl sap_target(p: symbol)   // the standalone script's TARGETS
+sap_target("l2000_connection/schema_transaction.py"). sap_target("l3200_metadata/bootstrap_coordinator.py").
+sap_target("l3200_metadata/bootstrap_state.py"). sap_target("impl/common/l2200_sql_dialect/sql_schema_services.py").
+sap_target("impl/common/l2200_sql_dialect/sql_versioning_services.py").
+sap_target("impl/common/l7245_versioned_backends/generic_sparse.py").
+.decl sap_dirs(d: number)     // under the plugin's directories
+sap_dirs(d) :- doc(d, p, _), glob("{l2000_connection,l3200_metadata,impl/common/l7245_versioned_backends}/**", p).
+.decl sap_direct(d: number)   // outside both linters' files: handed to one directly
+sap_direct(d) :- doc(d, p, _), !sap_dirs(d), !sap_target(p).
+.decl sap_triggered(d: number)
+sap_triggered(d) :- sap_dirs(d), source(d, sp),
+    (contains("SchemaTransaction", sp) ; contains("Callable", sp) ; contains("_schema_operation_plan", sp)).
+.decl sap_doc(d: number)      // the plugin reads it
+sap_doc(d) :- sap_triggered(d), !syntax_error(d, _, _).
+sap_doc(d) :- sap_direct(d).
+.decl cli_doc(d: number)      // the standalone script reads it
+cli_doc(d) :- doc(d, p, _), sap_target(p).
+cli_doc(d) :- sap_direct(d).
+.decl sap_in(n: node)         // n is in a file the plugin reads
+sap_in(n) :- docof(n, d), sap_doc(d).
+.decl cli_in(n: node)
+cli_in(n) :- docof(n, d), cli_doc(d).
+
+.violation SAP000(at: loc) "cannot inspect schema lifecycle ownership: the file does not parse"
+SAP000(@place(p, 1)) :- sap_triggered(d), syntax_error(d, _, _), doc(d, p, _).
+
+// sap_method(c, r, a): c is `r.a(…)`.
+.decl sap_method(c: node, r: node, a: symbol)
+sap_method(c, r, a) :- kind(c, "call"), field(c, "function", g), attr_of(g, r, a).
+// sap_root(e, x): the name an attribute chain hangs from: `p._schema_operation_plan.operations` gives p. Any
+// other step (a call, a subscript) ends the chain with no name.
+.decl sap_root(e: node, x: symbol)
+sap_root(e, x) :- kind(e, "identifier"), text(e, x).
+sap_root(e, x) :- attr_of(e, o, _), sap_root(o, x).
+
+// sap_param(f, x): parameter x of def f (positional or keyword-only, not *args/**kw) is a schema transaction.
+.decl sap_param(f: node, x: symbol)
+sap_param(f, x) :- kind(f, "function_definition"), sig_param(f, _, nm, _, k, a, _), (k = "posonly" ; k = "pos" ; k = "kwonly"),
+    ann_word(a, w), suffix("SchemaTransaction", w), text(nm, x).
+// sap_exec(f): f calls an execution terminal.
+.decl sap_terminal(x: symbol)
+sap_terminal("resolve_terminal_sync"). sap_terminal("resolve_terminal_async"). sap_terminal("execute_server_plan_now").
+sap_terminal("execute_server_plan_async"). sap_terminal("execute"). sap_terminal("execute_async").
+sap_terminal("resolve"). sap_terminal("resolve_async").
+.decl sap_exec(f: node)
+sap_exec(f) :- callee_name(c, x), sap_terminal(x), def_walk(c, f), kind(f, "function_definition").
+// sap_alias(f, x): `x = p._schema_operation_plan` (or `x: T = …`) anywhere in f, p a schema parameter of f.
+.decl sap_alias(f: node, x: symbol)
+sap_alias(f, x) :- assign_value(s, v), attr_of(v, o, "_schema_operation_plan"), sap_root(o, p), def_walk(s, f), sap_param(f, p),
+    assign_target(s, t), kind(t, "identifier"), text(t, x).
+// sap_plan_path(r): receiver r goes through `._schema_operation_plan` somewhere (any attribute in r's tree).
+.decl sap_plan_path(r: node)
+sap_plan_path(r) :- sap_method(_, r, _), (a = r ; has(r, a, "attribute")), attr_of(a, _, "_schema_operation_plan").
+.decl sap_mutator(x: symbol)
+sap_mutator("append"). sap_mutator("extend"). sap_mutator("insert"). sap_mutator("add"). sap_mutator("add_operation").
+sap_mutator("clear"). sap_mutator("pop"). sap_mutator("remove").
+
+// ---- the plugin ----------------------------------------------------------------------------------------------
+.violation SAP001(at: node, k: symbol, x: symbol) "schema operation {k} stores callable field {x}"
+SAP001(s, k, x) :- kind(c, "class_definition"), sap_in(c), def_name(c, k), field(c, "body", b),
+    sap_field(b, s0, _, a0), ann_word(a0, "SchemaOperationKind"), sap_field(b, s, x, a), ann_word(a, "Callable").
+// sap_field(b, s, x, a): s is an annotated field `x: T` directly in class body b, annotation a; x is "<field>"
+// when the target is not a plain name.
+.decl sap_field(b: node, s: node, x: symbol, a: node)
+sap_field(b, s, x, a) :- body_stmt(b, s, _), kind(s, "expression_statement"), child(s, e, 0), kind(e, "assignment"),
+    field(e, "type", a), field(e, "left", t), (kind(t, "identifier"), text(t, x) ; !kind(t, "identifier"), x = "<field>").
+
+// sap_fn(c, f, fn): node c is in def f, named fn, in a file the plugin reads.
+.decl sap_fn(c: node, f: node, fn: symbol)
+sap_fn(c, f, fn) :- def_walk(c, f), kind(f, "function_definition"), sap_in(f), def_name(f, fn).
+
+.violation SAP002(at: node, fn: symbol) "{fn} mutates schema planning state while executing/materializing it"
+SAP002(c, fn) :- sap_method(c, r, m), sap_mutator(m), sap_fn(c, f, fn), sap_exec(f), sap_root(r, x), sap_alias(f, x).
+SAP002(c, fn) :- sap_method(c, r, m), sap_mutator(m), sap_fn(c, f, fn), sap_exec(f), sap_root(r, x), sap_param(f, x),
+    sap_plan_path(r).
+.violation SAP005(at: node, fn: symbol) "{fn} adds or queries lazy schema work while executing/materializing it"
+SAP005(c, fn) :- sap_method(c, r, m), suffix("_lazy", m), sap_fn(c, f, fn), sap_exec(f), sap_root(r, x), sap_param(f, x).
+.violation SAP004(at: node, fn: symbol) "{fn} recursively materializes schema work during execution"
+SAP004(f, fn) :- sap_exec(f), sap_fn(c, f, fn), field(c, "function", g), kind(g, "identifier"), text(g, fn).
+.violation SAP003(at: node, fn: symbol) "{fn} stores executable callback behavior on a schema transaction"
+SAP003(c, fn) :- sap_method(c, r, _), sap_fn(c, f, fn), sap_root(r, x), sap_param(f, x), posarg(c, _, a), unparen(a, l),
+    kind(l, "lambda").
+
+// ---- the standalone script -----------------------------------------------------------------------------------
+.violation schema_architecture(at: node, rule: symbol) tag {rule} "{rule}"
+schema_architecture(s, "forbid-schema-planning-callback-field") :- kind(s, "expression_statement"), cli_in(s),
+    child(s, x, 0), kind(x, "assignment"), field(x, "type", _), field(x, "left", t), leaf_name(t, "planning_callback"),
+    !kind(t, "subscript").
+schema_architecture(c, "forbid-schema-callback-queues") :- callee_name(c, x), cli_in(c),
+    (x = "planning_callback" ; x = "enqueue_post_ddl" ; x = "enqueue_post_schema_ddl_flush" ;
+     x = "enqueue_post_commit_schema_exit").
+schema_architecture(c, "forbid-materialization-plan-mutation") :- callee_name(c, x), cli_in(c),
+    glob("{add_operation,flush_schema_plan{,_async},_materialize_schema_operation_records{,_async}}", x),
+    def_frame(c, f), def_name(f, n), contains("materialize_schema_operation_records", n).

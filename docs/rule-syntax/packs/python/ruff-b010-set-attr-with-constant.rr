@@ -1,0 +1,20 @@
+.policy "ruff-b010-set-attr-with-constant" revision 2
+.description "Use plain attribute assignment instead of setattr() with a constant attribute name; it is no safer and harder to read."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B010 (flake8-bugbear): `setattr(o, "name", v)` as a statement of its own, with a constant name that is a
+// valid identifier: `o.name = v` says the same. Exactly three positional arguments and no keyword; the object is
+// not `*xs`; `__debug__` (a SyntaxError to assign) and name-mangled privates are left alone. Only a whole
+// expression statement is reported, since only there can an assignment replace the call.
+//   setattr(foo, "bar", None)          ← B010
+//   _ = lambda x: setattr(x, "bar", 1) not reported: not a statement
+//   setattr(foo, "__123abc", None)     not reported: mangled
+#include "python/bugbear.rr"
+
+.violation B010(at: node) code "B010"
+    "Replace this `setattr` call with a plain assignment, such as `obj.name = value`."
+    suppress ruff "B010"
+B010(c) :- bb_builtin_call(c, "setattr"), bb_expr_stmt(c), call_nargs(c, 3), call_nkwargs(c, 0), bb_pos(c, 0, o),
+    !kind(o, "list_splat"), bb_pos(c, 1, a), plain_str(a, v), identifier(v), v != "__debug__", !bb_mangled(v).

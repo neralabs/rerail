@@ -504,9 +504,11 @@ impl LoweredMatcher {
                     Label::Constrained(_, _, constraints) => &constraints[..],
                     _ => &[],
                 };
+                // A file's verdicts are its own: the files run in parallel.
+                use rayon::prelude::*;
                 views
-                    .iter()
-                    .zip(sets)
+                    .par_iter()
+                    .zip(sets.par_iter())
                     .map(|(view, sets)| {
                         let mut bits = empty(view);
                         for node in domain(starts, view, sets) {
@@ -1912,26 +1914,22 @@ fn formulas(
     if !formulas_on() {
         return vec![None; level.len()];
     }
-    level
+    // What each pass is as a formula, if it is one.
+    enum Plan<'a> {
+        /// A fact whose findings are a node set (`nthChild`): read from the tape's sibling positions.
+        Fact(&'a crate::code_rule_dsl::matcher::Fact),
+        Set { walk: Micro, program: &'a Program, domain: &'a Domain, set: Set },
+    }
+    let plans = level
         .iter()
         .map(|&(clause, id)| {
-            // A fact whose findings are a node set (`nthChild`): read from the tape's sibling positions.
-            if let Label::Fact(fact, _) = clause.labels.def(id)
+            let label = clause.labels.def(id);
+            if let Label::Fact(fact, _) = label
                 && fact.is_node_set()
             {
-                let on = (0..views.len()).filter(|&tape| active(clause, tape)).collect::<Vec<_>>();
-                let found = on
-                    .par_iter()
-                    .map(|&tape| {
-                        let index = indexes[tape].get_or_init(|| Index::of(&views[tape]));
-                        let bits = fact.nth_bits(&views[tape], &index.siblings).expect("a node set");
-                        (tape, Arc::unwrap_or_clone(bits))
-                    })
-                    .collect::<Vec<_>>();
-                crate::code_rule_dsl::prof::count("labels.formula", 1);
-                return Some(found);
+                return Some(Plan::Fact(fact));
             }
-            let (Label::Roots(program, domain) | Label::Targets(program, domain)) = clause.labels.def(id) else { return None };
+            let (Label::Roots(program, domain) | Label::Targets(program, domain)) = label else { return None };
             let walk = Micro::of(program)?;
             // The starts: the domain's nodes.
             let starts = match domain {
@@ -1939,38 +1937,69 @@ fn formulas(
                 Domain::Kinds(kinds) => Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()),
                 Domain::Label(label) => Set::Class(*label),
             };
-            let set = match clause.labels.def(id) {
+            let set = match label {
                 Label::Targets(..) => Set::targets(&walk.words, starts)?,
                 _ => Set::And(vec![starts, Set::of(&walk.words)?]),
             };
-            let on = (0..views.len()).filter(|&tape| active(clause, tape)).collect::<Vec<_>>();
-            let found = on
-                .par_iter()
-                .map(|&tape| {
-                    let view = &views[tape];
-                    let texts = walk.texts(program, view)?;
-                    let index = indexes[tape].get_or_init(|| Index::of(view));
-                    let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(&set);
-                    if *CHECK {
-                        let starts = (0..view.transducer_len() as u32).filter(|&node| match domain {
-                            Domain::All => true,
-                            Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
-                            Domain::Label(label) => has(&sets[tape], *label, node),
-                        });
-                        if let Some(walked) = walked(clause.labels.def(id), &walk, program, view, &sets[tape], starts)
-                            && walked != bits
-                        {
-                            crate::code_rule_dsl::prof::count("labels.formula_differs", 1);
-                            eprintln!("SETS_CHECK differs on label {id}: {set:?}");
-                        }
-                    }
-                    Some((tape, bits))
-                })
-                .collect::<Option<Vec<_>>>()?;
-            crate::code_rule_dsl::prof::count("labels.formula", 1);
-            Some(found)
+            Some(Plan::Set { walk, program, domain, set })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    let on = level.iter().map(|&(clause, _)| (0..views.len()).map(|tape| active(clause, tape)).collect::<Vec<_>>()).collect::<Vec<_>>();
+    // File-major: each tape answers every formula of the level at once (its index and texts warm),
+    // as one task; a formula's answer on one small file is too little work for a task of its own.
+    let answers = (0..views.len())
+        .into_par_iter()
+        .map(|tape| {
+            let view = &views[tape];
+            let index = indexes[tape].get_or_init(Index::default);
+            plans
+                .iter()
+                .enumerate()
+                .filter(|&(at, plan)| plan.is_some() && on[at][tape])
+                .map(|(at, plan)| {
+                    let bits = match plan.as_ref().expect("a plan") {
+                        Plan::Fact(fact) => Some(Arc::unwrap_or_clone(fact.nth_bits(view, &index.siblings).expect("a node set"))),
+                        Plan::Set { walk, program, domain, set } => walk.texts(program, view).map(|texts| {
+                            let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
+                            if *CHECK {
+                                let starts = (0..view.transducer_len() as u32).filter(|&node| match domain {
+                                    Domain::All => true,
+                                    Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
+                                    Domain::Label(label) => has(&sets[tape], *label, node),
+                                });
+                                let (clause, id) = level[at];
+                                if let Some(walked) = walked(clause.labels.def(id), walk, program, view, &sets[tape], starts)
+                                    && walked != bits
+                                {
+                                    crate::code_rule_dsl::prof::count("labels.formula_differs", 1);
+                                    eprintln!("SETS_CHECK differs on label {id}: {set:?}");
+                                }
+                            }
+                            bits
+                        }),
+                    };
+                    (at, bits)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    // By pass: each tape's bits, in tape order; a pass with a tape it could not answer (its texts)
+    // is not a formula.
+    let mut found = plans.iter().map(|plan| plan.as_ref().map(|_| Vec::new())).collect::<Vec<Option<Vec<(usize, Vec<u64>)>>>>();
+    for (tape, answers) in answers.into_iter().enumerate() {
+        for (at, bits) in answers {
+            match bits {
+                Some(bits) => {
+                    if let Some(found) = &mut found[at] {
+                        found.push((tape, bits));
+                    }
+                }
+                None => found[at] = None,
+            }
+        }
+    }
+    crate::code_rule_dsl::prof::count("labels.formula", found.iter().flatten().count());
+    found
 }
 
 fn label_level(

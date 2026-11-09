@@ -1,0 +1,65 @@
+// tsx/eslint-b-literals: literals and comparisons as ESLint's js-2 literal rules read them: the global
+// `undefined`, `typeof` tests, string-like literals, and comparison operators.
+//
+// What a rule gets from this library:
+//   global_undefined(n)    n is `undefined` and means the global: no parameter, variable or function in scope
+//                          declares the name (tree-sitter gives `undefined` a kind of its own, so names.rr's ref
+//                          and ref_site, which read identifiers, do not see it)
+//   typeof_expr(e)         e is `typeof x`
+//   string_like(x)         x is a string literal or any template literal (astUtils.isStringLiteral)
+//   compare_op(o)          o is a comparison: < > <= >= == != === !==
+//   literal_like(e)        e is a literal as yoda reads it: an ESTree Literal, a negative number, a plain template
+//   literal_number(e, f)   literal_like e is a number (or BigInt) with value f, as a float: `-1` gives -1
+//
+// Rules that use it: valid-typeof (global_undefined, typeof_expr), yoda (literal_like, literal_number,
+// compare_op), no-useless-concat and prefer-template (string_like), use-isnan and no-self-compare (compare_op).
+// Builds on tsx/names (decl_site), tsx/eslint-a-expressions (and its tsx/eslint-a-common: deparen) and core.
+#include "tsx/names.rr"
+#include "tsx/eslint-a-expressions.rr"
+
+// ---- undefined ---------------------------------------------------------------------------------------------------
+// global_undefined(n): ESLint asks the scope manager whether `undefined` resolves to the global variable.
+//   typeof x === undefined                             the global: valid-typeof reports it
+//   function f(undefined) { typeof x === undefined }   a parameter: not the global
+// A declaration anywhere in an enclosing scope counts (no hoisting order): `var undefined` is hoisted anyway, and
+// `let undefined` before its declaration is a TDZ error.
+.decl global_undefined(n: node)
+global_undefined(n) :- kind(n, "undefined"), !undefined_bound(n), !undefined_param(n).
+.decl undefined_bound(n: node)
+undefined_bound(n) :- kind(n, "undefined"), decl_site(s, "undefined", _, _, "value"), within(n, s).
+.decl undefined_param(n: node)  // `function f(undefined)`: a parameter of an enclosing function
+undefined_param(n) :- kind(n, "undefined"), kind(p, "undefined"), undef_param_spot(p, f), within(n, f), p != n.
+.decl undef_param_spot(p: node, f: node)  // p is a parameter name of function f, as written: `(undefined)`, `(undefined: T)`
+undef_param_spot(p, f) :- field(f, "parameters", ps), child(ps, p, _).
+undef_param_spot(p, f) :- field(f, "parameters", ps), child(ps, q, _), field(q, "pattern", p).
+// With a default, `function k(undefined = 1)`: JavaScript writes an assignment_pattern whose left is the name.
+undef_param_spot(p, f) :- field(f, "parameters", ps), child(ps, q, _), kind(q, "assignment_pattern"), field(q, "left", p).
+undef_param_spot(p, f) :- kind(f, "arrow_function"), field(f, "parameter", p).
+
+// ---- typeof and literals ---------------------------------------------------------------------------------------------
+.decl typeof_expr(e: node)
+typeof_expr(e) :- kind(e, "unary_expression"), op(e, "typeof").
+// string_like(x):  "a"   'a'   `a`   `a${b}`      (a tagged template is a call, not a template literal)
+.decl string_like(x: node)
+string_like(x) :- kind(x, "string") ; kind(x, "template_string").
+.decl compare_op(o: symbol)
+compare_op("<"). compare_op(">"). compare_op("<="). compare_op(">="). compare_op("=="). compare_op("!=").
+compare_op("==="). compare_op("!==").
+
+// ---- literals as yoda sees them ------------------------------------------------------------------------------------
+// literal_like(e): ESTree's Literal (string, number, BigInt, boolean, null, regex), a negative number `-1` or
+// `-1n`, or a template without substitutions. e is already without parentheses (binop strips them).
+//   "red"   5   -1   5n   null   /x/   `red`        yes;    `${a}`   x   -x   +1        no
+.decl literal_like(e: node)
+literal_like(e) :- kind(e, "string") ; kind(e, "number") ; kind(e, "true") ; kind(e, "false") ;
+    kind(e, "null") ; kind(e, "regex").
+literal_like(e) :- kind(e, "template_string"), !lit_has_subst(e).
+literal_like(e) :- kind(e, "unary_expression"), op(e, "-"), field(e, "argument", a), deparen(a, x), kind(x, "number").
+.decl lit_has_subst(t: node)
+lit_has_subst(t) :- child(t, c, _), kind(c, "template_substitution").
+// literal_number(e, f): literal_like e is a number (or BigInt) with value f: `-1` gives -1, `0x10` 16.
+.decl literal_number(e: node, f: float)
+literal_number(e, to_float(v)) :- literal_like(e), kind(e, "number"), value(e, v), match("[0-9.e+-]+", v).
+literal_number(e, -f) :- literal_like(e), kind(e, "unary_expression"), field(e, "argument", a), deparen(a, x),
+    literal_number(x, f).
+

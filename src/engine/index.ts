@@ -58,6 +58,7 @@ export {
   type RulePackFile,
   rulePackFileSchema,
   rulePackPackageName,
+  rulePackPackageOf,
   rulePackPackageSchema,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
@@ -88,6 +89,7 @@ export { steerOrigin } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 export {
   encodeCodeRuleWorkspaceRequest,
+  RESULT_PAGE_BYTES,
   loadNativeBinding,
   type NativeBinding,
   type NativeCodeRuleDslWorkspace,
@@ -136,8 +138,12 @@ export {
   rules,
   ruleSettings,
   sessions,
+  steerFeedback,
   workLinks,
 } from "./storage/schema.js";
 export { ENTRY_POINTS, PACKAGE_ROOT } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";
+
+export { approve, ruleSubject, currentSubject } from "./catalog/rule-approval.js";
+export { worktreeRuleCatalog } from "./catalog/worktree-pack.js";

@@ -1,0 +1,16 @@
+.policy "blade-parser-debug-directive" revision 3
+.description "Remove @dd and @dump directives from Blade templates; they stop rendering or leak debug output to users."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/syntax.rr"
+//   blade_directive(d, x)   d is directive @x
+
+// stillat/blade-parser's DebugDirectiveValidator: a @dd or @dump directive, which stops rendering or prints debug
+// output into the page. Reported at the directive:
+//   @dd($user)   @dump($order, $items)        reported
+//   @@dump   {{-- @dd($x) --}}   @verbatim @dd @endverbatim     not reported: escaped, a comment, text
+.violation debug_directive(at: node) code "DebugDirectiveValidator"
+    "Remove this @dd or @dump directive; it stops rendering or shows debug output to users."
+debug_directive(d) :- blade_directive(d, x), (x = "dd" ; x = "dump").

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { zodToOpenAPIRegistry, type ZodOpenAPIMetadata } from "@asteasolutions/zod-to-openapi";
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi";
 import type { Context, MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { duplicateJsonKeyError } from "../engine/json-duplicate-keys.js";
 import {
   codeRuleAstRelationSchema,
@@ -19,9 +20,11 @@ import { semanticSchemaComponents } from "../engine/code-rule/code-rule-schema-s
 
 import { conversationRuleSchema, matchConditionSchema, sampleSourceSchema } from "../engine/catalog/rule-schema.js";
 import { auditControlsSchema, auditRequestSchema } from "../engine/audit/audit-control-schema.js";
+import { DAEMON_ACCESS_HEADER, sameSecret } from "../runtime/daemon-control.js";
 import { ApiError, invokeOperation, type Operation, type RerailApiStores } from "./operation.js";
 import { eventRecordSchema, auditRecordSchema, presentationPreferenceSchema } from "./operations.js";
 import { deciderSchema, effectiveRuleSchema, libraryRuleRecordSchema, repositorySummarySchema } from "./repository-contracts.js";
+import { checkoutAt, checkoutRuleCatalog } from "./repository-operations.js";
 import { sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
 // Named components give the generated client stable type names, and break the recursive
@@ -171,6 +174,49 @@ export function hostAllowlist(publicHosts: PublicHosts): MiddlewareHandler {
   };
 }
 
+const ACCESS_REQUIRED = "Every request to the Rerail daemon needs its access capability. "
+  + "Run rerail manage to open the dashboard with it, or send the x-rerail-access header with the accessToken in daemon.json.";
+
+/**
+ * The page itself: its shell and the static files it is built from, which the npm package ships to anyone and hold
+ * nothing of the person's. A browser loads them without the capability and then sends it on every request that reads
+ * or changes anything. An allowlist, so a route added later is guarded unless it is one of these.
+ */
+const PUBLIC_PAGE_FILE = /^\/(?:index\.html)?$|^\/(?!api\/)[\w./-]*\.(?:js|mjs|css|svg|png|ico|woff2?|map|txt)$/u;
+
+/**
+ * The capability every request must carry as `x-rerail-access`, but the page's own files. `Host` and `Origin` say
+ * where a request claims to come from, which any client can write, and on loopback another user of the machine or a
+ * sandboxed process allowed localhost reaches the socket too; this says the caller was given the capability, which
+ * lives in the person's 0600 home. A header and not a cookie: a cookie is sent to every server on the same host
+ * whatever its port, so another localhost server would receive it, and a browser cannot send a custom header to
+ * another origin without a CORS preflight, which this daemon never answers, so no other site can forge one either.
+ * The page keeps the capability in its origin's storage, from the link that opened it.
+ */
+export function accessCapability(token: string): MiddlewareHandler {
+  return async (context, next) => {
+    const pageFile = (context.req.method === "GET" || context.req.method === "HEAD") && PUBLIC_PAGE_FILE.test(context.req.path);
+    if (pageFile || sameSecret(context.req.header(DAEMON_ACCESS_HEADER), token)) {
+      await next();
+      // The address that opened the page may still carry the capability: no request from it names that address.
+      if (pageFile) context.header("referrer-policy", "no-referrer");
+      return;
+    }
+    return context.json({ error: "access-required", message: ACCESS_REQUIRED }, 401);
+  };
+}
+
+/**
+ * 413 for a request whose body is longer than `maxBytes`, before any route reads it: a declared `Content-Length` is
+ * refused unread, and a chunked body is counted as it arrives and refused once it passes the limit.
+ */
+export function requestBodyLimit(maxBytes: number): MiddlewareHandler {
+  return bodyLimit({
+    maxSize: maxBytes,
+    onError: context => context.json({ error: "request-too-large", message: `The request body is larger than the ${maxBytes} bytes this route takes.` }, 413),
+  });
+}
+
 /**
  * Whether a browser-reported `Origin` is a page this daemon serves: an allowlisted hostname on the
  * port the request was addressed to. The request's `Host` supplies the port rather than the
@@ -269,8 +315,11 @@ export function createRerailApi(
       try {
         if (DATABASE_ETAG_OPERATIONS.has(operation.id)) {
           // `dataVersion()` is a `PRAGMA data_version` read plus a local write counter, so it
-          // catches commits from other processes as well as this daemon's own, at constant cost.
-          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion(), stores.ruleCatalog().digest));
+          // catches commits from other processes as well as this daemon's own, at constant cost. A read for one
+          // checkout also depends on that checkout's own rules (`.rerail/rules`).
+          const checkout = typeof input.checkout === "string" ? checkoutAt(stores, input.checkout, false).checkout : undefined;
+          const digest = checkoutRuleCatalog(stores, checkout).digest;
+          const unchanged = conditional(entityTag(operation.id, instanceSalt, normalizedInput(input), stores.dataVersion(), digest));
           if (unchanged !== undefined) return unchanged;
         }
         if (RESULT_ETAG_OPERATIONS.has(operation.id)) {

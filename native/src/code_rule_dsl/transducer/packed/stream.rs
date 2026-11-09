@@ -1,4 +1,4 @@
-//! Tier 2's instructions (decision 0053): the transducer's words over tier 1's token stream, as
+//! Tier 2's instructions (decision 0087): the transducer's words over tier 1's token stream, as
 //! simdjson's stage 2 runs over its structural indexes. A program is a state machine: each
 //! state takes a token (`TOKEN`), switches on its byte (`SWITCH`), writes nodes, and jumps to the
 //! next state (`GOTO`). Its verifier refuses a cycle with no `TOKEN`, so its one loop is over the
@@ -58,7 +58,7 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
 
 /// A tier-2 program's whole-program rules: only tier 2's words, `STOP` and `GOTO`; switch
 /// targets in range; a return lands on a state's `TOKEN` (or the `SWITCH` after it); and no
-/// cycle without a `TOKEN` (decision 0053 §5).
+/// cycle without a `TOKEN` (decision 0087 §5).
 pub(super) fn validate(program: &Program) -> Result<(), Error> {
     let words = &program.words;
     for (pc, &w) in words.iter().enumerate() {

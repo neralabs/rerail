@@ -1,0 +1,31 @@
+.policy "ruff-try301-raise-within-try" revision 2
+.description "Avoid raising an exception inside a try block that catches it; move the raise into a helper function or restructure so it needs no handler."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TRY301 (tryceratops): a raise in a try body that one of the try's own handlers catches: the same
+// expression as a handled type, or anything when a handler takes `Exception` or `BaseException`. Ruff's walk
+// enters nested defs and branches but not a nested `try`. A bare `raise` is not reported.
+//   try:
+//       if bad: raise ValueError("x")     ← TRY301
+//   except ValueError: ...
+//
+//   try:
+//       raise ValueError("x")             not reported: TypeError is a different expression
+//   except TypeError: ...
+#include "python/exceptions.rr"
+//   exc_handler(t, x), exc_type(x, e), exc_raise(r, e), exc_class(e, c), exc_qual(e, q), exc_dotted(e, s)
+
+.violation TRY301(at: node) code "TRY301"
+    "Move this `raise` out of the `try` body into a helper function, or handle the condition without raising, so this `try` does not catch its own exception. Leave it if it is in a nested function."
+    suppress ruff "TRY301"
+TRY301(r) :- field(t, "body", b), kind(t, "try_statement"), exc_raise(r, e), within_stop(r, b, "try_statement"),
+    exc_class(e, c), caught_here(t, c).
+// caught_here(t, c): a handler of t names the raised class c (compared as dotted text, as ComparableExpr does
+// for names), or catches everything.
+.decl caught_here(t: node, c: node)
+caught_here(t, c) :- exc_handler(t, x), exc_type(x, h), exc_dotted(h, s), exc_raise(_, e), exc_class(e, c),
+    exc_dotted(c, s).
+caught_here(t, c) :- exc_handler(t, x), exc_type(x, h), exc_qual(h, q), (q = "builtins.Exception" ;
+    q = "builtins.BaseException"), exc_raise(_, e), exc_class(e, c).

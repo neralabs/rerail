@@ -56,8 +56,25 @@ pub(in crate::code_rule_dsl) const RELATION: &str = "strtest_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 10] =
-    [("value", &[1]), ("text", &[1]), ("name", &[1]), ("str", &[1]), ("strprefix", &[1]), ("op", &[1]), ("doc", &[1, 2]), ("pkg", &[1]), ("path_part", &[1]), ("file_name", &[1])];
+pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 17] = [
+    ("value", &[1]),
+    ("text", &[1]),
+    ("name", &[1]),
+    ("str", &[1]),
+    ("strprefix", &[1]),
+    ("op", &[1]),
+    ("op_at", &[2]),
+    ("doc", &[1, 2]),
+    ("pkg", &[1]),
+    ("path_part", &[1]),
+    ("file_name", &[1]),
+    ("comment", &[1]),
+    ("static_value", &[1]),
+    ("str_part", &[2]),
+    ("value_type", &[0, 1]),
+    ("split_line", &[2]),
+    ("lf_line", &[2]),
+];
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
 /// exact set, an affix set, an automaton), equal patterns' plans shared by key.
@@ -150,8 +167,8 @@ pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<S
     rx.captures(s)?.name(name).map(|m| m.as_str().to_owned())
 }
 
-/// `str_test(op, s, patterns)`: 1 or 0; `rx_group(s, re, name)`: the named group's text (`group`); and `core.rr`'s
-/// text functors (`functions`). NULL gives NULL.
+/// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them). NULL
+/// gives NULL.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     db.create_scalar_function(c"str_test", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
@@ -159,12 +176,6 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
             return Ok(None);
         };
         Ok(Some(i64::from(test(&op, &s, &p))))
-    })?;
-    db.create_scalar_function(c"rx_group", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
-        let (Some(s), Some(re), Some(name)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?, ctx.get::<Option<String>>(2)?) else {
-            return Ok(None);
-        };
-        Ok(group(&s, &re, &name))
     })?;
     functions::register(db)
 }
@@ -177,10 +188,22 @@ fn as_test(l: &Literal) -> Option<(&str, &str, Vec<String>, bool)> {
     Some((op.as_str(), s.as_str(), patterns(p)?, *v == 1))
 }
 
+/// Every test's plans as the vocabulary engine runs them, and each plan's test.
+struct Compiled {
+    searchers: crate::code_rule_dsl::text::vocabulary::Searchers,
+    owner: Vec<usize>,
+}
+
 /// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Vocabulary {
+    /// Each test's input relation and matcher (`again` keeps them for another run).
     pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
+    /// Each test's operator and patterns, in `tests`' order: what its matcher is made from (`from_specs`).
+    pub(in crate::code_rule_dsl) specs: Vec<(String, Vec<String>)>,
+    /// Every test's plans compiled together, once (decision 0075): shared by `again`, so a program kept for the
+    /// process compiles them once, and every batch runs the same searchers.
+    compiled: Arc<std::sync::OnceLock<Compiled>>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
     /// The strings tested, and the CPU (user + system seconds) testing them took.
@@ -207,13 +230,12 @@ impl Vocabulary {
         }
         if !fresh.is_empty() {
             tested += fresh.len();
-            let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vec<usize>) =
-                self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans.iter().map(move |p| (&p.plan, k))).unzip();
+            let compiled = self.compiled.get_or_init(|| self.compile_with(None));
             let terms: Vec<&[u8]> = fresh.iter().map(|(_, s)| s.as_bytes()).collect();
-            let (hits, _undecided) = crate::code_rule_dsl::text::vocabulary::evaluate(&plans, &terms);
+            let (hits, _undecided) = compiled.searchers.evaluate(&terms);
             let mut bits: Vec<Box<[u64]>> = vec![vec![0u64; words].into_boxed_slice(); fresh.len()];
             for (p, matched) in hits.iter().enumerate() {
-                let k = owner[p];
+                let k = compiled.owner[p];
                 for &t in matched {
                     bits[t as usize][k / 64] |= 1 << (k % 64);
                 }
@@ -241,9 +263,190 @@ impl Vocabulary {
 /// Turns each text test whose string a text relation of the same rule gives (`TEXT_COLUMNS`) into an atom over
 /// the input relation `strtest_<k>(s)`, negated where the test is: rules then join on symbols, and the run fills
 /// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
+fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
+    let mut columns: HashMap<String, HashSet<usize>> = TEXT_COLUMNS.iter()
+        .map(|(name, columns)| ((*name).to_owned(), columns.iter().copied().collect()))
+        .collect();
+    // Each relation's rules, found once: scanning every rule for every declaration in every round was quadratic in a
+    // combined pack (O111).
+    let mut by_head: HashMap<&str, Vec<&super::front::Rule>> = HashMap::new();
+    for rule in &prog.rules {
+        by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
+    }
+    let inputs: HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
+    loop {
+        let mut found = Vec::new();
+        for (relation, declaration) in &prog.decls {
+            // Facts and unknown external inputs can introduce symbols not in this batch's vocabulary.
+            if prog.facts.get(relation).is_some_and(|rows| !rows.is_empty())
+                || (inputs.contains(relation.as_str()) && !columns.contains_key(relation)) {
+                continue;
+            }
+            let writers: &[&super::front::Rule] = by_head.get(relation.as_str()).map_or(&[], Vec::as_slice);
+            if writers.is_empty() {
+                continue;
+            }
+            for (column, (_, ty)) in declaration.iter().enumerate() {
+                if ty != "sym" || columns.get(relation).is_some_and(|cols| cols.contains(&column)) {
+                    continue;
+                }
+                // Every producer must copy a prepared symbol. One computed or constant arm is enough
+                // to make the rewrite unsafe: that arm's new values do not have strtest rows yet.
+                let copied = writers.iter().all(|rule| {
+                    let Some(Term::Var(value)) = rule.head.args.get(column) else { return false };
+                    rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).any(|atom| {
+                        columns.get(&atom.rel).is_some_and(|cols| cols.iter().any(|&col| {
+                            matches!(atom.args.get(col), Some(Term::Var(other)) if other == value)
+                        }))
+                    })
+                });
+                if copied {
+                    found.push((relation.clone(), column));
+                }
+            }
+        }
+        if found.is_empty() {
+            return columns;
+        }
+        for (relation, column) in found {
+            columns.entry(relation).or_default().insert(column);
+        }
+    }
+}
+
+impl Vocabulary {
+    /// The same tests for another run, with nothing tested yet.
+    pub(in crate::code_rule_dsl) fn again(&self) -> Vocabulary {
+        Vocabulary { tests: self.tests.clone(), specs: self.specs.clone(), compiled: Arc::clone(&self.compiled), ..Vocabulary::default() }
+    }
+
+    fn compile_with(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>) -> Compiled {
+        let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vec<usize>) =
+            self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans.iter().map(move |p| (&p.plan, k))).unzip();
+        Compiled { searchers: crate::code_rule_dsl::text::vocabulary::Searchers::new(&plans, cache), owner }
+    }
+
+    /// Compiles every test's plans now, its groups of automata read from `cache` or kept in it (decision 0075), and
+    /// says what it did; `None` when they were compiled before (in this process).
+    pub(in crate::code_rule_dsl) fn compile(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>) -> Option<crate::code_rule_dsl::text::vocabulary::Compiling> {
+        let mut made = None;
+        self.compiled.get_or_init(|| {
+            let compiled = self.compile_with(cache);
+            made = Some(compiled.searchers.compiling);
+            compiled
+        });
+        made
+    }
+
+    /// The tests `relations` and `specs` name, their matchers made again (a prepared program read from the store,
+    /// decision 0073).
+    pub(in crate::code_rule_dsl) fn from_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Result<Vocabulary, String> {
+        let tests = relations.iter().zip(&specs).map(|(rel, (op, pats))| Ok((rel.clone(), Arc::new(Matcher::new(op, pats)?)))).collect::<Result<_, String>>()?;
+        Ok(Vocabulary { tests, specs, ..Vocabulary::default() })
+    }
+}
+
+/// The values a relation's column can hold when they come from the program's constants alone: a fact relation's
+/// (rows matching the atom's constants), a constant relation's (`typing::file_local::constant_relations`), or a
+/// derived column every rule fills from such a column or a literal. A superset is enough for its one reader,
+/// `implied_set_tests`. `None` where a value may come from anything else.
+fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(String, usize)>) -> Option<std::collections::BTreeSet<String>> {
+    use std::collections::BTreeSet;
+    if visiting.iter().any(|(r, c)| r == rel && *c == col) || visiting.len() > 16 {
+        return None;
+    }
+    let rules: Vec<&super::front::Rule> = prog.rules.iter().filter(|r| r.head.rel == rel).collect();
+    if rules.is_empty() {
+        if prog.inputs.contains(&rel.to_owned()) {
+            return None;
+        }
+        let rows = prog.facts.get(rel)?;
+        return rows.iter().map(|row| match row.get(col) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
+    }
+    visiting.push((rel.to_owned(), col));
+    let mut out = BTreeSet::new();
+    for rule in rules {
+        let got = match rule.head.args.get(col) {
+            Some(Term::Str(s)) => Some(BTreeSet::from([s.clone()])),
+            Some(Term::Var(v)) => rule.body.iter().find_map(|l| {
+                let Literal::Atom(a) = l else { return None };
+                if a.neg {
+                    return None;
+                }
+                let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
+                // A fact relation read with constants: only the rows that hold them.
+                if !prog.rules.iter().any(|r| r.head.rel == a.rel) && let Some(rows) = prog.facts.get(&a.rel) {
+                    let matches = |row: &Vec<super::front::Value>| a.args.iter().zip(row).all(|(t, v)| match (t, v) {
+                        (Term::Str(x), super::front::Value::Str(y)) => x == y,
+                        (Term::Int(x), super::front::Value::Int(y)) => x == y,
+                        (Term::Str(_) | Term::Int(_), _) => false,
+                        _ => true,
+                    });
+                    if prog.inputs.contains(&a.rel) {
+                        return None;
+                    }
+                    return rows.iter().filter(|r| matches(r)).map(|row| match row.get(c) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
+                }
+                constant_domain(prog, &a.rel, c, visiting)
+            }),
+            _ => None,
+        };
+        match got {
+            Some(values) => out.extend(values),
+            None => {
+                visiting.pop();
+                return None;
+            }
+        }
+    }
+    visiting.pop();
+    Some(out)
+}
+
+/// Most patterns an implied set test takes (`implied_set_tests`): a bigger table is tested as written.
+const IMPLIED_SET_MAX: usize = 4096;
+
+/// A text test whose pattern is a variable taking a constant table's values (`contains(x, t)` for each deleted
+/// name x of a table) implies the test of the whole table as one set (`contains(t, {…})`): it is added before it.
+/// Over a text relation it becomes a vocabulary test (each string matched once, all patterns at a time), and the
+/// pattern-at-a-time test runs only on the strings that pass, not on every string for every pattern.
+fn implied_set_tests(prog: &mut Program) {
+    let mut added = 0;
+    for i in 0..prog.rules.len() {
+        let mut extra = Vec::new();
+        for l in &prog.rules[i].body {
+            let Literal::Cmp { l: Term::Call(op, args), op: "=", r: Term::Int(1) } = l else { continue };
+            let [Term::Var(s), Term::Var(p)] = args.as_slice() else { continue };
+            if !is_test(op) {
+                continue;
+            }
+            let domain = prog.rules[i].body.iter().find_map(|b| match b {
+                Literal::Atom(a) if !a.neg => {
+                    let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == p))?;
+                    constant_domain(prog, &a.rel, c, &mut Vec::new())
+                }
+                _ => None,
+            });
+            if let Some(values) = domain.filter(|d| !d.is_empty() && d.len() <= IMPLIED_SET_MAX) {
+                extra.push(Literal::Cmp { l: Term::Call(op.clone(), vec![Term::Var(s.clone()), Term::Call(SET.to_owned(), values.into_iter().map(Term::Str).collect())]), op: "=", r: Term::Int(1) });
+            }
+        }
+        added += extra.len();
+        let body = &mut prog.rules[i].body;
+        for (k, lit) in extra.into_iter().enumerate() {
+            body.insert(k, lit);
+        }
+    }
+    if added > 0 {
+        super::profile::decision("implied set tests", || format!("{added} text tests of a constant table's values each gained the test of the whole table as one set"));
+    }
+}
+
 pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
+    implied_set_tests(prog);
+    let vocabulary_columns = vocabulary_columns(prog);
     let mut ids: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();
-    let mut tests = Vec::new();
+    let (mut tests, mut specs) = (Vec::new(), Vec::new());
     for rule in &mut prog.rules {
         let texts: HashSet<String> = rule
             .body
@@ -253,8 +456,8 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
                 _ => None,
             })
             .flat_map(|a| {
-                let cols = TEXT_COLUMNS.iter().find(|(r, _)| *r == a.rel).map_or(&[][..], |(_, c)| *c);
-                cols.iter().filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None })
+                vocabulary_columns.get(&a.rel).into_iter().flatten()
+                    .filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None })
             })
             .collect();
         for literal in &mut rule.body {
@@ -276,6 +479,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
                         format!("{rel} = @{}({{{}{more}}}): {}", key.0, shown.join(", "), matcher.describe())
                     });
                     tests.push((rel.clone(), Arc::new(matcher)));
+                    specs.push(key.clone());
                     ids.insert(key, rel.clone());
                     rel
                 }
@@ -289,10 +493,11 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             prog.inputs.push(rel.clone());
         }
     }
-    Ok(Vocabulary { tests, seen: Mutex::default(), tested: Mutex::default() })
+    Ok(Vocabulary { tests, specs, ..Vocabulary::default() })
 }
 
 pub(in crate::code_rule_dsl) mod functions;
+mod signatures;
 
 #[cfg(test)]
 mod tests;

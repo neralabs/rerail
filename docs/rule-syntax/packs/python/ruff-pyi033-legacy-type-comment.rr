@@ -1,0 +1,17 @@
+.policy "ruff-pyi033-legacy-type-comment" revision 2
+.description "Use inline annotations instead of type comments in stub files; type comments are deprecated and never needed in stubs."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI033 (flake8-pyi), stubs only: a type comment, `# type: int`. A comment starting `# type: ignore`
+// (`ignore[code]`, even `ignored`) is a pragma, not a type comment. The comment must start with `type:`, so
+// `# noqa # type: int` is not one.
+//   x = 1  # type: int        ← PYI033
+//   x = 1  # type: ignore     fine
+#include "python/typing.rr"
+
+.violation PYI033(at: node) code "PYI033" "Replace this type comment with an inline annotation, such as `x: int = 1` or a per-parameter annotation; stubs never need type comments. Leave `type: ignore` comments alone."
+    suppress ruff "PYI033"
+PYI033(c) :- kind(c, "comment"), match("#\\s*type:\\s*[^#\\s][^#]*(#.*)?", c), !match("#\\s*type:\\s*ignore[^#]*(#.*)?", c),
+    in_stub(c).

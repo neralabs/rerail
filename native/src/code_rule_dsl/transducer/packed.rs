@@ -111,6 +111,7 @@ pub(in crate::code_rule_dsl) use compile_micro::{Emit, Frames, Micro, RootRecord
 #[cfg(test)]
 #[path = "packed/compile/matcher_tests.rs"]
 mod compile_matcher_tests;
+#[cfg(target_os = "macos")]
 mod metal_bulk_closure;
 #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_bulk_closure_tests;
@@ -266,6 +267,7 @@ pub(in crate::code_rule_dsl) mod rir;
 mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
 pub(in crate::code_rule_dsl) mod block;
+pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
@@ -314,7 +316,7 @@ const REPEAT_END: u8 = 0x23;
 const FORK: u8 = 0x30;
 const GOTO: u8 = 0x31;
 const EMIT: u8 = 0x40;
-// Tier 2's words, over the token stream (decision 0053, `stream`).
+// Tier 2's words, over the token stream (decision 0087, `stream`).
 const TOKEN: u8 = 0x50;
 const SWITCH: u8 = 0x51;
 /// `WORD` in `rir`.
@@ -840,7 +842,7 @@ pub(in crate::code_rule_dsl) struct Program {
     /// Block programs, the side programs over source bytes (`block`), as `value_programs` are
     /// the side programs over a node's text.
     block_programs: Vec<block::BlockProgram>,
-    /// Tier 2's switch tables (`SWITCH`, decision 0053).
+    /// Tier 2's switch tables (`SWITCH`, decision 0087).
     switches: Vec<stream::ByteSwitch>,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
@@ -2364,7 +2366,7 @@ impl Program {
         {
             return Err(Error::InvalidOperand(0));
         }
-        // A tier-2 program (decision 0053): its own words and rules.
+        // A tier-2 program (decision 0087): its own words and rules.
         if self.words.iter().any(|&w| stream::is_stream(split(w).0)) {
             for (pc, &w) in self.words.iter().enumerate() {
                 let (opcode, mode, operand) = split(w);

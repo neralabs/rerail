@@ -1,0 +1,34 @@
+.policy "phpcs-generic-code-analysis-empty-statement" revision 3
+.description "Remove empty PHP control structure bodies, such as an if, loop, switch, try, catch or match block holding only comments; they hide unfinished or swallowed logic."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+// PHP_CodeSniffer's Generic.CodeAnalysis.EmptyStatement (codes DetectedIf, DetectedCatch, …): a control structure
+// whose braces hold nothing but whitespace and comments. Reported at the keyword:
+//   if ($a) { /* later */ }         at `if`
+//   } elseif ($b) {}  } else {}     at `elseif`, at `else`
+//   try {} catch (E $e) {}          at `try` and at `catch`
+//   match ($x) {};   switch ($x) {}  at `match`, `switch`
+//   if ($a): endif;                 not reported: the sniff's scope is a brace pair
+.violation empty_statement(at: node) code "Generic.CodeAnalysis.EmptyStatement"
+    "Put the missing logic in this empty block or remove the block; an empty branch or catch silently drops the case."
+    suppress phpcs "Generic.CodeAnalysis.EmptyStatement", "Generic.CodeAnalysis.EmptyStatement.DetectedIf",
+        "Generic.CodeAnalysis.EmptyStatement.DetectedElseif", "Generic.CodeAnalysis.EmptyStatement.DetectedElse",
+        "Generic.CodeAnalysis.EmptyStatement.DetectedFor", "Generic.CodeAnalysis.EmptyStatement.DetectedForeach",
+        "Generic.CodeAnalysis.EmptyStatement.DetectedWhile", "Generic.CodeAnalysis.EmptyStatement.DetectedDo",
+        "Generic.CodeAnalysis.EmptyStatement.DetectedSwitch", "Generic.CodeAnalysis.EmptyStatement.DetectedTry",
+        "Generic.CodeAnalysis.EmptyStatement.DetectedCatch", "Generic.CodeAnalysis.EmptyStatement.DetectedFinally",
+        "Generic.CodeAnalysis.EmptyStatement.DetectedMatch"
+empty_statement(n) :- kind(n, k), braced(k), field(n, "body", b), braces(b), !has_code(b).
+.decl braced(k: symbol)  // the structures the sniff registers (T_IF, T_ELSEIF, …, T_MATCH)
+braced("if_statement"). braced("else_if_clause"). braced("else_clause"). braced("for_statement").
+braced("foreach_statement"). braced("while_statement"). braced("do_statement"). braced("switch_statement").
+braced("try_statement"). braced("catch_clause"). braced("finally_clause"). braced("match_expression").
+.decl braces(b: node)  // a body in braces: `{ … }`, a switch's `{ … }` (not `: … endswitch;`), a match's arms
+braces(b) :- kind(b, "compound_statement").
+braces(b) :- kind(b, "switch_block"), prefix("{", b).
+braces(b) :- kind(b, "match_block").
+.decl has_code(b: node)  // b holds something other than comments
+has_code(b) :- braces(b), child(b, c, _), !kind(c, "comment").

@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rerail Rule Explorer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: the syntax site's top bar, then a three-pane workbench (rule | Python source | what the run produced),
+   stacked at phone width. Tokens are the syntax site's (page.html), so the two pages read as one site. */
+:root {
+  --bg: #f2f3f5;
+  --surface: #ffffff;
+  --ink: #161b22;
+  --muted: #5c6470;
+  --line: #dde1e6;
+  --accent: #8c2a3c;
+  --accent-2: #1c5d8a;
+  --tint: #f7f0f1;
+  --code-bg: #fbfbfc;
+  --t-var: #6a4aa5;
+  --t-str: #2c6b38;
+  --t-builtin: #a3561a;
+  --t-kw: #1c5d8a;
+  --t-num: #9b3c6a;
+  --t-com: #737b86;
+  --hit: #fdf3e3;
+  --hit-mark: #a3561a;
+  --bad: #b3261e;
+  --good: #2c6b38;
+  --flash: #fff1b8;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --lh: 20px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1115; --surface: #151a20; --ink: #e5e8ec; --muted: #98a1ad; --line: #283039;
+    --accent: #e8899a; --accent-2: #74b6e8; --tint: #241a1d; --code-bg: #12161b;
+    --t-var: #bba4f2; --t-str: #93d3a2; --t-builtin: #f0aa6c; --t-kw: #74b6e8; --t-num: #ee9cc2; --t-com: #7d8692;
+    --hit: #2b2416; --hit-mark: #f0aa6c; --bad: #f2867d; --good: #93d3a2; --flash: #4a4116;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1115; --surface: #151a20; --ink: #e5e8ec; --muted: #98a1ad; --line: #283039;
+  --accent: #e8899a; --accent-2: #74b6e8; --tint: #241a1d; --code-bg: #12161b;
+  --t-var: #bba4f2; --t-str: #93d3a2; --t-builtin: #f0aa6c; --t-kw: #74b6e8; --t-num: #ee9cc2; --t-com: #7d8692;
+  --hit: #2b2416; --hit-mark: #f0aa6c; --bad: #f2867d; --good: #93d3a2; --flash: #4a4116;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--font-body); display: flex; flex-direction: column; }
+a { color: var(--accent-2); }
+:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+button, input, select { font: inherit; color: inherit; }
+
+header.top { display: flex; align-items: center; gap: 28px; height: 52px; flex: none;
+  padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px));
+  background: var(--surface); border-bottom: 1px solid var(--line); }
+.brand { font: 600 18px/1 var(--font-display); letter-spacing: .01em; display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+.brand .ext { font: 500 12px var(--font-mono); color: var(--accent); }
+nav.views { display: flex; gap: 4px; overflow-x: auto; min-width: 0; }
+nav.views a { text-decoration: none; color: var(--muted); font-weight: 500; padding: 6px 12px; border-radius: 6px; white-space: nowrap; }
+nav.views a[aria-current="page"] { color: var(--ink); background: var(--tint); box-shadow: inset 0 -2px 0 var(--accent); border-radius: 6px 6px 0 0; }
+nav.views a:hover { color: var(--ink); }
+
+.intro { flex: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding-block: 10px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+.intro b { color: var(--ink); font-weight: 600; }
+.intro p { margin: 0; max-width: 92ch; }
+/* Scenario bar: a rule with Python files, chosen together; its note says what to look for. */
+.scen { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding-block: 8px;
+  padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line); background: var(--surface); }
+.scen label { font: 600 13px var(--font-display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.scen select { padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--code-bg); font-size: 13px; max-width: 100%; min-width: 0; }
+.scen .what { flex: 1 1 320px; min-width: 0; margin: 0; font-size: 13px; color: var(--muted); max-width: 120ch; }
+.scen .what b { color: var(--ink); font-weight: 600; }
+/* "Add file": the scenarios' files, to add beside your own. */
+.addfile { position: relative; }
+.pop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; width: min(360px, 86vw); max-height: min(420px, 60vh);
+  display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--ink) 16%, transparent); }
+.pop input { margin: 8px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--code-bg); font-size: 13px; }
+.pop .list { overflow: auto; padding: 0 0 6px; }
+.pop .grp { padding: 8px 12px 2px; font: 600 11px var(--font-body); letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.pop button { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: baseline; width: 100%; border: 0; background: none;
+  text-align: left; padding: 4px 12px; cursor: pointer; font-size: 13px; }
+.pop button:hover, .pop button:focus-visible { background: var(--tint); }
+.pop button code { font: 12.5px var(--font-mono); }
+.pop button span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.pop .none { padding: 8px 12px; color: var(--muted); font-size: 13px; }
+
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr) minmax(0, 1.15fr); }
+.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--surface); }
+.pane:last-child { border-right: 0; }
+.phead { flex: none; display: grid; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.phead .row { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.phead h2 { margin: 0; font: 600 13px var(--font-display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.desc { font-size: 13px; color: var(--muted); margin: 0; min-height: 1.5em; }
+.picker { position: relative; flex: 1; min-width: 180px; }
+.picker input { width: 100%; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--code-bg); font: 13px var(--font-mono); }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 4px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.btn:hover { background: var(--code-bg); }
+.btn.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.tabs { display: flex; gap: 2px; overflow-x: auto; min-width: 0; align-items: center; }
+.tabs-gap { flex: 1; }
+#full { margin-inline: 6px; padding: 2px 8px; font-size: 12px; }
+.tab { border: 0; background: none; padding: 5px 10px; border-radius: 6px 6px 0 0; font-size: 13px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); background: var(--tint); box-shadow: inset 0 -2px 0 var(--accent); }
+.tab .n { font: 500 11px var(--font-mono); margin-left: 5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tab .x { margin-left: 6px; color: var(--muted); }
+.tab .x:hover { color: var(--bad); }
+
+/* Editor: a highlighted <pre> under a transparent <textarea>, one scroll for both and the line numbers. */
+.ed { flex: 1; min-height: 0; overflow: auto; background: var(--code-bg); }
+.ed .inner { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 100%; min-width: max-content; }
+.gut { position: sticky; left: 0; z-index: 1; background: var(--code-bg); border-right: 1px solid var(--line); padding: 8px 0;
+  font: 12px/var(--lh) var(--font-mono); color: var(--muted); text-align: right; user-select: none; font-variant-numeric: tabular-nums; }
+.gut div { padding: 0 8px 0 14px; height: var(--lh); position: relative; }
+.gut div.hit { color: var(--hit-mark); font-weight: 600; }
+.gut div.hit::before { content: ""; position: absolute; left: 4px; top: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--hit-mark); }
+.gut div.err { color: var(--bad); font-weight: 600; }
+.code { position: relative; }
+.code pre, .code textarea { margin: 0; padding: 8px 14px; font: 13px/var(--lh) var(--font-mono); tab-size: 4; white-space: pre; letter-spacing: 0; }
+.code pre .l { display: block; min-height: var(--lh); }
+.code pre .l.hit { background: var(--hit); }
+.code pre .l.err { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+.code pre .l.flash { background: var(--flash); transition: background .9s; }
+.code textarea { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; outline: 0; resize: none; overflow: hidden;
+  background: transparent; color: transparent; caret-color: var(--ink); }
+.code textarea::selection { background: color-mix(in srgb, var(--accent-2) 28%, transparent); color: transparent; }
+.c { color: var(--t-com); font-style: italic; }
+.s { color: var(--t-str); }
+.v { color: var(--t-var); }
+.b { color: var(--t-builtin); }
+.k { color: var(--t-kw); font-weight: 500; }
+.num { color: var(--t-num); }
+.rel { font-weight: 600; }
+
+/* Run pane */
+.status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.state { font: 600 11px/1 var(--font-body); letter-spacing: .05em; text-transform: uppercase; padding: 4px 8px; border-radius: 99px; border: 1px solid currentColor; }
+.state.idle { color: var(--muted); }
+.state.busy { color: var(--accent-2); }
+.state.ok { color: var(--good); }
+.state.found { color: var(--hit-mark); }
+.state.fail { color: var(--bad); }
+.status .sum { color: var(--muted); font-variant-numeric: tabular-nums; }
+.prog { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--line) 70%, transparent); overflow: hidden; position: relative; }
+.prog i { display: block; height: 100%; width: 0; background: var(--accent-2); border-radius: 3px; transition: width .2s; }
+/* A step with no measure of its own (starting, compiling): a band that sweeps across. */
+.prog.busy i { width: 100%; background: linear-gradient(90deg, transparent, var(--accent-2), transparent); background-size: 40% 100%;
+  background-repeat: no-repeat; animation: sweep 1.2s linear infinite; }
+@keyframes sweep { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@media (prefers-reduced-motion: reduce) { .prog.busy i { animation: none; background: var(--accent-2); opacity: .5; } }
+.out { flex: 1; min-height: 0; overflow: auto; }
+.view { display: none; }
+.view.on { display: block; }
+.note { font-size: 13px; color: var(--muted); padding: 10px 14px; margin: 0; }
+.callout { margin: 12px 14px; padding: 10px 12px; border: 1px solid var(--bad); border-radius: 8px; color: var(--ink); background: color-mix(in srgb, var(--bad) 7%, var(--surface)); }
+.callout b { color: var(--bad); }
+.callout pre { margin: 8px 0 0; font: 12.5px/1.5 var(--font-mono); white-space: pre-wrap; word-break: break-word; }
+table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.t th, table.t td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.t th { font: 600 11px var(--font-body); color: var(--muted); text-transform: uppercase; letter-spacing: .05em; background: var(--code-bg); position: sticky; top: 0; }
+table.t td.m, table.t td code { font: 12.5px var(--font-mono); }
+table.t td.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.t td.wrap { white-space: pre-wrap; word-break: break-word; }
+table.t tr.go { cursor: pointer; }
+table.t tr.go:hover td { background: var(--hit); }
+.split { display: grid; grid-template-columns: minmax(130px, 210px) minmax(0, 1fr); min-height: 100%; }
+.rlist { border-right: 1px solid var(--line); padding: 6px 0; }
+.rlist button { display: flex; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: none; text-align: left; padding: 5px 12px; font: 12.5px var(--font-mono); cursor: pointer; border-left: 3px solid transparent; }
+.rlist button:hover { background: var(--code-bg); }
+.rlist button[aria-selected="true"] { background: var(--tint); border-left-color: var(--accent); }
+.rlist button span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.rlist button.zero { color: var(--muted); }
+.phases { display: grid; gap: 6px; padding: 12px 14px; }
+.ph { display: grid; grid-template-columns: 110px minmax(0, 1fr) 64px; gap: 10px; align-items: center; font-size: 13px; }
+.ph .bar { height: 10px; border-radius: 3px; background: color-mix(in srgb, var(--line) 60%, transparent); overflow: hidden; }
+.ph .bar i { display: block; height: 100%; background: var(--accent-2); border-radius: 3px; }
+.ph .ms { text-align: right; font: 12.5px var(--font-mono); font-variant-numeric: tabular-nums; }
+pre.text { margin: 0; padding: 10px 14px; font: 12.5px/1.55 var(--font-mono); white-space: pre-wrap; word-break: break-word; }
+h3.sub { margin: 0; padding: 12px 14px 0; font: 600 13px var(--font-display); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+kbd { font: 12px var(--font-mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+
+@media (max-width: 1100px) {
+  main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-auto-rows: minmax(360px, 1fr); overflow-y: auto; }
+  .pane.run { grid-column: 1 / -1; border-top: 1px solid var(--line); }
+}
+@media (max-width: 720px) {
+  header.top { gap: 14px; }
+  main { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; }
+  .pane { border-right: 0; border-bottom: 1px solid var(--line); }
+  .pane .ed, .pane .out { flex: none; height: 340px; }
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .rlist { border-right: 0; border-bottom: 1px solid var(--line); max-height: 160px; overflow: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .code pre .l.flash { transition: none; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Rerail logic <span class="ext">.rr</span></div>
+  <nav class="views" aria-label="Views">
+    <a href="index.html#intro">Intro</a>
+    <a href="index.html#syntax">Syntax</a>
+    <a href="index.html#library">Library</a>
+    <a href="index.html#packs">Pack rules</a>
+    <a href="index.html#data-layer">Data-layer rules</a>
+    <a href="explorer.html" aria-current="page">Explorer</a>
+  </nav>
+</header>
+<div class="intro">
+  <p><b>The engine runs in this page.</b> Start from a scenario, or pick any Python rule and write your own files: each change runs
+    the rule again: the findings, every relation it derived, the program the engine actually ran (the rule with
+    <code>core.rr</code> and its includes), the join plans it chose, its SQL and where the CPU went.
+    <kbd>Ctrl</kbd>&nbsp;<kbd>Enter</kbd> runs at once.</p>
+</div>
+<div class="scen">
+  <label for="scen">Scenario</label>
+  <select id="scen"><option value="">Loading…</option></select>
+  <p class="what" id="scen-what"></p>
+</div>
+<main>
+  <section class="pane" aria-label="Rule">
+    <div class="phead">
+      <div class="row">
+        <h2 id="rule-h">Rule</h2>
+        <div class="picker">
+          <label for="rule-q" class="sr" hidden>Rule</label>
+          <input id="rule-q" list="rule-ids" placeholder="Loading rules…" autocomplete="off" spellcheck="false" aria-labelledby="rule-h">
+          <datalist id="rule-ids"></datalist>
+        </div>
+        <button class="btn" id="rule-reset" type="button" title="Put back the rule as the pack has it">Reset</button>
+      </div>
+      <p class="desc" id="rule-d"></p>
+      <div class="tabs" id="part-tabs" role="tablist" aria-label="Rule files"></div>
+    </div>
+    <div class="ed" id="rule-ed"></div>
+  </section>
+
+  <section class="pane" aria-label="Python source">
+    <div class="phead">
+      <div class="row">
+        <h2>Python</h2>
+        <div class="tabs" id="src-tabs" role="tablist" aria-label="Python files" style="flex:1"></div>
+        <button class="btn" id="src-new" type="button" title="Start an empty file of your own">New file</button>
+        <div class="addfile">
+          <button class="btn" id="src-add" type="button" aria-haspopup="true" aria-expanded="false" title="Add a file from the scenarios">Add file ▾</button>
+          <div class="pop" id="src-pop" hidden>
+            <input id="src-q" placeholder="Search the scenarios' files" autocomplete="off" spellcheck="false" aria-label="Search files">
+            <div class="list" id="src-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="ed" id="src-ed"></div>
+  </section>
+
+  <section class="pane run" aria-label="Run">
+    <div class="phead">
+      <div class="status">
+        <span class="state idle" id="state">Loading</span>
+        <span class="sum" id="sum">Starting the background worker…</span>
+        <span style="flex:1"></span>
+        <button class="btn primary" id="run" type="button" disabled>Run</button>
+      </div>
+      <div class="prog busy" id="prog" role="progressbar" aria-label="Loading the engine" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="prog-i"></i></div>
+      <div class="tabs" id="out-tabs" role="tablist" aria-label="Run output">
+        <button class="tab" role="tab" data-v="findings" aria-selected="true">Findings<span class="n" id="n-findings"></span></button>
+        <button class="tab" role="tab" data-v="relations">Relations<span class="n" id="n-relations"></span></button>
+        <button class="tab" role="tab" data-v="program">Program<span class="n" id="n-program"></span></button>
+        <button class="tab" role="tab" data-v="plans">Join plans<span class="n" id="n-plans"></span></button>
+        <button class="tab" role="tab" data-v="sql">SQL<span class="n" id="n-sql"></span></button>
+        <button class="tab" role="tab" data-v="profile">Profile</button>
+        <span class="tabs-gap"></span>
+        <button class="btn" id="full" type="button" disabled title="Run from scratch: compile the rule and evaluate every file, so Join plans, SQL and Profile show every step">Full run</button>
+      </div>
+    </div>
+    <div class="out" id="out">
+      <div class="view on" id="v-findings"><p class="note">The findings appear here once the engine has loaded and run.</p></div>
+      <div class="view" id="v-relations"></div>
+      <div class="view" id="v-program"></div>
+      <div class="view" id="v-plans"></div>
+      <div class="view" id="v-sql"></div>
+      <div class="view" id="v-profile"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- start
+// With nothing saved and no scenario or rule in the address, the page opens on the first scenario.
+const START_RULE = "bandit-b307-eval";
+
+// ---------------------------------------------------------------- highlighting
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+const span = (cls, s) => `<span class="${cls}">${esc(s)}</span>`;
+
+// .rr: Soufflé Datalog with core.rr's additions: directives, $variables, @builtins, relations before "(".
+const RR = /(\/\/.*|\/\*[\s\S]*?\*\/)|("(?:[^"\\]|\\.)*")|(\$[A-Za-z_][\w]*)|(@[A-Za-z_][\w]*)|(^[ \t]*[.#][a-z_]+\b)|(\b\d+(?:\.\d+)?\b)|(\b[A-Za-z_][\w]*(?=\())|(:-)/gm;
+function hlRR(text) {
+  return text.replace(/[^]*/, (all) => {
+    let out = "", at = 0;
+    for (const m of all.matchAll(RR)) {
+      out += esc(all.slice(at, m.index));
+      const [t, com, str, v, b, k, num, rel, arrow] = m;
+      out += com ? span("c", t) : str ? span("s", t) : v ? span("v", t) : b ? span("b", t)
+        : k ? span("k", t) : num ? span("num", t) : rel ? span("rel", t) : arrow ? span("k", t) : esc(t);
+      at = m.index + t.length;
+    }
+    return out + esc(all.slice(at));
+  });
+}
+const PY_KW = new Set("False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case".split(" "));
+const PY = /(#.*)|((?:[rbuf]|rb|br|fr|rf)?(?:"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'))|(@[\w.]+)|(\b\d[\w.]*\b)|(\b[A-Za-z_]\w*\b)/gi;
+function hlPY(text) {
+  let out = "", at = 0;
+  for (const m of text.matchAll(PY)) {
+    out += esc(text.slice(at, m.index));
+    const [t, com, str, deco, num, word] = m;
+    out += com ? span("c", t) : str ? span("s", t) : deco ? span("b", t) : num ? span("num", t)
+      : word && PY_KW.has(word) ? span("k", t) : esc(t);
+    at = m.index + t.length;
+  }
+  return out + esc(text.slice(at));
+}
+// Splits highlighted HTML into lines, closing and reopening spans that cross a newline (strings, comments).
+function lines(html) {
+  const result = [];
+  let open = [], cur = "";
+  for (const piece of html.split(/(<span class="[^"]*">|<\/span>|\n)/)) {
+    if (piece === "\n") { result.push(cur + "</span>".repeat(open.length)); cur = open.join(""); }
+    else if (piece.startsWith("<span")) { open.push(piece); cur += piece; }
+    else if (piece === "</span>") { open.pop(); cur += piece; }
+    else cur += piece;
+  }
+  result.push(cur + "</span>".repeat(open.length));
+  return result;
+}
+
+// ---------------------------------------------------------------- editor
+function editor(host, highlight, { readonly = false, label = "" } = {}) {
+  host.innerHTML = `<div class="inner"><div class="gut" aria-hidden="true"></div><div class="code"><pre aria-hidden="true"></pre>${readonly ? "" : `<textarea spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${label}"></textarea>`}</div></div>`;
+  const gut = host.querySelector(".gut"), pre = host.querySelector("pre"), ta = host.querySelector("textarea");
+  let text = "", marks = new Map(), onEdit = () => {};
+  function paint() {
+    const ls = lines(highlight(text));
+    pre.innerHTML = ls.map((l, i) => `<span class="l${marks.has(i + 1) ? " " + marks.get(i + 1) : ""}">${l || " "}</span>`).join("");
+    gut.innerHTML = ls.map((_, i) => `<div${marks.has(i + 1) ? ` class="${marks.get(i + 1)}"` : ""}>${i + 1}</div>`).join("");
+  }
+  if (ta) {
+    ta.addEventListener("input", () => { text = ta.value; paint(); onEdit(text); });
+    ta.addEventListener("keydown", (e) => {
+      if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        const { selectionStart: a, selectionEnd: b } = ta;
+        ta.setRangeText("    ", a, b, "end");
+        ta.dispatchEvent(new Event("input"));
+      }
+    });
+  }
+  return {
+    get value() { return text; },
+    set value(v) { text = v; if (ta) ta.value = v; paint(); },
+    set onEdit(f) { onEdit = f; },
+    mark(m) { marks = m; paint(); },
+    reveal(line) {
+      const el = pre.children[line - 1];
+      if (!el) return;
+      host.scrollTop = Math.max(0, el.offsetTop - host.clientHeight / 3);
+      el.classList.add("flash");
+      setTimeout(() => el.classList.remove("flash"), 900);
+    },
+  };
+}
+
+// ---------------------------------------------------------------- state
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem("rerail-explorer:" + k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem("rerail-explorer:" + k, JSON.stringify(v)); } catch {} },
+};
+let bundle = null, byId = new Map();
+let rule = null;                 // { id, d, files: {name: text}, active }
+let sources = store.get("sources") || { "app.py": "# Loading the scenarios…\n" };
+let activeSrc = Object.keys(sources)[0];
+let last = null;                 // the last run's result
+let scenarios = [], scenById = new Map();
+const ruleEd = editor($("rule-ed"), hlRR, { label: "Rule source" });
+const srcEd = editor($("src-ed"), hlPY, { label: "Python source" });
+
+function setRule(id, hash = id) {
+  const base = byId.get(id);
+  if (!base) return false;
+  rule = { id, d: base.d, files: { [`${id}.rr`]: base.rr, ...base.parts }, active: `${id}.rr` };
+  $("rule-q").value = id;
+  $("rule-d").textContent = base.d || "";
+  if (location.hash.slice(1) !== hash) history.replaceState(null, "", "#" + hash);
+  showRuleFile();
+  return true;
+}
+function showRuleFile() {
+  const names = Object.keys(rule.files);
+  $("part-tabs").hidden = names.length < 2;
+  $("part-tabs").innerHTML = names.map((n) => `<button class="tab" role="tab" data-f="${esc(n)}" aria-selected="${n === rule.active}">${esc(n.slice(rule.id.length + 1) === "rr" ? "rule" : n.slice(rule.id.length + 1, -3))}</button>`).join("");
+  ruleEd.value = rule.files[rule.active];
+  markRule();
+}
+$("part-tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-f]");
+  if (b) { rule.active = b.dataset.f; showRuleFile(); }
+});
+ruleEd.onEdit = (t) => { rule.files[rule.active] = t; schedule(); };
+$("rule-q").addEventListener("change", () => { if (setRule($("rule-q").value.trim())) { showScenario(null); runNow(); } });
+$("rule-reset").addEventListener("click", () => { if (rule && setRule(rule.id, location.hash.slice(1) || rule.id)) runNow(); });
+window.addEventListener("hashchange", () => {
+  const id = location.hash.slice(1);
+  if (scenById.has(id)) { if ($("scen").value !== id) { loadScenario(id); runNow(); } }
+  else if (rule && id !== rule.id && setRule(id)) { showScenario(null); runNow(); }
+});
+
+// A scenario sets the rule and replaces the Python files; editing either afterwards is yours.
+function showScenario(s) {
+  $("scen").value = s ? s.id : "";
+  $("scen-what").innerHTML = s ? `<b>${esc(s.title)}.</b> ${esc(s.note)}` : "Your own files, with the rule picked below.";
+  store.set("scenario", s ? s.id : null);
+}
+function loadScenario(id) {
+  const s = scenById.get(id);
+  if (!s || !setRule(s.rule, id)) return false;
+  sources = { ...s.files };
+  activeSrc = Object.keys(sources)[0];
+  store.set("sources", sources);
+  showScenario(s);
+  showSources();
+  return true;
+}
+$("scen").addEventListener("change", () => {
+  const id = $("scen").value;
+  if (id && loadScenario(id)) runNow();
+  else if (!id) { showScenario(null); if (rule) history.replaceState(null, "", "#" + rule.id); }
+});
+
+function showSources() {
+  const names = Object.keys(sources);
+  $("src-tabs").innerHTML = names.map((n) => `<button class="tab" role="tab" data-s="${esc(n)}" aria-selected="${n === activeSrc}">${esc(n)}<span class="n" data-count="${esc(n)}"></span>${names.length > 1 ? `<span class="x" data-del="${esc(n)}" title="Remove ${esc(n)}" aria-label="Remove ${esc(n)}">×</span>` : ""}</button>`).join("");
+  srcEd.value = sources[activeSrc];
+  markSources();
+}
+$("src-tabs").addEventListener("click", (e) => {
+  const del = e.target.closest("[data-del]");
+  if (del) { delete sources[del.dataset.del]; activeSrc = Object.keys(sources)[0]; store.set("sources", sources); showSources(); schedule(); return; }
+  const b = e.target.closest("[data-s]");
+  if (b) { activeSrc = b.dataset.s; showSources(); }
+});
+$("src-new").addEventListener("click", () => {
+  closePop();
+  let i = 1;
+  while (sources[`module${i}.py`] !== undefined) i++;
+  activeSrc = `module${i}.py`;
+  sources[activeSrc] = `# ${activeSrc}: import it from another file as \`import module${i}\`.\n`;
+  store.set("sources", sources);
+  showSources();
+});
+
+// Add file: every scenario's files, by scenario, filtered as you type. A file whose name is taken gets a suffix,
+// unless it is the same text (then it is only shown).
+const pop = $("src-pop");
+function closePop() { pop.hidden = true; $("src-add").setAttribute("aria-expanded", "false"); }
+function listFiles() {
+  const q = $("src-q").value.trim().toLowerCase();
+  let h = "";
+  for (const s of scenarios) {
+    const names = Object.keys(s.files).filter((n) => !q || n.toLowerCase().includes(q) || s.title.toLowerCase().includes(q) || s.id.includes(q) || s.rule.includes(q));
+    if (!names.length) continue;
+    h += `<div class="grp">${esc(s.title)}</div>` + names.map((n) => `<button type="button" data-sc="${esc(s.id)}" data-n="${esc(n)}"><code>${esc(n)}</code><span>${esc((s.files[n].split("\n").find((l) => l.trim() && !l.startsWith("import") && !l.startsWith("from")) || "").trim())}</span></button>`).join("");
+  }
+  $("src-list").innerHTML = h || `<p class="none">${scenarios.length ? "No file matches." : "The scenarios are still loading."}</p>`;
+}
+$("src-add").addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!pop.hidden) { closePop(); return; }
+  pop.hidden = false; $("src-add").setAttribute("aria-expanded", "true");
+  $("src-q").value = ""; listFiles(); $("src-q").focus();
+});
+$("src-q").addEventListener("input", listFiles);
+$("src-list").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-n]");
+  if (!b) return;
+  const text = scenById.get(b.dataset.sc).files[b.dataset.n];
+  let name = b.dataset.n;
+  for (let i = 2; sources[name] !== undefined && sources[name] !== text; i++) name = b.dataset.n.replace(/\.py$/, `_${i}.py`);
+  sources[name] = text;
+  activeSrc = name;
+  store.set("sources", sources);
+  closePop();
+  showSources();
+  schedule();
+});
+pop.addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", closePop);
+pop.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePop(); $("src-add").focus(); } });
+srcEd.onEdit = (t) => { sources[activeSrc] = t; store.set("sources", sources); schedule(); };
+
+// ---------------------------------------------------------------- engine
+// The engine runs in a background worker; where the browser refuses one, or it says nothing within a few seconds,
+// on the page's own thread (each run then blocks the page for its duration). Every loading stage is shown.
+const ENGINE_BYTES = 9489146; // explorer.py writes the build's size here, for a download that does not say its length
+const abs = (path) => new URL(path, location.href).href;
+// The WASI shim (@bjorn3/browser_wasi_shim 0.4.2) is served with the page: see explorer/shim/README.md.
+const SHIM = abs("explorer/shim/index.js");
+const LOAD = { type: "load", shim: SHIM, engine: abs("explorer/engine.js"), wasm: abs("explorer/rerail-engine.wasm"), bytes: ENGINE_BYTES };
+let backend = null, where = "";
+// pending: a run asked for while one runs (true), or a full run ("full").
+let ready = false, running = false, pending = false, seq = 0, timer = 0;
+const mb = (n) => (n / 1e6).toFixed(1);
+const STAGES = {
+  worker: () => "Starting the background worker…",
+  shim: () => "Loading the WASI layer…",
+  download: (r, t) => `Downloading the engine: ${mb(r)} of ${mb(t)} MB`,
+  compile: (r) => `Compiling the engine (${mb(r)} MB of WebAssembly)…`,
+};
+let stage = { name: "worker", since: performance.now(), text: STAGES.worker() };
+function onStage(name, received = 0, total = 0) {
+  if (name !== stage.name) stage.since = performance.now();
+  stage.name = name;
+  stage.text = STAGES[name](received, total);
+  const frac = name === "download" && total ? received / total : name === "compile" ? 1 : 0;
+  $("prog").hidden = false;
+  $("prog").classList.toggle("busy", name !== "download");
+  $("prog-i").style.width = (name === "download" ? 100 * Math.min(1, frac) : 100).toFixed(1) + "%";
+  $("prog").setAttribute("aria-valuenow", Math.round(100 * frac));
+  tick();
+}
+function tick() {
+  if (ready) return;
+  const secs = Math.round((performance.now() - stage.since) / 1000);
+  setState("busy", "Loading", stage.text + (secs >= 8 ? ` (${secs} s at this step)` : ""));
+}
+const ticker = setInterval(() => (ready ? clearInterval(ticker) : tick()), 1000);
+function engineReady(how) {
+  ready = true; where = how;
+  $("prog").hidden = true;
+  $("run").disabled = false; $("full").disabled = false;
+  runNow();
+}
+function loadFailed(message) {
+  clearInterval(ticker);
+  $("prog").hidden = true;
+  setState("fail", "Stopped", "The engine did not start.");
+  $("v-findings").innerHTML = `<div class="callout"><b>The engine did not start</b> while ${esc(stage.text.replace(/…$/, "").toLowerCase())}.<pre>${esc(message)}</pre></div>`;
+}
+
+async function startHere(why) {
+  try {
+    onStage("shim");
+    const shim = await import(SHIM);
+    const runner = await import(LOAD.engine);
+    const module = await runner.loadEngine(LOAD.wasm, ENGINE_BYTES, onStage);
+    let engine = await runner.engineFor(shim, module, null);
+    backend = { run: async (request) => { engine = await runner.engineFor(shim, module, engine); return runner.explore(engine, request); } };
+    engineReady(`on the page's thread (${why})`);
+  } catch (error) {
+    loadFailed(String(error && error.message ? error.message : error));
+  }
+}
+function startWorker() {
+  let worker;
+  try { worker = new Worker("explorer/worker.js", { type: "module" }); }
+  catch (error) { startHere("the browser refused a background worker"); return; }
+  let heard = false, wseq = 0;
+  const waiting = new Map();
+  const giveUp = (why) => { if (heard) return; heard = true; clearTimeout(watchdog); worker.terminate(); startHere(why); };
+  const watchdog = setTimeout(() => giveUp("the background worker did not start"), 5000);
+  worker.onmessage = ({ data }) => {
+    heard = true; clearTimeout(watchdog);
+    if (data.type === "stage") { if (!ready) onStage(data.stage, data.received, data.total); }
+    else if (data.type === "loaded") {
+      backend = { run: (request) => new Promise((resolve, reject) => { waiting.set(++wseq, { resolve, reject }); worker.postMessage({ type: "run", seq: wseq, request }); }) };
+      engineReady("in a background worker");
+    } else if (data.type === "result" && waiting.has(data.seq)) { waiting.get(data.seq).resolve(data.result); waiting.delete(data.seq); }
+    else if (data.type === "failed") {
+      if (waiting.has(data.seq)) { waiting.get(data.seq).reject(new Error(data.message)); waiting.delete(data.seq); }
+      else loadFailed(data.message);
+    }
+  };
+  worker.onerror = (e) => { e.preventDefault?.(); if (!heard) giveUp("the background worker's script did not load"); else if (!ready) loadFailed(e.message || "the background worker stopped"); };
+  worker.postMessage(LOAD);
+}
+onStage("worker");
+startWorker();
+
+// A run starts as an edit lands: the engine keeps the rule compiled and every other file's rows (decision 0063), so a
+// run costs what the edit changed. Edits made while one runs are taken together by the next. A full run (the button
+// beside the output tabs) compiles the rule and evaluates every file afresh, so the explain views show every step.
+function schedule() { clearTimeout(timer); timer = setTimeout(() => runNow(), 16); }
+function runNow(full = false) {
+  clearTimeout(timer);
+  if (!ready || !rule) return;
+  if (running) { pending = full || pending === "full" ? "full" : true; return; }
+  pending = false; running = true;
+  const mine = ++seq;
+  setState("busy", "Running", (full ? "A full run of the rule over " : "Running the rule over ") + Object.keys(sources).length + " files…");
+  const id = rule.id;
+  const parts = Object.fromEntries(Object.entries(rule.files).filter(([n]) => n !== `${id}.rr`));
+  backend.run({ id, rr: rule.files[`${id}.rr`], parts, sources, lib: bundle.lib, full }).then(
+    (result) => { running = false; if (mine === seq) show(result); if (pending) runNow(pending === "full"); },
+    (error) => { running = false; setState("fail", "Stopped", String(error.message || error)); if (pending) runNow(pending === "full"); });
+}
+$("run").addEventListener("click", () => runNow());
+$("full").addEventListener("click", () => runNow(true));
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runNow(); } });
+function setState(kind, label, text) { $("state").className = "state " + kind; $("state").textContent = label; $("sum").textContent = text; }
+
+// ---------------------------------------------------------------- output
+const tsv = (text) => text.split("\n").filter((l) => l !== "").map((l) => l.split("\t"));
+// Column names from the flattened program's declarations: `.decl rel(a: T, b: T)`.
+function declarations(program) {
+  const decls = {};
+  for (const m of program.matchAll(/^\s*\.decl\s+([A-Za-z_]\w*)\s*\(([^)]*)\)/gm)) {
+    decls[m[1]] = m[2].split(",").map((c) => c.trim().split(/\s*:\s*/)[0]).filter(Boolean);
+  }
+  return decls;
+}
+function findingsOf(result, decls) {
+  const rows = tsv(result.relations.violation || "");
+  const cols = decls.violation || [];
+  const pathAt = cols.indexOf("path") >= 0 ? cols.indexOf("path") : rows[0] ? rows[0].length - 2 : 0;
+  const lineAt = cols.indexOf("line") >= 0 ? cols.indexOf("line") : rows[0] ? rows[0].length - 1 : 1;
+  return { cols, rows, pathAt, lineAt };
+}
+function ruleErrorLine(result) {
+  // The engine names a rule file's error as `<file>: line N:` (syntax) or `<file>:N:` (the include checks).
+  const m = (result.error + "\n" + result.programError).match(/\/w\/rule\/([^:\s]+):(?: line )?(\d+)/);
+  return m ? { file: m[1], line: +m[2] } : null;
+}
+let ruleError = null, hits = {};
+function markRule() {
+  const m = new Map();
+  if (ruleError && rule && ruleError.file === rule.active) m.set(ruleError.line, "err");
+  ruleEd.mark(m);
+}
+function markSources() {
+  srcEd.mark(new Map((hits[activeSrc] || []).map((l) => [l, "hit"])));
+  for (const el of document.querySelectorAll("[data-count]")) {
+    const n = (hits[el.dataset.count] || []).length;
+    el.textContent = n ? String(n) : "";
+  }
+}
+
+function show(result) {
+  last = result;
+  const decls = declarations(result.program);
+  const f = findingsOf(result, decls);
+  hits = {};
+  for (const r of f.rows) (hits[r[f.pathAt]] ??= []).push(+r[f.lineAt]);
+  ruleError = ruleErrorLine(result);
+  markRule(); markSources();
+  const first = result.report.split("\n")[0] || "";
+  const files = (first.match(/(\d+) files/) || [])[1], nodes = (first.match(/(\d+) nodes/) || [])[1];
+  const secs = (result.ms / 1000).toFixed(2);
+  if (result.code !== 0) setState("fail", "Stopped", "The engine stopped; see Findings for why.");
+  else setState(f.rows.length ? "found" : "ok", f.rows.length ? `${f.rows.length} found` : "Clean",
+    `${files || "?"} files, ${nodes || "?"} nodes · ${result.full ? "full run" : "ran"} in ${secs} s${where.startsWith("on the page") ? " · " + where : ""}`);
+
+  // Findings
+  let h = "";
+  if (result.code !== 0) h += `<div class="callout"><b>The engine stopped.</b><pre>${esc(result.error || "no message")}</pre></div>`;
+  if (f.rows.length) {
+    const head = f.rows[0].map((_, i) => f.cols[i] || `column ${i + 1}`);
+    h += `<table class="t"><thead><tr>${head.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>` +
+      f.rows.map((r) => `<tr class="go" tabindex="0" data-p="${esc(r[f.pathAt])}" data-l="${esc(r[f.lineAt])}">${r.map((c, i) => `<td class="${i === f.lineAt ? "r" : "m"}">${esc(c)}</td>`).join("")}</tr>`).join("") + "</tbody></table>" +
+      `<p class="note">Select a finding to show its line in the source.</p>`;
+  } else if (result.code === 0) {
+    h += `<p class="note">No findings: the rule's <code>violation</code> relation is empty for these files. The Relations tab shows what it did derive.</p>`;
+  }
+  $("v-findings").innerHTML = h;
+  $("n-findings").textContent = f.rows.length || "";
+
+  // Relations
+  const rels = Object.entries(result.relations).map(([n, t]) => [n, tsv(t)]).sort((a, b) => (b[0] === "violation") - (a[0] === "violation") || a[0].localeCompare(b[0]));
+  $("n-relations").textContent = rels.length || "";
+  const pick = (name) => {
+    const [, rows] = rels.find(([n]) => n === name) || [name, []];
+    const cols = decls[name] || (rows[0] || []).map((_, i) => `column ${i + 1}`);
+    const shown = rows.slice(0, 500);
+    $("rel-body").innerHTML = rows.length
+      ? `<table class="t"><thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${shown.map((r) => `<tr>${r.map((c) => `<td class="m">${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>${rows.length > 500 ? `<p class="note">The first 500 of ${rows.length} rows.</p>` : ""}`
+      : `<p class="note"><code>${esc(name)}</code> has no rows.</p>`;
+    for (const b of document.querySelectorAll("#rel-list button")) b.setAttribute("aria-selected", b.dataset.r === name);
+  };
+  $("v-relations").innerHTML = rels.length
+    ? `<div class="split"><div class="rlist" id="rel-list">${rels.map(([n, rows]) => `<button type="button" data-r="${esc(n)}" class="${rows.length ? "" : "zero"}">${esc(n)}<span>${rows.length}</span></button>`).join("")}</div><div id="rel-body"></div></div>`
+    : `<p class="note">The run wrote no relations.</p>`;
+  if (rels.length) {
+    $("rel-list").addEventListener("click", (e) => { const b = e.target.closest("[data-r]"); if (b) pick(b.dataset.r); });
+    pick(rels[0][0]);
+  }
+
+  // The other views: counts now, contents when shown (each run would otherwise rebuild views no one is looking at).
+  const pl = result.program ? result.program.split("\n").length : 0;
+  $("n-program").textContent = pl ? `${pl} lines` : "";
+  views = { result, plans: tsv(result.profile["native.tsv"] || "").slice(1).sort((a, b) => +b[1] - +a[1]), sql: tsv(result.profile["sql.tsv"] || "").slice(1).sort((a, b) => +b[3] - +a[3]) };
+  $("n-plans").textContent = views.plans.length || "";
+  $("n-sql").textContent = views.sql.length || "";
+  drawn = new Set();
+  draw(shownView());
+}
+
+let views = null, drawn = new Set(), programShown = null;
+const shownView = () => (document.querySelector("#out-tabs .tab[aria-selected=true]") || {}).dataset?.v;
+// Draws view `name` from the last run, once per run; the program only when its text changed.
+function draw(name) {
+  if (!views || drawn.has(name)) return;
+  drawn.add(name);
+  const { result, plans, sql } = views;
+  const how = result.full
+    ? `<p class="note how">A full run: the rule compiled and every file evaluated, so every step is here.</p>`
+    : `<p class="note how">An incremental run${result.memo ? ` (${esc(result.memo)})` : ""}: what an earlier run kept is not shown. <b>Full run</b>, above, shows every step.</p>`;
+  if (name === "program") {
+    if (programShown === (result.program || result.programError)) return;
+    programShown = result.program || result.programError;
+    $("v-program").innerHTML = result.program
+      ? `<p class="note">The rule as the engine ran it: <code>core.rr</code> and every file it includes, lowered and printed back as one program.</p><div class="ed" id="prog-ed" style="max-height:none"></div>`
+      : `<div class="callout"><b>The rule did not read as a program.</b><pre>${esc(result.programError || "no message")}</pre></div>`;
+    if (result.program) editor($("prog-ed"), hlRR, { readonly: true }).value = result.program;
+  } else if (name === "plans") {
+    // Join plans (native.tsv): the engine's own joins, by work.
+    $("v-plans").innerHTML = how + (plans.length
+      ? `<p class="note">Each stratum the engine joined natively: where it ran, the work it did, the rows in and out at each step, and the join order it chose (<code>seed</code> scans the first literal; <code>delta</code> is the recursive step).</p><table class="t"><thead><tr><th>Stratum</th><th>Work</th><th>Rows in:out</th><th>Plan</th></tr></thead><tbody>${plans.map(([s, w, io, p]) => `<tr><td class="m wrap">${esc(s.replace(/\/native$/, ""))}</td><td class="r">${esc(w)}</td><td class="m">${esc((io || "").replaceAll(",", " "))}</td><td class="m wrap">${esc(p || "")}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="note">No native joins in this run.</p>`);
+  } else if (name === "sql") {
+    // SQL (sql.tsv): statements by VM steps.
+    $("v-sql").innerHTML = how + (sql.length
+      ? `<p class="note">Every SQLite statement the run made, by virtual-machine steps (a measure of work that does not depend on the machine). Full-scan steps and sorts point at a missing index.</p><table class="t"><thead><tr><th>Where</th><th>Runs</th><th>VM steps</th><th>Full scan</th><th>Sorts</th><th>Statement</th></tr></thead><tbody>${sql.slice(0, 400).map(([s, runs, , vm, full, sorts, , text]) => `<tr><td class="m wrap">${esc(s)}</td><td class="r">${esc(runs)}</td><td class="r">${esc(vm)}</td><td class="r">${esc(full)}</td><td class="r">${esc(sorts)}</td><td class="m wrap">${esc(text || "")}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="note">No SQL statements recorded.</p>`);
+  } else if (name === "profile") {
+    // Profile: phases as bars, then the engine's decisions as it reports them.
+    const txt = result.profile["profile.txt"] || "";
+    const phases = [...txt.matchAll(/^\s+([\d.]+) s\s+(\S+(?: \(worker\))?)\s+rss/gm)].map((m) => [m[2], +m[1]]);
+    const max = Math.max(0.001, ...phases.map((p) => p[1]));
+    $("v-profile").innerHTML = how + (phases.length ? `<h3 class="sub">CPU by phase</h3><div class="phases">${phases.map(([n, s]) => `<div class="ph"><span>${esc(n)}</span><span class="bar"><i style="width:${(100 * s / max).toFixed(1)}%"></i></span><span class="ms">${(s * 1000).toFixed(0)} ms</span></div>`).join("")}</div><p class="note">The browser has no per-thread CPU clock, so these are elapsed times on the page's engine thread.</p>` : "") +
+      `<h3 class="sub">The engine's report</h3><pre class="text">${esc(txt.replace(/^[^]*?(?=== Decisions)/, "") || result.report)}</pre>`;
+  }
+}
+
+$("v-findings").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr.go");
+  if (tr) goTo(tr.dataset.p, +tr.dataset.l);
+});
+$("v-findings").addEventListener("keydown", (e) => {
+  const tr = e.target.closest("tr.go");
+  if (tr && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); goTo(tr.dataset.p, +tr.dataset.l); }
+});
+function goTo(path, line) {
+  if (sources[path] === undefined) return;
+  if (activeSrc !== path) { activeSrc = path; showSources(); }
+  srcEd.reveal(line);
+}
+$("out-tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-v]");
+  if (!b) return;
+  for (const t of document.querySelectorAll("#out-tabs .tab")) t.setAttribute("aria-selected", t === b);
+  for (const v of document.querySelectorAll(".out .view")) v.classList.toggle("on", v.id === "v-" + b.dataset.v);
+  draw(b.dataset.v);
+});
+
+// ---------------------------------------------------------------- start
+showSources();
+fetch("explorer/python.json").then((r) => {
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}).then((b) => {
+  bundle = b;
+  byId = new Map(b.rules.map((r) => [r.id, r]));
+  scenarios = b.scenarios || [];
+  scenById = new Map(scenarios.map((s) => [s.id, s]));
+  $("rule-ids").innerHTML = b.rules.map((r) => `<option value="${esc(r.id)}">${esc(r.d || "")}</option>`).join("");
+  $("rule-q").placeholder = `${b.rules.length} Python rules: type to search`;
+  const group = (label, list) => list.length ? `<optgroup label="${esc(label)}">${list.map((s) => `<option value="${esc(s.id)}">${esc(s.title)}</option>`).join("")}</optgroup>` : "";
+  $("scen").innerHTML = `<option value="">Your own files</option>` +
+    group("Security (Bandit)", scenarios.filter((s) => s.rule.startsWith("bandit-"))) +
+    group("Style and correctness (Ruff)", scenarios.filter((s) => !s.rule.startsWith("bandit-")));
+  const wanted = location.hash.slice(1), saved = store.get("scenario");
+  if (scenById.has(wanted)) loadScenario(wanted);
+  else if (byId.has(wanted)) { setRule(wanted); showScenario(store.get("sources") && saved && scenById.get(saved)?.rule === wanted ? scenById.get(saved) : null); }
+  else if (!store.get("sources") && scenarios.length) loadScenario(scenarios[0].id);
+  else { const s = scenById.get(saved); setRule(s ? s.rule : byId.has(START_RULE) ? START_RULE : b.rules[0].id, s ? s.id : undefined); showScenario(s || null); }
+  runNow();
+}).catch((e) => {
+  $("rule-d").textContent = `The rules did not load (${e.message}).`;
+});
+</script>
+</body>
+</html>

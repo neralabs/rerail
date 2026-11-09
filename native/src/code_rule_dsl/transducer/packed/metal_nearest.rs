@@ -135,6 +135,7 @@ pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &
     let command = queue.new_command_buffer();
     command.set_label("Rerail nearest");
     let encoder = command.new_compute_command_encoder();
+    encoder.set_label("nearest");
     encoder.set_compute_pipeline_state(&pipeline);
     encoder.set_buffer(0, Some(state.buffer()), 0);
     encoder.set_buffer(1, Some(stats.buffer()), 0);

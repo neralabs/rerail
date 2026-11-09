@@ -1,6 +1,6 @@
 # Parser generators: the tree section as a grammar
 
-Status: decided (user, 2026-11-07: "yes, please make that change"). Decision 0051. It
+Status: decided (user, 2026-11-07: "yes, please make that change"). Decision 0085. It
 replaces the tree section's start and end rules (`after`, `before`, `also`, `parent`, `with`,
 `field … of`, `supertype … of`) and tier 2's dataflow of docs 14 to 16.
 
@@ -106,12 +106,12 @@ arm 18 token 2 to 17 do close close leaf                # `,` after a string val
   token's first byte, and the last byte of each token whose row does not give its end (a
   one-byte token ends after its byte; a keyword-only row's word gives its length). The
   compiler knows which rows take a last byte, so an arm's `SPAN` reads the next one, never
-  searches (decision 0053).
+  searches (decision 0087).
 - **The token's kind** is its first byte, as simdjson's `switch (*value)`: a `SWITCH` on it.
   A word starting `t`, `f` or `n` is switched on byte by byte and then compared once with
   `true`, `false`, `null` (`WORD`, one load and compare, its length from its last byte); an
   escape's second byte picks its kind or refuses.
-- **A number's syntax** is tier 2's, as simdjson's `parse_number` (decision 0052): `check number = G`
+- **A number's syntax** is tier 2's, as simdjson's `parse_number` (decision 0086): `check number = G`
   is a grammar over the token's bytes. The compiler makes it a byte state machine (8 states,
   `parse_number`'s steps), then straight-line operations over the token's window, a `fill`
   per digit run; the number's arm runs them. No loop over the bytes. Tier 1 finds only the word; `true`, `false` and `null` retype it, and any

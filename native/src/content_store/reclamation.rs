@@ -3,7 +3,7 @@
 use super::rows::{generation, intern_string};
 use super::snapshots::GIT_TREE_BATCH_ENTRIES;
 use super::{
-    CapacityState, CollectionReport, ContentStore, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
+    CapacityState, CollectionReport, ContentStore, HashKey, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId,
     StoreCapacity, StoreError, StoreResult, TapeId,
 };
 use rusqlite::{OptionalExtension, Params, Transaction, TransactionBehavior, params};
@@ -12,7 +12,6 @@ use std::time::Instant;
 
 const OBJECT_TAPE: i64 = 1;
 const OBJECT_SOURCE: i64 = 2;
-
 pub(super) const STORE_SOFT_LIMIT: u64 = 7 * 1024 * 1024 * 1024;
 pub(super) const STORE_HARD_LIMIT: u64 = 9 * 1024 * 1024 * 1024;
 pub(super) const STORE_ABSOLUTE_LIMIT: u64 = 10 * 1024 * 1024 * 1024;
@@ -52,11 +51,64 @@ impl ContentStore {
              ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
             params![object_kind, object_id, owner_id, lease_until],
         )?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
+    /// From now on, each source this handle stores (`put_source`, `put_source_and_tape`) or finds through
+    /// [`Self::held_source_by_hash`] is pinned for `owner` until unix second `lease_until`, in the transaction that
+    /// stores or finds it (O95). A run's sources are live only once its manifest names them; held, a collector
+    /// running meanwhile cannot take them, or their tapes' and memo rows' sources, from under it.
+    /// `release_pins(owner)` ends the hold.
+    pub fn hold_sources(&self, owner: &str, lease_until: i64) -> StoreResult<()> {
+        if owner.is_empty() || lease_until <= 0 {
+            return Err(StoreError::Invalid("object pin is invalid".to_owned()));
+        }
+        *self.holder.lock() = Some((owner.to_owned(), lease_until));
+        Ok(())
+    }
+
+    /// Pins `source` under this handle's holder, if it has one, in `transaction`.
+    pub(super) fn pin_held(&self, transaction: &rusqlite::Transaction<'_>, source: SourceId) -> StoreResult<()> {
+        self.pin_held_object(transaction, OBJECT_SOURCE, source.0)
+    }
+
+    /// Pins `tape` under this handle's holder, if it has one, in `transaction`: a run's tapes stay until its manifest
+    /// makes them live, so the next run does not parse them again.
+    pub(super) fn pin_held_tape(&self, transaction: &rusqlite::Transaction<'_>, tape: TapeId) -> StoreResult<()> {
+        self.pin_held_object(transaction, OBJECT_TAPE, tape.0)
+    }
+
+    fn pin_held_object(&self, transaction: &rusqlite::Transaction<'_>, kind: i64, id: i64) -> StoreResult<()> {
+        let Some((owner, lease_until)) = self.holder.lock().clone() else { return Ok(()) };
+        let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
+        transaction
+            .prepare_cached(
+                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
+                 ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
+            )?
+            .execute(params![kind, id, owner_id, lease_until])?;
+        Ok(())
+    }
+
+    /// The source whose SHA-256 is `hash`, pinned under the holder in the same transaction when the handle has one.
+    pub fn held_source_by_hash(&self, hash: HashKey) -> StoreResult<Option<SourceId>> {
+        if self.holder.lock().is_none() {
+            return self.source_by_hash(hash);
+        }
+        self.immediate_transaction(|transaction| {
+            let found = super::objects::source_id_by_hash(transaction, hash)?;
+            if let Some(source) = found {
+                self.pin_held(transaction, source)?;
+            }
+            Ok(found)
+        })
+    }
+
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
+        if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
+            *self.holder.lock() = None;
+        }
         let connection = self
             .connection
             .lock()
@@ -104,16 +156,25 @@ impl ContentStore {
     /// trees are deleted whole, each row with all of its entries, so a surviving tree row always
     /// has its complete entry set: up to `batch` trees whose entries fit the publication budget
     /// `GIT_TREE_BATCH_ENTRIES`, or the first one alone when it is larger.
+    /// Returns an empty report while a cache reader or another collector holds the collection lease.
     pub fn collect(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .expire(Instant::now());
         if batch == 0 || batch > MAX_COLLECTION_BATCH {
             return Err(StoreError::Invalid(format!(
                 "collection batch must be between 1 and {MAX_COLLECTION_BATCH}"
             )));
         }
+        let Some(_lease) = self.try_collect()? else {
+            return Ok(CollectionReport::default());
+        };
+        self.collect_held(now, batch)
+    }
+
+    /// The caller holds the exclusive collection lease through the complete pass.
+    pub(super) fn collect_held(&self, now: i64, batch: usize) -> StoreResult<CollectionReport> {
+        self.decompressed_cache
+            .lock()
+            .expect("decompressed cache mutex poisoned")
+            .expire(Instant::now());
         let limit = i64::try_from(batch)
             .map_err(|_| StoreError::Invalid("collection batch exceeds i64".to_owned()))?;
         let entry_budget = GIT_TREE_BATCH_ENTRIES as i64;
@@ -196,6 +257,8 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.tape_id=t.tape_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=t.tape_id) \
              AND NOT EXISTS (SELECT 1 FROM file_documents d WHERE d.document_tape_id=t.tape_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=t.source_id \
+                             AND l.grammar_version=t.grammar_version AND l.tape_format=t.tape_format_version) \
              ORDER BY t.tape_id LIMIT ?3)",
             params![current_generation, OBJECT_TAPE, limit],
         )?;
@@ -207,6 +270,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -218,6 +282,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -229,6 +294,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -240,6 +306,7 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM workspace_overlay o WHERE o.source_id=s.source_id) \
              AND NOT EXISTS (SELECT 1 FROM object_pins p WHERE p.object_kind_id=?2 AND p.object_id=s.source_id) \
+             AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=s.source_id) \
              ORDER BY s.source_id LIMIT ?3)",
             params![current_generation, OBJECT_SOURCE, limit],
         )?;
@@ -367,9 +434,9 @@ impl ContentStore {
             "UPDATE store_state SET generation=generation+1 WHERE singleton=1",
             [],
         )?;
-        transaction.commit()?;
-        connection
-            .execute_batch("PRAGMA wal_checkpoint(PASSIVE); PRAGMA incremental_vacuum(128);")?;
+        self.commit(transaction)?;
+        connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
+        incremental_vacuum(&connection, 4096)?;
         drop(connection);
         self.decompressed_cache
             .lock()
@@ -405,6 +472,15 @@ fn execute_collect(
     transaction
         .execute(collect_sql(sql), params)
         .map_err(StoreError::from)
+}
+
+/// Returns up to `pages` free pages to the file system (16 MB at 4096: a grammar change frees about 63 MB on the full
+/// corpus, decision 0053). The pragma frees a page per step, so it is stepped to the end: run as a batch, it freed none.
+pub(super) fn incremental_vacuum(connection: &rusqlite::Connection, pages: u32) -> StoreResult<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
+    let mut rows = statement.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
 }
 
 pub(super) fn capacity_state(bytes: u64) -> CapacityState {

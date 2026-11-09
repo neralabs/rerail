@@ -1,6 +1,6 @@
 # Parser generators: JSON's two tiers on Metal, designed before they are built
 
-**Superseded by doc 18 (decision 0051):** the tree section is now a grammar, and tier 2 is its
+**Superseded by doc 18 (decision 0085):** the tree section is now a grammar, and tier 2 is its
 state machine. The start and end rules here (`after`, `before`, `also`, `parent`, code facts)
 and the dataflow built on them are gone; Metal's tier 2 is redone from the state machine
 (doc 17 §6).
@@ -15,7 +15,7 @@ otherwise, doc 17 holds.
 
 ## Intro
 
-A Bitlex file compiles to two tiers (decision 0049):
+A Bitlex file compiles to two tiers (decision 0071):
 
 - **tier 1** is bit operations on every byte: classes, strings, each token's first and last
   byte, per-byte errors;

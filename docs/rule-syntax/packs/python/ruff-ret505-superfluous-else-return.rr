@@ -1,0 +1,20 @@
+.policy "ruff-ret505-superfluous-else-return" revision 2
+.description "Remove the else or elif after an if branch that returns, and dedent its code; the branch already leaves the function."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RET505 (flake8-return): an `elif` or `else` right after an `if` body whose first jump is a `return`. That
+// branch leaves the function, so the rest can be dedented. Only an if's first elif/else clause is
+// paired with its body, and only the body's own statements are looked at, in order: the first return, raise,
+// break or continue decides which rule fires. Checked in each def RET reads (python/flow-return); reported
+// at the keyword.
+//   if x:
+//       return 1
+//   else:                      ← RET505 "Unnecessary `else` after `return` statement"
+//       y()
+#include "python/flow-return.rr"
+
+.violation RET505(at: span, w: symbol) code "RET505" "Unnecessary `{w}` after `return` statement"
+    suppress ruff "RET505"
+RET505(kw, w) :- else_after_jump(kw, w, "return").

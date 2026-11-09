@@ -81,7 +81,7 @@ pub(super) enum StructuralOperation {
     Fork { greedy: bool, target: u16 },
     Goto { target: u16 },
     Emit { label: u16, output: FunctionRef },
-    // Tier 2's words over the token stream (decision 0053, `stream`).
+    // Tier 2's words over the token stream (decision 0087, `stream`).
     /// The next start of tier 1's extract `extract`.
     Token { extract: u16 },
     Switch { table: u16 },

@@ -286,7 +286,50 @@ export interface NativeExclusiveFileLock {
   release(): void;
 }
 
+/** A connection-local SQL extension context over the native content store. */
+export interface NativeCodeRuleSqlExecutor {
+  bindSnapshot(snapshotJson: string): void;
+  /** Retain SQL results across source edits; unchanged files reuse native fact shards. */
+  applySnapshot(snapshotJson: string, maxWaves?: number | null): string;
+  /** Atomic {upsert: snapshot files, delete: paths}; leaves unmentioned files and metadata in place. */
+  applyFileChanges(changesJson: string, maxWaves?: number | null): string;
+  bindStored(scope: string, paths?: string[] | null): void;
+  bindRelation(relationJson: string): void;
+  /** Drop generated outputs while keeping fact bindings and registered extensions. */
+  reset(): void;
+  /** Per-operation limits: {max_steps?: number, timeout_ms?: number}. An empty object removes limits. */
+  setLimits(limitsJson: string): void;
+  createIndex(relation: string, columns: number[]): void;
+  /** Register deterministic aggregate/merge/widen SQL functions for a custom lattice. */
+  registerLattice(name: string, specificationJson: string): void;
+  lower(program: string, dialect: string): string;
+  run(program: string, dialect: string, maxWaves?: number | null): string;
+  runFile(path: string, dialect: string, maxWaves?: number | null): string;
+  /** Atomic [{name, insert?: rows, delete?: rows}] batch; returns deltas and refreshed strata. */
+  applyChanges(changesJson: string, maxWaves?: number | null): string;
+  query(sql: string, parametersJson?: string | null, maxRows?: number | null): string;
+}
+
+export interface NativeCodeRuleSqlExecutorConstructor {
+  new(storePath: string): NativeCodeRuleSqlExecutor;
+}
+
+export interface NativeCodeRuleDslExecution {
+  evaluate(compiled: NativeCompiledCodeRuleDsl, snapshot: string, mode: string): string;
+  createWorkspace(): NativeCodeRuleDslWorkspace;
+  close(): void;
+}
+
+export interface NativeModelCheck {
+  problem?: "missing" | "unreadable" | "invalid-manifest" | "checksum-mismatch" | null;
+  file?: string | null;
+}
+
 export interface NativeBinding {
+  verifyModelFiles(modelPath: string): NativeModelCheck;
+  CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
+  CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
+  executeSqlRequest(storePath: string, requestJson: string): string;
   health(): NativeHealth;
   nativeMemoryProfile(): string;
   processSessionId(pid: number): number | null;
@@ -318,7 +361,7 @@ export interface NativeBinding {
   validateRegex(pattern: string): void;
   /** Windows only: start a detached process that inherits only NUL stdin and the appended log file; returns its pid. */
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
-  /** The content-store file name this binary's store schema owns (`content-v2.sqlite` at store floor 2). */
+  /** The content-store file name this binary's store schema owns (`content-v3.sqlite` at store floor 3). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;

@@ -1,0 +1,1014 @@
+{
+  "format": "rerail.data-layer-batch-evidence/v1",
+  "batch": 6,
+  "source_commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "base_commit": "fb1dfced",
+  "state": "All ten source-detection candidates pass original source, repository, and incremental parity. I/O and reporter integration contracts remain separate.",
+  "linear_issues_created": [],
+  "linear_issues_amended": [],
+  "oracle": {
+    "pytest_exit_code": 0,
+    "collected_tests": 933,
+    "loaded_source_files_checked": 1521,
+    "source_mismatches": [],
+    "missing_test_modules": []
+  },
+  "source_corpus": {
+    "nativeCalls": 1259,
+    "replayedCalls": 1259,
+    "positiveCalls": 417,
+    "cleanCalls": 842,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "missingCoverage": [],
+    "coverage": [
+      {
+        "check": "serverplan_bypass",
+        "positive": 4,
+        "clean": 2
+      },
+      {
+        "check": "serverplan_steps",
+        "positive": 64,
+        "clean": 682
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "positive": 65,
+        "clean": 14
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "positive": 42,
+        "clean": 17
+      },
+      {
+        "check": "serverplan_quality",
+        "positive": 135,
+        "clean": 65
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "positive": 10,
+        "clean": 2
+      },
+      {
+        "check": "execution_authority_bypass",
+        "positive": 4,
+        "clean": 1
+      },
+      {
+        "check": "impl_direct_execution",
+        "positive": 39,
+        "clean": 29
+      },
+      {
+        "check": "raw_execute_regression",
+        "positive": 2,
+        "clean": 2
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "positive": 52,
+        "clean": 28
+      }
+    ],
+    "compilationMs": 13831.089332000032,
+    "elapsedMs": 349159.630458,
+    "nativeSha256": "0422a40b86520b49dbaad5131713c0d002ab1244ee0244a293dbced9e92fdfa8"
+  },
+  "source_recordings": [
+    {
+      "path": "fixtures/host/data-layer-port/batch-06-recording.json",
+      "sha256": "a34b4a7e0c04be501912e9114f01e431044b030d2ad53a5ddc57650c9d9c070b"
+    },
+    {
+      "path": "fixtures/host/data-layer-port/batch-06-probes.json",
+      "sha256": "3929777c02349b0dc43ac737dda73e41fb63b425f1704f004767b4f22885dbad"
+    },
+    {
+      "path": "fixtures/host/data-layer-port/batch-06-probe-inputs.json",
+      "sha256": "f276059164e4c8602cfa1345d6936ab48e510f213b4838e942e60a3b799f3aee"
+    }
+  ],
+  "retained_calls": [
+    {
+      "test": "scripts/tests/test_lint_serverplan_steps.py::test_legacy_postop_scan_reports_current_behavior_categories",
+      "reason": "Input adapter: ValueError: No source-bearing analyzer argument"
+    },
+    {
+      "test": "scripts/tests/test_lint_serverplan_steps.py::test_legacy_postop_scan_ratchet_fails_when_count_increases",
+      "reason": "Input adapter: ValueError: No source-bearing analyzer argument"
+    },
+    {
+      "test": "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_tolerates_nonutf8",
+      "reason": "Input adapter: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
+    },
+    {
+      "test": "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_handles_unreadable_file",
+      "reason": "Input adapter: ValueError: No original source text for AST/file input"
+    },
+    {
+      "test": "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_missing_file_returns_empty",
+      "reason": "Input adapter: ValueError: No original source text for AST/file input"
+    },
+    {
+      "test": "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_unicode_error_returns_empty",
+      "reason": "Input adapter: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
+    },
+    {
+      "test": "scripts/tests/test_lint_impl_direct_execution.py::test_scan_file_returns_list",
+      "reason": "Input adapter: ValueError: No original source text for AST/file input"
+    }
+  ],
+  "uncaptured_tests": 324,
+  "retained_integration_contracts": [
+    "Seven original I/O or behavioral observations remain separate from native source passes.",
+    "324 original tests have no captured analyzer boundary.",
+    "Signed allowlists, generated return-kind freshness, CLI ratchets, and aggregate reporter behavior remain integration contracts."
+  ],
+  "supplemental_probes": {
+    "cases": 25,
+    "positive": 12,
+    "clean": 13
+  },
+  "repository": {
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "files": 9010,
+    "bytes": 137896473,
+    "oracleMs": 70352.66991599929,
+    "oracleWorkers": 1,
+    "policyDigests": {
+      "data-layer-execution-authority-bypass": "sha256:0bc1b6415b39f4867108efd14051f652c745e5f0531b8417005cf08d98490478",
+      "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708",
+      "data-layer-legacy-execution-surfaces": "sha256:376593f8255b6a72a45b4c6f06180668ae0d2f8492f479c9514026349cc85714",
+      "data-layer-raw-execute-regression": "sha256:e7906ab4289b8ea6c7e0cc97dea0d2e0eb33c04daeb26e857ec908a6bcd4c35f",
+      "data-layer-serverplan-bypass": "sha256:bd11d189d06488a9cea1392b65d0d8571e9a2e30fe6e0ad2f63bbe0d708e0ff7",
+      "data-layer-serverplan-dispatch-architecture": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8",
+      "data-layer-serverplan-quality": "sha256:7c19e921adaa760d52093e2bca645cd69e22f5c23ef330b4dbf961d205169734",
+      "data-layer-serverplan-state-tripwires": "sha256:b86004eae4f723cfadccbad1a3a6c6288e3b6b648d691edd46c709e4ddad7bb2",
+      "data-layer-serverplan-steps": "sha256:1adf862c5ead8f71320eebbf8facfbd9fcc04a0f160339660b41164af8976b85",
+      "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198"
+    },
+    "policyCompilationMs": {
+      "data-layer-execution-authority-bypass": 2.6235419999999863,
+      "data-layer-impl-direct-execution": 4.293667000000028,
+      "data-layer-legacy-execution-surfaces": 17.27524999999997,
+      "data-layer-raw-execute-regression": 5.385125000000016,
+      "data-layer-serverplan-bypass": 4.356457999999975,
+      "data-layer-serverplan-dispatch-architecture": 18.868916000000013,
+      "data-layer-serverplan-quality": 356.207625,
+      "data-layer-serverplan-state-tripwires": 166.06600000000003,
+      "data-layer-serverplan-steps": 61.229499999999916,
+      "data-layer-serverplan-target-architecture": 8.088666000000103
+    },
+    "compilationMs": 2229.865917,
+    "coldMs": 951003.856,
+    "unchangedFileMs": 929.1667910000542,
+    "editedFileMs": 14730.407958999975,
+    "editedPath": "impl/common/l2200_sql_dialect/sql_connection.py",
+    "incrementalDifferences": [],
+    "expected": 173,
+    "actual": 173,
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "peakRssBytes": 11965284352,
+    "allocator": "system-malloc-via-jemalloc-symbol-shim",
+    "policies": "packs/data-layer/candidates/rules",
+    "nativeSha256": "0422a40b86520b49dbaad5131713c0d002ab1244ee0244a293dbced9e92fdfa8",
+    "nativeWorkers": 4
+  },
+  "incremental": {
+    "format": "rerail.data-layer-incremental-parity/v1",
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "nativeSha256": "0422a40b86520b49dbaad5131713c0d002ab1244ee0244a293dbced9e92fdfa8",
+    "checks": 10,
+    "transitions": 40,
+    "differences": 0,
+    "elapsedMs": 2603.804,
+    "rows": [
+      {
+        "check": "serverplan_bypass",
+        "cleanTest": "scripts/tests/test_lint_serverplan_bypass.py::test_allows_typed_grammar_execution",
+        "positiveTest": "scripts/tests/test_lint_serverplan_bypass.py::test_flags_each_direct_bypass_method[_execute_raw_sql]",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "serverplan_steps",
+        "cleanTest": "scripts/tests/test_lint_serverplan_steps.py::test_step016_no_false_positive_on_ctx_branching",
+        "positiveTest": "scripts/tests/test_lint_serverplan_steps.py::test_step016_compile_branching_on_resolved_data",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "cleanTest": "scripts/tests/test_lint_serverplan_state_tripwires.py::test_runtime_authority_analysis_skips_unreachable_functions",
+        "positiveTest": "scripts/tests/test_lint_serverplan_state_tripwires.py::test_flags_queue_auth_helper_definition",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "cleanTest": "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_presence_and_typed_capability_checks_are_not_identity_dispatch",
+        "positiveTest": "scripts/tests/test_lint_serverplan_dispatch_architecture.py::test_backend_identity_conditionals_are_blocking_findings",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 3,
+            "actual": 3,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 3,
+            "actual": 3,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "serverplan_quality",
+        "cleanTest": "scripts/tests/test_lint_serverplan_quality.py::test_serverplan_runtime_state_ingress_accepts_branded_connection_identifiers",
+        "positiveTest": "scripts/tests/test_lint_serverplan_quality.py::test_serverplan_runtime_state_ingress_flags_context_runtime_handles",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 3,
+            "actual": 3,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 3,
+            "actual": 3,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "cleanTest": "scripts/tests/test_lint_serverplan_target_architecture.py::test_target_contract_skeleton_satisfies_positive_shape",
+        "positiveTest": "scripts/tests/test_lint_serverplan_target_architecture.py::test_missing_positive_target_contracts_are_blocking",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 30,
+            "actual": 30,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 30,
+            "actual": 30,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "execution_authority_bypass",
+        "cleanTest": "scripts/tests/test_lint_execution_authority_bypass.py::test_allows_signed_explicit_plan_execution_scope_callsite",
+        "positiveTest": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_explicit_authority_contextvar_mutation",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "impl_direct_execution",
+        "cleanTest": "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[conn.execute_grammar(g)-False]",
+        "positiveTest": "scripts/tests/test_lint_impl_direct_execution.py::test_all_direct_patterns_detected[row = self._fetchone()-True]",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "raw_execute_regression",
+        "cleanTest": "scripts/tests/test_lint_raw_execute_regression.py::test_allows_query_raw_materializer",
+        "positiveTest": "scripts/tests/test_lint_raw_execute_regression.py::test_flags_removed_raw_call",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "cleanTest": "scripts/tests/test_lint_legacy_execution_surfaces.py::test_allows_public_legacy_wrapper_when_backed_by_lazy_surface",
+        "positiveTest": "scripts/tests/test_lint_legacy_execution_surfaces.py::test_flags_legacy_wrapper_import_outside_inventory",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      }
+    ]
+  },
+  "focused_repository": {
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "files": 71,
+    "bytes": 7308883,
+    "oracleMs": 70352.66991599929,
+    "oracleWorkers": 1,
+    "policyDigests": {
+      "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708",
+      "data-layer-legacy-execution-surfaces": "sha256:376593f8255b6a72a45b4c6f06180668ae0d2f8492f479c9514026349cc85714",
+      "data-layer-serverplan-dispatch-architecture": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8",
+      "data-layer-serverplan-quality": "sha256:7c19e921adaa760d52093e2bca645cd69e22f5c23ef330b4dbf961d205169734",
+      "data-layer-serverplan-state-tripwires": "sha256:b86004eae4f723cfadccbad1a3a6c6288e3b6b648d691edd46c709e4ddad7bb2",
+      "data-layer-serverplan-steps": "sha256:1adf862c5ead8f71320eebbf8facfbd9fcc04a0f160339660b41164af8976b85"
+    },
+    "policyCompilationMs": {
+      "data-layer-impl-direct-execution": 4.985208999999969,
+      "data-layer-legacy-execution-surfaces": 16.272666000000015,
+      "data-layer-serverplan-dispatch-architecture": 19.933791000000042,
+      "data-layer-serverplan-quality": 346.447334,
+      "data-layer-serverplan-state-tripwires": 155.58291700000018,
+      "data-layer-serverplan-steps": 60.03354199999967
+    },
+    "compilationMs": 2248.367375,
+    "coldMs": 90833.62520800001,
+    "unchangedFileMs": 27.253874999994878,
+    "editedFileMs": 512.6415830000042,
+    "editedPath": "impl/browser/read_through_connection.py",
+    "incrementalDifferences": [],
+    "expected": 4,
+    "actual": 4,
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "peakRssBytes": 2548629504,
+    "allocator": "system-malloc-via-jemalloc-symbol-shim",
+    "policies": "/tmp/rerail-b6-bounds-fixed5-policies",
+    "nativeSha256": "0422a40b86520b49dbaad5131713c0d002ab1244ee0244a293dbced9e92fdfa8",
+    "nativeWorkers": 4,
+    "source_files": [
+      {
+        "path": "impl/browser/read_through_connection.py",
+        "source_sha256": "e1b46490716905ba5057ccac3d6bd842a8179f46c407e3cc9ca3b51cbd227735"
+      },
+      {
+        "path": "impl/common/l2060_query_spec/test_subqueries.py",
+        "source_sha256": "03cf8bd8338b96e3388398ae3793d882300c602fc495383b087f15477414de87"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/base_server_plan.py",
+        "source_sha256": "f49015339b02b0cdebcd8f9477140a8d4e0d82d62af26ceb38b226028e8f6444"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/sql_backend_executor.py",
+        "source_sha256": "bc621190321d665710266fdffc395d13684184090f82b063e125c89a464be8e6"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+        "source_sha256": "f5aa852c8d3879e8b4d6a59947e3c0ffd659fedf555f9cc9037e8a535f6d4481"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/intent_versioning_extended.py",
+        "source_sha256": "df494dc3f15ede886d6d5073c208ccce7898d48048b1819312668dc865d068ad"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+        "source_sha256": "bf01f26b2b566ab77068f7d8191e3752d06c3bab5d9faf97f21dffcc99ea78e4"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/sql_projection.py",
+        "source_sha256": "f86133858b97315f6ebd1d38455176582f09f3ae9682938859ccba0c3c844f39"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/h14_migration_kill_worker.py",
+        "source_sha256": "f6fe8dc4bf99b946d1de2b4dc4e54eac5eed597d8cf8eb2ff011bfb270d089e7"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/h14_recovery_source_fixture.py",
+        "source_sha256": "c2d6fd6e9cae2d4d6b8da8f24553a21f446719c7debb89341bba2a0b274c4400"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_bootstrap_immutable_binary_row.py",
+        "source_sha256": "825fce7feb2d71c2e4bdddc691a4e4f194326e0fa816364b6d3be5538195949b"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_bootstrap_immutable_row.py",
+        "source_sha256": "74c2f80c9fef131deb10d17e0be90c8399e8c2bed9f21735c47b7ea28912f620"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_bootstrap_row_content_assertion.py",
+        "source_sha256": "c4d4f07a62c674b9d7c45b6b50d55bb9077cc8c5f040def888d75dabd09d743e"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_bootstrap_row_set_admission.py",
+        "source_sha256": "b7069dc1af2b6cc628b3645b54fab36556566be79a65675e20ada30384a05c15"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_dense_bootstrap_scope_reconciliation.py",
+        "source_sha256": "00b5114a4967318f9366fe5cd49acbd01ec2008446b842de4aebb39d08c7ea58"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_h14_schema_migration.py",
+        "source_sha256": "41a3a51d999d93d26b7f7955f8cdeb6723b638995980667c3252e38c0d4340bb"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_h14_schema_read_only_admission.py",
+        "source_sha256": "cd4dad00109fc7e89b33ddd4d307fc49220c7fcf28efa8f6059af34cc9c9530b"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_h14_warm_retry_authority.py",
+        "source_sha256": "4dd80e9646b7db6b17cc55e4cd0061fd6f6e2c77a16f96eca55ba602ff741a6a"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_immutable_schema_replacement.py",
+        "source_sha256": "9d4e6f79e1c5e68ccdd99bd2f08e4c4084cce22c3eeab38f25f161d382fed8da"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_native_h14_schema_composition.py",
+        "source_sha256": "6b6b60919024225eff8dd2308035cf5e029c575e3756bd1c3718c9c94b8b84af"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_native_migrated_admission.py",
+        "source_sha256": "3252a45cb46891015fc4922b35f93fefc4b6d2318f3ec82287d94f30e8bf040a"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/tests/test_native_schema_migration.py",
+        "source_sha256": "73ecdbe88d87e9f31a2818833dedc7700ffb0637a551244bea855755581592de"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/steps/versioned_hybrid_search.py",
+        "source_sha256": "dcefe9eed5201c9648e2b1a300a3961cb31b141738ca41ec5042c29e40d5d084"
+      },
+      {
+        "path": "impl/common/l2070_server_plan/tests/test_grammar_read_after_write.py",
+        "source_sha256": "e83df23b5d6bac53674d2103da74e12b71b61a75a7286d29bcee878cea4e8225"
+      },
+      {
+        "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sql_table_hnsw.py",
+        "source_sha256": "5ed9a93b048c95ea0efaaed787a0437bf592b1b3b78aa4e31a550ce07d678b78"
+      },
+      {
+        "path": "impl/common/l2100_sql_grammar/rust_bridge/generated_facades.py",
+        "source_sha256": "436ba07ec115a4464af81875d14cf375dd53b3bc3be67fbb8c2a18eb034823e7"
+      },
+      {
+        "path": "impl/common/l5250_matching/exact_dense.py",
+        "source_sha256": "45cd165bec4b02338052aeb78880092ac8731e0946dfdf79daaef0ea4f3cb406"
+      },
+      {
+        "path": "impl/common/l5250_matching/native_result_support.py",
+        "source_sha256": "5488af308928e10ba613c14f173e7ead25a96d4b307a29923fbcfb60aac6fbe0"
+      },
+      {
+        "path": "impl/common/l5250_matching/usearch_native.py",
+        "source_sha256": "54e152aa4a4f796d3c8772a546db718f6b693dbab03381173b0d322b37227cab"
+      },
+      {
+        "path": "impl/common/l8000_admin/approval_db_runtime.py",
+        "source_sha256": "f72d3c1937c6fd50e91544d7debce3e183fbd525998efda0cff0af0fd3dfdbf7"
+      },
+      {
+        "path": "impl/common/l8000_managed/permission/audit.py",
+        "source_sha256": "94f73d77f12fa11874ae66f667e2a1f6c2b544a9bbc954f5b463f4beaee038fc"
+      },
+      {
+        "path": "impl/doltdb/versioned_operations_read.py",
+        "source_sha256": "f5358f4b7e4d1752cef6f5ad8482c55d056c9ea3ebb32c7d56f007f07d8b6d7b"
+      },
+      {
+        "path": "impl/read_through/transaction.py",
+        "source_sha256": "63146c495e7d8f56ddf96024c2a9b346634940fe3e1912bccac2a886a941ef7a"
+      },
+      {
+        "path": "impl/sqlite/native_usearch_extension.py",
+        "source_sha256": "16d207a1f3c1d16edd3b7b1b6e53534d9e24c9e5642b33f63c8e1d05aa09839e"
+      },
+      {
+        "path": "l1000_schema/typed_field.py",
+        "source_sha256": "436ab179cca55eb5ce63068d5fedbddda2f2960977443cd88f89f4db6c8b5aa7"
+      },
+      {
+        "path": "l1470_matching_contracts/registry.py",
+        "source_sha256": "80a59c560c8912ea5719c985e66c94dcebba41b7aac4e10c77917e06502996ae"
+      },
+      {
+        "path": "l2000_connection/schema_reconciliation_coordinator.py",
+        "source_sha256": "22f5a6e1b6a221ed2ba136c6cc1a4752ac36784b5779d0577e9e6c8befa2bf62"
+      },
+      {
+        "path": "l2000_connection/schema_transaction.py",
+        "source_sha256": "67681a7749f9df95988d791ee45ebb8ed6aa899a6c330c12e14b83e8b1540a4f"
+      },
+      {
+        "path": "l2050_transaction/tests/test_legacy_wrappers_config.py",
+        "source_sha256": "08eb9046243d0f7350dd7e22b0dbae0900951d106ab1b2758d960110bd492b4b"
+      },
+      {
+        "path": "l2070_batching/conditional_step.py",
+        "source_sha256": "95b865f2a295007d49ffeff4dfde373850a86a56099b7dc24e0eb7922f25dc65"
+      },
+      {
+        "path": "l2070_batching/execution_runtime.py",
+        "source_sha256": "4aec06def3916a03d387297f10fa5d8f32f538719940acb0b23e7f42cc1c21e3"
+      },
+      {
+        "path": "l2070_batching/step.py",
+        "source_sha256": "96755e4cf3714ee6c7dfe4468f113ba67aec35c30107007f828234165c4a136d"
+      },
+      {
+        "path": "l2080_lazy_orm/lazy_table.py",
+        "source_sha256": "ccb167aba9733e02e87f574e0c79da0d16bc42ddd1d6adef826bfff4b5bdaa03"
+      },
+      {
+        "path": "l3200_metadata/ddl_lockdown.py",
+        "source_sha256": "53f7579f8486c7eb8b0f5fd28acd3fd0a86d5aae60c679b65780f183cc0cb330"
+      },
+      {
+        "path": "l3200_metadata/test_semantic_schema_plan_composition.py",
+        "source_sha256": "012cec3c9f10930d5f0024e7fa2a25708241c202f414b6880fa7171056ac0fd2"
+      },
+      {
+        "path": "l3250_migrations/versioned_data.py",
+        "source_sha256": "af93e87e78e852618b0116b232825b8d31ed4fcb45f0915d24e3c53f267b3fcd"
+      },
+      {
+        "path": "l4350_timer_driver/driver.py",
+        "source_sha256": "080bb1c043f764693872c31d21b61a487c77d23bd512a1175348fe4169709707"
+      },
+      {
+        "path": "l6500_evidence/delegation_budget.py",
+        "source_sha256": "94e4ee94461159ab836e2ba3e33022a03d96eecb3915dde408df4f63a9aeb380"
+      },
+      {
+        "path": "l6500_evidence/delegation_cache_authority.py",
+        "source_sha256": "877688393cf83c91cb709ea8897905bcdbbdec8d63faeafbf41e8f4136350d91"
+      },
+      {
+        "path": "l6500_evidence/delegation_cache_configuration.py",
+        "source_sha256": "5a69991ccfc8a8f0cde65633ecb25ed34ca43eae835645736dd3d6d417b69329"
+      },
+      {
+        "path": "l6500_evidence/delegation_cache_fill.py",
+        "source_sha256": "86d55547f2a45bd9bd5334c9f78cd9551f66c4b256af86f0cd3f63fd661574cf"
+      },
+      {
+        "path": "l6500_evidence/delegation_cache_lookup.py",
+        "source_sha256": "af04f04d2d9ac7468a60216060e922402e8711c1880336e9fd8908ae762d02b8"
+      },
+      {
+        "path": "l6500_evidence/delegation_cache_publish.py",
+        "source_sha256": "045e690742a2d13015eb768199c2c464158e9daf4a197cebf6af6c2e25bce838"
+      },
+      {
+        "path": "l6500_evidence/delegation_cache_source.py",
+        "source_sha256": "911259e470d32b0576c71b2c8c942e0a424fa9c06b1ca113223fd4a6fe5d5b36"
+      },
+      {
+        "path": "l6500_evidence/delegation_cache_tombstone_lookup.py",
+        "source_sha256": "c94d39e3c7aface7d0c4740206e79ee0db658eacfcf7a98c95d1d01890ecf875"
+      },
+      {
+        "path": "l6500_evidence/delegation_call_records.py",
+        "source_sha256": "a91c4566fb776ffa941cdb9afa34bd76e15d55c8e08b8c6a435f7e37059b20c1"
+      },
+      {
+        "path": "l6500_evidence/delegation_dispatch.py",
+        "source_sha256": "7db4223824a27eecbd6cfb7c2a5c7cd6cd0a4199cceb343dabcd703f2dba042f"
+      },
+      {
+        "path": "l6500_evidence/delegation_funding_selection.py",
+        "source_sha256": "7232a6622fef5efba78b7752bf440b27b5a91b1c7769fd301bd8e0fad7e5096e"
+      },
+      {
+        "path": "l6500_evidence/delegation_logical_calls.py",
+        "source_sha256": "ef0bc001f7ca4a607f04ff4d6297499a12bd950844271bc0a0bdce3c72ea7985"
+      },
+      {
+        "path": "l6500_evidence/delegation_resource_candidates.py",
+        "source_sha256": "f2d20b8dcb0d333d1fe2c5f4eaaba32a4acedf03b80e1f78a43e734f5dc547fc"
+      },
+      {
+        "path": "l6500_evidence/delegation_rule_bundle_authority.py",
+        "source_sha256": "2b391d6a651346a3edd7853c02c119f7cb3062acf26a70a43877016f4cba4f37"
+      },
+      {
+        "path": "l6500_evidence/sas_http.py",
+        "source_sha256": "37dc03e3df2fade20224fad310da881a05f97ddc0776d2397f006a2d2c95a274"
+      },
+      {
+        "path": "l8000_admin/enrollment.py",
+        "source_sha256": "24833160e3e21eb8ba08ed99b4051afebf9e4bbd484426ad81065bec8a00e553"
+      },
+      {
+        "path": "l8000_admin/registry.py",
+        "source_sha256": "d91c7f9aea5c7d5d7e063dcb1215d29600e8a52cb747573cb69e73a97a569be8"
+      },
+      {
+        "path": "l9750_graphql/executor.py",
+        "source_sha256": "066a33538095f6a279b947f22d3ef4481ff6720c485802bf79a596ba8e43b639"
+      },
+      {
+        "path": "l9800_rippling/processor.py",
+        "source_sha256": "436443aefe6b0ff11e2b7499b755f379b35fb919eed9a1ce7e3772823f32ad81"
+      },
+      {
+        "path": "l9875_mcp/adapters/http.py",
+        "source_sha256": "cb75b882b6b19483134b57f4b9b1406fa4272ef3fc54c58d79c52f3a231fcf82"
+      },
+      {
+        "path": "l9875_mcp/session.py",
+        "source_sha256": "560560df82c9f4efe35bced0373a624981a08f35abffdd2f7e76cfb0d1b308f3"
+      },
+      {
+        "path": "l9900_auto_api/mcp_list_source.py",
+        "source_sha256": "33a9b75b43ca5d456b6c38f61fcc15c5a9d5035017708c1722d98cf69d0d0137"
+      },
+      {
+        "path": "tests/security/test_test_authority_guard.py",
+        "source_sha256": "e34331695dcdc4088eb251f46585566099cec4dd64e2f0fe6fecc8c71e6bbf58"
+      },
+      {
+        "path": "tests/test_ipc_lazy_adapters.py",
+        "source_sha256": "39b65bd1312b7c420c464e495cf14caba2fec59f42587688c53913e9a2bf89a9"
+      }
+    ]
+  },
+  "policies": [
+    {
+      "check": "serverplan_bypass",
+      "path": "packs/data-layer/candidates/rules/data-layer-serverplan-bypass.json",
+      "sha256": "1dc17f26cd4f28f2405ecf0b51067aa45864416fb1933385dcf1e57f54e12cdb",
+      "compiled_digest": "sha256:bd11d189d06488a9cea1392b65d0d8571e9a2e30fe6e0ad2f63bbe0d708e0ff7"
+    },
+    {
+      "check": "serverplan_steps",
+      "path": "packs/data-layer/candidates/rules/data-layer-serverplan-steps.json",
+      "sha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
+      "compiled_digest": "sha256:1adf862c5ead8f71320eebbf8facfbd9fcc04a0f160339660b41164af8976b85"
+    },
+    {
+      "check": "serverplan_state_tripwires",
+      "path": "packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json",
+      "sha256": "baf8892fd9136cbce0d63b8a286b41d1eb22d15e430b740b041efd4d9f9b245b",
+      "compiled_digest": "sha256:b86004eae4f723cfadccbad1a3a6c6288e3b6b648d691edd46c709e4ddad7bb2"
+    },
+    {
+      "check": "serverplan_dispatch_architecture",
+      "path": "packs/data-layer/candidates/rules/data-layer-serverplan-dispatch-architecture.json",
+      "sha256": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
+      "compiled_digest": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8"
+    },
+    {
+      "check": "serverplan_quality",
+      "path": "packs/data-layer/candidates/rules/data-layer-serverplan-quality.json",
+      "sha256": "176783ecd5697571029d048ea3ce6936df1de4c0582bc954c203216796f2f1bd",
+      "compiled_digest": "sha256:7c19e921adaa760d52093e2bca645cd69e22f5c23ef330b4dbf961d205169734"
+    },
+    {
+      "check": "serverplan_target_architecture",
+      "path": "packs/data-layer/candidates/rules/data-layer-serverplan-target-architecture.json",
+      "sha256": "f8ca589ed2cda0828a22e4abaf4316bfbfd2f8dc3cb25f46596851770cbd6b4a",
+      "compiled_digest": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198"
+    },
+    {
+      "check": "execution_authority_bypass",
+      "path": "packs/data-layer/candidates/rules/data-layer-execution-authority-bypass.json",
+      "sha256": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
+      "compiled_digest": "sha256:0bc1b6415b39f4867108efd14051f652c745e5f0531b8417005cf08d98490478"
+    },
+    {
+      "check": "impl_direct_execution",
+      "path": "packs/data-layer/candidates/rules/data-layer-impl-direct-execution.json",
+      "sha256": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
+      "compiled_digest": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708"
+    },
+    {
+      "check": "raw_execute_regression",
+      "path": "packs/data-layer/candidates/rules/data-layer-raw-execute-regression.json",
+      "sha256": "a6f3834fc9a74b85e5df4706b13efb0943b6bb0ae82e5e0f59a80f048df53c04",
+      "compiled_digest": "sha256:e7906ab4289b8ea6c7e0cc97dea0d2e0eb33c04daeb26e857ec908a6bcd4c35f"
+    },
+    {
+      "check": "legacy_execution_surfaces",
+      "path": "packs/data-layer/candidates/rules/data-layer-legacy-execution-surfaces.json",
+      "sha256": "eae2fb755bd7c922e77b1d7546598320a8906d9b06ece3e254172958c110ce65",
+      "compiled_digest": "sha256:376593f8255b6a72a45b4c6f06180668ae0d2f8492f479c9514026349cc85714"
+    }
+  ],
+  "determinism": {
+    "python_hash_seeds": [
+      1,
+      983
+    ],
+    "policies": 10,
+    "byte_identical": true
+  },
+  "validation": {
+    "native_dsl_tests": {
+      "passed": 1349,
+      "ignored": 22
+    },
+    "typescript_selected_tests": {
+      "passed": 265,
+      "files": 7
+    },
+    "typecheck": true,
+    "repository_checks": true,
+    "native_formatting": true,
+    "clippy_all_targets": true,
+    "reference_grammar": true,
+    "license_check": true,
+    "git_diff_check": true
+  },
+  "cpu_sample": {
+    "duration_seconds": 1,
+    "active_worker_samples": 760,
+    "relational_evaluation_samples": 733,
+    "stage_materialization_samples": 716,
+    "other_idle_libuv_workers": 3,
+    "sample_sha256": "53c1fde6e212bbd172403d433372d239c1d35efedc12e2010dd5a9f87acf1117",
+    "scope": "One interval during the final cold scan; not a whole-run attribution"
+  },
+  "measurement_environment": {
+    "native_allocator": "system malloc via the existing jemalloc symbol shim",
+    "native_build": "release, code-rule-profile feature, thin LTO, 256 codegen units",
+    "oracle_workers": 1,
+    "native_workers": 4,
+    "short_cpu_samples": 2,
+    "timing_scope": "Shared-machine samples; final source replay and other validation overlapped the beginning of the repository scan."
+  }
+}

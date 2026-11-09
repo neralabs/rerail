@@ -1,0 +1,30 @@
+.policy "react-hooks-set-state-in-render" revision 2
+.description "Don't call a state setter unconditionally while a component or hook renders, or inside a useMemo callback; each call can start an infinite render loop."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/set-state-in-render (React Compiler): a useState setter called on every render schedules another
+// render, forever. A guarded call is the documented way to adjust state from props, so only unconditional ones:
+//   const [n, setN] = useState(0); setN(1);                        reported
+//   if (p !== prev) setPrev(p);                                     not: conditional
+//   const reset = () => setN(0); reset();                           reported at reset(): it always sets state
+//   useMemo(() => { setN(1); return 1; }, [])                       reported: a memo must not set state
+//   useMemo(async () => { setN(await f()); }, [])                    reported: set it from an effect instead
+#include "tsx/react-compiler.rr"
+
+.violation set_state_in_render(at: node, msg: symbol)
+    code "react-hooks/set-state-in-render"
+    "{msg}"
+    suppress eslint "react-hooks/set-state-in-render"
+    suppress oxlint "set-state-in-render"
+set_state_in_render(c, m) :- rc_set_state(c), rc_compiled(f), rc_always(c, f), says("render", m).
+set_state_in_render(k, m) :- rc_called_fn(k, g, f), rc_always(k, f), rc_set_state(c), rc_always(c, g),
+    says("render", m).
+set_state_in_render(c, m) :- rc_set_state(c), rc_own(c, g), rc_memo_callback(g, u), rc_own(u, h), rc_render_fn(h, _),
+    (!op(g, "async"), says("memo", m) ; op(g, "async"), says("async-memo", m)).
+
+.decl says(id: symbol, m: symbol)
+says("render", "Don't set state unconditionally during render; it re-renders forever. Compute the value during render, or call the setter only when a stored previous value differs.").
+says("memo", "Don't set state inside useMemo; return the computed value from the memo callback and read it from useMemo's result instead.").
+says("async-memo", "Don't set state from this async useMemo callback; memoize only the promise here and set state from an effect that awaits it.").

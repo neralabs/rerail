@@ -2,9 +2,9 @@
 //! steps of a `waves::schedule::Program`, so the frontier loop runs it instead of `run`'s own
 //! stratum loop. Each strongly connected component is a stratum, in `strata`' order:
 //! - a rule of a non-recursive component is one step over whole relations;
-//! - a recursive component's rules are each one step over whole relations, which reads (and so
-//!   waits on) only lower strata, and per positive atom of the component one delta variant,
-//!   planned with that atom first, which reads its `delta_` table and runs again whenever it grew;
+//! - a recursive component's full steps wait on lower strata and recursive aggregate inputs.
+//!   Each positive own atom also has a delta variant, planned with that atom first,
+//!   which reads its `delta_` table and runs again whenever it grew;
 //! - a relation's constant rows are one step, in a stratum before every component's.
 //!
 //! Lattice relations fold by key as `merge_lattice` merges them (`Program::lattices`). The views
@@ -23,7 +23,9 @@
 use super::*;
 use crate::code_rule_dsl::waves::schedule;
 
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Emitted {
+    pub(in crate::code_rule_dsl) analysis: std::sync::Arc<super::super::analysis::ProgramAnalysis>,
     pub(in crate::code_rule_dsl) program: schedule::Program,
     /// Statements the steps read besides the program's relations: `rdl_int`, then the views.
     pub(in crate::code_rule_dsl) setup: Vec<String>,
@@ -33,6 +35,40 @@ pub(in crate::code_rule_dsl) struct Emitted {
     pub(in crate::code_rule_dsl) views: Vec<(String, Query)>,
     /// The program's inputs, which its statements may read.
     pub(in crate::code_rule_dsl) inputs: Vec<String>,
+}
+
+impl Emitted {
+    /// Connection-local extension views must not shadow the public fact modules. All references
+    /// are rewritten through the checked query tree; SQL literals and user SQL are untouched.
+    pub(in crate::code_rule_dsl) fn for_session(&mut self, namespace: &str, bound: &BTreeSet<String>) {
+        let names: BTreeMap<String, String> = self.views.iter().filter(|(rel,_)|bound.contains(rel)).map(|(rel, _)| (rel.clone(), format!("__sql_{namespace}_{rel}"))).collect();
+        for (old, new) in &names {
+            if let Some(keys) = self.analysis.relation_keys.get(old).cloned() { std::sync::Arc::make_mut(&mut self.analysis).relation_keys.insert(new.clone(), keys); }
+        }
+        let old: HashSet<String> = self.views.iter().map(|(rel, q)| view_sql(rel, q)).collect();
+        self.setup.retain(|sql| !old.contains(sql));
+        let rewrite = |query: &mut Query| {
+            for block in query.ctes.iter_mut().flat_map(|c| &mut c.arms).chain([&mut query.body]) {
+                block.relations_mut(&mut |relation| {
+                    if let Relation::Derived { rel, .. } = relation {
+                        if let Some(private) = names.get(rel) { *rel = private.clone(); }
+                    }
+                });
+                block.sqlite_order();
+            }
+        };
+        for (rel, query) in &mut self.views {
+            rewrite(query);
+            if let Some(private) = names.get(rel) { *rel = private.clone(); }
+            self.setup.push(view_sql(rel, query));
+        }
+        for (step, query) in self.program.steps.iter_mut().zip(&mut self.queries) {
+            if let Some(query) = query {
+                rewrite(query);
+                step.sql = format!("INSERT OR IGNORE INTO new_{} {}", step.output, query.render());
+            }
+        }
+    }
 }
 
 /// `lowered` as the wave program `name`, planned over the statistics in schema `stats` of `db`,
@@ -47,7 +83,6 @@ pub(in crate::code_rule_dsl) fn emit(
     counts: Option<&BTreeMap<String, u64>>,
     batch: &HashMap<String, (Source, f64)>,
 ) -> Result<Emitted> {
-    let prog = &lowered.program;
     let inputs = Inputs {
         facts: "main.".to_owned(),
         stats: format!("{stats}."),
@@ -57,6 +92,11 @@ pub(in crate::code_rule_dsl) fn emit(
         given: None,
         kept: BTreeSet::new(),
     };
+    emit_inputs(&lowered.program,db,name,counts,inputs)
+}
+
+pub(in crate::code_rule_dsl) fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
+    let atoms=inputs.atoms.is_some();
     let mut model = make_plan(prog, db, inputs)?;
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
@@ -131,18 +171,30 @@ pub(in crate::code_rule_dsl) fn emit(
             continue;
         }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
+        let profile_key = super::super::profile::on().then(||format!("{name} stratum {stratum}: {}",scc.iter().cloned().collect::<Vec<_>>().join(",")));
+        let record = |rule: &Rule, kind: &str, x: Option<super::super::profile::RulePlan>, took: f64| {
+            if let (Some(key),Some(x)) = (&profile_key,x) {
+                let number = prog.rules.iter().position(|r|std::ptr::eq(r,rule));
+                super::super::profile::stratum(key,"SQL emission",||"compile-time search; runtime SQL counters are recorded separately".into());
+                super::super::profile::planned(key,kind,number,&x,took,0,None,None);
+                if let Some(number)=number { super::super::profile::note(format!("rule #{number:04}"),||rule.to_string()); }
+            }
+        };
         let mut planned = Vec::new();
         for rule in &rules {
-            let (order, _, _) = model.plan_rule(prog, &rule.head, &rule.body, None)?;
+            let started = profile_key.as_ref().map(|_|super::super::profile::now());
+            let ((order, _, _), explain) = model.plan_rule_explained(prog, &rule.head, &rule.body, None)?;
+            record(rule,"full query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
             planned.push((rule, order));
         }
         let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(&a.rel));
         let recursive = scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| own(&s.lit));
         for (rule, order) in &planned {
             let query = model.checked_query(prog, &rule.head, order, None, None)?;
-            // A recursive component's rule over whole relations runs once: its own atoms' later
-            // rows reach it through the delta variants.
-            let reads = reads(order, &|rel| !recursive || !scc.contains(rel));
+            // Positive own atoms have delta variants. An aggregate needs the complete
+            // current input, so wake the full query when that recursive input changes.
+            let aggregates=order.iter().filter_map(|s|match &s.lit {Literal::Agg{atom,..}=>Some(atom.rel.as_str()),_=>None}).collect::<BTreeSet<_>>();
+            let reads = reads(order, &|rel| !recursive || !scc.contains(rel) || aggregates.contains(rel));
             step(&rule.head.rel, stratum, reads, &query.render(), Some(query));
         }
         if recursive {
@@ -152,7 +204,9 @@ pub(in crate::code_rule_dsl) fn emit(
                     if !own(l) {
                         continue;
                     }
-                    let (order, _, _) = model.plan_rule(prog, &rule.head, &rule.body, Some(i))?;
+                    let started = profile_key.as_ref().map(|_|super::super::profile::now());
+                    let ((order, _, _), explain) = model.plan_rule_explained(prog, &rule.head, &rule.body, Some(i))?;
+                    record(rule,"delta query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
                     let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", rule.head)))?;
                     let query = model.checked_query(prog, &rule.head, &order, Some(at), None)?;
                     let Literal::Atom(a) = l else { unreachable!("an own atom") };
@@ -164,7 +218,8 @@ pub(in crate::code_rule_dsl) fn emit(
     }
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
     Ok(Emitted {
-        program: schedule::Program { name: name.to_owned(), relations, steps, file_local: false, partitions: Vec::new(), lattices },
+        analysis: std::sync::Arc::clone(&model.analysis),
+        program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
         setup,
         queries,
         views: planned_views,
@@ -204,7 +259,7 @@ pub(in crate::code_rule_dsl) fn emit_program(
 /// relation of its own stratum or a later one (recursion), reads a walk or constant rows, or the
 /// program has lattices.
 pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result<Emitted> {
-    let Emitted { program, setup, queries, views, inputs } = emitted;
+    let Emitted { analysis, program, setup, queries, views, inputs } = emitted;
     let fail = |message: String| Error::Plan(format!("{}: {message}", program.name));
     if !program.lattices.is_empty() {
         return Err(fail("a lattice needs the fixpoint".to_owned()));
@@ -284,7 +339,7 @@ pub(in crate::code_rule_dsl) fn single(emitted: Emitted, output: &str) -> Result
         steps: vec![schedule::Step { output: output.to_owned(), stratum: 0, reads: Vec::new(), sql }],
         ..program
     };
-    Ok(Emitted { program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs })
+    Ok(Emitted { analysis, program, setup: kept, queries: vec![Some(query)], views: Vec::new(), inputs })
 }
 
 /// The emitted program's outputs on `db` after it ran, decoded as `run_atoms` decodes its own.

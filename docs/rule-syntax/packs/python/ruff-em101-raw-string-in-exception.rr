@@ -1,0 +1,23 @@
+.policy "ruff-em101-raw-string-in-exception" revision 2
+.description "Assign an exception message to a variable before raising instead of passing a string literal; the traceback otherwise shows the message twice."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff EM101 (flake8-errmsg): the raised exception's first positional argument is a str or bytes literal. The
+// traceback prints the raise line, so the message appears twice. Option `flake8-errmsg.max-string-length` (default 0): only
+// literals at least that long, in bytes, are reported. `typing.cast(…)` is not an exception call.
+//   raise RuntimeError("This is an example exception")   ← EM101
+//   raise RuntimeError(b"bytes")                          ← EM101
+//   msg = "hello"; raise RuntimeError(msg)                not reported
+//   raise cast(RuntimeError, "not a message")            not reported
+#include "python/misc2-messages.rr"
+
+.violation EM101(at: node) code "EM101"
+    "Assign this string literal to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."
+    suppress ruff "EM101"
+EM101(a) :- msg_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
+    (msg_form(a, "str") ; msg_form(a, "bytes")), msg_len(a, n), em101_min(k), n >= k.
+.decl em101_min(k: number)
+em101_min(to_number(v)) :- option("flake8-errmsg.max-string-length", v).
+em101_min(0) :- !option("flake8-errmsg.max-string-length", _).

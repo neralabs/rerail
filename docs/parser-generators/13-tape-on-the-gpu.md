@@ -5,7 +5,7 @@ section (§4). Step 2 is under way: the compiler (`transducer/packed/bitlex_comp
 of `json.bitlex` (classes, masks, counts as bit-planes, frames, tokens, keywords, errors,
 escapes, and the tree section's `node` and `code` rows). Its rows equal the evaluator's on every
 executor. Both Metal executors run a batch of files, each under its own language's program, in
-one launch (§5.4, decision 0044). Step 3 is built for the masks' output (decision 0046): the CPU
+one launch (§5.4, decision 0066). Step 3 is built for the masks' output (decision 0068): the CPU
 writer's tapes equal tree-sitter's byte for byte on 771 of 774 data-layer JSON files, and the
 other 3 go to tree-sitter.
 
@@ -397,13 +397,13 @@ backward fact: Python's.
 
 ### 5.4 A batch of files in one launch
 
-Most launches parse many files, in several languages (decision 0044). One launch takes the batch
+Most launches parse many files, in several languages (decision 0066). One launch takes the batch
 and a group of programs, one per language:
 
 - **A group of lanes holds one file.** So it runs one program, chosen by a switch that is the same
   in every lane. The padding to whole groups costs 0.8% to 4.1% of the bytes.
 - **A file table** gives each file its bytes, its program and where its states and outputs go.
-- **The bytes are read where they are resident** (decision 0045). Each file is admitted to a
+- **The bytes are read where they are resident** (decision 0067). Each file is admitted to a
   slab once, keyed by its hash, and the launch binds up to four slabs. A file table row names
   its slab and its offset in it. A file already resident is not copied again.
 - **The CPU executors take the same batch.** The interpreter runs each step once over every

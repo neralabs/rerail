@@ -311,12 +311,12 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     pub(super) delay: u8,
     /// Each output's own delay (`0..=delay`), in `outputs`' order; an output without one is
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
-    /// shifts each by its own (decision 0047).
+    /// shifts each by its own (decision 0069).
     pub(super) output_delays: Vec<u8>,
 }
 
 /// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
-/// takes a batch in this shape (decision 0044).
+/// takes a batch in this shape (decision 0066).
 #[derive(Clone, Copy)]
 pub(in crate::code_rule_dsl) struct BatchFile<'a> {
     pub(in crate::code_rule_dsl) bytes: &'a [u8],
@@ -563,7 +563,7 @@ impl BlockProgram {
     }
 }
 
-/// The CPU interpreter over a batch (decision 0044): each file's run under its program, in the
+/// The CPU interpreter over a batch (decision 0066): each file's run under its program, in the
 /// files' order. One `interpret_files` per program, over all of that program's files.
 pub(super) fn run_batch(programs: &[&BlockProgram], files: &[BatchFile<'_>]) -> Vec<BlockRun> {
     let mut out: Vec<Option<BlockRun>> = vec![None; files.len()];

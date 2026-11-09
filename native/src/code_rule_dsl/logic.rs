@@ -2,21 +2,24 @@
 //! facts and Datalog over them, planned from statistics and lowered to SQL or transducer groups.
 //! `sql` is the typed SQL its plans emit.
 
+pub(in crate::code_rule_dsl) mod derived;
+pub(in crate::code_rule_dsl) mod analysis;
 // Nothing emits SQL through them until the planner (Phase 6) does.
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod front;
 #[allow(dead_code)]
+pub(in crate::code_rule_dsl) mod answers;
 pub(in crate::code_rule_dsl) mod magic;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod native;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod plan;
 pub(in crate::code_rule_dsl) mod profile;
+pub(in crate::code_rule_dsl) mod program_facts;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod rr;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod sql;
 pub(in crate::code_rule_dsl) mod simplify;
 pub(in crate::code_rule_dsl) mod strings;
-#[cfg(test)]
 pub(in crate::code_rule_dsl) mod convert;

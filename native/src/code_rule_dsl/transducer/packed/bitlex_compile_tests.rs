@@ -215,7 +215,7 @@ const JSON_CASES: [&[u8]; 12] = [
     b"[1 // c\n]",
 ];
 
-/// Tier 1's stream, on every executor, is the evaluator's tokens (decision 0053): the starts
+/// Tier 1's stream, on every executor, is the evaluator's tokens (decision 0087): the starts
 /// extract is every token's first byte; the lasts extract is the last byte of each token whose
 /// end tier 2 reads from it (a row whose tokens are not one byte and not all keywords).
 #[test]
@@ -311,7 +311,7 @@ fn json_msl_is_one_kernel() {
     }
 }
 
-/// A batch (decision 0044): files of several languages, interleaved, each under its own program,
+/// A batch (decision 0066): files of several languages, interleaved, each under its own program,
 /// in one launch. Every file's outputs and positions equal its program's CPU interpreter on that
 /// file alone, on the Metal interpreter and on generated MSL at every lane width. With the
 /// default polls it is one launch; with one poll per predecessor and none after it, groups leave unfinished and the launch is repeated; the
@@ -509,7 +509,7 @@ fn json_fallbacks() -> Vec<u16> {
 }
 
 
-// --- The shape of a compiled language (decision 0047) -----------------------------------------
+// --- The shape of a compiled language (decision 0069) -----------------------------------------
 //
 // A Bitlex file compiles to simdjson's shape: straight-line bit operations, a carry only where the
 // language needs one. These rules hold for every compiled program; JSON's budgets are ratchets,
@@ -561,7 +561,7 @@ fn json_compiles_to_simdjsons_shape() {
     assert!(ops <= JSON_OPS && words <= JSON_CARRIED_WORDS, "json: {ops} operations (budget {JSON_OPS}), {words} carried words (budget {JSON_CARRIED_WORDS})");
 }
 
-/// JSON's carried state is bits (decision 0048): one per carried operation, and `k` per value a
+/// JSON's carried state is bits (decision 0070): one per carried operation, and `k` per value a
 /// `prev` looks back on. The information that crosses a block boundary is about 18 bits (4 of
 /// lexical state: where in a string, number or literal, or between tokens; 14 of nesting: a
 /// depth to 13 and whether each open bracket is '{'), plus the bits the rules look back on. A
@@ -574,14 +574,14 @@ fn json_state_is_bits() {
     assert!(bits <= JSON_STATE_BITS, "json: {bits} state bits (budget {JSON_STATE_BITS})");
 }
 
-/// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0049); 5 since a
+/// JSON's state budget (a ratchet): 104 bits in one tier; 4 in two (decision 0071); 5 since a
 /// keyword-only row's tokens end at their own last bytes (an escape's last byte, one byte after
 /// its backslash, is carried into the next block's last-bytes stream); 15 since the number check
 /// is tier 1's masks (doc 18 §4): a bit per state it looks back on and per run it fills.
 const JSON_STATE_BITS: usize = 15;
 
 /// JSON's budgets (ratchets: lower them as the compiler improves). 37 operations rose to 40 when
-/// tier 1 began to hand tier 2 its stream (decision 0053): the starts' four ORs, as simdjson's
+/// tier 1 began to hand tier 2 its stream (decision 0087): the starts' four ORs, as simdjson's
 /// structural mask; one OR of the last bytes; and a guard of two (a number starting at a quote)
 /// that a sharper first-byte analysis would drop. The four token-row outputs went. 42 and 5
 /// carried words when escapes' last bytes joined the stream (a `prev` by one and an OR): a row of
@@ -611,23 +611,23 @@ fn json_loop_keeps_values_in_registers() {
     let (stack, mvn) = super::block_tests::loop_costs(&lines);
     eprintln!("json loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
     assert_eq!(mvn, 0, "json's loop inverts vectors");
-    // The state is packed: one carried word per 64 state bits (decision 0048).
+    // The state is packed: one carried word per 64 state bits (decision 0070).
     let bits = super::block_tests::state_bits(&program.block_programs()[0]);
     assert_eq!(super::block_tests::carried_params(&compiled.clif) - super::block_tests::sink_params(&native), bits.div_ceil(64), "json's carried state is not packed");
     assert!(lines.len() <= JSON_LOOP && stack <= JSON_LOOP_STACK, "json loop: {} instructions (budget {JSON_LOOP}), {stack} stack loads or stores (budget {JSON_LOOP_STACK})", lines.len());
 }
 
 /// JSON's loop budgets (ratchets): lower them as the program and the lowering improve. Packing
-/// the carried state (decision 0048) raised the instructions once, 1915 -> 1939, for 405 -> 164
+/// the carried state (decision 0070) raised the instructions once, 1915 -> 1939, for 405 -> 164
 /// stack operations, at an equal or lower CPU time in every paired timing. Two tiers (decision
 /// 0049) lowered them to 483 and 6, one structural class and kinds in tier 2 to 253 and 0, and a
 /// full-block body with folded logic to 178, and one word token with the number check in tier 2
-/// (decision 0052) to 174; the stream's two extracts (decision 0053) to 182, three outputs
+/// (decision 0086) to 174; the stream's two extracts (decision 0087) to 182, three outputs
 /// in place of ten, and two counts. The target is stage 1's 150.
 const JSON_LOOP: usize = 182;
 const JSON_LOOP_STACK: usize = 0;
 
-// --- Tier 1 is simdjson's stage 1 (decision 0049) ---------------------------------------------
+// --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
 //
 // A language's block program (tier 1) does only the work that needs every byte: one
 // classification, the string state, the token starts and the per-byte errors. Everything about
@@ -667,7 +667,7 @@ fn tier1_violations(p: &block::BlockProgram) -> Vec<String> {
 /// bytes).
 #[test]
 #[cfg(target_arch = "aarch64")]
-#[ignore = "red guard (decision 0049): on at step 3, when json.bitlex's dense part is stage 1's"]
+#[ignore = "red guard (decision 0071): on at step 3, when json.bitlex's dense part is stage 1's"]
 fn json_tier1_is_simdjsons_stage1() {
     let program = json_program();
     let p = &program.block_programs()[0];
@@ -776,7 +776,7 @@ arm 18 token 2 to 17 do close close leaf\n\
 arm 18 token 3 to 6 do close close leaf\n\
 ";
 
-/// Tier 2's states and arms are the compiler's (doc 18, decisions 0051 and 0053): `grammar` makes
+/// Tier 2's states and arms are the compiler's (doc 18, decisions 0085 and 0053): `grammar` makes
 /// them and `bitlex_tier2` lowers them to the transducer's words, which tier 2 runs as. Nothing
 /// else reads them, and nothing walks them to parse a file. A file outside this list that reads
 /// them fails here.
@@ -891,7 +891,7 @@ fn a_check_that_needs_a_byte_loop_is_refused() {
     json_with_check(Some("check number = digit+")).expect("runs only");
 }
 
-// --- Tier 2: the transducer's words (decision 0053) ----------------------------------------------
+// --- Tier 2: the transducer's words (decision 0087) ----------------------------------------------
 
 /// JSON compiled whole: its program, and the compiler's output (labels, fallbacks, machine).
 fn json_compiled() -> (Program, bitlex_compile::Compiled) {
@@ -979,7 +979,7 @@ fn tier2_nodes(p: &Program, bytes: &[u8]) -> Option<Vec<IdNode>> {
     )
 }
 
-/// JSON's tier 2 is the transducer's words (decision 0053): it reads the stream, switches on
+/// JSON's tier 2 is the transducer's words (decision 0087): it reads the stream, switches on
 /// bytes and writes nodes; it has no word of the tree walker's, and its loops all pass a `TOKEN`
 /// (the verifier's rule, which the program passed to assemble).
 #[test]

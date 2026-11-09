@@ -1,0 +1,210 @@
+// tsx/eslint-a-expressions: JavaScript expressions and literals as ESLint's expression rules see them (ESTree).
+// ESTree has no node for parentheses and one Literal type for every literal; tree-sitter keeps both apart. This
+// library bridges the two, so a rule can say "the operand, without its parentheses, is the literal -0".
+//
+// What a rule gets from this library:
+//   number_lit(n)          n is a Number literal (not a BigInt): 1, 0x1f, 1e3, .5
+//   bigint_lit(n)          n is a BigInt literal: 1n
+//   zero(n)                n is a Number literal whose value is 0: 0, 0.0, 0x0, 0e5 (0n is not: a BigInt)
+//   neg_zero(e)            e is -0 as ESLint reads it: unary minus on a zero literal, parentheses ignored
+//   null_lit(e)            e is the literal null, parentheses ignored
+//   literal_type(e, t)     e is an ESTree Literal and `typeof` its value is t: "string", "number", "bigint",
+//                          "boolean" or "object" (null, a regex). A template literal is not a Literal
+//   raw_number(n, r)       r is number literal n's source, lowercased, without `_` separators: 1_000E3 → 1000e3
+//   decimal(n)             n is written in base 10 (no 0x/0b/0o prefix, not a legacy octal 017)
+//   sci(s, f, c, m)        decimal numeral s is c × 10^m in ESLint's normalisation (c its significant digits);
+//                          f = 1 reads s as a float (trailing zeros of an integer count), as toPrecision's output
+//   significant_bits(n, k) a 0x / 0b / 0o / legacy-octal literal spans k bits from its first 1 to its last 1
+//   binop(n, o, l, r)      n is a binary expression with operator o, left l and right r (both stripped)
+//   op_token(n, t)         t is binary expression n's operator token (the token after its left operand)
+//   equality(o, strict)    o is ==, != (strict "false") or ===, !== (strict "true")
+//   dotted_member(n, o, p) n is o.p, p the property identifier (not computed, not private)
+//   object_prop(o, p, k, x, key)  p is a property of object literal o with static name x, kind k ("init", "get" or
+//                          "set") and key node key (key_static: getStaticPropertyName on a Property)
+//   stmt_start(x)          x starts an expression statement: `Array(1, 2).map(f);` for the call Array(1, 2)
+//   semi_needed(x)         text put at x's start would join the statement before it, unless led by `;`
+//                          (ESLint's needsPrecedingSemicolon): `foo()⏎ Array(a, b)` → `foo()⏎ ;[a, b]`
+//   as_array(n, lead)      edit: rewrite the call `Array(a, b)` / `new Array(a, b)` as `lead[a, b]`
+//   es3_reserved(x)        x is a reserved word, which ES3 does not allow as a property name after a dot
+//   ident_name(s)          s is a valid identifier name (ASCII letters, digits, _ and $; not a digit first)
+//
+// Rules that use it: no-bitwise, no-compare-neg-zero, no-eq-null, no-div-regex, no-multi-str, no-iterator,
+// no-caller, eqeqeq, dot-notation, no-array-constructor, no-dupe-keys, no-empty-pattern, no-magic-numbers,
+// no-loss-of-precision.
+//
+// Builds on tsx/eslint-a-common (deparen, estree_parent, static_string, key_static, static_prop; also used by the
+// rules) and core (kind, field, child, op, text, value, tokens, the tree axes, @to_precision).
+#include "tsx/eslint-a-common.rr"
+
+// ---- literals ----------------------------------------------------------------------------------------------------
+// tree-sitter writes every numeric literal as `number`; a BigInt is the one that ends in `n` (no Number literal
+// does: hex digits stop at f). value gives the number normalised: value(0x0, "0").
+//   0n === -0n         BigInts: no-compare-neg-zero does not report (ESLint tests `value === 0`, false for 0n)
+.decl number_lit(n: node)
+number_lit(n) :- kind(n, "number"), !suffix("n", n).
+.decl bigint_lit(n: node)
+bigint_lit(n) :- kind(n, "number"), suffix("n", n).
+.decl zero(n: node)
+zero(n) :- number_lit(n), value(n, "0").
+// neg_zero(e): ESLint's isNegZero: a UnaryExpression `-` whose argument is a Literal 0. ESTree drops the
+// parentheses, so `(-(0))` qualifies too.   x === -0   x < (-0)   x == -(0.0)
+.decl neg_zero(e: node)
+neg_zero(e) :- deparen(e, u), kind(u, "unary_expression"), op(u, "-"), field(u, "argument", a), deparen(a, z), zero(z).
+// null_lit(e): the literal `null`, as ESLint's `raw === "null"` (parentheses are not part of raw).
+.decl null_lit(e: node)
+null_lit(e) :- deparen(e, x), kind(x, "null").
+
+// literal_type(e, t): what eqeqeq's areLiteralsAndSameType compares.   "a" == "b"  1 == 2  null == /x/
+.decl literal_type(e: node, t: symbol)
+literal_type(e, "string") :- deparen(e, x), kind(x, "string").
+literal_type(e, "number") :- deparen(e, x), number_lit(x).
+literal_type(e, "bigint") :- deparen(e, x), bigint_lit(x).
+literal_type(e, "boolean") :- deparen(e, x), (kind(x, "true") ; kind(x, "false")).
+literal_type(e, "object") :- deparen(e, x), (kind(x, "null") ; kind(x, "regex")).
+
+// ---- numerals ----------------------------------------------------------------------------------------------------
+// no-loss-of-precision compares the digits a literal asks for with the digits the stored double has. Separators
+// and case do not matter: 1_000E3 is 1000e3.
+.decl raw_number(n: node, r: symbol)
+raw_number(n, @replace_all(@lower(t), "_", "")) :- number_lit(n), text(n, t).
+.decl decimal(n: node)
+decimal(n) :- raw_number(n, r), !match("0[xbo].*", r), !match("0[0-7]+", r).
+// sci(s, f, c, m): ESLint's convertNumberToScientificNotation. The mantissa (before `e`) loses its leading zeros;
+//   an integer also loses its trailing zeros:  "12300" → c 123, m 4;   "0.00120" (a float) → c 120, m -3
+//   "123.45e2" → c 12345, m 4.   The exponent adds to m.
+.decl sci_in(s: symbol, f: number)  // the numerals asked about: each literal's raw text, and toPrecision's output
+sci_in(r, 0) :- decimal(n), raw_number(n, r), !contains(".", r).
+sci_in(r, 1) :- decimal(n), raw_number(n, r), contains(".", r).
+sci_in(p, 1) :- stored(_, p).
+.decl sci(s: symbol, f: number, c: symbol, m: number)
+sci(s, f, c, m + x) :- sci_in(s, f), split_e(s, t, x), norm(t, f, c, m).
+.decl split_e(s: symbol, mant: symbol, x: number)  // "1.5e-3" → "1.5", -3; "+" is dropped first
+split_e(s, s, 0) :- sci_in(s, _), !contains("e", s).
+// The "0" in front keeps to_number total: Soufflé may evaluate it on a row the match then rejects.
+split_e(s, M, to_number(cat("0", X))) :- sci_in(s, _), match("(?<M>[^e]*)e\\+?(?<X>[0-9]+)", s).
+split_e(s, M, -to_number(cat("0", X))) :- sci_in(s, _), match("(?<M>[^e]*)e-(?<X>[0-9]+)", s).
+.decl norm(t: symbol, f: number, c: symbol, m: number)
+norm(t, 0, @replace_all(u, "0+$", ""), strlen(u) - 1) :- split_e(s, t, _), sci_in(s, 0), u = @replace_all(t, "^0+", "").
+norm(t, 1, u, strlen(u) - 1) :- split_e(s, t, _), sci_in(s, 1), !contains(".", t), u = @replace_all(t, "^0+", "").
+norm(t, 1, cat(A, B), strlen(A) - 1) :- split_e(s, t, _), sci_in(s, 1), u = @replace_all(t, "^0+", ""),
+    match("(?<A>[0-9]+)\\.(?<B>[0-9]*)", u).
+norm(t, 1, g, strlen(g) - strlen(u)) :- split_e(s, t, _), sci_in(s, 1), u = @replace_all(t, "^0+", ""),
+    match("\\.(?<B>[0-9]*)", u), g = @replace_all(B, "^0+", "").
+// stored(n, p): the literal's value printed with as many significant digits as the literal has.
+.decl stored(n: node, p: symbol)
+stored(n, @to_precision(r, strlen(c))) :- decimal(n), raw_number(n, r), sci(r, _, c, _), strlen(c) <= 100.
+// significant_bits(n, k): in base 2^b each digit is b bits; the first digit may use fewer, and the last
+// non-zero digit may end in zero bits. 0x1F is 5 bits; 0x20000000000001 is 54.
+.decl significant_bits(n: node, k: number)
+significant_bits(n, (strlen(D) - 1) * b + lead - z - b * strlen(Z)) :- raw_number(n, r), radix(r, D, Z, b),
+    lead_bits(@slice(D, 0, 1), lead), last_zero_bits(@slice(D, strlen(D) - 1, strlen(D)), b, z).
+// radix(r, D, Z, b): D runs from the first non-zero digit to the last, Z is the trailing zeros, b bits per digit.
+.decl radix(r: symbol, digits: symbol, zeros: symbol, b: number)
+radix(r, D, Z, 4) :- raw_number(_, r), match("0x0*(?<D>[1-9a-f][0-9a-f]*[1-9a-f]|[1-9a-f])(?<Z>0*)", r).
+radix(r, D, Z, 1) :- raw_number(_, r), match("0b0*(?<D>1[01]*1|1)(?<Z>0*)", r).
+radix(r, D, Z, 3) :- raw_number(_, r), match("0o?0*(?<D>[1-7][0-7]*[1-7]|[1-7])(?<Z>0*)", r).
+.decl lead_bits(d: symbol, k: number)  // bits of the leading digit: 1 → 1, 2-3 → 2, 4-7 → 3, 8-f → 4
+lead_bits("1", 1). lead_bits("2", 2). lead_bits("3", 2). lead_bits("4", 3). lead_bits("5", 3). lead_bits("6", 3).
+lead_bits("7", 3). lead_bits("8", 4). lead_bits("9", 4). lead_bits("a", 4). lead_bits("b", 4). lead_bits("c", 4).
+lead_bits("d", 4). lead_bits("e", 4). lead_bits("f", 4).
+.decl last_zero_bits(d: symbol, b: number, k: number)  // zero bits at the end of the last non-zero digit
+last_zero_bits(d, b, 0) :- lead_bits(d, _), (b = 1 ; b = 3 ; b = 4), match("[13579bdf]", d).
+last_zero_bits(d, b, 1) :- lead_bits(d, _), (b = 3 ; b = 4), match("[26ae]", d).
+last_zero_bits(d, b, 2) :- lead_bits(d, _), (b = 3 ; b = 4), match("[4c]", d).
+last_zero_bits("8", 4, 3).
+
+// ---- operators ---------------------------------------------------------------------------------------------------
+// binop(n, o, l, r): `a + b`. The operator is an anonymous token, so it is n's op. Both operands are stripped,
+// as ESTree's node.left / node.right are.   (a) == (null)  gives l = a, r = null
+.decl binop(n: node, o: symbol, l: node, r: node)
+binop(n, o, l, r) :- kind(n, "binary_expression"), op(n, o), field(n, "left", a), deparen(a, l),
+    field(n, "right", b), deparen(b, r).
+// op_token(n, t): the token after the left field. That field keeps its parentheses, so in `(a) == b` the
+// token after it is `==`, not `)`.
+.decl op_token(n: node, t: span)
+op_token(n, t) :- kind(n, "binary_expression"), field(n, "left", a), token_after(a, t).
+.decl equality(o: symbol, strict: symbol)
+equality("==", "false"). equality("!=", "false"). equality("===", "true"). equality("!==", "true").
+
+// ---- members -----------------------------------------------------------------------------------------------------
+// dotted_member(n, o, p): `a.b`, written with a dot: p is the property identifier. A static name read any way is
+// common's static_prop; dot-notation and no-caller need the dotted form itself.
+.decl dotted_member(n: node, o: node, p: node)
+dotted_member(n, o, p) :- kind(n, "member_expression"), field(n, "object", o), field(n, "property", p),
+    kind(p, "property_identifier").
+
+// ---- object literals ---------------------------------------------------------------------------------------------
+// object_prop(o, p, k, x, key): the properties of `{ … }` with a static name. ESTree's Property has kind "init" for a
+// value, a shorthand or a method, and "get" / "set" for accessors. Spreads and dynamic keys ([k]) have no row.
+//   { a: 1, "b": 2, 3: 0, [`c`]: 4, d, e() {}, get f() {}, set f(v) {} }
+//   gives a, b, 3, c, d, e (all "init"), f "get" and f "set". A number key is its value: 0x10 is "16".
+.decl object_prop(o: node, p: node, k: symbol, x: symbol, key: node)
+object_prop(o, p, "init", x, key) :- kind(o, "object"), child(o, p, _), kind(p, "pair"), field(p, "key", key),
+    key_static(key, x).
+object_prop(o, p, "init", x, p) :- kind(o, "object"), child(o, p, _), kind(p, "shorthand_property_identifier"),
+    text(p, x).
+object_prop(o, p, k, x, key) :- kind(o, "object"), child(o, p, _), kind(p, "method_definition"), field(p, "name", key),
+    key_static(key, x), (op(p, "get"), k = "get" ; op(p, "set"), k = "set" ; !op(p, "get"), !op(p, "set"), k = "init").
+
+// ---- statement starts and automatic semicolon insertion ---------------------------------------------------------
+// A fix that rewrites `Array(a, b)` as `[a, b]` at the start of a statement changes what the statement continues:
+//   foo()                         foo()
+//   Array(a, b).forEach(f)   →    [a, b].forEach(f)       reads as foo()[a, b].forEach(f)
+// so ESLint writes `;[a, b]` when the token before is one a `[` or `(` would continue. stmt_start(x): x begins
+// at the same offset as an expression statement that holds it.
+.decl stmt_start(x: node)
+stmt_start(x) :- node(_, x, _, b, _), kind(s, "expression_statement"), node(_, s, _, b, _), within(x, s).
+// semi_needed(x): the token before x does not end its statement for sure. ESLint's needsPrecedingSemicolon,
+// case by case on that token (comments are not tokens). It leaves out the TypeScript type contexts, where
+// ESLint also says no.
+.decl semi_needed(x: node)
+semi_needed(x) :- stmt_start(x), token_before(x, t), !asi_safe(t).
+.decl asi_safe(t: span)
+// `;` `:` `{` `=>`, and postfix `++` / `--`, which always end the statement before a new line.
+asi_safe(t) :- token_before(_, t), (text(t, ";") ; text(t, ":") ; text(t, "{") ; text(t, "=>") ; text(t, "++") ;
+    text(t, "--")).
+// `)` closing the head of if, while, with or for: `if (a)⏎ [b]` is the if's body.
+// for's own `)` ends no node (a token is its own last token, so that row does not count).
+asi_safe(t) :- token_before(_, t), text(t, ")"), count : { last_token(m, t), m != t } = 0.
+asi_safe(t) :- last_token(p, t), text(t, ")"), kind(p, "parenthesized_expression"), field(s, _, p),
+    (kind(s, "if_statement") ; kind(s, "while_statement") ; kind(s, "with_statement") ; kind(s, "do_statement")).
+// `}` ends a statement, except after a function expression, a class expression or an object literal.
+asi_safe(t) :- token_before(_, t), text(t, "}"), !open_brace(t).
+// A word: a declarator without `=` (`var a⏎ [b]`), break / continue (with or without a label), and the
+// keywords that end their statement: a bare `return`, `debugger`, `yield`, and `else` / `do` before a body.
+asi_safe(t) :- last_token(v, t), kind(v, "variable_declarator"), !field(v, "value", _).
+asi_safe(t) :- last_token(s, t), (kind(s, "break_statement") ; kind(s, "continue_statement") ;
+    kind(s, "return_statement") ; kind(s, "debugger_statement") ; kind(s, "yield_expression")).
+asi_safe(t) :- first_token(s, t), (kind(s, "else_clause") ; kind(s, "do_statement")).
+// The string of an import or export: `import "m"⏎ [a]`.
+asi_safe(t) :- last_token(sn, t), kind(sn, "string"), field(i, "source", sn),
+    (kind(i, "import_statement") ; kind(i, "export_statement")).
+.decl open_brace(t: span)
+open_brace(t) :- last_token(b, t), kind(b, "statement_block"), field(f, "body", b),
+    (kind(f, "function_expression") ; kind(f, "generator_function")).
+open_brace(t) :- last_token(b, t), kind(b, "class_body"), field(c, "body", b), kind(c, "class").
+open_brace(t) :- last_token(o, t), kind(o, "object").
+
+// as_array(n, lead): the Array call n becomes an array literal of its arguments, as written (comments kept),
+// after lead ("" or ";", by semi_needed).   new Array(a, /* b */ c)  →  [a, /* b */ c];   new Array  →  []
+.edit as_array(n: node, lead: symbol)
+as_array(n, l) :- (n ~ `Array($$$A)` ; n ~ `Array?.($$$A)` ; n ~ `new Array($$$A)`) => replace(n, `$l[$$$A]`).
+as_array(n, l) :- kind(n, "new_expression"), !field(n, "arguments", _) => replace(n, `$l[]`).
+
+// es3_reserved(x): ES3's reserved words. dot-notation's allowKeywords: false keeps `a["class"]` as it is, because
+// `a.class` was a syntax error before ES5.
+.decl es3_reserved(x: symbol)
+es3_reserved("abstract"). es3_reserved("boolean"). es3_reserved("break"). es3_reserved("byte"). es3_reserved("case"). es3_reserved("catch").
+es3_reserved("char"). es3_reserved("class"). es3_reserved("const"). es3_reserved("continue"). es3_reserved("debugger"). es3_reserved("default").
+es3_reserved("delete"). es3_reserved("do"). es3_reserved("double"). es3_reserved("else"). es3_reserved("enum"). es3_reserved("export").
+es3_reserved("extends"). es3_reserved("false"). es3_reserved("final"). es3_reserved("finally"). es3_reserved("float"). es3_reserved("for").
+es3_reserved("function"). es3_reserved("goto"). es3_reserved("if"). es3_reserved("implements"). es3_reserved("import"). es3_reserved("in").
+es3_reserved("instanceof"). es3_reserved("int"). es3_reserved("interface"). es3_reserved("long"). es3_reserved("native"). es3_reserved("new").
+es3_reserved("null"). es3_reserved("package"). es3_reserved("private"). es3_reserved("protected"). es3_reserved("public").
+es3_reserved("return"). es3_reserved("short"). es3_reserved("static"). es3_reserved("super"). es3_reserved("switch").
+es3_reserved("synchronized"). es3_reserved("this"). es3_reserved("throw"). es3_reserved("throws"). es3_reserved("transient").
+es3_reserved("true"). es3_reserved("try"). es3_reserved("typeof"). es3_reserved("var"). es3_reserved("void"). es3_reserved("volatile").
+es3_reserved("while"). es3_reserved("with").
+// ident_name(s): dot-notation's validIdentifier, /^[a-zA-Z_$][\w$]*$/u: a["foo-bar"] cannot be written a.foo-bar.
+.decl ident_name(s: symbol)
+ident_name(s) :- static_string(_, s), match("[a-zA-Z_$][a-zA-Z0-9_$]*", s).

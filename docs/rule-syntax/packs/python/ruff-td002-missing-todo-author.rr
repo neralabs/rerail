@@ -1,0 +1,20 @@
+.policy "ruff-td002-missing-todo-author" revision 2
+.description "Name an author on every TODO comment so readers know who has the context for the work."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TD002 (flake8-todos): a TODO, FIXME or XXX with no author right after the tag: `(name)`, or `@name`
+// followed by whitespace or a colon.
+//   # TODO: fix this               ← TD002
+//   # TODO @mona                   ← TD002: nothing after the name, so it is not taken as an author
+//   # TODO(charlie): fix this      not reported
+//   # TODO @mona: fix this         not reported
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
+
+.violation TD002(at: span, tag: symbol, msg: symbol) code "TD002" "{msg}"
+    suppress ruff "TD002"
+TD002(t, D, cat(cat(cat(cat("Add the author after `", D), "`, as `"), D), "(name): ...`, naming whoever owns the follow-up; if nobody is known, leave it and tell the user.")) :-
+    todo_item(c, D, _), todo_author(c, "no", a), !prefix("@", a), todo_at(c, t).
+TD002(t, D, cat(cat("Follow the author with a colon and the description, as `", D), " @name: description`, adding the name if the `@` is empty; if nobody is known, leave it and tell the user.")) :-
+    todo_item(c, D, _), todo_author(c, "no", a), prefix("@", a), todo_at(c, t).

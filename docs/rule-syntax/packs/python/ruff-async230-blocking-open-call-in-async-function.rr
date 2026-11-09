@@ -1,0 +1,25 @@
+.policy "ruff-async230-blocking-open-call-in-async-function" revision 2
+.description "Don't open files with open(), io.open or Path.open() inside async functions; use an async file API so file I/O doesn't block the event loop."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ASYNC230 (flake8-async): opening a file with a blocking call inside an async def: the builtin `open`,
+// `io.open`, `io.open_code`, or `.open()` on a `pathlib.Path(…)` call or on a name bound to one.
+//   async def f(): open("a")                      ← ASYNC230
+//   async def f(): p = Path("a"); p.open()        ← ASYNC230 at p.open
+//   async def f(): await anyio.open_file("a")     not reported
+#include "python/misc2-async.rr"
+
+.violation ASYNC230(at: node) code "ASYNC230"
+    "Open this file with an async file API, such as `anyio.open_file()`, `trio.open_file()` or `aiofiles.open()`."
+    suppress ruff "ASYNC230"
+ASYNC230(f) :- async_blocking(_, f, q), (q = "builtins.open" ; q = "io.open" ; q = "io.open_code").
+ASYNC230(f) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, o0, "open"), unparen(o0, o),
+    async_ctx(c), async_path_value(o).
+// `Path(…)` itself, or a name whose binding in effect has the value `Path(…)` (Ruff's find_binding_value).
+.decl async_path_value(o: node)
+async_path_value(o) :- async_path_call(o).
+async_path_value(o) :- async_name_value(o, v), async_path_call(v).
+.decl async_path_call(e: node)
+async_path_call(e) :- unparen(e, m), call_q(m, "pathlib.Path").

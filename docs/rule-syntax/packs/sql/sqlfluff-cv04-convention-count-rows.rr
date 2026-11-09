@@ -1,0 +1,19 @@
+.policy "sqlfluff-cv04-convention-count-rows" revision 2
+.description "Use COUNT(*) instead of COUNT(1) or COUNT(0) to count rows in SQL; it states the intent directly."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's CV04 (convention.count_rows), default prefer_count_1 = false. COUNT of the constant 0 or 1:
+//   SELECT count(1) FROM t        reported; the fix is count(*)
+//   SELECT count(*) FROM t        fine
+//   SELECT x.count(1) FROM t      fine: a method or a schema's function, not COUNT
+
+#include "sql/syntax.rr"
+
+.violation CV04(at: node) code "CV04" "Use COUNT(*) instead of COUNT(0) or COUNT(1) to express 'count number of rows'."
+    suppress sqlfluff "CV04", "L047", "all", "convention", "convention.count_rows", "core"
+    fix star "Write COUNT(*)"
+CV04(c) :- kind(c, "invocation"), child(c, o, 0), field(o, "name", n), iglob("count", n), !contains(".", o),
+    field(c, "parameter", t), field(t, "value", l), kind(l, "literal"), glob("{0,1}", l),
+    count : { field(c, "parameter", _) } = 1, count : { child(c, k, _), kind(k, "keyword_distinct") } = 0.
+star(c) :- field(c, "parameter", t) => replace(t, `*`).

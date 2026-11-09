@@ -1,0 +1,27 @@
+.policy "ruff-f632-is-literal" revision 3
+.description "Use == or != instead of is or is not to compare literal values; the identity of such values is unreliable."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F632 (pyflakes): `is` or `is not` with a literal: a str, bytes or number literal, a tuple of literals, or
+// a list, set or dict display or comprehension. Identity of such values is an implementation detail; `==` is
+// meant. None, True, False and `...` are singletons, so `is` is right for them. Each link of a chain is checked;
+// the finding is at the comparison.
+//   if x is "abc": ...        ← F632 "Use `==` …"
+//   if x is not []: ...       ← F632 "Use `!=` …"
+//   if x is None: ...         not reported
+#include "python/pyflakes.rr"
+//   cmp_pair(c, i, op, l, r)   link i of a comparison (python/ast)
+//   const_non_singleton(e), mutable_literal(e)
+
+.violation F632(at: node, msg: symbol) code "F632" "{msg}"
+    suppress ruff "F632"
+F632(c, m) :- cmp_pair(c, _, op, l, r), (op = "is" ; op = "is not"),
+    (literal_operand(l) ; literal_operand(r)), msg(op, m).
+.decl literal_operand(e: node)
+literal_operand(e) :- const_non_singleton(e).
+literal_operand(e) :- mutable_literal(e).
+.decl msg(op: symbol, m: symbol)
+msg("is", "Use `==` instead of `is` to compare this literal value.").
+msg("is not", "Use `!=` instead of `is not` to compare this literal value.").

@@ -1,0 +1,52 @@
+.policy "eslint-no-useless-computed-key" revision 4
+.description "Use a plain key instead of a computed key holding a string or number literal in objects, destructuring patterns and classes."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-objects.rr"
+//   holder_key, estree_key, is_static, number_lit, value, touching, cannot_touch
+
+// ESLint's no-useless-computed-key: a computed key that is a string or number literal, which a plain key says
+// the same way.
+//   ({ ["a"]: 1 })   ({ [0]() {} })   ({ ["a"]: b } = c)   class A { ["m"]() {} static ["f"] = 1 }   → reported
+//   ({ [a]: 1 })     ({ [`a`]: 1 })   ({ [1n]: 1 })                                                   fine: not a string or number literal
+// Where the computed form means something else, it is kept:
+//   ({ ["__proto__"]: a })                  an own property, where `__proto__: a` would set the prototype
+//   class A { ["constructor"]() {} }        a method, where `constructor() {}` would be the constructor
+//   class A { static ["prototype"]() {} }   `static prototype` is a syntax error; a field `["constructor"]` too
+// enforceForClassMembers (default true): also check class methods and fields.
+// The fix writes the literal as the key, with a space where it would join the token before (`get[1]() {}`),
+// and is not offered when a comment is between the brackets.
+.violation no_useless_computed_key(at: node, key: node) code "no-useless-computed-key"
+    "Unnecessarily computed property [{key}] found."
+    suppress eslint "no-useless-computed-key"
+    suppress oxlint "no-useless-computed-key"
+    suppress biome "lint/complexity/useLiteralKeys"
+    fix plain_key "Write the key without brackets."
+no_useless_computed_key(h, l) :- useless(h, l, _), literal_key(l, v), allowed(h, v).
+
+// useless(h, l, k): h has the computed key k, whose expression (parentheses aside) is the literal l.
+.decl useless(h: node, l: node, k: node)
+useless(h, l, k) :- holder_key(h, k), kind(k, "computed_property_name"), estree_key(h, l), checked(h).
+.decl checked(h: node)  // the members ESLint visits: properties always, class members unless the option is off
+checked(h) :- (kind(h, "pair") ; kind(h, "pair_pattern") ; in_object(h)).
+checked(h) :- class_member(h), !option("enforceForClassMembers", "false").
+.decl literal_key(l: node, v: symbol)  // a string or Number literal, with its value
+literal_key(l, v) :- (kind(l, "string") ; number_lit(l)), value(l, v).
+// allowed(h, v): the computed key may go. A method in an object literal is ESTree's Property too.
+.decl allowed(h: node, v: symbol)
+allowed(h, v) :- useless(h, l, _), literal_key(l, v), in_object(h), v != "__proto__".
+allowed(h, v) :- useless(h, l, _), literal_key(l, v), kind(h, "pair_pattern").
+allowed(h, v) :- useless(h, l, _), literal_key(l, v), class_member(h), kind(h, "method_definition"),
+    (is_static(h), v != "prototype" ; !is_static(h), v != "constructor").
+allowed(h, v) :- useless(h, l, _), literal_key(l, v), class_member(h), !kind(h, "method_definition"),
+    v != "constructor", !(is_static(h), v = "prototype").
+.decl in_object(h: node)
+in_object(h) :- (kind(h, "pair") ; kind(h, "method_definition")), child(o, h, _), kind(o, "object").
+
+// The fix: `[` … `]` becomes the literal's own text (`["a"]` → `"a"`, `[(0x1)]` → `0x1`).
+plain_key(h, l) :- useless(h, l, k), !has(k, _, "comment"), text(l, t), !space(k, l) => replace(k, `$t`).
+plain_key(h, l) :- useless(h, l, k), !has(k, _, "comment"), text(l, t), space(k, l) => replace(k, ` $t`).
+.decl space(k: node, l: node)
+space(k, l) :- useless(_, l, k), touching(t, k), text(t, a), text(l, b), cannot_touch(a, b).
+touch_pair(a, b) :- useless(_, l, k), touching(t, k), text(t, a), text(l, b).

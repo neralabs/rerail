@@ -309,7 +309,7 @@ fn shared_strip_continuations_preserve_exact_work_and_deletions_at_tiny_unit_bou
                 let actual = metal_register_execution::read::<RegexRequest>(&finished, 2).unwrap();
                 let used = metal_register_execution::read::<u32>(&work, 1).unwrap()[0];
                 let error = metal_register_execution::read::<u32>(&failures, 1).unwrap()[0];
-                assert!(trace.len() <= 600);
+                assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
                 assert!(
                     trace
                         .iter()
@@ -638,7 +638,7 @@ fn shared_strip_batches_programs_files_properties_and_predicates_with_one_immuta
         let trace = scope.snapshot();
         drop(scope);
         assert_eq!(actual, Ok(expected));
-        assert!(trace.len() <= 600);
+        assert!(trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
         assert!(
             trace
                 .iter()

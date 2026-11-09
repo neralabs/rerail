@@ -551,7 +551,7 @@ fn compiled_corpus() -> Vec<Case> {
     cases
 }
 
-/// Each file's runs: a batch of every file over every input (decision 0044).
+/// Each file's runs: a batch of every file over every input (decision 0066).
 fn batch<'a>(cases: &[Case], inputs: &'a [Vec<u8>]) -> Vec<block::BatchFile<'a>> {
     (0..cases.len()).flat_map(|p| inputs.iter().map(move |b| block::BatchFile { bytes: b, program: p })).collect()
 }
@@ -603,7 +603,7 @@ fn corpus_metal_equals_the_interpreter() {
 }
 
 /// Check 1: every compiled executor gives the CPU interpreter's outputs, bit for bit, for every
-/// file on every input. Each executor runs the corpus as batches (decision 0044).
+/// file on every input. Each executor runs the corpus as batches (decision 0066).
 fn executors_equal_the_interpreter(metal: bool) {
     let t = std::time::Instant::now();
     let cases = compiled_corpus();
@@ -729,7 +729,7 @@ fn tree_inputs(p: &TreeParams, seed: u64) -> Vec<Vec<u8>> {
             Atoms::Keywords => &["true", "null", "truex", "nul", "q"],
             Atoms::Numbers => &["0", "-12", "3.5", "7.", "-", "1a", "00", "4.2.1"],
         };
-        out.push_str(rng.pick(words));
+        out.push_str(*rng.pick(words));
     }
     let mut out: Vec<Vec<u8>> = vec![Vec::new(), b" ".to_vec()];
     for _ in 0..40 {

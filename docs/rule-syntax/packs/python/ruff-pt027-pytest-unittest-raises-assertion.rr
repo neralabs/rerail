@@ -1,0 +1,27 @@
+.policy "ruff-pt027-pytest-unittest-raises-assertion" revision 2
+.description "Use pytest.raises instead of assertRaises-style methods such as assertRaises and assertRaisesRegex; it is the exception-testing style pytest recommends."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT027 (flake8-pytest-style): unittest's exception assertions, called on anything, as a call or as a
+// context manager: `self.assertRaises(E)`, `failUnlessRaises`, `assertRaisesRegex`, `assertRaisesRegexp`.
+//   with self.assertRaises(ValueError): f()      ← PT027
+//   with self.assertRaises(E) as self.cm: f()    not reported: Ruff reads a target only when it is a name
+//   self.assertRaisesRegex(E, "msg", f)          ← PT027
+#include "python/pytest.rr"
+//   names: attr_of(n, o, a)
+
+.violation PT027(at: node, x: symbol) code "PT027"
+    "Use `pytest.raises` instead of `{x}`: a regex goes in `match=` and an `as` target's `.exception` becomes `.value`. Leave it in tests that don't run under pytest."
+    suppress ruff "PT027"
+PT027(g, x) :- kind(c, "call"), field(c, "function", g0), unparen(g0, g), attr_of(g, _, x),
+    (x = "assertRaises" ; x = "failUnlessRaises" ; x = "assertRaisesRegex" ; x = "assertRaisesRegexp"),
+    !odd_target(c).
+// odd_target(c): c is a with item bound to something other than a name (`as self.cm`, `as (a, b)`, `as cm[0]`).
+// Ruff reports a with item with a target through the name it binds, so these are never reported.
+.decl odd_target(c: node)
+odd_target(c) :- kind(it, "with_item"), field(it, "value", ap), kind(ap, "as_pattern"), child(ap, c0, 0), unparen(c0, c),
+    field(ap, "alias", t), !plain_target(t).
+.decl plain_target(t: node)
+plain_target(t) :- kind(t, "as_pattern_target"), child(t, n, 0), kind(n, "identifier"), !child(t, _, 1).

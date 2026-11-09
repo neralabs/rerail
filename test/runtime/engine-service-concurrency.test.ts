@@ -42,21 +42,21 @@ describe("engine service session concurrency", () => {
     });
     const requests: Array<Promise<readonly AdapterDelivery[]>> = [];
     try {
-      const blockedStart = ingestEngineEvent(socketPath, {
+      const blockedStart = ingestEngineEvent({ socketPath: socketPath }, {
         kind: "session-start",
         eventId: "blocked-start",
         session: { host: "claude-code", sessionId: "blocked", cwd: root },
       });
       requests.push(blockedStart);
       await blockedOpened.promise;
-      const independentStart = ingestEngineEvent(socketPath, {
+      const independentStart = ingestEngineEvent({ socketPath: socketPath }, {
         kind: "session-start",
         eventId: "independent-start",
         session: { host: "claude-code", sessionId: "independent", cwd: root },
       });
       requests.push(independentStart);
       await expect(independentStart).resolves.toEqual([]);
-      await expect(ingestEngineEvent(socketPath, {
+      await expect(ingestEngineEvent({ socketPath: socketPath }, {
         kind: "user-prompt",
         eventId: "independent-prompt",
         sessionId: "independent",
@@ -66,7 +66,7 @@ describe("engine service session concurrency", () => {
       ]);
       gate.resolve();
       await expect(blockedStart).resolves.toEqual([]);
-      await expect(ingestEngineEvent(socketPath, {
+      await expect(ingestEngineEvent({ socketPath: socketPath }, {
         kind: "user-prompt",
         eventId: "blocked-prompt",
         sessionId: "blocked",

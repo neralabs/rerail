@@ -1,0 +1,32 @@
+.policy "psalm-forbidden-code" revision 4
+.description "Remove var_dump(), shell_exec() and backtick shell commands from PHP code; they leak debug output or open the door to command injection."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/names.rr"
+//   php_call(c, x)   c calls global function x (lowercase, `use function` followed)
+
+// Psalm's ForbiddenCode, as `psalm --init` configures it: a call of var_dump() or shell_exec(), in any case, and
+// the backtick operator (shell_exec in disguise). Reported at the call:
+//   var_dump($x);   \SHELL_EXEC('ls');   `ls`;
+//   $f = var_dump(...);           not reported: a first-class callable, nothing runs
+// The pack keeps two var_dump idioms that do not reach the user (divergences.json: upstream-wrong):
+//   ob_start(); var_dump($x); $s = ob_get_clean();      the dump is captured into a string
+//   function dump($x) { var_dump($x); }                  a debug helper's own body (dump or dd)
+.violation forbidden_code(at: node) code "ForbiddenCode"
+    "Remove this var_dump() or shell command; log debug output instead, and run commands with proc_open() given an argument array."
+    suppress psalm "ForbiddenCode"
+forbidden_code(c) :- php_call(c, x), (x = "var_dump" ; x = "shell_exec"), !callable(c), !kept(c, x).
+forbidden_code(n) :- kind(n, "shell_command_expression").
+.decl callable(c: node)  // var_dump(...)
+callable(c) :- field(c, "arguments", l), child(l, p, _), kind(p, "variadic_placeholder").
+.decl kept(c: node, x: symbol)
+kept(c, "var_dump") :- child(st, c, 0), kind(st, "expression_statement"), precedes(o, st), child(o, s, 0),
+    php_call(s, "ob_start"), precedes(st, g), captured(g).
+kept(c, "var_dump") :- php_call(c, "var_dump"), (inside(c, f, "function_definition") ; inside(c, f, "method_declaration")),
+    field(f, "name", n), text(n, x), (iglob("dump", x) ; iglob("dd", x)).
+.decl captured(g: node)  // g reads the buffer: ob_get_clean() or ob_get_contents() in it
+captured(g) :- (php_call(g, x) ; has(g, k, "function_call_expression"), php_call(k, x)),
+    (x = "ob_get_clean" ; x = "ob_get_contents").

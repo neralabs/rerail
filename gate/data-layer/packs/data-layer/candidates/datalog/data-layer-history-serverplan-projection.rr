@@ -9,6 +9,8 @@
 .input doc, node, child, field, text, name, line, syntax_error
 .decl k0(kind: symbol)
 k0("string").
+.decl k1(kind: symbol)
+k1("return_statement").
 .decl in_scope(d: number)
 .decl m19(n: node)
 .decl m29(n: node)

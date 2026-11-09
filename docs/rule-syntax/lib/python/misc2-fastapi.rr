@@ -1,0 +1,129 @@
+// python/misc2-fastapi: FastAPI route functions and their parameters, as Ruff's FastAPI rules (FAST001-FAST003)
+// read them.
+//
+// Interface
+//   fast_route(f, dc)          def f is decorated with route call dc: `app.get(…)`, `router.post(…)`, … (get, post,
+//                              put, delete, patch, options, head, trace) on a name whose binding in force is a
+//                              `fastapi.FastAPI(…)` or `fastapi.APIRouter(…)` (a call, or an annotation)
+//   fast_param(f, p, x, ann, dflt)  parameter p of f named x, not positional-only nor `*args`/`**kwargs`, with its
+//                              annotation and default (unset for none); parentheses off
+//   fast_dependency(e, x)      e, or the callee when e is a call, resolves to fastapi.x, x one of Query, Path, Body,
+//                              Cookie, Header, File, Form, Depends, Security
+//   fast_annotated(ann, a, i)  ann is `Annotated[…]` (typing or typing_extensions) and a its i-th argument
+//   fast_dep_param(f, x)       x is a parameter name a `Depends` dependency of f's parameters takes (FAST003)
+//   fast_dep_unknown(f)        one of f's dependencies cannot be read: a name with more than one binding, not a
+//                              def or class, or one parameter with two `Depends` in its Annotated metadata
+//
+// Ruff background
+//   Ruff checks a def when it reaches it, so a name resolves to the binding made before the def: an `app`
+//   assigned only after the route, or a dependency defined below it, is not known there.
+//
+//   app = FastAPI()
+//   @app.get("/items/{item_id}")          fast_route(<def>, <app.get(…)>)
+//   async def read(item_id: int, q: str = Query(None)): …   fast_param(<def>, <q…>, "q", <str>, <Query(None)>),
+//                                                            fast_dependency(<Query(None)>, "Query")
+#include "python/misc2-perf.rr"
+//   perf_latest_site(n, site), perf_site_value(site, v), perf_site_ann(site, h); ruff_qual (python/ruff)
+#include "python/upgrade-typing.rr"
+//   up_typing_sub(s, x), type_arg(s, i, a)
+
+.decl fast_route(f: node, dc: node)
+fast_route(f, dc) :- kind(dd, "decorated_definition"), field(dd, "definition", f), child(dd, d, _),
+    kind(d, "decorator"), child(d, e, 0), unparen(e, dc), kind(dc, "call"), field(dc, "function", fn),
+    attr_of(fn, o, m), fast_method(m), kind(o, "identifier"), perf_latest_site(o, site), fast_app_site(site).
+.decl fast_method(m: symbol)
+fast_method("get"). fast_method("post"). fast_method("put"). fast_method("delete"). fast_method("patch").
+fast_method("options"). fast_method("head"). fast_method("trace").
+.decl fast_app_site(site: node)
+fast_app_site(site) :- perf_site_value(site, v), kind(v, "call"), field(v, "function", f), ruff_qual(f, q), fast_app(q).
+fast_app_site(site) :- perf_site_ann(site, h), ruff_qual(h, q), fast_app(q).
+.decl fast_app(q: symbol)
+fast_app("fastapi.FastAPI"). fast_app("fastapi.APIRouter").
+
+.decl fast_param(f: node, p: node, x: symbol, ann: loc, dflt: loc)
+fast_param(f, p, x, a, d) :- sig_param(f, p, nm, _, k, a0, d0), (k = "pos" ; k = "kwonly"), text(nm, x),
+    fast_strip(a0, a), fast_strip(d0, d).
+.decl fast_strip(e: loc, m: loc)  // parentheses and the annotation's `type` wrapper off; unset stays unset
+fast_strip(e, e) :- unset(e).
+fast_strip(e, m) :- unparen(e, b), !kind(b, "type"), m = b.
+fast_strip(e, m) :- unparen(e, b), kind(b, "type"), child(b, i, 0), fast_strip(i, m).
+
+.decl fast_dependency(e: node, x: symbol)
+fast_dependency(e, x) :- kind(e, "call"), field(e, "function", f), ruff_qual(f, q), split_dot(q, "fastapi", x),
+    fast_dep_kind(x).
+fast_dependency(e, x) :- !kind(e, "call"), ruff_qual(e, q), split_dot(q, "fastapi", x), fast_dep_kind(x).
+.decl fast_dep_kind(x: symbol)
+fast_dep_kind("Query"). fast_dep_kind("Path"). fast_dep_kind("Body"). fast_dep_kind("Cookie").
+fast_dep_kind("Header"). fast_dep_kind("File"). fast_dep_kind("Form"). fast_dep_kind("Depends").
+fast_dep_kind("Security").
+
+.decl fast_annotated(ann: node, a: node, i: number)
+fast_annotated(s, a, i) :- up_typing_sub(s, "Annotated"), type_arg(s, i, a0), fast_strip(a0, a).
+
+// ---- dependencies (FAST003, Ruff's Dependency::from_parameter) ----------------------------------------------
+// A parameter's dependency comes from its default `Depends(dep)`, else from its `Annotated[T, …, Depends(dep), …]`
+// metadata, where a bare `Depends()` means T itself. dep is a name (a def's parameters, a class's `__init__`'s)
+// or a call `Cls(…)` (the class's `__call__`); a pydantic model gives its annotated fields instead. A form with
+// no answer (an attribute, a class without the method) is skipped, so the annotation is looked at next.
+// Where annotations are deferred (`from __future__ import annotations`, Python 3.14), Ruff has not resolved an
+// annotation's names when it checks the route, so a dependency named there is unknown (fast_lazy).
+//   def common(q: str, skip: int = 0): …
+//   async def read(c: dict = Depends(common)): …    fast_dep_param(<read>, "q"), fast_dep_param(<read>, "skip")
+.decl fast_depends(c: node)
+fast_depends(c) :- kind(c, "call"), fast_dependency(c, "Depends").
+.decl fast_dep_src(c: node, e: node, how: symbol)  // Depends call c names e: "name" (e itself) or "instance" (e(…))
+fast_dep_src(c, e, how) :- fast_depends(c), (ruff_arg(c, 0, a0) ; call_kwarg(c, "dependency", a0)), unparen(a0, a),
+    (kind(a, "identifier"), e = a, how = "name" ; kind(a, "call"), field(a, "function", e), kind(e, "identifier"),
+    how = "instance").
+.decl fast_dep_known(e: node, how: symbol, x: symbol)  // the parameter names; a row with x = "" for none
+fast_dep_known(e, "name", x) :- fast_dep_name(e, "name"), !fast_lazy(e), perf_only_binding(e, f),
+    kind(f, "function_definition"), (fast_param(f, _, x, _, _) ; x = "").
+fast_dep_known(e, "name", x) :- fast_dep_name(e, "name"), !fast_lazy(e), perf_only_binding(e, k),
+    fast_class_params(k, "__init__", x).
+fast_dep_known(e, "instance", x) :- fast_dep_name(e, "instance"), !fast_lazy(e), perf_only_binding(e, k),
+    fast_class_params(k, "__call__", x).
+.decl fast_dep_name(e: node, how: symbol)
+fast_dep_name(e, how) :- fast_dep_src(_, e, how).
+fast_dep_name(e, "name") :- fast_dep_bare(_, e).
+.decl fast_dep_unknown_at(e: node, how: symbol)  // Ruff's Dependency::Unknown
+fast_dep_unknown_at(e, how) :- fast_dep_name(e, how), fast_lazy(e).
+fast_dep_unknown_at(e, how) :- fast_dep_name(e, how), !perf_only_binding(e, _).
+fast_dep_unknown_at(e, how) :- fast_dep_name(e, how), perf_only_binding(e, s), !kind(s, "class_definition"),
+    (how = "instance" ; !kind(s, "function_definition")).
+.decl fast_lazy(e: node)
+fast_lazy(e) :- fast_dep_name(e, _), inside(e, _, "type"), docof(e, d), (future_annotations(d) ; targets(14)).
+.decl fast_dep_some(e: node, how: symbol)
+fast_dep_some(e, how) :- fast_dep_unknown_at(e, how).
+fast_dep_some(e, how) :- fast_dep_known(e, how, _).
+.decl fast_class_params(k: node, m: symbol, x: symbol)
+fast_class_params(k, m, x) :- fast_dep_class(k), (m = "__init__" ; m = "__call__"), fast_pydantic(k),
+    field(k, "body", b), (body_stmt(b, st, _), child(st, a, 0), kind(a, "assignment"), field(a, "type", _),
+    field(a, "left", t), kind(t, "identifier"), text(t, x) ; x = "").
+fast_class_params(k, m, x) :- fast_dep_class(k), !fast_pydantic(k), field(k, "body", b), body_stmt(b, st, _),
+    (kind(st, "function_definition"), d = st ; kind(st, "decorated_definition"), field(st, "definition", d)),
+    field(d, "name", n), text(n, m), (fast_param(d, p, x, _, _), sig_param(d, p, _, i, _, _, _),
+    count : { fast_param(d, p2, _, _, _), sig_param(d, p2, _, j, _, _, _), j < i } > 0 ; x = "").
+.decl fast_dep_class(k: node)
+fast_dep_class(k) :- fast_dep_name(e, _), perf_only_binding(e, k), kind(k, "class_definition").
+.decl fast_pydantic(k: node)
+fast_pydantic(k) :- fast_dep_class(k), field(k, "superclasses", al), child(al, b, _), ruff_qual(b, "pydantic.BaseModel").
+// The parameter's dependency: from the default when that gives one, else the Annotated metadata's.
+.decl fast_dep_bare(c: node, e: node)  // a `Depends()` with no arguments in `Annotated[e, …]`
+fast_dep_bare(c, e) :- fast_annotated(ann, c, i), i > 0, fast_depends(c), call_nargs(c, 0), call_nkwargs(c, 0),
+    fast_annotated(ann, e, 0), kind(e, "identifier").
+.decl fast_ann_dep(p: node, c: node, e: node, how: symbol)
+fast_ann_dep(p, c, e, how) :- fast_param(_, p, _, ann, _), fast_annotated(ann, c, i), i > 0,
+    (fast_dep_src(c, e, how) ; fast_dep_bare(c, e), how = "name"), fast_dep_some(e, how).
+.decl fast_param_dep(p: node, e: node, how: symbol)
+fast_param_dep(p, e, how) :- fast_param(_, p, _, _, d), fast_dep_src(d, e, how), fast_dep_some(e, how).
+fast_param_dep(p, e, how) :- fast_param(_, p, _, _, d), !fast_default_dep(d), fast_ann_dep(p, c, e, how),
+    count : { fast_ann_dep(p, c2, _, _) } = 1.
+.decl fast_default_dep(d: loc)
+fast_default_dep(d) :- fast_dep_src(d, e, how), fast_dep_some(e, how).
+.decl fast_dep_param(f: node, x: symbol)
+fast_dep_param(f, x) :- fast_param(f, p, _, _, _), fast_param_dep(p, e, how), fast_dep_known(e, how, x), x != "".
+.decl fast_dep_unknown(f: node)
+fast_dep_unknown(f) :- fast_param(f, p, _, _, _), fast_param_dep(p, e, how), fast_dep_unknown_at(e, how),
+    !fast_dep_known(e, how, _).
+fast_dep_unknown(f) :- fast_param(f, p, _, _, d), !fast_default_dep(d), fast_ann_dep(p, _, _, _),
+    count : { fast_ann_dep(p, c2, _, _) } > 1.

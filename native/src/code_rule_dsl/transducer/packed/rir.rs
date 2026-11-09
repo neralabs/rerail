@@ -1053,7 +1053,7 @@ fn switch_target(t: u16) -> String {
     if t == stream::REFUSE { "refuse".to_owned() } else { format!("@{t:04}") }
 }
 
-/// Switch table `at` (decision 0053): `switch N at OFFSET end TARGET`, then a row per run of
+/// Switch table `at` (decision 0087): `switch N at OFFSET end TARGET`, then a row per run of
 /// bytes with one target, `switch N 0xLO-0xHI TARGET`; bytes in no row refuse.
 pub(super) fn switch_rows(out: &mut String, at: usize, s: &stream::ByteSwitch) {
     let _ = writeln!(out, "  switch {at} at {} end {}", s.offset, switch_target(s.end));

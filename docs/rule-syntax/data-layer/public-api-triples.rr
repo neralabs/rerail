@@ -107,13 +107,13 @@ legacy(f, "async") :- deco(f, q), glob("**{legacy_async,legacy_module_async}", q
 // own_private(f): f is marked internal by @internal_api, @private_api or @private_public_api, compared on the last
 // dotted segment as the Python linter's _is_marked_private_public_api does.
 .decl own_private(f: node)
-own_private(f) :- deco(f, q), match(".*(^|\.)(internal_api|private_api|private_public_api)", q).
+own_private(f) :- deco(f, q), match(".*(^|\\.)(internal_api|private_api|private_public_api)", q).
 .decl private(f: node)  // the def's decorators, or its class's
 private(f) :- own_private(f).
 private(f) :- nearest(f, c, cdef), own_private(c).
 // lazy_pipe(f): f (a def or a class) carries a lazy decorator: @lazy, @pure_lazy, or the class mixin decorator.
 .decl lazy_pipe(f: node)
-lazy_pipe(f) :- deco(f, q), match(".*(?:pure_lazy|apply_lazy_to_public_lazy_methods|(^|\.)lazy$).*", q).
+lazy_pipe(f) :- deco(f, q), match(".*(?:pure_lazy|apply_lazy_to_public_lazy_methods|(^|\\.)lazy$).*", q).
 // lazy_decorated(f): the lazy member is decorated, by itself or by its class's mixin, which covers the public
 // methods named …_lazy (the regex: not starting with _, ending _lazy).
 .decl lazy_decorated(f: node)
@@ -126,27 +126,41 @@ lazy_decorated(f) :- def_name(f, n), match("[^_].*_lazy", n), nearest(f, c, cdef
 .decl sig_type(f: node, x: symbol)
 // Resolved: keep the last segment of the qualified name ("pkg.lazy.LazyResult" → "LazyResult").
 sig_type(f, x) :- annotation(n), within(n, f), field(f, "body", b), !within(n, b), sym_of(n, q),
-    match("(?:.*\.)?(?<x>[^.]+)", q).
+    match("(?:.*\\.)?(?<x>[^.]+)", q).
 // Unresolved: a bare identifier's text.
 sig_type(f, x) :- annotation(n), within(n, f), field(f, "body", b), !within(n, b), !sym_of(n, _), kind(n, "identifier"), text(n, x).
 
 // The roots, and their slots.
 // data_layer_module(m): a module file directly in data_layer/, the public package whose exports are the roots.
 .decl data_layer_module(m: symbol)
-data_layer_module(m) :- module_path(m, p), match("data_layer/[^/]+\.py", p).
+data_layer_module(m) :- module_path(m, p), match("data_layer/[^/]+\\.py", p).
 // root(o, f): f is a root under owner o. Functions: o is the exporting data_layer module (Python linter
 // _scan_exported_module_functions). Methods: o is the exported class's qualified name (_scan_exported_class_methods).
 .decl root(o: symbol, f: node)
 // An exported module-level function, public (no leading _), not defined under _internal/.
-root(m, f) :- data_layer_module(m), exports(m, _, q), qualname(f, q), !nearest(f, _, nonmod),
+root(m, f) :- data_layer_module(m), exports(m, x, q), public_name(m, x), qualname(f, q), kind(f, "function_definition"),
+    !nearest(f, _, nonmod),
     def_name(f, n), !prefix("_", n), count : { docof(f, d), doc(d, p, _), prefix("_internal/", p) } = 0.
-// A public method of an exported class, own or inherited (mro_method follows the bases, across files).
+// A public method of an exported class, own or inherited (pub_member follows the bases, across files).
 // Skipped as in the Python linter: private classes, Protocol classes (by name or by a base), classes named Async…,
 // _-prefixed methods, the method_skip names, private-decorated methods, and properties (getter, setter, deleter).
-root(cq, f) :- data_layer_module(m), exports(m, _, cq), class_def(c, cq), def_name(c, x), !private(c),
+root(cq, f) :- data_layer_module(m), exports(m, y, cq), public_name(m, y), class_def(c, cq), def_name(c, x), !private(c),
     !match(".*(?:Protocol$|^Async).*", x), count : { class_base(c, b), contains("Protocol", b) } = 0,
-    mro_method(cq, n, f), !prefix("_", n), !method_skip(n), !private(f),
-    count : { deco(f, q), glob("**{property,.setter,.deleter}", q) } = 0.
+    pub_member(cq, n, f), !method_skip(n), !private(f).
+// pub_member(cq, n, f): the linter's public_methods_of_class: walking cq and then its bases, the first method named n
+// that is public (no leading _, not a method_skip name) and no property. A skipped member does not hide a base's:
+// when Child overrides Base.read_lazy with a property, Child's read_lazy is Base's (the recording reports
+// Base.read_lazy). Bases are taken as mro_method takes them (any ancestor), less any with a nearer counterpart.
+.decl pub_member(cq: symbol, n: symbol, f: node)
+pub_member(cq, n, f) :- method(cq, n, f), pub_method(n, f).
+pub_member(cq, n, f) :- class_def(_, cq), subclass(cq, b), method(b, n, f), pub_method(n, f),
+    count : { method(cq, n, g), pub_method(n, g) } = 0,
+    count : { subclass(cq, b2), subclass(b2, b), method(b2, n, g2), pub_method(n, g2) } = 0.
+.decl pub_method(n: symbol, f: node)
+pub_method(n, f) :- method(_, n, f), !prefix("_", n), !method_skip(n), !is_property(f).
+// is_property(f): a decorator ending in property, .setter or .deleter (the linter's SymbolInfo.is_property).
+.decl is_property(f: node)
+is_property(f) :- deco(f, q), glob("**{property,.setter,.deleter}", q).
 // mixed(f): the name contains "lazy" and also "sync" or "async" (case-insensitive; "async" contains "sync").
 // Mixed names are not grouped; they are reported by invalid_mixed_lazy_execution_name.
 .decl mixed(f: node)
@@ -196,7 +210,7 @@ bootstrap_base("physical_table_exists_many").
 bootstrap_base("seal_table_exists_cache").
 // Computed once per group so each exempt rule can reuse it.
 .decl owner_name(o: symbol, b: symbol, x: symbol)  // x: the owner's last dotted segment
-owner_name(o, b, x) :- member(o, b, _, _), match("(?:.*\.)?(?<x>[^.]+)", o).
+owner_name(o, b, x) :- member(o, b, _, _), match("(?:.*\\.)?(?<x>[^.]+)", o).
 .decl exempt(o: symbol, b: symbol)
 // Lifecycle methods (commit/rollback on caches and migrations, execute_ddl on schema transactions).
 exempt(o, b) :- owner_name(o, b, x), lifecycle(x, b).
@@ -238,7 +252,7 @@ not_surface(f) :- path_of(f, p), ctx_path(p), nearest(f, c, cdef), def_name(c, x
 // A chainable builder returns its own class: the return annotation is the class name, optionally quoted and
 // optionally subscripted (`-> "Query[T]"`). The regex captures the bare name; it must equal the class name x.
 not_surface(f) :- field(f, "return_type", r), text(r, t), nearest(f, c, cdef), def_name(c, x),   // chainable builder
-    match("['\"]?(?<x>[A-Za-z_][A-Za-z0-9_]*)(?:\[.*\])?['\"]?", t).
+    match("['\"]?(?<x>[A-Za-z_][A-Za-z0-9_]*)(?:\\[.*\\])?['\"]?", t).
 // surface(f): an execution base name with a hint, or a true lazy member, or a legacy-decorated member.
 .decl surface(f: node)
 surface(f) :- member(_, b, _, f), !not_surface(f), exec_base(b), hint(f).
@@ -264,9 +278,13 @@ checked(o, b) :- live(o, b), count : { live(p, b), p < o,
 // same_params(f, g): f and the lazy member g of its group take the same parameters, by name and position.
 // Python linter _legacy_decorator_applicable compares the full param_names tuples; this ignores self and cls.
 .decl same_params(f: node, g: node)
-same_params(f, g) :- member(o, b, _, f), member(o, b, "lazy", g),
-    count : { params(f, x, i), x != "self", x != "cls", !params(g, x, i) } = 0,
-    count : { params(g, x, i), x != "self", x != "cls", !params(f, x, i) } = 0.
+same_params(f, g) :- lazy_pair(f, g), !params_differ(f, g).
+.decl lazy_pair(f: node, g: node)
+lazy_pair(f, g) :- member(o, b, _, f), member(o, b, "lazy", g).
+// params_differ(f, g): one of the two has a parameter (other than self and cls) at a position the other lacks.
+.decl params_differ(f: node, g: node)
+params_differ(f, g) :- lazy_pair(f, g), params(f, x, i), x != "self", x != "cls", !params(g, x, i).
+params_differ(f, g) :- lazy_pair(f, g), params(g, x, i), x != "self", x != "cls", !params(f, x, i).
 
 // missing(o, b, s, at): checked group (o, b) has no member in slot s. Lazy-only groups need no other slot, as in
 // the Python linter's required_slots. The finding is anchored at the exemplar, as the Python linter reports exemplar.path/line.
@@ -296,7 +314,7 @@ missing_lazy_decorator(l) :- checked(o, b), member(o, b, "lazy", l), !lazy_decor
 .violation direct_wrapper_bypasses_lazy_owner(at: node)
     "{qualname(at)} uses a direct legacy wrapper despite an available lazy owner; delegate through the lazy member"
 direct_wrapper_bypasses_lazy_owner(f) :- checked(o, b), member(o, b, "lazy", _), member(o, b, s, f), s != "lazy",
-    deco(f, q), match(".*(^|\.)direct_legacy[^.]*", q),
+    deco(f, q), match(".*(^|\\.)direct_legacy[^.]*", q),
     within(c, f), cname(c, x),
     glob("{grammar_effect_lazy,grammar_rows_lazy,grammar_row_lazy,{execute_grammar,grammar_fetch}**_lazy}", x).
 

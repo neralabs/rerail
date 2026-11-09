@@ -1,3 +1,9 @@
+// A build of some languages, or without the addon (`headless`), leaves the others' code and the addon's API unused by
+// design: dead-code warnings there say nothing (the default build still warns).
+#![cfg_attr(any(not(feature = "all-languages"), feature = "headless"), allow(dead_code))]
+// The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
+#[cfg(target_family = "wasm")]
+extern crate cranelift_jit_wasm as cranelift_jit;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
@@ -15,6 +21,9 @@ pub mod git_workspace;
 mod main_instance;
 mod model;
 pub mod process;
+/// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
+#[cfg(target_family = "wasm")]
+pub mod reactor;
 mod rules;
 
 use model::{ModelFingerprint, load_model};
@@ -25,11 +34,11 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 // jemalloc does not build for MSVC targets; Windows keeps the system allocator.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 union JemallocConf {
     byte: &'static u8,
     character: &'static std::ffi::c_char,
@@ -39,7 +48,7 @@ union JemallocConf {
 // decay cost a tenth of the data-layer benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
@@ -52,7 +61,7 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 /// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
 /// which the system allocator served at 10% of the parse. Installed when the addon loads, before
 /// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
     use std::ffi::c_void;
@@ -117,6 +126,31 @@ pub fn health() -> Health {
     }
 }
 
+/// What `verify_model` found: `problem` and `file` are absent where the model matches its manifest.
+#[napi(object)]
+pub struct ModelCheck {
+    /// `missing`, `unreadable`, `invalid-manifest` or `checksum-mismatch`.
+    pub problem: Option<String>,
+    /// The file in the model directory at fault, `manifest.json` included.
+    pub file: Option<String>,
+}
+
+/// Checks the model directory at `model_path` against its `manifest.json` (every file's SHA-256),
+/// as a session's attach does, without loading the model.
+#[napi(catch_unwind)]
+pub fn verify_model_files(model_path: String) -> ModelCheck {
+    match model::verify_model(Path::new(&model_path)) {
+        Ok(()) => ModelCheck {
+            problem: None,
+            file: None,
+        },
+        Err(fault) => ModelCheck {
+            problem: Some(fault.problem.to_owned()),
+            file: Some(fault.file.to_owned()),
+        },
+    }
+}
+
 /// Check a pattern against the regex dialect and size limit structural rule conditions compile with.
 #[napi]
 pub fn validate_regex(pattern: String) -> Result<()> {
@@ -165,7 +199,7 @@ pub fn process_session_id(pid: i32) -> Result<Option<i32>> {
 /// neither does the Windows system allocator: its counters read zero.
 #[napi]
 pub fn native_memory_profile() -> String {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     let allocator = {
         let _ = tikv_jemalloc_ctl::epoch::advance();
         serde_json::json!({
@@ -176,7 +210,7 @@ pub fn native_memory_profile() -> String {
             "retainedBytes": tikv_jemalloc_ctl::stats::retained::read().unwrap_or(0),
         })
     };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_family = "wasm"))]
     let allocator = serde_json::json!({
         "allocatedBytes": 0,
         "activeBytes": 0,
@@ -209,7 +243,7 @@ static SQLITE_ALLOCATOR: extern "C" fn() = {
 /// Return allocator pages after eviction closes idle SQLite connections.
 pub(crate) fn release_allocator_memory() {
     // Background threads, where available, decay pages between applies too.
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     let _ = tikv_jemalloc_ctl::background_thread::write(true);
     purge_allocator_pages();
 }
@@ -218,7 +252,7 @@ pub(crate) fn release_allocator_memory() {
 pub(crate) fn purge_allocator_pages() {
     // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
     // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_family = "wasm")))]
     unsafe {
         tikv_jemalloc_sys::mallctl(
             c"arena.4096.purge".as_ptr(),
