@@ -78,6 +78,7 @@ directed acyclic graph of mask operations.
 | `lexer NAME` | Starts the file. |
 | `class NAME = ITEMS` | A set of bytes, such as `'"'`, `'\n'`, `'a'..'z'` or `0x80..0xff`. Its mask has a bit at each byte in the set. |
 | `mask NAME = EXPR` | A named mask. |
+| `number NAME = NEXPR` | A number per byte: a place, or a length (§2.8). |
 | `machine NAME { … }` | A data-parallel automaton over chosen event bytes (§2.3). |
 | `scan NAME = reflect(A -> S, B -> T) [reset R] [start lane]` | The reflection scan: states `out`, `S`, `T` (§2.7). |
 | `scan NAME = count(UP, DOWN) [reset R] max D` | A count that never goes below 0 and is bounded by `D` (§2.7). |
@@ -140,6 +141,7 @@ Bit `i` is byte `i`. "Earlier" means a smaller `i`.
 | `C.since(a)` | that frame holds a byte of `a` at its own level, before `i` |
 | `T*.in(S)`, `T*.on(A -> B)`, … | the OR of the same test over every instance of the machine template `T` (§2.5) |
 | `at_end(a)` | (file-level) `a` is set at the last byte |
+| `at_least(x, y)`, `above(x, y)` | number `x` at `i` is at least, or more than, number `y` at `i` (either may be a constant, or `position`) (§2.8) |
 
 A byte that is both a start and an end of `fill(s, e)` starts a new fill: the end stops the fill
 coming in, and the start begins another. So a fill meant to cover only the bytes of a token must
@@ -340,7 +342,7 @@ before it, so by induction from the left there is one self-consistent answer
 - every way from a carry to a `next` passes a `prev`, so a byte's next value reads the carries
   only at bytes before it;
 - no `next(…)` reads a value that depends on a carry (a `next` of raw bytes is fine);
-- the body holds only `mask`, `carry` and `next`.
+- the body holds only `mask`, `number`, `carry` and `next`.
 
 Then the fixed point is unique, and rounds reach it from the left. Each round makes one more
 bit of a 64-bit block right, so a block settles within 65 rounds, the confirming one included.
@@ -361,6 +363,36 @@ rounds until settled {
 }
 ```
 
+### 2.8 Numbers
+
+Some decisions compare lengths. A run of `n` backticks opens a literal that only a later run
+of at least `n` closes, and `n` has no bound. A mask holds one bit per byte, so it cannot hold
+a length. A **number** holds one per byte: an unsigned 32-bit value. Arithmetic on it wraps,
+mod 2^32. A file is shorter than 2^32 bytes, so a place or a distance in it is exact.
+
+| Number | Byte `i`'s value |
+|---|---|
+| `position` | `i` |
+| `fill(s, e, v)` | on the bytes of `fill(s, e)`, `v` at the byte of `s` the fill came from; 0 elsewhere. Each byte of `s` starts a fill of its own, so it is the nearest one |
+| `back_fill(s, e, v)` | the mirror: `v` at the byte of `s` the `back_fill` came back from |
+| `x - y` | the difference, mod 2^32 |
+
+Masks compare numbers with `at_least(x, y)` and `above(x, y)`.
+
+```
+# How many backticks follow each backtick of a run, the run's own excluded.
+mask   last = tick & ~next(tick)
+number end  = back_fill(last, ~tick, position)    # the run's last byte, at each of its bytes
+number rem  = end - position
+mask   long = tick & at_least(rem, 3)             # four backticks or more from here
+```
+
+A number is lowered to 32 masks, its *planes*: plane `k` holds the bytes whose value has bit
+`k` (§3.1). A `fill` and a `back_fill` move each plane as a mask. A difference and a compare
+are ripples of borrows over the planes, a few word operations per plane. There are no loops,
+and no operation reads another byte's number except through a plane's `fill`, `back_fill`
+or `prev`. A `number` may stand in `rounds until settled`, with no `back_fill` there.
+
 ## 3. Lowering
 
 ### 3.1 Masks
@@ -379,6 +411,7 @@ block boundary carries a small state from block to block:
 | `back_fill(s, e)` | `fill` on bit-reversed words (`rbit`), blocks taken last to first | the same, scanning the other way | one borrow bit, passed backwards |
 | `after_odd_run` | simdjson's add-with-carry over odd and even run starts | the same per word, with the carry passed by a scan | one carry bit |
 | `starts` `lasts` `after` `span` `run` | `prev`/`next` and logic | the same | as `prev`/`next` |
+| `position`, plane `k` | below 6, a constant pattern (`0xAAAA…` for 0); from 6, bit `k − 6` of the block's index, spread to the word | not yet: refused | nothing |
 
 Every carry is a single bit, and every carry combines associatively:
 

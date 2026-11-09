@@ -632,9 +632,24 @@ fn check_baseline(per_check: &BTreeMap<(String, String), [usize; 4]>, only: Opti
     assert!(worse.is_empty(), "worse than the replay baseline:\n{}", worse.join("\n"));
 }
 
-/// The rules `rules` (comma-separated ids, or `*`) in one corpus run: each file parsed and batched once, every rule
-/// over each chunk. Prints the run as `measure_converted_rules` does, and the violations per rule.
+/// The rules `rules` (comma-separated ids, or `*`), each check's hand-written rule replacing its converted one, as in
+/// the replay. A run binds one shape of base relations (`core.rr`'s for the hand-written rules, T's for the converted
+/// ones), so the two sets are two runs: the converted rules of the checks with no hand-written rule, then the
+/// hand-written rules, and the totals. `RERAIL_MEASURE_HAND=off`, `only` or `skip`: that one run alone.
 fn measure_all(corpus: &Path, rules: &str) {
+    let mode = std::env::var("RERAIL_MEASURE_HAND").unwrap_or_default();
+    if !mode.is_empty() {
+        measure_shape(corpus, rules, &mode, "all");
+        return;
+    }
+    let (a, b) = (measure_shape(corpus, rules, "skip", "converted"), measure_shape(corpus, rules, "only", "hand-written"));
+    println!("MEASURE total: {} programs, violations {}, CPU {:.2} s, peak RSS {:.0} MB", a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3.max(b.3));
+}
+
+/// One run of `measure_all`: `mode` as `RERAIL_MEASURE_HAND` (`off`, `only`, `skip`). Each file parsed and batched
+/// once, every rule over each chunk. Prints the run as `measure_converted_rules` does, and the violations per rule.
+/// Its programs, violations, CPU and peak RSS.
+fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize, usize, f64, f64) {
     let ids: Vec<String> = if rules == "*" {
         let mut ids: Vec<String> = std::fs::read_dir(pack().join("datalog")).unwrap().filter_map(|e| {
             let p = e.unwrap().path();
@@ -650,7 +665,6 @@ fn measure_all(corpus: &Path, rules: &str) {
     // `RERAIL_MEASURE_HAND=only`: the hand-written rules alone, including the checks the pack has no rule for; `skip`: the
     // converted rules of the other checks. A run binds one shape of base relations (`core.rr`'s, or T's), so the two
     // sets are two runs.
-    let mode = std::env::var("RERAIL_MEASURE_HAND").unwrap_or_default();
     let hand = mode != "off";
     let texts: Vec<String> = ids
         .iter()
@@ -662,7 +676,7 @@ fn measure_all(corpus: &Path, rules: &str) {
             if written.is_some() {
                 println!("HAND {id}");
             }
-            match (mode.as_str(), written) {
+            match (mode, written) {
                 ("only", w) => w,
                 ("skip", Some(_)) => None,
                 (_, Some(w)) => Some(w),
@@ -693,22 +707,28 @@ fn measure_all(corpus: &Path, rules: &str) {
         }
     }
     let programs: Vec<&str> = texts.iter().map(String::as_str).collect();
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("measure-all");
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("measure-{label}"));
     if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
-        crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join("all"));
+        crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join(label));
+    }
+    if programs.is_empty() {
+        println!("MEASURE {label}: no programs");
+        return (0, 0, 0.0, 0.0);
     }
     let r = super::super::plan::corpus::run_all(&programs, corpus, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
     let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
     println!(
-        "MEASURE all {} rules: {} files, {} nodes, {} chunks, violations {}, CPU {cpu:.2} s, peak RSS {rss:.0} MB; text tests {} relations, {} strings, {:.3} s CPU",
+        "MEASURE {label} {} rules: {} files, {} nodes, {} chunks, violations {}, CPU {cpu:.2} s, peak RSS {rss:.0} MB; text tests {} relations, {} strings, {:.3} s CPU",
         programs.len(), r.files, r.nodes, r.chunks, r.rows.get("violation").copied().unwrap_or(0), r.text.0, r.text.1, r.text.2
     );
     for (name, user, sys, rss, statements) in &r.phases {
         println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
     }
     // `RERAIL_MEASURE_KEEP`: a file to copy the findings to, for comparing them with a script's.
+    // Of two runs, each its own file (`<file>.converted`, `<file>.hand-written`).
     if let Some(keep) = std::env::var_os("RERAIL_MEASURE_KEEP") {
+        let keep = if label == "all" { PathBuf::from(keep) } else { PathBuf::from(format!("{}.{label}", PathBuf::from(keep).display())) };
         std::fs::copy(out.join("violation.csv"), keep).unwrap();
     }
     // Violations per rule: the first column of `violation.csv` is the rule's id.
@@ -721,6 +741,7 @@ fn measure_all(corpus: &Path, rules: &str) {
         println!("VIOLATIONS {id} {n}");
     }
     let _ = std::fs::remove_dir_all(&out);
+    (programs.len(), r.rows.get("violation").copied().unwrap_or(0), cpu, rss)
 }
 
 /// A measurement, not a check: converted rules (`RERAIL_MEASURE_RULES`, comma-separated rule ids) run over a corpus

@@ -70,6 +70,7 @@ pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
 mod demand;
 mod native_demand;
+pub(in crate::code_rule_dsl) mod sketch;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -432,7 +433,8 @@ impl Stats {
     /// Posting-weighted fanout of an equality probe on `cname` confined to one document: sqd / rows.
     fn fan_doc(&self, rel: &str, cname: &str) -> f64 {
         let [rows, _, _, sqd] = self.col[&(rel.to_owned(), cname.to_owned())];
-        if rows != 0 { sqd as f64 / rows as f64 } else { 1.0 }
+        let skewed = skew(rel, cname.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)), 2);
+        if rows != 0 { (sqd as f64 / rows as f64 * skewed).max(1.0) } else { 1.0 }
     }
 
     /// Expected parent reads to climb from `kind` to the nearest ancestor in `kset` (an absorbing Markov chain).
@@ -658,6 +660,36 @@ impl Drop for KeepPlans {
     }
 }
 
+thread_local! {
+    /// Whether the planner reads its statistics skewed (`Model::plan_inner`, `RERAIL_STATS_SKEW`).
+    static SKEWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `RERAIL_STATS_SKEW=f[:seed]`: the largest factor a statistic is skewed by, and the seed of the factors.
+fn skew_setting() -> Option<(f64, u64)> {
+    static SETTING: std::sync::OnceLock<Option<(f64, u64)>> = std::sync::OnceLock::new();
+    *SETTING.get_or_init(|| {
+        let v = std::env::var("RERAIL_STATS_SKEW").ok()?;
+        let (f, seed) = v.split_once(':').map_or((v.as_str(), "0"), |(a, b)| (a, b));
+        Some((f.parse().ok()?, seed.parse().ok()?))
+    })
+}
+
+/// The factor statistic `what` of column `c` of `rel` is skewed by while skewing: fixed per (seed, rel, c, what),
+/// log-uniform in [1/f, f]; 1 otherwise.
+fn skew(rel: &str, c: usize, what: u64) -> f64 {
+    let Some((f, seed)) = skew_setting().filter(|_| SKEWING.with(std::cell::Cell::get)) else { return 1.0 };
+    let mut h = seed ^ (what << 56) ^ (c as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    for b in rel.bytes() {
+        h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+    }
+    h ^= h >> 31;
+    h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h ^= h >> 29;
+    let u = (h >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0;
+    (u * f.ln()).exp()
+}
+
 /// A rule body in plan order, its estimated work and its estimated output rows.
 pub(in crate::code_rule_dsl) type Plan = (Vec<Step>, f64, f64);
 
@@ -676,7 +708,7 @@ impl Model {
     }
 
     fn ndv_or_1(&self, rel: &str, c: usize) -> f64 {
-        self.ndv.get(&(rel.to_owned(), c)).copied().unwrap_or(1.0).max(1.0)
+        (self.ndv.get(&(rel.to_owned(), c)).copied().unwrap_or(1.0) * skew(rel, c, 0)).max(1.0)
     }
 
     /// Orders a rule body (T's `plan_rule`). Dynamic programming over subsets of the join literals (Selinger): the
@@ -821,10 +853,34 @@ impl Model {
                 _ => None,
             }))
             .collect();
-        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| k.4.clone()));
-        if let Some(priced) = kept.filter(|k| near(&k.sizes, &sizes)) {
-            super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
-            return Ok(priced.got.clone());
+        // The last price, and the work of the order when it was searched.
+        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| Some((k.4.clone()?, k.1))));
+        if let Some((priced, searched)) = &kept {
+            if near(&priced.sizes, &sizes) {
+                super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
+                return Ok(priced.got.clone());
+            }
+            // A size moved: the kept order is priced again (no search), and kept while its work grew less than
+            // `REPLAN` times or by fewer than `REPLAN_ROWS` rows over its work when searched, as a kept plan is
+            // across chunks. Most moves are small relations growing between waves (1 row, then 50), where any
+            // order costs less than a search.
+            let then = *searched;
+            let repriced = {
+                let _span = super::profile::span(|| "re-price".into());
+                self.plan_inner(prog, head, body, first, Some(&priced.got.0.0), false)
+            };
+            if let Ok((plan, _)) = repriced
+                && (plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS)
+            {
+                super::profile::decision("plan cache (decision 0038)", || "a live replan kept, re-priced: its work grew little".into());
+                let got = (plan, priced.got.1.clone());
+                PLANS.with(|p| {
+                    if let Some(k) = p.borrow_mut().as_mut().and_then(|p| p.get_mut(&key)) {
+                        k.4 = Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }));
+                    }
+                });
+                return Ok(got);
+            }
         }
         let got = {
             let _span = super::profile::span(|| "search".into());
@@ -832,13 +888,17 @@ impl Model {
         };
         PLANS.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
-                p.insert(key, (got.0.0.clone().into(), 0.0, None, 0.0, Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }))));
+                // Its work as searched (for live replans, the second field), against which a re-pricing is judged.
+                p.insert(key, (got.0.0.clone().into(), got.0.1, None, 0.0, Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }))));
             }
         });
         Ok(got)
     }
 
-    /// The search, or with `fixed`, the pricing of that order (an error where it cannot run).
+    /// `plan_search`, under `RERAIL_STATS_SKEW` (a measurement aid, decision 0096): planned with each column's
+    /// fanout and distinct values skewed by a fixed factor in [1/f, f]; a search is also made with the statistics as
+    /// they are, and the skewed order priced with them, so `RERAIL_STATS_SKEW_LOG` gets the regret: the skewed
+    /// order's work over the best order's, by the true statistics.
     fn plan_inner(
         &self,
         prog: &Program,
@@ -852,6 +912,39 @@ impl Model {
         // must not reorder that boundary into a scan of the global witness universe. A recursive
         // delta, when supplied, remains the driver. The prefix is reserved by RR lowering.
         let first = first.or_else(|| body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel.contains("rr_demand_agg_"))));
+        if skew_setting().is_none() {
+            return self.plan_search(prog, head, body, first, fixed, explain);
+        }
+        SKEWING.with(|s| s.set(true));
+        let got = self.plan_search(prog, head, body, first, fixed, explain);
+        SKEWING.with(|s| s.set(false));
+        let got = got?;
+        if fixed.is_none()
+            && std::env::var_os("RERAIL_STATS_SKEW_LOG").is_some()
+            && let Ok((truth, _)) = self.plan_search(prog, head, body, first, None, false)
+            && let Ok((priced, _)) = self.plan_search(prog, head, body, first, Some(&got.0.0), false)
+        {
+            use std::io::Write as _;
+            static LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
+            let log = LOG.get_or_init(|| std::env::var_os("RERAIL_STATS_SKEW_LOG").and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok()).map(std::sync::Mutex::new));
+            if let Some(f) = log {
+                let same = shown(&got.0.0) == shown(&truth.0);
+                let _ = writeln!(f.lock().unwrap(), "{:.6}\t{}\t{:.1}\t{:.1}\t{head}", priced.1 / truth.1.max(1e-9), u8::from(same), priced.1, truth.1);
+            }
+        }
+        Ok(got)
+    }
+
+    /// The search, or with `fixed`, the pricing of that order (an error where it cannot run).
+    fn plan_search(
+        &self,
+        prog: &Program,
+        head: &Atom,
+        body: &[Literal],
+        first: Option<usize>,
+        fixed: Option<&[Step]>,
+        explain: bool,
+    ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let stats = &self.stats;
         let rule = obs_rule(head, body);
         // var → constant kind, from kind($v, "k") atoms.
@@ -913,7 +1006,7 @@ impl Model {
                 {
                     return d.get(k).copied().unwrap_or(0) as f64;
                 }
-                stats.fan.get(&(a.rel.clone(), c)).copied().unwrap_or_else(|| self.card(&a.rel) / self.ndv_or_1(&a.rel, c))
+                stats.fan.get(&(a.rel.clone(), c)).map(|f| (f * skew(&a.rel, c, 1)).max(1.0)).unwrap_or_else(|| self.card(&a.rel) / self.ndv_or_1(&a.rel, c))
             };
             let mut first = cols[0];
             for &c in &cols[1..] {
@@ -3074,7 +3167,10 @@ impl Run<'_, '_> {
             // A relation this program part does not declare (an input view of the whole) is not joined natively: SQL
             // reads it.
             let decl = prog.decls.get(&l.rel)?;
-            let types: String = keep.iter().map(|&c| sym_char(&self.model.inputs, &decl[c].1)).collect();
+            let types: String = keep
+                .iter()
+                .map(|&c| sym_char(&self.model.inputs, &decl.get(c).unwrap_or_else(|| panic!("{} is declared with {} columns and read as {l}", l.rel, decl.len())).1))
+                .collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
             let mut sel = self.model.relation(prog, projected.map_or(&l.rel, |(base, _)| base), false).render();
             if !wheres.is_empty() {
@@ -3543,6 +3639,11 @@ impl Run<'_, '_> {
         let placed = placement::place(&shape);
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s } else { 0.0 };
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
+        // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
+        let lab = super::native::component::lab::wanted(&name, shape.work)
+            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &lines.join("\n"), &path));
+        // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
+        let mut timed: Vec<f64> = Vec::new();
         self.fx().open(&lines.join("\n"))?;
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
@@ -3566,6 +3667,14 @@ impl Run<'_, '_> {
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;
             let f: Vec<&str> = f.split_whitespace().collect();
+            if let Some(per) = f.get(7).filter(|_| f.len() == 9 && super::profile::on()) {
+                for (k, item) in per.split(',').enumerate() {
+                    if timed.len() <= k {
+                        timed.resize(k + 1, 0.0);
+                    }
+                    timed[k] += item.rsplit(':').next().and_then(|c| c.parse::<f64>().ok()).unwrap_or(0.0) / 1e3;
+                }
+            }
             if f.last() == Some(&"2") {
                 answer_pending(self.db, self.model.inputs.atoms.is_some(), &mut self.answer, &mut self.answered, &name, scc)?;
                 continue;
@@ -3655,7 +3764,7 @@ impl Run<'_, '_> {
             let empty = Vec::new();
             let kinds = seeds.iter().map(|r| format!("seed {}", r.head)).chain(probes.iter().map(|(r, ai, _)| format!("join {} (delta at {ai})", r.head)));
             for ((k, o), kind) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate().zip(kinds) {
-                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty));
+                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0));
             }
             // After the native plans: they are charged to this stratum's `engine run (joins)` by the current span.
             let _record = super::profile::span(|| "profile record".into());
@@ -3708,6 +3817,9 @@ impl Run<'_, '_> {
         {
             let _close = super::profile::span(|| "engine close".into());
             self.fx().close(&name)?;
+        }
+        if let Some(capture) = lab {
+            super::native::component::lab::capture_outputs(self.db, capture);
         }
         self.native_rels.extend(scc.iter().cloned());
         Ok(true)

@@ -594,12 +594,20 @@ node scripts/profiling/sql-report.mjs --sql-session /tmp/sql-profile/raw /tmp/sq
 ```
 
 The report contains SQL text, EXPLAIN plans, bytecode, CPU time, VM instructions, and native table counters.
+Explain includes disjoint-producer proofs, dependent bag-storage decisions, and the requirements for shared transitions across wave gates.
+Shared transitions require the same input snapshot, prior summary roots, pending delta journal, projection, layout, and ordering.
+Each consumer retains its own lookup mapping and dependency index. Nullable values and opaque callbacks retain their existing effect boundaries.
 Contexts identify the API operation, preparation stage, recursive component, frame, relation, and rule step.
 Native version differences have separate operator records. Failed operations and rollback remain in the trace.
 Retained support initialization records exclusive native CPU, excluding child SQL and child operators.
 
 Native table counters include compound-key prefix probes and candidate inspections, including candidates that SQLite rejects.
 The benchmark probe reuses this profiler when capture is active, preserving SQLite's single callback.
+
+Fully retained schedules expose immutable row-count metadata through `temp.wave_stats`.
+Edits publish those counts without helper SQL writes. Rollback restores the previous metadata snapshot.
+A later cold program atomically restores the writable SQL table before its scheduler runs.
+SQL views and text predicates can read the same count interface.
 
 Fused phase preparation has its own CPU span and report category.
 Its context records SQL bytes, CTE definitions, result branches, and logical reads.
@@ -624,7 +632,25 @@ The independent cold kernel runs in a separate process without SQL capture.
 Every checkpoint includes all explicit facts, derived relations, and widening counters.
 The adapter also compares output deltas, failed-operation rollback, recovery, and final queries.
 Integer cells use decimal strings, so JavaScript does not round them.
-Snapshot and file publication need separate replay support. The verifier rejects those requests.
+The verifier also accepts an initial `snapshot` and snapshot/file publication steps.
+Each step supplies exactly one action: `changes`, `snapshot`, or `file_changes`.
+`file_changes` uses the session API's `upsert` and `delete` fields.
+
+Every checkpoint includes the native inputs that the program reads, derived tables, projection views, and widening counters.
+Document checkpoints also compare every path, language, and source text.
+Symbols compare by text. Nodes compare by document path and local identity. Direct document-key copies compare by path.
+Numeric cells retain exact decimal strings. Queries that return symbols can use `sym_text` to compare their text across stores.
+Failure checkpoints preserve the previous facts and documents. Successful retries must match a fresh cold execution.
+
+The document generator covers replacement snapshots, file additions and deletions, no-op edits, restoration, and empty inputs:
+
+```sh
+python3 benchmark/sql-executor.py --document-session-request 32 /tmp/documents.json
+node scripts/profiling/sql-session.mjs target/profiling/examples/sql-session-verify /tmp/documents.json /tmp/sql-documents
+```
+
+`--projection` adds projection-view coverage. `--scalar-consumers` selects the mixed set/scalar fallback case.
+The report enforces the same complete-job allowance for every variant. Correct parity alone does not satisfy that allowance.
 
 `steps` supplies changes, optional limits, and an optional expected error class.
 The generated request includes instruction-limit and wave-limit failures, followed by a successful retry and six edits.
