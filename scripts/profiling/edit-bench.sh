@@ -39,7 +39,7 @@ edit_cmd() {
     body) echo "python3 -I -c 'import re,sys; p=sys.argv[1]; s=open(p).read(); m=re.search(r\"^( *)def [^\\n]*:\\n\", s, re.M); i=m.end(); ind=re.match(r\"[ \\t]*\", s[i:]).group(0) or m.group(1)+\"    \"; open(p,\"w\").write(s[:i]+ind+\"_t31_local = 0\\n\"+s[i:])' '$target'" ;;
     comment) echo "python3 -I -c 'import re,sys; p=sys.argv[1]; s=open(p).read(); m=re.search(r\"^( *)def \", s, re.M); open(p,\"w\").write(s[:m.start()]+m.group(1)+\"# t31: a comment\\n\"+s[m.start():])' '$target'" ;;
     import) echo "python3 -I -c 'import sys; p=sys.argv[1]; s=open(p).read(); open(p,\"w\").write(\"import json as _t31_json\\n\"+s)' '$target'" ;;
-    rule) set -- ${RULE_EDIT}; echo "sed -i.bak '$2' '$out/rules/$1' && rm -f '$out/rules/$1.bak'" ;;
+    rule) local rf=${RULE_EDIT%% *} expr=${RULE_EDIT#* }; echo "sed -i.bak '$expr' '$out/rules/$rf' && rm -f '$out/rules/$rf.bak'" ;;
   esac
 }
 runs="cold warm append body comment import"

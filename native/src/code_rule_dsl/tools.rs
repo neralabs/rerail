@@ -614,7 +614,14 @@ fn repeat_command(script: &str) -> Result<String, String> {
         let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
         match word {
             "env" => match rest.split_once('=') {
-                Some((k, v)) => unsafe { std::env::set_var(k.trim(), v.trim()) },
+                Some((k, v)) => {
+                    unsafe { std::env::set_var(k.trim(), v.trim()) };
+                    // The profiler reads its directory once: each run's report goes where the script says.
+                    if k.trim() == "RERAIL_PROFILE" {
+                        crate::code_rule_dsl::logic::profile::set(true);
+                        crate::code_rule_dsl::logic::profile::set_directory(Path::new(v.trim()));
+                    }
+                }
                 None => unsafe { std::env::remove_var(rest.trim()) },
             },
             "sh" => {
