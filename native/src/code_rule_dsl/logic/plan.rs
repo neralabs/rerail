@@ -459,7 +459,8 @@ impl Stats {
 
 /// The planner's model of the data: statistics, distinct counts, and what the views are.
 pub(in crate::code_rule_dsl) struct Model {
-    pub(in crate::code_rule_dsl) analysis: super::analysis::ProgramAnalysis,
+    /// The program's logical key and scalar analysis, made once per plan and shared (not made again per stratum).
+    pub(in crate::code_rule_dsl) analysis: std::sync::Arc<super::analysis::ProgramAnalysis>,
     pub(in crate::code_rule_dsl) stats: Stats,
     pub(in crate::code_rule_dsl) ndv: HashMap<(String, usize), f64>,
     /// rel → (node column, document column) for projections of `node(d, n)`: documents are id intervals.
@@ -1333,7 +1334,7 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
         let analysis = super::analysis::ProgramAnalysis::analyze(prog);
         analysis.explain();
-        analysis
+        std::sync::Arc::new(analysis)
     };
     let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut stats = Stats::new(db, prog, &mut inputs)?;
@@ -4006,7 +4007,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     drop(setup);
     let planning = super::profile::span(|| "statistics and plan".into());
-    let model = {
+    let mut model = {
         let _span = super::profile::span(|| "statistics".into());
         make_plan(prog, db, inputs)?
     };
@@ -4025,6 +4026,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
             });
             split = p;
+            // The program run is the split one: its analysis is that program's.
+            let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
+            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&split));
             &split
         }
         None => prog,
