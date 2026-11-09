@@ -65,13 +65,6 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
         if !family.lookup.proven {
             continue;
         }
-        let had_shared = family.members.iter().any(|&i| {
-            let (out, rule, site) = &paths[i];
-            reducer::combined::already_shared(&plans.states[out].rules[*rule].reducers[*site])
-        });
-        if family.members.len() == 1 && !had_shared {
-            continue;
-        }
         let mut locals = BTreeMap::<(String, usize), Vec<usize>>::new();
         for &i in &family.members {
             let (out, rule, _) = &paths[i];
@@ -112,6 +105,7 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
                         &family.layout,
                         &members,
                         site == members[0],
+                        lookup.lookup.proven,
                         consumers,
                     );
                 }

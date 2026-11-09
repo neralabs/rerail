@@ -459,6 +459,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         }
         // The words, once the fallback's totals are known: each must be zero.
         let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, &meets, empties, whole, false)?;
+        // The extras' kinds: the node table flags their nodes (comments).
+        readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;
         super::rir::reading_rows(&mut lowered.text, &readings);
         let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
         tier2 = Some((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks));

@@ -250,10 +250,44 @@ Keeping the inputs whose rows did not change, with their indexes, was tried and 
 ways). The 154 kept inputs were cheap; the cost is in the 105 that changed. It was removed.
 
 The two diff strata cost 6.7 s of the 21 s evaluate, all of it in the repository's size: each anti-joins a whole
-relation against its old rows. The digests of every input read the same rows in 0.14 s. A step's input delta
-should be read, not computed. That means the changed documents' old and new rows of each input, which needs the
-cross inputs held per document, not assembled whole each run. That is the next step for engine open and for the
-diff strata both.
+relation against its old rows. The digests of every input read the same rows in 0.14 s.
+
+**An input's delta is read from the documents that changed** (`corpus/input_delta.rs`). The session's memo
+already holds each document's rows per content (decision 0052). So a run records each document's content, and the
+next run takes the old and new entries of the documents whose content changed, came or went:
+
+```text
+r__minus = ∪ over changed d: old(d) \ new(d)     r__plus = ∪ over changed d: new(d) \ old(d)
+```
+
+These are bound as inputs in place of the diff rules (`maintain::rewrite`'s `given`). The work is the changed
+documents' rows.
+
+A relation qualifies only when its rows are each one document's: every row of `d`'s entry names a node of `d` or
+of one of its guests. The file-local part sees one document, so no other entry holds that row. A guest's key is a
+hash of its host's path, so its rows are in that host's entry alone. Two guards send a relation back to the diff
+rules:
+- a row that names no such node (a text test's strings, a loaded document's rows, which go to every file that
+  asked, or `doc(d, path)`, keyed by the document key alone);
+- row counts that do not add up (`old − gone + new ≠ rows`), meaning another source fed the relation.
+
+The empty-join pruning above also covers these bound deltas: they are bound once, before the run. Other inputs
+can be bound when their first reader runs, so emptiness is not trusted for them. `RERAIL_DIFF_INPUTS` makes every
+delta by the rules again.
+
+On the replay every changed input qualifies at steps 06 and 07 (105 and 135). At step 08, 185 do, and a few
+small ones keyed by the document key alone (`doc`, `exists_0`, `py_docmod`) go to the rules. On the same binary, with the outputs equal to a full
+run's at every step:
+
+| step | deltas by rules | from documents |
+|---|---:|---:|
+| 06 (2 files) | 24.0 s | 17.6 s |
+| 07 (6 files) | 26.6 s | 20.3 s |
+| 08 (6 files) | 53.9 s | 43.1 s |
+
+Session CPU, load 45–70. At step 06 (load 90–130) the diff strata went from 5.3 s to 0.15 s, and engine open
+from 4.1 s to 2.7 s. Reading the deltas costs 0.55 s, nearly all of it hashing the two changed files' rows:
+the per-file unit 0083 §0 names as the step before per-definition.
 
 **Binding** costs 3.4 s: 2.2 s for 103 sources that are not kept, and 1.1 s for 282 kept ones.
 - The 103 are inputs' old rows (`X__old`), which were measured from their rows every step. They are now given the
@@ -263,7 +297,7 @@ diff strata both.
 Binding the kept relations then costs 1.25 s.
 
 What is left at step 06:
-- the input diffs (above);
+- engine open's derived-input indexes and survivors (about 1.9 s);
 - the joins (7.5 s);
 - the over-delete stratum (O137's);
 - `statistics` and key analysis, 0.7 s each, run once per run over the whole rewritten program.

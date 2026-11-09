@@ -205,6 +205,25 @@ impl ContentStore {
         })
     }
 
+    /// Keeps memo plan `plan`'s statistics (decision 0096 §2): one blob, written by the run that counted them.
+    pub fn put_stat_blob(&self, plan: [u8; 32], blob: &[u8]) -> StoreResult<()> {
+        self.immediate_transaction(|tx| {
+            tx.execute_batch("CREATE TABLE IF NOT EXISTS stat_blob(plan BLOB PRIMARY KEY, blob BLOB NOT NULL) WITHOUT ROWID")?;
+            tx.execute("INSERT OR REPLACE INTO stat_blob(plan, blob) VALUES (?1, ?2)", params![&plan[..], blob])?;
+            Ok(())
+        })
+    }
+
+    /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them.
+    pub fn stat_blob(&self, plan: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let kept: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stat_blob'", [], |r| r.get(0))?;
+        if kept == 0 {
+            return Ok(None);
+        }
+        Ok(connection.query_row("SELECT blob FROM stat_blob WHERE plan=?1", [&plan[..]], |r| r.get(0)).optional()?)
+    }
+
     /// Records the relations a memo plan's entries hold rows of, each with its declared columns (JSON).
     pub fn record_corpus_relations(&self, plan: [u8; 32], relations: &[(String, String)]) -> StoreResult<()> {
         self.immediate_transaction(|tx| {

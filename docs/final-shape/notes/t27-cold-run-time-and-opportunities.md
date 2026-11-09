@@ -132,8 +132,13 @@ is about a third of a second per search for a relation with 23 rows (t26). `fgp`
 
 - Demand per read, chosen from stored liveness (t26 § The on-demand path). Start with `bv` and `found`, which are
   selective, and with `wbind`, whose cost is in its probes.
-- `wbind`'s join order search (9.9 s): keep its order across waves while its delta alone grows, bound the
-  search for wide bodies, or replace `wbind` with the searches of t28.
+- `wbind`'s join order search: done, 11.9 s → 2.05 s with the same plans (identical plan set, 6,299 agree).
+  Three changes:
+  - the merged re-pricing of a kept live plan (3c7a8935d), which brought `wbind`'s searches from 295 to 183;
+  - the search visits only the subsets an order reaches;
+  - each subset's bound variables are a bit mask, and its cells sit in arrays indexed by subset, not hash maps.
+
+  `wbind` is still 1.4 s across 183 searches. The searches of t28 would remove it.
 - Base-row statistics summed from the chunks' instead of measured again.
 - One columnar pass for exporting to the cross-file part.
 - The joins' own costs in the dev build (`RowRef::at`, `Stored::rows_of`, index sorts): to be judged in the

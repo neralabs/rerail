@@ -2,6 +2,10 @@
 use super::*;
 
 impl Retained {
+    pub(in crate::code_rule_dsl::sql_executor) fn phase_context_rows(&self, counts: &BTreeMap<String,phase::Counts>) -> u64 {
+        self.rules.iter().filter_map(|r|counts.get(&r.contexts)).map(|c|c.keys as u64).sum()
+    }
+
     pub(in crate::code_rule_dsl::sql_executor) fn phase_arms(&self) -> usize {
         self.rules
             .iter()
