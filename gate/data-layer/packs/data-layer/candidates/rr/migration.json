@@ -3537,7 +3537,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "7e77fa2ead6148b651731514be9670e15934a288",
-    "status": "Merged Final 7e77fa2ea; native Boolean regression and dependency-complete source audit are ready for a fresh TDD build.",
+    "status": "Final 7e77 JSON Boolean regression failed; generic constant-derivation split repair committed for the next TDD build.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3722,6 +3722,11 @@
       {
         "path": "native/src/code_rule_dsl/logic/rr/check.rs",
         "sha256": "4c9c48783f5e0d4decfbabb7f89c0ef86b959d3b27841fd50268eb2467a7bd22"
+      },
+      {
+        "path": "native/src/code_rule_dsl/typing/file_local.rs",
+        "sha256": "0bbe32982ff274fa579460814cb9c9e0d2a0470a2c78f26ed714211f3e438530",
+        "reason": "The actual ratchet port proves document-free Boolean predicates vanish unless public. Keep constant derivations and outputs in the cross program, and do not require per-file exports for them."
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",

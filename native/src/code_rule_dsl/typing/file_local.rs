@@ -681,6 +681,7 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     use crate::code_rule_dsl::logic::front::Literal;
     use std::collections::BTreeSet;
     let (local, locations, same_doc) = split_located(prog);
+    let constants = constant_relations(prog);
     let is_local = |rel: &str| local.contains(rel);
     let read = |rules: &mut dyn Iterator<Item = &crate::code_rule_dsl::logic::front::Rule>| -> BTreeSet<String> {
         rules
@@ -691,7 +692,7 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
             })
             .collect()
     };
-    let cross_reads = read(&mut prog.rules.iter().filter(|r| !is_local(&r.head.rel)));
+    let cross_reads = read(&mut prog.rules.iter().filter(|r| !is_local(&r.head.rel) || constants.contains(&r.head.rel)));
     // A file-local relation that only projects a base input (each rule one positive input atom: `kind` of `node`)
     // is not exported: the cross-file part derives it from the stored input (a view), not from a copy of it.
     let projection = |rel: &str| {
@@ -701,14 +702,14 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
             && rules.all(|r| matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && prog.inputs.contains(&a.rel)))
     };
     let projected: BTreeSet<String> = cross_reads.iter().filter(|r| is_local(r) && projection(r)).cloned().collect();
-    let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
+    let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel) || constants.contains(rel);
     // A relation made natively (`dfs_first`) is cross-file, and reads its inputs there: they are exported too.
     let native_reads = |mut reads: BTreeSet<String>| {
         reads.extend(prog.natives.values().flat_map(|n| n.reads()).map(str::to_owned));
         reads
     };
     let cross_reads = native_reads(read(&mut prog.rules.iter().filter(|r| in_cross(&r.head.rel))));
-    let exports: Vec<String> = cross_reads.iter().filter(|r| is_local(r) && !projected.contains(*r)).cloned().collect();
+    let exports: Vec<String> = cross_reads.iter().filter(|r| is_local(r) && !projected.contains(*r) && !constants.contains(*r)).cloned().collect();
     let base_read: Vec<String> = prog.inputs.iter().filter(|i| cross_reads.contains(*i)).cloned().collect();
     let mut base = base_read.clone();
     for decode in ["node", "doc"] {
@@ -718,7 +719,6 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     }
     let mut l = prog.clone();
     // A relation of constants is derived in both parts (`constant_relations`).
-    let constants = constant_relations(prog);
     l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(&r.head.rel));
     l.lattice.retain(|rel, _| is_local(rel));
     l.gates.retain(|(rel, _)| is_local(rel));
@@ -727,7 +727,7 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     c.rules.retain(|r| in_cross(&r.head.rel));
     c.lattice.retain(|rel, _| !is_local(rel));
     c.gates.retain(|(rel, _)| !is_local(rel));
-    c.outputs.retain(|o| !is_local(o));
+    c.outputs.retain(|o| !is_local(o) || constants.contains(o));
     c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
     Programs { local: l, cross: c, exports, base, locations, same_doc }
 }
