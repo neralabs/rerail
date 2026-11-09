@@ -796,7 +796,7 @@ fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             if !prog.rules.iter().any(|r| r.head.rel == *request) { continue; }
             let alias = rename(request);
             if alias == *request || !world_bridges.insert((request.to_string(),alias.clone())) { continue; }
-            let cols = prog.decls.get(*request).expect("a lowered world request is declared").clone();
+            let cols = prog.decls.get(request).expect("a lowered world request is declared").clone();
             let args: Vec<front::Term> = (0..cols.len()).map(|i| front::Term::Var(format!("rr_world_{i}"))).collect();
             all.decls.entry(request.to_string()).or_insert(cols);
             all.rules.push(front::Rule {
