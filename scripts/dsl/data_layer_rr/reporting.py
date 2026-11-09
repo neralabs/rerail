@@ -157,6 +157,8 @@ def run(args):
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(file['source'])
                 module = modules[case['check']]
+                if case['check']=='raw_execute_regression':
+                    module.REPO_ROOT=root
                 if case['check'] == 'lazy_result_usage':
                     module.BASELINE_FILE = root / 'scripts/lazy_result_baseline.json'
                 if case['check'] == 'module_level_caches':
@@ -187,17 +189,26 @@ def run(args):
             program, phases = None, None
         # Keep the source reporter order. Adapt native rows to that interface's order.
         if native and case['check'] not in {'removed_compat_surfaces', 'serverplan_grammar_surface', 'conn_or_txn_union','transaction_closures','transaction_callback_wrappers','transaction_patterns','lazy_result_usage','module_level_caches','render_fstrings','render_raw_strings','regex_sql_parsing','sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage','grammar_allowlist_burndown'}:
-            last = {'backend_type_strings': 'code', 'error_handling': 'message', 'no_api_root_imports': 'message', 'connection_caches': 'message', 'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'unresolved_forward_refs': 'message', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code', 'async_patterns': 'code', 'async_sync_boundary': 'code', 'plan_scope_ownership':'code'}[case['check']]
+            last = {'raw_execute_regression':'message','backend_type_strings': 'code', 'error_handling': 'message', 'no_api_root_imports': 'message', 'connection_caches': 'message', 'backend_coupling': 'code', 'type_safety_patterns': 'message', 'sync_async_signatures': 'message', 'data_layer_facade_purity': 'code', 'forwardref': 'code', 'unresolved_forward_refs': 'message', 'data_layer_compat_aliases': 'code', 'hnsw_architecture': 'code', 'async_patterns': 'code', 'async_sync_boundary': 'code', 'plan_scope_ownership':'code'}[case['check']]
             actual.sort(key=lambda row: (row['path'], row['line'], row[last], *([row['message']] if case['check'] == 'hnsw_architecture' else [])))
         row = dict(id=case['id'], value=actual, status='passed', programInputs=program, phases=phases)
         if native:
             row['metadata'] = metadata
+        if case['check']=='raw_execute_regression':
+            if native:
+                description=[text for key,text in metadata['settings'] if key=='description']
+                if len(description)!=1:raise ValueError('Raw-execute metadata requires one description')
+                row['sourcePlugin']=dict(name=identity.removeprefix(prefix).replace('-','_'),
+                                         enforcement={'block':'hard-fail','log':'info'}[modes[0]],description=json.loads(description[0]))
+            else:
+                row['sourcePlugin']=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description)
         report['results'].append(row)
         if native:
             expected = oracle['results'][index]
             if expected['id'] != case['id']:
                 raise ValueError('Reporter case identity changed')
             try:
+                if case['check']=='raw_execute_regression':compare(expected['sourcePlugin'],row['sourcePlugin'])
                 if case['check'] in {'hnsw_architecture', 'removed_compat_surfaces'}:
                     row['comparisonContract'] = 'File groups are unordered (source FactEngine.as_completed); every in-file value, duplicate, and order is exact'
                     compare(reporter_file_groups(expected['value']), reporter_file_groups(actual))

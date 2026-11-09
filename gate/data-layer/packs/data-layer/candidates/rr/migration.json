@@ -1879,7 +1879,36 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
       "origin": "authored",
-      "sha256": "69c287f6eb74fdfeab7e6fa15ef57ec6a8d46d87663933e8535da6c149a37c69"
+      "sha256": "57b50347036b7e884af3c279a0bd9fa74d6c95ca11079a5cace197036cbb4f28",
+      "importedSha256": "69c287f6eb74fdfeab7e6fa15ef57ec6a8d46d87663933e8535da6c149a37c69",
+      "repairs": [
+        {
+          "before": "69c287f6eb74fdfeab7e6fa15ef57ec6a8d46d87663933e8535da6c149a37c69",
+          "after": "26123d6f9e96f42f04513dcef3503a87bf1ad1ddd140b222f3b9a248a8190a8e",
+          "reason": "Implement raw-execute traversal, fact conversion, and source scope from complete source observations"
+        },
+        {
+          "before": "26123d6f9e96f42f04513dcef3503a87bf1ad1ddd140b222f3b9a248a8190a8e",
+          "after": "092a3bd0a974fc14e5936c02631fd7f6eba64589110321c49bf40afc90b16c52",
+          "reason": "Limit production parsing to candidate roots while preserving exact relation-level selection"
+        },
+        {
+          "before": "092a3bd0a974fc14e5936c02631fd7f6eba64589110321c49bf40afc90b16c52",
+          "after": "002b175a0f69602f3cbbf17ea40179476c289b61703628b3db39d0e36c7aa630",
+          "reason": "Preserve FileScopeSpec selection through batched native filesystem requests"
+        },
+        {
+          "before": "002b175a0f69602f3cbbf17ea40179476c289b61703628b3db39d0e36c7aa630",
+          "after": "57b50347036b7e884af3c279a0bd9fa74d6c95ca11079a5cace197036cbb4f28",
+          "reason": "Preserve source plugin description and enforcement in compiled metadata"
+        }
+      ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/plugin-discovery.rr",
+      "origin": "authored",
+      "sha256": "e8f424016f69c4e1eaaede4418cd8441451c35485e7026bb42713752a12deb02",
+      "importedSha256": "e8f424016f69c4e1eaaede4418cd8441451c35485e7026bb42713752a12deb02"
     }
   ],
   "rules": [
@@ -2403,7 +2432,7 @@
       "legacySha256": "a6f3834fc9a74b85e5df4706b13efb0943b6bb0ae82e5e0f59a80f048df53c04",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/raw-execute-regression.rr",
-      "ruleSha256": "69c287f6eb74fdfeab7e6fa15ef57ec6a8d46d87663933e8535da6c149a37c69"
+      "ruleSha256": "57b50347036b7e884af3c279a0bd9fa74d6c95ca11079a5cace197036cbb4f28"
     },
     {
       "check": "legacy_execution_surfaces",

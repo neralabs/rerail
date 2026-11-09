@@ -9212,3 +9212,26 @@ The [CLI acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr
 It also retains the tooling tally from the recorded command output.
 The earlier red receipts remain unchanged.
 Deletion mode, import cleanup, CLI/registry integration, eleven absent translations, and full migration acceptance remain open.
+
+### 2026-11-08 — Raw-execute native authoring and workspace boundary failures
+
+The raw-execute detector first fails both original positive tests through successful native execution.
+Both clean tests pass. The saved red receipt retains all four tests and five complete observations.
+The native call, definition, text, and raising-stub implementation then passes all four original tests.
+A first supplemental cohort passes 132 source-derived API cases, including positives, ordering, duplicates, and nested function ownership.
+
+The expanded offline corpus records 187 API cases and 31 reporter cases.
+Fifteen reporter cases contain findings. They include Unicode layer names, compatibility wrappers, and paths containing colons.
+Native fact conversion preserves the source's split-at-two-colons behavior and Unicode digit handling.
+These expanded cases still need the final native acceptance cohort.
+
+Actual workspace checks expose two frontend exclusions that the source plugin does not apply: `.ruff_cache` and `.pytest_cache`.
+The new typed FileScopeSpec discovery library requests those files explicitly and prunes only the source's ignored trees.
+The first sixteen workspace cases pass after this change.
+A separate saved failure proves the source's first-character newline restriction on layer names.
+Four verifier tests pass, including rejection of a detector that drops all fifteen reporter positives and rejection of changed enforcement.
+
+Final advances to `32b16e4fe` before final acceptance.
+This checkpoint preserves the authored rule and evidence before the engine merge.
+The earlier observations use the registered Final-stage-two artifact. They do not certify the newer engine.
+The migration inventory now contains 90 drafts and ten absent translations. Full migration acceptance remains open.

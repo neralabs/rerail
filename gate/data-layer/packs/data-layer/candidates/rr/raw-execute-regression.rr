@@ -1,11 +1,21 @@
 .policy "data-layer-raw-execute-regression" revision 1
-.description "Port of the pinned raw-execute-regression linter."
+.description "Removed raw execution surfaces stay removed from production code"
 .language python
 .mode block
-.scope include "**/*.py"
+.scope dirs "__raw_execute_request_only__"
 .scope exclude
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_raw_execute_regression.py
 #include "python/ast.rr"
+#include "data-layer/plugin-discovery.rr"
+
+// Explicit discovery preserves source FileScopeSpec's cache-directory behavior.
+// The frontend's implicit walker prunes .ruff_cache and .pytest_cache too.
+.decl rre_workspace(path: symbol)
+rre_workspace(".").
+.decl rre_top(name: symbol)
+rre_top(name) :- rre_workspace(path), dir_entry(path,name,1).
+pfd_root(path) :- rre_top(path), (path = "impl" ; path = "data_layer" ; path = "_internal" ; match("l\\d{4}_.+(?s:.*)",path)).
+load(path,cat("raw-execute:",path),"python") :- pfd_file(path).
 
 .decl rre_relative(path: symbol, root: symbol, relative: symbol)
 rre_relative(path,root,@slice(path,strlen(root)+1,strlen(path))) :- option("argumentPath",path), option("argumentRoot",root), prefix(cat(root,"/"),path).
@@ -13,6 +23,219 @@ rre_relative(path,path,".") :- option("argumentPath",path), option("argumentRoot
 .violation RREValue(at: span, value: symbol) code "RRE_VALUE" "value"
 RREValue(@place("",0),relative) :- option("entryPoint","_relative"), rre_relative(_,_,relative).
 .violation RREError(at: span, value: symbol) code "RRE_ERROR" "{value}"
-RREError(@place("",0),cat(@python_repr(path)," is not in the subpath of ",@python_repr(root))) :- option("entryPoint","_relative"), option("argumentPath",path), option("argumentRoot",root), !rre_relative(path,root,_).
+RREError(@place("",0),cat(@python_repr(path)," is not in the subpath of ",@python_repr(root))) :- rre_needs_relative(), option("argumentPath",path), option("argumentRoot",root), !rre_relative(path,root,_).
 .violation RREString(at: span, file_order: number, ordinal: number, value: symbol) code "RRE_STRING" "{value}"
 RREString(@place("",0),0,0,"") :- option("entryPoint",_), 1 = 0.
+.violation RREBool(at: span, value: number) code "RRE_BOOL" "boolean"
+.decl rre_context_stub()
+rre_context_stub() :- (option("hasRaise","true") ; option("hasRaiseHelper","true")), !option("hasBannedCall","true").
+RREBool(@place("",0),1) :- option("entryPoint","_FunctionContext.is_raising_stub"), rre_context_stub().
+RREBool(@place("",0),0) :- option("entryPoint","_FunctionContext.is_raising_stub"), !rre_context_stub().
+.decl rre_query_argument()
+rre_query_argument() :- option("queryName",name), (name = "execute_raw" ; name = "execute_raw_async"), option_item("queryClasses",i,class), i = max j : { option_item("queryClasses",j,_) }, (suffix("Query",class) ; suffix("_CachedQuery",class)).
+RREBool(@place("",0),1) :- option("entryPoint","_is_query_raw_materializer"), rre_query_argument().
+RREBool(@place("",0),0) :- option("entryPoint","_is_query_raw_materializer"), !rre_query_argument().
+
+.decl rre_constant(family: symbol, ordinal: number, value: symbol)
+.decl rre_call_name(name: symbol)
+rre_call_name(name) :- option_item("bannedCalls",_,name).
+rre_call_name(name) :- !option("constantsSupplied","true"), rre_constant("calls",_,name).
+.decl rre_def_name(name: symbol)
+rre_def_name(name) :- option_item("bannedDefs",_,name).
+rre_def_name(name) :- !option("constantsSupplied","true"), rre_constant("definitions",_,name).
+.decl rre_mixed(i: number, value: symbol)
+rre_mixed(i,value) :- option_item("mixedTextOrder",i,value).
+rre_mixed(i,value) :- !option("constantsSupplied","true"), rre_constant("mixed",i,value).
+.decl rre_compatibility(path: symbol)
+rre_compatibility(path) :- option_item("compatibilityFiles",_,path).
+rre_compatibility(path) :- !option("constantsSupplied","true"), rre_constant("compatibility",_,path).
+.decl rre_trigger(value: symbol)
+rre_trigger(value) :- rre_call_name(value).
+rre_trigger(value) :- rre_def_name(value).
+rre_trigger(value) :- rre_mixed(_,value).
+.decl rre_path(d: number, path: symbol)
+rre_path(d,path) :- doc(d,_,_), doc_role(d,"primary"), option("argumentPath",_), rre_relative(_,_,path).
+rre_path(d,path) :- doc(d,path,label), doc_role(d,"primary"), !option("argumentPath",_), !prefix("raw-execute:",label).
+rre_path(d,@slice(label,12,strlen(label))) :- doc(d,physical,label), prefix("raw-execute:",label), loaded(physical,label,"python"), !option("argumentPath",_).
+.decl rre_source(d: number, text: symbol)
+rre_source(d,text) :- source(d,span), text(span,text).
+.decl rre_triggered(d: number)
+rre_triggered(d) :- rre_source(d,text), rre_trigger(token), contains(token,text).
+.decl rre_ast_gate()
+rre_ast_gate() :- option("gateText",text), (rre_call_name(token) ; rre_def_name(token)), contains(token,text).
+.decl rre_file(d: number)
+rre_file(d) :- option("entryPoint","_check_ast"), rre_path(d,_), rre_triggered(d), rre_ast_gate(), !syntax_error(d,_,_).
+rre_file(d) :- option("entryPoint",entry), (entry = "_facts_for_file" ; entry = "_violation_strings_for_file"), rre_path(d,_), rre_triggered(d), !syntax_error(d,_,_).
+rre_file(d) :- !option("entryPoint",_), rre_path(d,path), match_all("\\A(?:impl|data_layer|_internal|l\\d{4}_[^/\\n][^/]*)/",path), !match_all("(?:\\A|/)(?:\\.git|\\.venv|venv|__pycache__|tmp|tests|test)(?:/|\\z)",path), rre_triggered(d), !syntax_error(d,_,_).
+.decl rre_event(n: node, d: number)
+rre_event(n,d) :- rre_file(d), docof(n,d), (kind(n,"call") ; kind(n,"function_definition") ; kind(n,"class_definition") ; kind(n,"raise_statement")).
+.decl rre_ancestor(n: node, a: node)
+rre_ancestor(n,a) :- rre_event(n,_), ast_parent(n,a).
+rre_ancestor(n,a) :- rre_ancestor(n,p), ast_parent(p,a).
+.decl rre_owner_candidate(n: node, f: node, depth: number)
+rre_owner_candidate(n,f,depth) :- rre_ancestor(n,f), kind(f,"function_definition"), ast_depth(f,depth).
+.decl rre_owner(n: node, f: node)
+rre_owner(n,f) :- rre_owner_candidate(n,f,depth), depth = max i : { rre_owner_candidate(n,_,i) }.
+.decl rre_attribute(call: node, name: symbol)
+rre_attribute(call,@nfkc(name)) :- rre_event(call,_), kind(call,"call"), field(call,"function",raw), unparen(raw,func), kind(func,"attribute"), field(func,"attribute",attribute), text(attribute,name).
+.decl rre_has_raise(f: node)
+rre_has_raise(f) :- rre_event(n,_), kind(n,"raise_statement"), rre_owner(n,f).
+rre_has_raise(f) :- rre_attribute(n,name), prefix("_raise_",name), rre_owner(n,f).
+.decl rre_has_banned_call(f: node)
+rre_has_banned_call(f) :- rre_attribute(n,name), rre_call_name(name), rre_owner(n,f).
+.decl rre_query_materializer(f: node)
+rre_query_materializer(f) :- rre_event(f,_), kind(f,"function_definition"), def_name(f,raw), name = @nfkc(raw), (name = "execute_raw" ; name = "execute_raw_async"), rre_ancestor(f,c), kind(c,"class_definition"), ast_depth(c,depth), depth = max i : { rre_ancestor(f,other), kind(other,"class_definition"), ast_depth(other,i) }, def_name(c,class), (suffix("Query",@nfkc(class)) ; suffix("_CachedQuery",@nfkc(class))).
+.decl rre_stub(f: node)
+rre_stub(f) :- rre_event(f,d), rre_path(d,path), rre_compatibility(path), rre_has_raise(f), !rre_has_banned_call(f).
+.decl rre_end_candidate(f: node, ordinal: number)
+rre_end_candidate(f,i) :- rre_event(f,_), kind(f,"function_definition"), visit_index(f,i).
+rre_end_candidate(f,i) :- rre_event(n,_), rre_ancestor(n,f), kind(f,"function_definition"), visit_index(n,i).
+.decl rre_exit(f: node, ordinal: number)
+rre_exit(f,i) :- rre_end_candidate(f,_), i = max j : { rre_end_candidate(f,j) }.
+.decl rre_row(d: number, stage: number, key: number, phase: number, depth: number, line: number, message: symbol)
+rre_row(d,1,i,0,0,line,cat("call to removed raw surface .",name,"()")) :- rre_attribute(n,name), rre_call_name(name), docof(n,d), visit_index(n,i), line(n,line).
+rre_row(d,1,i,1,0-depth,line,cat("definition of removed raw surface ",name,"()")) :- rre_event(f,d), kind(f,"function_definition"), def_name(f,raw), name = @nfkc(raw), rre_def_name(name), !rre_query_materializer(f), !rre_stub(f), rre_exit(f,i), ast_depth(f,depth), line(f,line).
+rre_row(d,0,i,0,0,1,cat("contains banned raw-surface text ",@python_repr(token))) :- rre_file(d), (!option("entryPoint",_) ; option("includeText","true")), rre_source(d,text), rre_mixed(i,token), contains(token,text).
+.decl rre_rank(d: number, stage: number, key: number, phase: number, depth: number, ordinal: number)
+rre_rank(d,s,k,p,depth,ordinal) :- rre_row(d,s,k,p,depth,_,_), ordinal = count : { rre_row(d,a,b,c,e,_,_), (a < s ; (a = s,b < k) ; (a = s,b = k,c < p) ; (a = s,b = k,c = p,e < depth)) }.
+RREString(@place("",0),0,i,cat(path,": contains banned raw-surface text ",@python_repr(token))) :- option("entryPoint","_check_text"), rre_relative(_,_,path), option("sourceText",text), rre_mixed(order,token), contains(token,text), i = count : { rre_mixed(j,other), j < order, contains(other,text) }.
+RREString(@place("",0),0,i,cat(path,":",to_string(line),": ",message)) :- option("entryPoint",entry), (entry = "_check_ast" ; entry = "_violation_strings_for_file"), rre_fact(_,i,path,line,message).
+.severity RRERemoved hard-fail
+.violation RRERemoved(at: span, ordinal: number, detail: symbol) code "RER001" "{detail}"
+RRERemoved(@place(path,line),i,detail) :- !option("entryPoint",_), rre_fact(_,i,path,line,detail).
+
+.decl rre_needs_relative()
+rre_needs_relative() :- option("entryPoint",entry), (entry = "_relative" ; entry = "_check_text" ; entry = "_is_excluded" ; entry = "scan_file_content").
+rre_needs_relative() :- option("entryPoint","_prepare_file"), option("preparedEntry","scan_file_content").
+.decl rre_excluded_part(value: symbol)
+rre_excluded_part(value) :- option_item("excludedParts",_,value).
+rre_excluded_part(value) :- !option("constantsSupplied","true"), rre_constant("excluded_parts",_,value).
+.decl rre_excluded_prefix(value: symbol)
+rre_excluded_prefix(value) :- option_item("excludedPrefixes",_,value).
+rre_excluded_prefix(value) :- !option("constantsSupplied","true"), rre_constant("excluded_prefixes",_,value).
+.decl rre_excluded()
+rre_excluded() :- rre_relative(_,_,"scripts/lint_raw_execute_regression.py").
+rre_excluded() :- option("argumentPath",path), rre_excluded_part(part), contains(cat("/",part,"/"),cat("/",path,"/")).
+rre_excluded() :- rre_relative(_,_,path), rre_excluded_prefix(prefix), prefix(prefix,path).
+RREBool(@place("",0),1) :- option("entryPoint","_is_excluded"), rre_relative(_,_,_), rre_excluded().
+RREBool(@place("",0),0) :- option("entryPoint","_is_excluded"), rre_relative(_,_,_), !rre_excluded().
+.decl rre_full_gate()
+rre_full_gate() :- option("gateText",text), rre_trigger(token), contains(token,text).
+.decl rre_prepare()
+rre_prepare() :- option("preparedEntry","_check_ast"), rre_ast_gate().
+rre_prepare() :- option("preparedEntry",entry), (entry = "_facts_for_file" ; entry = "_violation_strings_for_file").
+rre_prepare() :- option("preparedEntry","scan_file_content"), rre_relative(_,_,_), !rre_excluded(), rre_full_gate().
+RREBool(@place("",0),1) :- option("entryPoint","_prepare_file"), rre_prepare().
+RREBool(@place("",0),0) :- option("entryPoint","_prepare_file"), !rre_prepare().
+rre_file(d) :- option("entryPoint","scan_file_content"), rre_path(d,_), !rre_excluded(), rre_full_gate(), rre_triggered(d), !syntax_error(d,_,_).
+
+// Preserve the source fact adapter's maxsplit=2 behavior, including colons in paths.
+.decl rre_raw_text(d: number, ordinal: number, text: symbol)
+rre_raw_text(d,i,cat(path,": ",message)) :- rre_path(d,path), rre_row(d,0,k,p,depth,_,message), rre_rank(d,0,k,p,depth,i).
+rre_raw_text(d,i,cat(path,":",to_string(line),": ",message)) :- rre_path(d,path), rre_row(d,1,k,p,depth,line,message), rre_rank(d,1,k,p,depth,i).
+.decl rre_parse_input(text: symbol)
+rre_parse_input(text) :- rre_raw_text(_,_,text).
+rre_parse_input(text) :- option("entryPoint","_violation_text_to_fact"), option("factText",text).
+.decl rre_parts(text: symbol, first: symbol, second: symbol, third: symbol, has_third: number)
+rre_parts(text,first,second,third,1) :- rre_parse_input(text), match_all("\\A(?<first>[^:]*):(?<second>[^:]*):(?<third>(?s:.*))\\z",text,_,_,_).
+rre_parts(text,first,second,"",0) :- rre_parse_input(text), match_all("\\A(?<first>[^:]*):(?<second>[^:]*)\\z",text,_,_,_).
+.decl rre_decimal(text: symbol, line: number)
+rre_decimal(text,line) :- rre_parts(_,_,text,_,1), rre_digits(text), line = @python_int_clamped(text,-1,9223372036854775807,4300), line >= 0.
+.decl rre_parsed(text: symbol, path: symbol, line: number, message: symbol)
+rre_parsed(text,path,line,@replace_all(message,"\\A[\\s\\x{1c}-\\x{1f}]+|[\\s\\x{1c}-\\x{1f}]+\\z","")) :- rre_parts(text,path,second,message,1), rre_digits(second), rre_decimal(second,line).
+rre_parsed(text,path,1,@replace_all(second,"\\A[\\s\\x{1c}-\\x{1f}]+|[\\s\\x{1c}-\\x{1f}]+\\z","")) :- rre_parts(text,path,second,_,has), (has = 0 ; !rre_digits(second)).
+rre_parsed(text,"unknown",1,text) :- rre_parse_input(text), !contains(":",text).
+.decl rre_parse_error(text: symbol, digits: symbol)
+rre_parse_error(text,second) :- rre_parts(text,_,second,_,1), rre_digits(second), !rre_decimal(second,_).
+.decl rre_invalid_file(d: number)
+rre_invalid_file(d) :- rre_raw_text(d,_,text), rre_parse_error(text,_).
+.decl rre_fact(d: number, ordinal: number, path: symbol, line: number, message: symbol)
+rre_fact(d,i,path,line,message) :- rre_raw_text(d,i,text), rre_parsed(text,path,line,message), !rre_invalid_file(d).
+.violation RREFact(at: span, file_order: number, ordinal: number, path: symbol, line: number, detail: symbol) code "RRE_FACT" "fact"
+RREFact(@place("",0),0,i,path,line,message) :- option("entryPoint",entry), (entry = "_facts_for_file" ; entry = "scan_file_content"), rre_fact(_,i,path,line,message).
+RREFact(@place("",0),0,0,path,line,message) :- option("entryPoint","_violation_text_to_fact"), option("factText",text), rre_parsed(text,path,line,message).
+RREError(@place("",0),cat("invalid literal for int() with base 10: ",@python_repr(digits))) :- option("entryPoint","_violation_text_to_fact"), option("factText",text), rre_parse_error(text,digits).
+rre_constant("calls",0,"_execute_grammar").
+rre_constant("calls",1,"_execute_sql_or_schema_statement").
+rre_constant("calls",2,"_execute_sql_or_schema_statement_async").
+rre_constant("calls",3,"_execute_template_with_params").
+rre_constant("calls",4,"_execute_template_with_params_async").
+rre_constant("calls",5,"execute_grammar").
+rre_constant("calls",6,"execute_sql").
+rre_constant("calls",7,"fetchall_grammar").
+rre_constant("calls",8,"fetchall_raw").
+rre_constant("calls",9,"fetchall_raw_async").
+rre_constant("calls",10,"fetchone_grammar").
+rre_constant("calls",11,"fetchone_raw").
+rre_constant("calls",12,"fetchone_raw_async").
+rre_constant("calls",13,"nonportably_execute_sql").
+rre_constant("calls",14,"raw_execute").
+rre_constant("calls",15,"raw_execute_async").
+rre_constant("calls",16,"raw_execute_fetch").
+rre_constant("calls",17,"raw_execute_fetch_async").
+rre_constant("definitions",0,"_execute_grammar").
+rre_constant("definitions",1,"_execute_grammar_async").
+rre_constant("definitions",2,"_execute_sql_or_schema_statement").
+rre_constant("definitions",3,"_execute_sql_or_schema_statement_async").
+rre_constant("definitions",4,"_execute_template_with_params").
+rre_constant("definitions",5,"_execute_template_with_params_async").
+rre_constant("definitions",6,"_is_schema_ddl_statement").
+rre_constant("definitions",7,"execute_grammar").
+rre_constant("definitions",8,"execute_sql").
+rre_constant("definitions",9,"fetchall_grammar").
+rre_constant("definitions",10,"fetchall_raw").
+rre_constant("definitions",11,"fetchall_raw_async").
+rre_constant("definitions",12,"fetchone_grammar").
+rre_constant("definitions",13,"fetchone_raw").
+rre_constant("definitions",14,"fetchone_raw_async").
+rre_constant("definitions",15,"nonportably_execute_sql").
+rre_constant("definitions",16,"raw_execute").
+rre_constant("definitions",17,"raw_execute_async").
+rre_constant("definitions",18,"raw_execute_fetch").
+rre_constant("definitions",19,"raw_execute_fetch_async").
+rre_constant("mixed",0,"_execute_sql_or_schema_statement_async").
+rre_constant("mixed",1,"_is_schema_ddl_statement").
+rre_constant("mixed",2,"_execute_sql_or_schema_statement").
+rre_constant("mixed",3,"arbitrary grammar router").
+rre_constant("mixed",4,"compatibility router").
+rre_constant("compatibility",0,"impl/common/l2200_sql_dialect/sql_connection.py").
+rre_constant("compatibility",1,"impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_transaction.py").
+rre_constant("compatibility",2,"impl/common/l7300_sql_versioned_transactions/sql_read_transaction.py").
+rre_constant("compatibility",3,"impl/common/l7300_sql_versioned_transactions/sql_versioned_read_transaction.py").
+rre_constant("compatibility",4,"impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py").
+rre_constant("compatibility",5,"impl/doltdb/connection.py").
+rre_constant("compatibility",6,"impl/doltdb/versioned_write_transaction.py").
+rre_constant("compatibility",7,"impl/mariadb/connection.py").
+rre_constant("compatibility",8,"impl/mongodb/connection.py").
+rre_constant("compatibility",9,"impl/mongodb/transaction.py").
+rre_constant("compatibility",10,"impl/mongodb/versioned_read_transaction_sparse.py").
+rre_constant("compatibility",11,"impl/neo4j/connection.py").
+rre_constant("compatibility",12,"impl/neo4j/transaction.py").
+rre_constant("compatibility",13,"impl/neo4j/versioned_read_transaction_sparse.py").
+rre_constant("compatibility",14,"impl/postgres/connection.py").
+rre_constant("compatibility",15,"impl/read_through/connection.py").
+rre_constant("compatibility",16,"impl/read_through/transaction.py").
+rre_constant("compatibility",17,"impl/sqlite/connection.py").
+rre_constant("compatibility",18,"impl/sqlite/transaction.py").
+rre_constant("compatibility",19,"l2000_connection/connection.py").
+rre_constant("compatibility",20,"l2050_transaction/transaction.py").
+rre_constant("compatibility",21,"l7200_versioned_transactions/versioned_transactions.py").
+
+// Python 3.13 Unicode 15.1 str.isdigit, including nondecimal digits.
+.decl rre_digits(value: symbol)
+rre_digits(value) :- rre_parts(_,_,value,_,1), match_all("\\A[\\x{30}-\\x{39}\\x{b2}-\\x{b3}\\x{b9}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{1369}-\\x{1371}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19da}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{2070}\\x{2074}-\\x{2079}\\x{2080}-\\x{2089}\\x{2460}-\\x{2468}\\x{2474}-\\x{247c}\\x{2488}-\\x{2490}\\x{24ea}\\x{24f5}-\\x{24fd}\\x{24ff}\\x{2776}-\\x{277e}\\x{2780}-\\x{2788}\\x{278a}-\\x{2792}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10a40}-\\x{10a43}\\x{10d30}-\\x{10d39}\\x{10e60}-\\x{10e68}\\x{11052}-\\x{1105a}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1f100}-\\x{1f10a}\\x{1fbf0}-\\x{1fbf9}]+\\z",value).
+rre_constant("excluded_parts",0,".git").
+rre_constant("excluded_parts",1,".mypy_cache").
+rre_constant("excluded_parts",2,".pytest_cache").
+rre_constant("excluded_parts",3,".ruff_cache").
+rre_constant("excluded_parts",4,".venv").
+rre_constant("excluded_parts",5,"__pycache__").
+rre_constant("excluded_parts",6,"node_modules").
+rre_constant("excluded_parts",7,"tests").
+rre_constant("excluded_parts",8,"tmp").
+rre_constant("excluded_parts",9,"venv").
+rre_constant("excluded_prefixes",0,"demos/").
+rre_constant("excluded_prefixes",1,"conform/").
+rre_constant("excluded_prefixes",2,"benchmarks/").
+rre_constant("excluded_prefixes",3,"scripts/benchmark").
+rre_constant("excluded_prefixes",4,"scripts/tests/").

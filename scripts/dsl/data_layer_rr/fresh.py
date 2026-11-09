@@ -114,6 +114,9 @@ def run(args):
         rule_root=getattr(args,'rule_root',None)
         backend = Suite(source, engine, checks, 0, 1, args.baseline.resolve(), rule_root.resolve() if rule_root is not None else None)
         original_codes = codes(modules)
+        if 'raw_execute_regression' in modules:
+            from raw_execute_regression_port import install
+            install(backend,modules['raw_execute_regression'])
         if 'internal_dead_code' in modules:
             from internal_dead_code_port import install,graph_algorithm_codes
             original_codes.update(graph_algorithm_codes(modules['internal_dead_code']))
@@ -186,7 +189,11 @@ def run(args):
                 os.chdir(root if case.get('cwd') == 'fixture' else source)
                 values = arguments(case['arguments'], root)
                 module = modules[case['check']]
-                if case['check']=='internal_dead_code':
+                if case['check']=='raw_execute_regression':
+                    from raw_execute_regression_probes import probe
+                    if native:backend.item=SimpleNamespace(nodeid=case['id'])
+                    call=lambda:probe(module,case['entry'],values)
+                elif case['check']=='internal_dead_code':
                     if native:backend.item=SimpleNamespace(nodeid=case['id'])
                     if case['entry']=='graph_analysis':
                         from internal_dead_code_probes import probe
@@ -337,7 +344,7 @@ def run(args):
                         call = lambda: method(**values)
                     else:
                         call = lambda: getattr(module, case['entry'])(**values)
-                if case['check'] in {'internal_dead_code','async_sync_delegation','sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage','grammar_allowlist_burndown'}:
+                if case['check'] in {'raw_execute_regression','internal_dead_code','async_sync_delegation','sql_grammar_escape_hatches','grammar_render_methods','grammar_str_params','grammar_callable_constructors','grammar_fragment_usage','grammar_allowlist_burndown'}:
                     output,errors=io.StringIO(),io.StringIO()
                     with contextlib.redirect_stdout(output),contextlib.redirect_stderr(errors):
                         actual=invoke(call,root)

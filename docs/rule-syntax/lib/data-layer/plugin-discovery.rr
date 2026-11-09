@@ -1,0 +1,14 @@
+// FileScopeSpec directory discovery. Callers supply roots; discovery returns
+// logical Python paths. Nested directory links are not followed, as in os.walk.
+.decl pfd_root(path: symbol)
+.decl pfd_skip(name: symbol)
+pfd_skip(".git"). pfd_skip(".venv"). pfd_skip("venv").
+pfd_skip("__pycache__"). pfd_skip("tmp").
+// The source walker visits test trees, then excludes every file inside them.
+// Pruning those trees produces the same file set without unnecessary requests.
+pfd_skip("tests"). pfd_skip("test").
+.decl pfd_walk(root: symbol, path: symbol)
+pfd_walk(root,root) :- pfd_root(root).
+pfd_walk(root,cat(path,"/",name)) :- pfd_walk(root,path), dir_entry(path,name,1), dir_metadata(path,name,_,0,_), !pfd_skip(name).
+.decl pfd_file(path: symbol)
+pfd_file(cat(path,"/",name)) :- pfd_walk(_,path), dir_entry(path,name,0), suffix(".py",name).
