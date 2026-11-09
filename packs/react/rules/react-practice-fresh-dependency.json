@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-fresh-dependency",
+  "id": "react-practice-fresh-dependency",
   "revision": 1,
   "mode": "steer",
   "description": "Keep values rebuilt on every render, such as filter or map results and the props object, out of effect, memo and callback dependency arrays.",
@@ -339,6 +339,14 @@
                       }
                     }
                   ]
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^connect$"
+                  }
                 }
               ]
             }
@@ -409,7 +417,8 @@
                     "useMemo",
                     "useCallback"
                   ]
-                }
+                },
+                "pattern": "$HK"
               },
               {
                 "kind": "identifier",
@@ -419,7 +428,8 @@
                       "kind": "import_specifier",
                       "has": {
                         "field": "name",
-                        "regex": "^(?:useEffect|useLayoutEffect|useMemo|useCallback)$"
+                        "regex": "^(?:useEffect|useLayoutEffect|useMemo|useCallback)$",
+                        "pattern": "$HK"
                       },
                       "inside": {
                         "stopBy": "end",
@@ -446,7 +456,8 @@
                     "has": {
                       "field": "property",
                       "kind": "property_identifier",
-                      "regex": "^(?:useEffect|useLayoutEffect|useMemo|useCallback)$"
+                      "regex": "^(?:useEffect|useLayoutEffect|useMemo|useCallback)$",
+                      "pattern": "$HK"
                     }
                   }
                 ]
@@ -474,7 +485,8 @@
                       ]
                     }
                   }
-                }
+                },
+                "pattern": "$HK"
               }
             ]
           },
@@ -851,13 +863,36 @@
               "react",
               "unknown"
             ]
+          },
+          "transform": {
+            "HV1": {
+              "replace": {
+                "source": "$HK",
+                "replace": "^use(?:Layout)?Effect$",
+                "by": "reruns"
+              }
+            },
+            "HV2": {
+              "replace": {
+                "source": "$HV1",
+                "replace": "^useMemo$",
+                "by": "recomputes"
+              }
+            },
+            "HVERB": {
+              "replace": {
+                "source": "$HV2",
+                "replace": "^useCallback$",
+                "by": "returns a new function"
+              }
+            }
           }
         }
       },
       "violation": {
         "anchor": "witness.span",
         "code": "FRESH_DERIVED_DEPENDENCY",
-        "message": "$X is a new array from $M() on every render, so this $HOOK reruns each time; build $X inside useMemo, or depend on the values it is built from."
+        "message": "$X is a new array from $M() on every render, so this $HOOK $HVERB each time; build $X inside useMemo, or depend on the values it is built from."
       }
     },
     {
@@ -913,13 +948,36 @@
               "react",
               "unknown"
             ]
+          },
+          "transform": {
+            "HV1": {
+              "replace": {
+                "source": "$HK",
+                "replace": "^use(?:Layout)?Effect$",
+                "by": "reruns"
+              }
+            },
+            "HV2": {
+              "replace": {
+                "source": "$HV1",
+                "replace": "^useMemo$",
+                "by": "recomputes"
+              }
+            },
+            "HVERB": {
+              "replace": {
+                "source": "$HV2",
+                "replace": "^useCallback$",
+                "by": "returns a new function"
+              }
+            }
           }
         }
       },
       "violation": {
         "anchor": "witness.span",
         "code": "FRESH_DERIVED_OBJECT_DEPENDENCY",
-        "message": "$X is a new object from $M() on every render, so this $HOOK reruns each time; build $X inside useMemo, or depend on the values it is built from."
+        "message": "$X is a new object from $M() on every render, so this $HOOK $HVERB each time; build $X inside useMemo, or depend on the values it is built from."
       }
     },
     {
@@ -1208,13 +1266,36 @@
               "react",
               "unknown"
             ]
+          },
+          "transform": {
+            "HV1": {
+              "replace": {
+                "source": "$HK",
+                "replace": "^use(?:Layout)?Effect$",
+                "by": "reruns"
+              }
+            },
+            "HV2": {
+              "replace": {
+                "source": "$HV1",
+                "replace": "^useMemo$",
+                "by": "recomputes"
+              }
+            },
+            "HVERB": {
+              "replace": {
+                "source": "$HV2",
+                "replace": "^useCallback$",
+                "by": "returns a new function"
+              }
+            }
           }
         }
       },
       "violation": {
         "anchor": "witness.span",
         "code": "FRESH_PROPS_DEPENDENCY",
-        "message": "$P is a new object each time the parent renders, so this $HOOK reruns with it; destructure the $P fields it uses above the hook and list those instead of $P."
+        "message": "$P is a new object each time the parent renders, so this $HOOK $HVERB with it; destructure the $P fields it uses above the hook and list those instead of $P."
       }
     },
     {

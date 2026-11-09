@@ -3,7 +3,7 @@
   "id": "react",
   "name": "React",
   "category": "framework",
-  "covers": "eslint-plugin-react and react-hooks rules for well-built components and hooks, and Rerail's own React architecture rules.",
+  "covers": "eslint-plugin-react and react-hooks rules for well-built components and hooks, and Rerail's own React practice rules.",
   "reason": "matches React",
   "match": {
     "any": [
@@ -685,10 +685,10 @@
       }
     },
     {
-      "id": "react-architecture-callback-for-dom-only",
-      "document": "rules/react-architecture-callback-for-dom-only.json",
-      "title": "React architecture: useCallback whose result only built-in elements or direct calls use",
-      "group": "React architecture",
+      "id": "react-practice-callback-for-dom-only",
+      "document": "rules/react-practice-callback-for-dom-only.json",
+      "title": "React practice: useCallback whose result only built-in elements or direct calls use",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/components/SaveButton.tsx",
@@ -701,10 +701,10 @@
       }
     },
     {
-      "id": "react-architecture-fresh-dependency",
-      "document": "rules/react-architecture-fresh-dependency.json",
-      "title": "React architecture: Hook dependency rebuilt on every render",
-      "group": "React architecture",
+      "id": "react-practice-fresh-dependency",
+      "document": "rules/react-practice-fresh-dependency.json",
+      "title": "React practice: Hook dependency rebuilt on every render",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/components/TodoList.tsx",
@@ -717,10 +717,10 @@
       }
     },
     {
-      "id": "react-architecture-side-effect-in-render",
-      "document": "rules/react-architecture-side-effect-in-render.json",
-      "title": "React architecture: Navigation, analytics or dispatch called during render",
-      "group": "React architecture",
+      "id": "react-practice-side-effect-in-render",
+      "document": "rules/react-practice-side-effect-in-render.json",
+      "title": "React practice: Navigation, analytics or dispatch called during render",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "app/settings/billing/page-view.tsx",
@@ -733,10 +733,10 @@
       }
     },
     {
-      "id": "react-architecture-then-without-stale-guard",
-      "document": "rules/react-architecture-then-without-stale-guard.json",
-      "title": "React architecture: Effect writes a .then result to state without a stale-result guard",
-      "group": "React architecture",
+      "id": "react-practice-then-without-stale-guard",
+      "document": "rules/react-practice-then-without-stale-guard.json",
+      "title": "React practice: Effect writes a .then result to state without a stale-result guard",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/features/profile/ProfileCard.tsx",
@@ -749,10 +749,10 @@
       }
     },
     {
-      "id": "react-architecture-cache-update-in-mutate-call",
-      "document": "rules/react-architecture-cache-update-in-mutate-call.json",
-      "title": "React architecture: Query cache update in a mutate call's own callbacks",
-      "group": "React architecture",
+      "id": "react-practice-cache-update-in-mutate-call",
+      "document": "rules/react-practice-cache-update-in-mutate-call.json",
+      "title": "React practice: Query cache update in a mutate call's own callbacks",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/settings/ProfileForm.tsx",
@@ -765,10 +765,10 @@
       }
     },
     {
-      "id": "react-architecture-mounted-ref-never-reset",
-      "document": "rules/react-architecture-mounted-ref-never-reset.json",
-      "title": "React architecture: Mount ref set false in cleanup and never set back to true",
-      "group": "React architecture",
+      "id": "react-practice-mounted-ref-never-reset",
+      "document": "rules/react-practice-mounted-ref-never-reset.json",
+      "title": "React practice: Mount ref set false in cleanup and never set back to true",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/components/OrderPanel.tsx",
@@ -781,10 +781,10 @@
       }
     },
     {
-      "id": "react-architecture-memo-trivial-expression",
-      "document": "rules/react-architecture-memo-trivial-expression.json",
-      "title": "React architecture: useMemo around a value or a cheap expression",
-      "group": "React architecture",
+      "id": "react-practice-memo-trivial-expression",
+      "document": "rules/react-practice-memo-trivial-expression.json",
+      "title": "React practice: useMemo around a value or a cheap expression",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/presentation/ParamsProvider.tsx",
@@ -797,10 +797,10 @@
       }
     },
     {
-      "id": "react-architecture-selector-returns-new-collection",
-      "document": "rules/react-architecture-selector-returns-new-collection.json",
-      "title": "React architecture: Store selector returns a new object or array",
-      "group": "React architecture",
+      "id": "react-practice-selector-returns-new-collection",
+      "document": "rules/react-practice-selector-returns-new-collection.json",
+      "title": "React practice: Store selector returns a new object or array",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/calendar/NowLine.tsx",
@@ -813,10 +813,10 @@
       }
     },
     {
-      "id": "react-architecture-request-beside-data-library",
-      "document": "rules/react-architecture-request-beside-data-library.json",
-      "title": "React architecture: Request in an effect in a file that uses a data library",
-      "group": "React architecture",
+      "id": "react-practice-request-beside-data-library",
+      "document": "rules/react-practice-request-beside-data-library.json",
+      "title": "React practice: Request in an effect in a file that uses a data library",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/teams/TeamPicker.tsx",
@@ -829,10 +829,10 @@
       }
     },
     {
-      "id": "react-architecture-hoist-static-value",
-      "document": "rules/react-architecture-hoist-static-value.json",
-      "title": "React architecture: Value that reads nothing from the component, built every render",
-      "group": "React architecture",
+      "id": "react-practice-hoist-static-value",
+      "document": "rules/react-practice-hoist-static-value.json",
+      "title": "React practice: Value that reads nothing from the component, built every render",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/settings/ShortcutTable.tsx",
@@ -845,10 +845,10 @@
       }
     },
     {
-      "id": "react-architecture-lifecycle-hook",
-      "document": "rules/react-architecture-lifecycle-hook.json",
-      "title": "React architecture: Run-once lifecycle hook reading component values",
-      "group": "React architecture",
+      "id": "react-practice-lifecycle-hook",
+      "document": "rules/react-practice-lifecycle-hook.json",
+      "title": "React practice: Run-once lifecycle hook reading component values",
+      "group": "React practice",
       "examples": {
         "caught": {
           "path": "src/components/InvoiceHeader.tsx",

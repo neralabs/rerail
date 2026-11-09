@@ -1,0 +1,206 @@
+{
+  "caught": [
+    {
+      "path": "src/settings/ShortcutTable.tsx",
+      "content": "import { Table } from './Table';\n\nexport const ShortcutTable = () => {\n  const columns = [\n    { title: 'Action', key: 'action' },\n    { title: 'Keys', key: 'keys' },\n  ];\n  return <Table columns={columns} />;\n};\n"
+    },
+    {
+      "path": "src/onboarding/Steps.jsx",
+      "content": "import { motion } from 'framer-motion';\n\nexport function Steps({ children }) {\n  const fade = { hidden: { opacity: 0 }, shown: { opacity: 1 } };\n  return <motion.ul variants={fade} initial=\"hidden\">{children}</motion.ul>;\n}\n"
+    },
+    {
+      "path": "src/hooks/useVisible.ts",
+      "content": "import { useIntersection } from './useIntersection';\n\nexport function useVisible(ref) {\n  const observerOptions = { rootMargin: '0px', threshold: 0.5 };\n  return useIntersection(ref, observerOptions);\n}\n"
+    },
+    {
+      "path": "src/reports/Report.tsx",
+      "content": "import * as React from 'react';\nimport { loadReport } from '../api';\n\nexport default function Report() {\n  const query = { status: 'open', limit: 20 };\n  const [rows, setRows] = React.useState([]);\n  React.useEffect(() => {\n    loadReport(query).then(setRows);\n  }, [query]);\n  return <ul>{rows.length}</ul>;\n}\n"
+    },
+    {
+      "path": "src/search/QueryEditor.tsx",
+      "content": "import Editor from '@monaco-editor/react';\n\nexport function QueryEditor({ value }: { value: string }) {\n  function registerLanguage(monaco: any) {\n    monaco.languages.register({ id: 'query' });\n  }\n  return <Editor value={value} beforeMount={registerLanguage} />;\n}\n"
+    },
+    {
+      "path": "src/list/People.tsx",
+      "content": "import { memo } from 'react';\nimport { List } from './List';\nimport { formatName } from './format';\n\nexport const People = memo(function People({ people }: { people: string[] }) {\n  const renderItem = (person: string) => <span>{formatName(person)}</span>;\n  return <List items={people} renderItem={renderItem} />;\n});\n"
+    },
+    {
+      "path": "src/grid/Board.tsx",
+      "content": "import { useCallback } from 'react';\nimport { Grid } from './Grid';\n\nexport const Board = ({ onPick }: { onPick: (s: string) => void }) => {\n  const sizes = ['small', 'large'] as const;\n  const pick = useCallback((s: string) => onPick(s), [onPick, sizes]);\n  return <Grid sizes={sizes} onPick={pick} />;\n};\n"
+    },
+    {
+      "path": "src/events/CreateDialog.tsx",
+      "content": "import { useCreateEvent } from './useCreateEvent';\nimport { toast } from '../toast';\n\nexport function CreateDialog() {\n  const onError = (message: string) => {\n    toast(message, 'error');\n  };\n  const { form } = useCreateEvent(onError);\n  return form;\n}\n"
+    },
+    {
+      "path": "src/reports/Weekly.tsx",
+      "content": "import * as R from 'react';\nimport { loadWeek } from '../api';\n\nexport function Weekly() {\n  const range = { days: 7 };\n  const [rows, setRows] = R.useState([]);\n  R.useEffect(() => {\n    loadWeek(range).then(setRows);\n  }, [range]);\n  return <ol>{rows.length}</ol>;\n}\n"
+    },
+    {
+      "path": "src/reports/Monthly.jsx",
+      "content": "import React from 'react';\nimport { loadMonth } from '../api';\n\nconst { useEffect, useState } = React;\n\nexport function Monthly() {\n  const range = { days: 30 };\n  const [rows, setRows] = useState([]);\n  useEffect(() => {\n    loadMonth(range).then(setRows);\n  }, [range]);\n  return <ol>{rows.length}</ol>;\n}\n"
+    },
+    {
+      "path": "src/plans/Plans.tsx",
+      "content": "import { PlanGrid } from './PlanGrid';\n\nexport function Plans({ showPlans }: { showPlans: boolean }) {\n  if (showPlans) {\n    const plans = [{ id: 'free' }, { id: 'pro' }];\n    return <PlanGrid plans={plans} />;\n  }\n  return null;\n}\n"
+    },
+    {
+      "path": "src/table/Results.tsx",
+      "content": "import { Table } from './Table';\n\nexport function Results({ compact }: { compact: boolean }) {\n  const compactColumns = [{ key: 'name' }];\n  const fullColumns = [{ key: 'name' }, { key: 'owner' }];\n  return <Table columns={compact ? compactColumns : fullColumns} />;\n}\n"
+    },
+    {
+      "path": "src/select/Country.tsx",
+      "content": "import { Select, type Option } from './Select';\n\nexport function Country() {\n  const countries = [{ value: 'fr', label: 'France' }];\n  return <Select options={countries as Option[]} />;\n}\n"
+    },
+    {
+      "path": "src/select/Currency.tsx",
+      "content": "import { Picker } from './Picker';\n\nexport function Currency() {\n  const currencies = ['USD', 'EUR', 'JPY'];\n  const first = [...currencies].sort()[0];\n  return <Picker items={currencies} initial={first} />;\n}\n"
+    },
+    {
+      "path": "src/select/Sizes.jsx",
+      "content": "import { Picker } from './Picker';\n\nexport function Sizes() {\n  const sizes = ['s', 'm', 'l'];\n  const largestFirst = sizes.slice().reverse();\n  return <Picker items={sizes} order={largestFirst.join()} />;\n}\n"
+    },
+    {
+      "path": "src/theme/ThemeRoot.tsx",
+      "content": "import { ThemeContext } from './context';\n\nexport function ThemeRoot({ children }) {\n  const theme = { dark: true };\n  return <ThemeContext.Provider value={theme}>{children}</ThemeContext.Provider>;\n}\n"
+    },
+    {
+      "path": "src/a/LogButton.tsx",
+      "content": "import { logger } from './logger';\nimport { Button } from './Button';\n\nexport function Filters() {\n  const onPress = () => logger.info('pressed');\n  return <Button onPress={onPress} />;\n}\n"
+    },
+    {
+      "path": "src/a/Columns.tsx",
+      "content": "import { format } from './format';\nimport { Table } from './Table';\n\nexport function Filters() {\n  const columns = [{ key: 'date', render: (v) => format(v) }];\n  return <Table columns={columns} />;\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/settings/ShortcutTable.tsx",
+      "content": "import { Table } from './Table';\n\nconst columns = [\n  { title: 'Action', key: 'action' },\n  { title: 'Keys', key: 'keys' },\n];\n\nexport const ShortcutTable = () => <Table columns={columns} />;\n"
+    },
+    {
+      "path": "src/settings/TitledTable.tsx",
+      "content": "import { Table } from './Table';\n\nexport const TitledTable = ({ title }: { title: string }) => {\n  const columns = [{ title, key: 'action' }];\n  return <Table columns={columns} />;\n};\n"
+    },
+    {
+      "path": "src/settings/LabelledSelect.tsx",
+      "content": "import { Select } from './Select';\nimport { t } from '../i18n';\n\nexport function LabelledSelect() {\n  const options = [{ value: 'a', label: t('Option A') }];\n  return <Select options={options} />;\n}\n"
+    },
+    {
+      "path": "src/alerts/Dropped.tsx",
+      "content": "import { Table } from './Table';\n\nexport function Dropped({ fields }: { fields: string[] }) {\n  const rows = [];\n  for (const field of fields) {\n    rows.push({ field });\n  }\n  return <Table rows={rows} />;\n}\n"
+    },
+    {
+      "path": "src/alerts/Summary.tsx",
+      "content": "import { Badge } from './Badge';\n\nexport function Summary({ op }: { op: string }) {\n  const ops = ['+', '-', '*'];\n  const levels = { low: 1, high: 2 };\n  return <Badge>{ops.includes(op) ? levels.high : levels.low}</Badge>;\n}\n"
+    },
+    {
+      "path": "src/layout/Panel.tsx",
+      "content": "export function Panel({ children }) {\n  const style = { display: 'flex', gap: 8 };\n  const onClick = () => console.info('panel');\n  return <div style={style} onClick={onClick}>{children}</div>;\n}\n"
+    },
+    {
+      "path": "src/layout/Actions.tsx",
+      "content": "import { Button } from './Button';\n\nexport function Actions() {\n  const common = { size: 'sm', variant: 'ghost' };\n  return <Button {...common}>Save</Button>;\n}\n"
+    },
+    {
+      "path": "src/state/useDraft.ts",
+      "content": "import { useRef, useState } from 'react';\n\nexport function useDraft() {\n  const initial = { title: '', body: '' };\n  const [draft, setDraft] = useState(initial);\n  const seen = useRef(initial);\n  return { draft, setDraft, seen };\n}\n"
+    },
+    {
+      "path": "src/state/Keys.tsx",
+      "content": "import { useState } from 'react';\nimport { KeyList } from './KeyList';\n\nexport function Keys() {\n  const [keys] = useState(() => {\n    const fallbackKeys = ['a', 'b'];\n    return fallbackKeys;\n  });\n  return <KeyList keys={keys} />;\n}\n"
+    },
+    {
+      "path": "src/factory/makeField.tsx",
+      "content": "import { Input } from './Input';\n\nexport function makeField(name: string) {\n  return function Field() {\n    const rules = { required: true };\n    return <Input name={name} rules={rules} />;\n  };\n}\n"
+    },
+    {
+      "path": "src/dialog/Dialog.tsx",
+      "content": "import { useState } from 'react';\nimport { Modal } from './Modal';\n\nexport function Dialog() {\n  const [open, setOpen] = useState(false);\n  const onClose = () => setOpen(false);\n  return <Modal open={open} onClose={onClose} />;\n}\n"
+    },
+    {
+      "path": "src/layout/Viewport.tsx",
+      "content": "import { Canvas } from './Canvas';\n\nexport function Viewport() {\n  const size = { width: window.innerWidth, height: window.innerHeight };\n  return <Canvas size={size} />;\n}\n"
+    },
+    {
+      "path": "src/layout/Merged.tsx",
+      "content": "import { Canvas } from './Canvas';\nimport { BASE } from './base';\n\nexport function Merged({ extra }) {\n  const config = {};\n  Object.assign(config, BASE, extra);\n  return <Canvas config={config} />;\n}\n"
+    },
+    {
+      "path": "src/grid/TypedGrid.tsx",
+      "content": "import { Grid, Column } from './Grid';\n\nexport function TypedGrid<Row>({ rows }: { rows: Row[] }) {\n  const columns = [] as Column<Row>[];\n  return <Grid rows={rows} columns={columns} />;\n}\n"
+    },
+    {
+      "path": "src/grid/Clock.tsx",
+      "content": "import { Face } from './Face';\n\nexport function Clock() {\n  const now = { at: new Date() };\n  return <Face now={now} />;\n}\n"
+    },
+    {
+      "path": "src/preact/Card.tsx",
+      "content": "/** @jsxImportSource preact */\nimport { Box } from './Box';\n\nexport function Card() {\n  const padding = { x: 2, y: 4 };\n  return <Box padding={padding} />;\n}\n"
+    },
+    {
+      "path": "src/settings/ShortcutTable.test.tsx",
+      "content": "import { Table } from './Table';\n\nexport const ShortcutTable = () => {\n  const columns = [{ title: 'Action' }];\n  return <Table columns={columns} />;\n};\n"
+    },
+    {
+      "path": "src/hooks/useLogOnce.ts",
+      "content": "import { useCallback, useEffect } from 'react';\nimport { log } from '../log';\n\nexport function useLogOnce() {\n  const announce = () => log('mounted');\n  useEffect(announce, []);\n  return useCallback(announce, []);\n}\n"
+    },
+    {
+      "path": "src/settings/ShortcutTable.story.tsx",
+      "content": "import { Table } from './Table';\n\nexport const Basic = () => {\n  const columns = [{ title: 'Action' }];\n  return <Table columns={columns} />;\n};\n"
+    },
+    {
+      "path": "src/settings/__stories__/Demo.tsx",
+      "content": "import { Table } from '../Table';\n\nexport function Demo() {\n  const columns = [{ title: 'Action' }];\n  return <Table columns={columns} />;\n}\n"
+    },
+    {
+      "path": "src/list/Feed.tsx",
+      "content": "import { FlatList } from 'react-native';\nimport { Divider } from './Divider';\n\nexport function Feed({ items }) {\n  const Separator = () => <Divider inset />;\n  return <FlatList data={items} ItemSeparatorComponent={Separator} />;\n}\n"
+    },
+    {
+      "path": "src/state/useLocalDraft.ts",
+      "content": "import { useState as useLocalState, useRef as useBox } from 'react';\n\nexport function useLocalDraft() {\n  const initial = { title: '' };\n  const [draft, setDraft] = useLocalState(initial);\n  const first = useBox(initial);\n  return { draft, setDraft, first };\n}\n"
+    },
+    {
+      "path": "src/settings/ShortcutTable.cy.tsx",
+      "content": "import { Table } from './Table';\n\nexport const Mounted = () => {\n  const columns = [{ title: 'Action' }];\n  return <Table columns={columns} />;\n};\n"
+    },
+    {
+      "path": "src/calendar/Agenda.tsx",
+      "content": "import { Calendar } from './Calendar';\n\nlet activeLocale = 'en-US';\nexport function setLocale(next: string) {\n  activeLocale = next;\n}\n\nexport function Agenda() {\n  const formatOptions = { locale: activeLocale };\n  return <Calendar formatOptions={formatOptions} />;\n}\n"
+    },
+    {
+      "path": "src/tags/TagList.tsx",
+      "content": "import { Tag } from './Tag';\n\nexport function TagList({ labels }: { labels: string[] }) {\n  const label = { tone: 'muted' };\n  return <ul data-tone={label.tone}>{labels.map((label) => <Tag key={label} label={label} />)}</ul>;\n}\n"
+    },
+    {
+      "path": "src/table/DataTable.tsx",
+      "content": "import { Table, type ColumnDef } from './Table';\n\nexport function DataTable<TRow>({ rows }: { rows: TRow[] }) {\n  const columns: ColumnDef<TRow>[] = [{ id: 'select' }];\n  return <Table rows={rows} columns={columns} />;\n}\n"
+    },
+    {
+      "path": "app/dashboard/page.tsx",
+      "content": "import { StatsGrid } from './StatsGrid';\nimport { loadStats } from './data';\n\nexport default async function DashboardPage() {\n  const stats = await loadStats();\n  const columns = [{ key: 'visits' }, { key: 'signups' }];\n  return <StatsGrid stats={stats} columns={columns} />;\n}\n"
+    },
+    {
+      "path": "src/a/StoreFilter.tsx",
+      "content": "import { store } from './store';\nimport { List } from './List';\n\nexport function Filters() {\n  const filter = { userId: store.userId };\n  return <List filter={filter} />;\n}\n"
+    },
+    {
+      "path": "src/a/UserFilter.tsx",
+      "content": "import { userId } from './session';\nimport { List } from './List';\n\nexport function Filters() {\n  const filter = { userId };\n  return <List filter={filter} />;\n}\n"
+    },
+    {
+      "path": "src/a/SessionFilter.tsx",
+      "content": "import Session from './Session';\nimport { List } from './List';\n\nexport function Filters() {\n  const filter = { id: Session.userId };\n  return <List filter={filter} />;\n}\n"
+    },
+    {
+      "path": "src/a/ConfigPage.tsx",
+      "content": "import * as config from './config';\nimport { List } from './List';\n\nexport function Filters() {\n  const paging = { size: config.pageSize };\n  return <List paging={paging} />;\n}\n"
+    },
+    {
+      "path": "src/a/OpenFilter.tsx",
+      "content": "import { Status } from './status';\nimport { List } from './List';\n\nexport function Filters() {\n  const filter = { status: Status.Open };\n  return <List filter={filter} />;\n}\n"
+    }
+  ]
+}

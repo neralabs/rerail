@@ -1,8 +1,8 @@
 # Rerail rule pack: React
 
 The pack ships 30 eslint-plugin-react and 10 eslint-plugin-react-hooks rules, ports of eslint-plugin-react 7.37.5 and
-eslint-plugin-react-hooks 7.1.1, and 11 React architecture rules of its own, which port no linter
-([React architecture rules](#react-architecture-rules)). A port starts in `candidates/rules/` (none today) and moves to `rules/` and
+eslint-plugin-react-hooks 7.1.1, and 11 React practice rules of its own, which port no linter
+([React practice rules](#react-practice-rules)). A port starts in `candidates/rules/` (none today) and moves to `rules/` and
 `pack.json` once it passes the conformance check ([conformance/README.md](../../conformance/README.md#the-gate)), which
 CI runs on every port. Every port is scored against the plugins' own findings on the
 plugins' test cases and on their rename variants (`holds-under-rename`), and against the labelled lines of the plugins'
@@ -35,13 +35,13 @@ The pack follows the [pack structure and validation contract](../../docs/pack-fo
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and the 51 rules it ships, with an example each rule catches and one it lets pass; the architecture rules are in the group `React architecture` |
-| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare and the capabilities it exercises; the pinned tools; and, as `own`, the architecture rules, which no gate judges. Written by `scripts/generate/packs/react-policies.mjs` |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition and the 51 rules it ships, with an example each rule catches and one it lets pass; the practice rules are in the group `React practice` |
+| `conformance.json` | Every port (shipped under `rules/`, or a candidate under `candidates/rules/`): its upstream tool and rule, how findings compare and the capabilities it exercises; the pinned tools; and, as `own`, the practice rules, which the gates judge on `loads` and `compact` alone. Written by `scripts/generate/packs/react-policies.mjs` |
 | `upstream/<tool>/` | For each plugin: the plugin's copied tests (`tests/`), the cases extracted from them (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), the generator (`generate.mjs`, sharing `upstream/common.mjs` and `scripts/pack-data/eslint-expected.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); `UPSTREAM.md` lists the fixtures Rerail wrote beside them (`common.mjs` `AUTHORED`): files of other JSX libraries, which the plugins report and the ports skip, and React files whose JSX goes through Emotion, which both report |
-| `upstream/react-architecture/` | The architecture rules' cases, one `<id>.cases.json` per rule, written by Rerail and listed in its `UPSTREAM.md`: pack test data in their own archive, pinned by `test-data.lock` and fetched by `npm run fixtures:pull`, with no upstream tool or generator |
+| `upstream/react-practice/` | The practice rules' cases, one `<id>.cases.json` per rule, written by Rerail and listed in its `UPSTREAM.md`: pack test data in their own archive, pinned by `test-data.lock` and fetched by `npm run fixtures:pull`, with no upstream tool or generator |
 | `divergences.json` | Where the ports and the expected findings disagree by design: the plugins' findings on the authored files of other JSX libraries, and sample lines under an `oxlint-disable` comment (or an `eslint-disable` naming another plugin's same-named rule), which silence the port as they silence Oxlint and not ESLint |
 | `licenses/<project>/` | The upstream licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
-| `rules/` | The shipped rules' code-rule documents. The ports are written by `scripts/generate/packs/react-policies.mjs` from `react-specs.mjs` beside it, or by hand for the ports `react-specs.mjs` lists in `HAND_WRITTEN`; the architecture rules (`react-architecture-*`) are written by hand |
+| `rules/` | The shipped rules' code-rule documents. The ports are written by `scripts/generate/packs/react-policies.mjs` from `react-specs.mjs` beside it, or by hand for the ports `react-specs.mjs` lists in `HAND_WRITTEN`; the practice rules (`react-practice-*`) are written by hand |
 | `candidates/` | Ports still being evaluated, scored but never shipped (`rules/`, none today), which `react-policies.mjs` also writes; `probes/` holds the hand-labelled React fact probes, whose rules `scripts/generate/packs/react-probes.mjs` writes |
 
 Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
@@ -65,31 +65,31 @@ node scripts/generate/packs/react-policies.mjs
 node --import tsx conformance/languages/cli.ts --pack react --rule react-jsx-key --fixtures
 ```
 
-## React architecture rules
+## React practice rules
 
-The 11 `react-architecture-*` rules are Rerail's own; none is a port of a linter rule. Each is advice that React
+The 11 `react-practice-*` rules are Rerail's own; none is a port of a linter rule. Each is advice that React
 maintainers give again and again in code review, or that the React docs give, and that no linter checks. A rule was kept
 when at least two independent sources gave the advice, one of them a maintainer or react.dev; when public apps held
 real violations of it; and when no existing lint rule makes the same check. A rule reads one file at a time, so each
 rule's details below list what it misses.
 
-Each rule is proven three ways: by its `pack.json` examples; by its cases in `upstream/react-architecture/<id>.cases.json`, run by
-`test/cli/react-architecture-rules.test.ts`; and by a run on 30 open-source React apps at pinned commits, whose matches
-were read and judged real or not. `conformance.json` lists them as `own`, so no conformance gate judges them.
+Each rule is proven three ways: by its `pack.json` examples; by its cases in `upstream/react-practice/<id>.cases.json`, run by
+`test/cli/react-practice-rules.test.ts`; and by a run on 30 open-source React apps at pinned commits, whose matches
+were read and judged real or not. `conformance.json` lists them as `own`, so the conformance gate judges them on `loads` and `compact` alone, with no upstream to compare.
 
 | Rule | Mode | Catches | Matches (repos) on 30 apps | Precision of read matches |
 |---|---|---|---|---|
-| `react-architecture-callback-for-dom-only` | Steer | `useCallback` whose result only built-in elements or direct calls use | 1,884 (28) | 100% (179 of 179) |
-| `react-architecture-fresh-dependency` | Steer | a hook dependency rebuilt on every render | 130 (23) | 99.2% (129 of 130; 1 unclear) |
-| `react-architecture-side-effect-in-render` | Steer | navigation, analytics or a dispatch called during render | 12 (7) | 100% (12 of 12) |
-| `react-architecture-then-without-stale-guard` | Steer | an effect writing a `.then` result to state with no stale-result guard | 52 (15) | 100% (52 of 52) |
-| `react-architecture-cache-update-in-mutate-call` | Steer | a query cache update in a `mutate` call's own callbacks | 27 (6) | 100% (27 of 27) |
-| `react-architecture-mounted-ref-never-reset` | Steer | a mount ref set false in a cleanup and never set back to true | 9 (3) | 100% (9 of 9) |
-| `react-architecture-memo-trivial-expression` | Steer | `useMemo` around a value or a cheap expression | 235 (27) | 100% (124 of 124) |
-| `react-architecture-selector-returns-new-collection` | Steer | a store selector that returns a new object or array | 10 (3) | 100% (10 of 10) |
-| `react-architecture-request-beside-data-library` | Log | a request in an effect, in a file that uses a data library | 15 (8) | 87% (13 of 15) |
-| `react-architecture-hoist-static-value` | Steer | a value that reads nothing from the component, built every render | 321 (24) | 100% (111 of 111) |
-| `react-architecture-lifecycle-hook` | Steer | a run-once lifecycle hook whose callback reads props or state | 12 (4) | 100% (12 of 12) |
+| `react-practice-callback-for-dom-only` | Steer | `useCallback` whose result only built-in elements or direct calls use | 1,884 (28) | 100% (179 of 179) |
+| `react-practice-fresh-dependency` | Steer | a hook dependency rebuilt on every render | 130 (23) | 99.2% (129 of 130; 1 unclear) |
+| `react-practice-side-effect-in-render` | Steer | navigation, analytics or a dispatch called during render | 12 (7) | 100% (12 of 12) |
+| `react-practice-then-without-stale-guard` | Steer | an effect writing a `.then` result to state with no stale-result guard | 53 (16) | 98.1% (52 of 53; 1 unclear) |
+| `react-practice-cache-update-in-mutate-call` | Steer | a query cache update in a `mutate` call's own callbacks | 27 (6) | 100% (27 of 27) |
+| `react-practice-mounted-ref-never-reset` | Steer | a mount ref set false in a cleanup and never set back to true | 9 (3) | 100% (9 of 9) |
+| `react-practice-memo-trivial-expression` | Steer | `useMemo` around a value or a cheap expression | 236 (27) | 100% (124 of 124) |
+| `react-practice-selector-returns-new-collection` | Steer | a store selector that returns a new object or array | 10 (3) | 100% (10 of 10) |
+| `react-practice-request-beside-data-library` | Log | a request in an effect, in a file that uses a data library | 15 (8) | 87% (13 of 15) |
+| `react-practice-hoist-static-value` | Steer | a value that reads nothing from the component, built every render | 278 (24) | 100% (94 of 94) |
+| `react-practice-lifecycle-hook` | Steer | a run-once lifecycle hook whose callback reads props or state | 12 (4) | 100% (12 of 12) |
 
 A match is real when the file holds the pattern, even if code elsewhere (a caller, an app-wide handler, a lint config)
 makes it harmless there; a repository that disagrees turns the rule off. A rule steers where nearly every match was
@@ -260,7 +260,7 @@ Port of eslint-plugin-react 7.37.5 react/self-closing-comp (component: true, htm
 
 Port of eslint-plugin-react 7.37.5 react/void-dom-elements-no-children. Void elements: area, base, br, col, embed, hr, img, input, keygen, link, menuitem, meta, param, source, track, wbr. Reports children, a `children` attribute or a `dangerouslySetInnerHTML` attribute (one report each); the same through createElement with an object-literal props argument.
 
-### `react-architecture-callback-for-dom-only`
+### `react-practice-callback-for-dom-only`
 
 Rerail's own rule, not a port. It matches `const X = useCallback(<arrow or function>, …)` in a component or hook (named in PascalCase or `use…`, wrapped in `memo`, `forwardRef` or another HOC, or an `export default` function) when `X` is read and every read is one of two kinds: an `on[A-Z]…` prop of a lowercase built-in element (also through parentheses, a cast, a ternary branch, or the right side of `&&`, `||` or `??`), or the callee of a call (`X()`, `X?.()`, `X!()`). Nothing reads such a function's identity, so the memo is wasted work. React's `useCallback` resolves under every import spelling.
 
@@ -274,13 +274,13 @@ It leaves alone: a first argument that is not a function literal (`useCallback(d
 - larkox, [mattermost#24912](https://github.com/mattermost/mattermost/pull/24912#discussion_r1358074711): "since it is a simple html component, I think it is ok to leave it like that".
 - TkDodo, [sentry#112689](https://github.com/getsentry/sentry/pull/112689): Sentry's in-repo rule flags a callback "when the result is directly invoked … or passed to intrinsic elements".
 
-### `react-architecture-fresh-dependency`
+### `react-practice-fresh-dependency`
 
 Rerail's own rule, not a port. It matches an element of the dependency array of `useEffect`, `useLayoutEffect`, `useMemo` or `useCallback` that is either a `const` the same function body declares at its top level as a new array (`.filter`, `.map`, `.flatMap`, `.split`, `Object.keys/values/entries`, `Array.from`) or a new object (`Object.fromEntries`, `Object.assign({}, …)`); or the component's whole first parameter, `props`. The props form applies to a component named in PascalCase, or passed straight to `memo`, `forwardRef` or `observer`, whose first parameter is a plain identifier.
 
-It leaves alone: components wrapped in `memo` or `observer` (directly, through `forwardRef`, or by name elsewhere in the file), since React keeps their props object while the props are shallow-equal; forwardRef's `ref`; destructured props; and a fresh call written in the deps array itself, which `react-hooks-exhaustive-deps` already reports.
+It leaves alone: components wrapped in `memo`, `observer` or react-redux's `connect(…)` (directly, through `forwardRef`, or by name elsewhere in the file), since React keeps their props object while the props are shallow-equal (`connect` wraps the component in `memo`); forwardRef's `ref`; destructured props; and a fresh call written in the deps array itself, which `react-hooks-exhaustive-deps` already reports.
 
-**Gaps:** `let`/`var` and nested-block declarations, and values from a ternary or `??` (`a?.filter(…) ?? []`); chains ending in another method (`.filter(…).sort()`, `.slice()`) and spread copies; helper calls, hook results and custom-hook parameters, which one file cannot prove fresh; anonymous default-export components, other wrappers, a defaulted first parameter, and a component memoized in another file (still matched); effects that pass the whole props on (`onChange(props)`), left out on purpose; `useImperativeHandle` and `useInsertionEffect`.
+**Gaps:** `let`/`var` and nested-block declarations, and values from a ternary or `??` (`a?.filter(…) ?? []`); chains ending in another method (`.filter(…).sort()`, `.slice()`) and spread copies; helper calls, hook results and custom-hook parameters, which one file cannot prove fresh; anonymous default-export components, other wrappers, a defaulted first parameter, and a component memoized or connected in another file, such as a `connect` in a sibling `index.ts` (still matched); effects that pass the whole props on (`onChange(props)`), left out on purpose; `useImperativeHandle` and `useInsertionEffect`.
 
 **Sources:**
 - react.dev, [useMemo: Should you add useMemo everywhere?](https://react.dev/reference/react/useMemo#should-you-add-usememo-everywhere): "a single value that's 'always new' is enough to break memoization for an entire component."
@@ -288,11 +288,11 @@ It leaves alone: components wrapped in `memo` or `observer` (directly, through `
 - torkelo, [grafana#73637](https://github.com/grafana/grafana/pull/73637#discussion_r1305268715): "Is this memoization not pointless? Props will always be a new object instance".
 - sachin-thakur-bruno, [bruno#8881](https://github.com/usebruno/bruno/pull/8881#discussion_r3767884194): "visibleCollections changes on every render. Either memo the visibleCollections also or remove the memo".
 
-### `react-architecture-side-effect-in-render`
+### `react-practice-side-effect-in-render`
 
-Rerail's own rule, not a port. It matches a router navigation, a `track…` analytics call or a store `dispatch` whose result is discarded (a statement of its own, the right side of `&&`/`||`/`??`, a ternary branch, `void x()`, or a JSX expression) and whose nearest function runs during render: a hook, a component (also inside `memo`, `forwardRef` or any wrapper), or a callback passed to `useMemo`, `useState` or `useReducer`. Navigation is `push`, `replace`, `back`, `navigate`, `reset` and their kin on the result of `useRouter`, `useHistory` or `useNavigation`, on a `navigation` or `history` prop, or a function from `useNavigate`; a dispatch comes from `useDispatch` or `useAppDispatch`.
+Rerail's own rule, not a port. It matches a router navigation, a `track…` analytics call or a store `dispatch` whose result is discarded (a statement of its own, the right side of `&&`/`||`/`??`, a ternary branch, `void x()`, or a JSX child such as `<div>{router.back()}</div>`) and whose nearest function runs during render: a hook, a component (also inside `memo`, `forwardRef` or any wrapper), or a callback passed to `useMemo`, `useState` or `useReducer`. Navigation is `push`, `replace`, `back`, `navigate`, `reset` and their kin on the result of `useRouter`, `useHistory` or `useNavigation`, on a `navigation` or `history` prop, or a function from `useNavigate`; a dispatch comes from `useDispatch` or `useAppDispatch`.
 
-It leaves alone: calls in handlers, effects, `useCallback`, JSX props and local helpers; a used result (`return router.push(…)`), which keeps URL builders quiet; async functions and `"use server"` files; a component with no JSX and no hook call; `useReducer` dispatches; and routers and stores of other UI libraries.
+It leaves alone: calls in handlers, effects, `useCallback`, JSX props (`onPress={trackTap("fairs")}` builds a handler) and local helpers; a used result (`return router.push(…)`), which keeps URL builders quiet; async functions and `"use server"` files; a component with no JSX and no hook call; `useReducer` dispatches; `track…` names imported from `react-tracked` or `proxy-compare`, whose `trackMemo(state)` belongs in `useMemo`; and routers and stores of other UI libraries.
 
 **Gaps:** app-named store actions (easy-peasy, zustand `getState().action()`); helpers that navigate or track for you; analytics not named `track…` (`posthog.capture`, `gtag`); namespace imports of the router or redux module, same-file or renamed router hooks, and expo-router's `router`; anonymous default-export, lowercase and class components; calls inside an IIFE or `forEach`; wouter's `useLocation` setter and `store.dispatch` on an imported store. It can match wrongly on a local hook named like a router hook, a `history` prop that is an undo stack, a `track…` function that is not analytics, or a server component without `"use client"`; none appeared on the 30 apps.
 
@@ -302,20 +302,20 @@ It leaves alone: calls in handlers, effects, `useCallback`, JSX props and local 
 - MounirDhahri, [eigen#5294](https://github.com/artsy/eigen/pull/5294#discussion_r692819915): "it would need to be wrapped with `useEffect` to avoid triggering it on screen re-rerenders" (analytics).
 - damassi, [eigen#10746](https://github.com/artsy/eigen/pull/10746#discussion_r1763677241): "We should fire this in a `useEffect` … so that we're sure it only fires once" (store action).
 
-### `react-architecture-then-without-stale-guard`
+### `react-practice-then-without-stale-guard`
 
-Rerail's own rule, not a port. It matches a `.then` inside a `useEffect` or `useLayoutEffect` callback when a `.then` argument is a same-file `useState`/`useReducer` setter, or calls one with a value the callback received or derived; when an element of the deps array is an argument of a call in the promise chain (directly, or through a `const` the effect builds from it); and when the effect has no wired guard. A guard is a `let` flag the effect declares, reads in the chain and sets in a returned cleanup; an `AbortController` whose `signal` reaches the request and whose cleanup aborts it; a `.current` read or an `if` on a value of this run in the callback; or a run-once latch.
+Rerail's own rule, not a port. It matches a `.then` inside a `useEffect` or `useLayoutEffect` callback when a `.then` argument is a same-file `useState`/`useReducer` setter, or calls one with a value the callback received or derived; when an element of the deps array is an argument of a call in the promise chain (directly, or through a `const` the effect builds from it); and when the effect has no wired guard. A guard is a `let` flag the effect declares, reads in the chain and sets in a returned cleanup; an `AbortController` whose `signal` reaches the request and whose cleanup aborts it; an `if` in a `.then` callback whose condition reads a name the effect body itself declares, such as a request id (an `if` on the callback's own parameters or on props, like `if (r.id === id)`, is no guard, since the stale run holds the old `id` too); a `.current` read in the callback, since that is usually a latch or a latest-request ref; or a run-once latch.
 
-It leaves alone: `[]` deps; deps used only as the receiver or named like a client (`api`, `client`, `…Service`, `…Manager`); setters called with no result (`setLoading(false)`); setters from props, custom hooks or stores; chains rooted at `fetch`, `axios.`, `ky`, `got`, `Promise.resolve`/`reject` or `new Promise`; effects that list the written state or gate on it; and writes keyed by a dependency (`[id]: r`, `.set(id, r)`).
+It leaves alone: `[]` deps; deps used only as the receiver or named like a client (`api`, `client`, `…Service`, `…Manager`); setters called with no result (`setLoading(false)`); setters from props, custom hooks or stores; chains rooted at `Promise.resolve`/`reject` or `new Promise`; effects that list the written state or gate on it; and writes keyed by a dependency (`[id]: r`, `.set(id, r)`).
 
-**Gaps:** the `await` form; a promise kept in a variable; loaders in `useCallback`; `useEffect(load, [id])`; a dep used only inside an earlier `.then`; a dep held in a component-scope `const` or `useMemo`; a flag that guards a different setter, or a signal the request ignores, still counts as a guard; a ref flag shared across runs passes; custom effect hooks and non-literal deps arrays. On the 30 apps, 7 matches are harmless only because of their callers. In grafana/grafana `public/app/features/alerting/unified/home/AdCard.tsx` every caller passes `storageKey` as a constant. In six, the dependency is a prop fixed while the component is mounted: actualbudget/actual `packages/desktop-client/src/components/modals/EditAccess.tsx` and `packages/desktop-client/src/components/modals/LoadBackupModal.tsx`, mastodon/mastodon `app/javascript/mastodon/features/ui/components/domain_block_modal.tsx`, grafana/grafana `public/app/core/components/OwnerReferences/OwnerReferenceSelector.tsx`, and two in mattermost/mattermost `webapp/channels/src/components/team_settings/team_access_policies_tab/team_policy_editor.tsx`.
+**Gaps:** the `await` form; a promise kept in a variable; loaders in `useCallback`; `useEffect(load, [id])`; a dep used only inside an earlier `.then`; a dep held in a component-scope `const` or `useMemo`; a flag that guards a different setter, or a signal the request ignores, still counts as a guard; a ref flag shared across runs passes; custom effect hooks and non-literal deps arrays. On the 30 apps, 7 matches are harmless only because of their callers. In grafana/grafana `public/app/features/alerting/unified/home/AdCard.tsx` every caller passes `storageKey` as a constant. In six, the dependency is a prop fixed while the component is mounted: actualbudget/actual `packages/desktop-client/src/components/modals/EditAccess.tsx` and `packages/desktop-client/src/components/modals/LoadBackupModal.tsx`, mastodon/mastodon `app/javascript/mastodon/features/ui/components/domain_block_modal.tsx`, grafana/grafana `public/app/core/components/OwnerReferences/OwnerReferenceSelector.tsx`, and two in mattermost/mattermost `webapp/channels/src/components/team_settings/team_access_policies_tab/team_policy_editor.tsx`. One is unclear: in calcom/cal.diy `packages/platform/examples/base/src/pages/_app.tsx` a module-level `seeding` flag stops the effect from sending a second request.
 
 **Sources:**
 - react.dev, [You Might Not Need an Effect: Fetching data](https://react.dev/learn/you-might-not-need-an-effect#fetching-data): "To fix the race condition, you need to add a cleanup function to ignore stale responses".
 - react.dev, [useEffect: Fetching data with Effects](https://react.dev/reference/react/useEffect#fetching-data-with-effects): `fetchBio(person).then(result => { if (!ignore) setBio(result) })` with `return () => { ignore = true }`.
 - FZambia, [centrifugal/web#75](https://github.com/centrifugal/web/pull/75): "the slower, stale response can resolve after the newer one and silently overwrite the screen".
 
-### `react-architecture-cache-update-in-mutate-call`
+### `react-practice-cache-update-in-mutate-call`
 
 Rerail's own rule, not a port. It matches a query cache call whose nearest enclosing function is an `onSuccess`, `onSettled` or `onError` callback in the options passed as the second argument of a `mutate` or `mutateAsync` call (`x.mutate`, bare `mutate`, or a name destructured from `mutate`). The options may be written in the call, held in a same-file `const`, or returned by React's `useMemo`. A cache call is a TanStack Query method (`invalidateQueries`, `setQueryData`, `setQueriesData`, `resetQueries`, `removeQueries`), `refetchQueries` in a file that imports TanStack Query or tRPC or on a receiver named like a query client, or `invalidate`, `refetch`, `reset`, `setData` or `setInfiniteData` on a tRPC utils object (`useUtils()`, `useContext()`). TanStack Query drops these callbacks if the component unmounts first, so the update belongs in `useMutation`'s own callbacks.
 
@@ -328,9 +328,9 @@ It leaves alone: a cache call in a later handler inside the callback (a toast's 
 - TkDodo, [Mastering Mutations](https://tkdodo.eu/blog/mastering-mutations-in-react-query#some-callbacks-might-not-fire): "Do things that are absolutely necessary and logic related (like query invalidation) in the useMutation callbacks."
 - lukevella, [rallly#3367](https://github.com/lukevella/rallly/pull/3367): "Callbacks passed to `mutate()` are dropped on unmount, so no call site uses them."
 
-### `react-architecture-mounted-ref-never-reset`
+### `react-practice-mounted-ref-never-reset`
 
-Rerail's own rule, not a port. It matches `X.current = false` in a cleanup that a `useEffect` or `useLayoutEffect` callback returns (by `return`, a concise `() => () => …` body, or a ternary branch), where `X` is bound to React's `useRef(true)` (also under a cast) and is named for mounting (`isMounted`, `mountedRef`, `unmounted`). The function that declares `X` must never set `X.current` to any other value. Strict Mode in development, and a hidden `<Activity>`, run the cleanup and then the effect again with refs kept, so such a ref stays `false` while the component is mounted.
+Rerail's own rule, not a port. It matches `X.current = false` in a cleanup that a `useEffect` or `useLayoutEffect` callback returns (by `return`, a concise `() => () => …` body, or a ternary branch), where `X` is bound to React's `useRef(true)` (also under a cast, or with a comment before `true`) and is named for mounting (`isMounted`, `mountedRef`, `unmounted`). The function that declares `X` must never set `X.current` to any other value. Strict Mode in development, and a hidden `<Activity>`, run the cleanup and then the effect again with refs kept, so such a ref stays `false` while the component is mounted.
 
 It leaves alone: first-render flags (any name with `first` or `initial`); a ref that is reset anywhere in its declaring function; and a ref handed on, as a call argument or a JSX value, since the receiver may reset it.
 
@@ -342,11 +342,11 @@ It leaves alone: first-render flags (any name with `first` or `initial`); a ref 
 - react.dev, [React 19.2: Activity](https://react.dev/blog/2025/10/01/react-19-2): a hidden `<Activity>` cleans up its effects and re-runs them when shown, keeping state.
 - juliusmarminge, [t3code#25920](https://github.com/pingdotgg/t3code/pull/25920): "Since React 18 a setState on an unmounted component does nothing … the guard prevented nothing."
 
-### `react-architecture-memo-trivial-expression`
+### `react-practice-memo-trivial-expression`
 
-Rerail's own rule, not a port. It matches React's `useMemo` with a non-async, parameterless callback and a non-empty deps array literal, when the callback returns a cheap expression (directly, or as a block's only `return`) and every name it reads is in the deps array, as the name or as a member chain read from it. Cheap means no call, `new`, object, array, function, JSX, template interpolation, `await`, assignment, spread or regex. Three forms get their own message: the identity form returns a dependency unchanged (`() => params, [params]`); the property-read form reads one property (`user.name` with `[user]`); the operator form is a comparison, arithmetic, `&&`/`||`/`??`, a ternary, `typeof` or `instanceof`.
+Rerail's own rule, not a port. It matches React's `useMemo` with a non-async, parameterless callback and a non-empty deps array literal, when the callback returns a cheap expression (directly, or as a block's only `return`) and every name it reads is in the deps array, as the name or as a member chain read from it. Cheap means no call, `new`, object, array, function, JSX, template interpolation, `await`, assignment, spread or regex. Three forms get their own message: the identity form returns a dependency unchanged (`() => params, [params]`); the property-read form reads one property (`user.name` with `[user]`); the operator form is a comparison, arithmetic, `&&`/`||`/`??`, a ternary, `typeof` or `instanceof`. Comments between the arguments or inside the callback don't change what it matches (`useMemo(/* c */ () => x, [x])`).
 
-It leaves alone: bodies that read a name outside the deps (a module constant, `window`, `ref.current`), which may be deliberate snapshots; memos keyed on another dependency (`[x?.length]`); literal-only bodies; deps that are not an array literal; and `useMemo` from Preact.
+It leaves alone: bodies that read a name outside the deps (a module constant, `window`), which may be deliberate snapshots; bodies that read `.current` (`() => ref.current`, with `[ref]` or `[ref.current]`), since computing them during render would read a ref during render; memos keyed on another dependency (`[x?.length]`); literal-only bodies; deps that are not an array literal; and `useMemo` from Preact.
 
 **Gaps:** cheap calls (`.some(…)`, `Boolean(x)`, `Math.max(…)`), which were most of what reviewers flagged; a block with a local before `return`; template literals with interpolation. A property read may be a getter in another file that builds a new object, or a deliberate snapshot; the property-read message says to leave those. A `**` on BigInts can be costly and is still matched.
 
@@ -356,20 +356,20 @@ It leaves alone: bodies that read a name outside the deps (a module constant, `w
 - hlomzik, [label-studio#8948](https://github.com/HumanSignal/label-studio/pull/8948#discussion_r2728061461): "This `useMemo()` is redundant".
 - malwilley, [sentry#40982](https://github.com/getsentry/sentry/pull/40982#discussion_r1013328641): "No need for a useMemo here since it returns a primitive and the operation is quick".
 
-### `react-architecture-selector-returns-new-collection`
+### `react-practice-selector-returns-new-collection`
 
-Rerail's own rule, not a port. It matches a call to one of the app's store selector hooks, named `use…Store`, `use…Selector` or `use…StoreContext` (`useAppSelector` included), with a single argument: a selector, written inline or bound in the same file as a `const`, a function or a `useCallback`, whose result is a new object or array literal. With no equality argument the store compares with `===`, so the component re-renders on every store change, and on Zustand 5 it can loop.
+Rerail's own rule, not a port. It matches a call to one of the app's store selector hooks, named `use…Store`, `use…Selector` or `use…StoreContext` (`useAppSelector` included), with a single argument: a selector, written inline or bound in the same file as a `const`, a function or a `useCallback`, whose result is a new object or array: a literal, or a chain that ends in a `.map`, `.filter`, `.slice`, `.concat` or `.flatMap` call, `Object.keys`, `Object.values`, `Object.entries` or `Array.from`. With no equality argument the store compares with `===`, so the component re-renders on every store change, and on Zustand 5 it can loop.
 
-It leaves alone: hook names containing `Shallow` or `Equal`; a call with a second argument; `useShallow(…)` wrappers; imported named selectors; derivations (`.map`, `.filter`, `|| []`, ternary branches); and react-redux `useSelector` and same-file Zustand stores, which React Doctor covers.
+It leaves alone: hook names with `Shallow` or `Equal` as a word (`useShallowEqualSelector`, but not `useEqualizerStore`); a call with a second argument; `useShallow(…)` wrappers; imported named selectors; chains that end in a plain value (`.map(…).join(…)`, `.filter(…).length`, a comparison); `|| []` fallbacks and ternary branches; and react-redux `useSelector`, which React Doctor covers.
 
-**Gaps:** hooks named otherwise (`useAppState`); imported selectors that return fresh values; a selector built by `useMemo`; a literal returned early or from both branches of a final `if`; whole-store subscriptions; same-file Zustand 3 and 4 stores. A second argument of any kind silences it, even on a Zustand 5 hook, where it does nothing. Hooks that memoize or compare in another file match wrongly: memoizing wrappers, stores made with `createWithEqualityFn(…, shallow)`, and TanStack Form's `useStore` on `@tanstack/react-store` 0.8 and earlier. On the 30 apps, one match is harmless because of its hook: grafana/grafana `public/app/features/alerting/unified/components/rules/GrafanaRules.tsx`, whose `useUnifiedAlertingSelector` wraps the selector in `createSelector`.
+**Gaps:** hooks named otherwise (`useAppState`); imported selectors that return fresh values; a selector built by `useMemo`; a literal returned early or from both branches of a final `if`; whole-store subscriptions. A second argument of any kind silences it, even on a Zustand 5 hook, where it does nothing. Hooks that memoize or compare match wrongly: memoizing wrappers in another file, stores made with `createWithEqualityFn(…, shallow)` in any file, and TanStack Form's `useStore` on `@tanstack/react-store` 0.8 and earlier. A `.slice` or `.concat` on a string also matches wrongly, since it returns a string. On the 30 apps, one match is harmless because of its hook: grafana/grafana `public/app/features/alerting/unified/components/rules/GrafanaRules.tsx`, whose `useUnifiedAlertingSelector` wraps the selector in `createSelector`.
 
 **Sources:**
 - React Redux, [Hooks: Equality Comparisons and Updates](https://react-redux.js.org/api/hooks#equality-comparisons-and-updates): "returning a new object every time will *always* force a re-render by default."
 - Zustand, [Migrating to v5](https://github.com/pmndrs/zustand/blob/main/docs/reference/migrations/migrating-to-v5.md): "If a selector returns a new reference, it may cause infinite loops".
 - damencho, [jitsi-meet#18013](https://github.com/jitsi/jitsi-meet/pull/18013#discussion_r4319605449): "returns a new object on every call … Passing `shallowEqual` … would limit it to real changes".
 
-### `react-architecture-request-beside-data-library`
+### `react-practice-request-beside-data-library`
 
 Rerail's own rule, not a port. It matches a request made in a `useEffect` or `useLayoutEffect` callback whose result, or a value derived from it, reaches a same-file `useState` setter, in a file that imports or `require`s a data library (TanStack Query, react-query, SWR, Apollo Client, Relay, a tRPC React binding, or RTK Query). The request heads a `.then`/`.catch`/`.finally` chain that sets state, is awaited before a setter call, or is a bare Relay `fetchQuery(…).subscribe({ next })` that sets state. The file already uses a client-side cache, which handles the request's caching, races and retries.
 
@@ -385,13 +385,13 @@ It leaves alone: files that import only setup names (`QueryClient`, `ApolloProvi
 
 Why Log: 87% precision (13 of 15). The two false positives are helpers whose bodies the rule cannot see, and telling them apart from server calls would take a list of helper names. The message says to keep the effect when the data is not server data.
 
-### `react-architecture-hoist-static-value`
+### `react-practice-hoist-static-value`
 
 Rerail's own rule, not a port. It matches a `const` object or array literal, or a lowercase-named function, declared in the body of a module-level, non-async component or hook (also in a nested block, not in a nested function) that reads no binding of that component or hook and no module-level `let`/`var`, is never mutated there, and is handed on by identity: as a component's JSX prop (also through a ternary, cast or fallback), as a hook argument, or in a hook's deps array. It should be moved to module scope, so it keeps one identity.
 
-It leaves alone: values used only locally (`.map` into JSX, spread into props, passed to a plain function, used on DOM elements), where hoisting changes nothing at runtime; values built with a call (`t('…')`, `new Fuse(…)`), which may read locale or time; inline JSX literals, which inline-prop lint rules cover; factory components and async server components.
+It leaves alone: values used only locally (`.map` into JSX, spread into props, passed to a plain function, used on DOM elements), where hoisting changes nothing at runtime; values built with a call (`t('…')`, `new Fuse(…)`), which may read locale or time; object and array values that read an imported binding outside a nested function (`{ userId: store.userId }`, `{ status: Status.Open }`), since hoisting would freeze a value that may change after load; inline JSX literals, which inline-prop lint rules cover; factory components and async server components. A context provider's `value` counts as a prop, in both `<Ctx value={…}>` and `<Ctx.Provider value={…}>`.
 
-**Gaps:** `let`/`var` declarations and values reached through another local; values passed inside another object (`useQuery({ queryKey: KEY })`) or only returned; class components, anonymous default exports and `observer(() => …)` components; values inside functions nested in the body; whether the receiver is memoized. It can match wrongly when a hook both passes on and returns an object a caller mutates, or when a literal reads a live value through an imported object (`i18n.language`); the message says to leave a value each instance needs its own copy of. Every read match on the 30 apps was the shape the rule describes.
+**Gaps:** `let`/`var` declarations and values reached through another local; values passed inside another object (`useQuery({ queryKey: KEY })`) or only returned; class components, anonymous default exports and `observer(() => …)` components; values inside functions nested in the body; whether the receiver is memoized; constant style tables and enums from other files, which are left alone with the live imports. It can match wrongly when a hook both passes on and returns an object a caller mutates, or when a function reads a live imported value when called; the message says to leave a value each instance needs its own copy of. Every read match on the 30 apps was the shape the rule describes.
 
 **Sources:**
 - react.dev, [useCallback: Should you add useCallback everywhere?](https://react.dev/reference/react/useCallback#should-you-add-usecallback-everywhere): "it's often simpler to move some object or a function inside an Effect or outside the component."
@@ -399,13 +399,13 @@ It leaves alone: values used only locally (`.map` into JSX, spread into props, p
 - mckn, [grafana#97354](https://github.com/grafana/grafana/pull/97354#discussion_r1870849699): "This can be moved outside of the hook so it doesn't get declared on every render."
 - hmhealey, [mattermost#35118](https://github.com/mattermost/mattermost/pull/35118#discussion_r3164466062): "will cause `useBookmarkDragDrop` to remove and re-attach listeners … every render cycle".
 
-### `react-architecture-lifecycle-hook`
+### `react-practice-lifecycle-hook`
 
 Rerail's own rule, not a port. It matches a call to `useMount`, `useEffectOnce` or `useMountEffect` imported from react-use, ahooks, usehooks-ts or @react-hookz/web (named, aliased, per-hook default or namespace import) whose first argument is an inline function that reads a parameter or local of the enclosing component or hook. These hooks run once on mount, and dependency checks only look at direct `useEffect` calls, so the read is never checked.
 
-It leaves alone, as not reactive reads: callees of calls (`load()`, `api.post(…)`); `.current` and refs; setters and dispatches; names starting with `default` or `initial`; `const` primitives; module-level bindings and imports. It does not match update wrappers (`useUpdateEffect`, `useDidUpdate`), unmount wrappers, which keep the latest callback, or a named callback (`useMount(load)`).
+It leaves alone, as not reactive reads: callees of calls (`load()`, `api.post(…)`); `.current` and refs; `useId` results; setters and dispatches; names starting with `default` or `initial`; `const` primitives; module-level bindings and imports. It does not match update wrappers (`useUpdateEffect`, `useDidUpdate`), unmount wrappers, which keep the latest callback, or a named callback (`useMount(load)`).
 
-**Gaps:** a repository's own wrappers (a local `useEffectOnce`); re-exports through a local module; wrappers under other names (`useDidMount`, `useOnMount`); `require()`; a closure called from the callback. Stable values from other files (a custom hook's ref or setter, `useDispatch`, `useQueryClient`, `useNavigate`) count as reads. It cannot see a parent's `key` that remounts the component, or a comment that says the read is meant to happen once. On the 30 apps, 3 matches are stale reads a user can hit (the grafana/grafana Azure Monitor plugin's `QueryEditor.tsx`, `FormatAsField.tsx` and `MonitorConfig.tsx`); in the other 9 the one-time read is deliberate. The message gives both choices: if the values can change while mounted, use `useEffect` and list them as its dependencies; if reading them once is intended, keep the hook (on React 19.2+, `useEffectEvent` makes that explicit). Six are deliberate run-once code: Kong/insomnia `packages/insomnia/src/ui/components/panes/grpc-request-pane.tsx`, backstage/backstage `packages/core-components/src/layout/SignInPage/SignInPage.tsx`, `plugins/scaffolder/src/components/fields/EntityTagsPicker/EntityTagsPicker.tsx` and `plugins/search/src/components/SearchType/SearchType.tsx`, grafana/grafana `public/app/core/components/AppNotifications/AppNotificationItem.tsx` and `public/app/features/alerting/unified/components/rule-editor/query-and-alert-condition/QueryAndExpressionsStep.tsx`. Three read once in a way that looks deliberate: backstage/backstage `plugins/catalog-react/src/components/EntityOwnerPicker/useFetchEntities.ts`, cline/cline `apps/vscode/webview-ui/src/components/settings/GroqModelPicker.tsx` and `apps/vscode/webview-ui/src/components/settings/HuggingFaceModelPicker.tsx`.
+**Gaps:** a repository's own wrappers (a local `useEffectOnce`); re-exports through a local module; wrappers under other names (`useDidMount`, `useOnMount`); `require()`; a closure called from the callback. Stable values from other files (a custom hook's ref or setter, `useDispatch`, `useQueryClient`, `useNavigate`) count as reads. It cannot see a parent's `key` that remounts the component, or a comment that says the read is meant to happen once. On the 30 apps, 3 matches are stale reads a user can hit (the grafana/grafana Azure Monitor plugin's `QueryEditor.tsx`, `FormatAsField.tsx` and `MonitorConfig.tsx`); the other 9 read once on purpose. Six are deliberate run-once code: Kong/insomnia `packages/insomnia/src/ui/components/panes/grpc-request-pane.tsx`, backstage/backstage `packages/core-components/src/layout/SignInPage/SignInPage.tsx`, `plugins/scaffolder/src/components/fields/EntityTagsPicker/EntityTagsPicker.tsx` and `plugins/search/src/components/SearchType/SearchType.tsx`, grafana/grafana `public/app/core/components/AppNotifications/AppNotificationItem.tsx` and `public/app/features/alerting/unified/components/rule-editor/query-and-alert-condition/QueryAndExpressionsStep.tsx`. Three read once in a way that looks deliberate: backstage/backstage `plugins/catalog-react/src/components/EntityOwnerPicker/useFetchEntities.ts`, cline/cline `apps/vscode/webview-ui/src/components/settings/GroqModelPicker.tsx` and `apps/vscode/webview-ui/src/components/settings/HuggingFaceModelPicker.tsx`. The message gives both choices: if the values can change while mounted, use `useEffect` and list them as its dependencies; if reading them once is intended, keep the hook (on React 19.2+, `useEffectEvent` makes that explicit).
 
 **Sources:**
 - react.dev, [Reusing Logic with Custom Hooks](https://react.dev/learn/reusing-logic-with-custom-hooks#keep-your-custom-hooks-focused-on-concrete-high-level-use-cases): "Avoid creating and using custom 'lifecycle' Hooks … the linter won't warn you about it because the linter only checks direct `useEffect` calls."

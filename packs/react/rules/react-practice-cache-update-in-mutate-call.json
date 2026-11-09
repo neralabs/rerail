@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-cache-update-in-mutate-call",
+  "id": "react-practice-cache-update-in-mutate-call",
   "revision": 1,
   "mode": "steer",
   "description": "Update the query cache in a mutation's own options, not in callbacks passed to mutate(); those are dropped if the component unmounts before the mutation finishes.",

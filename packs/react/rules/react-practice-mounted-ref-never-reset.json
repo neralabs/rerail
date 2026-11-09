@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-mounted-ref-never-reset",
+  "id": "react-practice-mounted-ref-never-reset",
   "revision": 1,
   "mode": "steer",
   "description": "Set a mount ref back to true in the effect's setup when its cleanup sets it false; a Strict Mode re-run or an Activity re-show otherwise leaves it false for good.",
@@ -381,7 +381,29 @@
               {
                 "has": {
                   "field": "arguments",
-                  "regex": "^\\(\\s*true\\s*,?\\s*\\)$"
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "kind": "true"
+                  },
+                  "not": {
+                    "has": {
+                      "nthChild": {
+                        "position": 2,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             ]

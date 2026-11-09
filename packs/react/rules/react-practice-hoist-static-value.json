@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-hoist-static-value",
+  "id": "react-practice-hoist-static-value",
   "revision": 1,
   "mode": "steer",
   "description": "Move objects, arrays and functions that read nothing from a component or hook to module scope when they are passed to child components, custom hooks or dependency arrays.",
@@ -1112,25 +1112,6 @@
                   },
                   "inside": {
                     "kind": "jsx_attribute",
-                    "not": {
-                      "all": [
-                        {
-                          "has": {
-                            "kind": "property_identifier",
-                            "regex": "^value$"
-                          }
-                        },
-                        {
-                          "inside": {
-                            "has": {
-                              "field": "name",
-                              "kind": "member_expression",
-                              "regex": "\\.Provider$"
-                            }
-                          }
-                        }
-                      ]
-                    },
                     "inside": {
                       "any": [
                         {
@@ -1292,6 +1273,26 @@
                 "pattern": "Object.assign($NAME, $$$REST)"
               }
             ]
+          },
+          "import-read": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier"
+              }
+            ],
+            "resolves": {
+              "binding": {
+                "site": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1329,7 +1330,15 @@
                   "field": "value",
                   "any": [
                     {
-                      "matches": "static-literal"
+                      "matches": "static-literal",
+                      "not": {
+                        "has": {
+                          "stopBy": {
+                            "matches": "fn"
+                          },
+                          "matches": "import-read"
+                        }
+                      }
                     },
                     {
                       "matches": "fn-value",

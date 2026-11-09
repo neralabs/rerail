@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-selector-returns-new-collection",
+  "id": "react-practice-selector-returns-new-collection",
   "revision": 1,
   "mode": "steer",
   "description": "Avoid selectors on the app's own store hooks that return a new object or array without a shallow comparison; the component may re-render on every store change.",
@@ -52,6 +52,78 @@
       "define": {
         "language": "typescript",
         "utils": {
+          "snc-new-array-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "property",
+                    "kind": "property_identifier",
+                    "regex": "^(?:map|filter|slice|concat|flatMap)$"
+                  }
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^Object$",
+                        "resolves": {
+                          "global": [
+                            "Object"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^(?:keys|values|entries)$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^Array$",
+                        "resolves": {
+                          "global": [
+                            "Array"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^(?:from)$"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
           "snc-collection": {
             "any": [
               {
@@ -63,6 +135,9 @@
                     "kind": "array"
                   }
                 ]
+              },
+              {
+                "matches": "snc-new-array-call"
               },
               {
                 "any": [
@@ -401,42 +476,10 @@
               }
             ]
           },
-          "snc-local-store": {
-            "resolves": {
-              "binding": {
-                "site": {
-                  "kind": "variable_declarator",
-                  "has": {
-                    "field": "value",
-                    "any": [
-                      {
-                        "kind": "call_expression",
-                        "has": {
-                          "field": "function",
-                          "regex": "^(?:create|createWithEqualityFn)\\b"
-                        }
-                      },
-                      {
-                        "kind": "call_expression",
-                        "has": {
-                          "field": "function",
-                          "kind": "call_expression",
-                          "has": {
-                            "field": "function",
-                            "regex": "^(?:create|createWithEqualityFn)\\b"
-                          }
-                        }
-                      }
-                    ]
-                  }
-                }
-              }
-            }
-          },
           "snc-hook-name": {
             "regex": "^use[A-Za-z0-9_$]*(?:Store|Selector|StoreContext)$",
             "not": {
-              "regex": "(?:Shallow|Equal)"
+              "regex": "(?:Shallow|Equal)(?:[A-Z]|$)"
             }
           },
           "snc-callee": {
@@ -445,14 +488,7 @@
                 "kind": "identifier",
                 "matches": "snc-hook-name",
                 "not": {
-                  "any": [
-                    {
-                      "matches": "snc-redux-hook"
-                    },
-                    {
-                      "matches": "snc-local-store"
-                    }
-                  ]
+                  "matches": "snc-redux-hook"
                 }
               },
               {

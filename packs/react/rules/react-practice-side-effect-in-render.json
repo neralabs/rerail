@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-side-effect-in-render",
+  "id": "react-practice-side-effect-in-render",
   "revision": 1,
   "mode": "steer",
   "description": "Don't navigate, send analytics events or dispatch store actions in the body of a component or hook; do it in an event handler or an effect, since render can run many times.",
@@ -375,6 +375,16 @@
               {
                 "inside": {
                   "kind": "expression_statement"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "jsx_expression",
+                  "not": {
+                    "inside": {
+                      "kind": "jsx_attribute"
+                    }
+                  }
                 }
               },
               {
@@ -846,17 +856,47 @@
               }
             ]
           },
+          "ser-tracked-import": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement",
+                    "has": {
+                      "field": "source",
+                      "kind": "string",
+                      "has": {
+                        "kind": "string_fragment",
+                        "regex": "^(?:react-tracked|proxy-compare)$"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
           "ser-track-callee": {
             "any": [
               {
                 "kind": "identifier",
-                "regex": "^track(?:[A-Z0-9_][\\w$]*)?$"
+                "regex": "^track(?:[A-Z0-9_][\\w$]*)?$",
+                "not": {
+                  "matches": "ser-tracked-import"
+                }
               },
               {
                 "kind": "member_expression",
                 "has": {
                   "field": "property",
                   "regex": "^track(?:[A-Z0-9_][\\w$]*)?$"
+                },
+                "not": {
+                  "has": {
+                    "field": "object",
+                    "matches": "ser-tracked-import"
+                  }
                 }
               }
             ]

@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-then-without-stale-guard",
+  "id": "react-practice-then-without-stale-guard",
   "revision": 1,
   "mode": "steer",
   "description": "Ignore stale results when an effect with dependencies writes a .then result to state; an earlier, slower response can overwrite the state of the latest run.",
@@ -793,7 +793,7 @@
                     "field": "function",
                     "has": {
                       "field": "object",
-                      "regex": "^(?:(?:window\\.|globalThis\\.)?fetch|ky|got|wretch|ofetch)\\s*\\(|^(?:axios|ky|got|ofetch|wretch|request)\\s*\\.|^Promise\\s*\\.\\s*(?:resolve|reject)\\b|^new\\s+Promise\\b"
+                      "regex": "^Promise\\s*\\.\\s*(?:resolve|reject)\\b|^new\\s+Promise\\b"
                     }
                   }
                 }

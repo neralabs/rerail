@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-request-beside-data-library",
+  "id": "react-practice-request-beside-data-library",
   "revision": 1,
   "mode": "log",
   "description": "Fetch server data with a query hook in files that already use a data-fetching library, not with a request in useEffect saved to useState; the library handles caching and races.",

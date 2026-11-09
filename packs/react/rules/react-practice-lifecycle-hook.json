@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-lifecycle-hook",
+  "id": "react-practice-lifecycle-hook",
   "revision": 1,
   "mode": "steer",
   "description": "Use useEffect instead of once-on-mount hooks from hook libraries when the callback reads props or state; those hooks hide the reads from dependency checks.",
@@ -317,13 +317,14 @@
               "any": [
                 {
                   "kind": "identifier",
-                  "regex": "^(?:useState|useReducer|useTransition|useActionState)$",
+                  "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$",
                   "resolves": {
                     "global": [
                       "useState",
                       "useReducer",
                       "useTransition",
-                      "useActionState"
+                      "useActionState",
+                      "useId"
                     ]
                   }
                 },
@@ -343,7 +344,7 @@
                         },
                         "has": {
                           "field": "name",
-                          "regex": "^(?:useState|useReducer|useTransition|useActionState)$"
+                          "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$"
                         }
                       }
                     }
@@ -353,7 +354,7 @@
                   "kind": "identifier",
                   "any": [
                     {
-                      "regex": "^(?:useState|useReducer|useTransition|useActionState)$"
+                      "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$"
                     },
                     {
                       "resolves": {
@@ -363,7 +364,7 @@
                               "kind": "pair_pattern",
                               "has": {
                                 "field": "key",
-                                "regex": "^(?:useState|useReducer|useTransition|useActionState)$"
+                                "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$"
                               }
                             }
                           }
@@ -396,7 +397,7 @@
                       "has": {
                         "field": "property",
                         "kind": "property_identifier",
-                        "regex": "^(?:useState|useReducer|useTransition|useActionState)$"
+                        "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$"
                       }
                     }
                   ]
@@ -469,8 +470,28 @@
                 {
                   "resolves": {
                     "binding": {
+                      "value": {
+                        "matches": "lh-state-call",
+                        "has": {
+                          "field": "function",
+                          "regex": "(?:^|\\.)useId$"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
                       "occurrence": {
-                        "nthChild": 2,
+                        "nthChild": {
+                          "position": 2,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
                         "inside": {
                           "kind": "array_pattern",
                           "inside": {
@@ -593,7 +614,14 @@
                 "has": {
                   "field": "arguments",
                   "has": {
-                    "nthChild": 1,
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
                     "any": [
                       {
                         "matches": "lh-fn",

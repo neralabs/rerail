@@ -1,6 +1,6 @@
 {
   "format": "rerail.policy/v1",
-  "id": "react-architecture-callback-for-dom-only",
+  "id": "react-practice-callback-for-dom-only",
   "revision": 1,
   "mode": "steer",
   "description": "Don't wrap a function in useCallback when it is only called or passed to built-in elements' event props; nothing reads its identity, so the memo is wasted work.",
