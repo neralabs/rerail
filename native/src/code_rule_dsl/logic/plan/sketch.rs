@@ -113,9 +113,53 @@ impl Sketch {
         }
     }
 
-    /// Bytes this sketch takes stored: the AMS counters, and the occupied levels' counters.
+    /// Bytes this sketch takes stored (`encode`).
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        D * W * 4 + self.levels.iter().flatten().count() * (M * 4 + 1)
+        5 + D * W * 4 + self.levels.iter().flatten().count() * M * 4
+    }
+
+    /// The sketch as stored (`stat_total.sketch`): a format byte, the AMS counters, a mask of the occupied levels,
+    /// and each occupied level's counters; counters as little-endian i32 (a column's rows stay under 2^31).
+    pub(in crate::code_rule_dsl) fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.bytes());
+        out.push(1);
+        for &c in self.ams.iter().flatten() {
+            out.extend_from_slice(&(c as i32).to_le_bytes());
+        }
+        let mask = self.levels.iter().enumerate().filter(|(_, l)| l.is_some()).fold(0u32, |m, (i, _)| m | 1 << i);
+        out.extend_from_slice(&mask.to_le_bytes());
+        for &c in self.levels.iter().flatten().flat_map(|l| l.iter()) {
+            out.extend_from_slice(&(c as i32).to_le_bytes());
+        }
+        out
+    }
+
+    /// `encode`'s sketch back; `None` if the bytes are not one.
+    pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Option<Sketch> {
+        let mut at = 1;
+        let mut int = || {
+            let b = bytes.get(at..at + 4)?;
+            at += 4;
+            Some(i32::from_le_bytes(b.try_into().ok()?))
+        };
+        if bytes.first() != Some(&1) {
+            return None;
+        }
+        let mut s = Sketch::default();
+        for c in s.ams.iter_mut().flatten() {
+            *c = i64::from(int()?);
+        }
+        let mask = int()? as u32;
+        for level in 0..LEVELS {
+            if mask & 1 << level != 0 {
+                let mut l = Box::new([0; M]);
+                for c in l.iter_mut() {
+                    *c = i64::from(int()?);
+                }
+                s.levels[level] = Some(l);
+            }
+        }
+        (at == bytes.len()).then_some(s)
     }
 }
 
@@ -185,6 +229,9 @@ mod tests {
         assert_eq!(both, once);
         both.merge(&a, -1);
         assert_eq!(both, b);
+        // Stored and read back, the same.
+        assert_eq!(Sketch::decode(&once.encode()).as_ref(), Some(&once));
+        assert_eq!(once.encode().len(), once.bytes());
     }
 
     #[test]
