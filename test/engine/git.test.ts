@@ -4,8 +4,8 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome, gitInstalled,
-  headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
+  findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
+  gitInstalled, GitUnavailableError, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
   runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -369,6 +369,44 @@ describe("gitCandidates", () => {
       vi.unstubAllEnvs();
       process.chdir(before);
     }
+  });
+});
+
+describe("findGit", () => {
+  /** A disk holding `files`, each runnable, that counts the realpath calls it answers. */
+  const counted = (files: readonly string[]) => {
+    const realpaths: string[] = [];
+    return {
+      realpaths,
+      exists: (path: string) => files.includes(path),
+      runnable: (path: string) => files.includes(path),
+      realpath: (path: string) => {
+        realpaths.push(path);
+        return path;
+      },
+      developerDir: () => undefined,
+    };
+  };
+  const entries = Array.from({ length: 40 }, (_, index) => `/opt/tool-${index}/bin`);
+
+  it("stops at the first Git that runs, without resolving the PATH entries after it", () => {
+    const search = { platform: "linux" as const, home: "/home/me", path: ["/opt/first/bin", "/opt/git/bin", ...entries].join(":"), cwd: "/home/me/app" };
+    const disk = counted(["/home/me/app/.git", "/opt/git/bin/git"]);
+    expect(findGit(search, disk).path).toBe("/opt/git/bin/git");
+    // The repository it runs in, then each entry up to the Git found.
+    expect(disk.realpaths).toEqual(["/home/me/app", "/opt/first/bin", "/opt/git/bin"]);
+    // Outside any repository no entry needs its real path.
+    const outside = counted(["/opt/git/bin/git"]);
+    expect(findGit({ ...search, cwd: "/home/me" }, outside).path).toBe("/opt/git/bin/git");
+    expect(outside.realpaths).toEqual([]);
+  });
+
+  it("lists every place it looked, in gitCandidates' order, when no Git runs", () => {
+    const search = { platform: "linux" as const, home: "/home/me", path: entries.join(":"), cwd: undefined };
+    const found = findGit(search, counted([]));
+    expect(found.path).toBeUndefined();
+    expect(found.looked).toEqual(gitCandidates(search, counted([])));
+    expect(new GitUnavailableError(found.looked).message).toContain("/opt/tool-39/bin/git, /usr/bin/git");
   });
 });
 

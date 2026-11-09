@@ -29,11 +29,25 @@ export interface GitSearch {
  * Nix profile's), built from the account's home, never from the environment: `LOCALAPPDATA` can be set by a
  * repository as easily as PATH.
  */
-export function gitCandidates(
-  search: GitSearch = { platform: process.platform, home: accountHome(), path: process.env.PATH, cwd: currentFolder() },
-  probe: GitPathProbe = machine,
-): string[] {
-  return [...new Set([...pathCandidates(search, probe), ...installLocations(search.platform, search.home)])];
+export function gitCandidates(search: GitSearch = currentSearch(), probe: GitPathProbe = machine): string[] {
+  return [...candidateOrder(search, gitTrust(search, probe))];
+}
+
+/** Where this process looks for Git from: the platform, the account's home, `PATH` and the folder it runs in. */
+function currentSearch(): GitSearch {
+  return { platform: process.platform, home: accountHome(), path: process.env.PATH, cwd: currentFolder() };
+}
+
+/** {@link gitCandidates} one at a time, each once, so a search can stop at the first Git that runs. */
+function* candidateOrder(search: GitSearch, trust: GitTrust): Generator<string> {
+  const seen = new Set<string>();
+  for (const candidates of [pathCandidates(search, trust), installLocations(search.platform, search.home)]) {
+    for (const candidate of candidates) {
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      yield candidate;
+    }
+  }
 }
 
 let searchFolder: string | undefined;
@@ -90,23 +104,45 @@ function installLocations(platform: NodeJS.Platform, home: string): string[] {
   ];
 }
 
-function pathCandidates(search: GitSearch, probe: GitPathProbe): string[] {
-  if (search.path === undefined) return [];
+/** What decides whether Rerail may run a program from a folder: the repository it runs in, and the platform's paths. */
+interface GitTrust {
+  readonly windows: boolean;
+  readonly paths: typeof posix;
+  /**
+   * The repository Rerail runs in by the path as written and with symlinks resolved, both sides: macOS's /var is
+   * /private/var, and a link in the repository can point out of it. Empty outside any repository.
+   */
+  readonly repository: readonly string[];
+  readonly probe: GitPathProbe;
+}
+
+function gitTrust(search: GitSearch, probe: GitPathProbe): GitTrust {
   const windows = search.platform === "win32";
   const paths = windows ? win32 : posix;
   const repository = search.cwd === undefined ? undefined : enclosingRepository(paths.resolve(search.cwd), paths, probe);
-  // By the path as written and with symlinks resolved, both sides: macOS's /var is /private/var, and a link in the
-  // repository can point out of it.
-  const repositoryForms = repository === undefined ? [] : [repository, probe.realpath(repository)];
-  return search.path
-    .split(windows ? ";" : ":")
+  return { windows, paths, repository: repository === undefined ? [] : [repository, probe.realpath(repository)], probe };
+}
+
+/**
+ * Whether Rerail may run a program from `folder`: an absolute folder outside every `node_modules`, and outside the
+ * repository it runs in by its path and by its real path.
+ */
+function trustedFolder(folder: string, { windows, paths, repository, probe }: GitTrust): boolean {
+  if (!(windows ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(folder) : folder.startsWith("/"))) return false;
+  if (folder.split(/[\\/]/).some(part => (windows ? part.toLowerCase() : part) === "node_modules")) return false;
+  if (repository.length === 0) return true;
+  const absolute = paths.resolve(folder);
+  return ![absolute, probe.realpath(absolute)].some(form => repository.some(root => within(root, form, paths)));
+}
+
+/** The Git on each `PATH` entry Rerail may run a program from, in order; each entry is resolved only when reached. */
+function* pathCandidates(search: GitSearch, trust: GitTrust): Generator<string> {
+  if (search.path === undefined) return;
+  for (const written of search.path.split(trust.windows ? ";" : ":")) {
     // Windows allows a quoted entry, which cmd.exe and CreateProcess unquote.
-    .map(entry => windows ? entry.replace(/^"(.*)"$/, "$1") : entry)
-    .filter(entry => (windows ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(entry) : entry.startsWith("/"))
-      && !entry.split(/[\\/]/).some(part => (windows ? part.toLowerCase() : part) === "node_modules")
-      && ![paths.resolve(entry), probe.realpath(paths.resolve(entry))]
-        .some(form => repositoryForms.some(folder => within(folder, form, paths))))
-    .map(entry => paths.join(entry, windows ? "git.exe" : "git"));
+    const entry = trust.windows ? written.replace(/^"(.*)"$/, "$1") : written;
+    if (trustedFolder(entry, trust)) yield trust.paths.join(entry, trust.windows ? "git.exe" : "git");
+  }
 }
 
 /** The nearest folder at or above `folder` that holds a `.git` entry, read from disk without running Git. */
@@ -146,7 +182,7 @@ export class GitUnavailableError extends Error {
   }
 }
 
-let probed: { path: string | undefined; looked: readonly string[] } | undefined;
+let probed: FoundGit | undefined;
 
 /** What {@link gitInstalled} asks of the machine; tests pass their own. */
 export interface GitProbe {
@@ -215,16 +251,32 @@ export function gitBehindLauncher(path: string, exists: (path: string) => boolea
   return GIT_FOR_WINDOWS_BUILDS.map(build => win32.join(root, build, "bin", "git.exe")).find(exists) ?? path;
 }
 
+/** The Git a search found, undefined when none runs, and every place it looked, in order. */
+export interface FoundGit {
+  path: string | undefined;
+  looked: readonly string[];
+}
+
 /**
- * The system Git, probed once per process; throws {@link GitUnavailableError} when none is installed. On Windows it is
- * the Git behind Git for Windows' launcher ({@link gitBehindLauncher}).
+ * The first of {@link gitCandidates} that {@link gitInstalled} takes, on Windows the Git behind Git for Windows'
+ * launcher ({@link gitBehindLauncher}). Candidates are tried one at a time, so the `PATH` entries after the Git found
+ * are never resolved: the status line, a process of its own every few seconds, pays for the entries up to its Git only.
  */
-export function gitExecutable(): string {
-  if (probed === undefined) {
-    const looked = gitCandidates();
-    const found = looked.find(path => gitInstalled(path));
-    probed = { path: found === undefined || process.platform !== "win32" ? found : gitBehindLauncher(found), looked };
+export function findGit(search: GitSearch = currentSearch(), probe: GitProbe & GitPathProbe = machine): FoundGit {
+  const trust = gitTrust(search, probe);
+  const looked: string[] = [];
+  for (const candidate of candidateOrder(search, trust)) {
+    looked.push(candidate);
+    if (gitInstalled(candidate, search.platform, probe)) {
+      return { path: search.platform === "win32" ? gitBehindLauncher(candidate, probe.exists) : candidate, looked };
+    }
   }
+  return { path: undefined, looked };
+}
+
+/** The system Git ({@link findGit}), probed once per process; throws {@link GitUnavailableError} when none is installed. */
+export function gitExecutable(): string {
+  probed ??= findGit();
   if (probed.path === undefined) throw new GitUnavailableError(probed.looked);
   return probed.path;
 }
