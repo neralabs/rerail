@@ -154,7 +154,7 @@ export async function ungatedChecks(root: string, options: { base?: string; runn
     checks.push({
       id: `frozen-list:${pack}`,
       ok: stale.length === 0,
-      detail: stale.length === 0 ? `${ids.length} listed rule(s), all still shipped and not gated` : `${stale.length} listed rule(s) no longer shipped, now gated or pending, or in a private pack (${stale.slice(0, 5).join(", ")}): remove it from the list`,
+      detail: stale.length === 0 ? `${ids.length} listed rule(s), all still shipped and not gated` : `${stale.length} listed rule(s) no longer shipped, now gated or pending, listed in conformance.json's own, or in a private pack (${stale.slice(0, 5).join(", ")}): remove it from the list`,
     });
   }
   for (const toolPack of Object.keys(pending).sort(byText)) {

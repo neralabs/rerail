@@ -149,6 +149,16 @@ describe("frozen-list", () => {
     expect(check("frozen-list:own")).toMatchObject({ ok: false, detail: expect.stringContaining("in a private pack") });
   });
 
+  it("fails a listed rule now listed in conformance.json's own as stale: an own rule is never on the list", async () => {
+    pack("mixed", ["otherlint"], { loose: "otherlint" });
+    write("packs/mixed/pack.json", { rules: [{ id: "loose" }, { id: "mine" }] });
+    write("packs/mixed/conformance.json", { tools: [{ name: "otherlint" }], rules: [{ id: "loose", upstream: { tool: "otherlint" } }], own: ["mine"] });
+    lists({ mixed: ["loose", "mine"] });
+    const { check } = await byId();
+    expect(check("not-gated:mixed")).toMatchObject({ ok: true });
+    expect(check("frozen-list:mixed")).toMatchObject({ ok: false, detail: expect.stringContaining("(mine)") });
+  });
+
   it("passes when every listed rule still ships ungated", async () => {
     pack("plain", ["lintx"], { a: "lintx" });
     lists({ plain: ["a"] });

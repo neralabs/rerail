@@ -327,6 +327,20 @@ describe("validatePack", () => {
       },
     ],
     [
+      "an own rule whose document sets violation.suppress, as a port moved into own would",
+      directory => {
+        editJson(join(directory, "conformance.json"), conformance => ({ ...conformance, own: ["pass-statement"] }));
+        editJson(join(directory, "rules", "pass-statement.json"), document => ({
+          ...document,
+          clauses: z
+            .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
+            .parse(document.clauses)
+            .map(clause => ({ ...clause, violation: { ...clause.violation, suppress: { noqa: { codes: ["PASS1"] } } } })),
+        }));
+      },
+      { proof: [expect.stringMatching(/^pass-statement: /u)] },
+    ],
+    [
       "a caught example that does not fire",
       directory => editPassStatement(directory, rule => ({ ...rule, examples: { caught: { path: "src/a.py", text: "x = 1\n" }, passes: { path: "src/a.py", text: "x = 2\n" } } })),
       { examples: ["pass-statement: the caught example (src/a.py) produces no PASS violation"] },
