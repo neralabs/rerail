@@ -938,6 +938,8 @@ pub(in crate::code_rule_dsl) struct TileCase {
     pub(in crate::code_rule_dsl) left: Vec<Vec<i64>>,
     pub(in crate::code_rule_dsl) right: Vec<Vec<i64>>,
     pub(in crate::code_rule_dsl) right_ids: Vec<u32>,
+    /// The right side's identity: its relation, key columns and column tests (one sort serves every case of it).
+    pub(in crate::code_rule_dsl) right_key: String,
     /// Whether each key holds symbols.
     pub(in crate::code_rule_dsl) symbols: Vec<bool>,
     pub(in crate::code_rule_dsl) pairs: Vec<(u32, u32)>,
@@ -983,7 +985,8 @@ pub(in crate::code_rule_dsl) fn tiles(conn: &Connection, name: &str) -> Result<V
         }
         let cpu_seconds = thread_cpu() - c0;
         let symbols = rcols.iter().map(|&c| b.types.get(c) == Some(&b's')).collect();
-        out.push(TileCase { rule: label, left, right, right_ids, symbols, pairs, cpu_seconds });
+        let right_key = format!("{:p} {rcols:?} {bt:?}", Arc::as_ptr(b));
+        out.push(TileCase { rule: label, left, right, right_ids, right_key, symbols, pairs, cpu_seconds });
     }
     Ok(out)
 }
