@@ -610,3 +610,20 @@ function awaitingApprovalIn(database: RerailDatabase, catalog: RuleCatalog, repo
   const [checkoutPath, ...parentCheckoutPaths] = owners;
   return awaitingApprovalOf(listRepositoryRules(database, catalog, repositoryKey, checkoutPath === undefined ? {} : { checkoutPath, parentCheckoutPaths }).rules);
 }
+
+/**
+ * When the newest event in the Rerail database at `databasePath` was observed (epoch ms), read without writing; null
+ * when it holds none or cannot be read. `rerail status` compares it with the hook failure log.
+ */
+export function lastObservedEventAt(databasePath: string): number | null {
+  let database: RerailDatabase | undefined;
+  try {
+    database = openRerailDatabase(databasePath, { readonly: true });
+    const [row] = database.select({ at: events.observedAt }).from(events).orderBy(desc(events.sequence)).limit(1).all();
+    return row?.at ?? null;
+  } catch {
+    return null;
+  } finally {
+    database?.$client.close();
+  }
+}

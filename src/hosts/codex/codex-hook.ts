@@ -19,10 +19,11 @@ export async function runCodexHook(input: HookInput, options: HookOptions = {}):
   if (!supportsCodexHook(input)) return {};
   const workspace = requiredText(input, "cwd");
   if (!await hookRerailStarted("codex", workspace, options.databasePath)) return {};
-  const startsSession = requiredText(input, "hook_event_name") === "SessionStart";
+  const event = requiredText(input, "hook_event_name");
+  const startsSession = event === "SessionStart";
   try {
     return await runHostHook("codex", workspace, requiredText(input, "session_id"), startsSession, options, (runtime, storageRoot) =>
-      handleCodexEvent(input, runtime, storageRoot));
+      handleCodexEvent(input, runtime, storageRoot), event);
   } catch (error) {
     if (!startsSession || !(error instanceof DaemonUnreachableError)) throw error;
     process.stderr.write(`rerail hook: ${error.message}\n`);

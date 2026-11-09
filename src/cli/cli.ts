@@ -74,6 +74,9 @@ import { runFeedbackCommand } from "./feedback-cli.js";
 import { errorStep, JSON_FLAG, machinePlace, runInstallCommand, runSetupCommand, setupAnswerCommand, setupEnvironment, setupIo, startStep, type SetupContext } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
+import { missingClaudeHookScripts } from "../setup/registered-hooks.js";
+import { HOOK_FAILURE_WINDOW_MS, hookFailureLines, readHookFailures } from "../harness/hook-failures.js";
+import { lastObservedEventAt } from "../runtime/session-store.js";
 import { modelStatusLine } from "../engine/native/model-status.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -283,6 +286,7 @@ async function runStatusCommand(home: string): Promise<number> {
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
   const code = printDaemonStatus(lookup);
+  for (const line of hookHealthLines(home)) process.stdout.write(`${line}\n`);
   // Internal testing: the remote sink, only when a remote is added.
   try {
     for (const remote of new RemoteOutbox({ home }).status()) process.stdout.write(`${describeRemoteStatus(remote)}\n`);
@@ -295,6 +299,20 @@ async function runStatusCommand(home: string): Promise<number> {
     if (agent.connected) process.stdout.write(`${agent.rerailData.why}\n`);
   }
   return code;
+}
+
+/**
+ * What `rerail status` says of the hooks: Claude Code's registration naming Rerail scripts that are gone, where every
+ * hook fails before Rerail runs, and the hook events Rerail could not record in the last day, with why.
+ */
+function hookHealthLines(home: string): string[] {
+  const missing = missingClaudeHookScripts(codingAgentHome());
+  const registration = missing.length === 0 ? [] : [
+    `Claude Code's Rerail hooks run ${missing.join(", ")}, which ${missing.length === 1 ? "is" : "are"} missing, so every hook fails before Rerail runs and nothing is recorded. Run rerail install --refresh.`,
+  ];
+  const failures = readHookFailures(home, Date.now() - HOOK_FAILURE_WINDOW_MS);
+  const recorded = failures.length === 0 ? null : lastObservedEventAt(join(home, RERAIL_DATABASE_FILE));
+  return [...registration, ...hookFailureLines(failures, recorded)];
 }
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */

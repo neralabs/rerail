@@ -4,7 +4,8 @@ import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
-import { daemonEngineEndpoint, engineEndpointAt, runningDaemonEngineEndpoint, type EngineEndpoint } from "../runtime/daemon-control.js";
+import { autostartDaemon, daemonEngineEndpoint, engineEndpointAt, runningDaemonEngineEndpoint, type EngineEndpoint } from "../runtime/daemon-control.js";
+import { recordHookFailure } from "./hook-failures.js";
 import {
   bindSteerReceipt,
   withSessionLock,
@@ -83,9 +84,11 @@ function unreachable(error: unknown): unknown {
 
 /**
  * Runs a normal package hook against the engine service, or an explicit local test runtime. Only the hook that starts
- * a session (`startsSession`) may start the daemon; any other hook finds none running and answers `{}` at once, so a
- * daemon that is down never stalls a tool call or shows as a hook error (design N11). A daemon that cannot be reached
- * throws `DaemonUnreachableError`, so a coding agent without a footer can say so.
+ * a session (`startsSession`) waits for a daemon to start; any other hook that finds none running answers `{}` at
+ * once, so a daemon that is down never stalls a tool call or shows as a hook error (design N11), records the lost event
+ * in the hook failure log and starts a daemon in the background. A daemon that cannot be reached throws
+ * `DaemonUnreachableError`, so a coding agent without a footer can say so. Every failure, `event` named as the coding
+ * agent names it, goes to the hook failure log (`hook-failures.ts`), which `rerail status` reads.
  */
 export async function runHostHook(
   host: HookHost,
@@ -94,6 +97,25 @@ export async function runHostHook(
   startsSession: boolean,
   options: HookOptions,
   handle: (runtime: RerailEventLoop, storageRoot: string) => Promise<HookOutput>,
+  event = "unknown",
+): Promise<HookOutput> {
+  try {
+    return await runHostHookOnce(host, workspace, sessionId, startsSession, options, handle, event);
+  } catch (error) {
+    // The coding agent keeps a hook's stderr out of the session; the failure log is where `rerail status` finds it.
+    recordHookFailure({ host, event, reason: error instanceof Error ? error.message : String(error) });
+    throw error;
+  }
+}
+
+async function runHostHookOnce(
+  host: HookHost,
+  workspace: string,
+  sessionId: string,
+  startsSession: boolean,
+  options: HookOptions,
+  handle: (runtime: RerailEventLoop, storageRoot: string) => Promise<HookOutput>,
+  event: string,
 ): Promise<HookOutput> {
   const { storageRoot, modelPath } = resolveSessionPaths(workspace, options);
   return withSessionLock(storageRoot, host, sessionId, async () => {
@@ -109,7 +131,14 @@ export async function runHostHook(
       } catch (error) {
         throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error });
       }
-      if (endpoint === undefined) return {};
+      if (endpoint === undefined) {
+        // The daemon is gone (it crashed, or was stopped): this event is lost, so say so where `rerail status` looks,
+        // and start one in the background for the next event. The start is handed to a detached process, so the
+        // tool call never waits on it (design N11); one that finds a daemon alive does nothing.
+        recordHookFailure({ host, event, reason: "no Rerail daemon answered, so this event was not recorded" });
+        autostartDaemon();
+        return {};
+      }
       const configuration = {
         storageRoot,
         databasePath,
