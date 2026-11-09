@@ -254,6 +254,76 @@ Beyond these, most of a store's bytes are in `atom_segment` and
 `facts_results` (50–82% of each store above). They should be measured
 the same way before more effort goes into tapes.
 
+## 6. What shipped (commit 766f2baf2)
+
+Recommendations 1 to 3 are done:
+
+- The v12 tape drops the source hash.
+- The store has per-language dictionaries.
+- Tapes are named-only.
+
+How the dictionaries work:
+
+- One codec module, `content_store::compression`, writes and reads
+  every store frame.
+- A source or tape under 64 KB is compressed twice, plain and with its
+  language's dictionary. The store keeps the smaller frame.
+- A dictionary frame names its dictionary in the zstd header, in 2
+  bytes. `codec_id` stays 1.
+- Dictionaries are compiled in and append-only
+  (`native/dictionaries/README.md`).
+- A tape's language comes from its header. A source written without
+  its tape gets its language from its path.
+
+The shipped dictionaries were trained only on text that can be
+redistributed: this repository, and CPython's standard library for
+Python. They were measured on repositories they were not trained on.
+Each figure is the frames as stored, as a fraction of plain zstd:
+
+| Data | Files | All frames | Frames < 1 KB |
+| -- | -- | -- | -- |
+| Python sources, data-layer repository (1 in 10) | 1,308 | 0.957 | 0.78 |
+| Python v12 tapes, same files | 1,308 | 0.961 | 0.68 |
+| Python sources, the 55k-source store (1 in 9) | 5,993 | 0.974 | 0.79 |
+| Rust sources, data-layer repository | 103 | 0.944 | 0.74 |
+| Rust v12 tapes | 103 | 0.960 | 0.71 |
+| JavaScript sources, data-layer repository | 35 | 0.965 | 0.67 |
+| JavaScript v12 tapes | 35 | 0.971 | 0.60 |
+| SQL v12 tapes, data-layer workspaces (1 in 4) | 1,602 | 0.973 | 0.74 |
+
+What the table says:
+
+- Small frames gain 20–40%, as §2 found.
+- Overall, the shipped dictionaries save 3–6%, not the 15–20% of §2.
+  §2 trained on the measured repositories' own files. A shipped
+  dictionary only knows the language, not the repository's
+  vocabulary.
+- On the 55k-source store, Python sources by size:
+
+  | Size | < 1 KB | 1–8 KB | 8–64 KB | ≥ 64 KB |
+  | -- | -- | -- | -- | -- |
+  | Stored / plain | 0.79 | 0.91 | 0.965 | 1.00 |
+
+- **Cost.** On the slice backends test (S7), CPU time was 131.6 s
+  with the dictionaries and 134.0 s without. That is within noise:
+  the machine's load average was 106–162. A small frame is compressed
+  twice when it is written; reads cost the same.
+- **Compatibility.** Plain frames still read as before. A binary
+  without these dictionaries cannot read a dictionary frame, and fails
+  with "frame names unknown dictionary".
+
+Next steps, if storage cost still matters:
+
+- **Per-store dictionaries.** Train a dictionary on a store's own
+  small frames, and keep it in the store under ids from 0x10000. §2
+  measured 0.80× on tapes and 0.85× on sources for the Python store
+  with its own dictionary. The codec already selects the dictionary
+  by frame id, so only training and a dictionaries table are new.
+- **Customer-trained shipped dictionaries.** Ruled out: they would
+  put customer code in the binary.
+- **The big tables.** `atom_segment` and `facts_results` are still
+  the largest share of a store (§1).
+
 ## Files
 
 In the session scratchpad, `compress/`. None of them is in the
