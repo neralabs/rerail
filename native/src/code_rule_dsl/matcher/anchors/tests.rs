@@ -1132,6 +1132,13 @@ fn utility_root_gates_select_as_the_gate_written_inline() {
         "imports": imports_util,
         "leaf": leaf,
     });
+    // A gate whose leaf is a `pattern`: where the index has no value postings for a regex leaf,
+    // `text_selection` reads the text, but a pattern leaf reads only the postings `collect_needs`
+    // built, so a gate it skips that `select_complete` confirms loses every finding.
+    let pattern_utils = json!({
+        "gate": { "inside": { "stopBy": "end", "kind": "program",
+            "has": { "stopBy": "end", "pattern": "import lib from \"lib\"" } } },
+    });
     for (source, expected) in [(calls.as_str(), (0, 0)), (imports.as_str(), (200, 200))] {
         assert_eq!(
             selection(json!({ "rule": inline, "utils": inline_utils }), source),
@@ -1142,6 +1149,11 @@ fn utility_root_gates_select_as_the_gate_written_inline() {
             selection(json!({ "rule": utility, "utils": utils }), source),
             expected,
             "utility"
+        );
+        assert_eq!(
+            selection(json!({ "rule": utility, "utils": pattern_utils }), source),
+            expected,
+            "utility with a pattern leaf"
         );
     }
     // `foo` alone selects the 200 roots `foo` names; the reduced relation utility leaves them.
