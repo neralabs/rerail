@@ -1,0 +1,13 @@
+[package]
+name = "mo-extract"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Workload extractor for the matrix-offload spikes: per-document name sets, binding/read occurrences, kind codes and the import graph of a Python corpus."
+
+[dependencies]
+tree-sitter = "=0.25.10"
+tree-sitter-python = "=0.25.0"
+
+# A standalone harness, not a member of the repository's workspace.
+[workspace]
