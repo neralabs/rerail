@@ -309,7 +309,9 @@ with one command per answer. Answer flags:
 
 Each answer run starts from what it is told, so running one twice repeats no earlier step's side effect. Claude
 Code's, Cursor's and Codex's `/rerail-start` runs `rerail start --relay`, and every answer command carries `--relay`,
-so an agent running commands in a terminal gets these questions, not a prompt waiting on input.
+so an agent running commands in a terminal gets these questions, not a prompt waiting on input. On Windows Codex's and
+Cursor's `/rerail-start` runs `rerail start --relay --powershell`, since they run PowerShell there: each answer
+command is then written for PowerShell (`& '<rerail.cmd>' setup ...`) and carries `--powershell` too.
 
 </details>
 
@@ -500,8 +502,9 @@ process (`rerail daemon stop`, or end it by pid) and start again.
 <details>
 <summary>The lock</summary>
 
-The daemon holds an exclusive OS lock (`flock` / `LockFileEx`) on `~/.cache/rerail/main-instance.lock` for its whole
-life, and records its pid, version, package root and start time beside it in `main-instance.json`. The OS drops the
+The daemon holds an exclusive OS lock (`flock` / `LockFileEx`) on `~/.cache/rerail/main-instance.lock` (on Windows
+`%LOCALAPPDATA%\rerail\main-instance.lock`) for its whole life, and records its pid, version, package root and start time
+beside it in `main-instance.json`. The OS drops the
 lock however the daemon ends, `kill -9` included, so there is never a stale lock to clear.
 
 A second main daemon can come from another `$RERAIL_HOME`, or be an orphan its `daemon.json` no longer names.
@@ -592,7 +595,8 @@ hooks point at files that are about to go.
 - **Removes the `PATH` entry** set-up added from every shell startup file (or the Windows user `Path`).
 - **Deletes the installation**, last: `~/.rerail/current`, the launcher's `~/.rerail/bin`, every version under
   `~/.rerail/versions` with `update-state.json`, the rule packs in `~/.rerail/packs`, and the cache `~/.cache/rerail`
-  (left alone, and said so, while another Rerail home's daemon holds it).
+  (on Windows `%LOCALAPPDATA%\rerail`, and the `~/.cache/rerail` an earlier release used there; left alone, and said so, while
+  another Rerail home's daemon holds it).
 
 </details>
 
@@ -637,7 +641,7 @@ Nothing it deletes can be restored, so export your rules first if you may want t
   database goes), and the checkout's `.rerail` when the ledgers were all it held. A checkout that no longer exists is
   skipped. Links are never followed: a `.rerail` that is a link is left alone, and a `sessions` link is removed as a
   link, never its target. Ledgers written elsewhere with `RERAIL_STORAGE_ROOT` are not found.
-- **Content cache:** `~/.cache/rerail` (kept while another Rerail home's daemon holds it, as above), and the file
+- **Content cache:** `~/.cache/rerail`, on Windows `%LOCALAPPDATA%\rerail` (kept while another Rerail home's daemon holds it, as above), and the file
   `RERAIL_CONTENT_STORE_PATH` names, with its sidecars, when it is set.
 
 `--delete-data` only goes with the whole uninstall: with `--agents`, or with `--root` naming a checkout other than the

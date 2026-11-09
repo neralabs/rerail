@@ -272,7 +272,7 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 
 `setup` installs under `~/.rerail/versions/<version>`, points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` at it, and adds `~/.rerail/bin` to `PATH`.
 
-- `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay]` takes the answers as arguments.
+- `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay] [--powershell]` takes the answers as arguments. With `--powershell` each answer command is written for PowerShell (`& '<rerail.cmd>' setup ...`) and carries `--powershell` on; Codex's and Cursor's `/rerail-start` pass it on Windows, where they run PowerShell.
 - `rerail install --agents <list> [--dry-run]` only connects coding agents.
 - `rerail install --remove` removes Rerail, keeping `rerail.sqlite` in a dated backup.
 
@@ -281,7 +281,7 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 
 On Windows the launcher is `rerail.cmd`, plus `rerail` for Git Bash. The `PATH` entry is a marked block in your shell startup file, or the Windows user `Path`; `RERAIL_MODIFY_PATH=0` leaves `PATH` to you. `rerail update` adds it where an older set-up didn't. `rerail update` shells out to `npm` with your `~/.npmrc`.
 
-`rerail install --remove` disconnects every coding agent, takes Rerail off `PATH` and stops the daemon. It moves `rerail.sqlite` to a dated backup, so rules and history are kept. Then it deletes `current`, the launcher, every version, the rule packs and `~/.cache/rerail`, naming each.
+`rerail install --remove` disconnects every coding agent, takes Rerail off `PATH` and stops the daemon. It moves `rerail.sqlite` to a dated backup, so rules and history are kept. Then it deletes `current`, the launcher, every version, the rule packs and the content cache (`~/.cache/rerail`; on Windows `%LOCALAPPDATA%\rerail`, and the `~/.cache/rerail` an earlier release used there), naming each.
 
 </details>
 

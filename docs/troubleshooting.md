@@ -29,7 +29,8 @@ The suggested upgrade matches how Node was installed:
 | Homebrew `node` | `brew upgrade node` |
 | Homebrew versioned formula (`node@22`) | `brew install node` |
 | nvm | `nvm install 24` |
-| fnm | `fnm install 24 && fnm use 24` |
+| nvm-windows | `nvm install 24, then nvm use 24` |
+| fnm | `fnm use --install-if-missing 24` |
 | Volta | `volta install node@24` |
 | Unknown | `Install Node 24 or newer from https://nodejs.org or your package manager.` |
 
@@ -569,7 +570,8 @@ is kept too; only Rerail's files go.
 2. Takes `~/.rerail/bin` off `PATH`, and deletes the `<file>.rerail.bak` it kept.
 3. Stops the daemon.
 4. Moves your database into a backup, `~/.rerail-clean-YYYYMMDD/`.
-5. Deletes `~/.rerail/current`, `~/.rerail/bin`, `~/.rerail/versions`, the rule packs and `~/.cache/rerail`.
+5. Deletes `~/.rerail/current`, `~/.rerail/bin`, `~/.rerail/versions`, the rule packs and `~/.cache/rerail` (on Windows
+   `%LOCALAPPDATA%\rerail`, and the `~/.cache/rerail` an earlier release used there).
 
 It prints each removed path (`Removed <path> (<what>).`) and each kept one:
 

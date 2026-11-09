@@ -61,7 +61,7 @@ What Rerail holds that is worth attacking, and where it lives.
 | --- | --- | --- |
 | Session history: prompts, replies, tool inputs, **raw tool outputs** | `rerail.sqlite` (`RerailRuntime.persistEvent`) | Whatever the agent saw, secrets included, unredacted. |
 | Pre-edit source text and session ledgers | `<repo>/.rerail/sessions/<sha256(session)>/events.jsonl` | Source and prompt text in the working tree; `rewind` restores from it. |
-| Source copies, syntax trees, check results | `~/.cache/rerail/content-v1.sqlite` | A second copy of every file the engine read. |
+| Source copies, syntax trees, check results | `~/.cache/rerail/content-v1.sqlite` (Windows: `%LOCALAPPDATA%\rerail\content-v1.sqlite`) | A second copy of every file the engine read. |
 | Rule catalog: rules, packs, settings, start state | `rerail.sqlite` | Decides what reaches every future session, and whether Rerail is armed. |
 | Daemon access capability | `~/.rerail/access-token`, `daemon.json` (0600) | Full `person` API: all repositories, unredacted transcripts, every write. |
 | Executable code Rerail launches | `~/.rerail/versions/<v>/`, `current`, `bin/rerail`, `update-state.json`, `RERAIL_ENGINE_PATH` | Runs on every hook, daemon start and CLI call. |
@@ -142,8 +142,9 @@ a secret token sent as `x-rerail-access`, on every request.
 - **DNS rebinding.** `hostAllowlist` (`src/api/http.ts`) answers `421` unless `Host` is loopback or a `--public-host`
   name. Mounted before every route; checked again in the MCP handler.
 - **Access capability** (`accessCapability`, `src/api/http.ts`):
-  - Required as `x-rerail-access` on every request, including `/healthz`, `/openapi.json`, `/api/*`, `/mcp` and
-    `/native/session`. Only GET and HEAD of the page's own static files are exempt (`PUBLIC_PAGE_FILE`).
+  - Required as `x-rerail-access` on every request, including `/healthz`, `/openapi.json`, `/api/*`, `/mcp`,
+    `/native/session` and `/native/shutdown`. Only GET and HEAD of the page's own static files are exempt
+    (`PUBLIC_PAGE_FILE`).
   - Compared by SHA-256 of both values with `timingSafeEqual` (`sameSecret` in `src/runtime/daemon-control.ts`).
   - 32 random bytes, written 0600 via a temp file and rename.
   - Kept across restarts by a loopback daemon; minted at each start by a remote or public-host daemon.
@@ -157,7 +158,10 @@ a secret token sent as `x-rerail-access`, on every request.
     `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`).
 - **Cross-site requests.** The capability is a header, not a cookie, so a browser cannot send it cross-origin without
   a preflight, which the daemon never answers. Defence in depth: a foreign `Origin` on an `/api` write gets `403`;
-  `/native/session` refuses any `Origin`.
+  `/native/session` and `/native/shutdown` refuse any `Origin`.
+- **Stopping the daemon.** `POST /native/shutdown` closes the daemon on every platform; `rerail daemon stop` sends it
+  on Windows, where no signal reaches a handler. Besides the capability it takes the native token from `daemon.json`
+  as a bearer token, so a page or process holding only the dashboard's capability cannot stop the daemon.
 - **Dashboard page.**
   - Moves the token from `?rerail-access=` into its origin's `localStorage`, then calls `history.replaceState`
     (`ui/index.html`).
@@ -336,7 +340,7 @@ run the `rerail` CLI, which acts for the person. Two controls narrow this.
 
 | Host | What Rerail's data is protected by |
 | --- | --- |
-| Claude Code | `sandbox.filesystem.denyRead`/`denyWrite` on the Rerail home and `~/.cache/rerail`; `allowRead` reopens only package code (`current/`, `versions/`). `permissions.deny` covers `Edit` on both and `Read` on the home's data files (`RERAIL_HOME_DATA_ENTRIES`). |
+| Claude Code | `sandbox.filesystem.denyRead`/`denyWrite` on the Rerail home and the content cache (`~/.cache/rerail`, on Windows `%LOCALAPPDATA%\rerail`); `allowRead` reopens only package code (`current/`, `versions/`). `permissions.deny` covers `Edit` on both and `Read` on the home's data files (`RERAIL_HOME_DATA_ENTRIES`). |
 | Cursor CLI | `Read` and `Write` denies in `~/.cursor/cli-config.json`; they bind its file tools only. |
 | Codex | Nothing added. No network by default, so commands cannot reach the daemon; writes stay in the workspace. But commands **read every file**, including the database (other repositories' history too) and the capability. |
 | Cursor editor | Sandbox on by default on macOS (Cursor 2.0 and later) and blocks loopback, but has no per-path read deny, so commands can read the Rerail home. |
