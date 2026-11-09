@@ -2847,10 +2847,10 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-execution-authority-bypass.json",
       "legacySha256": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
-      "status": "full-contract-passed",
+      "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
       "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
-      "evidence": {
+      "previousEvidence": {
         "assertions": 7,
         "positives": 6,
         "failures": 0,
@@ -2893,7 +2893,8 @@
           "verifiedNativeExecutions": 577
         },
         "comparison": "Complete values; only unspecified whole-file completion groups may permute. Registry and per-file order and multiplicity remain exact."
-      }
+      },
+      "acceptancePending": "Revalidate after adopting Final 49f791af1; previousEvidence certifies Final 004 only."
     },
     {
       "check": "impl_direct_execution",
@@ -3387,8 +3388,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a",
-    "status": "Final 004df7e75 with literal-fact preservation; dedicated step suite, signing, production/update cases, and focused engine tests passed; full migration remains open",
+    "upstreamCommit": "49f791af10b888b722784a713c911fa1f68c2e6e",
+    "status": "Final 49f791af1 merged; root rebuild and regression acceptance pending. Earlier receipts remain bound to Final 004.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3492,7 +3493,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "a283d5c212edb895e643156d3c647096fa56c6afc95611befbadf8de16b9fe82"
+        "sha256": "c99e4daefb5c341dca63b967c985803a5c529387aa8da40c7376ab316d447d2e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -3572,13 +3573,13 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "219657a9a698f5a7198c9f42ee295d169d960aaf",
+    "upstreamMerge": "bf567a26d68af21d7ba461000148b1f6b7488b2c",
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a",
-      "engineCommit": "1f71cfcb3cc36588211366962bf9dedb91513fea",
+      "upstreamCommit": "49f791af10b888b722784a713c911fa1f68c2e6e",
+      "engineCommit": "bf567a26d68af21d7ba461000148b1f6b7488b2c",
       "sourceTrees": {
-        "native": "4237268254b3c30b779eaa4945203ccc5b0ced3e",
+        "native": "45ee37d6b24c45166d909c6088167107470ff405",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
@@ -3607,7 +3608,8 @@
         "--release"
       ],
       "seconds": 684.182
-    }
+    },
+    "previousUpstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a"
   },
   "engineSourceSnapshots": [
     {
