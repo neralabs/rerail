@@ -168,7 +168,7 @@ Each step is committed on its own and checked with named tests and S7
 
 ## 4. Status
 
-Step 1 is done; its result is in §5.
+Steps 1 and 2 are done. Their results are in §5 and §6.
 
 ## 5. Step 1 result
 
@@ -198,3 +198,44 @@ Notes on the check:
   so `next_all` over a long list is quadratic. That is why the SQL run
   is sampled. It is a cost, not a correctness issue, and gets fixed
   with the readers that need it.
+
+## 6. Step 2 result: facts
+
+Facts share the document's node space. A named-only document's facts
+hold its records, plus a token column: per record, the tokens the
+records leave out, each with its slot among the record's children.
+
+Every reader of tokens asks for them through one of these, the same on
+both shapes:
+
+- `Facts::tokens(id)`: the anonymous children in order, whether in the
+  records or not;
+- `Facts::parts(id)`: all children in order, tokens among them;
+- `Facts::is_leaf(id)`.
+
+These readers moved:
+
+- T's `op_t`, `op_at` and `async`;
+- core.rr's `op` and `op_at`;
+- the token spans behind `first_token`, `last_token`, `token_before`
+  and `token_after`;
+- `tree_digest` and `def_digest`. A token outside the records hashes
+  as a token record does.
+- Python's f-string `=`, and the async context in `families` and
+  `call_batch`.
+
+Rules never saw token nodes. `Projected` numbers named nodes only, and
+gives token spans ids past them. So rule-visible ids do not change.
+
+Parity test (`facts::vtab::syntax::tests::named_only_documents_project_as_full_ones`):
+
+- Inputs: the CPython corpus, plus TypeScript, JavaScript, Rust, PHP
+  and SQL snippets.
+- Facts from named-only documents give the same rows as facts from
+  full ones, in every relation of both shapes (core.rr and T).
+- Two relations are compared differently, by design:
+  - `tape_of` names the facts by their digest, so it is left out;
+  - `core_node`'s record index is compared by the record's span.
+
+The facts module's own tests show no new failures. S7 is unchanged at
+519 keys; production restores full documents until step 6.

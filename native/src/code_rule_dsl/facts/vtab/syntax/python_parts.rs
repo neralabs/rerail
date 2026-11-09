@@ -114,7 +114,7 @@ impl Constants<'_> {
         let p = self.p;
         let f = &p.facts;
         let children = f.children(id);
-        if children.iter().any(|&c| self.kind(c) == "=") {
+        if f.tokens(id).iter().any(|t| self.dialect.atom_name(t.kind) == "=") {
             let end = children.iter().copied().find(|&c| matches!(self.kind(c), "type_conversion" | "format_specifier"))
                 .map_or(f.end[id as usize] - 1, |c| f.start[c as usize]);
             // A debug label is source text, not a string-literal body: escapes stay literal.

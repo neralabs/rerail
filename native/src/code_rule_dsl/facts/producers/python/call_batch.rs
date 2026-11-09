@@ -174,8 +174,8 @@ pub(crate) fn collect<'t>(
                         ContextKind::Class
                     } else if kind == kinds.lambda {
                         ContextKind::Lambda
-                    } else if children(doc, ordinal)
-                        .any(|child| doc.transducer_kind(child) == kinds.asynchronous)
+                    } else if children(doc, ordinal).any(|child| doc.transducer_kind(child) == kinds.asynchronous)
+                        || doc.transducer_tokens(ordinal).iter().any(|&(kind, _, _)| kind == kinds.asynchronous)
                     {
                         ContextKind::AsyncFunction
                     } else {

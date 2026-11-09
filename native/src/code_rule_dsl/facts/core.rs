@@ -78,6 +78,36 @@ pub(crate) struct Facts {
     pub syntax_errors: bool,
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape.
     pub python_syntax: std::sync::OnceLock<Option<(u32, String)>>,
+    /// The tokens the records leave out (a named-only tree, RER-131): CSR over parent ids, each with
+    /// its slot among the parent's children. Empty where the records hold every token.
+    pub token_offsets: Vec<u32>,
+    pub token_rows: Vec<TokenRow>,
+}
+
+/// A token the records leave out: its kind atom, field, span, and slot among its parent's children.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TokenRow {
+    pub kind: u32,
+    pub field: u16,
+    pub start: u32,
+    pub end: u32,
+    pub slot: u32,
+}
+
+/// One child in source order ([`Facts::parts`]): a record, or a token the records leave out.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Part {
+    Node(u32),
+    Token(TokenRow),
+}
+
+/// An anonymous child, whether the records hold it or not ([`Facts::tokens`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Token {
+    pub kind: u32,
+    pub field: u16,
+    pub start: u32,
+    pub end: u32,
 }
 
 pub(crate) enum Built {
@@ -125,6 +155,8 @@ pub(crate) fn text_only(source: Arc<String>) -> Facts {
         class_nodes: Vec::new(),
         syntax_errors: false,
         python_syntax: Default::default(),
+        token_offsets: vec![0],
+        token_rows: Vec::new(),
     }
 }
 
@@ -229,7 +261,21 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
         class_nodes: Vec::new(),
         syntax_errors: !doc.syntax_error_ranges().is_empty(),
         python_syntax: Default::default(),
+        token_offsets: Vec::new(),
+        token_rows: Vec::new(),
     };
+    if doc.is_named_only_in_memory() {
+        f.token_offsets.reserve(n + 1);
+        for id in 0..n as u32 {
+            f.token_offsets.push(f.token_rows.len() as u32);
+            for (slot, item) in doc.transducer_parts(id).into_iter().enumerate() {
+                if let crate::code_rule_dsl::tape::tokens::Item::Token { kind, field, start, end } = item {
+                    f.token_rows.push(TokenRow { kind: kind_atom(tag, kind), field, start, end, slot: slot as u32 });
+                }
+            }
+        }
+    }
+    f.token_offsets.push(f.token_rows.len() as u32);
     for id in 0..n as u32 {
         f.kind.push(kind_atom(tag, doc.transducer_kind(id)));
         f.parent.push(doc.transducer_parent(id).unwrap_or(NONE));
@@ -318,6 +364,51 @@ impl Facts {
         let b = self.child_offsets[id as usize + 1] as usize;
         &self.children[a..b]
     }
+    /// The tokens of `id` the records leave out (empty where they hold every token).
+    fn left_out(&self, id: u32) -> &[TokenRow] {
+        match (self.token_offsets.get(id as usize), self.token_offsets.get(id as usize + 1)) {
+            (Some(&a), Some(&b)) => &self.token_rows[a as usize..b as usize],
+            _ => &[],
+        }
+    }
+    /// Whether `id` has no children at all, tokens included.
+    pub fn is_leaf(&self, id: u32) -> bool {
+        self.children(id).is_empty() && self.left_out(id).is_empty()
+    }
+    /// `id`'s children in source order: its records, and the tokens they leave out.
+    pub fn parts(&self, id: u32) -> Vec<Part> {
+        let (kids, tokens) = (self.children(id), self.left_out(id));
+        let mut out = Vec::with_capacity(kids.len() + tokens.len());
+        let (mut k, mut t) = (0, 0);
+        while k < kids.len() || t < tokens.len() {
+            if t < tokens.len() && tokens[t].slot as usize == out.len() {
+                out.push(Part::Token(tokens[t]));
+                t += 1;
+            } else if k < kids.len() {
+                out.push(Part::Node(kids[k]));
+                k += 1;
+            } else {
+                out.push(Part::Token(tokens[t]));
+                t += 1;
+            }
+        }
+        out
+    }
+    /// `id`'s anonymous children in source order, whether the records hold them or not.
+    pub fn tokens(&self, id: u32) -> Vec<Token> {
+        self.parts(id)
+            .into_iter()
+            .filter_map(|part| match part {
+                Part::Node(c) if !self.named(c) => Some(Token { kind: self.kind[c as usize], field: self.field[c as usize], start: self.start[c as usize], end: self.end[c as usize] }),
+                Part::Node(_) => None,
+                Part::Token(t) => Some(Token { kind: t.kind, field: t.field, start: t.start, end: t.end }),
+            })
+            .collect()
+    }
+    /// A token's text.
+    pub fn token_text(&self, token: &Token) -> &str {
+        &self.source[token.start as usize..token.end as usize]
+    }
     pub fn of_kind(&self, kind: u32) -> &[u32] {
         posting(&self.kind_keys, &self.kind_offsets, &self.kind_nodes, kind)
     }
@@ -343,6 +434,8 @@ impl Facts {
             + self.child_offsets.len() * 4
             + self.kind_nodes.len() * 4
             + self.class_nodes.len() * 4
+            + self.token_offsets.len() * 4
+            + self.token_rows.len() * std::mem::size_of::<TokenRow>()
     }
 }
 
@@ -365,6 +458,15 @@ pub(crate) fn digest(f: &Facts) -> [u8; 32] {
     }
     hash.update(&f.flags);
     update_le(&mut hash, &f.field);
+    // The tokens the records leave out, so a named-only tree's facts digest its tokens too (a full tree's digest is
+    // as before: it has none).
+    if f.token_offsets.len() > 1 {
+        hash.update((f.token_rows.len() as u64).to_le_bytes());
+        for row in &f.token_rows {
+            update_le(&mut hash, &[row.kind, u32::from(row.field), row.start, row.end, row.slot]);
+        }
+        update_le(&mut hash, &f.token_offsets);
+    }
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes as u64);
     hash.update([u8::from(f.syntax_errors)]);
     hash.finalize().into()

@@ -568,15 +568,12 @@ impl CoreRows {
         let n = p.global(local);
         let kind = dialect.name(f, id);
         let text = f.text(id);
-        let children = f.children(id);
         // `op`: every anonymous child; `op_at`: those that are no punctuation, in order, Python's two-word
         // operators as one ("not in", "is not"), which `op` has too.
+        let children = f.children(id);
         let mut ops: Vec<String> = Vec::new();
-        for &c in children {
-            if f.named(c) {
-                continue;
-            }
-            let t = dialect.name(f, c);
+        for token in f.tokens(id) {
+            let t = dialect.atom_name(token.kind);
             self.op.push([n, string(t) as i64]);
             if !is_punct(t) {
                 let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
@@ -599,7 +596,7 @@ impl CoreRows {
             }
             prev = Some(c);
         }
-        let mut token_like = children.is_empty();
+        let mut token_like = f.is_leaf(id);
         if is_comment(kind) {
             self.comment.push([n, string(comment_body(text)) as i64]);
             token_like = true;
@@ -711,7 +708,7 @@ impl CoreRows {
             .filter_map(|l| {
                 let id = p.core[l as usize];
                 let [a, b] = p.span(l);
-                (f.children(id).is_empty() && b > a && !is_comment(dialect.name(f, id))).then(|| (a, b, p.global(l)))
+                (f.is_leaf(id) && b > a && !is_comment(dialect.name(f, id))).then(|| (a, b, p.global(l)))
             })
             .collect();
         toks.extend((0..x.tokens).map(|i| {
@@ -906,24 +903,52 @@ impl CoreRows {
             h.update(unit_name(f, dialect, id).unwrap_or_default().as_bytes());
             h.finalize().into()
         };
+        // A leaf's hash: its kind, and its literal value or its text (a token the records leave out hashes as a
+        // token record does).
+        let leaf = |kind: &str, text: &str, interpolated: bool| -> [u8; 32] {
+            let mut h = Sha256::new();
+            h.update(kind.as_bytes());
+            h.update([0]);
+            match literal(dialect.family, kind, text, interpolated).value {
+                Some((value, ty)) => {
+                    h.update(b"=");
+                    h.update(ty.as_bytes());
+                    h.update([0]);
+                    h.update(value.as_bytes());
+                }
+                None => {
+                    h.update(b"'");
+                    h.update(text.as_bytes());
+                }
+            }
+            h.finalize().into()
+        };
+        use crate::code_rule_dsl::facts::core::Part;
         for id in (0..f.len() as u32).rev() {
             let kind = dialect.name(f, id);
-            let kept: Vec<u32> = f
-                .children(id)
-                .iter()
-                .copied()
-                .filter(|&c| {
-                    let k = dialect.name(f, c);
-                    !is_comment(k) && (f.named(c) || !is_punct(k))
+            let kept: Vec<Part> = f
+                .parts(id)
+                .into_iter()
+                .filter(|part| match part {
+                    Part::Node(c) => {
+                        let k = dialect.name(f, *c);
+                        !is_comment(k) && (f.named(*c) || !is_punct(k))
+                    }
+                    Part::Token(t) => {
+                        let k = dialect.atom_name(t.kind);
+                        !is_comment(k) && !is_punct(k)
+                    }
                 })
                 .collect();
             if kind == "parenthesized_expression" && kept.len() == 1 {
-                hash[id as usize] = hash[kept[0] as usize];
-                own[id as usize] = own[kept[0] as usize];
-                continue;
+                if let Part::Node(only) = kept[0] {
+                    hash[id as usize] = hash[only as usize];
+                    own[id as usize] = own[only as usize];
+                    continue;
+                }
             }
             let interpolated = dialect.family == Family::Python
-                && kept.iter().any(|&c| f.named(c) && dialect.name(f, c) == "interpolation");
+                && kept.iter().any(|part| matches!(part, Part::Node(c) if f.named(*c) && dialect.name(f, *c) == "interpolation"));
             let (mut h, mut o) = (Sha256::new(), Sha256::new());
             for x in [&mut h, &mut o] {
                 x.update(kind.as_bytes());
@@ -945,11 +970,22 @@ impl CoreRows {
                     }
                 }
                 None => {
-                    for &c in &kept {
-                        h.update(f.field[c as usize].to_le_bytes());
-                        h.update(hash[c as usize]);
-                        o.update(f.field[c as usize].to_le_bytes());
-                        o.update(if units && unit(c) { placeholder(c) } else { own[c as usize] });
+                    for part in &kept {
+                        match *part {
+                            Part::Node(c) => {
+                                h.update(f.field[c as usize].to_le_bytes());
+                                h.update(hash[c as usize]);
+                                o.update(f.field[c as usize].to_le_bytes());
+                                o.update(if units && unit(c) { placeholder(c) } else { own[c as usize] });
+                            }
+                            Part::Token(t) => {
+                                let token = leaf(dialect.atom_name(t.kind), &f.source[t.start as usize..t.end as usize], false);
+                                for x in [&mut h, &mut o] {
+                                    x.update(t.field.to_le_bytes());
+                                    x.update(token);
+                                }
+                            }
+                        }
                     }
                 }
             }
