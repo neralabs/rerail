@@ -42,6 +42,7 @@ def main():
     report=dict(format='rerail.impl-direct-ratchet-boundaries/v1',sourcePin=PIN,mode=a.command,executionMode=a.mode,
         fullMigrationAcceptance=False,passed=False,cases=[],sourceFiles={n:sha((a.source/n).read_bytes()) for n in files},
         harnessFiles={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in dependencies})
+    report['selection']=dict(part=a.part,parts=a.parts,total=len(CASES))
     if a.command=='native':
         assert not any(n.endswith('lint_impl_direct_execution') for n in sys.modules)
         baseline=read_json(a.baseline);assert baseline['passed'];compare(CASES,[c['input'] for c in baseline['cases']]);report['engineSha256']=sha(a.engine.read_bytes())

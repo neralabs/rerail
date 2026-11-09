@@ -49,10 +49,11 @@ def validate_original(source, reports, engine):
     return dict(testsPerAPI=174,positiveScannerObservationsPerAPI=positives,verifiedNativeExecutions=executions)
 
 
-def validate(source, reports, engine):
+def validate(source, reports, engine, cases=None):
+    cases=CASES if cases is None else cases
     compare(source['sourcePin'], PIN)
     assert source['mode']=='source' and source['passed']
-    compare([c['input'] for c in source['cases']], CASES)
+    compare([c['input'] for c in source['cases']], cases)
     cohort=read_json(ROOT/MANIFEST)['engineSource']
     verify_source_cohort(ROOT,cohort)
     verify_engine_artifact(ROOT,cohort,engine)
@@ -70,8 +71,8 @@ def validate(source, reports, engine):
         mode=report['executionMode']
         assert mode in seen
         selection=report['selection']
-        wanted=list(range(selection['part'],len(CASES),selection['parts']))
-        compare([c['input'] for c in report['cases']],[CASES[i] for i in wanted])
+        wanted=list(range(selection['part'],len(cases),selection['parts']))
+        compare([c['input'] for c in report['cases']],[cases[i] for i in wanted])
         for index,case in zip(wanted,report['cases']):
             assert index not in seen[mode],(mode,index)
             seen[mode].add(index)
@@ -87,10 +88,10 @@ def validate(source, reports, engine):
                     compare(program['sha256'],sha(path.read_bytes()))
                 executions+=1
             signing+=len(case['signing'])
-    for mode,indices in seen.items():compare(indices,set(range(len(CASES))))
+    for mode,indices in seen.items():compare(indices,set(range(len(cases))))
     return dict(format='rerail.impl-direct-ratchet-checkpoint/v1',sourcePin=PIN,
         fullMigrationAcceptance=False,passed=True,engineSource=cohort,engineSha256=digest,
-        summary=dict(casesPerAPI=len(CASES),APIs=list(seen),verifiedNativeExecutions=executions,
+        summary=dict(casesPerAPI=len(cases),APIs=list(seen),verifiedNativeExecutions=executions,
             signingBatches=signing,failures=0,skippedSelectedAssertions=0),
         source=source,reports=reports,validator=Path(__file__).read_text())
 
@@ -103,12 +104,17 @@ def main():
     p.add_argument('--out',type=Path,required=True)
     p.add_argument('--original-source',type=Path,required=True)
     p.add_argument('--original-reports',type=Path,nargs='+',required=True)
+    p.add_argument('--boundary-source',type=Path,required=True)
+    p.add_argument('--boundary-reports',type=Path,nargs='+',required=True)
     a=p.parse_args()
     result=validate(read_json(a.source),[read_json(n) for n in a.reports],a.engine.absolute())
     source=read_json(a.original_source)
     reports=[read_json(n) for n in a.original_reports]
     result['originalSuite']=dict(summary=validate_original(source,reports,a.engine.absolute()),source=source,reports=reports)
-    result['remaining']='Global migration remains unfinished. This checkpoint covers the complete original direct-execution suite and the 30 recorded ratchet CLI cases, not arbitrary shared-helper input values or refreshed supplemental signing/lifecycle corpora.'
+    from impl_direct_execution_ratchet_boundary_contract import CASES as boundaries
+    result['boundaries']=validate(read_json(a.boundary_source),[read_json(n) for n in a.boundary_reports],a.engine.absolute(),boundaries)
+    result['format']='rerail.impl-direct-ratchet-checkpoint/v2'
+    result['remaining']='Global migration remains unfinished. This checkpoint covers the complete original direct-execution suite and 50 recorded ratchet CLI cases, not arbitrary shared-helper input values or refreshed supplemental signing/lifecycle corpora.'
     a.out.write_bytes(gzip.compress(json.dumps(result,sort_keys=True,separators=(',',':')).encode(),mtime=0))
     print(json.dumps(result['summary']))
 

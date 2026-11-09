@@ -9997,3 +9997,35 @@ This profile avoids release LTO while retaining optimized engine code. Compilati
 The next acceptance run will cover the entire ratchet corpus through both APIs, then repeat the affected original-suite checks.
 Full migration acceptance remains open. The recorded CLI corpus also does not exhaust arbitrary shared-helper input values.
 Non-string signature metadata, scalar roots other than arrays, and baselines beyond the engine's signed integer range still need explicit parity coverage and implementation.
+
+### 2026-11-10 — Optimized ratchet acceptance and the next boundary ladder
+
+The [Final 07b ratchet checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-ratchet-final07b-green.json.gz) validates 734 native executions.
+All 174 original source tests pass through each API, with exact recorded calls and 35 positive scanner observations per API.
+Those original tests account for 312 native executions. The 30 real ratchet CLI cases pass through both APIs, adding 422 executions and four signing batches.
+The optimized artifact is `cd39a3ea0e09589d…`. Its `profiling` build took 527.395 seconds, including a build-directory lock wait.
+The checkpoint certifies the frozen Final `07bba2f69` source cohort. No repository-wide cold benchmark was run.
+
+The separate [boundary recording](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-ratchet-boundaries-red.json.gz) exercises 20 more positive-code CLI cases.
+Eight pass and twelve fail. Five failures concern scalar roots, four concern non-string signatures, and three concern large numeric ceilings.
+The integrity check rejected two attempts after an unused-import edit during the run. Their original logs remain in the receipt.
+The imports were restored, and both affected shards were repeated with matching harness hashes before packaging the receipt.
+
+The [scalar-root repair](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-ratchet-scalars-green.json.gz) passes all five scalar cases.
+The remaining repairs use a shared JSON-to-Python-string projection and exact decimal operations from the existing bigint library.
+They preserve large comparison ceilings and regression totals without narrowing them to machine integers.
+Each JSON selector still uses the same decoded document. Decimal totals consume one newline-delimited value batch.
+These seven repairs are implemented but not yet accepted against the native boundary corpus.
+
+### 2026-11-10 — Latest Final bc83 integration in progress
+
+Final advanced to `bc83f6ae8` before the next cohort adoption. The source guard rejected adoption until it was merged.
+Merge `41b362844` takes its newer typing, parser, memo, and planner changes in the root engine.
+The conflict resolutions retain Final's precomputed projection requests and input lookup set, alongside positional string offsets and captured destination columns.
+No retired engine checkout was changed.
+
+The fresh unit build took 145.139 seconds. All 22 focused input and decimal tests pass.
+The wider focused suite and optimized CLI build are in progress.
+The next acceptance covers all 50 recorded ratchet cases through both APIs and the complete original linter suite.
+The migration inventory remains one accepted rule, 94 drafts, and five absent translations.
+The direct-execution rule remains a draft; the original corpus and boundary coverage do not establish arbitrary Python helper equivalence.
