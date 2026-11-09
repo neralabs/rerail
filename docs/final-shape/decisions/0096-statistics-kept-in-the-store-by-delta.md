@@ -233,12 +233,38 @@ change if a workload ever needs it.
 
 ## Cost
 
-- **Space.** At most 5.7 KB per sketched column, measured: about 1–2 MB for every column of the struct
-  workload, against 2.5M exact entries. Exact counts are kept for columns of at most 256 values, and for the
-  watch list.
-- **Time per edit.** For each changed row and sketched column, 4 hashes and 4 counter adds. Then one blob
-  rewrite per changed column, and one read of the run's totals. The per-row cost is not measured. It is
-  estimated at tens of nanoseconds, against today's sort of every row of every measured relation.
+Measured 2026-11-09 by `docs/final-shape/notes/0096-statbench` (release, the engine's `sketch.rs` by path; CPU of
+the thread, best of 7, load 8). Columns of 200,000 rows; an edit takes 1,000 rows out and puts 1,000 in.
+
+| Per changed row, per column | Sketch | Exact, in memory | Exact, SQLite upsert |
+| --- | --- | --- | --- |
+| Zipf column, 60k values (31,179 present) | 3.2 ns | 1.7 ns | 760 ns |
+| key-like column (200,000 values) | 3.2 ns | 3.1 ns | — |
+| few-valued column (40 values; kept exact) | 4.9 ns | 1.3 ns | — |
+
+| Per changed column | Cost |
+| --- | --- |
+| Estimates read (`sq`, `ndv`) | 0.21–0.26 µs |
+| Blob encode and decode | 0.9–2.7 µs (2.0–5.6 KB) |
+| Blob written in the rows' transaction | 2.8 µs (4.4 µs as a commit of its own) |
+| Today: a full re-measure (`syntax::measured`'s sort) | 2.1–7.4 ms, 10–37 ns per row of the relation |
+
+What an edit costs: say 1,000 rows changed in each of 30 sketched columns.
+
+| Mechanism | Per edit |
+| --- | --- |
+| Sketches | 30 × 2,000 × 3.2 ns + 30 × 2.8 µs ≈ 0.28 ms |
+| Exact counts in SQLite | 30 × 2,000 × 760 ns ≈ 46 ms |
+| Today (each 200k-row column measured again) | 30 × 2–7 ms ≈ 60–220 ms, growing with the repository |
+
+The exact in-memory map is cheaper per row than the sketch: 1.3–3.1 ns against 3.2–4.9 ns, because its
+hot entries sit in cache. But it holds every distinct value: 31,179 or 200,000 entries per column here, and
+2.5M for the struct workload. To survive a restart it is written to SQLite at 760 ns per changed row, or
+measured again from the rows, which is O(repo). The sketch's per-row cost is a few nanoseconds on rows that
+change anyway, and its write is one small blob per column. So the choice of §1 stands.
+
+The key-like column's ndv was estimated at 0.75× (150,828 of 200,000), inside the 4× the planner tolerates.
+Node columns are exact (§1) and are not sketched.
 
 ## Order of work
 
