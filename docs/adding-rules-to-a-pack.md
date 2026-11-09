@@ -92,7 +92,8 @@ A rule with no upstream needs no test data; its examples are the proof.
    [text criteria](pack-format.md#description), check 8).
 2. List it in `pack.json` with a caught and a passing example in the rule's scope (check 3).
 3. In a pack with a `conformance.json`, add its id to `own` there, so the gates know it has no upstream
-   ([conformance.json](pack-format.md#conformancejson)).
+   ([conformance.json](pack-format.md#conformancejson)). Where a generator writes `conformance.json`, add it to the
+   generator's input instead (React: `OWN` in `scripts/generate/packs/react-specs.mjs`).
 4. Add its section under `## Rule details` in `packs/<id>/README.md` (check 5).
 5. Add a changeset, its file name opening with its change type ([.changeset/README.md](../.changeset/README.md)).
 6. Run `npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"`.
