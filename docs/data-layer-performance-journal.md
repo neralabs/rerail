@@ -9582,3 +9582,24 @@ The supplemental scanner corpus still finds a native diagnostic spelling defect 
 Ten independent parser cases record nine mismatches against Python 3.13. The shared formatter repair remains next.
 Five signature, blocker, legacy-scan, and CLI entry points remain untranslated.
 Production, discovery, controls, updates, seven absent rules, and global migration acceptance remain open.
+
+### 2026-11-09 — Final engine merge and scanner diagnostic repair
+
+Commit `852e1c343` merges Final `134521978`, including its relational laboratory. No conflict requires a parallel engine implementation.
+Commit `bb6d6fd14` repairs the root Python diagnostic formatter.
+It preserves CPython's keyword quotes, statement labels, and class-definition wording for missing indentation.
+The recorded ten-case parser comparison has nine mismatches before the repair and none afterward.
+The shared parser oracle now includes 31 cases. Native rules invoke no Python interpreter.
+
+The root CLI and unit builds take 26.211 and 57.935 seconds, recorded separately from acceptance.
+The [Final checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-final134-checkpoint.json.gz) binds their exact binaries and source trees.
+Its combined replay passes 136 original tests, 200 complete observations, and 164 native calls.
+The replay retains all 58 positive detector observations. Its slowest shard takes 74.217 seconds.
+All 45 detector cases and thirteen scanner cases pass on this engine.
+All 101 focused engine tests and 173 tooling tests pass. Two existing focused engine helpers remain ignored.
+No full repository cold run occurs.
+
+The checkpoint individually lists all 28 original cases outside native acceptance.
+Signature verification, both blocker collectors, legacy scanning, and CLI reporting remain untranslated.
+Production, discovery, mutation controls, updates, the seven absent translations, and earlier migration gaps remain open.
+These results do not complete ServerPlan steps or the 100-rule migration.

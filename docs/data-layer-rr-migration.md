@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`2b494d4ef`. Merge `60839bc48` adopts Final's equal-request sharing and stage-three measurement notes.
+`134521978`. The manifest binds its frozen CLI and exact source trees.
+Earlier adoption `2b494d4ef` and merge `60839bc48` brought Final's equal-request sharing and stage-three measurement notes.
 Merge `f286e6a13` adopts Final's first library-module implementation.
 Merge `7a846bfca` adopts Final's parser-generator updates and the preceding library-module design.
 The preceding merge adds cross-file rows memoized by import component.
@@ -118,7 +119,7 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **90 target drafts and 10 absent translations**. None has full acceptance yet.
+The current inventory contains **93 target drafts and seven absent translations**. None has full migration acceptance yet.
 The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.
@@ -2339,3 +2340,8 @@ Requested API names now bound each test batch. Native helper summaries run only 
 All original-suite shards finish within 115 seconds. No assertion or finding field is removed.
 Supplemental scanner tests expose an indentation-diagnostic spelling gap in the shared native formatter.
 Signature verification, both blocker collectors, legacy scanning, CLI reporting, and full production acceptance remain unfinished.
+
+Final `134521978` is merged. The shared native formatter now matches the recorded Python indentation diagnostics.
+The [Final checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-final134-checkpoint.json.gz) reruns the 136 original tests and 200 observations on that engine.
+All 45 detector cases, thirteen scanner cases, 101 focused engine tests, and 173 tooling tests pass.
+The checkpoint lists all 28 original tests outside native acceptance. The five remaining APIs and production acceptance remain open.
