@@ -4107,20 +4107,21 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     };
     // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
     // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
-    let git = observe(|o| o.git(root));
-    if let Some(g) = git {
-        let canonical = std::fs::canonicalize(root).map_err(|e| Error::Plan(format!("{}: {e}", root.display())))?;
+    // A root Git sees no file under (one it ignores, such as fetched fixtures) is not described by Git: walked.
+    let git = observe(|o| o.git(root)).and_then(|g| {
+        let canonical = std::fs::canonicalize(root).ok()?;
         let prefix = canonical.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        let under: Vec<String> = g
+            .worktree_files()
+            .into_iter()
+            .filter_map(|file| if prefix.is_empty() { Some(file) } else { file.strip_prefix(prefix.as_str()).and_then(|f| f.strip_prefix('/')).map(str::to_owned) })
+            .collect();
+        (!under.is_empty()).then(|| (under, g.overlays.len()))
+    });
+    if let Some((under, overlays)) = git {
         let mut listed = 0;
-        for file in g.worktree_files() {
-            let relative = if prefix.is_empty() {
-                file.as_str()
-            } else {
-                match file.strip_prefix(prefix.as_str()).and_then(|f| f.strip_prefix('/')) {
-                    Some(f) => f,
-                    None => continue,
-                }
-            };
+        for relative in &under {
+            let relative = relative.as_str();
             let dirs: Vec<&str> = relative.split('/').collect();
             if dirs[..dirs.len() - 1].iter().any(|d| d.starts_with('.') || *d == "target") {
                 continue;
@@ -4128,7 +4129,7 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
             listed += 1;
             classify(relative.to_owned());
         }
-        crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || format!("{listed} files from Git ({} overlays: changed, staged or untracked), no walk", g.overlays.len()));
+        crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || format!("{listed} files from Git ({overlays} overlays: changed, staged or untracked), no walk"));
     } else {
     // Phase 0's observer lists each directory: again only when its stat changed (t23).
     let mut pending = vec![root.to_path_buf()];
