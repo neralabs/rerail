@@ -5,6 +5,7 @@ pub use super::logic::profile::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
+mod signing;
 
 /// The package CLI's SQL tool, sharing the standalone command's request and execution path.
 #[napi_derive::napi(catch_unwind)]
@@ -535,6 +536,10 @@ pub fn cli(args: &[String]) -> Result<String, String> {
         crate::code_rule_dsl::logic::plan::corpus::session::start(std::path::Path::new(&dir))?;
     }
     match args.first().map(String::as_str) {
+        Some("sign-ed25519") => match &args[1..] {
+            [request] => signing::run(&read(request)?),
+            _ => Err("usage: rerail-engine sign-ed25519 <request.json>".into()),
+        },
         #[cfg(feature = "dump-cli")]
         Some("dump") => dump_command(&args[1..]),
         Some("asm") => match &args[1..] {

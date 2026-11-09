@@ -48,6 +48,9 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/strings.rs',
     'native/src/code_rule_dsl/logic/strings/functions.rs',
     # Public signature verification errors use the same generic decoder and verifier.
+    # Explicit configuration signing is separate from rule evaluation.
+    'native/src/code_rule_dsl/tools.rs',
+    'native/src/code_rule_dsl/tools/signing.rs',
     'native/src/code_rule_dsl/logic/strings/signatures.rs',
     'native/src/code_rule_dsl/logic/strings/signature-errors.json',
     'native/src/code_rule_dsl/logic/strings/tests.rs',

@@ -3465,6 +3465,14 @@
         "sha256": "21ab58631e324b3c54fd8beda4eae769d7db6e33c6a57b397046ad3c931be00b"
       },
       {
+        "path": "native/src/code_rule_dsl/tools.rs",
+        "sha256": "91fe2689474a65adb099cfed2b9a931f7c1ea3e442a4e0f94cebf7b423a5ddaa"
+      },
+      {
+        "path": "native/src/code_rule_dsl/tools/signing.rs",
+        "sha256": "162f4bec2ef963a11e4eced6eab6e1ea6d7291bb934bb77604d5e48b92b091f5"
+      },
+      {
         "path": "native/src/code_rule_dsl/value/python.rs",
         "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
       },
