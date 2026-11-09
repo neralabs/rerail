@@ -97,6 +97,8 @@ export const findingSchema = z.object({
     judgment: z.object({ verdict: z.string(), explanation: z.string() }).nullable(),
   }),
   message: z.string().nullable().describe("For talk: a message the person can send the author."),
+  held: z.enum(["provisional", "contested"]).nullable()
+    .describe("Another branch's verdict that has not merged: provisional (information only, never a rule) or contested (a verdicts conflict on its question is open here, so it reaches no agent)."),
   updatedAt: z.string(),
 });
 export type Finding = z.infer<typeof findingSchema>;
@@ -171,7 +173,8 @@ export const conflictSideSchema = z.object({
   ref: z.string(),
   sha: z.string(),
   author: z.string().nullable(),
-  pushedAt: z.string().nullable(),
+  tip: z.object({ at: z.string(), pushed: z.boolean() }).nullable()
+    .describe("When the side's commit was made, and whether it is pushed (on a remote-tracking ref or a pull request) or only committed locally; null for this branch's working state."),
   url: z.string().nullable(),
   summary: z.string().describe("One sentence: the side's design or change."),
   location: z.string().nullable().describe("Where: \"src/x.ts:469\" or \"docs/x.md §9\"."),

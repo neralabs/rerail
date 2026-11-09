@@ -566,7 +566,13 @@ once. On this repository (426 refs, no entries) a read went from 11 s to under 0
 reaches this checkout's agents only as information, never as a rule: when the scan applies its decision, the agent
 reads `<branch> recorded a verdict on a conflict that has not merged yet.`, their decision labelled as theirs, then
 `It is provisional: information about work in flight, not a decision to follow.` While a `verdicts` conflict on its
-question is open here, neither side's decision is delivered at all: the conflict itself is the signal.
+question is open here, neither side's decision is delivered at all: the conflict itself is the signal. Activation never
+makes such a decision a rule, whatever it carries. The status says so: its finding has `held: "provisional"` (or
+`"contested"` while the verdicts conflict is open), level `note`, and a reason saying it is not applied; the dashboard
+and the CLI show "Provisional verdict" or "Held: verdicts conflict open" instead of "Added automatically".
+
+A conflict side's `tip` is `{ at, pushed }`: `pushed` only when its commit is a pull request's head or on a
+remote-tracking branch, so a local branch never pushed reads "committed <time>"; this branch's side has none.
 
 **Commit staging.** At the agent's `git commit` tool call (PreToolUse on a shell tool), when files under
 `.rerail/decisions/` or `.rerail/candidates/` are untracked, or modified and not staged (with `-a`/`--all`, only

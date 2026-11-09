@@ -1,9 +1,8 @@
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, Conflict } from "../../../src/engine/index.js";
-import { claudeHookOutput } from "../../../src/hosts/claude/claude-hook-adapter.js";
-import { codexHookEvents } from "../../../src/hosts/codex/codex-event-adapter.js";
-import { codexHookOutput } from "../../../src/hosts/codex/codex-hook-adapter.js";
+import { claudeHookOutput } from "../../../src/hosts/claude/index.js";
+import { codexHookEvents, codexHookOutput } from "../../../src/hosts/codex/index.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
 import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";

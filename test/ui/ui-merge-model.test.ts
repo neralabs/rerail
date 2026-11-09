@@ -17,6 +17,7 @@ const finding = (id: string, tier: Finding["tier"], status: Finding["status"], u
   reason: "Compatible with your decisions.",
   evidence: { violations: [], conflicts: [], mine: null, judgment: null },
   message: null,
+  held: null,
   updatedAt: at(updatedMinutesAgo),
 });
 

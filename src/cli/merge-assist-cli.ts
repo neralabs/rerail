@@ -131,10 +131,19 @@ function reviewEntry(finding: Finding): string[] {
   ];
 }
 
+/** What happens to an applied finding here: steering, or held because it is another branch's verdict not in force. */
+const HELD_TEXT: Readonly<Record<NonNullable<Finding["held"]>, string>> = {
+  provisional: "Provisional verdict, not applied: your agent gets it as information only",
+  contested: "Held: a verdicts conflict on its question is open, so it reaches no agent",
+};
+
 function addedEntry(finding: Finding): string[] {
+  const how = finding.held === null
+    ? `${finding.tier === "absorb" ? "Added automatically" : "Adopted"}; ${finding.candidate.level === "code" ? "Rerail checks it exactly" : "a note your agent was given"}`
+    : HELD_TEXT[finding.held];
   return [
     `${finding.id}  ${quoted(finding.candidate.decision)} (${peerText(finding)})`,
-    `  ${finding.tier === "absorb" ? "Added automatically" : "Adopted"}; ${finding.candidate.level === "code" ? "Rerail checks it exactly" : "a note your agent was given"}. Undo: rerail merge-assist undo ${finding.id}`,
+    `  ${how}. Undo: rerail merge-assist undo ${finding.id}`,
   ];
 }
 

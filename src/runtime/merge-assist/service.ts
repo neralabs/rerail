@@ -38,7 +38,7 @@ import { isSnoozed, snoozed } from "./conflict-level.js";
 import { answerConflict } from "./conflict-resolve.js";
 import { readConflicts, replaceConflict } from "./conflict-store.js";
 import { createGithubClient, type GithubClient, type PullRequestSummary } from "./github.js";
-import { refreshLedger, viewLedger } from "./ledger-store.js";
+import { provisionalResults, refreshLedger, viewLedger } from "./ledger-store.js";
 import { cardsShown, markNotesDelivered, pendingNotes, stopNotes, type EditCall, type PendingNote } from "./notes.js";
 import { authorName, osUser, personName } from "./people.js";
 import { scanPeers, type ItemEvidence } from "./scan.js";
@@ -375,8 +375,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       };
     });
     // Items from other branches are never `rejected` (a withdrawn candidate's item is removed); own items are not findings.
+    const verdicts = provisionalResults(db, root);
+    const heldOf = (item: MergeAssistItemRow): Finding["held"] => {
+      const verdict = verdicts.get(item.candidateId);
+      return verdict === undefined || verdict.place === "branch" ? null : verdict.contested ? "contested" : "provisional";
+    };
     const findings = items
-      .flatMap(item => (item.origin === "peer" && item.tier !== null && item.status !== "rejected" ? [findingOf(item, item.tier, item.status, failed)] : []))
+      .flatMap(item => (item.origin === "peer" && item.tier !== null && item.status !== "rejected" ? [findingOf(item, item.tier, item.status, failed, heldOf(item))] : []))
       .sort((left, right) => TIER_ORDER[left.tier] - TIER_ORDER[right.tier] || right.updatedAt.localeCompare(left.updatedAt));
     const judge = this.#judge();
     const base = baseBranch(root);
@@ -580,8 +585,14 @@ function nextStatus(item: MergeAssistItemRow, action: FindingAction): MergeAssis
     : { refusal: `Finding ${item.id} is not applied, so there is nothing to undo.` };
 }
 
-/** An item from another branch as the status shows it. */
-function findingOf(item: MergeAssistItemRow, tier: FindingTier, status: FindingStatus, failed: Readonly<Record<string, string>>): Finding {
+/** Why another branch's verdict that has not merged does not apply here, as the status says it. */
+const HELD_REASON: Readonly<Record<NonNullable<Finding["held"]>, string>> = {
+  provisional: "A verdict on another branch that has not merged: your agent gets it as information only, never as a rule; it is not applied here.",
+  contested: "Held: a verdicts conflict on its question is open here, so neither side's decision reaches your agent until it is settled.",
+};
+
+/** An item from another branch as the status shows it; `held` when it is another branch's verdict not in force. */
+function findingOf(item: MergeAssistItemRow, tier: FindingTier, status: FindingStatus, failed: Readonly<Record<string, string>>, held: Finding["held"]): Finding {
   const stored = item.evidence as Record<string, unknown>;
   const evidence = findingEvidenceSchema.safeParse({
     violations: stored.violations ?? [],
@@ -589,7 +600,8 @@ function findingOf(item: MergeAssistItemRow, tier: FindingTier, status: FindingS
     mine: stored.mine ?? null,
     judgment: stored.judgment ?? null,
   });
-  const level = item.candidate.rule !== undefined && typeof stored.ruleProblem !== "string" && failed[itemRuleId(item)] === undefined ? "code" : "note";
+  // A held verdict never steers as a rule, whatever it carries.
+  const level = held === null && item.candidate.rule !== undefined && typeof stored.ruleProblem !== "string" && failed[itemRuleId(item)] === undefined ? "code" : "note";
   return {
     id: item.id,
     tier,
@@ -612,9 +624,10 @@ function findingOf(item: MergeAssistItemRow, tier: FindingTier, status: FindingS
       author: item.peerKind === "pull-request" ? item.peerAuthor : null,
       trusted: item.trusted,
     },
-    reason: item.reason ?? "",
+    reason: held === null ? item.reason ?? "" : HELD_REASON[held],
     evidence: evidence.success ? evidence.data : { violations: [], conflicts: [], mine: null, judgment: null },
     message: item.message,
+    held,
     updatedAt: isoSeconds(item.updatedAt),
   };
 }

@@ -2,7 +2,7 @@ import type { Conflict, ConflictSide, DecisionLogItem } from "../../../src/engin
 
 /** One side of a conflict: this branch's by default. */
 export const side = (over: Partial<ConflictSide> = {}): ConflictSide => ({
-  label: "This branch", ref: "tbelanger/export-api", sha: "aaa111", author: "tbelanger", pushedAt: null, url: null,
+  label: "This branch", ref: "tbelanger/export-api", sha: "aaa111", author: "tbelanger", tip: null, url: null,
   summary: "Clones each matcher per rule copy.", location: "native/src/model.rs:469",
   hunk: "@@ -469 +469 @@\n- matchers: Vec<GrammarMatcher>,\n+ matchers: Vec<GrammarMatcher>, // cloned\n", decisionId: null,
   ...over,

@@ -158,6 +158,19 @@ describe("Merge Assist's conflicts", () => {
     }
   });
 
+  it("says a side's tip is pushed only when it is on a remote or a pull request, else committed, and gives none for this branch", () => {
+    const withTip = (pushed: boolean) => conflict(OPEN_ID, { theirs: side({ label: "jbarnes-model", ref: "jbarnes-model", tip: { at: "2026-11-02T10:00:00Z", pushed } }) });
+    const tipText = (pushed: boolean): string[] => {
+      data.mergeAssist = fixture({ conflicts: [withTip(pushed)] });
+      render(root);
+      return cards()[0]!.querySelectorAll(".mside").map(entry => entry.querySelector(".mloc span")?.textContent ?? "");
+    };
+    const [mine, pushed] = tipText(true);
+    expect(mine).toBe("");
+    expect(pushed).toMatch(/^pushed /u);
+    expect(tipText(false)[1]).toMatch(/^committed /u);
+  });
+
   it("offers the four choices alike, none styled as recommended, and shows a logged conflict muted", () => {
     const acts = cards()[0]!.querySelectorAll(".macts button").map(b => [b.dataset.act, b.textContent, b.className]);
     expect(acts).toEqual([

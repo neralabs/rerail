@@ -28,6 +28,7 @@ export function sampleFinding(overrides: Partial<Finding> & Pick<Finding, "id" |
     reason: "Jeremy has write access and your branch's changes pass its rule.",
     evidence: { violations: [], conflicts: [], mine: null, judgment: null },
     message: null,
+    held: null,
     updatedAt: "2026-11-03T14:05:00Z",
     ...overrides,
   };
@@ -49,11 +50,11 @@ export function sampleConflict(overrides: Partial<Conflict> = {}): Conflict {
     question: "overlap:0123456789abcdef01234567",
     title: "model.rs · fn compile",
     mine: {
-      label: "This branch", ref: "tbelanger/export-api", sha: "1".repeat(40), author: "Tim Belanger", pushedAt: null, url: null,
+      label: "This branch", ref: "tbelanger/export-api", sha: "1".repeat(40), author: "Tim Belanger", tip: null, url: null,
       summary: "edits native/src/model.rs", location: "native/src/model.rs:469", hunk: "@@ -469 +469 @@\n-matchers: Vec<GrammarMatcher>,\n+matchers: Vec<GrammarMatcher>, // cloned", decisionId: null,
     },
     theirs: {
-      label: "PR #398", ref: "refs/pull/398/head", sha: "2".repeat(40), author: "jbarnes", pushedAt: "2026-11-03T14:00:00Z", url: "https://github.com/acme/app/pull/398",
+      label: "PR #398", ref: "refs/pull/398/head", sha: "2".repeat(40), author: "jbarnes", tip: { at: "2026-11-03T14:00:00Z", pushed: true }, url: "https://github.com/acme/app/pull/398",
       summary: "Share compiled matchers", location: "native/src/model.rs:470", hunk: "@@ -470 +470 @@\n+matchers: Arc<[GrammarMatcher]>,", decisionId: null,
     },
     evidence: ["Both sides change native/src/model.rs within 3 lines of each other."],

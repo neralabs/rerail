@@ -1,13 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { mergeAssistStatusSchema, readWorktreeDecisions, type Conflict, type ConflictAction } from "../../../src/engine/index.js";
+import { DECISION_ENTRY_FORMAT, mergeAssistStatusSchema, readWorktreeDecisions, sealDecisionEntry, type Conflict, type ConflictAction, type DecisionDraft } from "../../../src/engine/index.js";
 import {
   candidate,
   candidateFiles,
   commit,
   compareAnswer,
   FakeJudge,
+  forbidRule,
   git,
   mergeAssistWorkspaces,
   takeNotes,
@@ -240,8 +241,9 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
     const verdicts = conflicts[0]!;
     expect(verdicts.question).toBe(mineOverlap.question);
     // This branch's entry may not be pushed: no time for it; theirs is on their committed branch.
-    expect(verdicts.mine.pushedAt).toBeNull();
-    expect(verdicts.theirs.pushedAt).not.toBeNull();
+    expect(verdicts.mine.tip).toBeNull();
+    // Their branch is local here, never pushed: committed, not pushed.
+    expect(verdicts.theirs.tip).toEqual({ at: expect.any(String), pushed: false });
 
     // While it is open, neither verdict is guidance: not this branch's own, not theirs.
     const guidance = /Rerail added a decision|settled a conflict with|recorded a verdict on a conflict that has not merged/u;
@@ -314,6 +316,47 @@ describe("in-flight conflicts", { timeout: 30_000 }, () => {
     expect(after.conflicts.find(conflict => conflict.id === verdicts!.id)).toMatchObject({ status: "resolved" });
     const own = after.decisionLog.questions.find(question => question.question === mine.question)!.items.filter(item => item.source.label === "This branch");
     expect(own.map(item => item.status)).toEqual(["provisional", "superseded"]);
+  });
+
+  it("never applies another branch's provisional verdict as a rule, and says so: provisional, then held while a verdicts conflict is open", async () => {
+    const ws = await workspace();
+    const theirsPath = ws.worktree("jbarnes-rules");
+    const sha = git(theirsPath, "rev-parse", "HEAD");
+    const verdictDecision = candidate({ id: "candidate:retries-in-transport-1a2b3c", rule: forbidRule("candidate:retries-in-transport-1a2b3c", String.raw`retry\(`) });
+    const plain = candidate({ id: "candidate:no-sleep-in-api-4d5e6f", decision: "API code never sleeps.", rule: forbidRule("candidate:no-sleep-in-api-4d5e6f", String.raw`sleep\(`, ["src/api/**"], "API code never sleeps.") });
+    const at = { kind: "hunks" as const, path: "src/api/orders.ts", lines: [{ lo: 1, hi: 1 }] };
+    const entry = (fields: Pick<DecisionDraft, "sides" | "verdict" | "decidedBy" | "result" | "recordedAt">) => sealDecisionEntry({
+      format: DECISION_ENTRY_FORMAT, question: "overlap:retries", title: "orders.ts · orders", base: sha, supersedes: null, ...fields,
+    });
+    const side = (ref: string, fingerprint: string) => ({ ref, label: ref, sha, author: null, fingerprint: fingerprint.repeat(64), at });
+    // jbarnes kept the transport side, whose branch is gone from here, so the verdict stays provisional.
+    const theirs = entry({
+      sides: { a: side("jbarnes-rules", "a"), b: side("transport", "b") }, verdict: "b", decidedBy: { kind: "person", name: "jbarnes" },
+      result: { candidateId: verdictDecision.id, kind: "decision", text: verdictDecision.decision, rule: ".rerail/candidates/retries-in-transport-1a2b3c.json", follows: null },
+      recordedAt: "2026-11-08T10:00:00.000Z",
+    });
+    commit(theirsPath, { ...candidateFiles(verdictDecision, plain), [`.rerail/decisions/${theirs.id}.json`]: `${JSON.stringify(theirs, null, 2)}\n` });
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+
+    const held = (status: Awaited<ReturnType<typeof service.scan>>, id: string) => status.findings.find(finding => finding.candidate.id === id);
+    let status = await service.scan(ws.repo);
+    expect(held(status, verdictDecision.id)).toMatchObject({ status: "applied", held: "provisional", candidate: { level: "note" }, reason: expect.stringContaining("information only") });
+    expect(held(status, plain.id)).toMatchObject({ status: "applied", held: null, candidate: { level: "code" } });
+    // The ordinary decision's rule steers here; the verdict's never does.
+    expect(ws.rulesOn(ws.repo).filter(id => id.startsWith("candidate:"))).toEqual([expect.stringMatching(/^candidate:no-sleep-in-api-4d5e6f~/u)]);
+
+    // This branch records another verdict on the same question: a verdicts conflict opens, and theirs is held.
+    const mine = entry({
+      sides: { a: side("mine", "c"), b: side("jbarnes-rules", "a") }, verdict: "new", decidedBy: { kind: "person", name: "Tim Belanger" },
+      result: { candidateId: null, kind: "amendment", text: "Retry once, in the client.", rule: null, follows: null },
+      recordedAt: "2026-11-08T11:00:00.000Z",
+    });
+    writeFiles(ws.repo, { [`.rerail/decisions/${mine.id}.json`]: `${JSON.stringify(mine, null, 2)}\n` });
+    status = await service.scan(ws.repo);
+    expect(status.conflicts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "verdicts", status: "open", question: "overlap:retries" })]));
+    expect(held(status, verdictDecision.id)).toMatchObject({ held: "contested", candidate: { level: "note" }, reason: expect.stringContaining("Held: a verdicts conflict") });
+    expect(ws.rulesOn(ws.repo).filter(id => id.startsWith("candidate:"))).toEqual([expect.stringMatching(/^candidate:no-sleep-in-api-4d5e6f~/u)]);
   });
 
   it("gives a contradiction the same question on both branches, so their verdicts can meet", async () => {

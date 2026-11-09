@@ -94,6 +94,16 @@ function branchRefs(root: string, view: MineView, taken: Set<string>): LiveRef[]
   return refs;
 }
 
+/**
+ * A side's tip as the card shows it: when its commit was made, and whether it is pushed: a pull request's head, or a
+ * commit some remote-tracking branch holds. A local branch never pushed is only committed.
+ */
+function tipState(root: string, sha: string, ref: string, at: string | null): ConflictSide["tip"] {
+  if (at === null) return null;
+  const pushed = ref.startsWith("refs/pull/") || (gitText(root, ["for-each-ref", "--count=1", `--contains=${sha}`, "--format=%(refname)", "refs/remotes"]) ?? "") !== "";
+  return { at, pushed };
+}
+
 /** A ref's tip author and commit time, as `git log` gives them. */
 function tipOf(root: string, sha: string): { author: string | null; at: string | null } {
   const [author, at] = (gitText(root, ["log", "-1", "--format=%an%x00%cI", sha, "--"]) ?? "").split("\0");
@@ -193,7 +203,7 @@ function theirSide(root: string, ref: LiveRef, own: string, overlap: GitConflict
   // Their change to these lines: the commit of theirs that changed them, not their latest.
   const subject = contestedSubject(root, overlap.file, overlap.theirs, own, ref.sha, false);
   return {
-    label: ref.label, ref: ref.ref, sha: ref.sha, author: ref.author ?? tip.author, pushedAt: tip.at, url: ref.url,
+    label: ref.label, ref: ref.ref, sha: ref.sha, author: ref.author ?? tip.author, tip: tipState(root, ref.sha, ref.ref, tip.at), url: ref.url,
     summary: subject ?? ref.title ?? `edits ${overlap.file}`,
     location: `${overlap.file}:${lineOf(overlap.theirs)}`, hunk: hunkText(overlap.theirs), decisionId: null,
   };
@@ -202,7 +212,7 @@ function theirSide(root: string, ref: LiveRef, own: string, overlap: GitConflict
 /** This branch's side of an overlap in `file`: the commit that changed its contested lines, else (uncommitted) its edit. */
 function mySide(root: string, view: MineView, file: string, ours: readonly RefHunk[]): ConflictSide {
   return {
-    label: "This branch", ref: view.branch ?? view.head, sha: view.head, author: view.person, pushedAt: null, url: null,
+    label: "This branch", ref: view.branch ?? view.head, sha: view.head, author: view.person, tip: null, url: null,
     summary: contestedSubject(root, file, ours, view.start, view.head, true) ?? `edits ${file}`, location: `${file}:${lineOf(ours)}`, hunk: hunkText(ours), decisionId: null,
   };
 }
@@ -265,7 +275,7 @@ function talkRef(item: MergeAssistItemRow): { ref: string; label: string } {
 
 /** A decision's side of a contradiction. */
 function decisionSide(side: Pick<ConflictSide, "label" | "ref" | "sha" | "author" | "url">, decision: { id: string; decision: string }): ConflictSide {
-  return { ...side, pushedAt: null, summary: decision.decision, location: `${CANDIDATE_DIRECTORY}/${candidateFileName(decision.id)}`, hunk: null, decisionId: decision.id };
+  return { ...side, tip: null, summary: decision.decision, location: `${CANDIDATE_DIRECTORY}/${candidateFileName(decision.id)}`, hunk: null, decisionId: decision.id };
 }
 
 /** The decision an amendment chain starts from: `supersedes` followed back while `supersedesOf` knows the next. */
@@ -335,9 +345,9 @@ async function decisionConflicts(context: DetectContext, view: MineView): Promis
 
 /**
  * One side of a verdicts conflict: the ledger entry's place, its winner's position, and the decision it follows.
- * `pushedAt` is when the ref carrying it was last committed to; null for this branch, whose entry may not be committed.
+ * `tip` is the ref carrying it: null for this branch, whose entry may not be committed.
  */
-function verdictSide(item: LedgerItem, side: Pick<ConflictSide, "label" | "ref" | "sha" | "pushedAt">): ConflictSide {
+function verdictSide(item: LedgerItem, side: Pick<ConflictSide, "label" | "ref" | "sha" | "tip">): ConflictSide {
   const { entry } = item;
   const winner = winnerOf(entry);
   const picked = winner === null ? "a new decision" : `${entry.sides[winner].label}'s side`;
@@ -358,9 +368,9 @@ function verdictPosition(item: LedgerItem): { fingerprint: string; at: Position 
 function verdictConflicts(context: DetectContext, view: MineView, ledger: LedgerView): StoredConflict[] {
   return verdictDisagreements(ledger).map(({ mine: ours, theirs: other }) => {
     const { question } = ours.entry;
-    const mine = verdictSide(ours, { label: "This branch", ref: view.branch ?? view.head, sha: view.head, pushedAt: null });
+    const mine = verdictSide(ours, { label: "This branch", ref: view.branch ?? view.head, sha: view.head, tip: null });
     const theirSha = other.source.sha ?? view.head;
-    const theirs = verdictSide(other, { label: other.source.label, ref: other.source.ref, sha: theirSha, pushedAt: tipOf(context.checkout.checkoutPath, theirSha).at });
+    const theirs = verdictSide(other, { label: other.source.label, ref: other.source.ref, sha: theirSha, tip: tipState(context.checkout.checkoutPath, theirSha, other.source.ref, tipOf(context.checkout.checkoutPath, theirSha).at) });
     // Its own id space: an overlap on the same question with the same ref is another conflict.
     const id = conflictId(`verdicts:${question}`, other.source.ref);
     const files = [...new Set([ours.entry.sides.a.at, other.entry.sides.a.at].flatMap(at => (at.kind === "hunks" ? [at.path] : [])))];

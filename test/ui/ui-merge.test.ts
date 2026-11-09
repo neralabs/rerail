@@ -16,6 +16,7 @@ const finding = (id: string, tier: Finding["tier"], status: Finding["status"], o
   reason: "Your branch's changes pass its rule.",
   evidence: { violations: [], conflicts: [], mine: null, judgment: null },
   message: null,
+  held: null,
   updatedAt: "2026-11-02T11:00:00Z",
   ...over,
 });

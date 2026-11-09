@@ -343,11 +343,15 @@ function reviewRow(finding) {
       button(".ghost", "madismiss", finding.id, "Dismiss", { aria: `Dismiss ${quoted(finding.candidate.decision)}` })));
 }
 
+/** Another branch's verdict that has not merged: never applied here, as its badge says. */
+const HELD_BADGE = { provisional: "Provisional verdict", contested: "Held: verdicts conflict open" };
+
 function addedRow(finding) {
   return h("article.mrow", null,
     h("p.mq", null, finding.candidate.decision),
     h("div.mmeta", null, source(finding), levelBadge(finding.candidate.level), scopeChips(finding.candidate.scope),
-      h("span", null, finding.tier === "absorb" ? "Added automatically " : "Adopted by you ", ageSlot())),
+      finding.held === null ? null : h("span.badge.mwarn", { title: finding.reason }, HELD_BADGE[finding.held]),
+      h("span", null, finding.held !== null ? "Not applied " : finding.tier === "absorb" ? "Added automatically " : "Adopted by you ", ageSlot())),
     h("p.mreason", null, finding.reason),
     h("div.macts", null,
       button("", "maundo", finding.id, "Undo", { aria: `Undo ${quoted(finding.candidate.decision)}`, title: "Stop it steering your coding agent in this checkout" })));
@@ -390,10 +394,10 @@ const hunkBlock = hunk => h("pre.mhunk", null, hunkLines(hunk).map(line => h(`sp
 
 /** Where a side's change is and when it was pushed. */
 function sideWhere(side) {
-  if (side.location === null && side.pushedAt === null) return null;
+  if (side.location === null && side.tip === null) return null;
   return h("div.mloc", null,
     side.location === null ? null : h("code", null, side.location),
-    side.pushedAt === null ? null : h("span", null, `pushed ${stamp(Date.parse(side.pushedAt))}`));
+    side.tip === null ? null : h("span", null, `${side.tip.pushed ? "pushed" : "committed"} ${stamp(Date.parse(side.tip.at))}`));
 }
 
 /** One side of a conflict: who (a link when its pull request is safe to open), what, the hunk and where. */
