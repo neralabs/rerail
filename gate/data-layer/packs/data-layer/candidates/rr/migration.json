@@ -3309,7 +3309,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a",
-    "status": "Adopted Final 004df7e75 plus generic literal-fact preservation; acceptance pending",
+    "status": "Final 004df7e75 with literal-fact preservation; dedicated step suite, signing, production/update cases, and focused engine tests passed; full migration remains open",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3514,8 +3514,8 @@
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-eb3f8e0f826cf2c1",
-      "sha256": "eb3f8e0f826cf2c1207bc8c3a16fa67195958f52bef369176ca2e4fd3bca9e3f",
+      "path": ".rerail/modern-engine-alignment/cli-3b770a2b3d625130",
+      "sha256": "3b770a2b3d625130871eac5061b7be21b550b82b38f44271de88eeecc86d6167",
       "command": [
         "cargo",
         "build",
@@ -3524,9 +3524,10 @@
         "--features",
         "headless",
         "--bin",
-        "rerail-engine"
+        "rerail-engine",
+        "--release"
       ],
-      "seconds": 46.928
+      "seconds": 684.182
     }
   },
   "engineSourceSnapshots": [

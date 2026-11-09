@@ -9790,3 +9790,36 @@ The native policy also preserves the raw-text trigger gate and the collector's f
 Registry results retain duplicate unsigned entries and the sorted order of missing entries.
 This rule remains a draft. Caller-supplied ASTs, production, helpers, CLI, and workspace updates remain open.
 The inventory contains 94 authored drafts and six absent translations. These counts do not certify full migration acceptance.
+
+### 2026-11-09 — Repaired Final 004 acceptance checkpoint
+
+The [Final 004 checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-final004-checkpoint.json.gz) records the completed replay on optimized artifact `3b770a2b3d625130`.
+All 164 dedicated original step tests pass. All 212 API observations match, through 205 native calls.
+The replay preserves all 58 positive detector observations. No dedicated original case is excluded.
+All thirteen module settings also match. The slowest original-suite command takes 52.603 seconds.
+These command times describe acceptance execution, not a repository performance benchmark.
+
+The same optimized artifact passes all 199 supplemental step cases and 38 signing cases.
+Both original publication tests pass. Five production controls and five signing controls reject incorrect behavior.
+All twelve production update steps pass in one persistent store.
+The focused native suite passes 146 tests, including the literal-fact regression. Two existing helpers remain ignored.
+All 186 tooling tests pass.
+
+The initial 32-part debug replay stops after two commands reach the 115-second limit.
+Those timeouts do not count as semantic failures or accepted assertions. The optimized sixteen-part replay replaces that attempt.
+The debug build takes 46.928 seconds, the unit build 111.080 seconds, and the optimized build 684.182 seconds.
+Compilation remains separate from execution. All builds and acceptance commands use nice level 19.
+
+The receipt embeds complete native recordings, consumed programs, command results, and build provenance.
+It references the unchanged full source recording in the committed Final 735 receipt.
+The source recording hash matches that earlier receipt. This reference avoids another copy of the 410 MB source corpus.
+
+The [expanded authority checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-authority-scanner-registry-checkpoint-v2.json.gz) passes all seven original tests and sixty supplemental comparisons.
+The supplemental corpus contains 28 positive cases and 39 findings. Ten cases supply AST arguments independently from source text.
+Native relations preserve source locations, duplicate node occurrences, constructed names, scope names, and monkeypatch arguments.
+The implementation uses structural argument columns and set-based scope construction. It adds no native engine feature.
+
+The inventory contains 94 drafts and six absent translations. None has full migration acceptance.
+The step inventory still requires two traversal tests and 44 readiness tests.
+Authority production, remaining helper and CLI contracts, workspace updates, and the full migration gate remain open.
+Earlier port acceptance gaps also remain open. No full-repository cold run occurs.

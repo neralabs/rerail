@@ -11,7 +11,11 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`134521978`. The manifest binds its frozen CLI and exact source trees.
+`004df7e75`. The manifest binds its frozen CLI and exact source trees.
+Merge `219657a9a` adopts the latest Metal join implementation.
+The root planner also preserves literal facts when every derivation joins an empty relation (`4367e310b`).
+The latest accepted dedicated step-suite cohort is repaired Final `004df7e75`.
+Its checkpoint preserves the remaining broad-inventory gaps. The earlier Final `735bc4422` receipt remains historical evidence.
 Earlier adoption `2b494d4ef` and merge `60839bc48` brought Final's equal-request sharing and stage-three measurement notes.
 Merge `f286e6a13` adopts Final's first library-module implementation.
 Merge `7a846bfca` adopts Final's parser-generator updates and the preceding library-module design.
@@ -119,12 +123,14 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **93 target drafts and seven absent translations**. None has full migration acceptance yet.
+The current inventory contains **94 target drafts and six absent translations**. None has full migration acceptance yet.
+The 94th draft, `execution_authority_bypass`, passes all seven original tests and sixty supplemental scanner and registry cases.
+Production and full migration acceptance remain open for that draft.
 The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.
 Dead-code analysis handles the tested randomized mixin alternatives through a reachability proof. Raw target ordering remains separate.
-The 88th draft, `async_sync_delegation`, passes all 124 original tests and 144 supplemental cases on the current engine.
+The 88th draft, `async_sync_delegation`, passes all 124 original tests and 144 supplemental cases on its recorded engine cohort.
 Its native detector includes all six source finding families. Production reporting and global migration acceptance remain open.
 The 87th draft, `grammar_allowlist_burndown`, has native set extraction, assignment selection, owner-bound CLI aggregation, and report construction.
 On the `ae7c48111` engine, all 144 original tests pass with 137 complete observations, including 57 positive set results and four growing-allowlist CLI cases.
@@ -197,7 +203,7 @@ The 76th draft, `transaction_patterns`, passes all 118 unchanged original tests 
 It preserves all 117 recorded API observations, including collector state and helper results.
 Its 151 supplemental API cases include 124 scans, with 96 positives. All 61 reporter cases pass, including 17 positives.
 Ten controls disable individual detector or helper outputs and make the selected positive assertions fail.
-The [current alignment receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-9993-alignment.json.gz) preserves the complete results and exact comparison contracts.
+The [historical alignment receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final-shape-9993-alignment.json.gz) preserves the complete results and exact comparison contracts.
 Production registration, CLI/enforcement, and persistent workspace acceptance remain open.
 The 75th draft, `transaction_callback_wrappers`, passes all four original tests on the engine through `1e4840f3c`.
 It also passes 116 API cases and 103 reporter cases, including 71 and 69 positives respectively.
@@ -2413,3 +2419,14 @@ Ten cases supply AST arguments independently from source text.
 They preserve changed source locations, repeated node occurrences, constructed identifier spellings, nested classes, and monkeypatch targets.
 The native rule receives structural columns and computes scope names and findings itself.
 Production, remaining helper and CLI contracts, workspace updates, and the full migration gate remain open.
+
+### 2026-11-09 — Repaired Final 004 combined acceptance
+
+The [Final 004 checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-final004-checkpoint.json.gz) supersedes the dedicated step-suite replay above.
+All 164 dedicated original tests pass with 212 complete observations, 205 native calls, and 58 positive detector observations.
+The same optimized artifact passes all 199 supplemental cases, 38 signing cases, and both publication tests.
+Ten mutation controls and twelve persistent update steps also pass.
+All 146 focused engine tests and 186 tooling tests pass. Two existing engine helpers remain ignored.
+The source recording reference matches the full corpus embedded in the committed Final 735 receipt.
+The rule remains a draft. Two traversal tests, 44 readiness tests, and the full migration gate remain open.
+Six absent translations, authority production contracts, and earlier migration gaps remain open.
