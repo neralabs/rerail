@@ -71,6 +71,7 @@ pub(in crate::code_rule_dsl) mod placement;
 mod demand;
 pub(in crate::code_rule_dsl) mod sketch;
 pub(in crate::code_rule_dsl) mod statkeep;
+mod keeps;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -4563,6 +4564,27 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
     let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
+    // What each derived relation keeps (decision 0099): stored, or inlined into its readers, from this plan's
+    // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
+    let inlined;
+    let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
+        Some((p, done)) => {
+            super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
+            inlined = p;
+            // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
+            if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    for r in &inlined.rules {
+                        let _ = writeln!(f, "{r}");
+                    }
+                }
+            }
+            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&inlined)).into();
+            &inlined
+        }
+        None => prog,
+    };
     let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
         Some((p, demanded)) => {
             super::profile::decision("demand (decision 0048)", || {
@@ -4716,6 +4738,37 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     for (r, &l) in &last {
         after_last[(l + 1).min(sccs.len())].push(r.clone());
     }
+    // Device waves (decision 0095 §5, 0098 §6). A stratum's level is one more than the deepest level it reads, so a
+    // level's strata read only earlier levels' relations. Each level's count tables that an earlier chunk found worth
+    // building (`count table`) are built as one batch when the level's first stratum runs: one submission per lane
+    // for the level, not one per stratum. A table whose relation is not held yet is built by its step, as before.
+    let level_of: Vec<usize> = {
+        let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
+        let by = rules_by_stratum(prog, &sccs);
+        let mut level = vec![0usize; sccs.len()];
+        for j in 0..sccs.len() {
+            let deepest = by[j].iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).filter_map(|a| of.get(a.rel.as_str())).filter(|&&d| d != j && d < j).map(|&d| level[d] + 1).max();
+            level[j] = deepest.unwrap_or(0);
+        }
+        level
+    };
+    let wants_of: Vec<BTreeSet<(String, Vec<usize>)>> = rules_by_stratum(prog, &sccs)
+        .iter()
+        .zip(&sccs)
+        .map(|(rules, scc)| {
+            rules
+                .iter()
+                .flat_map(|r| r.body.iter())
+                .filter_map(|l| match l {
+                    Literal::Agg { op: AggOp::Count, atom, .. } if !scc.contains(&atom.rel) => {
+                        Some((atom.rel.clone(), (0..atom.args.len()).filter(|&c| !matches!(atom.args[c], Term::Wild)).collect()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
+    let mut waved = vec![false; sccs.len()];
     for (at, scc) in sccs.iter().enumerate() {
         let candidates: Vec<String> = if at == 0 {
             run.native_rels.iter().cloned().collect()
@@ -4811,6 +4864,18 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         if super::profile::on() {
             for r in &rules {
                 super::profile::note(format!("rule #{:04}", rule_no(r)), || r.to_string());
+            }
+        }
+        if native.contains("program") && !waved[at] {
+            let level: Vec<usize> = (at..sccs.len()).filter(|&j| level_of[j] == level_of[at] && !waved[j]).collect();
+            let wants: BTreeSet<(String, Vec<usize>)> = level.iter().flat_map(|&j| wants_of[j].iter().cloned()).collect();
+            level.iter().for_each(|&j| waved[j] = true);
+            if !wants.is_empty() {
+                let _wave = super::profile::span(|| "device wave (count tables)".into());
+                let (launches, rels) = super::native::component::prefetch_tables(db, &wants)?;
+                if launches > 0 {
+                    super::profile::decision("device waves (decision 0095 §5)", || format!("a level of {} strata: {launches} count tables over {rels} relations in one batch", level.len()));
+                }
             }
         }
         if native.contains("program") && !scc.iter().all(|r| run.views.contains(r)) {
