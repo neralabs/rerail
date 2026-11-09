@@ -341,3 +341,57 @@ It reproduces exactly 2,283,088 VM instructions, ten semantic projections, and f
 All full-workload and edge comparison gates pass. The 100-execution gate remains explicitly unmet.
 The legacy diagnostic used the preceding binary; its exact source hashes and the two later-changed source files are preserved separately.
 The final allocator correction does not affect that diagnostic's aggregate plans or legacy rules.
+
+## Retained semantic demands after the successor merges
+
+The literal Pulling-it-all-together tip was already an ancestor.
+Merged the committed integration hub `aa2ef00ef` and executor `8bd924c72` into this branch.
+Their uncommitted edits remain untouched.
+The export-read conflict keeps the hub's keyed `rows_of` implementation.
+
+The boundary design and gates are in `retained-semantic-demands.md`.
+The first gate fails on the preceding profile: executed SQL mentioning `async_reference` consumes 1,773,972 VM instructions.
+That includes setup and statistics; publication and the five major reads account for 1,766,340 instructions.
+The merged baseline build is in progress before the boundary changes.
+The implementation will use the hub's retained relation APIs and preserve SQL fallback consumers.
+
+The merged build completes. Sixteen targeted checks pass; the legacy-extension aggregate check fails with `unknown join item sum`.
+The merged planner now emits numeric reductions that the frozen text-symbol extension does not implement.
+The adapter now declines those reductions for that extension, so SQL evaluates them.
+The work-growth test also runs the production atom-backed engine and requires its native sum reduction.
+The merged async positive fixture passes before the retention change.
+
+The implementation reads each completed unary demand relation once and shares its snapshot among exact-relation consumers.
+Semantic results enter the existing retained relation store with zero published rows.
+The ordinary liveness schedule releases demand snapshots. SQL consumers still trigger materialization.
+The regression covers separate target sets, duplicate keys, document identity, empty inputs, repeated runs, and both native and SQL joins.
+
+The merged baseline's three warm CPU samples are 13.682, 13.596, and 13.942 seconds.
+Median wall time is 28.910 seconds. All runs process 5,725 files with zero findings.
+Its profile reproduces exactly 2,283,088 VM instructions and 10,272 executions.
+The retained-candidate gate fails on this merged profile too, with 1,773,972 candidate-related VM instructions.
+The first implementation build caught a `Vec<String>` membership type mismatch; the corrected build is in progress.
+
+The first retained full-corpus profile passes the boundary gate: zero SQL mentions `async_reference`.
+It reads 71 native snapshots and records 213 cache hits across 71 chunks.
+Total SQL falls to 3,794 executions and 334,247 VM instructions. This first run fills the revised tape cache.
+All 17 previous targeted checks pass. Three new retention checks pass; the integration fixture needs measured node statistics.
+
+The wider RR suite passes 91 tests and exposes one obsolete shape assertion from the merge.
+That assertion expects the inner count-zero expression instead of its anti-existence lowering.
+The updated assertion retains its outer-key and context requirements.
+A new execution test checks the nested example under SQL and native joins, with independently specified results.
+The nine file-local tests, scalar reduction parity, and legacy native goldens pass.
+The final build includes only these test corrections since the successful retained production profile.
+
+The final build passes all 22 focused tests and all 93 active RR tests; two existing RR tests remain ignored.
+The four edge jobs match all 178 recorded Ruff findings. The old reference-only gate still reports its four known misses.
+The final profile records 336,517 VM instructions and 3,849 executions in 72 chunks.
+No executed SQL mentions `async_reference`; 72 native snapshots serve 216 additional consumers.
+Semantic projection remains ten nodes across five scope tables.
+
+The initial separate timing series appeared to reduce CPU from 13.682 to 8.575 seconds.
+Parsing and batch construction moved by a similar factor, so this was not accepted as the fix's speedup.
+Three alternating pairs give median CPU 9.358 → 8.510 seconds and wall time 8.283 → 7.332 seconds.
+Median local execution CPU is 0.674 → 0.567 seconds. Both timing series are preserved.
+The 100-execution budget remains failed. The report identifies batch projection as the dominant CPU cost and records the remaining SQL setup work.

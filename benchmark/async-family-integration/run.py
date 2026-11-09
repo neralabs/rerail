@@ -44,6 +44,7 @@ def run(name, test, extra=None, ignored=False):
 if a.stage == 'demand-tests':
     for name, test in [
         ('aggregate-demand', 'logic::rr::aggregate_demand::tests'),
+        ('retained-demands', 'logic::plan::native_demand::'),
         ('posting-parity', 'facts::producers::python::families::tests::py_families_equal_s_producers'),
         ('import-screen', 'facts::producers::python::import_screen::tests'),
         ('semantic-cache', 'python_demand::tests'),

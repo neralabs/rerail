@@ -1274,6 +1274,18 @@ pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
     ADOPTED.lock().unwrap().insert((at, table.to_owned()));
 }
 
+/// A native fact operator's completed set. No rows are published until a SQL consumer materializes it.
+/// Unlike `adopt`, this is a result of the current run, not an input scheduled for the next one.
+pub fn retain(conn: &Connection, table: &str, mut rows: Vec<Vec<i64>>, types: Vec<u8>) -> Result<()> {
+    if rows.iter().any(|r| r.len() != types.len()) { return Err(err(format!("{table}: native result width differs from its declaration"))); }
+    rows.sort_unstable();
+    rows.dedup();
+    let mut rel = InRel::flat(&rows, types);
+    Arc::get_mut(&mut rel).unwrap().stored = 0;
+    DERIVED.lock().unwrap().insert((scope(conn), table.to_owned()), rel);
+    Ok(())
+}
+
 /// The relations `adopt`ed into `conn`'s next run, taken by its planner.
 pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
     let at = scope(conn);

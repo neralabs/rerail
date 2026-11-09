@@ -98,3 +98,19 @@ python3 benchmark/async-family-integration/compare-demand.py \
 The command checks corpus sizes, findings, all Ruff edge fixtures, and unchanged legacy-policy edge results.
 The older reference-only edge gate still reports four known reference misses.
 It is preserved separately from Ruff parity. The 100-execution budget remains failed.
+
+## Retained semantic demands
+
+The [retention report](../../docs/comparisons/retained-semantic-demands.md) records the successor merges and the boundary change.
+The demand-test stage includes native snapshots, cache lifetime, target isolation, and SQL fallback.
+After a full profile, run the structural gate:
+
+```sh
+python3 benchmark/async-family-integration/check-retained.py \
+  /path/to/results/rr-profile.json --output /path/to/results/boundary.json
+```
+
+The gate rejects executed SQL that mentions the shared candidate relation.
+It also requires at most one native demand snapshot per chunk.
+The 100-execution budget appears as a separate result; passing this boundary gate does not satisfy that budget.
+For timing, run `--stage rr` once to warm the private cache, then retain three more reports before running `--stage rr-profile`.

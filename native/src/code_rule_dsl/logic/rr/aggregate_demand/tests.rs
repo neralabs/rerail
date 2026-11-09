@@ -156,7 +156,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
             "unrequested groups published in {h}"
         );
     }
-    // The production native join engine must also filter before expanding witnesses.
+    // Keep the frozen text-symbol extension compatible; unsupported reductions must fall back to SQL.
     let _serial = crate::code_rule_dsl::logic::profile::one_run();
     let was_on = crate::code_rule_dsl::logic::profile::on();
     crate::code_rule_dsl::logic::profile::reset();
@@ -174,6 +174,18 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     })
     .unwrap();
     assert_eq!(native.outputs, result.outputs);
+    // Measure the production atom-backed engine, not the frozen legacy extension above.
+    crate::code_rule_dsl::logic::profile::reset();
+    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    crate::code_rule_dsl::logic::native::register(&db).unwrap();
+    let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
+        &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
+    let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+        BTreeSet::new(), "program").unwrap();
+    assert_eq!(native.outputs, result.outputs);
+    assert!(native.native.contains("sums"), "production sum must use the native reduction");
     let dir = file.with_extension("profile");
     crate::code_rule_dsl::logic::profile::write(&dir, "Demanded aggregate growth gate").unwrap();
     crate::code_rule_dsl::logic::profile::set(was_on);
@@ -300,4 +312,32 @@ fn pyflakes_outer_binding_existence_keeps_load_and_nearest_scope_demands() {
         );
     }
     front::strata(&p).unwrap();
+}
+
+
+#[test]
+fn nested_zero_counts_preserve_outer_groups_in_sql_and_native_execution() {
+    use crate::code_rule_dsl::logic::{native, plan};
+    let p = rr::parse(r#"
+.decl ident(x:symbol)
+ident("a"). ident("b").
+.decl fn(f:number)
+fn(1). fn(2). fn(3).
+.decl ref(n:number,f:number,x:symbol)
+ref(10,1,"a"). ref(11,1,"b"). ref(20,2,"a").
+.decl hit(f:number)
+.output hit
+hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
+"#).unwrap();
+    for modes in ["", "program"] {
+        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let store = crate::content_store::ContentStore::open(&path).unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        native::register(&db).unwrap();
+        let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
+            &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
+        let result = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+            BTreeSet::new(), modes).unwrap();
+        assert_eq!(result.outputs["hit"], ["2", "3"], "outer groups lost in {modes:?}");
+    }
 }

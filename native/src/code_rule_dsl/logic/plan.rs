@@ -69,6 +69,7 @@ type Result<T> = std::result::Result<T, Error>;
 pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
 mod demand;
+mod native_demand;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -2236,6 +2237,8 @@ struct Run<'a, 'b> {
     keyless: HashSet<String>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
+    /// Immutable unary demand snapshots, shared only within this run.
+    demands: native_demand::Demands,
     /// Why the native engine declined the last stratum it was offered (EXPLAIN's `why`).
     why_not: Option<String>,
     /// What kind of literal the native engine declined (`decline_class`), for the profile's SQLite fallbacks.
@@ -2454,31 +2457,61 @@ impl Run<'_, '_> {
         Ok(n)
     }
 
-    /// One producer invocation for the whole relation of demands; no per-row matcher driver.
+    /// One producer invocation for a completed demand relation; native rows never take a SQL round trip.
     fn python_relation(&mut self, rel: &str, kind: &str, input: &str, targets: &Option<String>) -> Result<usize> {
-        let ident=crate::code_rule_dsl::logic::sql::ident;
-        let col=self.model.col(input,0);
-        let requests:Vec<i64>={let mut s=self.db.prepare(&format!("SELECT DISTINCT {col} FROM {}",ident(input)))?;s.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<_>>()?};
-        let mut wanted=BTreeSet::new();
-        if let Some(targets)=targets {
-            let col=self.model.col(targets,0);
-            let col=if self.model.inputs.atoms.is_some(){format!("sym_text({col})")}else{col};
-            let mut s=self.db.prepare(&format!("SELECT {col} FROM {}",ident(targets)))?;
-            wanted=s.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<_>>()?;
-        }
-        if requests.is_empty(){return Ok(0);}
-        let source=crate::code_rule_dsl::facts::vtab::bound_source(self.db,"node").ok_or_else(||Error::Plan("Python producer requires bound syntax facts".into()))?;
-        let batch=source.python_batch().ok_or_else(||Error::Plan("Python producer requires a syntax batch".into()))?;
-        let mut rows=batch.python_project(kind,&requests,&wanted).map_err(Error::Plan)?;
+        use super::native::component;
+        use crate::code_rule_dsl::facts::vtab;
+        let ident = crate::code_rule_dsl::logic::sql::ident;
+        let source = if self.native_rels.contains(input) {
+            Some(component::derived(self.db, input).ok_or_else(|| Error::Plan(format!("missing retained demand {input}")))?)
+        } else if self.prog.inputs.iter().any(|r| r == input) {
+            vtab::bound_source(self.db, input)
+        } else { None };
+        if source.is_none() { self.ensure(&[input.to_owned()])?; }
+        let requests = self.demands.read(self.db, input, &self.model.col(input, 0), source)?;
+        let mut rows = if requests.is_empty() { Vec::new() } else {
+            let mut wanted = BTreeSet::new();
+            if let Some(targets) = targets {
+                // Target relations can be derived as well as constant. Preserve their declared dependency.
+                self.ensure(std::slice::from_ref(targets))?;
+                self.materialize(std::slice::from_ref(targets))?;
+                let col = self.model.col(targets, 0);
+                let col = if self.model.inputs.atoms.is_some() { format!("sym_text({col})") } else { col };
+                let mut s = self.db.prepare(&format!("SELECT {col} FROM {}", ident(targets)))?;
+                wanted = s.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+            }
+            let source = vtab::bound_source(self.db, "node").ok_or_else(|| Error::Plan("Python producer requires bound syntax facts".into()))?;
+            let batch = source.python_batch().ok_or_else(|| Error::Plan("Python producer requires a syntax batch".into()))?;
+            batch.python_project(kind, &requests, &wanted).map_err(Error::Plan)?
+        };
         if self.model.inputs.atoms.is_some() {
-            let strings:Vec<_>=rows.iter().flatten().filter_map(|v|match v {SqlValue::Text(s)=>Some(s.as_str()),_=>None}).collect();
-            let ids=super::native::intern_batch(self.db,strings.into_iter())?;
-            let mut ids=ids.into_iter();
-            for value in rows.iter_mut().flatten(){if matches!(value,SqlValue::Text(_)){*value=SqlValue::Integer(ids.next().unwrap());}}
+            let strings = rows.iter().flatten().filter_map(|v| match v { SqlValue::Text(s) => Some(s.as_str()), _ => None });
+            let mut ids = super::native::intern_batch(self.db, strings)?.into_iter();
+            for value in rows.iter_mut().flatten() {
+                if matches!(value, SqlValue::Text(_)) { *value = SqlValue::Integer(ids.next().unwrap()); }
+            }
+            let values: Vec<Vec<i64>> = rows.into_iter().map(|row| row.into_iter().map(|v| match v {
+                SqlValue::Integer(i) => Ok(i),
+                _ => Err(Error::Plan("Python fact producer returned a non-integer after interning".into())),
+            }).collect()).collect::<Result<_>>()?;
+            component::retain(self.db, rel, values, vec![b'i'; self.prog.decls[rel].len()])?;
+            self.native_rels.insert(rel.to_owned());
+            let source = component::derived(self.db, rel).expect("just retained");
+            let stats = source.statistics().expect("retained relations own their statistics");
+            live_stats(&mut self.model, rel, LiveRel {
+                n: source.len() as i64,
+                ndv: stats.iter().map(|s| s.2).collect(),
+                sq: stats.iter().map(|s| s.3).collect(),
+                freq: Vec::new(),
+            });
+            super::profile::decision("native fact result", || format!("{rel}: retained rows={}", source.len()));
+            return Ok(source.len());
         }
-        let before=self.db.total_changes();
-        insert_many(self.db,&format!("INSERT OR IGNORE INTO {}",ident(rel)),rows)?;
-        Ok((self.db.total_changes()-before) as usize)
+        // The legacy text-symbol backend reads SQL tables. Atom-backed production retains the typed rows above.
+        self.ensure(&[rel.to_owned()])?;
+        let before = self.db.total_changes();
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", ident(rel)), rows)?;
+        Ok((self.db.total_changes() - before) as usize)
     }
 
     /// `components` (`front::Native::Components`): each document's component and key from `edge`'s and `own`'s
@@ -3184,6 +3217,9 @@ impl Run<'_, '_> {
                 Literal::Agg { var, op: op @ (AggOp::Count | AggOp::Sum | AggOp::Min | AggOp::Max), over, atom: a } => {
                     // The over-variable belongs to the bag even if an outer step bound the same name.
                     let local=a.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if Some(v)==over.as_ref()).then_some(c)).collect::<Vec<_>>();
+                    if self.model.inputs.atoms.is_none() && (*op != AggOp::Count || local.len() > 1) {
+                        return None;
+                    }
                     let mut a = a.clone();
                     let col = over.as_ref().and_then(|o| a.args.iter().position(|t| matches!(t, Term::Var(v) if v==o)));
                     if *op != AggOp::Count && col.is_none() { return None; }
@@ -4300,7 +4336,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // Inputs kept in the engine from an earlier run (a session's, decision 0090 step 3) are read in place, as native
     // relations, with the indexes they have.
     let adopted: BTreeSet<String> = super::native::component::adopted(db).into_iter().filter(|r| prog.inputs.contains(r)).collect();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: projections(prog), numbers: prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect(), answer: hooks.answer.take(), why_class: None, answered: BTreeMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
@@ -4425,6 +4461,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         after_last[(l + 1).min(sccs.len())].push(r.clone());
     }
     for (at, scc) in sccs.iter().enumerate() {
+        for r in &after_last[at] { run.demands.forget(r); }
         let candidates: Vec<String> = if at == 0 {
             run.native_rels.iter().cloned().collect()
         } else {
@@ -4521,6 +4558,22 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 super::profile::note(format!("rule #{:04}", rule_no(r)), || r.to_string());
             }
         }
+        // Python operators consume completed demands, not their synthetic locality-proof rules. Keep native
+        // inputs and outputs in the set store before the SQL fallback can materialize them.
+        if atoms && scc.iter().any(|r| matches!(prog.natives.get(r), Some(super::front::Native::Python { .. }))) {
+            let rel = scc.iter().next().unwrap();
+            let Some(super::front::Native::Python { kind, input, targets }) = prog.natives.get(rel) else {
+                return Err(Error::Plan("recursive Python semantic demands are not supported".into()));
+            };
+            if scc.len() != 1 || scc.contains(input) || targets.as_ref().is_some_and(|t| scc.contains(t)) {
+                return Err(Error::Plan("recursive Python semantic demands are not supported".into()));
+            }
+            let n = run.python_relation(rel, kind, input, targets)?;
+            super::profile::stratum(&skey, "native fact operator over retained demand relations", String::new);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
         if native.contains("program") && !scc.iter().all(|r| run.views.contains(r)) {
             let native_span = super::profile::span(|| "native".into());
             let ran = run.native_stratum(scc, &rules)?;
@@ -4536,17 +4589,17 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             if scc.iter().any(|r| prog.answers.contains_key(r)) && scc.iter().any(|r| super::answers::produced(prog).contains_key(r.as_str())) {
                 return Err(Error::Plan(format!("requests in {scc:?} are answered only inside the native fixpoint: {why}")));
             }
-            // This stratum runs in SQL, which reads the native relations it joins from their tables.
-            let read: Vec<String> = rules
-                .iter()
-                .flat_map(|r| &r.body)
-                .filter_map(|l| match l {
-                    Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
-                    _ => None,
-                })
-                .collect();
-            run.materialize(&read)?;
         }
+        // This stratum runs in SQL, which reads the native relations it joins from their tables.
+        let read: Vec<String> = rules
+            .iter()
+            .flat_map(|r| &r.body)
+            .filter_map(|l| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
+                _ => None,
+            })
+            .collect();
+        run.materialize(&read)?;
         // This stratum runs in SQL: its relations' and those it reads' tables.
         let read: Vec<String> = rules
             .iter()

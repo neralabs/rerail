@@ -1,5 +1,7 @@
 # Aggregate and semantic demand repair
 
+The [retained-demand follow-up](retained-semantic-demands.md) merges the successor engines and removes the candidate SQL round trip.
+
 The full four-rule job falls from **1,058.8 to 14.3 CPU seconds**, about **74× faster**.
 The aggregate repair and the selective semantic producers both contribute.
 The 100-execution budget remains unmet. Statement reuse is a separate, documented follow-up.
