@@ -197,6 +197,10 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let _running = Running::enter(&name)?;
         let src = source(&name, dir.as_deref())?.expect("a phase program");
         let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
+        // A later phase sees the libraries only through what earlier ones hand on (0083 §1: P3 loads nothing).
+        if derives_load(prog) && loads_documents(&program, dir.as_deref(), &mut BTreeSet::new())? {
+            return Err(Error::Plan(format!("a program reading phase {name}, whose fixed point loaded documents, loads documents itself: it reads the libraries through {name}'s exports")));
+        }
         let declared = declared(&program).ok_or_else(|| Error::Plan(format!("{name}.rr: no `.phase {name}`")))?;
         if declared.name != name {
             return Err(Error::Plan(format!("{name}.rr says `.phase {}`", declared.name)));
@@ -285,6 +289,29 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began, full_because: Some(full_because), versions });
     }
     Ok((facts, runs, handed))
+}
+
+/// Whether a program loads documents into its fixed point (a `load` rule, decision 0065 §2a).
+fn derives_load(prog: &Program) -> bool {
+    prog.rules.iter().any(|r| r.head.rel == "load")
+}
+
+/// Whether phase program `program`'s fixed point, or an earlier phase's it reads, loads documents (`seen`: the
+/// phases looked at, so a cycle, refused when the phases run, ends here).
+fn loads_documents(program: &Program, dir: Option<&Path>, seen: &mut BTreeSet<String>) -> Result<bool> {
+    if derives_load(program) {
+        return Ok(true);
+    }
+    for (name, _) in wanted(program, dir)? {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let src = source(&name, dir)?.expect("a phase program");
+        if loads_documents(&crate::code_rule_dsl::logic::rr::parse(&src)?, dir, seen)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The exports whose rows the reader needs: those it reads and holds neither at this version nor at the one its delta
@@ -883,6 +910,11 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         std::fs::write(phases.join("p1.rr"), p1.replace("text(e, b).", "text(e, b), b = \"none\".")).unwrap();
         run(&reader).unwrap();
         assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "", "p2 run again over p1's new exports");
+        // A reader of p2 that loads documents itself is refused: p1 loaded none, so first give p1 a load.
+        std::fs::write(phases.join("p1.rr"), format!("{p1}\nload(\"x.pyi\", \"x\", \"python\") :- def(\"A\", _).\n")).unwrap();
+        let loading = reader.replace(".output r", "load(\"y.pyi\", \"y\", \"python\") :- r(_, _).\n.output r");
+        let err = run(&loading).err().expect("a later phase's reader that loads").to_string();
+        assert!(err.contains("loads documents itself"), "{err}");
         // p1 reading p2's export: each runs the other first.
         std::fs::write(phases.join("p1.rr"), format!("{p1}\n.decl p2__anc(s: symbol, a: symbol)\n.decl seen(s: symbol)\nseen(s) :- p2__anc(s, _).\n.output seen\n")).unwrap();
         let err = run(&reader).err().expect("a cycle refused").to_string();
