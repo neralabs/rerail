@@ -1397,6 +1397,11 @@ fn spike_o125_replay() {
             return;
         }
         let spans = crate::code_rule_dsl::logic::profile::spans();
+        // `O125_SPANS_TSV=<dir>`: the step's whole session tree, `<dir>/spans-<step>.tsv` (path, calls, CPU s).
+        if let Some(dir) = std::env::var_os("O125_SPANS_TSV") {
+            let rows: String = spans.iter().filter(|(p, _)| p.contains("session/")).map(|(p, t)| format!("{p}\t{}\t{:.4}\n", t.calls, t.total)).collect();
+            let _ = std::fs::write(PathBuf::from(dir).join(format!("spans-{step:02}.tsv")), rows);
+        }
         let mut by: BTreeMap<String, f64> = BTreeMap::new();
         for (path, t) in spans.iter() {
             let Some((_, rest)) = path.split_once("session/") else { continue };
