@@ -324,6 +324,32 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
+  it("keeps first-sight text only within its budget, and measures a shell edit past it as before", async () => {
+    const root = await workspace();
+    const [first, second] = [join(root, "src", "a.py"), join(root, "src", "b.py")];
+    await writeFile(first, "old\n");
+    await writeFile(second, "old\n");
+    commitAll(root);
+    await writeFile(first, "aaaa\n");
+    await writeFile(second, "bbbb\n");
+    await awaitClockAfter(first, second);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { firstSightTextBytes: 5 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await shell(bridge, async () => {
+      await writeFile(first, "aaaa\nmine\n");
+      await writeFile(second, "bbbb\nmine\n");
+    });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([[
+      { path: "src/a.py", language: "python", previousText: "aaaa\n", generatedText: "aaaa\nmine\n" },
+      {
+        path: "src/b.py", language: "python",
+        previousReadError: "Source changed outside a tool with a captured preimage", generatedText: "bbbb\nmine\n",
+      },
+    ]]);
+  });
+
   it("measures a shell edit from the text a later walk first saw in a folder the baseline could not read", async () => {
     const root = await realpath(await workspace());
     const draft = join(root, "deep", "draft.py");

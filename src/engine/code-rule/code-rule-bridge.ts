@@ -33,6 +33,11 @@ const MAX_SOURCE_BYTES = 1_000_000;
 const OVERSIZE_ERROR = `Source exceeds ${MAX_SOURCE_BYTES} byte policy limit`;
 /** The most source text the session keeps as later preimages (`#texts`); the least recently changed goes first. */
 const MAX_SESSION_TEXT_BYTES = 64 * 1024 * 1024;
+/**
+ * The most of that the text of sources first seen with changes Git does not hold may take (`first-sight`): every
+ * session holds it from its start, so it is kept smaller; a source past it falls back to Git.
+ */
+const FIRST_SIGHT_TEXT_BYTES = 8 * 1024 * 1024;
 /** Paths observed per wave; on network or virtualised mounts each lstat/read is a round trip, so latency, not bandwidth, bounds the walk. */
 const OBSERVATION_CONCURRENCY = 16;
 
@@ -662,8 +667,8 @@ export class CodeRuleBridge {
    * The text each source this session changed was last seen with: the preimage of its next change made without one
    * captured, once its digest proves it (`#recoverPreimages`). The baseline is not kept, but for a source a walk first
    * sees with text Git may not hold (`#keepFirstSeenTexts`), which no other preimage could give; that text is no change
-   * of the session's (`first-sight`). At most `MAX_SESSION_TEXT_BYTES` of them are kept, the least recently changed
-   * evicted first: an evicted source falls back to Git.
+   * of the session's (`first-sight`), and takes at most `FIRST_SIGHT_TEXT_BYTES`. At most `MAX_SESSION_TEXT_BYTES` of
+   * them are kept, the least recently changed evicted first: an evicted source falls back to Git.
    */
   readonly #texts = new Map<string, { text: string; bytes: number; origin: TextOrigin }>();
   #textBytes = 0;
@@ -684,6 +689,9 @@ export class CodeRuleBridge {
   /** The `.gitignore` files walks found new, changed or gone since the last look at the ignore rules, session-relative. */
   readonly #walkedIgnoreChanges = new Set<string>();
   readonly #worktreeWalkGapMs: number;
+  /** The most of `#texts` first-sight text may take (`FIRST_SIGHT_TEXT_BYTES`), and how much it takes now. */
+  readonly #firstSightTextBytes: number;
+  #firstSightBytes = 0;
 
   constructor(
     cwd: string,
@@ -701,6 +709,8 @@ export class CodeRuleBridge {
       onIgnoreRulesChanged?(change: IgnoreRulesChange): void;
       /** `WORKTREE_WALK_GAP_MS` by default. */
       worktreeWalkGapMs?: number;
+      /** `FIRST_SIGHT_TEXT_BYTES` by default. */
+      firstSightTextBytes?: number;
     } = {},
   ) {
     this.#cwd = resolve(cwd);
@@ -712,6 +722,7 @@ export class CodeRuleBridge {
     this.#onIgnoredEdit = options.onIgnoredEdit;
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs ?? WORKTREE_WALK_GAP_MS;
+    this.#firstSightTextBytes = options.firstSightTextBytes ?? FIRST_SIGHT_TEXT_BYTES;
   }
 
   /** Resolves once the evaluator is open; the baseline walk runs behind it and delays only the next checkpoint or command result. */
@@ -729,6 +740,7 @@ export class CodeRuleBridge {
       this.#observed.clear();
       this.#texts.clear();
       this.#textBytes = 0;
+      this.#firstSightBytes = 0;
       this.#discovery = undefined;
       const root = await realpath(this.#cwd);
       await this.#auditor.openWorkspace(sessionId);
@@ -1072,6 +1084,7 @@ export class CodeRuleBridge {
       this.#observed.clear();
       this.#texts.clear();
       this.#textBytes = 0;
+      this.#firstSightBytes = 0;
       this.#discovery = undefined;
       await this.#auditor.close(options);
     });
@@ -1869,13 +1882,13 @@ export class CodeRuleBridge {
   /**
    * Puts in `scan.firstSeen` the text of each source the walk saw first, in the session folder or a worktree new to it,
    * that its checkout's index may not hold (`gitModifiedOrUntrackedPaths`): changed before the session, neither its
-   * index nor its `HEAD` blob is the preimage of the session's next shell write to it. Each is read again, up to
-   * `MAX_SESSION_TEXT_BYTES` of them, and taken only while it still has the digest the scan observed.
+   * index nor its `HEAD` blob is the preimage of the session's next shell write to it. Each is read again, while the
+   * session's first-sight budget lasts, and taken only while it still has the digest the scan observed.
    */
   async #readFirstSeenTexts(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<void> {
     const listed = await this.#firstSeenModifiedOrUntracked(discovery, walk, scan);
-    let bytes = 0;
-    while (listed.length > 0 && bytes < MAX_SESSION_TEXT_BYTES && !this.#abandoned(discovery)) {
+    let bytes = this.#firstSightBytes;
+    while (listed.length > 0 && bytes < this.#firstSightTextBytes && !this.#abandoned(discovery)) {
       const wave = listed.splice(0, OBSERVATION_CONCURRENCY);
       bytes += takeFirstSeen(scan, await Promise.all(wave.map(path => this.#readSource(discovery.root, path))));
     }
@@ -1903,11 +1916,13 @@ export class CodeRuleBridge {
 
   /**
    * Keeps each of a walk's `firstSeen` texts (no change of the session's) that the session holds no text for, while it
-   * is still what the session last observed of the source.
+   * is still what the session last observed of the source and the session's first-sight budget holds it.
    */
   #keepFirstSeenTexts(firstSeen: SourceScan["firstSeen"]): void {
-    for (const [path, { text, digest }] of firstSeen)
+    for (const [path, { text, digest }] of firstSeen) {
+      if (this.#firstSightBytes + Buffer.byteLength(text) > this.#firstSightTextBytes) continue;
       if (!this.#texts.has(path) && this.#observed.get(path)?.digest === digest) this.#rememberText(path, text, "first-sight");
+    }
   }
 
   /** Keeps `text`, from `origin`, as the source's latest; past `MAX_SESSION_TEXT_BYTES`, the least recently changed go. */
@@ -1916,18 +1931,22 @@ export class CodeRuleBridge {
     const bytes = Buffer.byteLength(text);
     this.#texts.set(path, { text, bytes, origin });
     this.#textBytes += bytes;
+    if (origin === "first-sight") this.#firstSightBytes += bytes;
     for (const [oldest, entry] of this.#texts) {
       if (this.#textBytes <= MAX_SESSION_TEXT_BYTES) break;
-      this.#texts.delete(oldest);
-      this.#textBytes -= entry.bytes;
+      this.#dropText(oldest, entry);
     }
   }
 
   #forgetText(path: string): void {
     const entry = this.#texts.get(path);
-    if (entry === undefined) return;
+    if (entry !== undefined) this.#dropText(path, entry);
+  }
+
+  #dropText(path: string, entry: { bytes: number; origin: TextOrigin }): void {
     this.#texts.delete(path);
     this.#textBytes -= entry.bytes;
+    if (entry.origin === "first-sight") this.#firstSightBytes -= entry.bytes;
   }
 
   #touchSource(discovery: SourceDiscovery, path: string): void {
