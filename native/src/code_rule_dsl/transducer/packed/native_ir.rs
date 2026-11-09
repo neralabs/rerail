@@ -443,9 +443,11 @@ pub(super) struct BlockNative {
     /// bit of the stream's mask as its byte position, in order, at the offset of the bits before
     /// it (a running count, carried from block to block).
     pub extracts: Vec<usize>,
-    /// The outputs (indexes into `outputs`) counted: each file's number of set bits in the
-    /// stream's mask, the same running count's final value.
+    /// The outputs (indexes into `outputs`) tested: each file's flag, whether the stream's mask
+    /// has a bit (`block::BlockProgram::totals`).
     pub totals: Vec<usize>,
+    /// The outputs (indexes into `outputs`) tier 2 reads as masks (`block::BlockProgram::masks`).
+    pub masks: Vec<usize>,
     /// How many bytes past the stream the program runs (`block::BlockProgram::delay`).
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
@@ -539,6 +541,7 @@ impl BlockNative {
             outputs: program.outputs.clone(),
             extracts: program.extract_outputs(),
             totals: program.total_outputs(),
+            masks: program.mask_outputs(),
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
         }
@@ -604,6 +607,7 @@ impl BlockNative {
             outputs: self.outputs.iter().map(|&v| at[usize::from(v)]).collect(),
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
+            masks: self.masks.clone(),
             delay: self.delay,
             output_delays: self.output_delays.clone(),
         }

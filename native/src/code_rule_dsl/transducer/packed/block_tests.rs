@@ -321,10 +321,10 @@ fn check_lowering(name: &str, p: &Program) {
 }
 
 /// A program function's control lines, each the same in every lane: those that leave the group
-/// unfinished, and the full group's body.
-const CONTROL: [&str; 5] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (simd_any(", "if (g > 0u && (g + 1u) * "];
+/// unfinished, and the full group's bodies.
+const CONTROL: [&str; 6] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (simd_any(", "if (g > 0u && (g + 1u) * ", "if (simd_all(ascii))"];
 
-/// The generated MSL's lane code: every function (the carry helpers, `halo_window_P`, `load16`,
+/// The generated MSL's lane code: every function (the carry helpers, `load16`,
 /// and each `program_P`). The look-backs and exchanges, which loop over predecessor groups, and
 /// the workers' kernel, which loops over groups, are left out.
 fn lane_code(msl: &str) -> Vec<(String, String)> {
@@ -890,8 +890,8 @@ fn lookback_fallback_equals_reference() {
     }
 }
 
-/// Generated MSL is one kernel, each instruction twice at most (a full group's body and the
-/// general one): a few lines per instruction.
+/// Generated MSL is one kernel, each instruction three times at most (a full group's body, its
+/// ASCII twin and the general one): a few lines per instruction.
 #[test]
 #[cfg(target_os = "macos")]
 fn generated_msl_is_one_kernel() {
@@ -903,7 +903,7 @@ fn generated_msl_is_one_kernel() {
             let msl = generate_with(&native, width, strategy);
             assert_eq!(msl.matches("kernel void ").count(), 1, "{msl}");
             let lines = msl.lines().filter(|l| l.starts_with("  const ") || l.starts_with("  if (!")).count();
-            assert!(lines < 24 * native.insts.len(), "{lines} lines for {} instructions", native.insts.len());
+            assert!(lines < 36 * native.insts.len(), "{lines} lines for {} instructions", native.insts.len());
         }
     }
 }

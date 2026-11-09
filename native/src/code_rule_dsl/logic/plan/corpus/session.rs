@@ -79,24 +79,28 @@ pub(in crate::code_rule_dsl) fn full<T>(run: impl FnOnce() -> T) -> T {
 
 /// The session, held for a run (`None`: none started, or a full run).
 pub(super) fn current() -> Held {
+    // Phase 0's runs (`phase0`) are never a session's, and may run while another thread's run holds it.
+    if super::phase0::active() {
+        return Held(None, true);
+    }
     let held = SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     #[cfg(test)]
     let skip = held.as_ref().is_some_and(|s| s.thread != std::thread::current().id());
     #[cfg(not(test))]
     let skip = false;
-    Held(held, skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
+    Held(Some(held), skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// The session held for a run, unless the run is a full one.
-pub(super) struct Held(MutexGuard<'static, Option<Session>>, bool);
+pub(super) struct Held(Option<MutexGuard<'static, Option<Session>>>, bool);
 
 impl Held {
     pub(super) fn as_ref(&self) -> Option<&Session> {
-        self.0.as_ref().filter(|s| !self.1 && Self::ours(s))
+        self.0.as_ref()?.as_ref().filter(|s| !self.1 && Self::ours(s))
     }
     pub(super) fn as_mut(&mut self) -> Option<&mut Session> {
         let full = self.1;
-        self.0.as_mut().filter(|s| !full && Self::ours(s))
+        self.0.as_mut()?.as_mut().filter(|s| !full && Self::ours(s))
     }
     /// Whether a run on this thread is the session's: always, outside tests.
     fn ours(_session: &Session) -> bool {
@@ -267,6 +271,53 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         assert!(recursive > 0, "the recursive stratum is maintained");
         stop();
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// An insert into a recursive stratum stops at the rows that survived (decision 0090): an edge that adds no
+    /// reachability (`a` imports `c`, which it reached through `b`) inserts the new edge and nothing of `reach`.
+    /// Without the stop, the inserts walked the closure from the new edge again (9,000,000 rows on `session_costs`).
+    #[test]
+    fn a_session_inserts_only_rows_new_against_the_survivors() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-ins-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("reach.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-import-reach" revision 1
+.description "An import of a module that reaches back to its importer."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl reach(a: number, b: number)
+reach(a, b) :- dep(a, b).
+reach(a, c) :- reach(a, b), dep(b, c).
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from d import z\n"), ("d.py", "x = 1\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        start(&base.join("session")).unwrap();
+        run();
+        std::fs::write(src.join("a.py"), "from b import x\nfrom c import q\n").unwrap();
+        // SAFETY: the session tests run one at a time (`SERIAL`), and only a session's run reads the variable.
+        unsafe { std::env::set_var("RERAIL_CROSS_DELTA_COUNTS", "1") };
+        let report = run();
+        unsafe { std::env::remove_var("RERAIL_CROSS_DELTA_COUNTS") };
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+        let [_, inserted, _, _, _, new] = report.cross_delta_counts;
+        assert!(report.cross_maintained.1 > 0, "the recursive stratum is maintained: {:?}", report.cross_maintained);
+        assert_eq!(inserted, new, "the insert rules carry only rows truly new (the edge a -> c), not reach's rows again");
     }
 
     /// A cross-file stratum with aggregates is maintained by its changed groups (decision 0077 §3): a module's
@@ -443,7 +494,13 @@ HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
             // The costliest strata, and their parts: loading inputs and indexes, and the joins.
             let mut strata: Vec<(&String, f64)> = spans.iter().filter(|(p, _)| p.contains("session/plan and evaluate/stratum ") && p.matches('/').count() == 3).map(|(p, t)| (p, t.total)).collect();
             strata.sort_by(|a, b| b.1.total_cmp(&a.1));
-            for (path, total) in strata.into_iter().take(4) {
+            // `RERAIL_SESSION_COST_SPANS`: every span of the session's run past 0.1 s, at any depth.
+            if std::env::var_os("RERAIL_SESSION_COST_SPANS").is_some() {
+                for (path, t) in spans.iter().filter(|(p, t)| p.contains("session/") && t.total > 0.1) {
+                    eprintln!("    {:>7.3} s  {}", t.total, path.split_once("session/").map_or(path.as_str(), |(_, r)| r));
+                }
+            }
+            for (path, total) in strata.into_iter().take(12) {
                 let part = |name: &str| spans.get(&format!("{path}/native/{name}")).map_or(0.0, |t| t.total);
                 eprintln!("    {total:>7.3} s  {}: open {:.3} s, joins {:.3} s", path.rsplit('/').next().unwrap_or(""), part("engine open (load inputs, build indexes)"), part("engine run (joins)"));
             }

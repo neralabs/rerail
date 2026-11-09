@@ -10,7 +10,7 @@ const RUN: &str = "program -
   block 0 %0 = eq 0x61
   block 0 output %0
   block 0 extract %0
-  block 0 extract %0
+  block 0 mask %0
   switch 0 at 0 end refuse
   switch 0 0x61-0x61 @0002
   switch 1 at 0 end @0007
@@ -25,9 +25,13 @@ const RUN: &str = "program -
   0007 ACCEPT 0
 ";
 
-/// Tier 1's run as the words read it: the starts (extract 0) and last bytes (extract 1).
+/// Tier 1's run as the words read it: the starts (extract 0) and last bytes (mask 0, output 0).
 fn tier1(starts: &[u32], lasts: &[u32]) -> block::BlockRun {
-    block::BlockRun { outputs: Vec::new(), positions: vec![starts.to_vec(), lasts.to_vec()], totals: Vec::new() }
+    let mut words = vec![0u64; 1];
+    for &l in lasts {
+        words[l as usize / 64] |= 1 << (l % 64);
+    }
+    block::BlockRun { outputs: vec![words], positions: vec![starts.to_vec()], totals: Vec::new() }
 }
 
 #[test]
@@ -41,11 +45,12 @@ fn a_tier2_program_writes_its_nodes() {
     assert!(run(&p, b"ab", &tier1(&[0, 1], &[])).is_err());
     assert!(run(&p, b"a", &tier1(&[0, 1], &[])).is_err());
     assert!(run(&p, b"", &tier1(&[], &[])).is_err());
-    // The last bytes are the stream a `SPAN m=1` names; this program names none, so it reads
-    // none. One that does takes a last byte per token, and refuses one left unread.
-    let lasts = rir::assemble(&RUN.replace("  0003 SPAN 1\n", "  0003 SPAN m=1 1\n")).unwrap_or_else(|e| panic!("{e}"));
+    // The last bytes are the mask a `SPAN m=1` names; this program names none, so it reads
+    // none. One that does takes a last byte per token, the next bit after the last one taken,
+    // and refuses one left unread.
+    let lasts = rir::assemble(&RUN.replace("  0003 SPAN 1\n", "  0003 SPAN m=1 0\n")).unwrap_or_else(|e| panic!("{e}"));
     assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0, 1])).is_ok());
-    assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0, 1, 1])).is_err());
+    assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0, 1, 2])).is_err());
     assert!(run(&lasts, b"aa", &tier1(&[0, 1], &[0])).is_err());
 }
 
