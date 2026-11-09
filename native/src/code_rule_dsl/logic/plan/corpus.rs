@@ -27,6 +27,7 @@ use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
 pub(in crate::code_rule_dsl) mod guests;
 mod hiding;
+mod exports;
 mod scoping;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
@@ -1760,15 +1761,9 @@ pub(crate) fn run_with_options(
     if !stored.is_empty() && memoised {
         crate::code_rule_dsl::logic::profile::decision("per-file memo holds base rows", || format!("the cross-file part reads base relations {:?}: each file's entry holds its rows of them", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
     }
-    // One transaction for every export's table, not a commit each.
-    let mut tables = String::from("BEGIN;");
-    for rel in &split.exports {
-        let width = lowered.program.decls[rel].len();
-        let cols: Vec<String> = (0..width).map(|i| format!("c{i}")).collect();
-        tables.push_str(&format!("CREATE TABLE x.{}({}, PRIMARY KEY ({})) WITHOUT ROWID;", crate::code_rule_dsl::logic::sql::ident(rel), cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")));
-    }
-    tables.push_str("COMMIT;");
-    db.execute_batch(&tables)?;
+    // The exports the chunks hand on, each row once, held in memory for the cross-file part to read in place
+    // (`exports`). Was: a table of `x` per export, filled by SQL and read back.
+    let exports = std::cell::RefCell::new(exports::Exports::default());
     phase("stats", statements.count());
     statements.enter("parse");
     let modules = Modules::default();
@@ -2106,12 +2101,8 @@ pub(crate) fn run_with_options(
                 let types: Vec<&str> = lowered.program.decls[&rel].iter().map(|(_, t)| t.as_str()).collect();
                 let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
                 let rows = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), cols.into_iter().map(Some).collect());
-                let via = format!("rr_memo_w{width}");
-                modules.bind(&db, &via, rows.clone())?;
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {} FROM {via}", crate::code_rule_dsl::logic::sql::ident(&rel), names.join(", ")), [])?;
+                let inserted = exports.borrow_mut().add(&rel, width, rows.as_ref());
                 totals.add_rows(&rel, inserted, rows.as_ref(), &types);
-                // Released: the rows are in `x` now.
-                modules.bind(&db, &via, crate::code_rule_dsl::logic::native::component::columns_source(names, vec![Some(Vec::new()); width]))?;
             }
             db.execute_batch("COMMIT")?;
         }
@@ -2295,9 +2286,8 @@ pub(crate) fn run_with_options(
                     return Ok(());
                 }
                 let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
-                let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {cols} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::ident(rel)), [rel])?;
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
+                let inserted = exports.borrow_mut().add(rel, types.len(), rows.as_ref());
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
                 if !deferred.is_empty() {
                     mention(&mut mentioned, rows.as_ref());
@@ -2382,17 +2372,16 @@ pub(crate) fn run_with_options(
             // derived is in its table.
             let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
             if kept.contains(rel) {
-                let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {cols} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::ident(rel)), [rel])?;
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
+                let inserted = exports.borrow_mut().add(rel, types.len(), rows.as_ref());
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
                 attribute(rel, rows.as_ref());
                 if !deferred.is_empty() {
                     mention(&mut mentioned, rows.as_ref());
                 }
             } else {
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{q} SELECT * FROM temp.{q}", q = crate::code_rule_dsl::logic::sql::ident(rel)), [])?;
                 let rows = Rows::read(&db, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
+                let inserted = exports.borrow_mut().add(rel, types.len(), &rows);
                 totals.add_rows(rel, inserted, &rows, &types);
                 attribute(rel, &rows);
                 if !deferred.is_empty() {
@@ -2501,7 +2490,8 @@ pub(crate) fn run_with_options(
         let load_stats = t_stats.clone();
         let (ask_tx, ask_rx) = std::sync::mpsc::channel::<(String, Vec<Vec<i64>>)>();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel::<std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>>();
-        let (db_path, x_path, per_file_in, kept_in, world_in) = (path.clone(), cross_path.clone(), per_file.clone(), kept.clone(), world_inputs);
+        let per_file_in: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = per_file.iter().map(|r| (r.clone(), exports.borrow().snapshot(r, lowered.program.decls[r].len()))).collect();
+        let (db_path, x_path, kept_in, world_in) = (path.clone(), cross_path.clone(), kept.clone(), world_inputs);
         let decls = load.decls.clone();
         let cone = scope.spawn(move || -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             let db2 = Connection::open(&db_path)?;
@@ -2517,9 +2507,8 @@ pub(crate) fn run_with_options(
                 modules.bind(&db2, rel, source)?;
                 Ok(())
             };
-            for rel in &per_file_in {
-                let source = crate::code_rule_dsl::logic::native::component::table_source(&db2, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
-                bind(rel, source)?;
+            for (rel, source) in per_file_in {
+                bind(&rel, source)?;
             }
             for (rel, width) in &world_in {
                 bind(rel, crate::code_rule_dsl::logic::native::component::columns_source((0..*width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); *width]))?;
@@ -2809,7 +2798,7 @@ pub(crate) fn run_with_options(
             modules.bind(&db, rel, empty)?;
             continue;
         }
-        let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
+        let source = exports.borrow_mut().source(rel, lowered.program.decls[rel].len());
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
         modules.bind(&db, rel, source)?;
     }
@@ -3174,11 +3163,10 @@ pub(crate) fn run_with_options(
                     *cell = Some(next);
                 }
                 None => {
-                    let exports: BTreeSet<&String> = split.exports.iter().collect();
+                    let exported: BTreeSet<&String> = split.exports.iter().collect();
                     let mut load = |rels: &[String]| -> Result<()> {
-                        for rel in rels.iter().filter(|r| exports.contains(r)) {
-                            let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
-                            modules.bind(&db, rel, source)?;
+                        for rel in rels.iter().filter(|r| exported.contains(r)) {
+                            modules.bind(&db, rel, exports.borrow_mut().source(rel, lowered.program.decls[rel].len()))?;
                         }
                         Ok(())
                     };
@@ -3373,7 +3361,8 @@ pub(crate) fn run_with_options(
         rows.insert(rel.clone(), decoded.len());
     }
     if prog.decls.contains_key("declared_ret") {
-        typing::outputs(typing, &db, &store, root, outputs.get("type_of"), &returns, &declared, &mut typed)?;
+        let fn_q = split.exports.iter().any(|e| e == "fn_q").then(|| exports.borrow_mut().source("fn_q", 2));
+        typing::outputs(typing, &db, &store, root, outputs.get("type_of"), &returns, &declared, fn_q.as_deref(), &mut typed)?;
     }
     phase("write", statements.count());
     let rss = usage().2;

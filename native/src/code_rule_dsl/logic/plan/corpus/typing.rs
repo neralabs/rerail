@@ -128,6 +128,7 @@ pub(crate) fn outputs(
     type_of: Option<&Vec<String>>,
     returns: &[Vec<i64>],
     declared: &BTreeMap<String, BTreeSet<String>>,
+    fn_q: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>,
     report: &mut TypingReport,
 ) -> Result<()> {
     let text = |a: i64| -> Result<String> { store.atom_value(a as u32).map_err(|e| Error::Plan(e.to_string()))?.ok_or_else(|| Error::Plan(format!("no atom {a}"))) };
@@ -163,17 +164,17 @@ pub(crate) fn outputs(
         report.typed_nodes = per.len();
         report.terms = terms.len();
     }
-    // The corpus's functions: name → the return names it derived.
-    let has_fn_q = db.query_row("SELECT count(*) FROM x.sqlite_master WHERE name = 'fn_q'", [], |r| r.get::<_, i64>(0))? > 0;
-    if !has_fn_q {
+    // The corpus's functions: name → the return names it derived, from the export `fn_q` (`exports`), when the
+    // program has one.
+    let Some(fn_q) = fn_q else {
         return Ok(());
-    }
+    };
     let mut rets: BTreeMap<i64, BTreeSet<String>> = BTreeMap::new();
     for r in returns {
         rets.entry(r[0]).or_default().insert(text(r[1])?);
     }
     let mut functions: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let pairs: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM x.fn_q")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+    let pairs: Vec<(i64, i64)> = (0..fn_q.len()).map(|r| (fn_q.value(r, 0), fn_q.value(r, 1))).collect();
     for (q, f) in pairs {
         functions.entry(text(q)?).or_default().extend(rets.get(&f).cloned().unwrap_or_default());
     }
