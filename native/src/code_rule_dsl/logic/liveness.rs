@@ -34,15 +34,16 @@ use std::collections::BTreeSet;
 
 use super::front::{AggOp, Atom, Literal, Program, Rule, Term};
 
-/// The counts' relation: `live_count(rel, what, n)`.
-pub(in crate::code_rule_dsl) const COUNTS: &str = "live_count";
+/// The counts' relation: `liveof_count(rel, what, n)`.
+pub(in crate::code_rule_dsl) const COUNTS: &str = "liveof_count";
 
 /// What `COUNTS` counts, in the order the report prints it.
 pub(in crate::code_rule_dsl) const MEASURES: [&str; 6] = ["rows", "live", "keys", "live keys", "library", "library live"];
 
-/// `rel`'s liveness relation.
+/// `rel`'s liveness relation, under a prefix no program uses: a program may name its own relations `live_…`
+/// (calls_cx has `live_def`).
 pub(in crate::code_rule_dsl) fn live(rel: &str) -> String {
-    format!("live_{rel}")
+    format!("liveof_{rel}")
 }
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
@@ -52,16 +53,20 @@ fn atom(rel: String, args: Vec<Term>) -> Atom {
 /// The backward rules and the counts for `prog` (its rules, declarations and outputs, as `rr::parse` gives them): a
 /// program of their own, to print after `prog`'s text, which declares what they read.
 pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
+    // A program naming a relation as these do would read the liveness rules' rows as its own.
+    if let Some(r) = prog.decls.keys().find(|r| r.starts_with(&live(""))) {
+        panic!("{r}: the liveness rules' prefix is taken");
+    }
     let mut out = Program::default();
     let mut fresh = 0usize;
     let mut var = || {
         fresh += 1;
-        format!("lv__{fresh}")
+        format!("liveof_v{fresh}")
     };
     let declared = |r: &str| prog.decls.contains_key(r) && !prog.nullary.contains(r);
     let mut targets: BTreeSet<String> = BTreeSet::new();
     for o in prog.outputs.iter().filter(|o| declared(o)) {
-        let args: Vec<Term> = (0..prog.decls[o].len()).map(|i| Term::Var(format!("lv__o{i}"))).collect();
+        let args: Vec<Term> = (0..prog.decls[o].len()).map(|i| Term::Var(format!("liveof_vo{i}"))).collect();
         out.rules.push(Rule { head: atom(live(o), args.clone()), body: vec![Literal::Atom(atom(o.clone(), args))] });
         targets.insert(o.clone());
     }
@@ -137,7 +142,7 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
         out.rules.push(count("n", t, MEASURES[0], atom(t.clone(), vars("c"))));
         out.rules.push(count("n", t, MEASURES[1], atom(live(t), vars("c"))));
         // Keys: the first column's values, of all rows and of the live ones.
-        let key = |of: &str| format!("live_key{of}_{t}");
+        let key = |of: &str| format!("liveof_key{of}_{t}");
         for (name, rel) in [(key(""), t.clone()), (key("l"), live(t))] {
             out.decls.insert(name.clone(), vec![cols[0].clone()]);
             let mut args = vec![Term::Var("k".into())];
@@ -148,11 +153,11 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
         out.rules.push(count("n", t, MEASURES[3], atom(key("l"), vec![Term::Var("k".into())])));
         // Rows about a loaded document: a library's.
         if library && cols[0].1 == "node" {
-            for (name, rel, what) in [(format!("live_lib_{t}"), t.clone(), MEASURES[4]), (format!("live_libl_{t}"), live(t), MEASURES[5])] {
+            for (name, rel, what) in [(format!("liveof_lib_{t}"), t.clone(), MEASURES[4]), (format!("liveof_libl_{t}"), live(t), MEASURES[5])] {
                 out.decls.insert(name.clone(), cols.clone());
                 let args = vars("c");
-                let d = Term::Var("lv__d".into());
-                let p = Term::Var("lv__p".into());
+                let d = Term::Var("liveof_vd".into());
+                let p = Term::Var("liveof_vp".into());
                 out.rules.push(Rule {
                     head: atom(name.clone(), args.clone()),
                     body: vec![
@@ -170,7 +175,7 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
     out
 }
 
-/// `COUNTS`' rows (`live_count.csv`), by relation: each measure's count, absent where the relation had no row.
+/// `COUNTS`' rows (`liveof_count.csv`), by relation: each measure's count, absent where the relation had no row.
 pub(in crate::code_rule_dsl) fn read_counts(csv: &str) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
     let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
     for line in csv.lines() {
@@ -225,3 +230,4 @@ out(a, b) :- path(a, b), a = 1.
         assert_eq!((get("out", "rows"), get("out", "live")), (2, 2), "{counts:?}");
     }
 }
+
