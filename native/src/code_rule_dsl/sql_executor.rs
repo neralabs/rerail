@@ -35,7 +35,7 @@ mod reductions;
 mod scratch;
 mod temporal;
 mod updates;
-#[cfg(feature = "headless")]
+#[cfg(any(test, feature = "headless"))]
 mod verification;
 mod versions;
 mod walks;
@@ -83,6 +83,7 @@ pub struct CodeRuleSqlExecutor {
     versions: versions::Store,
     next_trace: usize,
     stats_ready: std::cell::Cell<bool>,
+    statistics: session::Statistics,
     catalog_dirty: std::cell::Cell<bool>,
     control_ready: std::cell::Cell<bool>,
     #[cfg(any(test, feature = "headless"))]
@@ -116,6 +117,7 @@ impl CodeRuleSqlExecutor {
             versions: versions::Store::default(),
             next_trace: 0,
             stats_ready: std::cell::Cell::new(false),
+            statistics: session::Statistics::default(),
             catalog_dirty: std::cell::Cell::new(true),
             control_ready: std::cell::Cell::new(false),
             #[cfg(any(test, feature = "headless"))]
@@ -616,6 +618,7 @@ impl CodeRuleSqlExecutor {
         dialect: &str,
         max_waves: u32,
     ) -> Result<String> {
+        self.statistics.materialize(&self.db)?;
         let outputs = program.outputs.clone();
         let declared = Arc::new(program.clone());
         let arities: BTreeMap<_, _> = program
@@ -834,18 +837,15 @@ impl CodeRuleSqlExecutor {
                 }
                 waves
             };
-            plan::insert_many(
-                &self.db,
-                "INSERT OR REPLACE INTO wave_stats(tbl,rows)",
-                execution
-                    .counts
-                    .iter()
-                    .map(|(r, n)| vec![SqlValue::Text(r.clone()), SqlValue::Integer(*n as i64)])
-                    .collect(),
-            )
-            .map_err(error)?;
+            let statistics = self.executions.iter().flat_map(|e|&e.counts).chain(execution.counts.iter()).map(|(r,n)|vec![SqlValue::Text(r.clone()),SqlValue::Integer(*n as i64)])
+                .chain(self.inputs.iter().map(|(r,s)|vec![SqlValue::Text(r.clone()),SqlValue::Integer(s.estimated_len() as i64)])).collect();
+            if execution.temporal.len()==1 && execution.temporal.get(&0).is_some_and(|t|t.stable_phases(&execution.emitted.program)) {
+                self.statistics.enable(&self.db,statistics)?;
+            } else {
+                plan::insert_many(&self.db,"INSERT OR REPLACE INTO wave_stats(tbl,rows)",statistics).map_err(error)?;
+            }
             work.cleanup()?;
-            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created,"recursive_frames":execution.temporal.values().map(temporal::Trace::frames).sum::<usize>(),"initial_execution":if native_initial.is_some(){"retained"}else{"cold"}});
+            let preparation = json!({"initializations":initializations,"materialized_views":materialized_views,"constant_tables":constant_tables,"scratch_tables_created":work.created,"summary_transition_reuses":work.summary_reuses,"recursive_frames":execution.temporal.values().map(temporal::Trace::frames).sum::<usize>(),"initial_execution":if native_initial.is_some(){"retained"}else{"cold"}});
             self.db
                 .execute_batch("RELEASE sql_extension_run")
                 .map_err(error)?;
@@ -861,6 +861,7 @@ impl CodeRuleSqlExecutor {
                 let _ = self
                     .db
                     .execute_batch("ROLLBACK TO sql_extension_run; RELEASE sql_extension_run");
+                self.statistics.forget(&self.db)?;
                 self.generated = previous.0;
                 self.executions = previous.1;
                 self.control_ready.set(previous.2);

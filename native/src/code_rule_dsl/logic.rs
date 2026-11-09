@@ -9,6 +9,7 @@ pub(in crate::code_rule_dsl) mod analysis;
 pub(in crate::code_rule_dsl) mod front;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod answers;
+pub(in crate::code_rule_dsl) mod liveness;
 pub(in crate::code_rule_dsl) mod magic;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod native;

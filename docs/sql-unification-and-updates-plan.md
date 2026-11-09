@@ -1930,3 +1930,112 @@ Each session compares all nine checkpoints, every relation, output deltas, widen
 Both reports pass the framework's complete-job execution allowance at 100 SQL executions.
 Their connections close normally, with no unknown SQL origins or running statements.
 The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.
+
+### Serverplan quality rollup and versioned SQL maintenance (2026-11-09)
+
+The branch first fast-forwards to `efd4f325f`, then includes the newer quality commits through `a34441da4`.
+Those trees already include the earlier SQL preparation work.
+It also contains phase 0's unchanged-run cutoff.
+
+#### Root causes and implementation
+
+| Area | Root cause | Change |
+| --- | --- | --- |
+| Metadata submissions | Every successful edit writes row counts through SQL, even under a fully retained schedule. | Immutable native statistics retain the `temp.wave_stats` interface. Cold schedules atomically restore a writable SQL table. |
+| Repeated merge SQL | Extra merge aliases either materialize more rows or add VM instructions. | Both candidates are rejected. The existing result fence remains. |
+| Independent gates | Equal source names do not prove equal input versions or applied deltas. | A bounded transition cache requires matching input snapshots, prior summary roots, and pending journals. |
+| Dependent scalars | Bag-storage eligibility also rejects dependent lookup expressions. Shared group names also identify dependency tables. | The shared analysis separates bag storage from lookup eligibility. Each consumer keeps its original dependency-table identity. |
+| Multiple producers | Support uniqueness stops at a single rule. | A shared proof combines unique producers with pairwise distinct literal head tags. SQL preserves all dirty arms without support grouping. |
+| Replay coverage | The verifier accepts explicit facts only. Wave inventories also omit projection views. | Snapshot and file-change replay compare source documents, native inputs, all derived relations, projection views, and widening counters. |
+| Store-local identities | Cold stores can assign different integer IDs to the same symbol or document. | Semantic comparison preserves symbol text, document paths, node identities, and direct copies of document keys. |
+| Cross-file input digests | The initial rollup still reads exports from the removed `x` tables. | The newer rollup fixes that read. This change visits held exports without another column copy. |
+| Unchanged cross-file runs | Gates always force whole-program execution. Output records can also include another program's stale files. | Complete unchanged gated programs reuse retained results. Output records contain only the current program's files. |
+
+Initialization and transition caches each retain at most 128 entries for one operation.
+Initialization shares SQL-computed summary roots for matching projections and input versions.
+Mutable bound inputs expose explicit revisions. Sources without a revision contract retain separate evaluation.
+Nested maintenance passes can reuse an entry only after the same checks.
+Failures and later operations retain no cached transitions.
+The complete projection, summary layout, and ordered-join expression also participate in the identity.
+Planning computes the projection proof and rendered signature once.
+Known string intrinsics retain their complete ordering expression. Opaque callbacks remain separate.
+
+Dependent consumers share bag storage while their lookup expressions retain separate evaluation.
+Their dependency indexes preserve the current correlation values.
+Boolean comparisons with non-null operands now have a shared value contract.
+Nullable values, checked arithmetic, and opaque callbacks retain their existing boundaries.
+Product reductions also retain separate summaries.
+
+The producer proof requires a witness uniqueness proof for every producer.
+Each pair must contain distinct literals at the same head position.
+Overlapping producers retain support counts. Lattice keys still require their normal merge and widening.
+Logical explain includes the proof. Runtime explain reports the selected storage and transition boundaries.
+Profiles record native count publication and actual transition reuse.
+
+Unchanged cross-file runs reuse their complete outputs. Gated programs also skip derivation when every input and retained relation survives unchanged.
+A changed input or missing retained relation still runs the complete gated program.
+The output cache records only the current program's outputs, excluding stale CSV files from older programs.
+
+#### Rejected candidate
+
+The first merge rewrite materializes both its proposal and merged rows.
+Its 10,000-region capture increases scans from 2,110,949 to 2,280,983 across the complete session.
+An inline-alias candidate avoids extra scans but increases VM instructions from 52,221,189 to 52,341,058.
+Its paired trials show no meaningful warm-edit improvement at 10,000 regions. That candidate is also rejected.
+Unchanged row counts now retain their metadata source without copying or rebinding it.
+
+#### Verification and remaining boundaries
+
+The maintained document generator supports recursive, projection-view, and mixed set/scalar variants.
+Every variant uses the same execution allowance and complete-state comparison.
+The report retains failures and rejects incomplete or ambiguous publication sequences.
+Queries can use `sym_text` for store-independent symbol results.
+
+The final recursive comparison passes at 1,000 and 10,000 regions with 95 submissions, against the control's 100.
+The recursive document case passes parity and the allowance at 76 submissions.
+The projection variant passes parity but uses 190 submissions.
+The mixed document set/scalar case passes parity but uses 276 submissions.
+The projection case uses 25 setup, 17 transaction, and 148 matching/cleanup submissions.
+The mixed case uses 31 setup, 15 transaction, and 230 matching/cleanup submissions.
+Repeated scratch deletion, set-delta reconciliation, and mixed-schedule statistics publication dominate those counts.
+The next fix must fuse those transitions while preserving signed support multiplicities. It cannot assume unique projections.
+Full-product acceptance still requires its own workload.
+
+The merged regression run passes 325 Rust tests, with six ignored tests.
+The final focused rerun passes 34 tests, including the new gated-reuse regression.
+The Node profiling and acceptance checks pass all 44 tests.
+Structure comparison against `a34441da4` retains 10 passing metrics and 15 existing failures, with no new findings.
+All five complete-session variants pass parity. The recursive variants also pass the execution allowance.
+No final capture contains unknown SQL origins, incomplete operations, or unexpected explanation failures.
+
+#### Final CPU comparison
+
+The control is the merged quality branch at `a34441da4`.
+Unprofiled trials use fresh processes and stores, and alternate control/candidate order.
+Six pairs at each size compare final queries and every reported output delta across 600 edits.
+The first six edits are separate from the remaining 594 edits.
+
+| Median CPU | 1,000 regions: control / final | 10,000 regions: control / final |
+| --- | --- | --- |
+| First six edits | 16.35 / 17.93 ms | 23.74 / 23.02 ms |
+| Remaining 594 edits | 626.86 / 638.61 ms | 748.74 / 748.37 ms |
+| Initial execution | 146.46 / 146.80 ms | 1.636 / 1.640 s |
+| Peak resident memory | 67.51 / 67.67 MiB | 483.09 / 484.64 MiB |
+
+The larger shortest-path workload remains flat. These trials do not establish a general CPU improvement.
+The host is heavily loaded throughout the trials. The submission reduction remains independent of that timing noise.
+The final 10,000-region capture uses 52,221,002 VM instructions, against 52,221,189 for the control.
+Scan counts are 2,110,951 and 2,110,949. The extra materialized row stores are absent.
+Preparation CPU in single captures varies too much to claim another preparation improvement.
+
+A separate workload uses 10,000 groups, two recursive max outputs, and count/sum consumers of the same event bag.
+Four alternating pairs compare final queries and all six edit reports against the merged control.
+Median initial CPU falls from 2.841 to 2.781 seconds. Every pair improves.
+Median edit CPU falls from 28.18 to 26.68 ms. Three of four pairs improve.
+Each final run reuses three initial summaries and 30 maintenance transitions.
+This is a targeted summary-sharing result. It does not certify whole-product performance or the workload's complete-job execution budget.
+
+The next performance task is native-backed SQL reconciliation for the remaining projection and mixed set/scalar paths.
+It must combine scratch maintenance, support counts, and publication without weakening multiplicity, rollback, or the complete-session allowance.
+Nullable, opaque, product, and incompatible ordered reducers still require stronger contracts before sharing.
+Overlapping producers and lattice supports retain general reconciliation where the available proofs require it.

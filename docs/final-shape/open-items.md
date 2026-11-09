@@ -3256,10 +3256,21 @@ list (`READ_PERMISSION_SCENARIO_KEYS`), a decorator that replaces a class with a
 or an enum. `data_layer_testing/` holds the first two; `test-budget` reads it. The two files left read enums of
 `data_layer` itself (`DelegationCapability`, `BranchTipMaterialization`), which the scope leaves open.
 
-**Left.** A run of `test-budget`'s scope over the whole of `conform/` (expected near the model's 1,131); enums
-outside the scope (O-names-cost). Known
-differences from the model: a nested Test class reached through two parents counts once (the owner is a node, not
-a path).
+**Measured (2026-11-09), `test-budget`'s scope** (`conform/`, `data_layer_testing/`, the root's files; 1,601
+files): 1,127 of 1,143 exact, total 13,585; 262 s user + 4.6 s sys, load 90–130. The four files where the rules and
+the model differ read an enum defined outside the scope (`MatchProducerFamily` in `l1470_matching_contracts/`,
+`BranchTipMaterialization` and two more in `data_layer/`); each is reported open and counted as 1.
+
+**Beyond the model (2026-11-09).** Lists a function builds by `append`/`extend`/`+=` under `for` loops, helpers
+with several returns (the largest), function-local names, and `range` bounds given as `len(x)`.
+`test_speculative_publication_scenarios.py` (pytest 66, model 13) and `test_branches.py` (18, model 8) are now
+exact. The same scope run with them: 1,129 of 1,143 exact, total 13,648; 208 s user + 4.2 s sys, load 20–60; the
+only files below the model are the four enum files above. A list built by introspection (`test_phase1_case_matrix.py`, 819) has no length; it stays in
+`collect_disabled`.
+
+**Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Expected over the whole
+workspace: 1,133 of 1,143, once names over the whole workspace fit the budget (O-names-cost). Known difference from
+the model: a nested Test class reached through two parents counts once (the owner is a node, not a path).
 
 ## O-names-cost. Name resolution costs about 75 ms of CPU per file
 
@@ -3270,6 +3281,18 @@ nearly all of that is `qn`, which reads `look`: the LEGB walk of every name refe
 
 The run over `conform/` (1,418 files) also peaked at 3.8 GB RSS, in the parse workers and the cross-file part,
 against the 1 GB budget.
+
+**Progress (2026-11-09).** `python/pytest-collect.rr` no longer reads `sym_of`: its own lookup (`pc_sym`) is asked
+only for the expressions the count needs (`pc_symq`), at module level, through `live_def`, `live_asg`, `ibind` and
+the from-import chain, with no LEGB walk. The 133-file sample went from 28 s to 10.4 s. Rewriting the lookup over
+`parsed_in` guest parses was slower (68 s, and past 2 min) and was dropped. The library-wide `sym_of` is still
+whole-relation: `export_query(q) :- qn(_, q)` in `imports.rr` and `resolve_export`'s identity rule ask for every
+name.
+
+Memory, on the 1,601-file run of `test-budget`'s scope: the engine reports a peak RSS of 3,770 MB in the parse and
+batch workers and the cross part, and 1,184 MB in the local part; `/usr/bin/time -l` reports a peak footprint of
+1,245 MB. The gap is mapped, shared pages counted in RSS; the footprint is still past the 1 GB budget. Not yet
+looked into.
 
 **Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.

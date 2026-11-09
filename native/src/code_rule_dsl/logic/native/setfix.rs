@@ -52,6 +52,9 @@ use std::os::raw::c_int;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::Instant;
 
+/// Strata captured and run again on their own (decision 0095, step 0).
+pub(in crate::code_rule_dsl) mod lab;
+
 fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()) }
 
 /// Symbols are the store's atoms (`content_store::atoms`, C12), so a symbol column holds atom ids and joins
@@ -616,8 +619,11 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let mut done = false;
     let mut paused = false;
     let mut seeded = comp.seeded;
-    // Per probe: seconds spent in its statement and rows it returned.
-    let mut per: Vec<(f64, u64)> = vec![(0.0, 0); comp.probes.len()];
+    // Per probe: seconds spent in its statement, rows it returned, and, while profiling, this thread's CPU seconds
+    // in it (the profile's `native.tsv`, per join plan).
+    let mut per: Vec<(f64, u64, f64)> = vec![(0.0, 0, 0.0); comp.probes.len()];
+    let cpu_timed = crate::code_rule_dsl::logic::profile::on();
+    let cpu_now = || if cpu_timed { crate::code_rule_dsl::logic::profile::now() } else { 0.0 };
     let mut row: Vec<i64> = Vec::new();
     let wave_trace = std::env::var_os("RDL_WAVE_TRACE").is_some();
     let mut gates = std::mem::take(&mut comp.gates);
@@ -632,12 +638,14 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             let empty = { let s = comp.store.read().unwrap(); s.rels[p.delta].lo == s.rels[p.delta].hi };
             if empty { skips += 1; continue; }
             runs += 1;
+            let c0 = cpu_now();
             let k = comp.store.read().unwrap().rels[p.head].types.len();
             let mut rows = st.query([])?;
             let mut got = Vec::new();
             while let Some(r) = rows.next()? { got.push((0..k).map(|i| r.get::<_, Value>(i)).collect::<Result<Vec<_>>>()?); }
             per[pi].0 += tp.elapsed().as_secs_f64();
             per[pi].1 += got.len() as u64;
+            per[pi].2 += cpu_now() - c0;
             raw.push((p.head, got));
         }
         let mut guard = comp.store.write().unwrap();
@@ -674,10 +682,12 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
                 eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {d}", store.rels[p.head].table);
             }
+            let c0 = cpu_now();
             let n = run_join(j, p.head, store, &mut syms, &mut fresh)?;
             visits += n;
             per[pi].0 += tp.elapsed().as_secs_f64();
             per[pi].1 += n;
+            per[pi].2 += cpu_now() - c0;
             // RDL_WAVE_TRACE: each probe of a wave as it runs (probe lines in spec order, seeds first).
             if wave_trace {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
@@ -768,7 +778,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     // A symbol a wave could not intern fails the run.
     symbols.write().unwrap().check()?;
     let solve = t0.elapsed();
-    let per: Vec<String> = per.iter().map(|(t, n)| format!("{:.1}:{n}", t * 1e3)).collect();
+    let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
     if paused {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 2", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
@@ -1701,7 +1711,8 @@ struct Stored {
     columns: Vec<String>,
     n: std::sync::OnceLock<usize>,
     values: Vec<std::sync::OnceLock<Vec<i64>>>,
-    index: Vec<std::sync::OnceLock<Vec<u32>>>,
+    /// Each column's rows ordered by value, with its distinct values and where each one's run starts (`Sorted`).
+    index: Vec<std::sync::OnceLock<Sorted>>,
     /// Each column's count of distinct values, from its index (for SQL's estimates).
     distinct: Vec<std::sync::OnceLock<usize>>,
     /// Lexicographic orders over several columns, built on a first `lookup_all` over them (4 bytes a row each;
@@ -1731,12 +1742,11 @@ impl Stored {
                 if self.values[c].get().is_none() || n == 0 {
                     return (name, n as i64, n as i64, n as i64, n as i64);
                 }
-                let (ids, col) = (self.index(c), self.col(c));
+                let sorted = self.sorted(c);
+                let ids = &sorted.ids;
                 let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
-                let mut at = 0;
-                while at < ids.len() {
-                    let v = col[ids[at] as usize];
-                    let end = at + ids[at..].partition_point(|&r| col[r as usize] == v);
+                for run in sorted.starts.windows(2) {
+                    let (at, end) = (run[0] as usize, run[1] as usize);
                     let l = (end - at) as i64;
                     ndv += 1;
                     sq += l * l;
@@ -1751,17 +1761,13 @@ impl Stored {
                         sqd += ((de - d) * (de - d)) as i64;
                         d = de;
                     }
-                    at = end;
                 }
                 (name, n as i64, ndv, sq, sqd)
             })
             .collect()
     }
     fn distinct(&self, c: usize) -> usize {
-        *self.distinct[c].get_or_init(|| {
-            let (ids, col) = (self.index(c), self.col(c));
-            1 + ids.windows(2).filter(|w| col[w[0] as usize] != col[w[1] as usize]).count()
-        })
+        *self.distinct[c].get_or_init(|| self.sorted(c).keys.len().max(1))
     }
     /// An order whose leading columns are exactly `cols` (as a set), built most selective column first.
     fn order(&self, cols: &[usize]) -> (Vec<usize>, Arc<Vec<u32>>) {
@@ -1780,19 +1786,19 @@ impl Stored {
     fn col(&self, c: usize) -> &[i64] { self.values[c].get().map_or(&[], Vec::as_slice) }
     /// Column `c`'s rows ordered by value (4 bytes a row, no allocation per key); a value's rows are one run.
     fn index(&self, c: usize) -> &[u32] {
-        self.index[c].get_or_init(|| {
-            let col = self.col(c);
-            charge(Unit::IndexEntry, col.len() as u64);
-            let mut ids: Vec<u32> = (0..col.len() as u32).collect();
-            ids.sort_by_key(|&r| col[r as usize]);
-            ids
-        })
+        &self.sorted(c).ids
     }
+    fn sorted(&self, c: usize) -> &Sorted {
+        self.index[c].get_or_init(|| Sorted::of(self.col(c)))
+    }
+    /// The rows whose column `c` is `v`: a search of the column's distinct values (contiguous, one per value), not of
+    /// its rows through their ids (a cache miss a step).
     fn rows_of(&self, c: usize, v: i64) -> &[u32] {
-        let (ids, col) = (self.index(c), self.col(c));
-        let lo = ids.partition_point(|&r| col[r as usize] < v);
-        let hi = ids.partition_point(|&r| col[r as usize] <= v);
-        &ids[lo..hi]
+        let s = self.sorted(c);
+        match s.keys.binary_search(&v) {
+            Ok(i) => &s.ids[s.starts[i] as usize..s.starts[i + 1] as usize],
+            Err(_) => &[],
+        }
     }
     /// Loads the columns among `need` not yet loaded, in one statement. False if one holds a non-integer value.
     fn load(&self, conn: &Connection, table: &str, need: &[usize]) -> bool {
@@ -1818,6 +1824,29 @@ impl Stored {
             let _ = self.values[c].set(v);
         }
         true
+    }
+}
+/// A column's rows ordered by value (`ids`, in row order within a value), its distinct values ascending (`keys`), and
+/// where each value's run of `ids` starts (`starts`, one more than `keys`: the last is the row count). 4 bytes a row
+/// and 12 a distinct value.
+struct Sorted { ids: Vec<u32>, keys: Vec<i64>, starts: Vec<u32> }
+impl Sorted {
+    fn of(col: &[i64]) -> Sorted {
+        charge(Unit::IndexEntry, col.len() as u64);
+        // Sorted as (value, row) pairs in place: the same order as rows sorted stably by value, without reading a
+        // value through its row id at each comparison.
+        let mut pairs: Vec<(i64, u32)> = col.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
+        pairs.sort_unstable();
+        let mut keys = Vec::new();
+        let mut starts = Vec::new();
+        for (i, &(v, _)) in pairs.iter().enumerate() {
+            if keys.last() != Some(&v) {
+                keys.push(v);
+                starts.push(i as u32);
+            }
+        }
+        starts.push(pairs.len() as u32);
+        Sorted { ids: pairs.into_iter().map(|(_, r)| r).collect(), keys, starts }
     }
 }
 impl crate::code_rule_dsl::facts::vtab::Source for Stored {
