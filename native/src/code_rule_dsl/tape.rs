@@ -236,8 +236,12 @@ impl From<String> for TemplateError {
 }
 
 /// Owns only compact structure and a binding to the exact source and grammar.
-/// The first derived class id (`TapeDoc::with_labels`), above every grammar's kinds and supertypes.
-pub(super) const DERIVED_CLASS_BASE: u16 = 0xf000;
+/// The first derived class id (`TapeDoc::with_labels`), above every grammar's kinds and supertypes
+/// (`KIND_LIMIT`). A wave's distinct labels take the ids from here to `u16::MAX`: 0x4000 leaves
+/// room for 49,151 of them (a whole Python pack's; 0xf000 held 4,095). The Metal sources spell it
+/// `16384u`.
+pub(super) const DERIVED_CLASS_BASE: u16 = 0x4000;
+const _: () = assert!(DERIVED_CLASS_BASE as usize >= KIND_LIMIT);
 
 /// A tape image in v9np's columns (decision 0025; P decision 0003). Each node is a fixed-width
 /// row across five columns, in preorder:

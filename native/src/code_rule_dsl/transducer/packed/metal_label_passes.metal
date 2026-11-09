@@ -102,7 +102,7 @@ struct MicroFrame { uint pc,node,resume,named,next,end,cursors[8],capture0,captu
 constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=64u,MICRO_POOL=4096u,MICRO_DEEP_FRAMES=128u,MICRO_DEEP_POOL=2048u;
 
 static bool micro_class(thread const Tree& t,device const uint* head,uint node,uint kind){
-  if(kind>=61440u){uint words=head[1];device const uint* bits=head+2;return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;}
+  if(kind>=16384u){uint words=head[1];device const uint* bits=head+2;return ((bits[(kind-16384u)*words+node/32u]>>(node%32u))&1u)!=0u;}
   return tape_has_class(t.s,t.d,tree_local(t,node),kind);
 }
 
