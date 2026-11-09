@@ -26,8 +26,8 @@ def install(suite, module):
     if len(signatures)!=1:raise ValueError('One native allowlist signature is required')
     suite.replace(module,'_ALLOWED_FILES_SIGNATURE',signatures[0])
 
-    def allowed(path):
-        result = rows('is_allowed_file', options=dict(argumentPath=str(path)))
+    def allowed(filepath):
+        result = rows('is_allowed_file', options=dict(argumentPath=str(filepath)))
         if len(result) != 1 or result[0]['code'] != 'IDE_BOOL':
             raise ValueError('One native allowlist Boolean is required')
         return bool(result[0]['parameters']['value'])
@@ -51,9 +51,9 @@ def install(suite, module):
         return values(rows(entry, [dict(path='input.py', source=source)], options))
 
     suite.replace(module, 'is_allowed_file', allowed)
-    suite.replace(module, 'scan_file', lambda path: scan('scan_file', path))
+    suite.replace(module, 'scan_file', lambda filepath: scan('scan_file', filepath))
     suite.replace(module, 'scan_source', lambda filepath, content, tree=None: scan('scan_source', filepath, content))
-    suite.replace(module, 'scan_fts_manager_direct_execution', lambda path: scan('scan_fts_manager_direct_execution', path))
+    suite.replace(module, 'scan_fts_manager_direct_execution', lambda filepath: scan('scan_fts_manager_direct_execution', filepath))
     suite.replace(module, 'scan_fts_manager_source', lambda filepath, content, tree=None: scan('scan_fts_manager_source', filepath, content))
 
     def directories(project_root, directories):
