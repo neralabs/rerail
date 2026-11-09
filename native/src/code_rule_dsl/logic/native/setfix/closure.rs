@@ -21,7 +21,7 @@
 //!   condensation and bit rows), placed on a lane by its price;
 //! - otherwise the component runs semi-naive from the seeds, as it would have (the planner's other form).
 
-use super::{Body, Component, Fresh, JoinRule, Key, SEED, Src, Step, Store, Term, run_join_collect};
+use super::{Body, Component, Fresh, JoinRule, Key, SEED, Src, Step, Store, Term, run_join_collect, run_join_each};
 use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
@@ -168,6 +168,7 @@ pub(super) struct Ran {
 /// and not a chain: the caller then runs semi-naive from the seeds.
 pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, lanes: &rerail_accel::Executor) -> Option<Ran> {
     // The distinct start nodes, then the edges out of every node reached, by search.
+    let h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "encode: the reach's edges (the rest, per node)");
     let rel = &store.rels[0];
     let mut index: HashMap<i64, u32> = HashMap::default();
     let mut nodes: Vec<i64> = Vec::new();
@@ -182,25 +183,29 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
         });
     }
     let mut adj: Vec<Vec<u32>> = Vec::new();
-    let mut at = 0;
-    let mut out = Vec::new();
-    while at < nodes.len() {
-        out.clear();
-        run_join_collect(&cl.rest, store, syms, &[(cl.y, nodes[at])], &mut out).ok()?;
-        out.sort_unstable();
-        out.dedup();
-        let mut next = Vec::with_capacity(out.len());
-        for &z in &out {
-            let id = *index.entry(z).or_insert_with(|| {
-                nodes.push(z);
-                (nodes.len() - 1) as u32
-            });
-            next.push(id);
+    let mut started = false;
+    run_join_each(&cl.rest, store, syms, cl.y, &mut |out: &mut Vec<i64>| {
+        // `out`: the edges out of node `adj.len()`, once a node was searched.
+        if started {
+            out.sort_unstable();
+            out.dedup();
+            let mut next = Vec::with_capacity(out.len());
+            for &z in out.iter() {
+                let id = *index.entry(z).or_insert_with(|| {
+                    nodes.push(z);
+                    (nodes.len() - 1) as u32
+                });
+                next.push(id);
+            }
+            adj.push(next);
         }
-        adj.push(next);
-        at += 1;
-    }
+        started = true;
+        nodes.get(adj.len()).copied()
+    })
+    .ok()?;
+    drop(h);
     let n = nodes.len();
+    crate::code_rule_dsl::logic::lanes::prof::count("closure", "nodes searched", n as u64);
     let chain = adj.iter().all(|a| a.len() <= 1);
     // Each start node's reach, as node ids.
     let reach: Box<dyn Fn(u32, &mut Vec<u32>)> = if chain {
@@ -220,6 +225,7 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
             }
         })
     } else if n <= MAX_DENSE {
+        let h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "encode: adjacency as offsets and targets");
         let mut off = vec![0u32];
         let mut dst = Vec::new();
         for a in &adj {
@@ -227,7 +233,9 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
             off.push(dst.len() as u32);
         }
         let k = rerail_accel::Kernel::Closure { n: n as u32, off: off.into(), dst: dst.into() };
-        let (mut done, _) = lanes.run(rerail_accel::Batch(vec![rerail_accel::Launch::new(k)])).ok()?;
+        drop(h);
+        let _ = lanes;
+        let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run("closure", rerail_accel::Batch(vec![rerail_accel::Launch::new(k)])).ok()?;
         let rerail_accel::Output::Bits(bits) = done.remove(0).out else { return None };
         Box::new(move |s: u32, into: &mut Vec<u32>| {
             for (w, word) in bits.row(s as usize).iter().enumerate() {
@@ -242,11 +250,13 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
         return None;
     };
     // The rows: each seed row with its column replaced by every node of its start's reach.
+    let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", if chain { "decode: chain walks, rows into the relation" } else { "decode: reach bits, rows into the relation" });
     let rel = &mut store.rels[0];
     let seeds = rel.n;
-    let mut fresh = Fresh::default();
     let mut row = vec![0i64; rel.k];
     let mut into = Vec::new();
+    // Each row pushed once (the relation's push is its set check): no buffer of fresh rows to hash first.
+    let mut rows = 0;
     for id in 0..seeds {
         if rel.dead(id as u32) {
             continue;
@@ -256,12 +266,9 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
         reach(index[&row[cl.col]], &mut into);
         for &z in &into {
             row[cl.col] = nodes[z as usize];
-            fresh.add(&row);
+            rows += rel.push(&row) as usize;
         }
     }
-    let mut rows = 0;
-    for i in 0..fresh.n {
-        rows += rel.push(&fresh.data[i * rel.k..][..rel.k]) as usize;
-    }
+    crate::code_rule_dsl::logic::lanes::prof::count("closure", "rows made", rows as u64);
     Some(Ran { nodes: n, rows, how: if chain { "chains" } else { "bit rows" } })
 }

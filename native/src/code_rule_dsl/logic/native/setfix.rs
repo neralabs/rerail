@@ -579,7 +579,10 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let key = (scope(conn), name.clone());
     reg.retain(|(k, _)| *k != key);
     let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None };
-    comp.closure = closure::recognize(&comp);
+    comp.closure = {
+        let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
+        closure::recognize(&comp)
+    };
     reg.push((key, Arc::new(Mutex::new(comp))));
     Ok(name)
 }
@@ -2436,7 +2439,21 @@ fn run_join_collect(j: &JoinRule, store: &Store, syms: &mut Interner, preset: &[
     run_join_in(j, 0, store, syms, &mut [], preset, Some(out))
 }
 
+/// The join's rows for each value of slot `y` in turn, collected: `next` is handed the previous value's rows (empty
+/// the first time) and gives the next value, or `None` to stop. One context for every value (a closure's search of
+/// its edges, node after node), not one per value.
+fn run_join_each(j: &JoinRule, store: &Store, syms: &mut Interner, y: usize, next: &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>) -> Result<u64> {
+    let mut out = Vec::new();
+    run_join_in_each(j, 0, store, syms, &mut [], &[], Some(&mut out), Some((y, next)))
+}
+
 fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>) -> Result<u64> {
+    run_join_in_each(j, head, store, syms, fresh, preset, collect, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>,
+                    each: Option<(usize, &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>)>) -> Result<u64> {
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
                      key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch>,
                      collect: Option<&'c mut Vec<i64>>,
@@ -2732,7 +2749,17 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0 };
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
-    go(&mut cx, 0, &mut slots);
+    match each {
+        None => go(&mut cx, 0, &mut slots),
+        Some((y, next)) => loop {
+            let out = cx.collect.as_deref_mut().expect("a join run for each value collects");
+            let Some(v) = next(out) else { break };
+            out.clear();
+            slots[y] = v;
+            go(&mut cx, 0, &mut slots);
+            if cx.error.is_some() { break; }
+        },
+    }
     scalars::explain(&j.steps,store);
     match cx.error {Some(e)=>Err(e),None=>Ok(cx.n)}
 }

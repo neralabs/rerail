@@ -110,6 +110,9 @@ pub struct GpuBackend {
 pub struct Stats {
     /// Device seconds, `GPUEndTime - GPUStartTime`, summed over the command buffers.
     pub device: f64,
+    /// Host seconds making the jobs' buffers (copies in), and reading the outputs back (copies out).
+    pub encode: f64,
+    pub decode: f64,
     /// Command buffers: 1, or 2 when a pairs output outgrew its first buffer.
     pub command_buffers: usize,
     pub dispatches: usize,
@@ -160,6 +163,10 @@ impl Backend for GpuBackend {
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
         self.run(ks).map(|(o, _)| o)
     }
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, crate::exec::Phases), String> {
+        let (o, s) = self.run(ks)?;
+        Ok((o, crate::exec::Phases { encode: s.encode, device: Some(s.device), decode: s.decode, worker_cpu: 0.0 }))
+    }
 }
 
 impl GpuBackend {
@@ -167,8 +174,9 @@ impl GpuBackend {
     pub fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Stats), String> {
         objc::rc::autoreleasepool(|| {
             let mut plan = Planner { gpu: self.gpu, inputs: HashMap::new() };
+            let t = std::time::Instant::now();
             let jobs: Vec<Job> = ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>()?;
-            let mut stats = Stats::default();
+            let mut stats = Stats { encode: t.elapsed().as_secs_f64(), ..Stats::default() };
             self.execute(jobs.iter().map(|j| j.stages.as_slice()), &mut stats)?;
             // Pairs that outgrew their first buffer: their scatter again, into the exact size.
             let mut rerun: Vec<Dispatch> = Vec::new();
@@ -194,6 +202,7 @@ impl GpuBackend {
                 let stage = [Stage { ds: rerun, writes: Vec::new() }];
                 self.execute(std::iter::once(&stage[..]), &mut stats)?;
             }
+            let t = std::time::Instant::now();
             let mut outs = Vec::with_capacity(jobs.len());
             for (i, j) in jobs.into_iter().enumerate() {
                 if let Some(bad) = &j.bad {
@@ -213,6 +222,7 @@ impl GpuBackend {
                     }
                 });
             }
+            stats.decode = t.elapsed().as_secs_f64();
             Ok((outs, stats))
         })
     }

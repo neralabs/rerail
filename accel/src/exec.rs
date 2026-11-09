@@ -29,6 +29,25 @@ pub trait Backend: Send + Sync {
     fn can(&self, k: &Kernel) -> bool;
     /// Runs `ks` as one submission. The outputs are in `ks`' order, each equal to [`crate::cpu::run`]'s.
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String>;
+    /// [`Backend::submit`] with where its time went. The default knows nothing beyond the lane thread's own CPU,
+    /// which [`Executor::run`] measures around this call.
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
+        self.submit(ks).map(|o| (o, Phases::default()))
+    }
+}
+
+/// Where one lane's submission spent its time, as far as the backend can tell (the profile's acceleration section).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Phases {
+    /// Host seconds turning the launches into the lane's inputs (buffers, surfaces, encoders).
+    pub encode: f64,
+    /// Seconds on the device itself, where the device reports it (the GPU's `GPUEndTime - GPUStartTime`, the Neural
+    /// Engine's prediction calls); `None` where it does not.
+    pub device: Option<f64>,
+    /// Host seconds turning the lane's outputs back into [`Output`]s.
+    pub decode: f64,
+    /// CPU seconds of worker threads other than the lane's own (the rayon pool for the CPU lane).
+    pub worker_cpu: f64,
 }
 
 /// One kernel to run, optionally pinned to a lane.
@@ -74,8 +93,24 @@ pub struct Report {
     pub cpu_freed: f64,
     /// Estimated seconds lost against the fastest lane, summed over launches placed elsewhere.
     pub lost: f64,
-    /// The process's CPU time (user + sys) over the batch.
+    /// The process's CPU time (user + sys) over the batch. Other threads' work counts too: a profile reads
+    /// `lane_cpu` and `phases` instead.
     pub cpu: f64,
+    /// Wall seconds of [`Executor::run`] as a whole, and of its placement.
+    pub total: f64,
+    pub place: f64,
+    /// Per lane: CPU seconds of the lane's own thread over its submission (`CLOCK_THREAD_CPUTIME_ID`), and what the
+    /// backend says of its phases.
+    pub lane_cpu: [f64; 4],
+    pub phases: [Phases; 4],
+}
+
+impl Report {
+    /// Wall seconds of the run that were neither placement nor the slowest lane's submission: spawning and joining
+    /// the lane threads, and gathering the outputs.
+    pub fn overhead(&self) -> f64 {
+        (self.total - self.place - self.wall.iter().copied().fold(0.0, f64::max)).max(0.0)
+    }
 }
 
 /// The lanes this process has, their prices, and the submission of batches.
@@ -143,9 +178,10 @@ impl Executor {
 
     /// Runs a batch: placed, one submission per lane, the lanes together.
     pub fn run(&self, batch: Batch) -> Result<(Vec<Done>, Report), String> {
+        let t0 = Instant::now();
         let cpu0 = process_cpu();
         let placed = self.place(&batch)?;
-        let mut report = Report::default();
+        let mut report = Report { place: t0.elapsed().as_secs_f64(), ..Report::default() };
         let mut per_lane: [Vec<usize>; 4] = Default::default();
         for (i, &(lane, est, fastest)) in placed.iter().enumerate() {
             per_lane[lane.index()].push(i);
@@ -157,25 +193,33 @@ impl Executor {
                 }
             }
         }
-        let results: Vec<(Lane, Result<Vec<Output>, String>, f64)> = std::thread::scope(|s| {
-            let handles: Vec<_> = Lane::ALL
-                .iter()
-                .filter(|l| !per_lane[l.index()].is_empty())
-                .map(|&lane| {
-                    let ks: Vec<&Kernel> = per_lane[lane.index()].iter().map(|&i| &batch.0[i].kernel).collect();
-                    let backend = self.backend(lane).expect("placed on a present lane");
-                    s.spawn(move || {
-                        let t = Instant::now();
-                        let r = backend.submit(&ks);
-                        (lane, r, t.elapsed().as_secs_f64())
-                    })
-                })
-                .collect();
-            handles.into_iter().map(|h| h.join().expect("a lane's thread panicked")).collect()
-        });
+        type Ran = (Lane, Result<(Vec<Output>, Phases), String>, f64, f64);
+        let submit = |lane: Lane, ks: Vec<&Kernel>| -> Ran {
+            let backend = self.backend(lane).expect("placed on a present lane");
+            let (t, c) = (Instant::now(), thread_cpu());
+            let r = backend.submit_timed(&ks);
+            (lane, r, t.elapsed().as_secs_f64(), thread_cpu() - c)
+        };
+        let busy: Vec<Lane> = Lane::ALL.iter().copied().filter(|l| !per_lane[l.index()].is_empty()).collect();
+        let kernels = |lane: Lane| -> Vec<&Kernel> { per_lane[lane.index()].iter().map(|&i| &batch.0[i].kernel).collect() };
+        // One lane: run it on this thread (no spawn). Several: each on its own thread, together.
+        let results: Vec<Ran> = if busy.len() == 1 {
+            vec![submit(busy[0], kernels(busy[0]))]
+        } else {
+            std::thread::scope(|s| {
+                let handles: Vec<_> = busy.iter().map(|&lane| {
+                    let ks = kernels(lane);
+                    let submit = &submit;
+                    s.spawn(move || submit(lane, ks))
+                }).collect();
+                handles.into_iter().map(|h| h.join().expect("a lane's thread panicked")).collect()
+            })
+        };
         let mut outs: Vec<Option<Output>> = vec![None; batch.0.len()];
-        for (lane, r, wall) in results {
-            let r = r.map_err(|e| format!("{} lane: {e}", lane.name()))?;
+        for (lane, r, wall, cpu) in results {
+            let (r, phases) = r.map_err(|e| format!("{} lane: {e}", lane.name()))?;
+            report.lane_cpu[lane.index()] = cpu;
+            report.phases[lane.index()] = phases;
             let ids = &per_lane[lane.index()];
             if r.len() != ids.len() {
                 return Err(format!("{} lane: {} outputs for {} launches", lane.name(), r.len(), ids.len()));
@@ -187,6 +231,7 @@ impl Executor {
             }
         }
         report.cpu = process_cpu() - cpu0;
+        report.total = t0.elapsed().as_secs_f64();
         let done = outs
             .into_iter()
             .zip(placed)
@@ -213,8 +258,41 @@ impl Backend for CpuBackend {
         true
     }
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
+        self.submit_timed(ks).map(|(o, _)| o)
+    }
+    /// One launch runs on the calling thread; several on the rayon pool, each worker's CPU counted.
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
         use rayon::prelude::*;
-        Ok(ks.par_iter().map(|k| crate::cpu::run(k)).collect())
+        if ks.len() == 1 {
+            return Ok((vec![crate::cpu::run(ks[0])], Phases::default()));
+        }
+        let me = std::thread::current().id();
+        let ran: Vec<(Output, f64)> = ks
+            .par_iter()
+            .map(|k| {
+                let c = thread_cpu();
+                let o = crate::cpu::run(k);
+                (o, if std::thread::current().id() == me { 0.0 } else { thread_cpu() - c })
+            })
+            .collect();
+        let worker_cpu = ran.iter().map(|r| r.1).sum();
+        Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
+    }
+}
+
+/// This thread's CPU seconds (`CLOCK_THREAD_CPUTIME_ID`; 0 where there is none).
+pub fn thread_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut t: libc::timespec = unsafe { std::mem::zeroed() };
+        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } != 0 {
+            return 0.0;
+        }
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
     }
 }
 

@@ -1094,6 +1094,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         }
     }
 
+    r.push_str(&super::lanes::prof::report());
     let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");
     if state.devices.is_empty() {
         r.push_str("(no device work)\n");
