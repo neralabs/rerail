@@ -33,19 +33,29 @@ thread_local! {
     static MEMO: RefCell<Option<Memo>> = const { RefCell::new(None) };
 }
 
-/// Derived values kept on this thread while held.
-pub(in crate::code_rule_dsl) struct Keep;
+/// Derived values kept on this thread while held; for a session's run (`across`, the session's generation), the
+/// values its earlier runs kept, put back at the end (decision 0090 step 5).
+pub(in crate::code_rule_dsl) struct Keep(Option<u64>);
+
+thread_local! {
+    /// A session's derived values between its runs, with the session's generation.
+    static SESSION_MEMO: RefCell<Option<(u64, Memo)>> = const { RefCell::new(None) };
+}
 
 impl Keep {
-    pub(in crate::code_rule_dsl) fn start() -> Self {
-        MEMO.with(|m| *m.borrow_mut() = Some(Memo { keys: (RandomState::new(), RandomState::new()), values: FxHashMap::default() }));
-        Keep
+    pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
+        let kept = across.and_then(|g| SESSION_MEMO.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, m)| m)));
+        MEMO.with(|m| *m.borrow_mut() = Some(kept.unwrap_or_else(|| Memo { keys: (RandomState::new(), RandomState::new()), values: FxHashMap::default() })));
+        Keep(across)
     }
 }
 
 impl Drop for Keep {
     fn drop(&mut self) {
-        MEMO.with(|m| *m.borrow_mut() = None);
+        let memo = MEMO.with(|m| m.borrow_mut().take());
+        if let (Some(g), Some(memo)) = (self.0, memo) {
+            SESSION_MEMO.with(|s| *s.borrow_mut() = Some((g, memo)));
+        }
     }
 }
 
@@ -131,7 +141,7 @@ mod tests {
         assert_eq!(get("a"), "<a>");
         assert_eq!(get("a"), "<a>");
         assert_eq!(made.get(), 2);
-        let _keep = Keep::start();
+        let _keep = Keep::start(None);
         assert_eq!(get("a"), "<a>");
         assert_eq!(get("a"), "<a>");
         assert_eq!(made.get(), 3);
