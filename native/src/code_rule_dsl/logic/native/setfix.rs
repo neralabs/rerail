@@ -980,6 +980,8 @@ pub(in crate::code_rule_dsl) struct TileCase {
     pub(in crate::code_rule_dsl) left: Vec<Vec<i64>>,
     pub(in crate::code_rule_dsl) right: Vec<Vec<i64>>,
     pub(in crate::code_rule_dsl) right_ids: Vec<u32>,
+    /// Whether each key holds symbols.
+    pub(in crate::code_rule_dsl) symbols: Vec<bool>,
     pub(in crate::code_rule_dsl) pairs: Vec<(u32, u32)>,
     pub(in crate::code_rule_dsl) cpu_seconds: f64,
 }
@@ -1022,7 +1024,8 @@ pub(in crate::code_rule_dsl) fn tiles(conn: &Connection, name: &str) -> Result<V
             if let Some(rs) = table.get(&key) { pairs.extend(rs.iter().map(|&r| (l as u32, r))); }
         }
         let cpu_seconds = thread_cpu() - c0;
-        out.push(TileCase { rule: label, left, right, right_ids, pairs, cpu_seconds });
+        let symbols = rcols.iter().map(|&c| b.types.get(c) == Some(&b's')).collect();
+        out.push(TileCase { rule: label, left, right, right_ids, symbols, pairs, cpu_seconds });
     }
     Ok(out)
 }
