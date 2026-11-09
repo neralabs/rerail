@@ -529,6 +529,44 @@ impl GitWorkspace {
             .is_ok_and(|bytes| self.source_alias(relative_path, &bytes).is_some())
     }
 
+    /// A clean base file's blob, unread: the path has no overlay and its worktree stat is exactly its index entry's
+    /// (`BaseFile::checkout`), so its bytes are the blob's (phase 0, t23). `None` where only a hash could tell.
+    pub(crate) fn clean_blob_unread(&self, relative_path: &str) -> Option<HashKey> {
+        if self.overlays.binary_search_by(|o| o.path.as_str().cmp(relative_path)).is_ok() {
+            return None;
+        }
+        let file = &self.base_files[self.base_files.binary_search_by(|f| f.path.as_str().cmp(relative_path)).ok()?];
+        let recorded = file.checkout?;
+        let metadata = gix::index::fs::Metadata::from_path_no_follow(&self.worktree_root.join(relative_path)).ok()?;
+        (metadata.is_file() && gix::index::entry::Stat::from_fs(&metadata).is_ok_and(|now| recorded.matches(&now, RESTORE_STAT))).then_some(file.blob)
+    }
+
+    /// Every file of the worktree as Git sees it, relative and sorted: HEAD's (less those deleted), the staged new
+    /// ones and the untracked ones Git does not ignore. Ignored directories are not entered; nested repositories are
+    /// their own.
+    pub(crate) fn worktree_files(&self) -> Vec<String> {
+        const TREE: u16 = 0o040000;
+        const COMMIT: u16 = 0o160000;
+        let mut files: BTreeSet<String> = BTreeSet::new();
+        for tree in &self.trees {
+            for entry in tree.entries.iter().filter(|e| e.mode & 0o170000 != TREE && e.mode & 0o170000 != COMMIT) {
+                files.insert(if tree.prefix.is_empty() { entry.name.clone() } else { format!("{}/{}", tree.prefix, entry.name) });
+            }
+        }
+        for overlay in &self.overlays {
+            match overlay.kind {
+                OverlayKind::Deleted => {
+                    files.remove(&overlay.path);
+                }
+                _ if self.worktree_root.join(&overlay.path).is_file() => {
+                    files.insert(overlay.path.clone());
+                }
+                _ => {}
+            }
+        }
+        files.into_iter().collect()
+    }
+
     /// Return the committed blob alias only when the evaluated bytes have that identity.
     pub fn source_alias(&self, relative_path: &str, bytes: &[u8]) -> Option<HashKey> {
         let index = self
@@ -590,6 +628,16 @@ impl GitWorkspace {
 /// The result is sorted by path and object identity. The caller can use the
 /// Git object IDs as aliases only after it compares them with evaluated bytes.
 pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
+    discover_in(root, false)
+}
+
+/// [`discover`] for the files under `root` only: HEAD's subtree there, and status over that part of the
+/// worktree. Its trees, base files and overlays are those under `root`; a file elsewhere is none of them.
+pub fn discover_under(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
+    discover_in(root, true)
+}
+
+fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError> {
     let repository = gix::discover(root).map_err(|error| {
         let message = format!("cannot discover Git repository: {error}");
         match error {
@@ -628,15 +676,48 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
     let mut trees = Vec::new();
     let mut base_files = Vec::new();
     let mut nested_paths = BTreeSet::new();
-    visit_tree(
-        &repository,
-        root_tree,
-        "",
-        &ignore,
-        &mut trees,
-        &mut base_files,
-        &mut nested_paths,
-    )?;
+    // Scoped: the root's path in the worktree ("" at the top), its subtree, and a pathspec for status.
+    let scope = if scoped {
+        let canonical = root
+            .canonicalize()
+            .map_err(|error| discovery_error("cannot resolve the root", error))?;
+        canonical
+            .strip_prefix(&worktree)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if scope.is_empty() {
+        visit_tree(
+            &repository,
+            root_tree,
+            "",
+            &ignore,
+            &mut trees,
+            &mut base_files,
+            &mut nested_paths,
+        )?;
+    } else if let Some(entry) = root_tree
+        .lookup_entry_by_path(&scope)
+        .map_err(|error| discovery_error("cannot read HEAD tree", error))?
+        .filter(|entry| entry.mode().is_tree())
+    {
+        let subtree = entry
+            .object()
+            .map_err(|error| discovery_error("cannot read Git subtree", error))?
+            .try_into_tree()
+            .map_err(|error| discovery_error("Git subtree has the wrong object kind", error))?;
+        visit_tree(
+            &repository,
+            subtree,
+            &scope,
+            &ignore,
+            &mut trees,
+            &mut base_files,
+            &mut nested_paths,
+        )?;
+    }
     #[cfg(test)]
     if let Some(hook) = AFTER_HEAD_TREE_VISIT.take() {
         hook();
@@ -656,9 +737,14 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
         .index_worktree_submodules(None)
         .head_tree(head_tree)
         .into_iter(
-            STATUS_EXCLUDES
-                .iter()
-                .map(|pattern| gix::bstr::BString::from(*pattern)),
+            (!scope.is_empty())
+                .then(|| gix::bstr::BString::from(format!(":(top,literal){scope}")))
+                .into_iter()
+                .chain(
+                    STATUS_EXCLUDES
+                        .iter()
+                        .map(|pattern| gix::bstr::BString::from(*pattern)),
+                ),
         )
         .map_err(|error| discovery_error("cannot read Git status", error))?;
     for item in status {

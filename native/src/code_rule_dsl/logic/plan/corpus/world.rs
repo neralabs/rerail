@@ -103,10 +103,8 @@ impl World {
             self.refused.insert(asked.to_owned());
             return Vec::new();
         };
-        let mut entries: Vec<(String, bool)> = std::fs::read_dir(&path)
-            .map(|it| it.filter_map(|e| e.ok()).map(|e| (e.file_name().to_string_lossy().into_owned(), e.path().is_dir())).collect())
-            .unwrap_or_default();
-        entries.sort();
+        // Phase 0's observer: listed again only when the directory's stat changed.
+        let entries: Vec<(String, bool)> = super::observe(|o| o.listing(&path)).map(|l| l.as_ref().clone()).unwrap_or_default();
         self.dirs.insert(asked.to_owned(), entries.clone());
         entries
     }
@@ -116,7 +114,7 @@ impl World {
         if let Some(lines) = self.files.get(asked) {
             return lines.clone();
         }
-        let Some(text) = self.allowed(asked).and_then(|p| std::fs::read_to_string(p).ok()) else {
+        let Some(text) = self.allowed(asked).and_then(|p| super::observe(|o| o.read(&p))).and_then(|(bytes, _)| String::from_utf8(bytes).ok()) else {
             self.refused.insert(asked.to_owned());
             return Vec::new();
         };
@@ -173,8 +171,8 @@ impl World {
         for (asked, entries) in &self.dirs {
             out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
         }
-        for (asked, lines) in &self.files {
-            out.push(("file".to_owned(), asked.clone(), lines_digest(lines)));
+        for asked in self.files.keys() {
+            out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
         }
         for path in self.loads.keys() {
             out.push(("load".to_owned(), path.clone(), bytes_digest(Path::new(path))));
@@ -185,12 +183,13 @@ impl World {
         out
     }
 
-    /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike.
+    /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike. Phase 0's
+    /// observer answers each by a `stat`, reading only what changed.
     pub(super) fn still(&mut self, consulted: &[(String, String, String)]) -> bool {
         consulted.iter().all(|(what, path, digest)| {
             let now = match what.as_str() {
                 "dir" => listing_digest(&self.dir(path)),
-                "file" => lines_digest(&self.file(path)),
+                "file" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
                 _ => return false,
@@ -201,11 +200,12 @@ impl World {
 
     /// What a refused path is now: outside the roots or missing, a file, or a directory.
     fn probe(&self, asked: &str) -> String {
-        match self.allowed(asked) {
-            None => "none",
-            Some(p) if p.is_file() => "file",
-            Some(p) if p.is_dir() => "dir",
-            Some(_) => "other",
+        use crate::content_store::observe::Kind;
+        match self.allowed(asked).map(|p| super::observe(|o| o.kind(&p))) {
+            None | Some(Kind::Missing) => "none",
+            Some(Kind::File) => "file",
+            Some(Kind::Dir) => "dir",
+            Some(Kind::Other) => "other",
         }
         .to_owned()
     }
@@ -243,18 +243,7 @@ fn listing_digest(entries: &[(String, bool)]) -> String {
     hex(&h.finalize())
 }
 
-fn lines_digest(lines: &[String]) -> String {
-    use sha2::Digest;
-    let mut h = sha2::Sha256::new();
-    for l in lines {
-        h.update(l.as_bytes());
-        h.update([b'\n']);
-    }
-    hex(&h.finalize())
-}
-
-/// A file's bytes' digest ("" when it cannot be read).
+/// A file's bytes' digest ("" when it cannot be read), from phase 0's observer: read only when its stat changed.
 pub(super) fn bytes_digest(path: &Path) -> String {
-    use sha2::Digest;
-    std::fs::read(path).map(|b| hex(&sha2::Sha256::digest(&b))).unwrap_or_default()
+    super::observe(|o| o.digest(path)).map(|d| hex(&d)).unwrap_or_default()
 }
