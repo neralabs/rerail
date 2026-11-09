@@ -30,7 +30,7 @@ import {
   rulePacksThatFit,
   type RulePack,
 } from "../engine/catalog/rule-packs.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { defaultRerailHome, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
 import { runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
 import { withPacksLock } from "./packs-lock.js";
 
@@ -190,15 +190,20 @@ export function npmPackStore(home: string = defaultRerailHome(), npm: NpmRunner 
 
 /** The update channel in the Rerail home's `update-state.json`: the dist-tag packs are fetched under. */
 export function updateChannel(home: string = defaultRerailHome()): string {
-  const path = join(home, "update-state.json");
+  const path = join(home, UPDATE_STATE_FILE);
   if (!existsSync(path)) return "latest";
+  return readChannel(path) ?? "latest";
+}
+
+/** The channel the update state file at `path` names; undefined when it names none or cannot be read. */
+function readChannel(path: string): string | undefined {
   try {
     const state = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (typeof state === "object" && state !== null && "channel" in state && typeof state.channel === "string") return state.channel;
   } catch {
     // An unreadable state file is the updater's to report; discovery falls back to latest.
   }
-  return "latest";
+  return undefined;
 }
 
 /** The version a pack directory's `package.json` names; null when it names none or cannot be read. */

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type * as Sqlite from "node:sqlite";
 import { enableWal } from "../engine/storage/sqlite-wal.js";
+import { CLAUDE_STATUS_DATABASE_FILE } from "../engine/storage/rerail-home.js";
 
 /** Installation recovery has its own schema in `harness.sqlite`, separate from the Rerail database. */
 const STATUS_COLUMNS = `settings_path AS settingsPath, installed_command AS installedCommand,
@@ -30,8 +31,7 @@ export interface ClaudeStatusRegistration {
   previousInherited?: boolean;
 }
 
-/** In `~/.rerail` (never `RERAIL_HOME`): which Claude Code status lines Rerail registered. */
-export const CLAUDE_STATUS_DATABASE_FILE = "harness.sqlite";
+export { CLAUDE_STATUS_DATABASE_FILE };
 
 /** Registration ownership lives outside project databases and presentation preferences. */
 export function claudeStatusDatabasePath(home: string = homedir()): string {

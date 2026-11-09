@@ -43,6 +43,7 @@ export { codexHookEvents, createCodexEventHandler, type CodexHookInput } from ".
 export {
   decodeRerailEventFrame,
   encodeRerailEventResult,
+  InactiveSessionError,
   RERAIL_EVENT_MAX_FRAME_BYTES,
   RERAIL_EVENT_PROTOCOL_PREFACE,
   type RerailEventErrorFrame,

@@ -130,6 +130,15 @@ impl From<String> for TemplateError {
     }
 }
 
+impl From<ReadError> for TemplateError {
+    fn from(error: ReadError) -> Self {
+        match error {
+            ReadError::Parser(error) => Self::Parser(error),
+            ReadError::Interrupted => Self::Encode("tape operation interrupted".into()),
+        }
+    }
+}
+
 /// Owns only compact structure and a binding to the exact source and grammar.
 #[derive(Clone)]
 pub(super) struct TapeImage {
@@ -1167,7 +1176,7 @@ impl TapeImage {
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Option<Result<FileImage, String>> {
-        if grammar.lang == GrammarDialect::Blade {
+        if super::language::adapter::parsed_by_forte(grammar.lang) {
             return match Self::encode_template(grammar, source, budget) {
                 Ok(image) => Some(Ok(image)),
                 // Forte stopped at a limit: like tree-sitter giving up, it read nothing.
@@ -1274,8 +1283,24 @@ impl TapeImage {
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Result<FileImage, TemplateError> {
+        Self::check_blade_input(grammar, source, budget)?;
+        // The template's syntax errors are ERROR leaves where Blade reads them (`View::read`).
+        let read = View::read(tree, source, budget)?;
+        let mut nodes = Vec::<Pending>::new();
+        encode_blade_tree(&mut nodes, tree, &read.syntax_errors, budget)?;
+        let image = FileImage::single(Self::finish(nodes, grammar, source, budget)?);
+        Self::with_compiled_view(image, read.view, grammar, source, budget)
+    }
+
+    /// Why `encode_blade` can't encode `source` with `grammar`: the budget ran out, the
+    /// grammar isn't one Forte parses, or the source is past the tape's range.
+    fn check_blade_input(
+        grammar: &Grammar,
+        source: &str,
+        budget: &impl Fn() -> bool,
+    ) -> Result<(), TemplateError> {
         checked(budget)?;
-        if grammar.lang != GrammarDialect::Blade {
+        if !super::language::adapter::parsed_by_forte(grammar.lang) {
             return Err("only a Blade template is encoded from a Forte tree"
                 .to_owned()
                 .into());
@@ -1283,15 +1308,19 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".to_owned().into());
         }
-        // The template's syntax errors are ERROR leaves where Blade reads them (`View::read`).
-        let read = View::read(tree, source, budget).map_err(|error| match error {
-            ReadError::Parser(error) => TemplateError::Parser(error),
-            ReadError::Interrupted => TemplateError::Encode("tape operation interrupted".into()),
-        })?;
-        let mut nodes = Vec::<Pending>::new();
-        encode_blade_tree(&mut nodes, tree, &read.syntax_errors, budget)?;
-        let mut image = FileImage::single(Self::finish(nodes, grammar, source, budget)?);
-        if let Some(view) = read.view {
+        Ok(())
+    }
+
+    /// `image` with the document its template's embedded PHP derives, where it embeds any
+    /// (`blade::view`, the `compiled-view` embedding).
+    fn with_compiled_view(
+        mut image: FileImage,
+        view: Option<View>,
+        grammar: &Grammar,
+        source: &str,
+        budget: &impl Fn() -> bool,
+    ) -> Result<FileImage, TemplateError> {
+        if let Some(view) = view {
             image.derived.push(DerivedImage::encode(
                 Via::CompiledView,
                 view.into_program(),

@@ -57,6 +57,13 @@ export interface CheckoutContext {
 /** `not-set-up`: started, but the repository has no configuration, so nothing runs. */
 export type RepositoryStartState = "started" | "stopped" | "not-set-up";
 
+const RUNNING_START_STATES: readonly string[] = ["started", "not-set-up"];
+
+/** Whether Rerail runs in a checkout in `state`, set up or not. `state` may be a daemon's or the CLI's answer, as text. */
+export function rerailRunsIn(state: string): boolean {
+  return RUNNING_START_STATES.includes(state);
+}
+
 export interface RepositoryStatus {
   readonly started: boolean;
   readonly setUp: boolean;
