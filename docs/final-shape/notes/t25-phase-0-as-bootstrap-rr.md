@@ -158,13 +158,42 @@ CPU of the main thread is the run's report. The process figure is `/usr/bin/time
 - **A kept run costs 1.0–1.4 s,** against 0.9–1.1 s in t24. The extra is the stat checks of the modules phase 0
   loaded (354 against 315 stats).
 
+## Where the time goes: debug against optimized
+
+All the figures above are from the dev build. It optimizes the dependencies (SQLite, tree-sitter) but not
+the engine's own Rust code: the native joins, statistics, memo replay and SQLite glue. Its profiles are
+dominated by the standard library's debug checks (`ub_checks`, `precondition_check`). The `profiling` profile
+(Cargo.toml: opt-level 3, incremental, no LTO) builds the same code optimized. Same corpus and program
+(calls_cx, both memos), with every answer the same (6,299 agree):
+
+| run | dev build, user + sys | `profiling` build, user + sys |
+|---|---|---|
+| phase 0 alone (`bootstrap.rr` for calls_cx.rr), new store | 0.53 s | 0.14 s |
+| phase 0 alone, warm | 0.07 s | 0.03 s |
+| calls_cx, new store | 117 s | 19.1 s |
+| calls_cx, warm, the cutoff off (both memos found) | 23.6 s | 4.4 s |
+| calls_cx, kept by the cutoff | 1.4 s | 0.25 s |
+| struct.rr as its own phase (P1, typeshed loaded in it), new store | 16.4 s | 3.2 s |
+| struct.rr, unchanged / a comment in `exceptions.py` | 0.1 s / 8.7 s | 0.1 s / 1.4 s |
+
+Where the optimized cold run's 16.1 s of main-thread CPU goes:
+- the cross-file part, 6.8 s: the 53-relation stratum of calls, values and bindings is 2.8 s (75.7 M probes for
+  2.8 M rows);
+- the file-local part, 5.7 s, of which 2.3 s moves the chunks' exported rows to the cross-file part;
+- statistics, 2.1 s;
+- storing the import components' rows, 0.53 s (13.9 s in the dev build, as a row per insert);
+- typeshed's load requests, 0.9 s in 21 pauses of the fixpoint;
+- parsing the 267 files, 0.21 s.
+
+The warm run's 3.4 s: memo replay into SQLite 1.5 s, typeshed's load requests 0.9 s, statistics 0.8 s.
+
 ## Open items
 
-- O143: a relation the request cone derives is written empty as an output. `bootstrap.rr` outputs copies.
-- O144: a per-file relation with no node column is lost for documents that `load` brings in. `p0_names` carries
+- O144: a relation the request cone derives is written empty as an output. `bootstrap.rr` outputs copies.
+- O145: a per-file relation with no node column is lost for documents that `load` brings in. `p0_names` carries
   its node.
-- O145: tests against the shared default tape cache wait on its atoms lease.
-- O146: each phase-0 run costs about 0.25 s, so callers batch their seeds.
+- O146: tests against the shared default tape cache wait on its atoms lease.
+- O147: each phase-0 run costs about 0.25 s, so callers batch their seeds.
 
 One fault was found and fixed while measuring. A profiled run with the cross-file memo deadlocked: the outer run
 held the profile (`profile::one_run`), and `cross_memo::add` then started a phase-0 run for `components.rr`,

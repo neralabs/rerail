@@ -3172,9 +3172,7 @@ What a warm run still spends (8.7 s):
 A warm run with nothing changed still derives the whole cross-file part again. That is 0090's maintenance (an
 empty delta), not a fixed cost.
 
-## O-p0-cone-output. A relation the request cone derives is written empty as an output
-
-(Numbered O143 on `investigate-bend-vs-datalog`; trunk's O143 is the annotation stratum above.)
+## O144. A relation the request cone derives is written empty as an output
 
 **Seen (2026-11-08, t25).** `bootstrap.rr` first declared `p0_resolved` as an output. It is in the cone of `load`
 requests (a load is asked from it), and its output table was written empty, though the run had the rows. The cross
@@ -3185,7 +3183,7 @@ path holds back cone relations that are outputs and expects them to be read from
 
 **Closure:** a cone relation declared `.output` is written with its rows, and `bootstrap.rr` drops the copies.
 
-## O144. A per-file relation with no node column is lost for documents a `load` brings in
+## O145. A per-file relation with no node column is lost for documents a `load` brings in
 
 **Seen (2026-11-08, t25).** A loaded document's rows of the per-file relations the cone reads are found by its
 node range (`corpus.rs`, the `rr_load_new` join on the relation's first location column). A per-file relation
@@ -3197,7 +3195,7 @@ whose columns are all symbols and numbers (`p0_names(f, at, name)`) has no locat
 **Closure:** the per-file rows of a loaded document are found by the document they were derived from (the chunk
 builder knows it), so a relation needs no node column; or the engine refuses such a relation with a message.
 
-## O145. Tests against the shared default tape cache wait on its atoms lease
+## O146. Tests against the shared default tape cache wait on its atoms lease
 
 **Seen (2026-11-08, t25).** `$TMPDIR/rerail-tape-cache.sqlite` (425 MB) is shared with other sessions. Each phase-0
 run takes the atoms lease, and while another process holds it a test waits (`LEASE_WAIT`, 60 s); a run of
@@ -3206,7 +3204,7 @@ no corpus session (a session held across the nested run deadlocked against the l
 
 **Closure:** the lease is held only across the atoms write, not the run; or tests default to a per-process store.
 
-## O146. Each phase-0 run costs about 0.25 s, paid once per seed set
+## O147. Each phase-0 run costs about 0.25 s, paid once per seed set
 
 **Seen (2026-11-08, t25).** A run of `bootstrap.rr` over one text with includes costs about 0.25 s CPU when nothing
 is kept. Callers that resolve programs one at a time pay it each time: `rule_syntax_files_pass_check_rr` took about
@@ -3241,21 +3239,56 @@ a phase output (t24, "not built").
 
 ## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
 
-Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`. **Closure:** the `product`
-aggregate; `python/pytest-collect.rr`; `collect_disabled` for
-`conform/l5250_matching/test_phase1_case_matrix.py`, reported as a finding; the per-file counts of
-`notes/t13/est-full-6.json` reproduced (1,131 of 1,143 exact) on the corpus.
+Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+
+**Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
+model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
+tree; `test-budget` counting with it, the artifact optional, `collect_disabled` reported as `collection_disabled`.
+**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json`).**
+
+| Scope | Files exact | Total (pytest 14,449; model 13,610) | CPU |
+|---|---:|---:|---:|
+| `conform/` and the root's files (1,418 files) | 1,120 of 1,143 | 13,515 | 327 s user + sys, load 12–17 |
+| the same plus `data_layer_testing/`, on the five directories that differed (394 files) | 143 of 145 (the model: 145) | | 63 s |
+
+With `conform/` alone, all eleven files where the rules and the model differ read a name from outside it: a case
+list (`READ_PERMISSION_SCENARIO_KEYS`), a decorator that replaces a class with a function (`requires_capabilities`),
+or an enum. `data_layer_testing/` holds the first two; `test-budget` reads it. The two files left read enums of
+`data_layer` itself (`DelegationCapability`, `BranchTipMaterialization`), which the scope leaves open.
+
+**Left.** A run of `test-budget`'s scope over the whole of `conform/` (expected near the model's 1,131); enums
+outside the scope (O-names-cost). Known
+differences from the model: a nested Test class reached through two parents counts once (the owner is a node, not
+a path).
+
+## O-names-cost. Name resolution costs about 75 ms of CPU per file
+
+**Seen (2026-11-08).** `python/pytest-collect.rr` over the 9,010-file data layer ran past 9 min of CPU and 1.8 GB,
+and was stopped. On the 133-file sample, `resolve_export` alone costs 15 s of the run's 28 s (debug build), and
+nearly all of that is `qn`, which reads `look`: the LEGB walk of every name reference (`type_checking_block` reads
+`qn`, and `import_time` negates it). Every check that reads `sym_of` pays this.
+
+The run over `conform/` (1,418 files) also peaked at 3.8 GB RSS, in the parse workers and the cross-file part,
+against the 1 GB budget.
+
+**Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
+imported from outside is then open, counted as 1.
+
+**Closure:** the walk computed only for the references a rule asks about (demand), or `qn` without the walk for
+names no import binds; a run of `sym_of` over the data layer within the run and memory budgets.
 
 ## O-git-tracked. `git_tracked` is declared and never made
 
-Decision 0095 §6. `markdown_docs` needs tracked against on-disk. **Closure:** `@git_tracked(path)` answered from the
-index phase 0's Git provider reads, with a staged-add and a deleted-file test.
+**Status:** closed (2026-11-08, `3cb7d0d0a`). `@git_tracked(path)` is a functor over the index phase 0's Git
+provider reads (`strings/git.rs`), read again when the index file's digest moves; the test stages an add and reads
+it again. Decision 0095 §6.
 
 ## O-git-merge-base. `git_rev` is declared and never made; `--base` is the caller's
 
-Decision 0095 §6. **Closure:** `git_rev("head", …)` from `HEAD` as an observed read, `git_rev("base", …)` from gix's
-`merge_base` (the `revision` feature) of `HEAD` and the base reference, kept under the two ids; `at="base"` reading
-at it; the whole-run cutoff checking `HEAD` and the reference.
+**Status:** closed (2026-11-08, `3cb7d0d0a`). `git_rev("head", …)` and `git_rev("base", …)`, the merge base of
+`HEAD` and `--base` by gix's `merge_base`, are made when a rule reads `git_rev`; `at="base"` reads at the merge base;
+the whole-run cutoff records both as a read (`git_rev`, with the index as `git_index`) and checks them again. A bad
+`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0095 §6.
 
 
 ## O-stored-patterns. A stored prepared program lost its AST patterns, and its memo kept the result (fixed)
@@ -3276,3 +3309,11 @@ and passing on an empty one. Every finding was `Plain`, none `Cut`: the run had 
 **Still open:** `Program::answers` has no relation in the program facts either. Check whether a stored prepared
 program needs it. **Closure:** every `Program` field a run reads after `prepared::lookup` either round-trips through
 the program facts or is derived from what does, and a test compares a read-back program against the original.
+
+## O-replay-intermittent. The replay gate gave 3988 248 243 once
+
+**Seen (2026-11-08).** `converted_rules_give_the_recorded_findings` gave `3988 248 243 0` once and `3988 303 298 0`
+on the next run, with the same code. Suspect: the shared default tape cache (O146), which other sessions write.
+After the merges of 2026-11-08 (`0078ba091`, with the collection rules), 2026-11-09 00:15: `3988 303 298 0`, 55.6 s
+CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
+**Closure:** the cause found, or twenty runs on an isolated store all `3988 303 298 0`.

@@ -253,7 +253,7 @@ pub(crate) fn unchanged(programs: &[&str], root: &Path, typing: &Typing, options
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1 || world::bytes_digest(&root.join(f)) != d.2) {
         return Ok(false);
     }
-    const READERS: [&str; 4] = ["input", "input_dir", "artifact", "base"];
+    const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
     Ok(inputs::still(&prog, root, &read) && world::World::new(root, &prog).still(&requests))
 }
@@ -1246,7 +1246,6 @@ pub(crate) fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    crate::code_rule_dsl::logic::strings::git::set_root(root);
     let before = observe(|o| {
         o.begin();
         o.counts
@@ -1330,8 +1329,15 @@ fn run_observed(
     };
     // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
     // profiling on may have turned it off meanwhile.
-    // Phase 0's own run, nested in a run's preparing, neither holds nor resets it: the outer run does.
-    let _profile = (crate::code_rule_dsl::logic::profile::on() && !phase0::active()).then(crate::code_rule_dsl::logic::profile::one_run);
+    // Phase 0's own run holds it only when no run does (phase 0 alone, as its benchmark runs it): nested in a run's
+    // preparing, it is the outer run's, and neither resets nor writes it.
+    let _profile = if !crate::code_rule_dsl::logic::profile::on() {
+        None
+    } else if phase0::active() {
+        crate::code_rule_dsl::logic::profile::one_run_if_free()
+    } else {
+        Some(crate::code_rule_dsl::logic::profile::one_run())
+    };
     let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
@@ -1362,6 +1368,8 @@ fn run_observed(
         }
     };
     let mut folded = fold_constants(&mut prog)?;
+    // The Git functors answer from the repository holding this run's root (`strings::git`), for this run only.
+    let _git = crate::code_rule_dsl::logic::strings::git::scope(root);
     // Plans are kept across this run's chunks (decision 0038), and a session's across its runs (decision 0090 step 5).
     let across = session::generation();
     let _plans = super::KeepPlans::start(across);
@@ -2793,14 +2801,13 @@ fn run_observed(
             if !drain(process)? {
                 return Err(Error::Plan("the chunk builder ended before a load's documents".to_owned()));
             }
-            // The new documents' rows of the per-file relations the cone reads, from the exports held in memory
-            // (`exports.rs`), by their first location. The chunks wrote them there while `drain` ran.
+            // The new documents' rows of the per-file relations the cone reads, from the exports the chunks added
+            // (`exports`, held in memory), by their first location column.
             let new: std::collections::HashSet<i64> = keys.iter().copied().collect();
             for rel in &per_file {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied()).ok_or_else(|| Error::Plan(format!("{rel}: no location column")))?;
                 let width = lowered.program.decls[rel].len();
-                let rows = exports.borrow().rows_of_docs(rel, width, at, &new);
-                out.push((rel.clone(), rows));
+                out.push((rel.clone(), exports.borrow().rows_of(rel, width, at, &new)));
             }
             Ok(out)
         };
@@ -3632,7 +3639,7 @@ fn run_observed(
         });
     }
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
-    if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {
+    if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory().map(|d| if phase0::active() { d.join("phase-0") } else { d }) {
         let mut header = format!(
             "Profile of a corpus run: {} files, {nodes} nodes, {chunks} chunks; text tests {} relations, {tested} strings, {text_cpu:.3} s CPU\n\n== Phases (CPU = user + system; worker phases run beside the main thread)\n",
             docs.len(),
@@ -3644,6 +3651,10 @@ fn run_observed(
         let lines: usize = programs.iter().map(|p| p.lines().filter(|l| !l.trim().is_empty()).count()).sum();
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
+    }
+    // The index, when `@git_tracked` read it: it moves between runs (`strings::git`).
+    if t.is_none() {
+        consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
     Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, files_observed: Default::default() })
 }

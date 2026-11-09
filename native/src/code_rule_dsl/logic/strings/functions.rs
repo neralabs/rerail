@@ -37,6 +37,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // Git objects of the repository holding the run's root (`strings::git`): never stale, so never invalidated.
     ("git_commit", &[Text], Number),
     ("git_has", &[Text, Text], Number),
+    ("git_tracked", &[Text], Number),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
@@ -93,12 +94,34 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
     db.create_aggregate_function("rr_join", -1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Join)?;
+    db.create_aggregate_function("rr_product", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Product)?;
     Ok(())
 }
 
 /// `core.rr`'s `join x by k sep s` as the SQL aggregate `rr_join(s, x, k, …)`: the distinct (k…, x) rows ordered by
 /// their keys, then x (numbers by value, text by code point, as Python's `sorted`), their x joined by s.
 struct Join;
+
+/// `product x : {…}` as the SQL aggregate `rr_product(x)`: the product of the integers, saturating at i64's range;
+/// NULL over no rows (the caller's `coalesce` makes that 1), and NULL arguments are skipped as `sum` skips them.
+struct Product;
+
+impl rusqlite::functions::Aggregate<Option<i64>, Option<i64>> for Product {
+    fn init(&self, _: &mut Context<'_>) -> rusqlite::Result<Option<i64>> {
+        Ok(None)
+    }
+
+    fn step(&self, ctx: &mut Context<'_>, acc: &mut Option<i64>) -> rusqlite::Result<()> {
+        if let Some(v) = ctx.get::<Option<i64>>(0)? {
+            *acc = Some(acc.map_or(v, |a| a.saturating_mul(v)));
+        }
+        Ok(())
+    }
+
+    fn finalize(&self, _: &mut Context<'_>, acc: Option<Option<i64>>) -> rusqlite::Result<Option<i64>> {
+        Ok(acc.flatten())
+    }
+}
 
 /// A `rr_join` row's keys and value, ordered as `rr_join` orders them.
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -180,6 +203,7 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
         "git_commit" => return super::git::git_commit(t(0)),
         "git_has" => return super::git::git_has(t(0), t(1)),
+        "git_tracked" => return super::git::git_tracked(t(0)),
         "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
         "rr_add" => return numbers[0].checked_add(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),

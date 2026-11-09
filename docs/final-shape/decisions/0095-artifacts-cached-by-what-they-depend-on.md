@@ -142,10 +142,10 @@ The policies need these from Git:
 |---|---|---|---|
 | `@git_commit(sha)` | `architecture_rule_docs`: a commit a document cites exists | the object store, by id | built |
 | `@git_has(sha, path)` | the same: a path at a cited commit | the commit's tree | built |
-| `git_tracked(path)` | `markdown_docs`: tracked, as against on disk | the index phase 0 reads | open |
-| `git_rev("head", sha)` | `at="base"` comparisons | `HEAD`, observed by phase 0 | open |
-| `git_rev("base", sha)` | burn-down lists that may only shrink | the merge base of `HEAD` and the base ref | open |
-| a file at the base | `at="base"` inputs | the base commit's tree | built (`--base REV`) |
+| `@git_tracked(path)` | `markdown_docs`: tracked, as against on disk | the index phase 0 reads | built |
+| `git_rev("head", sha)` | `at="base"` comparisons | `HEAD`, recorded for the cutoff | built |
+| `git_rev("base", sha)` | burn-down lists that may only shrink | the merge base of `HEAD` and the base ref | built |
+| a file at the base | `at="base"` inputs | the merge base's tree | built (`--base REV`) |
 | content digests | artifact freshness (§3) | phase 0's content sources and blob aliases | built in phase 0 |
 
 **Inline calls, not a subprocess, not enumerations.** `@git_commit` and `@git_has` are functors, evaluated per
@@ -159,8 +159,7 @@ tree and a blob's bytes never change, so those answers are kept for the process 
 names move: `HEAD`, the base reference and the index. Those are phase 0's observed reads, so a moved `HEAD` is a
 changed read like an edited file. The merge base is then derived from the two commit ids and kept under them.
 
-The merge base needs gix's `revision` feature (`merge_base`); today's build has `status` only, and `--base` takes
-the revision as given. A prefix that later becomes ambiguous, as new objects arrive, is the one answer an id does
+The merge base uses gix's `revision` feature (`merge_base`), and `at="base"` reads at it. A prefix that later becomes ambiguous, as new objects arrive, is the one answer an id does
 not pin. A check should cite full ids; an abbreviated one is accepted, and gives 0 once ambiguous.
 
 ## What the prior work says
@@ -187,7 +186,7 @@ not pin. A check should cite full ids; an abbreviated one is accepted, and gives
 - **O-artifact-digest-p0**: digests from phase 0's content sources instead of the walk and blob ids (§3).
 - **O-artifact-store**: stamps in the store by digest, import from the facts directory, retention (§4).
 - **O-artifact-imports**: an entry's inputs as its import closure, once P0's module graph is a phase output (§2).
-- **O-test-collect-rules**: `python/pytest-collect.rr` from t13's draft, the `product` aggregate, the scope split,
-  and `collect_disabled` in `test-budget` (§1).
-- **O-git-tracked**: `@git_tracked(path)` over phase 0's index (§6).
-- **O-git-merge-base**: `git_rev("head"/"base")` as phase 0 facts, with gix's `merge_base` (§6).
+- **O-test-collect-rules**: built (`python/pytest-collect.rr`, `product`, `collect_disabled` in `test-budget`);
+  the whole of `conform/` against pytest is left (§1).
+- **O-names-cost**: name resolution's per-file cost, which keeps `test-budget` to `conform/` (§1).
+- O-git-tracked and O-git-merge-base: closed (§6).
