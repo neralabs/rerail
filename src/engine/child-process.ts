@@ -17,11 +17,19 @@ import { promisify } from "node:util";
 const HIDDEN = { windowsHide: true } as const;
 
 /**
- * `args`, the arguments of a child_process call, with `windowsHide: true` set in its options object: after the
- * argument array when there is one, else after the command. A callback in that place moves one along.
+ * Where a child_process call's options are, as Node reads them: after the argument array, or after an argument list
+ * given as undefined or null when more follows (`spawn(command, undefined, options)`), else after the command.
+ */
+function optionsAt(args: readonly unknown[]): 1 | 2 {
+  return Array.isArray(args[1]) || (args[1] == null && args.length > 2) ? 2 : 1;
+}
+
+/**
+ * `args`, the arguments of a child_process call, with `windowsHide: true` set in its options object, where Node reads
+ * it ({@link optionsAt}). A callback in that place moves one along.
  */
 export function withHiddenWindow(args: readonly unknown[]): unknown[] {
-  const at = Array.isArray(args[1]) ? 2 : 1;
+  const at = optionsAt(args);
   const options = args[at];
   if (typeof options === "function") return [...args.slice(0, at), HIDDEN, ...args.slice(at)];
   // Options are an object, or absent (undefined or null); spreading either keeps what the caller set.
@@ -38,7 +46,7 @@ export function withHiddenWindow(args: readonly unknown[]): unknown[] {
 export function assertProgramPath(args: readonly unknown[], platform: NodeJS.Platform = process.platform): void {
   if (platform !== "win32") return;
   const [command] = args;
-  const options = args[Array.isArray(args[1]) ? 2 : 1];
+  const options = args[optionsAt(args)];
   const shell = typeof options === "object" && options !== null && "shell" in options && Boolean(options.shell);
   if (typeof command === "string" && !shell && !win32.isAbsolute(command)) {
     throw new Error(`Rerail starts a program on Windows by its absolute path, never from the current folder; it was asked for ${command}`);

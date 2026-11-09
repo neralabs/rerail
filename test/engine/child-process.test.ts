@@ -32,6 +32,20 @@ describe("withHiddenWindow", () => {
     expect(withHiddenWindow(["git", ["status"], undefined, callback])).toEqual(["git", ["status"], { windowsHide: true }, callback]);
     expect(withHiddenWindow(["git", ["status"], { windowsHide: false }])).toEqual(["git", ["status"], { windowsHide: true }]);
   });
+
+  it("keeps the options after an argument list given as undefined or null, where Node reads them", () => {
+    const callback = (): void => undefined;
+    expect(withHiddenWindow(["git", undefined, { cwd: "/r" }])).toEqual(["git", undefined, { cwd: "/r", windowsHide: true }]);
+    expect(withHiddenWindow(["git", null, { cwd: "/r" }, callback])).toEqual(["git", null, { cwd: "/r", windowsHide: true }, callback]);
+    expect(withHiddenWindow(["git", undefined, callback])).toEqual(["git", undefined, { windowsHide: true }, callback]);
+    // Read where Node reads it: a shell line after an undefined argument list is still a shell line.
+    expect(() => assertProgramPath(["bash ~/.claude/statusline.sh", undefined, { shell: true }], "win32")).not.toThrow();
+  });
+
+  it("starts a child with the caller's options after an undefined argument list", () => {
+    const result = spawnSync(process.execPath, undefined, { encoding: "utf8", input: "process.stdout.write(process.cwd())", cwd: tmpdir() });
+    expect(result.stdout).toBe(tmpdir());
+  });
 });
 
 describe("assertProgramPath", () => {
