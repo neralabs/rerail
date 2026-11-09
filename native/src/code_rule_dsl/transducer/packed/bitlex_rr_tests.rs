@@ -208,6 +208,16 @@ const CASES: &[(&str, &str)] = &[
     ("p(x) :- (a(x), b(x)) + 1 > 2.", "never"),
     ("p(x) :- (a(x) ; b(x)) > 1.", "never"),
     ("p(x) :- !(o) > 1.", "never"),
+    // Floats: a `.` between digits, the digits after it the fraction; a `.` after a fraction
+    // is no float's.
+    (".mode 1.5\nr(x) :- s(x, y), y > 0.10, x = -2.5 * y, z = - 3.25.", "13"),
+    (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "13"),
+    ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "13"),
+    (".policy {\"a\": 1.5, \"b\": -0.25, \"c\": [1.0]}", "13"),
+    (".lattice l<b> { A -> 1.5 * x }\n.functor f(x: number): t 2.5\nr(x) :- count : { s(_) } > 1.5, max v : { t(v) } < -2.25.", "13"),
+    ("r(x) :- x = 1..5.", "never"),
+    ("r(x) :- a = 1.2.3.4.", "never"),
+    ("r(x) :- w = 1.5e3.", "never"),
     // The same bytes outside JSON: no refusal.
     ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
 ];
