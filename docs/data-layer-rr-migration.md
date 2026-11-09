@@ -2273,3 +2273,32 @@ Its validator checks assertion coverage, complete result equality, engine identi
 The inventory contains 92 drafts and eight absent translations. Draft count is not completion coverage.
 The bypass standalone CLI and legacy callback adapters remain open, along with shared registry integration and earlier recorded gaps.
 The next absent translation is serverplan-steps. The 100-rule migration is not complete.
+
+### 2026-11-09 — ServerPlan step contracts remain partial
+
+The branch merges Final's observed filesystem preparation and CPU/GPU placement through `4dd2dec74`.
+The [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-final4dd-checkpoint.json.gz) binds the root engine, programs, and complete selected observations.
+
+All 164 original source tests pass. Their inventory contains 212 API observations.
+The native draft defines 21 detector functions and passes 95 original tests with 155 complete observations.
+It includes thirty positive observations across nineteen functions.
+Thirteen additional cases cover MISC_RUNTIME, including seven positives.
+Obsolete kind/name validation returns an empty list in the pinned source.
+The checkpoint lists all 69 original tests outside native coverage. These are unfinished work.
+
+The next work follows this order:
+
+1. Add callback parameter-shape cases, including positional-only separators.
+2. Translate runtime-ref consumption and helper summaries. Preserve last-assignment lookup, cycles, and source traversal order.
+3. Translate raw-row shaping and literal-payload dispatch. Preserve duplicate findings from distinct materializer definitions.
+4. Translate callable registries, legacy callbacks, static-exception summaries, and contradictory role contracts.
+5. Translate the remaining seven entry points: signature verification, blocker collectors, legacy scanning, file scanning, source scanning, and CLI reporting.
+6. Run all 164 original tests through native execution. Complete production, discovery, mutation, and update acceptance.
+7. Port the seven absent rules. Close earlier CLI, collector, registry, and global migration gaps.
+
+The shared signing repair preserves explicitly named empty lists. Eight cases match Python's exact message and verification status.
+The large five-file fixture preserves fifteen API observations with five native runs through a batched transport.
+Neither result completes this rule's definition of done.
+
+Final advances to `e3dbedd64` during acceptance. That merge is next; the recorded checkpoint remains tied to `4dd2dec74`.
+The previously authorized external fixture exclusion remains unchanged.

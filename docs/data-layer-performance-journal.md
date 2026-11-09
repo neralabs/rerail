@@ -9447,3 +9447,53 @@ Its validator checks assertion coverage, complete result equality, engine identi
 The inventory contains 92 drafts and eight absent translations. Draft count is not completion coverage.
 The bypass standalone CLI and legacy callback adapters remain open, along with shared registry integration and earlier recorded gaps.
 The next absent translation is serverplan-steps. The 100-rule migration is not complete.
+
+### 2026-11-09 — Final integration and partial ServerPlan step contracts
+
+The branch takes Final through `4dd2dec74`, including observed filesystem preparation and CPU/GPU placement.
+The root CLI build takes 81.655 seconds. The unit build takes 304.179 seconds, including shared target contention.
+Compilation remains separate from rule execution. The acceptance engine is frozen as `f82abb72f58bf9e5`.
+
+The merge exposes two stale integration assumptions.
+The library request fixture now uses Final's library include resolution.
+Metadata consumers retain one directory snapshot through the observer. Directory-only consumers do not construct child metadata.
+All 130 focused engine tests pass. Two existing helper tests remain ignored.
+All 171 harness tests pass.
+
+The complete pinned serverplan-steps source suite passes all 164 tests and records 212 API observations.
+Its test IDs exactly match the independent original inventory.
+Python 3.13 TypeAlias.name is an AST child. The shared transport now retains that child instead of storing an AST object as text.
+
+The new native draft defines 21 of 31 detector functions.
+Its partial acceptance passes 95 original tests and 155 complete observations, including 30 positive detector observations across nineteen functions.
+Another thirteen source/native cases cover the MISC_RUNTIME check, including seven positives, Unicode identifiers, and repeated targets.
+The remaining function intentionally returns no findings in the pinned source: obsolete runtime-builder kind/name validation.
+No Python detector runs in native acceptance.
+
+Twenty-check acceptance first passes 83 tests, but one shard exceeds its 115-second limit.
+That live-source case calls three APIs for each of five files.
+A batched observation path now shares typed native results across those APIs.
+The case passes all fifteen observations with five native runs in 68.51 seconds.
+Transport regressions reject reuse after source, path, configuration, or supplied-AST changes.
+This result measures the test API path. It is not a repository performance baseline.
+
+Native parity also exposes a signed-message defect: the shared library drops named empty allowlists.
+Explicit list names now preserve those keys. Eight comparisons match Python's exact message bytes and signature status.
+These cases change signed content, not the signature. The tampered-signature API assertion remains untranslated.
+
+A negative recursive name fallback initially prevents execution. The repair uses nonrecursive shape tests.
+Source review also replaces an incorrect remediation string with the pinned text.
+SQL planning errors now identify their rule head.
+That diagnostic isolates a lost function-name binding in the authority-return producer; an explicit definition anchor executes correctly.
+Disabled branching and callback consumers each fail their original positive test, with no fallback.
+
+The [partial checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-final4dd-checkpoint.json.gz) records exact programs, observations, builds, controls, and remaining cases.
+The [initial red recording](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-scaffold-red.json.gz) retains the complete source observations and initial failures.
+The checkpoint explicitly lists 69 original tests outside native coverage.
+Ten detector functions and seven scanner, signature, or CLI entry points remain untranslated.
+Production reporting, discovery, parameter-shape acceptance, update tests, and full serverplan-steps acceptance remain open.
+Seven other translations remain absent. Earlier migration gaps remain open.
+
+Final advances to `e3dbedd64` after this immutable acceptance run starts.
+The live alignment audit correctly requests another merge. This checkpoint continues to identify its actual `4dd2dec74` engine.
+No full repository cold run or external fixture suite runs.
