@@ -27,6 +27,8 @@
 .export unit, def, binds, base, member, param, ret, module_file, at
 // Where a definition is: kept, and handed on to the findings that cite it, but not part of its granule's digest.
 .positions at
+// Which document each definition is in: the store replaces a changed document's granules on their own.
+.owner at
 
 // ---- the scopes P1 reads: a module, and the classes defined at module level or in such a class ----------------
 .decl scope(kind: symbol)
