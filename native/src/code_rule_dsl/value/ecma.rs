@@ -68,7 +68,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             }
         }
         "unary_expression" => {
-            let (Some(operator), Some(argument)) = (node.field("operator"), node.field("argument"))
+            let (Some(operator), Some(argument)) = (node.operator_token(), node.field("argument"))
             else {
                 return Value::Unknown;
             };
@@ -220,7 +220,7 @@ fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     let (Some(left), Some(operator), Some(right)) = (
         node.field("left"),
-        node.field("operator"),
+        node.operator_token(),
         node.field("right"),
     ) else {
         return Value::Unknown;

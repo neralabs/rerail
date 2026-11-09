@@ -246,7 +246,7 @@ fn boolean<D: Doc>(
         operands.push(right);
         let same = left.kind() == "boolean_operator"
             && left
-                .field("operator")
+                .operator_token()
                 .is_some_and(|op| op.kind() == operator.as_str());
         if same {
             current = left;
@@ -618,7 +618,7 @@ fn folded<D: Doc>(node: &Node<'_, D>) -> Option<(Real, Real)> {
         },
         "unary_operator" => {
             let (real, imag) = folded(&node.field("argument")?)?;
-            match node.field("operator")?.kind().as_ref() {
+            match node.operator_token()?.kind().as_ref() {
                 "+" => Some((real, imag)),
                 "-" => Some((real.negate(), imag.negate())),
                 _ => None,

@@ -1,5 +1,6 @@
 mod semantic;
 
+use crate::code_rule_dsl::tree::Tree;
 use super::collate::natural_compare;
 use super::exported::exported_text;
 use super::transform::Transform;
@@ -324,16 +325,7 @@ fn element_index<D: Doc>(node: &Node<'_, D>) -> Option<usize> {
     if !LISTS.contains(&parent.kind().as_ref()) {
         return None;
     }
-    let mut commas = 0;
-    for child in parent.children() {
-        if child.node_id() == node.node_id() {
-            return Some(commas);
-        }
-        if !child.is_named() && child.text() == "," {
-            commas += 1;
-        }
-    }
-    None
+    Some(parent.count_tokens_before(&node, ","))
 }
 
 /// The node inside any parentheses: ESTree has none.
@@ -356,7 +348,7 @@ fn listed_operands<'t, D: Doc>(
     node: &Node<'t, D>,
     commute: &[String],
 ) -> Option<(Node<'t, D>, String, Node<'t, D>)> {
-    let operator = node.field("operator")?.text().into_owned();
+    let operator = node.operator_token()?.text().into_owned();
     if !commute.contains(&operator) {
         return None;
     }

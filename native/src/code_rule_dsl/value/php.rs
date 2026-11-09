@@ -1094,7 +1094,7 @@ impl Prefix {
     fn of<'a, D: Doc>(node: &Node<'a, D>) -> Option<(Self, Node<'a, D>)> {
         match node.kind().as_ref() {
             "unary_op_expression" => Some((
-                Self::Operator(node.field("operator")?.text().to_string()),
+                Self::Operator(node.operator_token()?.text().to_string()),
                 node.field("argument").or_else(|| node.named_code().last())?,
             )),
             "cast_expression" => Some((
@@ -1317,7 +1317,7 @@ fn bitwise(operator: &str, left: &Value, right: &Value) -> Option<Value> {
 }
 
 fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Value> {
-    let operator = node.field("operator")?.text().to_ascii_lowercase();
+    let operator = node.operator_token()?.text().to_ascii_lowercase();
     let left_node = node.field("left")?;
     let right_node = node.field("right")?;
     if operator == "**" {
@@ -1367,7 +1367,7 @@ fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Value
         "." => {
             // `.` directly followed by a digit is a float to PHP's lexer (`0x1.5` does not
             // compile), not the concatenation tree-sitter-php reads.
-            if node.field("operator")?.range().end == right_node.range().start
+            if node.operator_token()?.range().end == right_node.range().start
                 && right_node.text().starts_with(|c: char| c.is_ascii_digit())
             {
                 return Some(Value::Unknown);

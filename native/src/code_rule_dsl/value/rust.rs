@@ -528,15 +528,14 @@ fn reader<D: Doc>(expr: Expr) -> Reader<D> {
 
 
 /// The operators `unary` and `binary` read, by their text; any other is `?`, which neither reads.
-fn operator<D: Doc>(node: &Node<'_, D>) -> &'static str {
+fn operator(text: &str) -> &'static str {
     const OPERATORS: &[&str] = &[
         "-", "+", "!", "*", "/", "%", "&", "|", "^", "<<", ">>", "&&", "||", "==", "!=", "<", "<=",
         ">", ">=",
     ];
-    let text = node.text();
     OPERATORS
         .iter()
-        .find(|op| **op == text.as_ref())
+        .find(|op| **op == text)
         .copied()
         .unwrap_or("?")
 }
@@ -546,11 +545,12 @@ fn unary_parts<'r, D: Doc>(
     node: &Node<'r, D>,
     hint: Option<Hint>,
 ) -> Option<(&'static str, Node<'r, D>, Option<Hint>)> {
-    let op = node.field("operator").or_else(|| node.children().next())?;
+    // tree-sitter-rust's unary operator has no field: it is the first token.
+    let op = node.operator_token().or_else(|| node.first_token())?;
     let arg = node
         .field("argument")
         .or_else(|| node.first_named())?;
-    let op = operator(&op);
+    let op = operator(&op.text());
     let operand_hint = hint.filter(|_| matches!(op, "-" | "+" | "!"));
     Some((op, arg, operand_hint))
 }
@@ -604,10 +604,10 @@ struct BinaryParts<'r, D: Doc> {
 fn binary_parts<'r, D: Doc>(node: &Node<'r, D>, hint: Option<Hint>) -> Option<BinaryParts<'r, D>> {
     let (left, op, right) = (
         node.field("left")?,
-        node.field("operator")?,
+        node.operator_token()?,
         node.field("right")?,
     );
-    let op = operator(&op);
+    let op = operator(&op.text());
     let arithmetic = matches!(op, "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^");
     let (left_hint, right_hint) = match op {
         _ if arithmetic => (hint, hint),

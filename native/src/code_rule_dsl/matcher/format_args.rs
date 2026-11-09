@@ -828,7 +828,7 @@ fn resolve<D: Doc>(node: &Node<'_, D>) -> Type {
         },
         "not_operator" => atom(Atom::Bool),
         "unary_operator" => {
-            let (Some(operator), Some(operand)) = (node.field("operator"), node.field("argument"))
+            let (Some(operator), Some(operand)) = (node.operator_token(), node.field("argument"))
             else {
                 return Type::Unknown;
             };
@@ -849,7 +849,7 @@ fn resolve<D: Doc>(node: &Node<'_, D>) -> Type {
         "binary_operator" => {
             let (Some(left), Some(operator), Some(right)) = (
                 node.field("left"),
-                node.field("operator"),
+                node.operator_token(),
                 node.field("right"),
             ) else {
                 return Type::Unknown;

@@ -342,7 +342,7 @@ fn case_of<D: Doc>(node: &Node<'_, D>) -> Case {
         "binary_expression" => {
             if is_field("right")
                 && parent
-                    .field("operator")
+                    .operator_token()
                     .is_some_and(|operator| operator.kind() == "instanceof")
             {
                 Case::Insensitive

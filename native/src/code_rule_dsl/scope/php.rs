@@ -427,7 +427,7 @@ fn self_reads<D: Doc>(value: &Node<'_, D>, name: &str) -> Vec<usize> {
             .collect(),
         "binary_expression"
             if value
-                .field("operator")
+                .operator_token()
                 .is_some_and(|operator| COMPUTING.contains(&operator.text().as_ref())) =>
         {
             ["left", "right"]
@@ -1289,7 +1289,7 @@ impl Visitor<'_, '_> {
             },
             "unary_op_expression"
                 if node
-                    .field("operator")
+                    .operator_token()
                     .is_some_and(|operator| operator.text() == "!") =>
             {
                 match node.field("argument").or_else(|| node.named_code().last()) {
@@ -1302,7 +1302,7 @@ impl Visitor<'_, '_> {
             }
             "binary_expression" => {
                 let operator = node
-                    .field("operator")
+                    .operator_token()
                     .map(|operator| operator.text().to_ascii_lowercase())
                     .unwrap_or_default();
                 let (Some(left), Some(right)) = (node.field("left"), node.field("right")) else {
@@ -1494,7 +1494,7 @@ impl Visitor<'_, '_> {
                     return self.expressions(node.named_code(), state);
                 };
                 let coalesce = node
-                    .field("operator")
+                    .operator_token()
                     .is_some_and(|operator| operator.text() == "??=");
                 if coalesce {
                     // `$a ??= v` assigns only where `$a` is null or undefined; either way `$a` is
@@ -1593,7 +1593,7 @@ impl Visitor<'_, '_> {
             }
             "binary_expression" => {
                 let operator = node
-                    .field("operator")
+                    .operator_token()
                     .map(|operator| operator.text().to_ascii_lowercase())
                     .unwrap_or_default();
                 let (Some(left), Some(right)) = (node.field("left"), node.field("right")) else {

@@ -483,7 +483,7 @@ fn codepoint(code: u32) -> Option<u32> {
 
 /// `+x`, `-x`, `~x`.
 fn unary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
-    let (Some(operator), Some(operand)) = (node.field("operator"), node.field("argument")) else {
+    let (Some(operator), Some(operand)) = (node.operator_token(), node.field("argument")) else {
         return Value::Unknown;
     };
     let operand = decode(&operand, context);
@@ -494,7 +494,7 @@ fn unary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     let (Some(left), Some(operator), Some(right)) = (
         node.field("left"),
-        node.field("operator"),
+        node.operator_token(),
         node.field("right"),
     ) else {
         return Value::Unknown;
@@ -511,7 +511,7 @@ fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 fn boolean<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     let (Some(left), Some(operator), Some(right)) = (
         node.field("left"),
-        node.field("operator"),
+        node.operator_token(),
         node.field("right"),
     ) else {
         return Value::Unknown;

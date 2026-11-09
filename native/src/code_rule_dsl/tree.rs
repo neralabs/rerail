@@ -10,8 +10,10 @@
 //! - **Named children:** [`Tree::named`] (all), [`Tree::named_code`] (not comments),
 //!   [`Tree::first_named`], [`Tree::last_named`], [`Tree::first_code`].
 //! - **Tokens:** [`Tree::tokens`], [`Tree::has_token`], [`Tree::has_any_token`],
-//!   [`Tree::count_tokens`], [`Tree::first_token`], [`Tree::operator`].
-//! - **Tokens beside a node:** [`Tree::token_before`], [`Tree::token_after`].
+//!   [`Tree::count_tokens`], [`Tree::first_token`], [`Tree::operator`], [`Tree::operator_token`].
+//! - **Tokens beside a node:** [`Tree::token_before`], [`Tree::token_after`],
+//!   [`Tree::count_tokens_before`].
+//! - **Layout:** [`Tree::parts`], named nodes and tokens in source order ([`Part`]).
 //!
 //! A [`Token`] is a value: its kind, text and span. Code that edits a token edits its span.
 
@@ -55,6 +57,43 @@ impl<'r, D: Doc> Token<'r, D> {
     }
 }
 
+/// A child in source order: a named node, or one of the parent's tokens.
+pub(crate) enum Part<'r, D: Doc> {
+    Named(Node<'r, D>),
+    Token(Token<'r, D>),
+}
+
+impl<'r, D: Doc> Part<'r, D> {
+    /// The part's kind.
+    pub(crate) fn kind(&self) -> Cow<'_, str> {
+        match self {
+            Self::Named(node) => node.kind(),
+            Self::Token(token) => token.kind(),
+        }
+    }
+    /// The part's byte span.
+    pub(crate) fn range(&self) -> Range<usize> {
+        match self {
+            Self::Named(node) => node.range(),
+            Self::Token(token) => token.range(),
+        }
+    }
+    /// The named node, if the part is one.
+    pub(crate) fn named(&self) -> Option<&Node<'r, D>> {
+        match self {
+            Self::Named(node) => Some(node),
+            Self::Token(_) => None,
+        }
+    }
+    /// The token, if the part is one.
+    pub(crate) fn token(&self) -> Option<&Token<'r, D>> {
+        match self {
+            Self::Named(_) => None,
+            Self::Token(token) => Some(token),
+        }
+    }
+}
+
 /// Shape queries on a tree node; see the module documentation.
 pub(crate) trait Tree<'r, D: Doc> {
     /// The named children, comments included.
@@ -75,6 +114,15 @@ pub(crate) trait Tree<'r, D: Doc> {
     }
     /// The node's own tokens, in order.
     fn tokens(&self) -> impl Iterator<Item = Token<'r, D>> + '_;
+    /// The children in source order, named nodes and tokens interleaved: for a reader of a node's
+    /// layout (a string's delimiters and pieces, say).
+    fn parts(&self) -> impl Iterator<Item = Part<'r, D>> + '_;
+    /// How many tokens of kind `kind` come before `child` (one of this node's children): an
+    /// argument's index by its commas, say.
+    fn count_tokens_before(&self, child: &Node<'r, D>, kind: &str) -> usize {
+        let start = child.range().start;
+        self.tokens().take_while(|token| token.range().end <= start).filter(|token| token.kind() == kind).count()
+    }
     /// Whether the node has a token of kind `kind`.
     fn has_token(&self, kind: &str) -> bool {
         self.tokens().any(|token| token.kind() == kind)
@@ -92,7 +140,11 @@ pub(crate) trait Tree<'r, D: Doc> {
         self.tokens().next()
     }
     /// The kind of the token in the node's `operator` field (`"+"`, `"not in"`).
-    fn operator(&self) -> Option<String>;
+    fn operator(&self) -> Option<String> {
+        self.operator_token().map(|token| token.kind().into_owned())
+    }
+    /// The token in the node's `operator` field.
+    fn operator_token(&self) -> Option<Token<'r, D>>;
     /// The token just before this node among its parent's children, if that child is a token.
     fn token_before(&self) -> Option<Token<'r, D>>;
     /// The token just after this node among its parent's children, if that child is a token.
@@ -109,8 +161,11 @@ impl<'r, D: Doc> Tree<'r, D> for Node<'r, D> {
     fn tokens(&self) -> impl Iterator<Item = Token<'r, D>> + '_ {
         self.children().filter(|child| !child.is_named()).map(|node| Token { node })
     }
-    fn operator(&self) -> Option<String> {
-        self.field("operator").map(|operator| operator.kind().into_owned())
+    fn parts(&self) -> impl Iterator<Item = Part<'r, D>> + '_ {
+        self.children().map(|node| if node.is_named() { Part::Named(node) } else { Part::Token(Token { node }) })
+    }
+    fn operator_token(&self) -> Option<Token<'r, D>> {
+        self.field("operator").map(|node| Token { node })
     }
     fn token_before(&self) -> Option<Token<'r, D>> {
         self.prev().filter(|node| !node.is_named()).map(|node| Token { node })
@@ -154,8 +209,10 @@ mod tests {
                         let tokens: Vec<_> = node.tokens().map(|t| format!("{}@{:?}", t.kind(), t.range())).collect();
                         let named: Vec<_> = node.named().map(|n| n.range()).collect();
                         let code: Vec<_> = node.named_code().map(|n| n.range()).collect();
+                        let parts: Vec<_> = node.parts().map(|p| format!("{}{}@{:?}", if p.named().is_some() { "n:" } else { "t:" }, p.kind(), p.range())).collect();
+                        let commas: Vec<_> = node.named().map(|child| node.count_tokens_before(&child, ",")).collect();
                         format!(
-                            "{} {:?} {tokens:?} {named:?} {code:?} {:?} {:?} {:?} {}",
+                            "{} {:?} {tokens:?} {named:?} {code:?} {parts:?} {commas:?} {:?} {:?} {:?} {}",
                             node.kind(),
                             node.range(),
                             node.operator(),

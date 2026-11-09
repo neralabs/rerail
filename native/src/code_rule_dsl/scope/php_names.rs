@@ -858,7 +858,7 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         "binary_expression"
             if is("right")
                 && parent
-                    .field("operator")
+                    .operator_token()
                     .is_some_and(|operator| operator.kind().eq_ignore_ascii_case("instanceof")) =>
         {
             NameKind::Class

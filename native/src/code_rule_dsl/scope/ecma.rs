@@ -827,9 +827,7 @@ impl Visitor<'_, '_> {
         let fields = self.fields();
         self.builder.push(ScopeKind::Block, node.range());
         let left = field(node, fields.left);
-        let declared = node.children().find(|child| {
-            !child.is_named() && matches!(child.kind().as_ref(), "var" | "let" | "const")
-        });
+        let declared = node.tokens().find(|token| matches!(token.kind().as_ref(), "var" | "let" | "const"));
         if let Some(left) = &left {
             let site = site(Form::For, node);
             match declared.map(|keyword| keyword.kind() == "var") {
@@ -1009,9 +1007,7 @@ impl Visitor<'_, '_> {
     /// global augmentation like `declare global { }`: it binds no name, nor do its declarations.
     fn module<D: Doc>(&mut self, node: &Node<'_, D>) -> Visit {
         let fields = self.fields();
-        let keyword = node.children().any(|child| {
-            !child.is_named() && matches!(child.kind().as_ref(), "namespace" | "module")
-        });
+        let keyword = node.has_any_token(&["namespace", "module"]);
         if !keyword {
             self.builder
                 .push(ScopeKind::GlobalAugmentation, node.range());
