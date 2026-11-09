@@ -1864,19 +1864,27 @@ fn run_observed(
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     // A file-local part reading the run's options (`file_local::option_input`) is memoised under them too.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the memo's program and the components' plan".into()));
-    let memo_program = {
-        let digest = memo::program_digest(&split.local);
-        let reads_options = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(&a.rel));
-        let digest = if reads_options { memo::with_options(digest, options) } else { digest };
-        // And under the rows of the phases' exports it reads, which are not in its text.
-        // By their versions when the phase store numbers them (no row read), else by their rows.
-        let reads_phased: BTreeSet<&str> = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).filter(|r| phased.contains_key(*r) || phase_versions.contains_key(*r)).collect();
+    // A digest under the rows of the phases' exports that `rules` read, which are not in the program's text: by their
+    // versions when the phase store numbers them (no row read), else by their rows.
+    let under_phased = |digest: [u8; 32], rules: &[front::Rule]| -> [u8; 32] {
+        let reads_phased: BTreeSet<&str> = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).filter(|r| phased.contains_key(*r) || phase_versions.contains_key(*r)).collect();
         let (versioned, by_rows): (Vec<&str>, Vec<&str>) = reads_phased.iter().partition(|r| phase_versions.contains_key(**r));
         let digest = if versioned.is_empty() { digest } else { memo::with_options(digest, &serde_json::json!(versioned.iter().map(|r| format!("{r}@{}", phase_versions[*r].now)).collect::<Vec<_>>())) };
         if by_rows.is_empty() { digest } else { memo::with_rows(digest, by_rows.iter().map(|r| (*r, &phased[*r]))) }
     };
+    let memo_program = {
+        let digest = memo::program_digest(&split.local);
+        let reads_options = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(&a.rel));
+        let digest = if reads_options { memo::with_options(digest, options) } else { digest };
+        under_phased(digest, &split.local.rules)
+    };
+    // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's
+    // `types__attr`, `types__tmap`: a library's stubs, which no component's documents hold), so the plan is digested
+    // under those as well. Coarse: an export that changes misses every component, not only those that read the rows
+    // that changed.
+    let cross_digest = under_phased(memo_program, &split.cross.rules);
     let cross_plan = match &cross_declared {
-        Some(declared) => cross_memo::split(&mut split.cross, declared, &memo_program, &split.same_doc)?,
+        Some(declared) => cross_memo::split(&mut split.cross, declared, &cross_digest, &split.same_doc)?,
         None => None,
     };
     crate::code_rule_dsl::logic::profile::decision("cross-file memo (decision 0076)", || match (&cross_declared, &cross_plan) {
