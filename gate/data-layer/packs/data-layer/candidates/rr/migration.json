@@ -2318,7 +2318,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
-      "sha256": "f7022ae92ca6e15b15128c38c79ecc557998c3b4e3738e7134e630e89f842904",
+      "sha256": "e9f1202beae0703a78bea58ddd016cde1e9f3009d005c2312ce1ce2043e6df3d",
       "origin": "authored",
       "repairs": [
         {
@@ -2340,6 +2340,11 @@
           "before": "f9ec85d71220c80e89b9e00b8bf5178adfa827adffe5c2e8eea889c40ac13c97",
           "after": "f7022ae92ca6e15b15128c38c79ecc557998c3b4e3738e7134e630e89f842904",
           "reason": "Retain the caller directory demand ordinal in results; repeated and overlapping roots share parsing but preserve duplicate observations."
+        },
+        {
+          "before": "f7022ae92ca6e15b15128c38c79ecc557998c3b4e3738e7134e630e89f842904",
+          "after": "e9f1202beae0703a78bea58ddd016cde1e9f3009d005c2312ce1ce2043e6df3d",
+          "reason": "Implement native CLI discovery, signature verification and exact report formatting; nine original CLI assertions pass."
         }
       ]
     },
@@ -2966,7 +2971,7 @@
       "legacySha256": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
-      "ruleSha256": "f7022ae92ca6e15b15128c38c79ecc557998c3b4e3738e7134e630e89f842904"
+      "ruleSha256": "e9f1202beae0703a78bea58ddd016cde1e9f3009d005c2312ce1ce2043e6df3d"
     },
     {
       "check": "raw_execute_regression",

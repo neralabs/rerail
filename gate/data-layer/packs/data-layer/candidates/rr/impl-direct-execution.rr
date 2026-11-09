@@ -145,3 +145,38 @@ IdeFile(@place("",0),p,@replace_all(p,"/","\u0000")) :- option("entryPoint","_pr
 .violation IdeFinding(at: span, pattern: symbol, snippet: symbol) code "direct_execution" "{pattern}: {snippet}"
 .severity IdeFinding error
 IdeFinding(@place(output,l),pattern,@slice(text,0,70)) :- !option("entryPoint",_), ide_event(d,p,_,_,l,pattern), ide_output_path(p,output), ide_line(d,l,text).
+
+// CLI discovery, verification and formatting use typed batches. The frontend only performs requested I/O.
+#include "data-layer/signing.rr"
+allow_sig("ide",name,sig) :- option("entryPoint","_verify_allowlist"), option("linterName",name), option("signature",sig).
+allow_entry("ide",entry) :- option("entryPoint","_verify_allowlist"), option_item("allowlistEntries",_,entry).
+.violation IdeVerification(at: span, value: number, stderr: symbol) code "IDE_VERIFY" "verification result"
+IdeVerification(@place("",0),1,"") :- option("entryPoint","_verify_allowlist"), allow_status("ide","valid").
+IdeVerification(@place("",0),0,cat("FAIL: WARNING: Allowlist for ",name," is ",label,". Sign with --sign-allowlist.\n")) :- option("entryPoint","_verify_allowlist"), allow_sig("ide",name,sig), allow_status("ide","unsigned"), (sig = "NEEDS_SIGNING", label = "needs signing" ; sig != "NEEDS_SIGNING", label = "unsigned").
+IdeVerification(@place("",0),0,cat("FAIL: Allowlist signature verification failed for ",name,": ",detail,"\n")) :- option("entryPoint","_verify_allowlist"), allow_sig("ide",name,sig), allow_status("ide","invalid"), allow_message("ide",message), nera_key(key), detail = @ed25519_error(key,message,sig).
+
+.decl ide_cli_root(name: symbol, priority: number)
+ide_cli_root("impl",0) :- env("ide.cli.root",root), dir_entry(root,"impl",1).
+ide_cli_root("data_layer",1) :- env("ide.cli.root",root), dir_entry(root,"data_layer",1).
+ide_cli_root("_internal",2) :- env("ide.cli.root",root), dir_entry(root,"_internal",1).
+ide_cli_root(name,3) :- env("ide.cli.root",root), dir_entry(root,name,1), match_all("\\Al\\d{4}_.+",name).
+.violation IdeDirectory(at: span, priority: number, path: symbol) code "IDE_DIRECTORY" "{path}"
+IdeDirectory(@place("",0),priority,name) :- ide_cli_root(name,priority).
+
+.decl ide_cli_row(index: number, path: symbol, line: symbol, text: symbol)
+ide_cli_row(i,p,l,s) :- option("entryPoint","_cli_format"), option_item("reportPaths",i,p), option_item("reportLines",i,l), option_item("reportTexts",i,s).
+.decl ide_cli_file(path: symbol, display: symbol, order: symbol)
+ide_cli_file(p,relative,@replace_all(p,"/","\u0000")) :- ide_cli_row(_,p,_,_), option("projectRoot",root), prefix(cat(root,"/"),p), relative = @slice(p,strlen(root)+1,strlen(p)).
+ide_cli_file(p,p,@replace_all(p,"/","\u0000")) :- ide_cli_row(_,p,_,_), option("projectRoot",root), !prefix(cat(root,"/"),p).
+.violation IdeCliOutput(at: span, phase: number, path_order: symbol, ordinal: number, text: symbol) code "IDE_OUTPUT" "{text}"
+IdeCliOutput(@place("",0),0,"",0,"\nDirect execution allowlist failed signature verification.\nIf the changes are legitimate, sign with:\n  uv run python scripts/lint_impl_direct_execution.py --sign-allowlist\n") :- option("entryPoint","_cli_signature_failure").
+IdeCliOutput(@place("",0),0,"",0,cat("Error: impl/ directory not found and no production directories found under ",root,"\n")) :- option("entryPoint","_cli_missing"), option("projectRoot",root).
+IdeCliOutput(@place("",0),0,"",0,"No direct execution violations found.\n") :- option("entryPoint","_cli_format"), !ide_cli_row(_,_,_,_).
+IdeCliOutput(@place("",0),0,"",0,cat("======================================================================\nDIRECT EXECUTION VIOLATIONS: ",to_string(n),"\n======================================================================\n\n")) :- option("entryPoint","_cli_format"), ide_cli_row(_,_,_,_), n = count : { ide_cli_row(_,_,_,_) }.
+IdeCliOutput(@place("",0),1,order,0,cat(display,": ",to_string(n)," violation(s)\n")) :- ide_cli_file(p,display,order), n = count : { ide_cli_row(_,p,_,_) }.
+IdeCliOutput(@place("",0),1,order,i+1,cat("  ",line,": ",@slice(text,0,70),"\n")) :- option("cliVerbose","1"), ide_cli_file(p,_,order), ide_cli_row(i,p,line,text).
+IdeCliOutput(@place("",0),1,order,n+2,"\n") :- option("cliVerbose","1"), ide_cli_file(p,_,order), n = max i : { ide_cli_row(i,p,_,_) }.
+IdeCliOutput(@place("",0),2,"",0,"\n----------------------------------------------------------------------\nThese locations call _fetchone()/_fetchall() directly.\nThey should route through ServerPlan for consistent batching.\n\nTo fix:\n  1. Use query builder .execute() which auto-delegates to ServerPlan\n  2. Use txn.plan() context for explicit batching\n  3. If infrastructure code, use conn.plan() with DDL_EXECUTE\n----------------------------------------------------------------------\n") :- option("entryPoint","_cli_format"), ide_cli_row(_,_,_,_).
+.violation IdeCliExit(at: span, status: number, count: number) code "IDE_EXIT" "status"
+IdeCliExit(@place("",0),1,0) :- option("entryPoint",entry), (entry = "_cli_missing" ; entry = "_cli_signature_failure").
+IdeCliExit(@place("",0),0,n) :- option("entryPoint","_cli_format"), n = count : { ide_cli_row(_,_,_,_) }.

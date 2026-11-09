@@ -23,7 +23,7 @@ class Backend:
 
 class Keywords(unittest.TestCase):
     def adapter(self):
-        backend=Backend();module=SimpleNamespace(ALLOWED_FILES={'impl/allowed.py'},PROJECT_ROOT=Path('/project'))
+        backend=Backend();module=SimpleNamespace(ALLOWED_FILES={'impl/allowed.py'},PROJECT_ROOT=Path('/project'),lint_signing=SimpleNamespace(),lint_ratchet=SimpleNamespace())
         install(backend,module);return backend,module
 
     def test_allowlist_filepath_keyword(self):
