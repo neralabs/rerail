@@ -109,7 +109,7 @@ export function listRepositoryFiles(root: string): string[] {
 function readableManifest(root: string, path: string): boolean {
   try {
     const info = lstatSync(path);
-    return info.isFile() && info.size <= MAX_MANIFEST_BYTES && withinCheckout(checkoutRealpath()(root), checkoutRealpath()(dirname(path)));
+    return info.isFile() && info.size <= MAX_MANIFEST_BYTES && withinCheckout(checkoutRealpath(root), checkoutRealpath(dirname(path)));
   } catch {
     // A manifest that vanished or cannot be inspected says nothing about the stack.
     return false;

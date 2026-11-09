@@ -1969,7 +1969,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
-    const cwd = checkoutRealpath()(session.cwd);
+    const cwd = checkoutRealpath(session.cwd);
     const known = recordCheckout(this.#catalogs.database, cwd);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);

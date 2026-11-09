@@ -346,9 +346,8 @@ export const operations: readonly Operation[] = [
       if (session !== null) {
         try {
           // A host may report a directory below its launch root; presence and identity follow the session's canonical cwd.
-          const realpath = checkoutRealpath();
-          const cwd = realpath(session.session.cwd);
-          if (session.session.host !== input.host || !withinCheckout(cwd, realpath(input.repository))) session = null;
+          const cwd = checkoutRealpath(session.session.cwd);
+          if (session.session.host !== input.host || !withinCheckout(cwd, checkoutRealpath(input.repository))) session = null;
           else repository = cwd;
         } catch { session = null; }
       }

@@ -79,7 +79,7 @@ function ancestors(path: string): string[] {
   for (let folder = dirname(path); folder !== folders.at(-1); folder = dirname(folder)) folders.push(folder);
   return folders;
 }
-function canonicalWorkspace(path: string): string { try { return checkoutRealpath()(path); } catch { return resolve(path); } }
+function canonicalWorkspace(path: string): string { try { return checkoutRealpath(path); } catch { return resolve(path); } }
 function controls(
   databasePath: string,
   row: { cwd: string; endedAt: number | null },

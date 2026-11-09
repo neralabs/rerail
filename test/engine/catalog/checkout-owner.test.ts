@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
-import { checkoutRealpath, physicalPath } from "../../../src/engine/catalog/checkout-control.js";
+import { physicalPath } from "../../../src/engine/catalog/checkout-control.js";
 import { CheckoutCatalogs } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 
@@ -47,12 +47,6 @@ describe("CheckoutOwners", () => {
     recordCheckout(catalogs.database, nested);
 
     expect(owners.ownerOf(join(outer, "src", "a.py"))).toEqual({ checkoutRoot: nested, path: "a.py" });
-  });
-
-  it("keys checkouts through the realpath that spells names as stored on Windows", () => {
-    expect(checkoutRealpath("win32")).toBe(realpathSync.native);
-    expect(checkoutRealpath("darwin")).toBe(realpathSync);
-    expect(checkoutRealpath("linux")).toBe(realpathSync);
   });
 
   it.runIf(process.platform === "win32")("owns a file spelled with a lower-case drive letter, as VS Code spells a session's folder", async () => {

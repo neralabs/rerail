@@ -131,7 +131,7 @@ function checkoutNotFound(path: string): ApiError {
 export function checkoutAt(stores: RerailApiStores, path: string, write: boolean): { checkout: CheckoutContext; folder: string } {
   let physical: string;
   try {
-    physical = checkoutRealpath()(path);
+    physical = checkoutRealpath(path);
   } catch {
     throw checkoutNotFound(path);
   }
