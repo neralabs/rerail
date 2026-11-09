@@ -229,16 +229,22 @@ impl ProgramAnalysis {
             reason: if program.lattice.contains_key(name) { "A lattice has one value per declared key" } else { "A logical set is unique by its complete tuple; this does not prove unique rule witnesses" }.into(),
             proof: None,
         })).collect::<Vec<_>>();
-        // Only a single rule without additional row producers can establish a narrower key.
+        // Only a single rule without additional row producers can establish a narrower key. Counted once: a count
+        // per rule per pass was quadratic in the rules (14,800 in a maintained program).
+        let mut producers: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for r in &program.rules {
+            *producers.entry(r.head.rel.as_str()).or_default() += 1;
+        }
+        let inputs: std::collections::HashSet<&str> = program.inputs.iter().map(String::as_str).collect();
         loop {
             let mut changed = false;
             for rule in &program.rules {
                 let name = &rule.head.rel;
-                if program.inputs.contains(name)
+                if inputs.contains(name.as_str())
                     || program.facts.get(name).is_some_and(|v| !v.is_empty())
                     || program.natives.contains_key(name)
                     || program.lattice.contains_key(name)
-                    || program.rules.iter().filter(|r| r.head.rel == *name).count() != 1
+                    || producers.get(name.as_str()) != Some(&1)
                 {
                     continue;
                 }
