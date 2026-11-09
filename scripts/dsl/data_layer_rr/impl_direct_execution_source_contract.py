@@ -48,7 +48,9 @@ CASES=[case('empty',''),case('clean','pass\n'),
     case('source-reads-disk','obj.fetchall()\n',entry='scan_source',callSource='obj._fetchone()'),
     case('fts-source-ignores-buffer','obj._execute_direct_internal()\n',path='impl/sqlite/fts/manager.py',entry='scan_fts_manager_source',callSource='pass'),
     case('form-feed','\fobj._fetchone()\n'),case('unicode-separator-in-string','"line\u2028text"; obj._fetchone()\n'),
-    case('exact-trim','\tobj._fetchone()   \n'),case('long-line','obj._fetchone('+repr('x'*400)+')\n')]
+    case('exact-trim','\tobj._fetchone()   \n'),case('long-line','obj._fetchone('+repr('x'*400)+')\n'),
+    case('logical-separator-inside-string','"prefix\u2028obj._fetchone()"\n'),
+    case('logical-separator-inside-comment','# prefix\u2028obj._fetchone()\n')]
 
 
 def source_case(module,case):
