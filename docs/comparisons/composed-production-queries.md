@@ -6,7 +6,8 @@ This change fixes the statement boundary. It does not establish performance pari
 
 ## Integration and workstream alignment
 
-Merge `abf75bb79` includes integration hub `a27994c6a` and executor ancestor `735bc4422`.
+Merge `abf75bb79` includes integration hub `a27994c6a`.
+Merge `b34b0376b` records executor tip `735bc4422`; its contents were already present, so this merge changes no files.
 The merge preserves demanded aggregate lowering, native semantic locality, parser caching, planner sketches, and retained relation statistics.
 The original SSC worktree and Tim's branch remain unchanged.
 

@@ -476,3 +476,8 @@ The earlier timing series used another merged snapshot and was not interleaved; 
 
 The final source and binary hashes, emitted SQL, EXPLAIN output, cursor counters, failure evidence, and results are checked in under `benchmark/async-family-integration/composed`.
 The remaining SQL VM regression and the two-query whole-corpus target are explicit open items, not passing gates.
+
+Implementation commit `90398a0d0` and the integration merge were published to the owned comparison branch.
+The final ancestry check found that the executor tip's contents were present, but its merge commit was not an ancestor.
+Merge `b34b0376b` records the requested executor tip `735bc4422` and changes no files.
+The tested source hashes remain unchanged. Both requested committed tips now appear in branch ancestry.
