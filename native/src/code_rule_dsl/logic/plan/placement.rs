@@ -147,6 +147,11 @@ thread_local! {
     static DEVICE: Cell<bool> = const { Cell::new(false) };
 }
 
+/// Whether this thread's run may use the device.
+pub(in crate::code_rule_dsl) fn device() -> bool {
+    DEVICE.with(Cell::get)
+}
+
 /// Sets whether this thread's run may place strata on the device; the previous value, to restore.
 pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
     DEVICE.with(|d| d.replace(on))

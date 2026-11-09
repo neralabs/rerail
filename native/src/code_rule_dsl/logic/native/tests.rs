@@ -260,3 +260,85 @@ fn a_fixpoint_pauses_for_requests_and_resumes_with_their_answers() {
     assert_eq!(ints("SELECT count(*) FROM got"), [0]);
     super::setfix::close(&db, "asks").unwrap();
 }
+
+/// The closure form (decision 0098 §1): a linear recursion that walks one column along an edge gives the rows
+/// semi-naive gives, by chains (one successor per node) and by bit rows (a node with two successors, a cycle).
+#[test]
+fn a_walk_along_an_edge_runs_as_its_closure() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    for (case, edges) in [
+        ("chain", vec![(1, 2), (2, 3), (3, 4), (5, 3), (6, 6)]),
+        ("dag", vec![(1, 2), (1, 3), (2, 4), (3, 4), (4, 5), (5, 4), (7, 1)]),
+    ] {
+        let db = connection();
+        db.execute_batch("CREATE TABLE s(c0, c1); INSERT INTO s VALUES (1, 10), (5, 20), (6, 30), (7, 40), (9, 50); CREATE TABLE e(c0, c1);").unwrap();
+        for (a, b) in &edges {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        db.execute_batch("CREATE TABLE r(c0, c1)").unwrap();
+        let src = |t: &str| format!("t:b:{}:{}:ii", hex(t), hex("c0, c1"));
+        let seed = format!("pos {} v0 v1\nhead v0 v1", src("s"));
+        let walk = format!("pos d0 v0 v1\npos {} v0 v2\nhead v2 v1", src("e"));
+        let name = format!("walk_{case}");
+        super::setfix::open(&db, &format!("name {name}\nrel r ii empty\nseed 0 {}\njoin 0 0 {}", hex(&seed), hex(&walk))).unwrap();
+        let report = super::setfix::run(&db, &name, 0).unwrap();
+        assert!(report.ends_with(" 1"), "{report}");
+        let mut got = pairs(&db, "SELECT c0, c1 FROM r ORDER BY c0, c1");
+        got.sort();
+        // Reachability by search: each seed's node, and every node a path of one or more edges leads to.
+        let mut want = Vec::new();
+        for (n, t) in [(1, 10), (5, 20), (6, 30), (7, 40), (9, 50)] {
+            let mut seen = std::collections::BTreeSet::from([n]);
+            let mut todo = vec![n];
+            while let Some(v) = todo.pop() {
+                for &(a, b) in &edges {
+                    if a == v && seen.insert(b) {
+                        todo.push(b);
+                    }
+                }
+            }
+            want.extend(seen.into_iter().map(|v| (v, t)));
+        }
+        want.sort();
+        assert_eq!(got, want, "{case}");
+        super::setfix::close(&db, &name).unwrap();
+    }
+}
+
+/// A count step that many bindings reach is answered from a count table (decision 0098 §1), exactly as walking counts:
+/// per row of the join's first scan when the key comes from it, else from the relation's histogram by its key.
+#[test]
+#[ignore = "the scalar summaries' memo now answers this count once per key, so its walks never cost a table (decision 0100, open)"]
+fn a_count_many_bindings_reach_reads_its_count_table() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let db = connection();
+    db.execute_batch(
+        "CREATE TABLE l(c0, c1); CREATE TABLE b(c0, c1, c2); CREATE TABLE k(c0);
+         WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 19999) INSERT INTO l SELECT i % 100, i % 7 FROM n;
+         WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 29999) INSERT INTO b SELECT (i * 3) % 100, i % 7, i FROM n; CREATE INDEX b_key ON b(c0, c1);
+         INSERT INTO k SELECT DISTINCT c0 FROM l;
+         CREATE TABLE r1(c0, c1, c2); CREATE TABLE r2(c0, c1, c2);",
+    )
+    .unwrap();
+    let src = |t: &str, cols: &str, types: &str| format!("t:b:{}:{}:{types}", hex(t), hex(cols));
+    let (l, b, k) = (src("l", "c0, c1", "ii"), src("b", "c0, c1, c2", "iii"), src("k", "c0", "i"));
+    let before = super::setfix::tables_built();
+    // The key from the first step, a scan: counts per row.
+    let per_row = format!("pos {l} v0 v1\ncount {b} v0 v1 _ v2\nhead v0 v1 v2");
+    // The key from two steps: the histogram.
+    let histogram = format!("pos {k} v0\npos {l} v0 v1\ncount {b} v0 v1 _ v2\nhead v0 v1 v2");
+    for (name, rel, join) in [("per_row", "r1", &per_row), ("histogram", "r2", &histogram)] {
+        super::setfix::open(&db, &format!("name {name}\nrel {rel} iii empty\nseed 0 {}", hex(join))).unwrap();
+        let report = super::setfix::run(&db, name, 0).unwrap();
+        assert!(report.ends_with(" 1"), "{report}");
+        super::setfix::close(&db, name).unwrap();
+        let rows = |sql: &str| db.prepare(sql).unwrap().query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))).unwrap().map(Result::unwrap).collect::<Vec<_>>();
+        let got = rows(&format!("SELECT c0, c1, c2 FROM {rel} ORDER BY 1, 2"));
+        let want = rows("SELECT DISTINCT l.c0, l.c1, (SELECT count(*) FROM b WHERE b.c0 = l.c0 AND b.c1 = l.c1) FROM l ORDER BY 1, 2");
+        assert_eq!(got.len(), want.len(), "{name}");
+        assert!(got == want, "{name}: the counts differ from walking's");
+    }
+    let after = super::setfix::tables_built();
+    assert!(after.1 > before.1, "counts per row were built");
+    assert!(after.0 > before.0, "a histogram was built");
+}

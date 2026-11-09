@@ -11,8 +11,8 @@
 //! - **Atoms and terms:** `atom(p, a, rel, neg, gated)`, `arg(p, a, i, t)`, `term(p, t, kind, n, s)` (kind `var`,
 //!   `wild`, `int`, `str`, `top` or `call`) and `call_arg(p, t, i, u)`.
 //! - **Declarations:** `relation(p, rel, arity)`, `decl(p, rel, i, col, ty)`, `nullary(p, rel)`, `lattice(p, rel,
-//!   keys, ty)` (with `lattice_merge`, `lattice_widen`), `input(p, k, rel)`, `output(p, k, rel)`, `kindset(p, set)`
-//!   and `kindset_kind(p, set, k, kind)`.
+//!   keys, ty)` (with `lattice_merge`, `lattice_widen`), `input(p, k, rel)`, `output(p, k, rel)`, `kindset(p, set)`,
+//!   `kindset_kind(p, set, k, kind)` and `qualifier(p, rel, word)` (`.decl r(…) inline` and its kin).
 //! - **Facts:** `fact_row(p, rel, row, width)` and `fact(p, rel, row, i, kind, n, s)`.
 //! - **What preparing made:** `demand`, `demand_dropped`, `magic_extras`, `magic_report` (with `report_list`),
 //!   `gate` (with `gate_src`, `gate_quiet`, `gate_dep`), `native_dfs` (with `native_roots`), `native_match` (with
@@ -94,6 +94,8 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("ast_pattern", &["p:sym", "pattern:sym"]),
         // `answers`: each request relation's answering programs, in order.
         ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
+        // `qualifiers`: `.decl r(…) inline` and its kin (decision 0099).
+        ("qualifier", &["p:sym", "rel:sym", "word:sym"]),
     ];
     SCHEMA
         .iter()
@@ -221,6 +223,11 @@ impl Writer<'_> {
         }
         for rel in &prog.nullary {
             self.row("nullary", vec![s(rel)]);
+        }
+        for (rel, words) in &prog.qualifiers {
+            for w in words {
+                self.row("qualifier", vec![s(rel), s(w)]);
+            }
         }
         for (rel, l) in &prog.lattice {
             self.row("lattice", vec![s(rel), n(l.keys), s(&l.ty)]);
@@ -522,6 +529,9 @@ impl<'a> Reader<'a> {
             prog.decls.insert(rel, cols);
         }
         prog.nullary = self.get("nullary").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
+        for row in self.get("qualifier") {
+            prog.qualifiers.entry(text(&row[0])?).or_default().insert(text(&row[1])?);
+        }
         let merges = self.by_id_text("lattice_merge")?;
         let widens = self.by_id_text("lattice_widen")?;
         for row in self.get("lattice") {
