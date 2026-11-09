@@ -1652,6 +1652,15 @@ impl TapeImage {
     }
 }
 
+/// How a restored tree is held in memory (RER-131).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Shape {
+    /// Every node in the records (a named-only image is unfolded).
+    Full,
+    /// Named nodes and kept tokens in the records; the other tokens recognized on demand.
+    Named,
+}
+
 #[derive(Clone, Copy)]
 struct Rec {
     kind: u16,
@@ -1670,6 +1679,8 @@ struct Rec {
     /// The first child under its field (P's `rec` flag bit 4); read by `index_image`.
     #[allow(dead_code)]
     first_field: bool,
+    /// A named-only tape keeps all of this node's tokens (`CODE_TOKENS`): none is recognized.
+    tokens_kept: bool,
 }
 
 #[derive(Clone)]
@@ -1702,6 +1713,10 @@ pub(super) struct TapeDoc {
     /// Restored from a named-only image (RER-131): `image` is the full tree re-packed, not the
     /// bytes the store holds, so the device takes it from the host.
     named_only: bool,
+    /// Named-only in memory (RER-131 option B): the records hold the named nodes and the tokens
+    /// the fold kept, and the node API recognizes the other tokens from the source on demand
+    /// (`tokens::TokenGrammar::sequence`). `None`: the records hold every node.
+    tokens: Option<Arc<tokens::TokenGrammar>>,
 }
 
 #[derive(Clone)]
@@ -1896,7 +1911,29 @@ impl TapeDoc {
         lines: Arc<LineTable>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
+        Self::restore_tree_as(source, grammar, image, lines, Shape::Full, budget)
+    }
+
+    /// The document of `image`'s own tree, in memory as `shape` asks.
+    fn restore_tree_as(
+        source: Arc<String>,
+        grammar: Arc<Grammar>,
+        image: &TapeImage,
+        lines: Arc<LineTable>,
+        shape: Shape,
+        budget: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
         checked(budget)?;
+        if image.widths[0] & NAMED_ONLY != 0 && shape == Shape::Named {
+            let mut plain = image.clone();
+            plain.widths[0] &= !NAMED_ONLY;
+            let language = grammar.kinds.grammar().ok_or("a named-only tape of a grammar tree-sitter does not parse")?;
+            let automata = tokens::TokenGrammar::of(grammar.lang, language).ok_or("a named-only tape without its grammar's automata")?;
+            let mut doc = Self::restore_tree(source, grammar, &plain, lines, budget)?;
+            doc.image = Arc::new(image.clone());
+            doc.tokens = Some(automata);
+            return Ok(doc);
+        }
         if image.widths[0] & NAMED_ONLY != 0 {
             // RER-131: stored named-only, restored whole (option A), so every reader, and the
             // device, which reads `image`, sees the full tree.
@@ -2029,6 +2066,7 @@ impl TapeDoc {
                 error,
                 missing,
                 first_field,
+                tokens_kept: code.flags & CODE_TOKENS != 0,
             });
             parent_stack.push((index, 0));
         }
@@ -2075,6 +2113,7 @@ impl TapeDoc {
             image: Arc::new(image.clone()),
             digest: Arc::default(),
             named_only: false,
+            tokens: None,
         })
     }
 
@@ -2191,6 +2230,42 @@ impl TapeDoc {
         self.host
             .as_ref()
             .map_or(self.grammar.lang, |link| link.host.grammar.lang)
+    }
+
+    /// Named-only in memory (RER-131 option B), restored from a named-only image without unfolding:
+    /// the records hold named nodes and kept tokens; the node API serves the others.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn restore_named(
+        source: Arc<String>,
+        grammar: Arc<Grammar>,
+        image: &TapeImage,
+        budget: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
+        let lines = Arc::new(LineTable::new(&source, Terminators::of(grammar.lang)));
+        Self::restore_tree_as(source, grammar, image, lines, Shape::Named, budget)
+    }
+
+    /// Whether the records leave tokens out (RER-131 option B): readers of preorder records see
+    /// named nodes and kept tokens only, and read the others through [`Self::transducer_tokens`].
+    pub(crate) fn is_named_only_in_memory(&self) -> bool {
+        self.tokens.is_some()
+    }
+
+    /// `node`'s children in source order, recognized tokens included: [`tokens::Item::Child`]
+    /// holds a record index.
+    pub(super) fn transducer_parts(&self, node: u32) -> Vec<tokens::Item> {
+        self.node(node).items()
+    }
+
+    /// The tokens of `node` the records leave out, in order: (kind, field, span).
+    pub(super) fn transducer_tokens(&self, node: u32) -> Vec<(u16, u16, Range<usize>)> {
+        self.transducer_parts(node)
+            .into_iter()
+            .filter_map(|item| match item {
+                tokens::Item::Token { kind, field, start, end } => Some((kind, field, start as usize..end as usize)),
+                tokens::Item::Child(_) => None,
+            })
+            .collect()
     }
 
     /// The documents `image` encodes over `source`, with a fresh line table: a file's documents,
@@ -2455,38 +2530,147 @@ pub(super) struct TapeNode<'a> {
     points: &'a Points,
     kind_aliases: &'a [(String, bool)],
     kind_overrides: &'a [(u32, u16)],
+    source: &'a str,
+    /// Set where the records leave tokens out (`TapeDoc::tokens`).
+    tokens: Option<&'a tokens::TokenGrammar>,
+    /// The record: this node's, or a token's parent's.
     index: u32,
+    /// A token the records leave out, recognized from the source (RER-131 option B).
+    token: Option<Tok>,
 }
+
+/// A recognized token: its position among its parent's children, kind, field and span.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Tok {
+    slot: u32,
+    kind: u16,
+    field: u16,
+    start: u32,
+    end: u32,
+}
+
+/// The node-id bit of a recognized token (`SgNode::node_id`): above every record index, below
+/// the bit `literal` reserves for sub-trees.
+pub(super) const TOKEN_ID_BIT: usize = 1 << 62;
 
 impl<'a> TapeNode<'a> {
     /// P's: the field this node fills in its parent (P's SQL anchor engine, test-only).
     #[cfg(test)]
     pub(super) fn incoming_field(&self) -> u16 {
-        self.rec().field
+        self.field_id()
     }
 
     /// Whether this is the first direct child in `field`, as `child_by_field_id` selects it.
     pub(super) fn is_first_field(&self, field: u16) -> bool {
-        field != 0 && self.rec().field == field && self.rec().first_field
+        self.token.is_none() && field != 0 && self.rec().field == field && self.rec().first_field
     }
 
     fn rec(&self) -> &Rec {
         &self.nodes[self.index as usize]
     }
     fn at(&self, index: u32) -> Self {
-        Self { index, ..*self }
+        Self { index, token: None, ..*self }
+    }
+    fn field_id(&self) -> u16 {
+        self.token.map_or_else(|| self.rec().field, |token| token.field)
+    }
+    fn span(&self) -> (u32, u32) {
+        self.token.map_or_else(|| (self.rec().start, self.rec().end), |token| (token.start, token.end))
     }
     fn kind_alias(&self) -> Option<&'a (String, bool)> {
+        if self.token.is_some() {
+            return None;
+        }
         self.kind_overrides
             .binary_search_by_key(&self.index, |&(index, _)| index)
             .ok()
             .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
     }
+    /// The record at `index` as the token view reads it.
+    fn describe(&self, index: u32) -> tokens::Child<'a> {
+        let rec = &self.nodes[index as usize];
+        tokens::Child {
+            start: rec.start,
+            end: rec.end,
+            kind: rec.kind,
+            field: rec.field,
+            alias: self.at(index).kind_alias(),
+            error: rec.error,
+            extra: rec.extra,
+        }
+    }
+    /// Whether this record's children include tokens the records leave out.
+    fn recognizes(&self) -> bool {
+        self.token.is_none()
+            && self.tokens.is_some_and(|grammar| grammar.recognizes(&self.describe(self.index), self.rec().tokens_kept))
+    }
+    /// This record's stored children, in order.
+    fn records(&self) -> Children<'a> {
+        Children { node: self.at(self.index), next: self.rec().first, remaining: self.rec().children as usize }
+    }
+    /// This node's children in source order, recognized tokens included.
+    fn items(&self) -> Vec<tokens::Item> {
+        if self.token.is_some() {
+            return Vec::new();
+        }
+        let kids: Vec<u32> = self.records().map(|child| child.index).collect();
+        let Some(grammar) = self.tokens.filter(|_| self.recognizes()) else {
+            return kids.into_iter().map(tokens::Item::Child).collect();
+        };
+        let described: Vec<_> = kids.iter().map(|&kid| self.describe(kid)).collect();
+        let mut items = Vec::with_capacity(kids.len() * 2);
+        // The fold kept every token it could not rebuild this same way, so this cannot fail on a
+        // tape restore accepted; a failure reads the stored children alone.
+        if grammar.sequence(&self.describe(self.index), self.rec().tokens_kept, &described, self.source.as_bytes(), &mut items).is_err() {
+            return kids.into_iter().map(tokens::Item::Child).collect();
+        }
+        for item in &mut items {
+            if let tokens::Item::Child(position) = item {
+                *position = kids[*position as usize];
+            }
+        }
+        items
+    }
+    /// This node's children in source order, recognized tokens included.
+    fn parts(&self) -> Vec<Self> {
+        self.items()
+            .into_iter()
+            .enumerate()
+            .map(|(slot, item)| match item {
+                tokens::Item::Child(index) => self.at(index),
+                tokens::Item::Token { kind, field, start, end } => Self {
+                    token: Some(Tok { slot: slot as u32, kind, field, start, end }),
+                    ..self.at(self.index)
+                },
+            })
+            .collect()
+    }
+    /// This node's parent, and its siblings with tokens (`Some` where the parent recognizes).
+    fn siblings(&self) -> Option<(Self, Vec<Self>, usize)> {
+        let parent = self.parent()?;
+        if !parent.recognizes() {
+            return None;
+        }
+        let parts = parent.parts();
+        let position = parts.iter().position(|part| part.same(self))?;
+        Some((parent, parts, position))
+    }
+    fn same(&self, other: &Self) -> bool {
+        self.index == other.index && self.token.map(|t| t.slot) == other.token.map(|t| t.slot)
+    }
     /// The structurally adjacent sibling, for traversal; `SgNode::next` follows Tree-sitter.
     pub(super) fn next_sibling(&self) -> Option<Self> {
+        if self.token.is_some() || self.parent().is_some_and(|parent| parent.recognizes()) {
+            let (_, parts, position) = self.siblings()?;
+            return parts.get(position + 1).copied();
+        }
         (self.rec().next != NONE).then(|| self.at(self.rec().next))
     }
     fn prev_sibling(&self) -> Option<Self> {
+        if self.token.is_some() || self.parent().is_some_and(|parent| parent.recognizes()) {
+            let (_, parts, position) = self.siblings()?;
+            return position.checked_sub(1).map(|at| parts[at]);
+        }
         (self.rec().prev != NONE).then(|| self.at(self.rec().prev))
     }
     /// Where ast-grep's `next_all`/`prev_all` start: a cursor on the parent (the root for the
@@ -2499,8 +2683,8 @@ impl<'a> TapeNode<'a> {
     /// siblings end at or before its start, that is one or two steps, not a scan from the
     /// parent's first child.
     fn walk_anchor(&self) -> Option<Self> {
-        let start = self.rec().start;
-        let ends_after = |node: &Self| node.rec().end > start;
+        let start = self.span().0;
+        let ends_after = |node: &Self| node.span().1 > start;
         let mut anchor = match self.parent() {
             Some(_) => *self,
             None => self.children().next()?,
@@ -2542,8 +2726,33 @@ impl<'a> Iterator for Children<'a> {
 }
 impl ExactSizeIterator for Children<'_> {}
 
+/// A node's children: its records, or (where it recognizes tokens) its parts.
+enum ChildIter<'a> {
+    Records(Children<'a>),
+    Parts(std::vec::IntoIter<TapeNode<'a>>),
+}
+impl<'a> Iterator for ChildIter<'a> {
+    type Item = TapeNode<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Records(children) => children.next(),
+            Self::Parts(parts) => parts.next(),
+        }
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Records(children) => children.size_hint(),
+            Self::Parts(parts) => parts.size_hint(),
+        }
+    }
+}
+impl ExactSizeIterator for ChildIter<'_> {}
+
 impl<'a> SgNode<'a> for TapeNode<'a> {
     fn parent(&self) -> Option<Self> {
+        if self.token.is_some() {
+            return Some(self.at(self.index));
+        }
         (self.rec().parent != NONE).then(|| self.at(self.rec().parent))
     }
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
@@ -2555,16 +2764,35 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         })
     }
     fn children(&self) -> impl ExactSizeIterator<Item = Self> {
-        Children {
-            node: *self,
-            next: self.rec().first,
-            remaining: self.rec().children as usize,
+        if self.token.is_some() {
+            ChildIter::Parts(Vec::new().into_iter())
+        } else if self.recognizes() {
+            ChildIter::Parts(self.parts().into_iter())
+        } else {
+            ChildIter::Records(self.records())
         }
     }
     fn dfs(&self) -> impl Iterator<Item = Self> {
-        let start = self.index;
-        let end = start + self.rec().size;
-        (start..end).map(move |index| self.at(index))
+        enum Walk<'a> {
+            Range(TapeNode<'a>, Range<u32>),
+            Stack(Vec<TapeNode<'a>>),
+        }
+        let mut walk = if self.tokens.is_none() {
+            let start = self.index;
+            Walk::Range(*self, start..start + self.rec().size)
+        } else {
+            Walk::Stack(vec![*self])
+        };
+        std::iter::from_fn(move || match &mut walk {
+            Walk::Range(node, range) => range.next().map(|index| node.at(index)),
+            Walk::Stack(stack) => {
+                let node = stack.pop()?;
+                let mut children: Vec<_> = node.children().collect();
+                children.reverse();
+                stack.extend(children);
+                Some(node)
+            }
+        })
     }
     fn child(&self, nth: usize) -> Option<Self> {
         self.children().nth(nth)
@@ -2572,10 +2800,10 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     // Tree-sitter's next sibling is byte-positioned: it skips later siblings that end at or
     // before this node's end, i.e. zero-width siblings sitting at that end.
     fn next(&self) -> Option<Self> {
-        let end = self.rec().end;
+        let end = self.span().1;
         let mut next = self.next_sibling();
         while let Some(node) = next {
-            if node.rec().end > end {
+            if node.span().1 > end {
                 return Some(node);
             }
             next = node.next_sibling();
@@ -2602,6 +2830,9 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         })
     }
     fn kind(&self) -> Cow<'_, str> {
+        if let Some(token) = self.token {
+            return Cow::Borrowed(self.grammar.kind_name(token.kind).expect("validated grammar symbol"));
+        }
         Cow::Borrowed(self.kind_alias().map_or_else(
             || {
                 self.grammar
@@ -2612,21 +2843,28 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         ))
     }
     fn kind_id(&self) -> u16 {
-        self.rec().kind
+        self.token.map_or_else(|| self.rec().kind, |token| token.kind)
     }
     fn node_id(&self) -> usize {
-        self.index as usize
+        match self.token {
+            None => self.index as usize,
+            Some(token) => TOKEN_ID_BIT | (self.index as usize) << 24 | token.slot as usize,
+        }
     }
     fn range(&self) -> Range<usize> {
-        self.rec().start as usize..self.rec().end as usize
+        let (start, end) = self.span();
+        start as usize..end as usize
     }
     fn start_pos(&self) -> Position {
-        self.points.point(self.rec().start)
+        self.points.point(self.span().0)
     }
     fn end_pos(&self) -> Position {
-        self.points.point(self.rec().end)
+        self.points.point(self.span().1)
     }
     fn is_named(&self) -> bool {
+        if self.token.is_some() {
+            return false;
+        }
         self.kind_alias().map_or_else(
             || self.grammar.kind_is_named(self.rec().kind),
             |alias| alias.1,
@@ -2636,13 +2874,13 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.children().all(|child| !child.is_named())
     }
     fn is_extra(&self) -> bool {
-        self.rec().extra
+        self.token.is_none() && self.rec().extra
     }
     fn is_error(&self) -> bool {
-        self.rec().error
+        self.token.is_none() && self.rec().error
     }
     fn is_missing(&self) -> bool {
-        self.rec().missing
+        self.token.is_none() && self.rec().missing
     }
     fn field(&self, name: &str) -> Option<Self> {
         let field = self.grammar.kinds.field_id(name)?;
@@ -2650,26 +2888,28 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     }
     fn field_children(&self, field_id: Option<u16>) -> impl Iterator<Item = Self> {
         self.children().filter(move |child| {
-            field_id.is_some_and(|field| field != 0 && child.rec().field == field)
+            field_id.is_some_and(|field| field != 0 && child.field_id() == field)
         })
     }
     fn child_by_field_id(&self, field_id: u16) -> Option<Self> {
-        if field_id == 0 {
-            None
-        } else {
-            #[cfg(feature = "code-rule-profile")]
-            let mut examined = 0;
-            let found = self.children().find(|child| {
-                #[cfg(feature = "code-rule-profile")]
-                {
-                    examined += 1;
-                }
-                child.rec().field == field_id
-            });
-            #[cfg(feature = "code-rule-profile")]
-            super::profile::navigation::record(examined, found.is_some());
-            found
+        if field_id == 0 || self.token.is_some() {
+            return None;
         }
+        if self.tokens.is_some_and(|grammar| grammar.has_token_field(&self.describe(self.index), self.rec().tokens_kept, field_id)) {
+            return self.parts().into_iter().find(|child| child.field_id() == field_id);
+        }
+        #[cfg(feature = "code-rule-profile")]
+        let mut examined = 0;
+        let found = self.records().find(|child| {
+            #[cfg(feature = "code-rule-profile")]
+            {
+                examined += 1;
+            }
+            child.rec().field == field_id
+        });
+        #[cfg(feature = "code-rule-profile")]
+        super::profile::navigation::record(examined, found.is_some());
+        found
     }
 }
 
@@ -2693,7 +2933,10 @@ impl Doc for TapeDoc {
             points: &self.points,
             kind_aliases: &self.kind_aliases,
             kind_overrides: &self.kind_overrides,
+            source: &self.source,
+            tokens: self.tokens.as_deref(),
             index: 0,
+            token: None,
         }
     }
     fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str> {

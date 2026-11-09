@@ -42,6 +42,8 @@ struct Automaton {
     accepting: Vec<bool>,
     /// Per state: its token moves in recognition order (longest text first, then by label).
     tokens: Vec<Vec<(Label, u32)>>,
+    /// The fields any of its tokens fill, sorted: where `child_by_field_id` must read tokens.
+    token_fields: Vec<Sym>,
 }
 
 /// Every visible kind's automaton for one grammar.
@@ -59,6 +61,7 @@ pub(in crate::code_rule_dsl) struct TokenGrammar {
     /// Hidden text recognition can read (see `Builder::hidden_edge`).
     hidden_text: FxHashMap<Sym, regex::bytes::Regex>,
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
+    language: Language,
 }
 
 /// What [`fold`] kept and left out.
@@ -455,8 +458,11 @@ impl TokenGrammar {
                     tokens
                 })
                 .collect();
+            let mut token_fields: Vec<Sym> = moves.iter().flat_map(|out| out.keys().filter(|l| l.token && l.field != 0).map(|l| l.field)).collect();
+            token_fields.sort_unstable();
+            token_fields.dedup();
             let sym = builder.sym(name);
-            kinds.insert(sym, Automaton { moves, accepting, tokens });
+            kinds.insert(sym, Automaton { moves, accepting, tokens, token_fields });
         }
         let Builder { names, texts, hidden_text, .. } = builder;
         let kind_sym = (0..language.node_kind_count() as u16)
@@ -475,7 +481,7 @@ impl TokenGrammar {
         let field_id = (1..=language.field_count() as u16)
             .filter_map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).map(|&sym| (sym, id))))
             .collect();
-        Ok(Self { names, texts, kinds, kind_sym, field_sym, token_id, field_id, hidden_text, unsupported })
+        Ok(Self { names, texts, kinds, kind_sym, field_sym, token_id, field_id, hidden_text, unsupported, language: language.clone() })
     }
 
     pub(in crate::code_rule_dsl) fn kind_count(&self) -> usize {
@@ -484,6 +490,138 @@ impl TokenGrammar {
 
     fn text(&self, sym: Sym) -> &str {
         &self.texts[sym as usize]
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// A node's children with its tokens: what unfold writes, and what the in-memory token view
+// (`TapeDoc`, RER-131 option B) serves on demand.
+
+/// A node or one of its stored children, as the token view reads it.
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) struct Child<'s> {
+    pub(in crate::code_rule_dsl) start: u32,
+    pub(in crate::code_rule_dsl) end: u32,
+    /// Its tree-sitter kind id (ignored for an ERROR node).
+    pub(in crate::code_rule_dsl) kind: u16,
+    pub(in crate::code_rule_dsl) field: u16,
+    pub(in crate::code_rule_dsl) alias: Option<&'s (String, bool)>,
+    pub(in crate::code_rule_dsl) error: bool,
+    pub(in crate::code_rule_dsl) extra: bool,
+}
+
+/// One child in source order: a stored child (its position among the stored children) or a
+/// token recognized from the source.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::code_rule_dsl) enum Item {
+    Child(u32),
+    Token { kind: u16, field: u16, start: u32, end: u32 },
+}
+
+impl TokenGrammar {
+    fn child_name(&self, child: &Child<'_>) -> Option<Sym> {
+        if child.error {
+            return None;
+        }
+        match child.alias {
+            Some((alias, _)) => self.names.get(alias).copied(),
+            None => self.kind_sym.get(usize::from(child.kind)).copied().flatten(),
+        }
+    }
+    fn child_named(&self, child: &Child<'_>) -> bool {
+        match child.alias {
+            Some((_, named)) => *named,
+            None => child.error || self.language.node_kind_is_named(child.kind),
+        }
+    }
+    fn child_field(&self, child: &Child<'_>) -> Sym {
+        self.field_sym.get(usize::from(child.field)).copied().unwrap_or(0)
+    }
+    fn automaton(&self, node: &Child<'_>, tokens_kept: bool) -> Option<&Automaton> {
+        if tokens_kept || !self.child_named(node) {
+            return None;
+        }
+        self.kinds.get(&self.child_name(node)?)
+    }
+
+    /// Whether `node`'s recognized tokens can fill `field`: where a field lookup must read them.
+    pub(in crate::code_rule_dsl) fn has_token_field(&self, node: &Child<'_>, tokens_kept: bool, field: u16) -> bool {
+        let sym = self.field_sym.get(usize::from(field)).copied().unwrap_or(0);
+        sym != 0 && self.automaton(node, tokens_kept).is_some_and(|automaton| automaton.token_fields.binary_search(&sym).is_ok())
+    }
+
+    /// Whether `node` has tokens the stored tree leaves out: whether reading its children needs
+    /// [`Self::sequence`].
+    pub(in crate::code_rule_dsl) fn recognizes(&self, node: &Child<'_>, tokens_kept: bool) -> bool {
+        self.automaton(node, tokens_kept).is_some()
+    }
+
+    /// `node`'s children in source order into `out`: its stored children (`kids`, in order) and
+    /// the tokens recognized from `source` between them, as [`unfold`] restores them.
+    pub(in crate::code_rule_dsl) fn sequence(
+        &self,
+        node: &Child<'_>,
+        tokens_kept: bool,
+        kids: &[Child<'_>],
+        source: &[u8],
+        out: &mut Vec<Item>,
+    ) -> Result<(), String> {
+        out.clear();
+        let Some(automaton) = self.automaton(node, tokens_kept) else {
+            out.extend((0..kids.len() as u32).map(Item::Child));
+            return Ok(());
+        };
+        let token = |label: Label, start: u32, length: u32| -> Result<Item, String> {
+            let kind = *self.token_id.get(&label.name).ok_or("a recognized token with no kind id")?;
+            let field = self.field_id.get(&label.field).copied().unwrap_or(0);
+            Ok(Item::Token { kind, field, start, end: start + length })
+        };
+        let mut state = 0u32;
+        let mut stored: Vec<Label> = Vec::new();
+        let mut at = node.start as usize;
+        let advance = |state: &mut u32, word: &[Label]| -> Result<(), String> {
+            for label in word {
+                *state = *automaton.moves[*state as usize].get(label).ok_or("a kept token the automaton refuses")?;
+            }
+            Ok(())
+        };
+        for (position, child) in kids.iter().enumerate() {
+            if child.extra {
+                out.push(Item::Child(position as u32));
+                at = child.end as usize;
+                continue;
+            }
+            if !self.child_named(child) {
+                let name = self.child_name(child).ok_or("a kept token outside the grammar")?;
+                stored.push(Label { token: true, name, field: self.child_field(child) });
+                out.push(Item::Child(position as u32));
+                at = child.end as usize;
+                continue;
+            }
+            let name = self.child_name(child).ok_or("a named child outside the grammar")?;
+            let label = Label { token: false, name, field: self.child_field(child) };
+            if stored.is_empty() {
+                // A gap recognition cannot read is empty (`fold` made sure of it).
+                let (spans, to) = recognize(self, automaton, source, state, at, child.start as usize, Some(label)).unwrap_or((Vec::new(), state));
+                for (l, start, length) in spans {
+                    out.push(token(l, start, length)?);
+                }
+                state = to;
+            } else {
+                advance(&mut state, &stored)?;
+                stored.clear();
+            }
+            state = *automaton.moves[state as usize].get(&label).ok_or("a named child the automaton refuses")?;
+            out.push(Item::Child(position as u32));
+            at = child.end as usize;
+        }
+        if stored.is_empty() {
+            let (spans, _) = recognize(self, automaton, source, state, at, node.end as usize, None).unwrap_or_default();
+            for (l, start, length) in spans {
+                out.push(token(l, start, length)?);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -846,25 +984,34 @@ pub(in crate::code_rule_dsl) fn unfold(
     nodes: &[Pending],
     supertypes: &[(u32, u16)],
     grammar: &TokenGrammar,
-    language: &Language,
+    _language: &Language,
     source: &str,
 ) -> Result<(Vec<Pending>, Vec<(u32, u16)>), String> {
     enum Work {
         Node(u32, Option<u32>),
-        Token(Label, u32, u32, u32),
+        Token(u16, u16, u32, u32, u32),
     }
-    let view = View { grammar, language };
     let bytes = source.as_bytes();
     let children = children_of(nodes);
+    fn describe(node: &Pending) -> Child<'_> {
+        Child {
+        start: node.start,
+        end: node.start + node.length,
+        kind: node.kf & 1023,
+        field: node.kf >> 10,
+        alias: node.kind_alias.as_ref(),
+        error: node.error,
+        extra: node.extra,
+        }
+    }
     let mut out: Vec<Pending> = Vec::with_capacity(nodes.len() * 2);
     let mut new_index = vec![u32::MAX; nodes.len()];
     let mut stack = vec![Work::Node(0, None)];
-    let mut sequence: Vec<Work> = Vec::new();
+    let mut items = Vec::new();
+    let mut kids_of = Vec::new();
     while let Some(work) = stack.pop() {
         let (index, parent) = match work {
-            Work::Token(label, start, length, parent) => {
-                let kind = *grammar.token_id.get(&label.name).ok_or("a default token with no kind id")?;
-                let field = grammar.field_id.get(&label.field).copied().unwrap_or(0);
+            Work::Token(kind, field, start, length, parent) => {
                 out.push(Pending {
                     kf: kind | (field << 10),
                     parent: Some(parent),
@@ -890,60 +1037,13 @@ pub(in crate::code_rule_dsl) fn unfold(
         copy.tokens_kept = false;
         out.push(copy);
         let kids = &children[index as usize];
-        let automaton = if node.tokens_kept || !view.named(node) {
-            None
-        } else {
-            view.name(node).and_then(|sym| grammar.kinds.get(&sym))
-        };
-        let Some(automaton) = automaton else {
-            stack.extend(kids.iter().rev().map(|&c| Work::Node(c, Some(here))));
-            continue;
-        };
-        sequence.clear();
-        let mut state = 0u32;
-        let mut stored: Vec<Label> = Vec::new();
-        let mut at = node.start as usize;
-        let end = (node.start + node.length) as usize;
-        let advance = |state: &mut u32, word: &[Label]| -> Result<(), String> {
-            for label in word {
-                *state = *automaton.moves[*state as usize].get(label).ok_or("a kept token the automaton refuses")?;
-            }
-            Ok(())
-        };
-        for &c in kids {
-            let child = &nodes[c as usize];
-            if child.extra {
-                sequence.push(Work::Node(c, Some(here)));
-                at = (child.start + child.length) as usize;
-                continue;
-            }
-            if !view.named(child) {
-                let name = view.name(child).ok_or("a kept token outside the grammar")?;
-                stored.push(Label { token: true, name, field: view.field(child) });
-                sequence.push(Work::Node(c, Some(here)));
-                at = (child.start + child.length) as usize;
-                continue;
-            }
-            let name = view.name(child).ok_or("a named child outside the grammar")?;
-            let label = Label { token: false, name, field: view.field(child) };
-            if stored.is_empty() {
-                // A gap recognition cannot read is empty (`fold` made sure of it).
-                let (spans, to) = recognize(grammar, automaton, bytes, state, at, child.start as usize, Some(label)).unwrap_or((Vec::new(), state));
-                sequence.extend(spans.into_iter().map(|(l, s, n)| Work::Token(l, s, n, here)));
-                state = to;
-            } else {
-                advance(&mut state, &stored)?;
-                stored.clear();
-            }
-            state = *automaton.moves[state as usize].get(&label).ok_or("a named child the automaton refuses")?;
-            sequence.push(Work::Node(c, Some(here)));
-            at = (child.start + child.length) as usize;
-        }
-        if stored.is_empty() {
-            let (spans, _) = recognize(grammar, automaton, bytes, state, at, end, None).unwrap_or_default();
-            sequence.extend(spans.into_iter().map(|(l, s, n)| Work::Token(l, s, n, here)));
-        }
-        stack.extend(sequence.drain(..).rev());
+        kids_of.clear();
+        kids_of.extend(kids.iter().map(|&c| describe(&nodes[c as usize])));
+        grammar.sequence(&describe(node), node.tokens_kept, &kids_of, bytes, &mut items)?;
+        stack.extend(items.iter().rev().map(|item| match *item {
+            Item::Child(position) => Work::Node(kids[position as usize], Some(here)),
+            Item::Token { kind, field, start, end } => Work::Token(kind, field, start, end - start, here),
+        }));
     }
     let classes = supertypes.iter().map(|&(at, class)| (new_index[at as usize], class)).collect();
     Ok((out, classes))

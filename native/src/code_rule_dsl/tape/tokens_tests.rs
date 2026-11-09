@@ -238,3 +238,111 @@ fn token_grammars_match_the_parser_crates() {
         assert_eq!(grammar_json(lang).unwrap(), std::fs::read_to_string(&path).unwrap(), "{krate} {version}: refresh grammars/token-grammars");
     }
 }
+
+/// What the node API answers for every node of `root`'s tree, in dfs order: the token view's
+/// parity check (RER-131 option B). Field lookups are checked on every `field_stride`-th node.
+fn node_answers<D: ast_grep_core::Doc>(root: ast_grep_core::Node<'_, D>, fields: &[&str], field_stride: usize) -> Vec<String> {
+    let at = |node: &ast_grep_core::Node<'_, D>| format!("{}@{:?}", node.kind(), node.range());
+    root.dfs()
+        .enumerate()
+        .map(|(i, node)| {
+            let children: Vec<_> = node.children().map(|c| at(&c)).collect();
+            let mut line = format!(
+                "{} n{} x{} e{} m{} {:?} next {:?} prev {:?}",
+                at(&node),
+                u8::from(node.is_named()),
+                u8::from(node.get_inner_node().is_extra()),
+                u8::from(node.is_error()),
+                u8::from(node.get_inner_node().is_missing()),
+                children,
+                node.next().map(|n| at(&n)),
+                node.prev().map(|n| at(&n)),
+            );
+            if i % field_stride == 0 {
+                line.push_str(&format!(" all {}+{}", node.next_all().count(), node.prev_all().count()));
+                for name in fields {
+                    if let Some(child) = node.field(name) {
+                        line.push_str(&format!(" {name}={}", at(&child)));
+                    }
+                }
+            }
+            line
+        })
+        .collect()
+}
+
+/// The first answer that differs between the full document (every node in its records, what
+/// readers read today) and the named-only one, if any; `None` where the source does not encode
+/// named-only. (The full document is checked against tree-sitter's tree elsewhere; it differs in
+/// one way on purpose: tree-sitter also finds a hidden child's fields on its parent.)
+fn view_difference(lang: GrammarDialect, source: &str, field_stride: usize) -> Option<String> {
+    use ast_grep_core::AstGrep;
+    use ast_grep_core::tree_sitter::StrDoc;
+    let native = StrDoc::new(source, lang);
+    let grammar = Grammar::new(lang).unwrap();
+    let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).ok()?;
+    if !image.primary.is_named_only() {
+        return None;
+    }
+    let language = grammar.kinds.grammar().unwrap().clone();
+    let fields: Vec<&str> = (1..=language.field_count() as u16).filter_map(|id| language.field_name_for_id(id)).collect();
+    let source = Arc::new(source.to_owned());
+    let full = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &image.primary, &|| false).unwrap();
+    let tape = TapeDoc::restore_named(source, grammar, &image.primary, &|| false).unwrap();
+    assert!(tape.is_named_only_in_memory() && !full.is_named_only_in_memory());
+    drop(native);
+    let (native, tape) = (AstGrep::doc(full), AstGrep::doc(tape));
+    let (want, got) = (node_answers(native.root(), &fields, field_stride), node_answers(tape.root(), &fields, field_stride));
+    let at = (0..want.len().min(got.len())).find(|&i| want[i] != got[i]);
+    match at {
+        Some(i) => Some(format!("node {i}:\n  full        {}\n  named-only  {}", want[i], got[i])),
+        None => (want.len() != got.len()).then(|| format!("{} nodes / {} named-only", want.len(), got.len())),
+    }
+}
+
+/// The named-only document's node API (records plus recognized tokens) answers as tree-sitter's
+/// tree does.
+#[test]
+fn the_token_view_answers_as_tree_sitter_does() {
+    for (lang, source) in [
+        (GrammarDialect::Python, "async def f(a, b=1):  # c\n    return a if a is not b else [x for x in b if x not in a]\n"),
+        (GrammarDialect::TypeScript, "const f = async (a, b?) => { let x = [1,,2]; return a?.b ?? 0; };\nfor (let i = 0; i < 3; i++) {}\n"),
+        (GrammarDialect::JavaScript, "export default function* g(a = 1, ...r) { yield* r; if (a) return; else { a += 2 } }\n"),
+        (GrammarDialect::Rust, "fn f(x: &[u8]) -> Option<u8> { if let Some(y) = x.first() { return Some(*y + 1); } None }\n"),
+        (GrammarDialect::Php, "<?php\nFUNCTION f($a, $b = [1, 2,]) { return $a ?? $b; }\n"),
+        (GrammarDialect::Sql, "SELECT a, `b` FROM t WHERE a = 1 AND b IN (1, 2) ORDER BY a DESC;\n"),
+    ] {
+        assert_eq!(view_difference(lang, source, 1), None, "{lang:?}");
+    }
+}
+
+/// RERAIL_VIEW_PARITY="<dialect>=<list>[:<step>];...": the token view's parity check on corpora.
+#[test]
+#[ignore = "corpus run: set RERAIL_VIEW_PARITY"]
+fn the_token_view_answers_as_tree_sitter_does_on_corpora() {
+    let spec = std::env::var("RERAIL_VIEW_PARITY").expect("RERAIL_VIEW_PARITY");
+    let mut failures = Vec::new();
+    for entry in spec.split(';').filter(|e| !e.trim().is_empty()) {
+        let (label, list) = entry.split_once('=').expect("<dialect>=<list>");
+        let (list, step) = list.split_once(':').map_or((list, 1), |(l, s)| (l, s.parse().unwrap()));
+        let lang = dialect(label.trim());
+        let (mut files, mut checked) = (0, 0);
+        for (i, path) in std::fs::read_to_string(list).unwrap().lines().enumerate() {
+            if i % step != 0 {
+                continue;
+            }
+            let Ok(source) = std::fs::read_to_string(path) else { continue };
+            files += 1;
+            if let Some(difference) = view_difference(lang, &source, 7) {
+                failures.push(format!("{path}: {difference}"));
+            } else {
+                checked += 1;
+            }
+        }
+        eprintln!("{label}: {checked} of {files} files answer alike");
+    }
+    for failure in failures.iter().take(20) {
+        eprintln!("{failure}");
+    }
+    assert!(failures.is_empty(), "{} files differ", failures.len());
+}
