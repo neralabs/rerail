@@ -1938,7 +1938,44 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
       "origin": "authored",
-      "sha256": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730"
+      "sha256": "e2ecc29be31342e5917fc0ca67644de528a52f4fb562be73e37fee05fd2abd0e",
+      "importedSha256": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730",
+      "repairs": [
+        {
+          "before": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730",
+          "after": "3bd315361d3113282bd3a5123ba6ed5a331b7b4d2abb5abc56d0aba531a7dd90",
+          "reason": "Implement source architectural seeds and ordered multi-seed taint propagation using the existing batched breadth-first producer"
+        },
+        {
+          "before": "3bd315361d3113282bd3a5123ba6ed5a331b7b4d2abb5abc56d0aba531a7dd90",
+          "after": "8878f8f4dc34215c1545e82054195df6f945dd37236bf610d8237a5081ea9177",
+          "reason": "Implement exact Counter insertion order, stable report ordering, source limit behavior, JSON bytes, and CLI status"
+        },
+        {
+          "before": "8878f8f4dc34215c1545e82054195df6f945dd37236bf610d8237a5081ea9177",
+          "after": "e2ecc29be31342e5917fc0ca67644de528a52f4fb562be73e37fee05fd2abd0e",
+          "reason": "Drive source-file execution through the existing typed SymbolGraph producer and native production scope"
+        }
+      ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/imperative-report.rr",
+      "origin": "authored",
+      "sha256": "c2005421b3532b088dc97579b2b2726df0a30850d867625daf5729089edbeb0e",
+      "importedSha256": "c2005421b3532b088dc97579b2b2726df0a30850d867625daf5729089edbeb0e"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/imperative-source.rr",
+      "origin": "authored",
+      "sha256": "4349427bef94ae4eeef68c1420d1c9e12be87e0727de8762699ec4bd40e5bea7",
+      "importedSha256": "4baa259b0161fc34dd76c4627b46e63d4214cdad41448fc0587d86521ac3efbd",
+      "repairs": [
+        {
+          "before": "4baa259b0161fc34dd76c4627b46e63d4214cdad41448fc0587d86521ac3efbd",
+          "after": "4349427bef94ae4eeef68c1420d1c9e12be87e0727de8762699ec4bd40e5bea7",
+          "reason": "Join source graph callers into primary predecessor selection, as proven by eight failing source positives"
+        }
+      ]
     }
   ],
   "rules": [
@@ -2390,7 +2427,7 @@
       "legacySha256": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
-      "ruleSha256": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730"
+      "ruleSha256": "e2ecc29be31342e5917fc0ca67644de528a52f4fb562be73e37fee05fd2abd0e"
     },
     {
       "check": "serverplan_bypass",

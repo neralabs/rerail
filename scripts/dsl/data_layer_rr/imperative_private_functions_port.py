@@ -69,8 +69,11 @@ def install(suite,module):
     suite.replace(module,'_print_json',lambda findings,graph:report('_print_json',findings,graph))
     def cli():
         parser=argparse.ArgumentParser(description=module.__doc__)
-        parser.add_argument('--check',action='store_true');parser.add_argument('--json',action='store_true')
-        parser.add_argument('--limit',type=int,default=100);parser.add_argument('--root');parser.add_argument('--dirs',nargs='*')
+        parser.add_argument('--check',action='store_true',help='Exit non-zero if findings exist')
+        parser.add_argument('--json',action='store_true',help='Emit JSON instead of text')
+        parser.add_argument('--limit',type=int,default=100,help='Maximum detailed text findings to print')
+        parser.add_argument('--root',help='Project root directory to scan (default: data layer repo root)')
+        parser.add_argument('--dirs',nargs='*',help='Subdirectories under --root to scan (default: production roots for the detected layout)')
         args=parser.parse_args();root=Path(args.root).resolve() if args.root is not None else module.ROOT
         directories=module._default_dirs() if args.dirs is None else args.dirs
         selected=parameters(native('_cli_directories',options=dict(argumentRoot=str(root),env=['ipf.root='+str(root)],cliDirectories=directories)),'IPF_DIRECTORY')

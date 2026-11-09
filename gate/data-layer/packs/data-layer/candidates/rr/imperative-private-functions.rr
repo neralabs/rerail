@@ -2,9 +2,10 @@
 .description "Imperative private-function taint survey"
 .language python
 .mode metric
-.scope given
+.scope include "**/api/**/*.py", "**/impl/**/*.py", "**/data_layer/**/*.py", "**/_internal/**/*.py", "**/l*/**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_imperative_private_functions.py
-#include "core.rr"
+#include "data-layer/imperative-source.rr"
+#include "data-layer/imperative-report.rr"
 .decl ipf_hint(family: symbol, ordinal: number, value: symbol)
 .violation IPFConfig(at: span, family: symbol, ordinal: number, value: symbol) code "IPF_CONFIG" "configuration"
 IPFConfig(@place("",0),family,i,value) :- option("entryPoint","configuration"), ipf_hint(family,i,value).
@@ -18,15 +19,90 @@ IPFDirectory(@place("",0),3,"_internal") :- option("entryPoint","_default_dirs")
 IPFDirectory(@place("",0),i+4,name) :- option("entryPoint","_default_dirs"), ordered_rows(_,name,i,ipf_layer).
 IPFDirectory(@place("",0),i,name) :- option("entryPoint","_cli_directories"), option_item("cliDirectories",i,name).
 .violation IPFBool(at: span, value: number) code "IPF_BOOL" "boolean"
-IPFBool(@place("",0),0) :- option("entryPoint",entry), (entry = "_should_seed_signature" ; entry = "_is_architectural_scope").
+.decl ipf_private(sid: symbol)
+ipf_private(sid) :- sg_symbol(_,sid,name,_,_,_,_,owner,_,_), !(prefix("__",name),suffix("__",name)), (prefix("_",name) ; prefix("_",owner)).
+.decl ipf_lazy_marker(value: symbol)
+ipf_lazy_marker("Lazy"). ipf_lazy_marker("LazyResult"). ipf_lazy_marker("LazySeq").
+ipf_lazy_marker("LazyOperation"). ipf_lazy_marker("ServerPlan").
+.decl ipf_lazy(sid: symbol)
+ipf_lazy(sid) :- sg_symbol(_,sid,name,_,_,_,_,_,_,_), suffix("_lazy",name).
+ipf_lazy(sid) :- sg_decorator(sid,name), suffix("lazy",name).
+ipf_lazy(sid) :- option_item("annotationTextSymbols",i,sid), option_item("annotationTexts",i,text), ipf_lazy_marker(marker), contains(marker,text).
+.decl ipf_legacy(sid: symbol)
+ipf_legacy(sid) :- sg_decorator(sid,name), (suffix("legacy_sync",name) ; suffix("legacy_module_sync",name) ; suffix("direct_legacy_module_sync",name) ; suffix("legacy_async",name) ; suffix("legacy_module_async",name) ; suffix("direct_legacy_module_async",name)).
+.decl ipf_hit(sid: symbol, name: symbol)
+ipf_hit(sid,name) :- option_item("executionSymbols",i,sid), option_item("executionNames",i,name).
+.decl ipf_annotation_hint(value: symbol)
+ipf_annotation_hint("databaseconnection"). ipf_annotation_hint("syncdatabaseconnection").
+ipf_annotation_hint("lazyresult"). ipf_annotation_hint("lazyseq"). ipf_annotation_hint("readtransaction").
+ipf_annotation_hint("serverplan"). ipf_annotation_hint("syncversioneddatabaseconnection").
+ipf_annotation_hint("versioneddatabaseconnection"). ipf_annotation_hint("versionedreadtransaction").
+ipf_annotation_hint("versionedwritetransaction"). ipf_annotation_hint("writetransaction").
+.decl ipf_architectural(sid: symbol)
+ipf_architectural(sid) :- sg_symbol(_,sid,_,_,_,path,_,_,_,_), ipf_hint("path",_,hint), contains(hint,@replace_all(path,"\\\\","/")).
+ipf_architectural(sid) :- sg_qualname(sid,name), ipf_hint("name",_,hint), contains(hint,@lower(name)).
+ipf_architectural(sid) :- ipf_hit(sid,_).
+ipf_architectural(sid) :- ipf_lazy(sid).
+ipf_architectural(sid) :- sg_annotation(sid,name), ipf_annotation_hint(@lower(name)).
+.decl ipf_signature_seed(sid: symbol)
+ipf_signature_seed(sid) :- sg_function(sid), ipf_private(sid), sg_symbol(_,sid,_,_,_,_,_,_,_,0), !sg_property(sid), !ipf_legacy(sid), !ipf_lazy(sid), ipf_architectural(sid).
+.decl ipf_boolean()
+ipf_boolean() :- option("entryPoint","_is_architectural_scope"), option("queryId",sid), ipf_architectural(sid).
+ipf_boolean() :- option("entryPoint","_should_seed_signature"), option("queryId",sid), ipf_signature_seed(sid).
+IPFBool(@place("",0),1) :- option("entryPoint",entry), (entry = "_should_seed_signature" ; entry = "_is_architectural_scope"), ipf_boolean().
+IPFBool(@place("",0),0) :- option("entryPoint",entry), (entry = "_should_seed_signature" ; entry = "_is_architectural_scope"), !ipf_boolean().
+.decl ipf_seed(sid: symbol, reason: symbol, detail: symbol)
+ipf_seed(sid,"direct_execution",detail) :- sg_function(sid), ipf_hit(sid,_), detail = join name by name sep ", " : { ipf_hit(sid,name) }.
+ipf_seed(sid,"eager_signature","private execution-scope function has no lazy return type and no lazy parameters") :- ipf_signature_seed(sid), !ipf_hit(sid,_).
+// Numeric storage IDs leave -1 available for the shared queue head. All seed
+// vertices are queued before traversal, in the source dictionary's order.
+.decl ipf_vertex(sid: symbol, vertex: number)
+ipf_vertex(sid,i) :- sg_order(sid,file,local), i = count : { sg_order(_,a,b), (a < file ; (a = file,b < local)) }.
+.decl ipf_unknown(sid: symbol, position: number)
+ipf_unknown(sid,2*i) :- option_item("callerCallees",i,sid), !sg_symbol(_,sid,_,_,_,_,_,_,_,_).
+ipf_unknown(sid,2*i+1) :- option_item("callerSymbols",i,sid), !sg_symbol(_,sid,_,_,_,_,_,_,_,_).
+ipf_vertex(sid,n+i) :- ipf_unknown(sid,_), i = min j : { ipf_unknown(sid,j) }, n = count : { sg_symbol(_,_,_,_,_,_,_,_,_,_) }.
+.decl ipf_queue_root(root: number)
+ipf_queue_root(-1).
+.decl ipf_queue_edge(source: number, target: number, ordinal: number)
+ipf_queue_edge(-1,i,i) :- ipf_seed(sid,_,_), ipf_vertex(sid,i).
+ipf_queue_edge(callee,caller,to_number(rank)) :- option_item("callerCallees",i,a), option_item("callerSymbols",i,b), option_item("callerOrdinals",i,rank), ipf_vertex(a,callee), ipf_vertex(b,caller).
+.decl ipf_visit(sid: symbol, ordinal: number)
+ipf_visit(sid,i) :- bfs_walk(-1,vertex,i,ipf_queue_edge,ipf_queue_root), ipf_vertex(sid,vertex).
+.decl ipf_predecessor(sid: symbol, parent: symbol, ordinal: number)
+ipf_predecessor(sid,parent,i) :- option_item("callerCallees",row,parent), option_item("callerSymbols",row,sid), ipf_visit(parent,i).
+.decl ipf_finding(sid: symbol, ordinal: number, reason: symbol, detail: symbol)
+ipf_finding(sid,i,reason,detail) :- ipf_visit(sid,i), ipf_seed(sid,reason,detail).
+ipf_finding(sid,i,"calls_imperative",cat("calls ",qual)) :- ipf_visit(sid,i), !ipf_seed(sid,_,_), ipf_predecessor(sid,parent,j), j = min k : { ipf_predecessor(sid,_,k) }, sg_qualname(parent,qual).
+.violation IPFError(at: span, ordinal: number, key: symbol) code "IPF_ERROR" "missing {key}"
+IPFError(@place("",0),0,sid) :- option("entryPoint",entry), (entry = "_should_seed_signature" ; entry = "_is_architectural_scope"), option("queryId",sid), !sg_symbol(_,sid,_,_,_,_,_,_,_,_).
+IPFError(@place("",0),i,sid) :- option("entryPoint","analyze_imperative_private_functions"), ipf_visit(sid,i), !sg_symbol(_,sid,_,_,_,_,_,_,_,_).
 .violation IPFFinding(at: span, sid: symbol, ordinal: number, reason: symbol, detail: symbol) code "IPF_FINDING" "finding"
-IPFFinding(@place("",0),"",0,"","") :- 1 = 0.
+IPFFinding(@place("",0),sid,i,reason,detail) :- option("entryPoint",entry), (entry = "analyze_imperative_private_functions" ; entry = "analyze_source"), ipf_finding(sid,i,reason,detail).
 .violation IPFCount(at: span, ordinal: number, path: symbol, count: number) code "IPF_COUNT" "file count"
-IPFCount(@place("",0),0,"",0) :- 1 = 0.
+ipfr_mode("count") :- option("entryPoint","_by_file").
+ipfr_mode("text") :- option("entryPoint","_print_text").
+ipfr_mode("json") :- option("entryPoint","_print_json").
+ipfr_limit(text) :- option("reportLimit",text).
+ipfr_finding(sid,i,reason,detail) :- option_item("findingSymbols",i,sid), option_item("findingReasons",i,reason), option_item("findingDetails",i,detail).
+ipfr_symbol(sid,path,line,qual) :- sg_symbol(_,sid,_,_,_,path,line,_,_,_), sg_qualname(sid,qual).
+ipfr_private(sid) :- ipf_private(sid).
+IPFError(@place("",0),i,sid) :- ipfr_missing(sid,i), i = min j : { ipfr_missing(_,j) }.
+IPFCount(@place("",0),i,path,n) :- ipfr_mode("count"), ipfr_file(path,n,i), !ipfr_failed().
 .violation IPFOutput(at: span, stage: number, ordinal: number, text: symbol) code "IPF_OUTPUT" "output"
-IPFOutput(@place("",0),0,0,"") :- 1 = 0.
+IPFOutput(@place("",0),stage,i,text) :- ipfr_output(stage,i,text).
 .violation IPFExit(at: span, status: number) code "IPF_EXIT" "CLI status"
-IPFExit(@place("",0),0) :- option("entryPoint","_cli_exit").
+IPFExit(@place("",0),1) :- option("entryPoint","_cli_exit"), option("cliCheck","true"), option_item("findingSymbols",_,_).
+IPFExit(@place("",0),0) :- option("entryPoint","_cli_exit"), (!option("cliCheck","true") ; !option_item("findingSymbols",_,_)).
+.severity IPFDirect error
+.severity IPFEager error
+.severity IPFCalls error
+.violation IPFDirect(at: span, qualname: symbol, detail: symbol) code "direct_execution" "{qualname}: {detail}"
+.violation IPFEager(at: span, qualname: symbol, detail: symbol) code "eager_signature" "{qualname}: {detail}"
+.violation IPFCalls(at: span, qualname: symbol, detail: symbol) code "calls_imperative" "{qualname}: {detail}"
+IPFDirect(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_finding(sid,_,"direct_execution",detail), ipfr_symbol(sid,path,line,qual).
+IPFEager(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_finding(sid,_,"eager_signature",detail), ipfr_symbol(sid,path,line,qual).
+IPFCalls(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_finding(sid,_,"calls_imperative",detail), ipfr_symbol(sid,path,line,qual).
 
 ipf_hint("path",0,"/connection").
 ipf_hint("path",1,"/graph_query").

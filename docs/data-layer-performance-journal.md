@@ -9361,3 +9361,12 @@ It also retains raw caller iteration order and guards imported graph algorithms.
 That native translation remains absent.
 The inventory remains 90 drafts and ten absent translations.
 Callback/factory transport, shared registry integration, rule 89 deletion, and full migration acceptance remain open.
+
+### 2026-11-08 — Imperative analysis and report checkpoint
+
+The next draft implements native signature seeds, direct execution, breadth-first propagation, and exact text/JSON reports.
+All 144 original tests pass across the focused runs, after a CLI help repair.
+The real-file corpus still fails one of 32 cases: reversing definitions exposes Python caller-set ordering.
+The [failure receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-private-functions-order-red.json.gz) preserves the complete ordered difference.
+These checks precede the final source integration bytes. Final acceptance, plugin scope, production CLI, and lifecycle checks remain open.
+The inventory contains 91 drafts and nine absent translations. This rule is not complete.

@@ -1,0 +1,50 @@
+// Exact Counter order, stable detail order, and json.dumps(indent=2) output.
+.decl ipfr_mode(mode: symbol)
+.decl ipfr_finding(sid: symbol, ordinal: number, reason: symbol, detail: symbol)
+.decl ipfr_symbol(sid: symbol, path: symbol, line: number, qualname: symbol)
+.decl ipfr_private(sid: symbol)
+.decl ipfr_limit(text: symbol)
+.decl ipfr_missing(sid: symbol, ordinal: number)
+ipfr_missing(sid,i) :- ipfr_mode(_), ipfr_finding(sid,i,_,_), !ipfr_symbol(sid,_,_,_).
+.decl ipfr_failed()
+ipfr_failed() :- ipfr_missing(_,_).
+.decl ipfr_file(path: symbol, count: number, first: number)
+ipfr_file(path,n,first) :- ipfr_finding(sid,_,_,_), ipfr_symbol(sid,path,_,_), n = count : { ipfr_finding(other,_,_,_), ipfr_symbol(other,path,_,_) }, first = min i : { ipfr_finding(other,i,_,_), ipfr_symbol(other,path,_,_) }.
+.decl ipfr_worst(path: symbol, count: number, ordinal: number)
+ipfr_worst(path,n,i) :- ipfr_file(path,n,first), i = count : { ipfr_file(_,m,other), (m > n ; (m = n,other < first)) }.
+.decl ipfr_reason(reason: symbol, count: number, ordinal: number)
+ipfr_reason(reason,n,i) :- ipfr_finding(_,_,reason,_), n = count : { ipfr_finding(_,_,reason,_) }, i = count : { ipfr_finding(_,_,other,_), @str_cmp(other,reason) < 0 }.
+.decl ipfr_total(total: number, private: number)
+ipfr_total(n,p) :- ipfr_mode(_), n = count : { ipfr_finding(_,_,_,_) }, p = count : { ipfr_finding(sid,_,_,_), ipfr_private(sid) }.
+.decl ipfr_detail(sid: symbol, ordinal: number)
+ipfr_detail(sid,rank) :- ipfr_finding(sid,i,_,_), ipfr_symbol(sid,path,line,_), rank = count : { ipfr_finding(other,j,_,_), ipfr_symbol(other,p,l,_), (@str_cmp(p,path) < 0 ; (p = path,l < line) ; (p = path,l = line,j < i)) }.
+.decl ipfr_private_detail(sid: symbol, ordinal: number)
+ipfr_private_detail(sid,rank) :- ipfr_finding(sid,i,_,_), ipfr_private(sid), ipfr_symbol(sid,path,line,_), rank = count : { ipfr_finding(other,j,_,_), ipfr_private(other), ipfr_symbol(other,p,l,_), (@str_cmp(p,path) < 0 ; (p = path,l < line) ; (p = path,l = line,j < i)) }.
+.decl ipfr_bound(n: number)
+// The source prints one private item before checking a zero or negative limit.
+ipfr_bound(n) :- ipfr_limit(text), ipfr_total(_,p), n = @python_int_clamped(text,1,max(1,p),0).
+.decl ipfr_output(stage: number, ordinal: number, text: symbol)
+ipfr_output(0,0,cat("Imperative private-function survey\n=================================\ntainted functions: ",to_string(n),"\ntainted private functions: ",to_string(p),"\ntainted public callers: ",to_string(n-p),"\n\nReasons:\n")) :- ipfr_mode("text"), ipfr_total(n,p), !ipfr_failed().
+ipfr_output(1,i,cat("  ",reason,": ",to_string(n),"\n")) :- ipfr_mode("text"), ipfr_reason(reason,n,i), !ipfr_failed().
+ipfr_output(2,0,"\nWorst files:\n") :- ipfr_mode("text"), !ipfr_failed().
+ipfr_output(3,i,cat("  ",path,": ",to_string(n),"\n")) :- ipfr_mode("text"), ipfr_worst(path,n,i), i < 20, !ipfr_failed().
+ipfr_output(4,0,cat("\nTop tainted private functions (limit ",text,"):\n")) :- ipfr_mode("text"), ipfr_limit(text), !ipfr_failed().
+ipfr_output(5,i,cat("  ",path,":",to_string(line)," ",qual," [",reason,"] ",detail,"\n")) :- ipfr_mode("text"), ipfr_private_detail(sid,i), ipfr_bound(bound), i < bound, ipfr_symbol(sid,path,line,qual), ipfr_finding(sid,_,reason,detail), !ipfr_failed().
+.decl ipfr_json_reason(ordinal: number, text: symbol)
+ipfr_json_reason(i,cat("      ",@json_str(reason),": ",to_string(n))) :- ipfr_reason(reason,n,i).
+.decl ipfr_json_file(ordinal: number, text: symbol)
+ipfr_json_file(i,cat("      ",@json_str(path),": ",to_string(n))) :- ipfr_worst(path,n,i), i < 20.
+.decl ipfr_json_dict(family: symbol, text: symbol)
+ipfr_json_dict("reasons","{}") :- ipfr_mode("json"), !ipfr_reason(_,_,_).
+ipfr_json_dict("reasons",cat("{\n",body,"\n    }")) :- ipfr_mode("json"), ipfr_reason(_,_,_), body = join text by i sep ",\n" : { ipfr_json_reason(i,text) }.
+ipfr_json_dict("files","{}") :- ipfr_mode("json"), !ipfr_worst(_,_,_).
+ipfr_json_dict("files",cat("{\n",body,"\n    }")) :- ipfr_mode("json"), ipfr_worst(_,_,_), body = join text by i sep ",\n" : { ipfr_json_file(i,text) }.
+.decl ipfr_bool(sid: symbol, text: symbol)
+ipfr_bool(sid,"true") :- ipfr_finding(sid,_,_,_), ipfr_private(sid).
+ipfr_bool(sid,"false") :- ipfr_finding(sid,_,_,_), !ipfr_private(sid).
+.decl ipfr_json_item(ordinal: number, text: symbol)
+ipfr_json_item(i,cat("    {\n      \"symbol_id\": ",@json_str(sid),",\n      \"path\": ",@json_str(path),",\n      \"line\": ",to_string(line),",\n      \"qualname\": ",@json_str(qual),",\n      \"private\": ",private,",\n      \"reason\": ",@json_str(reason),",\n      \"detail\": ",@json_str(detail),"\n    }")) :- ipfr_mode("json"), ipfr_detail(sid,i), ipfr_symbol(sid,path,line,qual), ipfr_finding(sid,_,reason,detail), ipfr_bool(sid,private).
+.decl ipfr_json_items(text: symbol)
+ipfr_json_items("[]") :- ipfr_mode("json"), !ipfr_finding(_,_,_,_).
+ipfr_json_items(cat("[\n",body,"\n  ]")) :- ipfr_mode("json"), ipfr_finding(_,_,_,_), body = join text by i sep ",\n" : { ipfr_json_item(i,text) }.
+ipfr_output(0,0,cat("{\n  \"summary\": {\n    \"tainted_functions\": ",to_string(n),",\n    \"tainted_private_functions\": ",to_string(p),",\n    \"tainted_public_callers\": ",to_string(n-p),",\n    \"reason_counts\": ",reasons,",\n    \"worst_files\": ",files,"\n  },\n  \"findings\": ",items,"\n}\n")) :- ipfr_mode("json"), ipfr_total(n,p), ipfr_json_dict("reasons",reasons), ipfr_json_dict("files",files), ipfr_json_items(items), !ipfr_failed().
