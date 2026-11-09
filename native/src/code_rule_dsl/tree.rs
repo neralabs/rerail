@@ -38,6 +38,10 @@ pub(crate) struct Token<'r, D: Doc> {
 }
 
 impl<'r, D: Doc> Token<'r, D> {
+    /// The token as a node: what a capture of it binds.
+    pub(crate) fn node(&self) -> &Node<'r, D> {
+        &self.node
+    }
     /// The token's kind: its text in the grammar (`"+"`, `"async"`, `","`).
     pub(crate) fn kind(&self) -> Cow<'_, str> {
         self.node.kind()

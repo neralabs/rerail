@@ -20,15 +20,16 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "regex": "^with$",
-            "inside": {
-              "kind": "with_statement"
+            "kind": "with_statement",
+            "tokens": {
+              "has": "^with$",
+              "as": "TOKEN"
             }
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.TOKEN",
         "code": "no-with",
         "message": "Remove this with statement and reference the object's properties explicitly through a variable.",
         "suppress": {

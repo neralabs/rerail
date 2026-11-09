@@ -229,35 +229,36 @@
           "rule": {
             "any": [
               {
-                "regex": "^print$",
-                "inside": {
+                "kind": "print_statement",
+                "has": {
                   "stopBy": "neighbor",
-                  "kind": "print_statement",
-                  "has": {
-                    "stopBy": "neighbor",
-                    "kind": "chevron"
-                  }
+                  "kind": "chevron"
                 },
-                "not": {
-                  "follows": {
-                    "stopBy": "neighbor",
-                    "regex": "(?s)."
-                  }
-                },
-                "all": [
-                  {
+                "tokens": {
+                  "has": "^print$",
+                  "where": {
                     "not": {
-                      "inside": {
-                        "stopBy": "end",
-                        "kind": "module",
-                        "has": {
-                          "stopBy": "end",
-                          "matches": "print-binding"
+                      "follows": {
+                        "stopBy": "neighbor",
+                        "regex": "(?s)."
+                      }
+                    },
+                    "all": [
+                      {
+                        "not": {
+                          "inside": {
+                            "stopBy": "end",
+                            "kind": "module",
+                            "has": {
+                              "stopBy": "end",
+                              "matches": "print-binding"
+                            }
+                          }
                         }
                       }
-                    }
+                    ]
                   }
-                ]
+                }
               },
               {
                 "any": [

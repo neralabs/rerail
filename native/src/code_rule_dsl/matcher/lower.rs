@@ -537,6 +537,8 @@ impl Lowering {
             Semantic::Resolves(resolves) => !super::semantic::flow(resolves.language),
             // A label's view has no host path to read.
             Semantic::FilePath(_) => return Err(Unsupported(name)),
+            // A node's tokens are always known: the test never leaves a verdict open.
+            Semantic::Tokens(_) => true,
             Semantic::Value(_) | Semantic::Layout(_) | Semantic::Arguments(_) => false,
             Semantic::Binding(test) => {
                 if test.occurrence.is_some() {
@@ -583,6 +585,7 @@ fn candidate_kinds(semantic: &super::Semantic) -> Option<BTreeSet<u16>> {
         Semantic::Binding(test) => Some(union(&[&test.reference_kinds, &test.paren_kinds])),
         Semantic::Binds(test) => Some(test.name_kinds.clone()),
         Semantic::Arguments(arguments) => Some(arguments.call_kinds.clone()),
+        Semantic::Tokens(test) => test.kinds.clone(),
         _ => None,
     }
 }
@@ -602,6 +605,7 @@ fn semantic_name(semantic: &super::Semantic) -> &'static str {
         Semantic::Capture(_) => "capture",
         Semantic::FormatArgs(_) => "formatArgs",
         Semantic::Layout(_) => "layout",
+        Semantic::Tokens(_) => "tokens",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
     }

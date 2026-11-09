@@ -5,7 +5,7 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
     match semantic {
         // Lines and bytes hold on any node.
         // W's `Embedded` holds on any node, as `Host` does (P's arm).
-        Semantic::Layout(_) | Semantic::FilePath(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
+        Semantic::Layout(_) | Semantic::Tokens(_) | Semantic::FilePath(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
             AnchorPlan::unrestricted()
         }
         // Every value predicate except `constant: false` needs a known value, which only the

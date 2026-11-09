@@ -560,16 +560,16 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "regex": "^var$",
-            "inside": {
-              "kind": "for_in_statement",
-              "stopBy": "neighbor"
+            "kind": "for_in_statement",
+            "tokens": {
+              "has": "^var$",
+              "as": "TOKEN"
             }
           }
         }
       },
       "violation": {
-        "anchor": "witness.span",
+        "anchor": "capture.TOKEN",
         "code": "vars-on-top",
         "message": "Declare this loop variable with var at the top of the function and reuse it in the for-in head.",
         "suppress": {

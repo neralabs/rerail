@@ -1874,14 +1874,13 @@
                 ]
               },
               {
-                "regex": "^=>$",
-                "inside": {
-                  "stopBy": "neighbor",
-                  "kind": "arrow_function",
-                  "matches": "report",
-                  "not": {
-                    "matches": "head-in-property"
-                  }
+                "kind": "arrow_function",
+                "matches": "report",
+                "not": {
+                  "matches": "head-in-property"
+                },
+                "tokens": {
+                  "has": "^=>$"
                 }
               }
             ]

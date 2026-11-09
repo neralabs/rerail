@@ -17,18 +17,25 @@
         "ast": {
           "language": "python",
           "rule": {
-            "regex": "^except$",
-            "precedes": {
-              "stopBy": "neighbor",
-              "regex": "^:$"
-            },
-            "inside": {
-              "stopBy": "neighbor",
-              "kind": "except_clause",
-              "precedes": {
-                "stopBy": "end",
-                "kind": "except_clause"
+            "kind": "except_clause",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "not": {
+                  "any": [
+                    {
+                      "kind": "block"
+                    },
+                    {
+                      "kind": "comment"
+                    }
+                  ]
+                }
               }
+            },
+            "precedes": {
+              "stopBy": "end",
+              "kind": "except_clause"
             }
           }
         }

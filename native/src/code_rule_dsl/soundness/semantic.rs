@@ -19,6 +19,7 @@ pub(super) fn optional_outward_captures(
         | Semantic::Parse(_)
         | Semantic::Capture(_)
         | Semantic::Layout(_)
+        | Semantic::Tokens(_)
         | Semantic::FilePath(_)
         | Semantic::Host(_)
         | Semantic::Embedded(_) => {}
@@ -78,6 +79,8 @@ pub(super) fn sound(
         // `precedes` does: its neighbour and the tokens up to it are facts of the recovered tree,
         // but their absence is no fact, so a negated gap is unsound.
         Semantic::Layout(layout) => !negated || !layout.outward(),
+        // A node's own tokens are the witness's; the tokens beside it read outward, as a gap does.
+        Semantic::Tokens(test) => !negated || test.tests.iter().all(|(place, _)| matches!(place, crate::code_rule_dsl::matcher::tokens::Place::Own | crate::code_rule_dsl::matcher::tokens::Place::Below | crate::code_rule_dsl::matcher::tokens::Place::Field(_))),
         // Whether a binding is read, or what it redefines, depends on the whole file.
         Semantic::Binds(_) => false,
         // Resolution reads bindings anywhere in the file, and an error region can hide one: a
@@ -99,6 +102,7 @@ pub(super) fn leaves_witness(semantic: &Semantic, memo: &mut UtilitySummary<usiz
         | Semantic::Parse(_)
         | Semantic::Capture(_)
         | Semantic::Layout(_)
+        | Semantic::Tokens(_)
         | Semantic::FilePath(_) => false,
         Semantic::Host(_) | Semantic::Embedded(_) => true,
         Semantic::FormatArgs(test) => test

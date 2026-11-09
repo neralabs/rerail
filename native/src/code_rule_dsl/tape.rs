@@ -2413,6 +2413,13 @@ impl TapeDoc {
     }
 
     /// Whether the node is named (its alias's, else its kind's).
+    /// The grammar's named kinds, ERROR included, ascending: what a rule ranges over.
+    pub(in crate::code_rule_dsl) fn named_kinds(&self) -> Vec<u16> {
+        let mut kinds: Vec<u16> = (0..self.grammar.named.len() as u16).filter(|&kind| self.grammar.kind_is_named(kind)).collect();
+        kinds.push(ERROR_SYMBOL);
+        kinds
+    }
+
     pub(super) fn transducer_is_named(&self, node: u32) -> bool {
         matches!(self.at(node), walk::At::Record(_)) && self.node_is_named(node)
     }

@@ -33,6 +33,8 @@ pub(in crate::code_rule_dsl) enum Semantic {
     FormatArgs(Box<FormatArgs>),
     /// `layout`: the node's lines, its first byte, and the lines to a neighbour.
     Layout(Box<Layout>),
+    /// `tokens`: the node's own tokens, or the tokens beside it, by text (RER-131).
+    Tokens(Box<super::TokenTest>),
     /// File-path condition within a rule, including a call-graph seed.
     FilePath(std::sync::Arc<crate::code_rule_dsl::language::TextCondition>),
     /// `calls` (Python): the call's callee reaches a definition the term's inner rule matches,
@@ -103,6 +105,7 @@ impl Semantic {
             | Self::Layout(_)
             | Self::FilePath(_)
             | Self::Host(_) => true,
+            Self::Tokens(test) => test.capture.is_none() && test.rule.as_deref().is_none_or(super::AstMatcher::binds_nothing),
             Self::Binding(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
             Self::Binds(test) => test.sub_rules().all(super::AstMatcher::binds_nothing),
             Self::Arguments(arguments) => arguments.bind.is_empty(),
@@ -135,7 +138,7 @@ impl Semantic {
             Self::Embedded(test) => test.rules().any(|rule| super::reads_values(rule, seen)),
             // PHP's run-time fallback of a function or constant name may be unknown.
             Self::Resolves(resolves) => flow(resolves.language),
-            Self::Capture(_) | Self::Layout(_) | Self::FilePath(_) => false,
+            Self::Capture(_) | Self::Layout(_) | Self::Tokens(_) | Self::FilePath(_) => false,
             // PHP's flow may leave a read's binding, `latest` and `outer` unknown.
             Self::Binding(test) => {
                 test.filter.reads_usage()
@@ -172,6 +175,7 @@ impl Semantic {
                 Some(node)
             }
             Self::Layout(layout) => layout.match_node(node, env),
+            Self::Tokens(test) => test.match_node(node, env),
             Self::FilePath(condition) => super::resolve::file_path()
                 .filter(|path| condition.holds(path))
                 .map(|_| node),

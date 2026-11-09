@@ -1008,3 +1008,114 @@ fn rer131_one_rule_probe() {
     let root = directory_root(&store, &dir).unwrap();
     eprintln!("PROBE keys {:?}", keys(&audit(&store, WS, root, &mut rules).unwrap()));
 }
+
+/// RER-131 oracle (ignored): one pack's rules over a file list, interpreter only, keys to `RERAIL_DUMP_KEYS`.
+/// `RERAIL_PACK` (a directory under `packs/`), `RERAIL_FILES` (a list of paths), `RERAIL_MAX` (default 200).
+#[test]
+#[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
+fn rer131_pack_keys() {
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let mut documents = Vec::new();
+    files(&pack.join("rules"), "json", &mut documents);
+    files(&pack.join("candidates/rules"), "json", &mut documents);
+    documents.sort();
+    let policies: Vec<_> = documents
+        .into_iter()
+        .filter_map(|path| {
+            let text = std::fs::read_to_string(&path).ok()?;
+            let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+            Some((path.file_stem().unwrap().to_string_lossy().into_owned(), compiled))
+        })
+        .collect();
+    let max: usize = std::env::var("RERAIL_MAX").ok().and_then(|m| m.parse().ok()).unwrap_or(200);
+    let dir = temp("pack-keys");
+    std::fs::create_dir_all(&dir).unwrap();
+    let list = std::fs::read_to_string(std::env::var("RERAIL_FILES").unwrap()).unwrap();
+    let mut copied = 0;
+    for (i, path) in list.lines().filter(|l| !l.is_empty()).enumerate() {
+        if copied == max {
+            break;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else { continue };
+        let name = Path::new(path).file_name().unwrap().to_string_lossy();
+        std::fs::write(dir.join(format!("f{i:05}-{name}")), text).unwrap();
+        copied += 1;
+    }
+    let store = ContentStore::open(&temp("pack-keys-store").with_extension("sqlite")).unwrap();
+    let mut rules = Rules::lower(&policies, ExecutionBackend::CpuInterpreter).unwrap();
+    let start = cpu();
+    let root = directory_root(&store, &dir).unwrap();
+    let found = keys(&audit(&store, WS, root, &mut rules).unwrap());
+    eprintln!("PACK {}: {} rules, {} files, {} keys, cpu {:?}", pack.display(), policies.len(), copied, found.len(), cpu() - start);
+    if let Ok(path) = std::env::var("RERAIL_DUMP_KEYS") {
+        std::fs::write(&path, found.iter().map(|k| format!("{}\t{}\t{}\t{}\n", k.0, k.1, k.2, k.3)).collect::<String>()).unwrap();
+    }
+}
+
+/// RER-131 oracle (ignored), any language: every policy of `RERAIL_PACK` evaluated by the runtime
+/// over `RERAIL_FILES` (first `RERAIL_MAX`, default 150), its violations as keys to `RERAIL_DUMP_KEYS`.
+#[test]
+#[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
+fn rer131_runtime_keys() {
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let mut documents = Vec::new();
+    files(&pack.join("rules"), "json", &mut documents);
+    files(&pack.join("candidates/rules"), "json", &mut documents);
+    documents.sort();
+    let max: usize = std::env::var("RERAIL_MAX").ok().and_then(|m| m.parse().ok()).unwrap_or(150);
+    let label = |path: &str| match Path::new(path).extension().and_then(|e| e.to_str()) {
+        Some("ts" | "mts" | "cts") => "typescript",
+        Some("tsx") => "tsx",
+        Some("js" | "mjs" | "cjs" | "jsx") => "javascript",
+        Some("py") => "python",
+        Some("php") => "php",
+        Some("rs") => "rust",
+        Some("sql") => "sql",
+        Some("vue") => "vue",
+        _ => "",
+    };
+    let list = std::fs::read_to_string(std::env::var("RERAIL_FILES").unwrap()).unwrap();
+    let inputs: Vec<serde_json::Value> = list
+        .lines()
+        .filter(|l| !label(l).is_empty())
+        .filter_map(|path| Some((path, std::fs::read_to_string(path).ok()?)))
+        .take(max)
+        .enumerate()
+        .map(|(i, (path, source))| serde_json::json!({ "path": format!("f{i:05}-{}", Path::new(path).file_name().unwrap().to_string_lossy()), "language": label(path), "source": source }))
+        .collect();
+    let snapshot = serde_json::json!({ "facts": [], "format": "rerail.repository-snapshot/v1", "revision": 0, "files": inputs }).to_string();
+    let start = cpu();
+    let mut out = String::new();
+    let (mut rules, mut failed, mut keys) = (0, 0, 0);
+    for path in documents {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(compiled) = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()) else { continue };
+        rules += 1;
+        let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let Ok(result) = compiled.evaluate(snapshot.clone(), "report".to_owned()) else {
+            failed += 1;
+            continue;
+        };
+        let result: serde_json::Value = serde_json::from_str(&result).unwrap();
+        if let Some(failures) = result["failures"].as_array().filter(|f| !f.is_empty()) {
+            if failed == 0 {
+                eprintln!("FAILURE {stem}: {}", serde_json::Value::from(failures.clone()).to_string().chars().take(400).collect::<String>());
+            }
+            failed += 1;
+        }
+        for v in result["violations"].as_array().into_iter().flatten() {
+            if keys == 0 && std::env::var_os("RERAIL_SHOW_VIOLATION").is_some() {
+                eprintln!("VIOLATION {v}");
+            }
+            let line = v.pointer("/span/startLine").cloned().unwrap_or_default();
+            out.push_str(&format!("{stem}\t{}\t{}\t{line}\n", v["code"].as_str().unwrap_or(""), v["path"].as_str().unwrap_or("")));
+            keys += 1;
+        }
+    }
+    eprintln!("RUNTIME {}: {rules} rules ({failed} with failures), {} files, {keys} keys, cpu {:?}", pack.display(), max, cpu() - start);
+    if let Ok(path) = std::env::var("RERAIL_DUMP_KEYS") {
+        let mut lines: Vec<&str> = out.lines().collect();
+        lines.sort_unstable();
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    }
+}

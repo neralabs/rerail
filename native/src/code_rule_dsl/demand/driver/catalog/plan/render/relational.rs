@@ -1299,6 +1299,7 @@ impl Builder {
             | Semantic::Host(_)
             | Semantic::Capture(_)
             | Semantic::Embedded(_)
+            | Semantic::Tokens(_)
             | Semantic::FilePath(_) => {
                 self.unsupported.push(format!(
                     "{at}: semantic fact family belongs to a later phase"
@@ -1404,6 +1405,7 @@ impl Builder {
             | Semantic::Host(_)
             | Semantic::Capture(_)
             | Semantic::Embedded(_)
+            | Semantic::Tokens(_)
             | Semantic::FilePath(_) => {
                 unreachable!("unsupported semantic families returned before descriptor creation")
             }

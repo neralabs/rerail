@@ -42,13 +42,15 @@
         "ast": {
           "language": "php",
           "rule": {
-            "regex": "^`$",
-            "inside": {
-              "kind": "shell_command_expression"
-            },
-            "follows": {
-              "regex": "^`$",
-              "stopBy": "end"
+            "kind": "shell_command_expression",
+            "tokens": {
+              "has": "^`$",
+              "where": {
+                "follows": {
+                  "regex": "^`$",
+                  "stopBy": "end"
+                }
+              }
             }
           }
         }

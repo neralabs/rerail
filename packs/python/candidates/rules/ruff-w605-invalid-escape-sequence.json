@@ -19,21 +19,20 @@
           "rule": {
             "any": [
               {
-                "regex": "^\\\\$",
+                "kind": "string_content",
                 "inside": {
                   "stopBy": "neighbor",
-                  "kind": "string_content",
-                  "inside": {
-                    "stopBy": "neighbor",
-                    "kind": "string",
-                    "not": {
-                      "has": {
-                        "stopBy": "neighbor",
-                        "kind": "string_start",
-                        "regex": "[rR]"
-                      }
+                  "kind": "string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string_start",
+                      "regex": "[rR]"
                     }
                   }
+                },
+                "tokens": {
+                  "has": "^\\\\$"
                 }
               },
               {

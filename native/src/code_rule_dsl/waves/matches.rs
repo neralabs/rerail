@@ -465,19 +465,9 @@ impl Wave {
         tapes: &[Arc<Tape>],
         docs: &[crate::code_rule_dsl::tape::TapeDoc],
     ) -> StoreResult<Vec<Vec<Vec<u32>>>> {
-        let mut found = self.record_candidates(graph, tapes)?;
-        // A walk's tokens (`TapeDoc::walking_tokens`): the prefilter's rows are the records', so a
-        // root that can start at a token starts at each of the clause's kinds (RER-131 stopgap until
-        // token postings, t30 §3 step 5). The root program tests each.
-        for (clause, files) in found.iter_mut().enumerate() {
-            for (file, nodes) in files.iter_mut().enumerate() {
-                let doc = &docs[file];
-                if doc.walks_tokens() {
-                    nodes.extend((doc.record_count() as u32..doc.transducer_len() as u32).filter(|&node| self.lowered.starts(clause, doc, node)));
-                }
-            }
-        }
-        Ok(found)
+        // A rule's roots are named nodes (RER-131): the records' candidates are all of them.
+        let _ = docs;
+        self.record_candidates(graph, tapes)
     }
 
     /// [`Self::candidates`] among the records.
