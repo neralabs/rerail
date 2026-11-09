@@ -29,24 +29,29 @@ pub trait Backend: Send + Sync {
     fn can(&self, k: &Kernel) -> bool;
     /// Runs `ks` as one submission. The outputs are in `ks`' order, each equal to [`crate::cpu::run`]'s.
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String>;
-    /// [`Backend::submit`] with where its time went. The default knows nothing beyond the lane thread's own CPU,
-    /// which [`Executor::run`] measures around this call.
+    /// [`Backend::submit`], with where the submission's time went ([`Phases`]); a lane that does not split its work
+    /// reports the default.
     fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
         self.submit(ks).map(|o| (o, Phases::default()))
     }
 }
 
-/// Where one lane's submission spent its time, as far as the backend can tell (the profile's acceleration section).
-#[derive(Clone, Copy, Debug, Default)]
+/// Where one lane's submission went, in seconds, each phase summed over the submission. A lane that overlaps its
+/// host work with the device (the Neural Engine, tile by tile) has phases that run at the same time, so they sum
+/// to more than its wall time.
+///
+/// - `encode`: wall time writing inputs in the device's form (the Neural Engine: `a`'s bits expanded to fp16 in
+///   place into IOSurfaces);
+/// - `device`: wall time on the device, where the lane can see it (the Neural Engine: its prediction calls);
+/// - `decode`: wall time reading outputs back (the Neural Engine: fp16 partial counts summed, each launch's share
+///   and thresholds);
+/// - `worker_cpu`: CPU (user + sys) spent for the submission off the lane's own thread (the Neural Engine: its
+///   predictor thread and Core ML's threads).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Phases {
-    /// Host seconds turning the launches into the lane's inputs (buffers, surfaces, encoders).
     pub encode: f64,
-    /// Seconds on the device itself, where the device reports it (the GPU's `GPUEndTime - GPUStartTime`, the Neural
-    /// Engine's prediction calls); `None` where it does not.
     pub device: Option<f64>,
-    /// Host seconds turning the lane's outputs back into [`Output`]s.
     pub decode: f64,
-    /// CPU seconds of worker threads other than the lane's own (the rayon pool for the CPU lane).
     pub worker_cpu: f64,
 }
 
