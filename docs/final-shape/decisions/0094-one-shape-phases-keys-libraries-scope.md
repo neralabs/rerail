@@ -106,6 +106,26 @@ The id scheme is part of the per-file memo's plan key, so a change of scheme mis
   inserted the whole closure again: a bug, not DRed's cost. What is left is the survivors' copy (`h :- h__old,
   !h__del`, 1.8 s here), which costs what deriving `h` cold does. Reading the survivors in place needs a relation
   with deleted rows in the engine's core: any mechanism needs it, counting included.
+- **Survivors in place (spike, same day)**: a maintained relation starts from the kept one, its deleted rows
+  marked dead in a bitset every reader skips. `session_costs` edit: 1.67 s with the copy, 0.82 s in place (cold
+  1.8 s); 0.47 s of it is still copying the kept relation's memory.
+- **DRed against counting (same day)**. Counting is built as support relations (`RERAIL_MAINTAIN=count`): each
+  rule of a non-recursive stratum keeps one row per derivation, so its deletes are exact and nothing is
+  rederived; a recursive stratum is derived again (counting over cycles needs a level witness). Both give a full
+  run's answers at all 20 steps of O125's replay (`calls.rr`, 84 files, real commits).
+
+  | | synthetic closure, one edit | O125 replay, session per step | full run |
+  | --- | --- | --- | --- |
+  | DRed | 0.9–1.4 s | 3.3–10.2 s (cross 2.5–8.4 s) | 1.1–2.0 s (cross 0.6–1.1 s) |
+  | counting | 5.4–7.4 s | 3.0–5.9 s (cross 2.1–4.4 s) | same |
+
+  On the closure DRed wins: counting derives `reach` again (1.6 s) and then diffs 9,000,000 rows old against new
+  (3.0 s). On the replay counting is about 1.5x cheaper. Neither result is about the mechanism yet: on a replay
+  step DRed spends 3.3 of 6.4 s planning its 14,800 rewritten rules and 0.7 s joining, and counting 1.2 s
+  planning and 0.5 s joining. A one-file edit changes about 230 inputs and 450,000 input rows, because preorder
+  ids move (§2). DRed's over-deletion there is 1.23–1.27x the rows truly deleted. A fair verdict needs memoised
+  rewrites and plans (0090 step 5) and per-definition input deltas (§2) first; then the mechanisms differ only in
+  their joins and stored rows.
 - **Statistics are maintained like data**: stored counts updated by deltas, not measured again on a warm run.
 - **Every keyed read from SQLite has a test of its plan** (`SEARCH … USING PRIMARY KEY`). SQLite falls back to a
   scan without saying so; one such read took 33 s.
