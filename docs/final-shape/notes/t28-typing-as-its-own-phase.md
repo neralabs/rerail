@@ -49,23 +49,71 @@ in `exceptions.py`, 8.7 s (t25).
   phase 0's run start inside another run on the same thread. A profiled nested run used to wait for the profile
   that the outer run holds, which was a deadlock.
 
+- **Every phase run is listed flat.** The reader's `phase_runs` lists every phase in the order they ran, each
+  once, and a phase's own run takes the upstream facts that keyed it instead of checking those phases again.
+- **A later phase loads nothing.** A program that reads a phase whose fixed point loaded documents (directly or
+  through an earlier phase) and derives `load` itself is refused before any phase runs.
+- **A phase reading phases is kept when unchanged.** Its key holds the versions of the exports it reads. Rows
+  digested in order missed every time, because a full run and a kept one hand rows on in different orders. Its own
+  comparison no longer refuses a program that reads phases. `RERAIL_PHASE_WHY=1` says why a phase was not kept.
+
+### The typing phase, P2 (`typing/programs/types.rr`)
+
+P2 reads only struct.'s exports and loads nothing. Its exports, keyed by symbol:
+
+| export | what |
+|---|---|
+| `binds(m, x, d)` | module m's name x, through imports, re-exports and `import *`, to the symbol it names |
+| `bases(c, i, b)`, `anc(c, a)` | a class's bases as written, resolved; its ancestors |
+| `attr(c, x, d, k)` | x looked up on class c: d, defined in class k (first base left to right, depth first) |
+| `sig(f, i, x, a, d)`, `rtype(f, a, d)`, `vtype(s, a, d)` | annotations as written, and each alternative's head symbol |
+| `owner(s, m)` | the module a symbol is defined in |
+
+struct.rr gained `vann(s, a)`, the annotation a module- or class-level name is declared with. That is O128's
+case: 181,293 of 302,897 workspace `pv` rows point at a library value. It also gained `import *` as a `binds`
+row. Test: `phase_tests::types_resolves_names_bases_members_and_annotations_by_symbol`.
+
+Over the 84 files with typeshed (`phase_tests::spike_types_over_the_corpus`, dev build, load about 30–100):
+
+| | cold | unchanged |
+|---|---|---|
+| struct (P1) | 11.0 s | 0.08 s |
+| types (P2) | 10.3 s | 0.11 s |
+| the reader's whole run | 20.2 s | 1.1 s |
+
+- Workspace imports: 1,212 bound. 460 name modules the fixture does not have, since it is part of a
+  repository. Of the rest, 99.3% resolve, 346 of them to a library's symbol.
+- Annotations: 91.2% of 4,867 resolve, 2,653 of them to a library's symbol. Most misses name packages not
+  installed (`pydantic_core`) or generics written as `X[Any]` of an absent module.
+- `attr` answers 17,754 lookups on library classes.
+
+Two approximations, kept on purpose. `attr` is not C3: the order differs only for a class that reaches one
+ancestor by two paths. A generic annotation keeps its text, with its parameters unresolved, because
+instantiating it is P3's search.
+
+Writing P2 found two engine faults, both fixed:
+- `split_dot(q, m, _)` treated the wildcard part as bound, so the split was placed before `q` was;
+- a recursion through `split_dot` scanned every definition per row. The program now joins on a `parent`
+  relation made once.
+
 ## What is missing
 
-### The typing phase itself (P2, `types.rr`)
+### P2 still to come
 
-There is no P2 program. `docs/rule-syntax/lib/python/types.rr` is the old bridge's reader, which joins answers
-back to nodes by span. The phase needs:
-- `.phase types`, reading only `struct__…`;
-- exports keyed by symbol:
-  - `binds(m, x, t)`: a module's name resolved through aliases and re-exports to the definition it names;
-  - `mro(c, i, b)` and `member(c, x, d)`: inherited members included;
-  - `sig(f, i, p, ty)` and `ret(f, ty)`: parameters and returns as type terms, generic ones as schemes
-    (`T`, not each instance);
-  - `overload(f, k, …)`;
-  - the declared type of a library value (`value(s, ty)`). O128 found that 181,293 of 302,897 workspace `pv`
-    rows point at a library value. P3 must reach those through `types.`, not through stub nodes.
+- Overloads (`@overload` stubs): struct does not mark them yet.
+- `__all__`, which narrows `import *`.
+- Generic signatures held as schemes. Today a generic annotation is kept as text, its head resolved.
 
 ### P3 without libraries
+
+`calls_cx.rr`'s values are nodes throughout (`pv(n, k, v)`, `qv`, `bv`), and every reach into a library goes
+through `rr_cx_reach` to a stub's node. P3 is therefore hybrid. A workspace definition stays a node, since P3
+parses the workspace. A library value is a symbol, answered from `types__…`:
+- `pvl(n, k, s)` beside `pv(n, k, v)`: n's value is library symbol s, of kind k;
+- a name bound by an import whose `types__binds` symbol has a library `types__owner`: `pvl`, not `qv`/`bv`;
+- `x.attr` on a value whose class is a library symbol: `types__attr`;
+- a call of a library function: its `types__rtype` symbol, as an instance (`pvl(c, "inst", d)`);
+- a workspace class with a library base: `types__bases` and `types__attr` for the inherited part.
 
 `calls.rr` splits into `struct.rr`, `types.rr` and a P3 `calls.rr` (0083 §7):
 - P3 gives each workspace definition its symbol by struct.rr's naming. It resolves names through `types__binds`
@@ -91,37 +139,49 @@ struct's delta (0083 §2) waits on the maintenance decision (0094 §4, DRed or c
 
 ### Engine checks the design needs
 
-- **A library document in P3 is refused.** A program that reads `types__…` and also loads a library document
-  should fail, so the split stays honest.
-- **Every phase is reported at the top.** The reader's `phase_runs` lists the phases it reads directly. P1's run
-  is inside P2's own report (`phase_runs[k].report.phase_runs`), so the summary line shows two of the three
-  phases. The report should list them flat, in the order they ran.
-- **An upstream phase is checked once.** To key P2, `phases::facts` first runs or keeps P1. P2's run then
-  reaches P1 again, and finds it unchanged (about 0.1 s). The first check's facts should be handed down.
+Done on this branch: refusing loads in a later phase, listing phases flat, checking an upstream phase once.
+Still to come:
+- **Maintaining P2 from struct's delta.** `maintain` refuses a phase that reads phases, so P2 runs in full
+  (10 s) whenever any struct export changes. A workspace edit changes struct's rows for that file only. With the
+  Typing-support export deltas now merged, P2 can take struct's delta once 0094 §4 settles DRed or counting.
 
 ## The order
 
 | step | where | what | measures |
 |---|---|---|---|
-| 1 | engine, done here | chained phases, keyed by upstream exports; cycles refused; nested runs profiled | phase tests |
-| 2 | engine | report nested phase runs flat; check an upstream phase once; refuse library documents in a P3 that reads `types__…` | tests |
-| 3 | Typing-support | `types.rr` (P2) over `struct__…`: binds, mro/member, sig/ret as schemes, value | P2's CPU and export rows, cold and unchanged |
-| 4 | engine spike | P1 → P2 → a reader that answers calls_cx's name and member lookups from `types__…` by symbol, over the 84 files | the share of lookups answered; P3's rows without the stubs |
+| 1 | engine, done | chained phases, keyed by upstream exports; cycles refused; nested runs profiled | phase tests |
+| 2 | engine, done | phase runs flat; an upstream phase checked once; loads refused in a later phase; kept when unchanged | phase tests |
+| 3 | done here | `types.rr` (P2): binds, bases/anc, attr, sig/rtype/vtype, owner | 10.3 s cold, 0.11 s unchanged |
+| 4 | spike, done | P1 → P2 → a reader over the 84 files | 99.3% of imports present, 91.2% of annotations |
 | 5 | Typing-support | P3 `calls.rr`: no loads, symbols, anti-joins over `types.` | 6,299 Jedi answers agree |
 | 6 | engine | searches (`inst`, `mro_find`) as the on-demand path (t26) | `wbind`/`gpar` work gone |
 | 7 | after 0094 §4 | P2 from struct's delta | an edit's cost in P2 |
 
-Step 3 is the long pole. The programs under `typing/programs` are Typing-support's, and 0083's order of work
-puts `types.rr` with that session. Steps 2, 4 and 6 are engine work that can go ahead here.
+Step 5 is the long pole now. It is a rewrite of `calls_cx.rr`'s library half, the hybrid above, checked against
+the 6,299 Jedi answers. It is worth doing only if P3 without the stub rows saves more than the 21 s P1 and P2
+cost cold, since kept runs cost 0.2 s. Today's figures: the stubs are 3.0 M of 5.94 M rows, and the cone is
+5.1 s of joins.
+
+## Dovetailing with the other worktrees
+
+A read-only survey of every worktree, 2026-11-09. Nobody else has a `types.rr` or edits `typing/programs`.
+
+| worktree | what touches this | how it fits |
+|---|---|---|
+| Typing-support | export deltas into a phase's reader (20d9bfc68, d244d6378); `RuleIndex` in `file_local.rs`; 0096, planner statistics as deletable sketches (`plan/sketch.rs`) | merged here. P2's maintenance builds on its deltas, and the join order search should read statistics from 0096's sketches when they land |
+| Final-shape-quality (serverplan-quality) | 3c7a8935d, a live replan re-prices its kept order | merged; with this branch's search changes it took the join order search from 11.9 s to 2.05 s |
+| Two-pass-roots-and-cross-file | 0a4286c3d, rules over empty relations not planned; 7a8ca1967, old rows keep their statistics; a merge in progress (`corpus.rs` unmerged) | cuts the number of searches; touches `plan.rs` near the search; not to be redone here |
+| wolfeel | e3dbedd64, observed fanouts kept per rule; cone reads held exports (7d1e40073); a merge in progress | changes the costs the search reads; coordinate before changing `plan_inner`'s pricing |
+| More-ergonomic-rule-syntax | the cone reading held exports, a third copy | not to be redone |
+| Matrix-offload-spikes | a draft numbered 0096, as is Typing-support's | a numbering clash to settle when they meet |
+
+Likely conflicts when these meet: `plan/corpus.rs` (every branch), `phases.rs` (Typing-support), `plan.rs`
+(the search here, statistics in Two-pass and wolfeel), and `typing/file_local.rs` (Typing-support, wolfeel).
 
 ## Things to watch
 
-- **Typing-support's `phases.rs` is ahead of the hub.** Two commits there (20d9bfc68, the reader maintained from
-  export deltas; d244d6378, a session's reader) are not in `final-shape-serverplan-quality`, so not on this
-  branch. The upstream key above touches the same function (`phases::facts`). Whichever merges second has a
-  small conflict there.
-- **What should be cheap may not be.** P1 alone costs 16.4 s cold in the dev build, more than the 5.1 s cone it
-  replaces, because P1 reads every document's structure. The saving has to come from P3: no stub rows (half of
-  today's), and P1 and P2 kept across runs. Step 4 measures that before step 5 is built.
+- **What should be cheap may not be.** P1 and P2 cost 21 s cold in the dev build, more than the 5.1 s cone they
+  replace, because they read every document's structure. The saving has to come from P3, with no stub rows
+  (half of today's), and from P1 and P2 kept across runs (0.2 s).
 - **Positions are not freshness.** `.positions at` keeps positions out of a granule's digest. A P3 report that
   names lines must take them from `struct__at` at the end, never key on them.

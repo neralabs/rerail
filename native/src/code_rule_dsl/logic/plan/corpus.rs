@@ -246,10 +246,20 @@ pub(crate) fn unchanged(programs: &[&str], root: &Path, typing: &Typing, options
     Ok(changes(programs, root, typing, options, consulted)?.is_some_and(|c| c.is_empty()))
 }
 
+/// `unchanged`, for a phase whose key holds the versions of the earlier phases' exports it reads (`phases::facts`):
+/// those are not consulted inputs, so reading them does not stop the comparison.
+pub(crate) fn unchanged_phase(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<bool> {
+    Ok(changes_of(programs, root, typing, options, consulted, true)?.is_some_and(|c| c.is_empty()))
+}
+
 /// The workspace documents whose bytes changed since a run that consulted `consulted`, when nothing else it
 /// consulted did: the same documents, by path, and every request's answer as it was (`World::still`). `None` when
 /// anything else changed, or the run cannot be compared (its documents named, typing, phases read).
 pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
+    changes_of(programs, root, typing, options, consulted, false)
+}
+
+fn changes_of(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], phases_keyed: bool) -> Result<Option<Vec<String>>> {
     if options.get("inputFiles").is_some() || consulted.is_empty() {
         return Ok(None);
     }
@@ -258,7 +268,7 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
     let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::tools::with_settings(p, &settings)).collect();
     let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
     let prog = combine(&programs, "")?;
-    if prog.decls.contains_key("declared_ret") || !phases::wanted(&prog, None)?.is_empty() {
+    if prog.decls.contains_key("declared_ret") || (!phases_keyed && !phases::wanted(&prog, None)?.is_empty()) {
         return Ok(None);
     }
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
