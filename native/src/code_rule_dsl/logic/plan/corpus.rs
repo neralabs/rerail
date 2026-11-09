@@ -4912,6 +4912,17 @@ impl Own {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn literal_output_is_written_without_derived_rules_or_documents() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("literal-output");
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = ".language python\n.scope dirs \"__no_primary__\"\n#include \"core.rr\"\n.decl tag(value: symbol)\ntag(\"literal\").\n.output tag\n";
+        let out = dir.join("out");
+        super::run_all(&[text], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        assert_eq!(std::fs::read_to_string(out.join("tag.csv")).unwrap(), "literal\n");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn combined_policy_and_library_requests_reach_the_external_world() {
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("combined-world-requests");
         std::fs::create_dir_all(&dir).unwrap();
