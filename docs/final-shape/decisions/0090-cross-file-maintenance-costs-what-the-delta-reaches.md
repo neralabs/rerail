@@ -273,7 +273,7 @@ rules:
 
 The empty-join pruning above also covers these bound deltas: they are bound once, before the run. Other inputs
 can be bound when their first reader runs, so emptiness is not trusted for them. `RERAIL_DIFF_INPUTS` makes every
-delta by the rules again.
+delta by the rules again (below, "One path for an input's delta").
 
 On the replay every changed input qualifies at steps 06 and 07 (105 and 135). At step 08, 185 do, and a few
 small ones keyed by the document key alone (`doc`, `exists_0`, `py_docmod`) go to the rules. On the same binary, with the outputs equal to a full
@@ -296,11 +296,34 @@ the per-file unit 0083 §0 names as the step before per-definition.
 
 Binding the kept relations then costs 1.25 s.
 
-What is left at step 06:
-- engine open's derived-input indexes and survivors (about 1.9 s);
-- the joins (7.5 s);
-- the over-delete stratum (O137's);
-- `statistics` and key analysis, 0.7 s each, run once per run over the whole rewritten program.
+**One path for an input's delta** (merged with serverplan-quality's `c70c82be9`). `maintain::rewrite` asks for an
+input's delta only when a maintained stratum reads it, and the answer is taken in this order:
+
+1. an earlier phase's delta (`given`, `phases::Versioned`);
+2. the changed documents' memo entries (`input_delta`), where every row is one document's: no unchanged
+   document's row is read;
+3. the documents hashed (`retain::document_delta`): each document's rows of the new source are hashed, and only
+   the documents whose hashes differ are compared. This is exact for any input, but reads every row of the input;
+4. else, the diff rules.
+
+Step 2 is the one in the edit's size; step 3 covers the relations it leaves (`doc`, `exists_0`, a text test's
+strings).
+
+**What is left, at step 07** (6 files, load about 10: session 14.3 s, cross-file part 9.2 s):
+- the joins, 2.6 s. Most of this is DRed's over-estimate: `pv` over-deletes 3,660 rows and 70 are truly gone.
+  Counting against DRed is the open maintenance decision.
+- engine open, 1.9 s: indexes of the changed base relations, rebuilt over every row (0.64 s); derived inputs'
+  indexes (0.52 s), the largest over `kind` and `docof`, which are maintained and change every step; survivors
+  copied from the old relation (0.2 s). Making these the delta's size needs relations whose old and new versions
+  share storage (a dead mark and an appended tail per version), not a copy.
+- planning, spec and replans, about 2.6 s for 8,938 delta rules: the delta's size in rules, at a high cost per
+  rule.
+- outside the cross-file part, about 4 s that grows with the repository: the memo replay of every unchanged
+  file (1.3 s), the chunks' totals and the measuring of the held base rows (1.2 s and 1.0 s), and exporting to the
+  cross-file part (0.4 s). 0096's order of work is the plan for these: statistics patched from the same delta
+  rows (its step 2), then the per-file cross store, so an unchanged file is neither replayed nor counted (its
+  step 3).
+- the key analysis is 0.28 s; its JSON `explain` (0.23 s) runs only while profiling.
 
 ## What the prior work says
 
