@@ -2519,3 +2519,15 @@ The global migration gate and five absent translations remain open.
 
 Final advanced again to `04e3b5b83` during the frozen acceptance run. These receipts certify the Final 49 cohort, not that newer engine.
 The next integration checkpoint will merge it before more rule development.
+
+### 2026-11-10 — Ratchet source contracts and latest Final integration
+
+Merge `08381b39e` adopts Final `04e3b5b83`, including kept statistics, delta costs, typed phases, and native sort and join changes.
+The root unit and optimized CLI builds are running at low priority. Prior receipts remain bound to the earlier engine.
+
+The [ratchet source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-ratchet-original-source.json.gz) defines 30 real CLI cases for the next implementation.
+They use actual baseline reads and writes, public signature bytes, fixed clock and approver metadata, and isolated fixture keys.
+These are source observations only; none is claimed as native coverage.
+They show why the two mocked original CLI tests were insufficient.
+The source ignores `--require-baseline`, verifies existing signatures even when skipping unsigned checks, and excludes string counts from comparison ceilings.
+Its CLI also returns zero after a failed signed baseline update. These observed behaviors are part of the parity target.
