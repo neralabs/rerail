@@ -2345,3 +2345,7 @@ Final `134521978` is merged. The shared native formatter now matches the recorde
 The [Final checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-final134-checkpoint.json.gz) reruns the 136 original tests and 200 observations on that engine.
 All 45 detector cases, thirteen scanner cases, 101 focused engine tests, and 173 tooling tests pass.
 The checkpoint lists all 28 original tests outside native acceptance. The five remaining APIs and production acceptance remain open.
+
+The [signature TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-signature-tdd.json.gz) adds both original signature tests and 72 complete API cases.
+The shared native verifier also passes 1,110 recorded transport/error cases in one SQL batch.
+Both blocker collectors, legacy scanning, and CLI reporting remain open. A combined original-suite replay and production acceptance still remain to run.

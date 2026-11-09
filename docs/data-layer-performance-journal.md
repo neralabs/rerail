@@ -9603,3 +9603,21 @@ The checkpoint individually lists all 28 original cases outside native acceptanc
 Signature verification, both blocker collectors, legacy scanning, and CLI reporting remain untranslated.
 Production, discovery, mutation controls, updates, the seven absent translations, and earlier migration gaps remain open.
 These results do not complete ServerPlan steps or the 100-rule migration.
+
+### 2026-11-09 — Exact allowlist verification
+
+The signature API now uses native `.rr` rules, the shared signed-message library, and the existing public-key verifier.
+The generic `ed25519_error` functor exposes the verifier's result text. It never signs artifacts or reads private keys.
+All 72 API cases pass, including valid signatures, unsigned markers, changed lists, Unicode, noise, padding, and malformed inputs.
+Both original signature tests pass with their complete return values and stderr.
+
+A single SQL batch checks 1,110 recorded decoder/verifier cases. The test fails before the new functor exists and passes afterward.
+The first implementation also exposes an existing decoder discrepancy: it stops at completed padding and ignores later data.
+The pinned runtime is Python 3.13.18, whose [decoder](https://raw.githubusercontent.com/python/cpython/v3.13.18/Modules/binascii.c#L365) continues through interior padding.
+The repair matches that runtime and retains bounded signature storage. Expected results remain unchanged throughout the repair.
+All sixteen string-function tests and 99 rule-engine tests pass. Two existing rule-engine helpers remain ignored.
+The final root CLI and unit builds take 15.498 and 27.118 seconds.
+
+The [TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-signature-tdd.json.gz) retains the original failures, complete API results, parser corpus, and build identities.
+Both blocker collectors, legacy scanning, and CLI reporting remain untranslated.
+The complete original-suite replay and production acceptance remain open, along with seven absent translations and earlier migration gaps.
