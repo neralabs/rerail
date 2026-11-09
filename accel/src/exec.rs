@@ -29,6 +29,30 @@ pub trait Backend: Send + Sync {
     fn can(&self, k: &Kernel) -> bool;
     /// Runs `ks` as one submission. The outputs are in `ks`' order, each equal to [`crate::cpu::run`]'s.
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String>;
+    /// [`Backend::submit`], with where the submission's time went ([`Phases`]); a lane that does not split its work
+    /// reports the default.
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
+        self.submit(ks).map(|o| (o, Phases::default()))
+    }
+}
+
+/// Where one lane's submission went, in seconds, each phase summed over the submission. A lane that overlaps its
+/// host work with the device (the Neural Engine, tile by tile) has phases that run at the same time, so they sum
+/// to more than its wall time.
+///
+/// - `encode`: wall time writing inputs in the device's form (the Neural Engine: `a`'s bits expanded to fp16 in
+///   place into IOSurfaces);
+/// - `device`: wall time on the device, where the lane can see it (the Neural Engine: its prediction calls);
+/// - `decode`: wall time reading outputs back (the Neural Engine: fp16 partial counts summed, each launch's share
+///   and thresholds);
+/// - `worker_cpu`: CPU (user + sys) spent for the submission off the lane's own thread (the Neural Engine: its
+///   predictor thread and Core ML's threads).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Phases {
+    pub encode: f64,
+    pub device: Option<f64>,
+    pub decode: f64,
+    pub worker_cpu: f64,
 }
 
 /// One kernel to run, optionally pinned to a lane.
@@ -215,6 +239,20 @@ impl Backend for CpuBackend {
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
         use rayon::prelude::*;
         Ok(ks.par_iter().map(|k| crate::cpu::run(k)).collect())
+    }
+}
+
+/// The calling thread's user + system CPU seconds (0 where there is no thread clock).
+pub fn thread_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut t: libc::timespec = unsafe { std::mem::zeroed() };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
     }
 }
 
