@@ -3273,7 +3273,9 @@ chain (`data_layer/matching.py` → `l5250_matching/__init__.py` → `l1470_matc
 `data_layer/versioned_schema.py` → `l7000_versioned_schema/compatibility.py` → `…/versioned_schema.py`;
 `l1500_llm/delegation_consent.py`), counts all four exactly (22, 12, 25, 40): no rule change.
 
-**Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Expected over the whole
+**Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Through the `values` phase
+(O-names-cost) the four enum files count exactly on a 212-file root; over the whole workspace that waits on the
+phase's cold cost. Expected over the whole
 workspace: 1,133 of 1,143, once names over the whole workspace fit the budget (O-names-cost). Known difference from
 the model: a nested Test class reached through two parents counts once (the owner is a node, not a path).
 
@@ -3340,6 +3342,13 @@ the wrapper's, in bytes, not the engine's.)
 - Whole workspace, tape cache on, cold (2026-11-09 15:03, load 93–138): `struct` ended and was recorded at 13
   minutes (218,783 granules; tapes for 8,986 files); `values` had not ended at 1,800 s (1,327 s CPU). A warm rerun
   reuses both.
+- The values phase as `test-budget` would read it, on a root of 212 files (2026-11-09, load 31–35): the four enum
+  files, their conftests, each enum's re-export chain (19 files), and `data_layer_testing/` and the root's files
+  (`pcE.rr`'s scope). `struct` and `values` run over all 212; `pytest-collect` reads `values__len`. All four exact
+  (22, 12, 25, 40), none open. Cold 25.0 s CPU (318 MB peak RSS); phases reused 13.9 s; with the per-file memo on,
+  19.4 s then 5.6 s. `test_fts_versioned_isolation.py`'s 12 needs `data_layer_testing`: its `TestFTSBranchIsolation`
+  is replaced by a function (`@requires_capabilities`, `pc_replaced`); without the decorator's document the class
+  counts 21 more (its fixture's 7 scenarios, now read through `values`, times three tests).
 
 **Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.
