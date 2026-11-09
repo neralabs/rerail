@@ -26,7 +26,7 @@ describe("openNoFollow", () => {
     roots.push(root);
     const file = join(root, "record.json");
     await writeFile(file, "{}");
-    const handle = await openNoFollow(file, constants.O_RDONLY, undefined, undefined);
+    const handle = await openNoFollow(file, constants.O_RDONLY, undefined, 0);
     expect(await handle.readFile("utf8")).toBe("{}");
     await handle.close();
     const link = join(root, "planted.json");
@@ -34,7 +34,7 @@ describe("openNoFollow", () => {
       context.skip();
       return;
     }
-    await expect(openNoFollow(link, constants.O_RDONLY, undefined, undefined)).rejects.toMatchObject({ code: "ELOOP" });
+    await expect(openNoFollow(link, constants.O_RDONLY, undefined, 0)).rejects.toMatchObject({ code: "ELOOP" });
   });
 });
 
@@ -44,7 +44,7 @@ describe("openNoFollowSync", () => {
     roots.push(root);
     const file = join(root, "rerail-repository-id");
     await writeFile(file, "clone-1");
-    const descriptor = openNoFollowSync(file, constants.O_RDONLY, undefined, undefined);
+    const descriptor = openNoFollowSync(file, constants.O_RDONLY, undefined, 0);
     expect(readFileSync(descriptor, "utf8")).toBe("clone-1");
     closeSync(descriptor);
     const link = join(root, "planted-id");
@@ -52,6 +52,6 @@ describe("openNoFollowSync", () => {
       context.skip();
       return;
     }
-    expect(() => openNoFollowSync(link, constants.O_RDONLY, undefined, undefined)).toThrow(expect.objectContaining({ code: "ELOOP" }));
+    expect(() => openNoFollowSync(link, constants.O_RDONLY, undefined, 0)).toThrow(expect.objectContaining({ code: "ELOOP" }));
   });
 });

@@ -20,10 +20,10 @@ async function lstatOrMissing(path: string): Promise<BigIntStats | undefined> {
  * has `O_NOFOLLOW` the kernel refuses it. Windows has none: `constants.O_NOFOLLOW` is undefined there, and `flags |
  * undefined` adds nothing, so a planted link was opened as if it were Rerail's own file. There the name is read with
  * lstat before the open, and the opened file is checked to be the one lstat saw, so a link swapped in between is
- * refused too. `noFollow` is the flag to use, which tests set to undefined to take the Windows path.
+ * refused too. `noFollow` is the flag to use, 0 where the OS has none; tests pass 0 to take that path on any OS.
  */
-export async function openNoFollow(path: string, flags: number, mode?: number, noFollow: number | undefined = constants.O_NOFOLLOW): Promise<FileHandle> {
-  if (noFollow !== undefined) return await open(path, flags | noFollow, mode);
+export async function openNoFollow(path: string, flags: number, mode?: number, noFollow: number = constants.O_NOFOLLOW ?? 0): Promise<FileHandle> {
+  if (noFollow !== 0) return await open(path, flags | noFollow, mode);
   const before = await lstatOrMissing(path);
   if (before?.isSymbolicLink() === true) throw symlinkRefusal(path);
   const handle = await open(path, flags, mode);
@@ -48,8 +48,8 @@ function lstatOrMissingSync(path: string): BigIntStats | undefined {
 }
 
 /** {@link openNoFollow} for synchronous code: a file descriptor the caller closes. */
-export function openNoFollowSync(path: string, flags: number, mode?: number, noFollow: number | undefined = constants.O_NOFOLLOW): number {
-  if (noFollow !== undefined) return openSync(path, flags | noFollow, mode);
+export function openNoFollowSync(path: string, flags: number, mode?: number, noFollow: number = constants.O_NOFOLLOW ?? 0): number {
+  if (noFollow !== 0) return openSync(path, flags | noFollow, mode);
   const before = lstatOrMissingSync(path);
   if (before?.isSymbolicLink() === true) throw symlinkRefusal(path);
   const descriptor = openSync(path, flags, mode);
