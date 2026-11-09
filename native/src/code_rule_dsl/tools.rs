@@ -352,7 +352,12 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
         // run however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
         let canonical = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
         let own = module_text(&canonical, &text, &graph, &mut Vec::new(), &read)?;
-        out.push(if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own });
+        let own = if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own };
+        // The text's own graph is the file's, cut to what the text includes: kept, so no second run derives it.
+        if let Ok(Some(seed)) = super::logic::rr::text_seed(&own) {
+            phase0::keep_text(&seed, &graph);
+        }
+        out.push(own);
     }
     Ok(out)
 }

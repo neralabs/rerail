@@ -105,7 +105,7 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
                     .collect::<Vec<_>>();
                 for &site in &members {
                     reducer::combined::share(
-                        &mut plans.states.get_mut(&output).unwrap().rules[rule].reducers[site],
+                        &mut Arc::make_mut(&mut plans.states.get_mut(&output).unwrap().rules)[rule].reducers[site],
                         &group,
                         &values,
                         &projection,
@@ -119,7 +119,7 @@ pub(super) fn combine(plans: &mut Plans, queries: &[Option<Query>]) {
         }
     }
     for state in plans.states.values_mut() {
-        for rule in &mut state.rules {
+        for rule in Arc::make_mut(&mut state.rules) {
             rule.rewrite(queries[rule.step].as_ref().unwrap());
         }
     }

@@ -1,0 +1,41 @@
+{"files": 1143, "level": 0, "stats": {}, "total": 7603}
+user 10.62
+sys 0.22
+{"files": 1143, "level": 1, "stats": {"class_with_init_or_test_false": 37, "imported_test_name": 75}, "total": 7590}
+user 10.14
+sys 0.19
+{"files": 1143, "level": 2, "stats": {"class_with_init_or_test_false": 37, "imported_test_name": 75, "parametrize": 591, "parametrize_unresolved": 61}, "total": 9064}
+user 12.00
+sys 0.25
+{"files": 1143, "level": 3, "stats": {"class_with_init_or_test_false": 37, "imported_test_name": 75, "parametrize": 591, "parametrize_unresolved": 14}, "total": 9264}
+user 14.51
+sys 0.45
+{"files": 1143, "level": 4, "stats": {"class_with_init_or_test_false": 37, "fixture_params_resolved": 657, "fixture_params_unresolved": 33, "imported_test_name": 75, "parametrize": 591, "parametrize_unresolved": 14}, "total": 13457}
+user 15.96
+sys 0.35
+{"files": 1143, "level": 5, "stats": {"class_with_init_or_test_false": 37, "filtered_comprehension_upper": 8, "fixture_params_resolved": 690, "ifexp_max": 43, "imported_test_name": 75, "parametrize": 591, "parametrize_unresolved": 4}, "total": 13772}
+user 16.95
+sys 0.42
+{"files": 1143, "level": 6, "stats": {"class_replaced_by_decorator": 3, "class_with_init_or_test_false": 88, "filtered_comprehension_upper": 8, "fixture_params_resolved": 687, "ifexp_max": 43, "imported_test_name": 75, "parametrize": 591, "parametrize_unresolved": 4}, "total": 13610}
+user 17.51
+sys 0.48
+truth 14449 est 7603 err -47.4% files_exact 726/1143 under 6983 over 137 dirs_exact 23/76
+truth 14449 est 7590 err -47.5% files_exact 733/1143 under 6985 over 126 dirs_exact 23/76
+truth 14449 est 9064 err -37.3% files_exact 896/1143 under 5526 over 141 dirs_exact 29/76
+truth 14449 est 9264 err -35.9% files_exact 918/1143 under 5326 over 141 dirs_exact 31/76
+truth 14449 est 13457 err -6.9% files_exact 1114/1143 under 1154 over 162 dirs_exact 67/76
+truth 14449 est 13772 err -4.7% files_exact 1121/1143 under 872 over 195 dirs_exact 67/76
+truth 14449 est 13610 err -5.8% files_exact 1131/1143 under 872 over 33 dirs_exact 72/76
+truth 14449 est 13610 err -5.8% files_exact 1131/1143 under 872 over 33 dirs_exact 72/76
+    819    11 conform/l5250_matching/test_phase1_case_matrix.py
+     66    13 conform/l7000_versioned/test_speculative_publication_scenarios.py
+      2    16 conform/l9750_graphql/suite/test_event_engine_graph_predicate.py
+     18     8 conform/l7000_versioned/test_branches.py
+      1     8 conform/l9750_graphql/suite/test_subscription_graph_read_predicate.py
+    101   104 conform/l9750_graphql/suite/test_queries.py
+      6     8 conform/l9750_graphql/suite/test_subscription_revision_projection.py
+      6     8 conform/l9750_graphql/suite/test_event_engine_branch_scope.py
+     22    24 conform/l9750_graphql/suite/test_rtt_efficiency.py
+      6     8 conform/l9750_graphql/suite/test_versioning.py
+     23    24 conform/l9750_graphql/suite/test_mutations.py
+      8     7 conform/l9900_auto_api/test_graphql_whitebox.py

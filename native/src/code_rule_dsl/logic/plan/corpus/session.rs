@@ -29,10 +29,9 @@ pub(in crate::code_rule_dsl) struct Session {
     #[cfg(test)]
     thread: std::thread::ThreadId,
     pub(super) memo: memo::Held,
-    /// Each program's cross-file part as its last run left it (decision 0077): an edit runs the strata whose inputs
-    /// changed. A run that reads a phase runs the phase's program too, so the session keeps a few programs' parts
-    /// (`retain::PARTS`), the one run last first.
-    pub(super) cross: Mutex<Vec<([u8; 32], super::retain::Retained)>>,
+    /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
+    /// per cross program (`retain::key`): a run's passes are different programs, and one would take the other's place.
+    pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
     /// Each phase export a run read, as bound: its version (`phases::Versioned`), the relation of atoms and its
     /// statistics. A run reading the same version binds it as it is: no row is interned or measured again.
     pub(super) phased: Mutex<std::collections::HashMap<String, (u64, PhasedSource)>>,
@@ -68,7 +67,7 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         path,
         store,
         memo: Default::default(),
-        cross: Mutex::new(Vec::new()),
+        cross: Default::default(),
         phased: Mutex::new(Default::default()),
         written: Mutex::new(Default::default()),
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),

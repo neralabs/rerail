@@ -45,8 +45,6 @@ impl Kept {
     }
 }
 
-/// How many programs' cross-file parts a session keeps (a reader's, and the phases' it reads).
-pub(in crate::code_rule_dsl) const PARTS: usize = 8;
 
 /// What a session keeps of its cross-file part.
 #[derive(Default)]
@@ -197,7 +195,7 @@ impl Cut {
 }
 
 /// The byte budget of what a session keeps of its cross-file part.
-fn budget() -> usize {
+pub(in crate::code_rule_dsl) fn budget() -> usize {
     std::env::var("RERAIL_CROSS_RETAIN_MB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(256) << 20
 }
 

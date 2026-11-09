@@ -406,8 +406,73 @@ impl TempDir {
 pub(super) fn tempdir() -> TempDir {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let dir = std::env::temp_dir().join(format!("rerail-sql-profile-{}-{nonce}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "rerail-sql-profile-{}-{nonce}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     TempDir(dir)
+}
+
+#[test]
+fn nested_operator_cpu_excludes_child_sql_and_child_operators() {
+    let directory = tempdir();
+    let connection = Connection::open_in_memory().unwrap();
+    // SAFETY: the profiler drops before the connection.
+    let profiler = unsafe { Profiler::new(&connection, directory.path()) }.unwrap();
+    let outer = profiler.operation("outer", ("test", 0), 0, vec![]);
+    let middle = profiler.operation("middle", ("test", 0), 1, vec![]);
+    let inner = profiler.operation("inner", ("test", 0), 2, vec![]);
+    connection.query_row("WITH RECURSIVE n(x) AS(VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000) SELECT sum(x) FROM n", [], |r| r.get::<_,i64>(0)).unwrap();
+    inner.finish(1);
+    middle.finish(1);
+    outer.finish(1);
+    profiler.checkpoint(&connection).unwrap();
+    let catalog: Value =
+        serde_json::from_slice(&std::fs::read(profiler.stem.with_extension("json")).unwrap())
+            .unwrap();
+    let events = std::fs::read_to_string(profiler.stem.with_extension("jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str::<Value>(l).unwrap())
+        .collect::<Vec<_>>();
+    let operator = |name| {
+        events
+            .iter()
+            .find(|e| {
+                e["kind"] == "operator"
+                    && catalog["queries"][e["query"].as_u64().unwrap() as usize]["sql"] == name
+            })
+            .unwrap()
+    };
+    let outer = operator("outer");
+    let middle = operator("middle");
+    let inner = operator("inner");
+    let value = |e: &Value, k: &str| e[k].as_u64().unwrap();
+    let sql_cpu = events
+        .iter()
+        .filter(|e| e["kind"] == "sql")
+        .map(|e| value(e, "cpuNs"))
+        .sum::<u64>();
+    assert_eq!(
+        value(middle, "childOperatorCpuNs"),
+        value(inner, "selfCpuNs")
+    );
+    assert_eq!(
+        value(outer, "childOperatorCpuNs"),
+        value(middle, "selfCpuNs") + value(inner, "selfCpuNs")
+    );
+    assert_eq!(
+        value(outer, "cpuNs"),
+        value(outer, "selfCpuNs") + value(outer, "childOperatorCpuNs") + sql_cpu
+    );
+    assert_eq!(
+        value(middle, "cpuNs"),
+        value(middle, "selfCpuNs") + value(inner, "selfCpuNs") + sql_cpu
+    );
 }
