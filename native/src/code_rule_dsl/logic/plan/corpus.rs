@@ -2120,6 +2120,8 @@ fn run_observed(
     let mut base_rows: BTreeMap<String, (Vec<String>, Vec<Option<Vec<i64>>>)> = BTreeMap::new();
     // The base rows as sources, once made (`columns_source`): measured and bound as one, so they keep their statistics.
     let mut base_sources: BTreeMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = BTreeMap::new();
+    // Their digests, when a session's run took them (`retain::kept_source`).
+    let mut input_digests: HashMap<String, u64> = HashMap::new();
     // The base rows memo hits replayed, every column: measured once, after the chunks.
     let mut replayed: BTreeMap<String, (Vec<String>, Vec<Vec<i64>>)> = BTreeMap::new();
     let mut bound = BTreeSet::new();
@@ -3085,9 +3087,12 @@ fn run_observed(
         // Measured through the source the cross-file part binds: it keeps its statistics, so a session's next run
         // reads them for its `r__old` (0094 §4). A column no cross-file rule names is not held: the planner still
         // asks for it, so it is stated as a key.
+        // In a session, rows as the last run had them are its source.
+        let parts = session.as_ref().map(|s| s.cross.lock().expect("the session's cross-file parts"));
         for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
             let rows = values.iter().flatten().map(Vec::len).next().unwrap_or(0);
             let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+            let source = retain::kept_source(parts.as_deref(), &rel, source, &mut input_digests);
             totals.add(&rel, rows, &syntax::statistics(source.as_ref()));
             base_sources.insert(rel, source);
         }
@@ -3131,8 +3136,12 @@ fn run_observed(
     // The cross-file part reads every input in place from `main`: the base relations held in memory, and the
     // exports, read from `x` once each.
     // Without the memo the base rows are still columns: sources now.
-    for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
-        base_sources.insert(rel, crate::code_rule_dsl::logic::native::component::columns_source(columns, values));
+    {
+        let parts = session.as_ref().map(|s| s.cross.lock().expect("the session's cross-file parts"));
+        for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
+            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+            base_sources.insert(rel.clone(), retain::kept_source(parts.as_deref(), &rel, source, &mut input_digests));
+        }
     }
     crate::code_rule_dsl::logic::profile::decision("held for the cross-file part", || {
         let mut held: Vec<(usize, String)> = base_sources
@@ -3318,8 +3327,12 @@ fn run_observed(
                     // Each linear cost of a session's run is its own span (decision 0090, step 1).
                     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("session/{name}"));
                     let s = span("digest inputs");
-                    // A phase's export is digested by its version: none of its rows is read for it.
-                    let digests: HashMap<String, u64> = cross_inputs.iter().map(|(rel, source)| (rel.clone(), phase_versions.get(rel).map_or_else(|| retain::digest(source.as_ref()), |v| v.now))).collect();
+                    // A phase's export is digested by its version: none of its rows is read for it. A base relation's
+                    // digest was taken when its source was made (`retain::kept_source`).
+                    let digests: HashMap<String, u64> = cross_inputs
+                        .iter()
+                        .map(|(rel, source)| (rel.clone(), phase_versions.get(rel).map(|v| v.now).or_else(|| input_digests.get(rel).copied()).unwrap_or_else(|| retain::digest(source.as_ref()))))
+                        .collect();
                     drop(s);
                     let ckey = retain::key(&prepared_key, &cross.program);
                     let mut cells = cell.lock().expect("the session's cross-file part");
@@ -3351,6 +3364,16 @@ fn run_observed(
                             }
                         }
                     }
+                    // An input with the rows it had is read from the last run's source, with its indexes and statistics.
+                    let s = span("bind unchanged inputs");
+                    let same = cell.as_ref().map(|kept| kept.same_inputs(ckey, &digests)).unwrap_or_default();
+                    for (rel, source) in same {
+                        if let Some(input) = cross_inputs.iter_mut().find(|(r, _)| *r == rel) {
+                            modules.bind(&db, &rel, Arc::clone(&source))?;
+                            input.1 = source;
+                        }
+                    }
+                    drop(s);
                     // The O125 spike's progress: each step of a session's run, with this thread's CPU.
                     let trace = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
                     let step = |what: &str| {

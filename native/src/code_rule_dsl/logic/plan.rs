@@ -837,10 +837,34 @@ impl Model {
                 _ => None,
             }))
             .collect();
-        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| k.4.clone()));
-        if let Some(priced) = kept.filter(|k| near(&k.sizes, &sizes)) {
-            super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
-            return Ok(priced.got.clone());
+        // The last price, and the work of the order when it was searched.
+        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| Some((k.4.clone()?, k.1))));
+        if let Some((priced, searched)) = &kept {
+            if near(&priced.sizes, &sizes) {
+                super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
+                return Ok(priced.got.clone());
+            }
+            // A size moved: the kept order is priced again (no search), and kept while its work grew less than
+            // `REPLAN` times or by fewer than `REPLAN_ROWS` rows over its work when searched, as a kept plan is
+            // across chunks. Most moves are small relations growing between waves (1 row, then 50), where any
+            // order costs less than a search.
+            let then = *searched;
+            let repriced = {
+                let _span = super::profile::span(|| "re-price".into());
+                self.plan_inner(prog, head, body, first, Some(&priced.got.0.0), false)
+            };
+            if let Ok((plan, _)) = repriced
+                && (plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS)
+            {
+                super::profile::decision("plan cache (decision 0038)", || "a live replan kept, re-priced: its work grew little".into());
+                let got = (plan, priced.got.1.clone());
+                PLANS.with(|p| {
+                    if let Some(k) = p.borrow_mut().as_mut().and_then(|p| p.get_mut(&key)) {
+                        k.4 = Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }));
+                    }
+                });
+                return Ok(got);
+            }
         }
         let got = {
             let _span = super::profile::span(|| "search".into());
@@ -848,7 +872,8 @@ impl Model {
         };
         PLANS.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
-                p.insert(key, (got.0.0.clone().into(), 0.0, None, 0.0, Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }))));
+                // Its work as searched (for live replans, the second field), against which a re-pricing is judged.
+                p.insert(key, (got.0.0.clone().into(), got.0.1, None, 0.0, Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }))));
             }
         });
         Ok(got)
