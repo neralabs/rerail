@@ -389,6 +389,8 @@ pub(super) struct At<'a> {
     /// The file's first slot word, and the slots per block (`native_ir::Passes`).
     pub(super) scratch: Value,
     pub(super) slots: u16,
+    /// Before the last pass: each output's slot, stored where the body makes it.
+    pub(super) slot_of: &'a [u16],
 }
 
 /// One block's body: every instruction as straight-line bit operations. Gives each output's
@@ -405,7 +407,7 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     let n = native.insts.len();
     let lanes = Lanes::new(&mut *f, native, plan, at.base, at.i, !at.full, at.ascii, at.bytes, c.nibble);
     // The block's row of slots, made once: each `Load` is one load at its slot's offset.
-    let row = if native.insts.iter().any(|i| matches!(i, BlockInst::Load(_))) {
+    let row = if !at.slot_of.is_empty() || native.insts.iter().any(|i| matches!(i, BlockInst::Load(_))) {
         let r = f.ins().imul_imm(at.i, 8 * i64::from(at.slots));
         f.ins().iadd(at.scratch, r)
     } else {
@@ -443,6 +445,19 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
     let mut done = vec![false; n];
     let mut emitted = vec![false; regions];
     let mut gates = 0;
+    // Each slot word to store (before the last pass), by the value that is it.
+    let mut store_at: Vec<Vec<u16>> = vec![Vec::new(); n];
+    for (k, &v) in native.outputs.iter().enumerate() {
+        if let Some(&slot) = at.slot_of.get(k) {
+            store_at[usize::from(v)].push(slot);
+        }
+    }
+    if regions == 0 {
+        demand_order(&mut e, &mut *f, &grouped, &store_at);
+        let rounds = std::mem::take(&mut e.rounds);
+        let (outputs, packed) = e.finish(&mut *f);
+        return (outputs, packed, 0, rounds);
+    }
     loop {
         // Every value outside the regions whose operands are made, in order; then the first
         // region whose operands outside it are made.
@@ -491,9 +506,84 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
             }
         }
     }
+    for x in 0..n {
+        e.store(&mut *f, x, &store_at[x]);
+    }
     let rounds = std::mem::take(&mut e.rounds);
     let (outputs, packed) = e.finish(&mut *f);
     (outputs, packed, gates, rounds)
+}
+
+/// A body's values in the order they are needed (a body without gated regions): each just
+/// before the first value that reads it, a fixed point's loop just before its first member is
+/// read, from the values no other reads (the outputs, the carried ones), first to last. In the
+/// program's order a value made early and read late lives through all between, and spills.
+/// Each slot word is stored where it is made.
+fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Option<usize>], store_at: &[Vec<u16>]) {
+    let native = e.native;
+    let n = native.insts.len();
+    let mut read = vec![false; n];
+    for (x, inst) in native.insts.iter().enumerate() {
+        if e.live[x] {
+            for o in inst.operands() {
+                read[o] = true;
+            }
+        }
+    }
+    #[derive(Clone, Copy)]
+    enum Node {
+        Value(usize),
+        Group(usize),
+    }
+    let mut done = vec![false; n];
+    let mut ran = vec![false; native.groups.len()];
+    let mut stack: Vec<(Node, bool)> = Vec::new();
+    for root in 0..n {
+        if done[root] || (e.live[root] && read[root]) {
+            continue;
+        }
+        stack.push((Node::Value(root), false));
+        while let Some((node, ready)) = stack.pop() {
+            match node {
+                Node::Value(x) if done[x] => {}
+                Node::Value(x) => match grouped[x] {
+                    Some(g) => stack.push((Node::Group(g), false)),
+                    None if ready => {
+                        e.emit(&mut *f, x);
+                        done[x] = true;
+                        e.store(&mut *f, x, &store_at[x]);
+                    }
+                    None => {
+                        stack.push((node, true));
+                        if e.live[x] {
+                            for o in native.insts[x].operands().into_iter().rev() {
+                                stack.push((Node::Value(o), false));
+                            }
+                        }
+                    }
+                },
+                Node::Group(g) if ran[g] => {}
+                Node::Group(g) if ready => {
+                    e.rounds(&mut *f, g);
+                    ran[g] = true;
+                    for &m in &native.groups[g].members {
+                        done[m] = true;
+                        e.store(&mut *f, m, &store_at[m]);
+                    }
+                }
+                Node::Group(g) => {
+                    stack.push((node, true));
+                    for &m in native.groups[g].members.iter().rev() {
+                        for o in native.insts[m].operands().into_iter().rev() {
+                            if grouped[o] != Some(g) {
+                                stack.push((Node::Value(o), false));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// The values a body must make: the outputs, the carried ones (a known one's carry is a constant)
@@ -888,6 +978,14 @@ impl Emit<'_, '_> {
         f.switch_to_block(after);
     }
 
+    /// Value `x`'s word to each of `slots` of the block's row.
+    fn store(&mut self, f: &mut FunctionBuilder<'_>, x: usize, slots: &[u16]) {
+        for &slot in slots {
+            let v = plain(&mut *f, &self.syms, &mut self.values, x);
+            f.ins().store(stores_flags(), v, self.row, 8 * i32::from(slot));
+        }
+    }
+
     fn finish(mut self, f: &mut FunctionBuilder<'_>) -> (Vec<Value>, Vec<Value>) {
         let outputs = self.native.outputs.iter().map(|&v| plain(&mut *f, &self.syms, &mut self.values, usize::from(v))).collect();
         let packed = (0..self.state.words)
@@ -1253,7 +1351,7 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
                 f.ins().brif(ascii, fast, &[], slow, &[]);
                 for (blk, ascii) in [(fast, true), (slow, false)] {
                     f.switch_to_block(blk);
-                    let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes), scratch, slots });
+                    let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes), scratch, slots, slot_of });
                     gate_branches += gates;
                     round_branches += rounds.len();
                     heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
@@ -1264,7 +1362,7 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
                 let m = f.block_params(merge).to_vec();
                 (m[..n].to_vec(), m[n..].to_vec())
             } else {
-                let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii: false, bytes: None, scratch, slots });
+                let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii: false, bytes: None, scratch, slots, slot_of });
                 gate_branches += gates;
                 if full {
                     round_branches += rounds.len();
@@ -1272,14 +1370,7 @@ fn forward(context: &mut Context, native: &BlockNative, slot_of: &[u16], slots: 
                 heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
                 (v, packed)
             };
-            // Before the last pass: each output's word as made, to its slot.
-            if !slot_of.is_empty() {
-                let row = f.ins().imul_imm(i, 8 * i64::from(slots));
-                let at = f.ins().iadd(scratch, row);
-                for (k, &slot) in slot_of.iter().enumerate() {
-                    f.ins().store(stores_flags(), values[k], at, 8 * i32::from(slot));
-                }
-            }
+            // Before the last pass each output's word is in its slot: the body stored it.
             // Each output cut to the stream outside full blocks: the bits `d <= 64 i + j < len + d`.
             let words: Vec<Value> = values
                 .iter()
