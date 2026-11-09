@@ -713,13 +713,30 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     }
 }
 
-fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Prepared>> {
-    static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Prepared>>> = std::sync::OnceLock::new();
+/// The prepared programs kept in the process, by program key: a few of each, one per store whose atoms it holds
+/// (`interned`), so a process serving two stores (a session's and another run's) does not prepare again on each
+/// switch.
+fn prepared_cache() -> &'static std::sync::Mutex<HashMap<[u8; 32], Vec<Prepared>>> {
+    static PREPARED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Vec<Prepared>>>> = std::sync::OnceLock::new();
     PREPARED.get_or_init(Default::default)
 }
 
 /// A few prepared programs at a time are kept.
 const PREPARED_KEPT: usize = 16;
+/// And a few stores' of each.
+const PREPARED_STORES: usize = 4;
+
+/// Keeps `p`, prepared under `key`, first among that key's.
+fn keep_prepared(key: [u8; 32], p: Prepared) {
+    let mut kept = prepared_cache().lock().expect("the prepared programs");
+    if !kept.contains_key(&key) && kept.len() >= PREPARED_KEPT {
+        kept.clear();
+    }
+    let all = kept.entry(key).or_default();
+    all.retain(|q| q.interned != p.interned);
+    all.insert(0, p);
+    all.truncate(PREPARED_STORES);
+}
 
 fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
@@ -1702,7 +1719,7 @@ fn run_observed(
         })
     };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the prepared program, kept or stored".into()));
-    let kept = prepared_cache().lock().expect("the prepared programs").get(&prepared_key).cloned().filter(holds);
+    let kept = prepared_cache().lock().expect("the prepared programs").get(&prepared_key).and_then(|all| all.iter().find(|p| holds(p)).cloned());
     // Kept across processes in the persistent store, under the programs' text (decision 0073); a session's or T's run
     // keeps it in memory only.
     let durable = if tapes.is_some() && t.is_none() && session.is_none() {
@@ -1741,11 +1758,7 @@ fn run_observed(
         Some(p) => {
             crate::code_rule_dsl::prof::count("corpus.prepared_reused", 1);
             if from == "store" {
-                let mut kept = prepared_cache().lock().expect("the prepared programs");
-                if kept.len() >= PREPARED_KEPT {
-                    kept.clear();
-                }
-                kept.insert(prepared_key, p.clone());
+                keep_prepared(prepared_key, p.clone());
             }
             p
         }
@@ -1792,12 +1805,7 @@ fn run_observed(
                 dump_split(std::path::Path::new(&path), &split);
             }
             let prepared = Prepared { prog, vocabulary: Arc::new(vocabulary), lowered, sets, demanded, pushed, located, merged, split, interned };
-            let mut kept = prepared_cache().lock().expect("the prepared programs");
-            if kept.len() >= PREPARED_KEPT {
-                kept.clear();
-            }
-            kept.insert(prepared_key, prepared.clone());
-            drop(kept);
+            keep_prepared(prepared_key, prepared.clone());
             if let Some(source) = durable {
                 // A document whose tape does not give back its facts is a bug of `program_facts`: said, not stored.
                 match prepared::remember(store, source, &prepared_key, &prepared).map_err(|e| Error::Plan(e.to_string()))? {
