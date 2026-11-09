@@ -716,6 +716,9 @@ impl Projected {
             let matched = spans.len() as u32;
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
             p.extra = Some(Box::new(Extra { lines, spans, tokens, matched, host }));
+        } else if definition_ids() && guest.is_none() {
+            // T's shape has no token spans: its nodes alone are numbered per definition.
+            p.defs = DefIds::new(&p, dialect, &[]);
         }
         p
     }

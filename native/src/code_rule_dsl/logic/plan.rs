@@ -595,19 +595,29 @@ type PlanKey = String;
 /// cheapest start (`SEED`) when searched.
 type Kept = (std::rc::Rc<[Step]>, f64, Option<super::profile::RulePlan>, f64);
 
-/// Plans kept across chunks on this thread while held (a corpus run), none kept at the start.
-pub(in crate::code_rule_dsl) struct KeepPlans;
+/// Plans kept across chunks on this thread while held (a corpus run), none kept at the start; for a session's run
+/// (`across`, the session's generation), the plans its earlier runs kept, put back at the end (decision 0090 step 5).
+pub(in crate::code_rule_dsl) struct KeepPlans(Option<u64>);
+
+thread_local! {
+    /// A session's plans between its runs, with the session's generation: another session's are not taken.
+    static SESSION_PLANS: std::cell::RefCell<Option<(u64, HashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
+}
 
 impl KeepPlans {
-    pub(in crate::code_rule_dsl) fn start() -> Self {
-        PLANS.with(|p| *p.borrow_mut() = Some(HashMap::new()));
-        KeepPlans
+    pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
+        let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
+        PLANS.with(|p| *p.borrow_mut() = Some(kept.unwrap_or_default()));
+        KeepPlans(across)
     }
 }
 
 impl Drop for KeepPlans {
     fn drop(&mut self) {
-        PLANS.with(|p| *p.borrow_mut() = None);
+        let plans = PLANS.with(|p| p.borrow_mut().take());
+        if let (Some(g), Some(plans)) = (self.0, plans) {
+            SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans)));
+        }
     }
 }
 
