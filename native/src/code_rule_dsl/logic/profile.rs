@@ -494,6 +494,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
 /// Where the native strata ran (decision 0095): how many on each backend, the strata the GPU would run cheaper and
 /// the forms it lacks for them, by their CPU. What the device must take on next, and what it would save.
 fn placements(r: &mut String, state: &State) {
+    use crate::code_rule_dsl::logic::plan::placement::gpu_price;
     let all = &state.placements;
     if all.is_empty() {
         return;
@@ -513,8 +514,21 @@ fn placements(r: &mut String, state: &State) {
     // The strata the GPU would run cheaper in at least one run, and did not.
     let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
     let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
-    let cheaper_gpu: f64 = cheaper.iter().map(|(_, t)| t.gpu_estimate).sum();
-    let _ = writeln!(r, "The GPU would be cheaper for {} strata: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s estimated on the GPU.", cheaper.len());
+    // The GPU priced at the work each stratum did, not the work planned: a planned estimate can be far off (a cross
+    // product priced at 10^20 rows that met none).
+    let at_work = |t: &PlacedTotal| gpu_price(t.runs, t.work as f64);
+    let cheaper_gpu: f64 = cheaper.iter().map(|(_, t)| at_work(t)).sum();
+    let _ = writeln!(r, "The GPU would be cheaper for {} strata: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
+    // Strata whose planned work is off by 10x or more, either way, by their CPU: the placement read a wrong price, and
+    // the join order likely came from the same estimate.
+    let off = |t: &PlacedTotal| {
+        let (p, w) = (t.planned_work.max(1.0), (t.work as f64).max(1.0));
+        w / p >= 10.0 || p / w >= 10.0
+    };
+    let (under, over) = all.values().filter(|t| off(t)).fold(((0u64, 0.0), (0u64, 0.0)), |(u, o), t| {
+        if (t.work as f64) > t.planned_work { ((u.0 + 1, u.1 + t.cpu), o) } else { (u, (o.0 + 1, o.1 + t.cpu)) }
+    });
+    let _ = writeln!(r, "Planned work off by 10x or more: {} strata under (did more, {:.2} s CPU), {} over (did less, {:.2} s CPU); marked ! below.", under.0, under.1, over.0, over.1);
     // By the form the GPU lacks: a stratum counts under each form it lacks.
     let mut by: BTreeMap<&str, (u64, f64)> = BTreeMap::new();
     for (_, t) in &cheaper {
@@ -535,9 +549,10 @@ fn placements(r: &mut String, state: &State) {
     let mut top = cheaper.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
     let _ = writeln!(r, "Costliest strata the GPU would run cheaper:");
-    let _ = writeln!(r, "{:>8} {:>8} {:>12} {:>12} {:>5}  stratum: forms (missing on the GPU)", "cpu s", "gpu est", "planned", "work", "runs");
+    let _ = writeln!(r, "{:>8} {:>8} {:>12} {:>12} {:>5}  stratum: forms (missing on the GPU)", "cpu s", "gpu s", "planned", "work", "runs");
     for (key, t) in top.iter().take(20) {
-        let _ = writeln!(r, "{:>8.3} {:>8.4} {:>12.0} {:>12} {:>5}  {}: {} (missing {})", t.cpu, t.gpu_estimate, t.planned_work, t.work, t.runs, short(key, 60), t.forms.join(", "), t.missing.join(", "));
+        let mark = if off(t) { "!" } else { " " };
+        let _ = writeln!(r, "{:>8.3} {:>8.4} {:>12.0} {:>11}{mark} {:>5}  {}: {} (missing {})", t.cpu, at_work(t), t.planned_work, t.work, t.runs, short(key, 60), t.forms.join(", "), t.missing.join(", "));
     }
 }
 
