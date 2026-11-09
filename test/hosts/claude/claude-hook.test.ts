@@ -1,8 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { type AdapterDelivery, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { type AdapterDelivery, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
@@ -10,6 +11,7 @@ import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/present
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 
@@ -29,6 +31,40 @@ describe("Claude Code hook without a daemon", () => {
       }, daemonPath);
       expect(output).toEqual({});
       await expect(readFile(join(process.env.RERAIL_HOME!, "daemon.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("Claude Code hook with a daemon that misses its health probe", () => {
+  afterEach(closeNativeTestDaemons);
+
+  // RERAIL_AUTOSTART=1 is a person's session, where the session-start hook may start a daemon; 0 starts none.
+  it.each(["1", "0"])("sends each event to the daemon's engine socket anyway, so a busy daemon records the session (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", autostart);
+    try {
+      await startNativeTestDaemon(root);
+      // Nothing answers at the recorded URL, as when the daemon's one event loop is busy past the probe's 2 s; its pid
+      // is alive and its engine socket still serves.
+      const stateFile = join(process.env.RERAIL_HOME!, "daemon.json");
+      const state = JSON.parse(await readFile(stateFile, "utf8")) as Record<string, unknown>;
+      await writeFile(stateFile, JSON.stringify({ ...state, url: "http://127.0.0.1:1/", port: 1 }));
+      const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+      const common = { session_id: "busy-session", cwd: root };
+      await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+      await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+
+      const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+      try {
+        const rows = database.prepare<[], { eventId: string }>("SELECT event_id AS eventId FROM events ORDER BY sequence").all();
+        expect(rows.map(row => row.eventId)).toEqual(expect.arrayContaining(["busy-session:SessionStart", "busy-session:prompt:p1"]));
+      } finally {
+        database.close();
+      }
     } finally {
       vi.unstubAllEnvs();
     }

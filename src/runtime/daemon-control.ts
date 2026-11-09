@@ -301,6 +301,17 @@ function liveDaemonProblem(lookup: Extract<DaemonLookup, { status: "unresponsive
     : `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`;
 }
 
+/** `start` found a recorded daemon alive that it will neither use nor replace; `lookup` says which way it failed. */
+export class LiveDaemonError extends Error {
+  override readonly name = "LiveDaemonError";
+  readonly lookup: Extract<DaemonLookup, { status: "unresponsive" | "refused" }>;
+
+  constructor(lookup: Extract<DaemonLookup, { status: "unresponsive" | "refused" }>) {
+    super(liveDaemonProblem(lookup));
+    this.lookup = lookup;
+  }
+}
+
 export interface DaemonLaunchOptions {
   dev: boolean;
   host?: string;
@@ -646,7 +657,7 @@ export async function startDaemon(control: DaemonControl, options: DaemonLaunchO
   return await withStartLock(control.home, async () => {
     const lookup = await lookupDaemon(control.home);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
-    if (lookup.status === "unresponsive" || lookup.status === "refused") throw new Error(liveDaemonProblem(lookup));
+    if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options);
   });
 }
@@ -667,7 +678,7 @@ export async function startDaemonForPackage(control: DaemonControl, options: Dae
       await stopDaemon(control.home);
       return await spawnDaemon(control, options);
     }
-    if (lookup.status === "unresponsive" || lookup.status === "refused") throw new Error(liveDaemonProblem(lookup));
+    if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options);
   });
 }
@@ -691,9 +702,20 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
   const packageRoot = PACKAGE_ROOT;
   const control = { home, packageRoot };
   const options = { dev: false };
-  const daemon = process.env.RERAIL_AUTOSTART === "0"
-    ? await findRunningDaemon(home)
-    : (replaceOtherPackage ? await startDaemonForPackage(control, options) : await startDaemon(control, options)).daemon;
+  let daemon: RunningDaemon | undefined;
+  try {
+    if (process.env.RERAIL_AUTOSTART === "0") {
+      const lookup = await lookupDaemon(home);
+      if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
+      daemon = lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
+    } else {
+      daemon = (replaceOtherPackage ? await startDaemonForPackage(control, options) : await startDaemon(control, options)).daemon;
+    }
+  } catch (error) {
+    const busy = error instanceof LiveDaemonError ? await busyEngineEndpoint(error.lookup, packageRoot) : undefined;
+    if (busy === undefined) throw error;
+    return busy;
+  }
   if (daemon === undefined) throw new Error("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, packageRoot))) {
     throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
@@ -702,15 +724,29 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
 }
 
 /**
- * The engine endpoint for a hook after a session's start, or undefined when no daemon answers. A daemon that is
- * down is not started: each tool call then costs one failed probe instead of an autostart that can outlast the coding
- * agent's hook timeout (design N11). A healthy daemon from another package (an update installed mid-session) is
- * replaced as `daemonEngineEndpoint(true)` replaces it, so steering carries on with this package's engine.
+ * The engine endpoint for a hook after a session's start, or undefined when no daemon is alive to take the event. A
+ * daemon that is down is not started: each tool call then costs one failed probe instead of an autostart that can
+ * outlast the coding agent's hook timeout (design N11). A busy one still gets the event (`busyEngineEndpoint`). A
+ * healthy daemon from another package (an update installed mid-session) is replaced as `daemonEngineEndpoint(true)`
+ * replaces it, so steering carries on with this package's engine.
  */
 export async function runningDaemonEngineEndpoint(): Promise<EngineEndpoint | undefined> {
-  const daemon = await findRunningDaemon(defaultRerailHome());
-  if (daemon === undefined) return undefined;
-  return await daemonUsesPackageRoot(daemon.state, PACKAGE_ROOT) ? engineEndpointOf(daemon.state) : await daemonEngineEndpoint(true);
+  const lookup = await lookupDaemon(defaultRerailHome());
+  if (lookup.status === "unresponsive") return await busyEngineEndpoint(lookup, PACKAGE_ROOT);
+  if (lookup.status !== "running") return undefined;
+  return await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true);
+}
+
+/**
+ * The engine socket of a daemon of this package whose pid is alive but which missed the health probe's 2 s, as one does
+ * while its single event loop runs an audit or a long garbage collection. Its socket queues the event and the event's
+ * own request timeout bounds the wait, so a missed probe does not drop the event, and with it the session's record. A
+ * daemon that refused the capability, or one of another package (which cannot be replaced while it does not answer),
+ * gets nothing.
+ */
+async function busyEngineEndpoint(lookup: DaemonLookup, packageRoot: string): Promise<EngineEndpoint | undefined> {
+  if (lookup.status !== "unresponsive" || !(await daemonUsesPackageRoot(lookup.state, packageRoot))) return undefined;
+  return engineEndpointOf(lookup.state);
 }
 
 export interface LaunchedDaemon {
