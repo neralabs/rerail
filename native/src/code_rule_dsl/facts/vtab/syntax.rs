@@ -1357,6 +1357,12 @@ impl Source for Viewed {
     fn value(&self, row: usize, column: usize) -> i64 {
         self.row_value(row, column)
     }
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let (p, i) = self.batch.locate(self.view, row);
+        for (o, &c) in out.iter_mut().zip(columns) {
+            *o = self.value_at(p, i, c);
+        }
+    }
 }
 impl Viewed {
     /// The rows whose `column` is one of `values`, in document `only` (by index) where the column spans the

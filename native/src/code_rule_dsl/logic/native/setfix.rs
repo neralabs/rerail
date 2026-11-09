@@ -1027,15 +1027,34 @@ impl View {
 }
 /// One row of an input relation: a slice of its flat rows, or a row of its view.
 #[derive(Clone, Copy)]
-pub enum RowRef<'a> { Flat(&'a [i64]), View(&'a View, usize), Source(&'a View, usize) }
-impl RowRef<'_> {
+pub enum RowRef<'a> { Flat(&'a [i64]), View(&'a View, usize), Source(&'a View, usize), Read([i64; READ], usize) }
+/// The widest view row read whole (`RowRef::read`); a wider one is read a value at a time.
+const READ: usize = 8;
+impl<'a> RowRef<'a> {
     #[inline]
     fn at(self, c: usize) -> i64 {
         match self {
             RowRef::Flat(r) => r[c],
             RowRef::View(v, id) => v.src.value(v.ids.as_ref().map_or(id, |ids| ids[id] as usize), v.cols[c]),
             RowRef::Source(v, row) => v.src.value(row, v.cols[c]),
+            RowRef::Read(vals, _) => vals[c],
         }
+    }
+    /// The row with its view's columns read at once (`Source::row_at`): a view of a batch finds the row's document
+    /// once, not once per column a step reads.
+    #[inline]
+    fn read(self) -> RowRef<'a> {
+        let (v, row) = match self {
+            RowRef::View(v, id) => (v, v.ids.as_ref().map_or(id, |ids| ids[id] as usize)),
+            RowRef::Source(v, row) => (v, row),
+            other => return other,
+        };
+        if v.cols.len() > READ {
+            return self;
+        }
+        let mut vals = [0i64; READ];
+        v.src.row_at(row, &v.cols, &mut vals[..v.cols.len()]);
+        RowRef::Read(vals, row)
     }
 }
 /// A hash index of an immutable relation on `cols`: each key's row ids are one run of `ids`, found from the key's
@@ -1825,7 +1844,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
     enum Rows<'a> { In(&'a InRel), Comp(&'a Rel), Source(&'a View) }
     impl<'a> Rows<'a> {
         fn row(self, id: u32) -> RowRef<'a> {
-            match self { Rows::In(r) => r.at(id as usize), Rows::Comp(r) => RowRef::Flat(r.row(id as usize)), Rows::Source(v) => RowRef::Source(v, id as usize) }
+            match self { Rows::In(r) => r.at(id as usize).read(), Rows::Comp(r) => RowRef::Flat(r.row(id as usize)), Rows::Source(v) => RowRef::Source(v, id as usize).read() }
         }
     }
     fn go<'a>(cx: &mut Ctx<'a>, i: usize, slots: &mut [i64]) {
