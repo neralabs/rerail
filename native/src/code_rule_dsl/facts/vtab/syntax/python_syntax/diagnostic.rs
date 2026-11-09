@@ -58,7 +58,9 @@ pub(super) fn describe(source: &str, error: &ParseError, tokens: &Tokens) -> (u3
         E::OtherError(message) if message.starts_with("Expected an indented block after ") => {
             let start = source[..(offset as usize).min(source.len())].lines().enumerate()
                 .filter(|(_, text)| text.trim_end().ends_with(':')).last().map_or(line(source, offset), |(i, _)| i as u32 + 1);
-            format!("expected{} on line {start}", message.trim_start_matches("Expected"))
+            let context = message.trim_start_matches("Expected")
+                .replace("`class`", "class").replace('`', "'").replace(" clause", " statement");
+            format!("expected{context} on line {start}")
         }
         E::OtherError(message) if message.starts_with("Expected ") => "invalid syntax".to_owned(),
         E::ExpectedExpression | E::UnexpectedExpressionToken | E::EmptySlice | E::EmptyGlobalNames |

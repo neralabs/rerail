@@ -95,7 +95,7 @@
     "message": "invalid syntax"
   },
   {
-    "source": "\ufeffSqlPrerenderedDdl\n",
+    "source": "﻿SqlPrerenderedDdl\n",
     "line": 1,
     "message": "invalid non-printable character U+FEFF"
   },
@@ -103,5 +103,55 @@
     "source": "if True:\n    x = 1\n  SqlPrerenderedDdl\n",
     "line": 3,
     "message": "unindent does not match any outer indentation level"
+  },
+  {
+    "source": "if True:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'if' statement on line 1"
+  },
+  {
+    "source": "if True:\n    pass\nelse:\npass\n",
+    "line": 4,
+    "message": "expected an indented block after 'else' statement on line 3"
+  },
+  {
+    "source": "for x in y:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'for' statement on line 1"
+  },
+  {
+    "source": "while True:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'while' statement on line 1"
+  },
+  {
+    "source": "with resource:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'with' statement on line 1"
+  },
+  {
+    "source": "try:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'try' statement on line 1"
+  },
+  {
+    "source": "try:\n    pass\nexcept Exception:\npass\n",
+    "line": 4,
+    "message": "expected an indented block after 'except' statement on line 3"
+  },
+  {
+    "source": "try:\n    pass\nfinally:\npass\n",
+    "line": 4,
+    "message": "expected an indented block after 'finally' statement on line 3"
+  },
+  {
+    "source": "class A:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after class definition on line 1"
+  },
+  {
+    "source": "async def f():\npass\n",
+    "line": 2,
+    "message": "expected an indented block after function definition on line 1"
   }
 ]

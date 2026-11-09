@@ -3191,8 +3191,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "8bd924c7220ac21e79b02b25ff1ac8fef1766b7e",
-    "status": "Adopting Final 7d1e40073, including observed filesystem and in-memory load exports; native acceptance pending",
+    "upstreamCommit": "1345219782280410efcc0b9b712594a6a8489619",
+    "status": "Root Final through 134521978, including relational lab and generic Python diagnostic repairs",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3260,11 +3260,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
-        "sha256": "57d6fde4a113d12208c0eb1fc3779448edbc1a856d562e036b067fc786231bd9"
+        "sha256": "8c91d767c6693aa8a07c8dc351b8a25712c62ca4bddc1b7353c0c8d01c4de075"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-errors.json",
-        "sha256": "680ae1afd7c274895609a1c81af94083c42d9f77ebb2471e4edb84222cddc254"
+        "sha256": "7b85e2616f4f630a121112cac556c1874cafff8bbf9ce85a51d1aca6056bef15"
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
@@ -3272,7 +3272,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "3d4f7e9e2d669fb403ab1674989029f80aebf60089cb8a7835e8386854b07d47"
+        "sha256": "c2e6c144d3128b67807760f56a8cf0b382de48042fdeaada5e281566fdfdb869"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
@@ -3288,11 +3288,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "7d773a6753348a6e2bd0af690b49759f94ef3f4534c46fe2583cbb0485e7fb57"
+        "sha256": "b0f89955b8a36cdcb6e3df7186b4d74cd84bd86cc68a8d546048285a8d7b1026"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "648c9a435991d23842749140aa0f6e8cf8f21df91f672a815f7849d1428b9d57"
+        "sha256": "0e1ec8586f47c9e5eea76b2f6b820cfd4f18357baab035b41a2919240159afc6"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
@@ -3356,30 +3356,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b",
-    "cliArtifact": {
-      "engineCommit": "f2ffcc3803c5c633f2df408029e6ea6f64dc21c5",
-      "upstreamCommit": "8bd924c7220ac21e79b02b25ff1ac8fef1766b7e",
-      "sourceTrees": {
-        "native": "67e7d349ea1f2d051d74174658d775e357a1c0c5",
-        "tools/bitlex": "4abd73b7e2f3bcb7f7f90d9cf3183abbd8edbec1",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "36d03ae745ce0a93a9c95b7f57d15c49f1635bff"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-2d425683e90a2c81",
-      "sha256": "2d425683e90a2c81b345df028fddccde553565207643d077fb77eafa0a3be741",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine"
-      ],
-      "seconds": 28.802
-    }
+    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038"
   },
   "engineSourceSnapshots": [
     {
@@ -3909,6 +3886,198 @@
           "rerail-engine"
         ],
         "seconds": 22.716
+      }
+    },
+    {
+      "checkout": ".",
+      "upstreamCommit": "8bd924c7220ac21e79b02b25ff1ac8fef1766b7e",
+      "status": "Adopting Final 7d1e40073, including observed filesystem and in-memory load exports; native acceptance pending",
+      "retiredCheckout": ".rerail/rr-migration-20261106/engine",
+      "localRepairCommit": "25b580262",
+      "localRepairPaths": [
+        "native/src/code_rule_dsl/logic/plan.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs"
+      ],
+      "localCapabilityCommits": [
+        "e6968ad82"
+      ],
+      "localCapabilityPaths": [
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+        "native/src/code_rule_dsl/logic/sql/select.rs",
+        "native/src/code_rule_dsl/logic/strings.rs"
+      ],
+      "rootMetadataCommit": "7b44f4813",
+      "canonicalCallTextCommit": "eea5ed2da",
+      "nativeExtensions": [
+        {
+          "path": "Cargo.lock",
+          "sha256": "dce52683cd25065c545b6d22f1647076ced0c9575bb125d820ae82b35bfe11ad"
+        },
+        {
+          "path": "native/Cargo.toml",
+          "sha256": "8fefb1be8ea42ebf246139b8533125d04fabe544033627824e25e8b9545678b0"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/repository.rs",
+          "sha256": "7ff68b070b737fb38b27f4736c687cba260151ec5c4ff8dff08f75d5ccd991b0"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+          "sha256": "b684c1c5916a53a73dd1ddfe198563f60e3cc291706f353b609066fe311a7f4f"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+          "sha256": "56a3afd9233f65bc72247c5e97b2203afdb82db428e536cccf51de35a10fd8d6"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
+          "sha256": "387a57f02a15ed421338608244cae27f480d4de6565179dfe0ca26e4da4f3ad1"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+          "sha256": "670cc09461d50ae90b01f77fee285066c71cb49933a72cf0d803df0bdede2b79"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
+          "sha256": "214157a6cb66b177fe258f94e75f035130c43100ba19991a9189b441b79c2039"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/expressions.json",
+          "sha256": "5a6eee8ac5ddbc31b67faab5bc57af09be30c54be73d4aa27d8af050fd180bf9"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/printable.generated.rs",
+          "sha256": "a3e99353157742c99f47adcef0d88237c5606a6b9b1dbebe754f75ed4434537b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+          "sha256": "cad0d536546ee5bfdfb055ea7409d9277010941516fcd756b5ea55b8be00147b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+          "sha256": "57d6fde4a113d12208c0eb1fc3779448edbc1a856d562e036b067fc786231bd9"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-errors.json",
+          "sha256": "680ae1afd7c274895609a1c81af94083c42d9f77ebb2471e4edb84222cddc254"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/front.rs",
+          "sha256": "0343dc735b4247d9559665155cb4f9beccb3cc81d571ac5c0d6aa1c9d4d19f26"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native.rs",
+          "sha256": "3d4f7e9e2d669fb403ab1674989029f80aebf60089cb8a7835e8386854b07d47"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
+          "sha256": "0c935fe75ae2831dfe9db9da2859627a2b5c734d3b593e413d8e812835c32870"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/bfs_walk.rs",
+          "sha256": "a0d972d6f3e877b0ab6bf2bd222958542660dd9963f9085f0b5375e3c8806f4c"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/python_set_rows.rs",
+          "sha256": "86ad7b22fb4b6e632229c36ea24d5f760d583f50ada005723cd843eabcd37e46"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
+          "sha256": "7d773a6753348a6e2bd0af690b49759f94ef3f4534c46fe2583cbb0485e7fb57"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan.rs",
+          "sha256": "648c9a435991d23842749140aa0f6e8cf8f21df91f672a815f7849d1428b9d57"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
+          "sha256": "76def7e4da0471d02a958fbd5c46984c54395c0db301005649d1881c147ed3b4"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
+          "sha256": "9431ef2d41b20be3476403c10a4bf10c216981d1f92b2e3bc74ae8166ad6930e"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
+          "sha256": "a7ac5157595ca67337d2e5a38aee1a98a0c3a155438d3593746f7c5d886e2a80"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
+          "sha256": "ed4e1c592ecf667dff4806fa2849e7e0e2a58bab7cb1bb40c7144bc1b4400b73"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/program_facts.rs",
+          "sha256": "aa173f855d5da20d7d7224c1fc18386f65964c96592f18562e94bf533d326c37"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
+          "sha256": "783ddda60b2530ddd1763d5b1ebddf5379875d86d0eb06d357a9df7899250406"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/print.rs",
+          "sha256": "7731bb76b8a639cd0f6ce0de14c63b42e780f1c916467740bb3fb2cdac1ee046"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
+          "sha256": "86f44f5eeb39daaf915e36d37831d5bc17460b910d4286d89e456b9a00b8344d"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/sql/select.rs",
+          "sha256": "d0c444381314e23637acce53e764917bf01b8da1530d84cc1995eda1ff727af3"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings.rs",
+          "sha256": "c92ecc7f3918d59359f2b7f01e78dbb04f1af47921ee50fff02187652d4f4dce"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
+          "sha256": "929231432fa9a84f5187808b649e1d79c37703f5f02b876212c45cf5d235cf76"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
+          "sha256": "6a3ca40885a3b4248483d2dc9d275d87da5a52ac41ecdd9fa5d4757441a96c81"
+        },
+        {
+          "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
+          "sha256": "21ab58631e324b3c54fd8beda4eae769d7db6e33c6a57b397046ad3c931be00b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/value/python.rs",
+          "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
+        },
+        {
+          "path": "native/src/content_store/observe.rs",
+          "sha256": "95034aae016c04d45b016beff349c167c696767da0bb3dddd6564d69165aeeac"
+        }
+      ],
+      "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
+      "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b",
+      "cliArtifact": {
+        "engineCommit": "f2ffcc3803c5c633f2df408029e6ea6f64dc21c5",
+        "upstreamCommit": "8bd924c7220ac21e79b02b25ff1ac8fef1766b7e",
+        "sourceTrees": {
+          "native": "67e7d349ea1f2d051d74174658d775e357a1c0c5",
+          "tools/bitlex": "4abd73b7e2f3bcb7f7f90d9cf3183abbd8edbec1",
+          "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
+          "Cargo.lock": "36d03ae745ce0a93a9c95b7f57d15c49f1635bff"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-2d425683e90a2c81",
+        "sha256": "2d425683e90a2c81b345df028fddccde553565207643d077fb77eafa0a3be741",
+        "command": [
+          "cargo",
+          "build",
+          "-p",
+          "rerail-engine",
+          "--features",
+          "headless",
+          "--bin",
+          "rerail-engine"
+        ],
+        "seconds": 28.802
       }
     }
   ]
