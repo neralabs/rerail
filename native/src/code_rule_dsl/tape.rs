@@ -46,6 +46,8 @@ pub(in crate::code_rule_dsl) const TAIL_FROM_START: u8 = 0x80;
 const CODE_EXTRA: u8 = 1;
 const CODE_ERROR: u8 = 2;
 const CODE_MISSING: u8 = 4;
+/// A named-only tape keeps all of the node's anonymous children (`tokens::fold`).
+const CODE_TOKENS: u8 = 8;
 const KIND_LIMIT: usize = 1024;
 const FIELD_LIMIT: usize = 64;
 const SENTINEL: u16 = u16::MAX;
@@ -61,6 +63,9 @@ mod index;
 #[allow(unused_imports)]
 pub(in crate::code_rule_dsl) use index::IndexImage;
 mod wire;
+pub(in crate::code_rule_dsl) mod tokens;
+#[cfg(test)]
+mod tokens_tests;
 pub(in crate::code_rule_dsl) mod resident;
 pub(super) use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
@@ -675,6 +680,8 @@ struct Pending {
     error: bool,
     missing: bool,
     kind_alias: Option<(String, bool)>,
+    /// A named-only tape keeps all of this node's anonymous children (`tokens::fold`).
+    tokens_kept: bool,
 }
 
 fn checked(budget: &impl Fn() -> bool) -> Result<(), String> {
@@ -887,6 +894,7 @@ fn encode_node<'l>(
         error,
         missing: node.is_missing(),
         kind_alias,
+        tokens_kept: false,
     });
     Ok(index)
 }
@@ -960,6 +968,7 @@ fn encode_blade_tree(
                     error: true,
                     missing: false,
                     kind_alias: None,
+                    tokens_kept: false,
                 });
                 continue;
             }
@@ -988,6 +997,7 @@ fn encode_blade_tree(
             error: false,
             missing: false,
             kind_alias: None,
+            tokens_kept: false,
         });
         let id = node.node_id();
         let here = errors.partition_point(|(node, ..)| *node < id)
@@ -1353,6 +1363,7 @@ impl TapeImage {
                     error,
                     missing: false,
                     kind_alias: None,
+                    tokens_kept: false,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
@@ -1427,7 +1438,7 @@ impl TapeImage {
                 }
                 None => SENTINEL,
             };
-            let flags = u8::from(node.extra) * CODE_EXTRA | u8::from(node.error) * CODE_ERROR | u8::from(node.missing) * CODE_MISSING;
+            let flags = u8::from(node.extra) * CODE_EXTRA | u8::from(node.error) * CODE_ERROR | u8::from(node.missing) * CODE_MISSING | u8::from(node.tokens_kept) * CODE_TOKENS;
             let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
             let mut class_count = 0_usize;
             while let Some(&(_, class)) = memberships.next_if(|&&(at, _)| at as usize == index) {
@@ -1854,7 +1865,7 @@ impl TapeDoc {
             let kind = code.kf & 1023;
             let field = code.kf >> 10;
             let error = code.flags & CODE_ERROR != 0;
-            if code.flags & !(CODE_EXTRA | CODE_ERROR | CODE_MISSING) != 0
+            if code.flags & !(CODE_EXTRA | CODE_ERROR | CODE_MISSING | CODE_TOKENS) != 0
                 || (error && (kind != ERROR_CODE || code.flags & CODE_MISSING != 0))
                 || (!error && (usize::from(kind) >= grammar.kinds.kind_count() || !grammar.kinds.kind_is_visible(kind)))
                 || usize::from(field) > grammar.kinds.field_count()
