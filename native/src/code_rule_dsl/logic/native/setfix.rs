@@ -1686,6 +1686,9 @@ impl InRel {
                 charge(Unit::IndexEntry, self.len() as u64);
                 Csr::build(self, cols)
             };
+            if std::env::var_os("RERAIL_SPIKE_INDEX").is_some() {
+                eprintln!("O125 index base={} took {:.3} ms rows={} cols={cols:?} chain={} source={} sorted={} lead={} view={}", self.base, (thread_cpu() - c0) * 1e3, self.len(), m.chain.is_some(), m.source, m.sorted, m.lead, self.view.is_some());
+            }
             let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
             l.0 += thread_cpu() - c0;
             if std::env::var_os("RDL_PROFILE").is_some() {

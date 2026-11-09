@@ -2187,8 +2187,6 @@ fn run_observed(
     let mut base_held: HashMap<String, Vec<Option<String>>> = HashMap::new();
     // Their digests, when a session's run took them (`retain::kept_source`).
     let mut input_digests: HashMap<String, u64> = HashMap::new();
-    // The base rows memo hits replayed, every column: measured once, after the chunks.
-    let mut replayed: BTreeMap<String, (Vec<String>, Vec<Vec<i64>>)> = BTreeMap::new();
     let mut bound = BTreeSet::new();
     let mut totals = Totals::default();
     let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
@@ -2518,14 +2516,8 @@ fn run_observed(
                         let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
                         held.1[to].get_or_insert_with(Vec::new).extend(values.iter().skip(from).step_by(*width).copied());
                     }
-                    // Kept whole, to be measured once after the chunks, so the cross-file part's statistics count them;
-                    // not when the keeper counts them (decision 0096 §3).
-                    if keeper.is_none() {
-                        let full = replayed.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![Vec::new(); *width]));
-                        for (c, col) in full.1.iter_mut().enumerate() {
-                            col.extend(values.iter().skip(c).step_by(*width).copied());
-                        }
-                    }
+                    // Measured with the evaluated files' rows once the chunks are done ("measure the base rows
+                    // held"). They were also kept whole and measured again, so a memo hit's rows counted twice.
                 }
                 // Gathered by relation across the batch's hits: one statement per relation below, not one per row.
                 for (rel, (width, values)) in entry.rows {
@@ -3274,21 +3266,12 @@ fn run_observed(
             totals.add(&rel, rows, &statistics);
             base_sources.insert(rel, source);
         }
-        // Their rows replayed from the memo are counted with them (above), not again.
-        if kept.is_some() {
-            replayed.clear();
-        }
     }
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
     let applying = crate::code_rule_dsl::logic::profile::span(|| "apply the chunks' totals".into());
     let mut cross_stats = t_stats;
     if own {
         own_totals.apply(&mut cross_stats);
-    }
-    for (rel, (columns, values)) in std::mem::take(&mut replayed) {
-        let rows = crate::code_rule_dsl::logic::native::component::columns_source(columns, values.into_iter().map(Some).collect());
-        let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} (memo)"));
-        totals.add(&rel, rows.estimated_len(), &syntax::statistics(rows.as_ref()));
     }
     totals.apply(&mut cross_stats);
     // Applied: the chunks' per-value counts are not read again.
@@ -3793,6 +3776,10 @@ fn run_observed(
                                 let del = rows_of(&format!("{rel}__del"));
                                 let gone = del.iter().filter(|r| !after.contains(*r)).count();
                                 let old = olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0);
+                                if std::env::var("RERAIL_CROSS_DELTA_COUNTS").is_ok_and(|v| v == "each") {
+                                    let ins = part.program.decls.contains_key(&format!("{rel}__ins")).then(|| rows_of(&format!("{rel}__ins")).len()).unwrap_or(0);
+                                    eprintln!("O125 delta rows {rel}: old {old}, overdeleted {}, gone {gone}, inserted {ins}, after {}", del.len(), after.len());
+                                }
                                 counts[0] += del.len();
                                 counts[2] += after.len();
                                 counts[4] += gone;
