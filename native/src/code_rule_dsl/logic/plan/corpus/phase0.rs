@@ -326,3 +326,43 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod benchmarks {
+    /// Phase 0 over every `.rr` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them
+    /// (`tools::program_texts`): one run of `bootstrap.rr` for all. Run it twice for the warm figure.
+    #[test]
+    #[ignore = "a benchmark: RERAIL_P0_RULES=<a pack's directory>"]
+    fn benchmark_phase_0_rules() {
+        let dir = std::path::PathBuf::from(std::env::var("RERAIL_P0_RULES").expect("RERAIL_P0_RULES"));
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rr")).collect();
+        files.sort();
+        let before = super::super::observe(|o| {
+            o.begin();
+            o.counts
+        });
+        let start = super::super::thread_usage();
+        let refs: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
+        let texts = crate::code_rule_dsl::tools::program_texts(&refs).unwrap();
+        let resolved = super::super::thread_usage();
+        let seeds: Vec<super::Seed> = texts.iter().filter_map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap()).collect();
+        let graphs = super::graphs(&seeds).unwrap();
+        let keyed = super::super::thread_usage();
+        let did = super::super::observe(|o| {
+            o.flush();
+            o.counts.since(&before)
+        });
+        let modules: std::collections::BTreeSet<&std::path::PathBuf> = graphs.iter().flat_map(|g| g.digests.keys()).collect();
+        let cpu = |a: (f64, f64), b: (f64, f64)| (b.0 - a.0) + (b.1 - a.1);
+        println!(
+            "phase 0 over {} files of {}: {} texts with includes, {} modules; files {:.2} s, texts' graphs {:.2} s CPU (thread); peak RSS {:.0} MB\n  {did}",
+            files.len(),
+            dir.display(),
+            seeds.len(),
+            modules.len(),
+            cpu(start, resolved),
+            cpu(resolved, keyed),
+            super::super::usage().2
+        );
+    }
+}
