@@ -19,7 +19,7 @@
 //! held (`observe`, kept for the corpus run beside its plans): a later chunk or part prices a relation's rows and
 //! build, and each reader term (the reader as it is, each copy), from what an earlier one observed, per node of the
 //! corpus. A term not observed is the plan's estimate scaled by observed over estimated for the reader's terms that
-//! were. `RERAIL_OBSERVED_STEPS=off` prices from estimates alone. Stored always: outputs, inputs, lattices, relations with facts, natives and what they read,
+//! were. `RERAIL_OBSERVED_STEPS=on` prices from observations (off by default until its regression is fixed). Stored always: outputs, inputs, lattices, relations with facts, natives and what they read,
 //! demanded relations, gates, answers, recursive relations, relations read inside an aggregate (a count, a sum or a
 //! string join reads the distinct rows), and relations read by a negation whose unfolding is not a negation of plain
 //! literals (below).
@@ -580,9 +580,11 @@ struct Observed {
 }
 
 /// Observations kept while held (a corpus run, `KeepPlans`); none outside one, and none under
-/// `RERAIL_OBSERVED_STEPS=off` (every choice from the plan's estimates, for comparison).
+/// `RERAIL_OBSERVED_STEPS=on` (off by default: every choice from the plan's estimates).
 pub(super) fn observing(on: bool) {
-    let on = on && !std::env::var("RERAIL_OBSERVED_STEPS").is_ok_and(|v| v == "off");
+    // Off by default: with two chunks a relation stored by its estimate is repriced from its observation while its
+    // inlined copies are still estimated, and inlining then costs more (0097, observed counts). `on` turns it on.
+    let on = on && std::env::var("RERAIL_OBSERVED_STEPS").is_ok_and(|v| v == "on");
     OBSERVED.with(|o| *o.borrow_mut() = on.then(Observed::default));
 }
 

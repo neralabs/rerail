@@ -188,7 +188,7 @@ ran; each reader term (the reader as it is, each copy) when that rule ran. A ter
 scaled by observed over estimated for that reader's observed terms: unscaled, a stored reader's observed work (all
 its waves) set against its copies' first estimates read as savings that were not there. A copy's variables are now
 named apart by the unfolding pass, so a first-level copy has the text priced and its observation is found.
-`RERAIL_OBSERVED_STEPS=off` prices from estimates alone. The integration's statistics kept by delta (0096) are not
+It is off by default until its regression is fixed (`RERAIL_OBSERVED_STEPS=on` turns it on). The integration's statistics kept by delta (0096) are not
 read yet: they keep rows and distinct values, not step counts.
 
 **The factorized store: the analysis, and the design.** Not built. The profile names, under "factorized store
