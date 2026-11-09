@@ -48,6 +48,7 @@ export default defineConfig({
       "packs/*/candidates/**",
       "**/scripts/ensure-sqlite.test.mjs",
       "**/scripts/sql-profile.test.mjs",
+      "**/scripts/sql-profile/**",
       "**/scripts/sql-execution-budget.test.mjs",
       ...(process.env.RERAIL_RELATIONAL_TESTS === "1" ? [] : psAddonExclusions),
     ],
