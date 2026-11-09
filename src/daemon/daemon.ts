@@ -772,7 +772,13 @@ export async function loadDaemonTls(
   access: KeyAccess = { platform: process.platform, acl: WINDOWS_ACL },
 ): Promise<DaemonTlsMaterial> {
   if (access.platform === "win32") {
-    const readers = access.acl.otherReaders(tls.keyFile);
+    let readers: string[];
+    try {
+      readers = access.acl.otherReaders(tls.keyFile);
+    } catch (error) {
+      // Unread is refused, as a key others can read is: the daemon would otherwise serve with it unchecked.
+      throw new Error(`Could not read who may read ${tls.keyFile}: ${errorText(error)}`, { cause: error });
+    }
     if (readers.length > 0) {
       throw new Error(
         `${tls.keyFile} can be read by other accounts (${readers.join(", ")}); a TLS private key must be readable by its `

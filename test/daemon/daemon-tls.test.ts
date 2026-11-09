@@ -112,6 +112,11 @@ describe("TLS daemon", () => {
     await expect(loadDaemonTls(files, shared)).rejects.toThrow(`${files.keyFile} can be read by other accounts (BU)`);
     await expect(loadDaemonTls(files, shared)).rejects.toThrow(`icacls "${files.keyFile}" /inheritance:r`);
     expect(await loadDaemonTls(files, { platform: "win32", acl: { otherReaders: () => [] } })).toEqual({ cert, key });
+    // A key whose ACL cannot be read is refused too, never served unchecked.
+    const unread = { platform: "win32" as const, acl: { otherReaders: (): string[] => {
+      throw new Error("Get-Acl failed");
+    } } };
+    await expect(loadDaemonTls(files, unread)).rejects.toThrow(`Could not read who may read ${files.keyFile}: Get-Acl failed`);
   });
 
   it("answers Rerail's own client over https pinned to the certificate it recorded, and nothing pinned to another", async () => {
