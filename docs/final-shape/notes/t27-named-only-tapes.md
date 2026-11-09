@@ -237,3 +237,123 @@ Each step is committed on its own and checked with named tests only.
 3. **The token view as the long-term interface for ast-grep `~`
    patterns:** acceptable, or should `~` patterns lower fully to named
    children plus code tests, as `logic/convert.rs` already does for some?
+
+## 8. Integration results (stage A)
+
+Stage A stores named-only tapes and restores them whole. It is behind
+`RERAIL_NAMED_ONLY_TAPES=1` (commits fa9fbfb4b, cf9345e49). The real
+encoder folds each tree-sitter tree (`tape/tokens.rs`) and sets a
+header bit. Restore unfolds the tree and re-packs it, so every reader,
+the GPU's included, sees the same full tree as before. This tests the
+fold on real data and finds every reader of stored bytes before the
+format changes.
+
+How the fold decides, in short:
+
+- Each kind gets an automaton over its children, built from
+  `grammar.json`.
+- A gap's default is the shortest token word to the next named child.
+- Tokens are dropped only when the source matches the default and
+  restore rebuilds the exact spans and kind ids.
+- Anything else is stored, so the fold is correct by construction.
+  A node the automaton cannot walk keeps all its tokens (`CODE_TOKENS`).
+
+### Correctness
+
+- **Round trip:** 0 failures on 4,691 files. The languages are Python,
+  TypeScript, TSX, JavaScript, Rust, PHP, SQL and Vue, and 656 of the
+  files contain parse errors.
+- **S7, 101 Python files, 158 clauses:** the four backends
+  (interpreter, JIT, Metal interpreter, Metal JIT) find the same 519
+  keys with or without the switch.
+- **Module tests with the switch on:** `prefilter::` and
+  `facts::families::` pass. Five `tape::` tests and one `residency::`
+  test fail because they assert the stored layout itself (digest, node
+  counts, spans read in place). They change with the format bump.
+- **Readers of stored bytes found:**
+  - The SQL fallback's structure (`prefilter/tapes.rs`). It now unfolds
+    first.
+  - The device's in-place admission (`slabs::admit`). Under stage A it
+    takes the host image (`admit_docs`).
+  - All the other `from_bytes` callers go through restore.
+
+**Which rules read tokens.** This is the work list for step 5. In a
+run that read named-only trees with no token view, S7 lost 140 keys
+and gained 3:
+
+| Rules | Keys | Token they need |
+| -- | -- | -- |
+| `ret505`–`ret508` (superfluous else) | 104 | `else` |
+| `e722` bare except, `b110` | 12 | `except` with no type |
+| `b006` mutable default | 9 | `=` in a default parameter |
+| `b404`, `b024`, `sim118`, `pie808` | 15 | keywords and `in` |
+| `sim300` yoda conditions (gained 3) | +3 | operator: without it the comparison is guessed |
+
+So the token view, or `op` read from the code, has to serve these
+before stage B can ship. The gained keys show that a missing token can
+cause false positives, not just missed findings.
+
+### Size and memory (real encoder, whole fixture corpora)
+
+| Language | Tokens / nodes | Implied | Nodes | Bytes | zstd | Restored records |
+| -- | -- | -- | -- | -- | -- | -- |
+| Python (1,309 files) | 34.9% | 89.6% | 0.69× | 0.69× | 0.81× | 0.71× |
+| TypeScript (759) | 46.0% | 87.9% | 0.60× | 0.60× | 0.78× | 0.63× |
+| TSX (34) | 46.0% | 92.1% | 0.58× | 0.61× | 0.78× | 0.60× |
+| JavaScript (260) | 45.8% | 85.0% | 0.61× | 0.62× | 0.79× | 0.65× |
+| Rust (608) | 45.6% | 87.9% | 0.60× | 0.60× | 0.77× | 0.62× |
+| PHP (105) | 44.5% | 79.8% | 0.65× | 0.66× | 0.81× | 0.67× |
+| SQL (1,607) | 42.1% | 31.4% | 0.87× | 0.87× | 0.88× | 0.87× |
+| Vue (9) | 42.9% | 85.9% | 0.63× | 0.69× | 0.85× | 0.63× |
+
+- "Restored records" is `TapeDoc`'s ~40 B per node. It is the memory
+  a document takes once restored, and in stage B it shrinks by the
+  ratio shown.
+- In S7 the process footprint was 188 MB with full trees and 176 MB
+  with named-only trees in memory (−6%). Most of the footprint is not
+  tapes, so on S7 the in-memory gain is small. The gain grows with how
+  many documents are held at once.
+- Stage A itself saves no memory (190 MB), because it restores whole.
+- **SQL is the weak case.** 1.15M quoted identifiers (`` `x` ``) do not
+  match the unquoted default. A per-kind choice bit in the code
+  (step 1's "choice, once" class) would remove most of them. The
+  `end` kind is flagged in 148k nodes; I have not looked into why.
+- **Stored because they are not the default** (fixable by policy):
+  - JS/TS's explicit `;` (`expression_statement`, `lexical_declaration`
+    and `return_statement`) is about 60k tokens. ASI makes the empty
+    word the shortest, so the empty word is the default.
+  - Python's trailing `, )` is about 30k.
+  - Comparison operators and `async` belong in the code (§3 rule 2),
+    not stored as leaves.
+
+### Speed (CPU, debug build, load average about 100)
+
+| Step | Cost |
+| -- | -- |
+| fold, at encode | 1.7–2.1× pack time |
+| unfold, at restore | 1.2–1.9× restore time |
+| pack, folded vs full | 0.65–0.87× |
+| restore, folded vs full | 0.62–0.88× |
+| S7 interpreter, full / named-only in memory / stage A | 34.8 s / 32.2 s / 37.9 s |
+
+- Fold and unfold run once per encode and once per restore. Stage A
+  pays both. Stage B pays only the fold, and readers that need tokens
+  pay a per-gap recovery.
+- Named-only in memory cut S7's interpreter CPU by 7%, while still
+  reading a tree that was missing tokens. The machine was loaded, so
+  treat the timings as indicative. Re-measure on a quiet machine before
+  the decision record.
+- The fold is a first cut in debug code: it walks a DFA per child, with
+  hash-map lookups. It has not been tuned.
+
+### What this changes in the plan
+
+- Step 3 (the token view) is confirmed as the gate. Without it, 27% of
+  S7's keys change.
+- Policy work before the format bump:
+  - put "choice, once" tokens in the code;
+  - treat ASI as a pseudo-label;
+  - a quoting bit for SQL identifiers;
+  - check SQL's `end` and Rust's `let_chain` (no automaton yet).
+- The device path has to read named-only slabs (step 6). Until then
+  stage A's host-image detour is the fallback.
