@@ -3462,7 +3462,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "04e3b5b83cc915926d842a8fe3ba6d94c78b555b",
-    "status": "Final 04e3b5b83 root debug CLI built; all 158 focused engine tests pass (two existing ignored helpers). Optimized build and rule-cohort revalidation pending.",
+    "status": "Final 04e3b5b83 root optimized CLI built and registered; 158 focused engine tests pass, two existing helpers ignored; affected rule acceptance in progress.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3664,7 +3664,7 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "9879cab685f6fe7be5a26b090209cc2d0084cb39",
+      "engineCommit": "158f2531e32e542940f55f0b90abb04e35ec015a",
       "upstreamCommit": "04e3b5b83cc915926d842a8fe3ba6d94c78b555b",
       "sourceTrees": {
         "native": "be8bcd87e27af3937e5ed3d8d8d1cd71f54467bb",
@@ -3672,8 +3672,8 @@
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-679c2c2e026ddfcc",
-      "sha256": "679c2c2e026ddfcceb501a9b12ea54386d6f4544dafb4921e68ba88d6c448ebb",
+      "path": ".rerail/modern-engine-alignment/cli-89215924f4a71755",
+      "sha256": "89215924f4a71755e92e21d9c5ff784e24b9c5dddaf0d829bd7de61e21699f59",
       "command": [
         "cargo",
         "build",
@@ -3682,9 +3682,10 @@
         "--features",
         "headless",
         "--bin",
-        "rerail-engine"
+        "rerail-engine",
+        "--release"
       ],
-      "seconds": 140.457
+      "seconds": 911.326
     }
   },
   "engineSourceSnapshots": [
