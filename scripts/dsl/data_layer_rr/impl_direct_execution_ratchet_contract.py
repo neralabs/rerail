@@ -102,18 +102,19 @@ def source_one(source,case):
     with tempfile.TemporaryDirectory(prefix='impl-direct-ratchet-source-') as temporary:return exercise(module,case,Path(temporary))
 
 
-def native_one(engine,case,source):
+def native_one(engine,case,source,mode):
     from dataclasses import make_dataclass
     from types import SimpleNamespace
     from impl_direct_execution_contract import FUNCTIONS
     from impl_direct_execution_port import install
-    from replay import execute_native, sign_native
+    from replay import execute_native, execute_workspace, sign_native
     from policy_routes import policy_filename
     class Backend:
         def __init__(self):self.calls=[];self.signatures=[]
         def replace(self,owner,name,value):setattr(owner,name,value)
         def native(self,check,entry,files,options=None):
-            value=execute_native(engine,ROOT/'gate/data-layer/packs/data-layer/candidates/rr'/policy_filename(check,entry),files,dict(entryPoint=entry,**(options or {})))
+            execute=execute_native if mode=='snapshot' else execute_workspace
+            value=execute(engine,ROOT/'gate/data-layer/packs/data-layer/candidates/rr'/policy_filename(check,entry),files,dict(entryPoint=entry,**(options or {})))
             self.calls.append(dict(value,entry=entry));return value['diagnostics']
         def sign_ed25519(self,requests):
             value=sign_native(engine,requests,environment=environment(case));self.signatures.append(dict(requests=requests,replies=value));return value
@@ -131,6 +132,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['source','source-one','native'])
     for name in ['source','out','case','engine','baseline']:p.add_argument('--'+name,type=Path,required=name in ['source','out'])
     p.add_argument('--part',type=int,default=0);p.add_argument('--parts',type=int,default=1)
+    p.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot')
     a=p.parse_args();a.source=a.source.absolute()
     if a.command=='source-one':write_json(a.out,source_one(a.source,read_json(a.case)));return
     assert git(a.source,'rev-parse','HEAD')==PIN
@@ -141,13 +143,13 @@ def main():
     report['harnessFiles']={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in dependencies}
     if a.command=='native':
         if any(n.endswith('lint_impl_direct_execution') for n in sys.modules):raise ValueError('Native ratchet tests cannot import the source detector')
-        expected=read_json(a.baseline);assert expected['passed'];compare(CASES,[r['input'] for r in expected['cases']]);report['engineSha256']=sha(a.engine.read_bytes())
+        expected=read_json(a.baseline);assert expected['passed'];compare(CASES,[r['input'] for r in expected['cases']]);report['engineSha256']=sha(a.engine.read_bytes());report['executionMode']=a.mode
     assert 0<=a.part<a.parts
     report['selection']=dict(part=a.part,parts=a.parts,total=len(CASES))
     for index in range(a.part,len(CASES),a.parts):
         case=CASES[index]
         if a.command=='native':
-            actual,calls,signatures=native_one(a.engine.absolute(),case,a.source);report['cases'].append(dict(input=case,expected=expected['cases'][index]['expected'],actual=actual,native=calls,signing=signatures,passed=actual==expected['cases'][index]['expected']));write_json(a.out,report);continue
+            actual,calls,signatures=native_one(a.engine.absolute(),case,a.source,a.mode);report['cases'].append(dict(input=case,expected=expected['cases'][index]['expected'],actual=actual,native=calls,signing=signatures,passed=actual==expected['cases'][index]['expected']));write_json(a.out,report);continue
         with tempfile.TemporaryDirectory(prefix='impl-direct-ratchet-oracle-') as temporary:
             root=Path(temporary);write_json(root/'case.json',case)
             run=subprocess.run([sys.executable,str(Path(__file__).absolute()),'source-one','--source',str(a.source),'--case',str(root/'case.json'),'--out',str(root/'result.json')],env=environment(case),capture_output=True,text=True,timeout=30)

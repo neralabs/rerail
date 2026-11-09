@@ -2558,3 +2558,28 @@ This isolates the acceptance failure to the bounded run, but does not establish 
 Direct execution remains a draft. Real ratchet reads and writes remain unported; the separate red native fixture demonstrates this gap.
 The inventory remains one accepted rule, 94 drafts, and five absent translations. The global migration remains unfinished.
 The next implementation starts with the recorded missing-baseline check, then works through the full 30-case ratchet corpus.
+
+### 2026-11-10 — Native ratchet ladder and Final integration in progress
+
+The root engine now merges Final `07bba2f69`, after first merging `7e77fa2ea`.
+The source audit now includes the `accel` crate. A regression proves that stale acceleration sources invalidate an artifact.
+The inventory remains one accepted rule, 94 drafts, and five absent translations.
+
+The first native ratchet ladder passed 12 of 20 observations. The Boolean join failure was an engine defect.
+An initial repair to constant splitting did not fix it and was reverted. Its failed receipt remains recorded.
+SQL tracing showed the actual cause: an unconditional ground reader did not seed a demanded producer.
+On empty corpora, zero-sized scan estimates also activated automatic demand rewriting.
+The corrected demand repair passes all 24 combinations of metadata shape, document presence, output visibility, and demand configuration.
+The two existing demand tests pass too. These results use the frozen debug cohort from `82a08f6b6`.
+
+The native ratchet policy now constructs baseline bytes and signing requests. The frontend performs requested file I/O.
+A partial replay confirms normal checks, real signatures, list and null metadata, and array-root errors.
+Five-case debug shards exceeded 115 seconds. They are incomplete results, not passing acceptance.
+Baseline write acceptance and the complete 30-case corpus remain open at this checkpoint.
+
+A red projection test proves that strict integer inputs reject float and string baseline counts.
+The new native integer projection preserves per-member conversion results and errors using the shared decoded document.
+It handles binary float truncation, arbitrary decimal text, Boolean values, Unicode digits, and Python's conversion limit.
+The policy separately selects numeric comparison ceilings and coerced signature content, as the source does.
+Native JSON syntax diagnostics replace the placeholder for malformed JSON and UTF-8 BOM inputs.
+Tests and fresh root builds are in progress. This checkpoint does not certify these new changes.

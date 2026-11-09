@@ -497,7 +497,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "9b0cd1c053fbdd7062b6e75ba45baae04efdf0b9bb1ba170e44e2cb9b49359b4",
+      "sha256": "7061a34198985b76503e86054bd6d2e66356836a1551d6084f12b45c2c542808",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -636,6 +636,11 @@
           "before": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9",
           "after": "9b0cd1c053fbdd7062b6e75ba45baae04efdf0b9bb1ba170e44e2cb9b49359b4",
           "reason": "Native JSON coercion, parse diagnostics, and exact ratchet baseline actions"
+        },
+        {
+          "before": "9b0cd1c053fbdd7062b6e75ba45baae04efdf0b9bb1ba170e44e2cb9b49359b4",
+          "after": "7061a34198985b76503e86054bd6d2e66356836a1551d6084f12b45c2c542808",
+          "reason": "Document the shared native integer input projection"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"

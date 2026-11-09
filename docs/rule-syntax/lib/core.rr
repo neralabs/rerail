@@ -550,6 +550,10 @@
 //                projection="type" returns one type-name column for each selected value; projection="json"
 //                returns one serialized JSON column for complete DTO transport. Wildcard captures stay in front.
 //                Both use the same decoded document as the typed rows. JSON numbers retain their full precision.
+//                projection="python-int" returns (decimal text, error type, error detail), all symbols.
+//                It uses Python 3.13 int conversion (including binary float truncation and Unicode digits).
+//                Successful values have empty error columns. Failed values retain an empty decimal column.
+//                Wildcard captures precede these columns. No selector reparses the shared document.
 //   IO=jsonl     one JSON value per line (JSON Lines); each line is read as IO=json reads a file, with the line
 //                number as a leading column
 //   IO=yaml      the same shapes as json
