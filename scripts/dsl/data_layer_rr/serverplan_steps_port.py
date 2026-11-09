@@ -51,7 +51,16 @@ def install(suite, module):
                    'check_compile_must_not_raise', 'check_postop_no_resolved_data_manipulation',
                    'check_can_batch_allowlist', 'check_runtime_state_allowlist',
                    'check_side_effect_tag_allowlist', 'check_zero_io_l0_execution_role_guardrail',
-                   'check_zero_io_l0_execution_role_enum_semantics'}
+                   'check_zero_io_l0_execution_role_enum_semantics',
+                   'check_misc_runtime_is_deleted', 'check_runtime_builder_names_are_enum_members',
+                   'check_runtime_builder_kind_name_pairs', 'check_closed_post_op_migration_guardrail',
+                   'check_virtual_execute_runtime_scalar_value_guardrail',
+                   'check_virtual_execute_runtime_python_shaping_guardrail',
+                   'check_terminal_projection_string_dispatch_guardrail',
+                   'check_empty_result_assertion_placeholder_guardrail',
+                   'check_sql_visible_steps_declare_cte_type_hints',
+                   'check_cte_type_hints_not_inferred_from_column_names',
+                   'check_result_materialization_spec_no_source_ref_escape_hatch'}
     for name in FUNCTIONS:
         if name in implemented:
             def bind(entry):
