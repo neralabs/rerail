@@ -212,3 +212,22 @@ fn named_only_tapes_on_corpora() {
     }
     assert_eq!(failures, 0, "round trips failed");
 }
+
+/// The Rust and PHP grammars the automata are built from are the crates' own, byte for byte:
+/// a crate upgrade without refreshing `grammars/token-grammars` fails here (where the crate's
+/// sources are on disk).
+#[test]
+fn token_grammars_match_the_parser_crates() {
+    let home = std::env::var("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap()).join(".cargo"));
+    let Ok(registries) = std::fs::read_dir(home.join("registry/src")) else { return };
+    let registries: Vec<PathBuf> = registries.filter_map(|entry| Some(entry.ok()?.path())).collect();
+    let cargo = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../Cargo.lock")).unwrap();
+    for (lang, krate, inner) in [(GrammarDialect::Rust, "tree-sitter-rust", "src"), (GrammarDialect::Php, "tree-sitter-php", "php/src")] {
+        let version = cargo.split("[[package]]").find_map(|package| {
+            package.contains(&format!("name = \"{krate}\"")).then(|| package.lines().find_map(|line| line.strip_prefix("version = \"")?.strip_suffix('"').map(str::to_owned)))?
+        });
+        let Some(version) = version else { continue };
+        let Some(path) = registries.iter().map(|registry| registry.join(format!("{krate}-{version}")).join(inner).join("grammar.json")).find(|path| path.exists()) else { continue };
+        assert_eq!(grammar_json(lang).unwrap(), std::fs::read_to_string(&path).unwrap(), "{krate} {version}: refresh grammars/token-grammars");
+    }
+}
