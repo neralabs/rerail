@@ -3349,6 +3349,22 @@ the wrapper's, in bytes, not the engine's.)
   19.4 s then 5.6 s. `test_fts_versioned_isolation.py`'s 12 needs `data_layer_testing`: its `TestFTSBranchIsolation`
   is replaced by a function (`@requires_capabilities`, `pc_replaced`); without the decorator's document the class
   counts 21 more (its fixture's 7 scenarios, now read through `values`, times three tests).
+- What a cold phase spends, measured on samples (237, 591 and 2,063 files), and fixed (2026-11-09; outputs
+  compared each time: struct's four exports on 237 files, `values`' 1,379 rows on 591, the fixture's counts):
+  - The per-file memo's lookup decoded every plan ever run on the file (zstd), 0.86 ms a lookup; it now reads the
+    run's row alone, 0.2 ms (`17c00cc9c`).
+  - `py_dead_at` (python/conditions) joined `py_dead` with every child edge in the cross part (4.3 M rows at 2,063
+    files, 6.2 s); its descent is now per file below guarded branches only (`8e3f8ee4b`): struct 14.35 s to 11.84 s
+    on 237 files.
+  - `pdef` joined `nearest` in the cross part, which then held and indexed every node's nearest scope (352 k rows
+    and two 150 ms index builds at 237 files, 4.7 s and 2.4 s of the 2,063-file cross part); the lookup is now per
+    file (`pdef_at`, `34f45e49c`): struct's cross part 0.63 s to 0.33 s on 237 files.
+  - `len_num`, 100,001 numbers derived in every chunk to bound a length, is gone: the bound is `t >= 0, t <= 100000`,
+    which the cycle check now takes as finite (`34a2dc514`). `values`' rules on 591 files: 8.86 s to 6.58 s.
+  - What a cold phase still spends on 591 files (load 120–150): `struct` 26 s CPU (rules 7.2 s, projection 8.1 s,
+    tape restore and facts 3.3 s, parse 1.9 s); `values` 23.5 s (rules 6.6 s, projection 4.1 s, tape and facts
+    4.2 s). Linear in the documents, so over the whole workspace about 400 s and 350 s of CPU cold. A warm run
+    reuses each phase from its record.
 
 **Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.

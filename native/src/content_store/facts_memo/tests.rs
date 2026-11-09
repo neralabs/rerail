@@ -273,3 +273,18 @@ fn a_memo_row_that_does_not_decode_is_a_miss_and_is_replaced() {
     assert_eq!(read.completed[&plan(3)], (false, b"c3".to_vec()));
     assert!(read.run_digest(&set).is_some());
 }
+
+#[test]
+fn one_plans_result_is_the_memos_row_for_it() {
+    let (_path, store) = store("one-plan");
+    let bytes = b"x = 1\n";
+    let source = store.put_facts_source(bytes, content(bytes), &[]).unwrap();
+    let set = FactsPlanSet::new(vec![plan(1), plan(2), plan(3)]);
+    let at_a = FactsMemoKey { source, fact_schema: 7, path: "a/x.py" };
+    store.put_facts_memo(at_a, &set, &[result(1, false, b"pure"), result(2, true, b"at a")], &[]).unwrap();
+    for (key, p) in [(at_a, 1), (at_a, 2), (at_a, 3), (FactsMemoKey { path: "b/y.py", ..at_a }, 1), (FactsMemoKey { path: "b/y.py", ..at_a }, 2)] {
+        let whole = store.facts_memo(key).unwrap();
+        let one = store.facts_result(key, plan(p)).unwrap();
+        assert_eq!(one.as_ref().map(|r| (&r.entry, r.path_dependent)), whole.results.get(&plan(p)).map(|r| (&r.entry, r.path_dependent)), "{} plan {p}", key.path);
+    }
+}

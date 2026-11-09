@@ -72,6 +72,8 @@
 // libraries' its imports reach, by symbol.
 .decl struct__def(s: symbol, k: symbol)
 .decl struct__base(c: symbol, i: number, b: symbol)
+.decl struct__flag(f: symbol, k: symbol)
+.decl struct__shape(f: symbol, need: number, cap: number, kw: number)
 .decl types__binds(m: symbol, x: symbol, d: symbol)
 .decl types__attr(c: symbol, x: symbol, d: symbol, k: symbol)
 .decl types__owner(s: symbol, m: symbol)
@@ -79,6 +81,11 @@
 .decl types__rtype(f: symbol, a: symbol, d: symbol)
 .decl types__vtype(s: symbol, a: symbol, d: symbol)
 .decl types__callret(f: symbol, b: symbol, d: symbol)
+.decl types__tparam(c: symbol, i: number, y: symbol)
+.decl types__tmap(k: symbol, i: number, a: symbol, y: symbol)
+.decl types__rvar(f: symbol, y: symbol)
+.decl types__rgen(f: symbol, k: symbol, j: number, y: symbol)
+.decl types__ropen(f: symbol)
 // The import closure, components.rr's (the engine adds it to a program that reads it): rr_cx_reach(d, e), e is in
 // d's closure; rr_cx_sees(d, q), q is a module of d's closure.
 
@@ -874,12 +881,13 @@ lval(d, "none", "builtins.None") :- types__vtype(d, _, "builtins.None"), !struct
 // lret(f, k, v): a call of library function f holds an instance of its declared return's class (each of a union's), or
 // None.
 .decl lret(f: symbol, k: symbol, v: symbol)
-lret(f, "inst", t) :- types__rtype(f, _, t), struct__def(t, "class").
-lret(f, "none", "builtins.None") :- types__rtype(f, _, "builtins.None").
+// Not an `async def`'s: its call holds a coroutine (open, as a workspace one's).
+lret(f, "inst", t) :- types__rtype(f, _, t), struct__def(t, "class"), !struct__flag(f, "async").
+lret(f, "none", "builtins.None") :- types__rtype(f, _, "builtins.None"), !struct__flag(f, "async").
 // lopenret(f): some alternative of f's declared return is no class nor None (`Any`, a type variable, a name no
 // symbol gives; types.rr's "" row): a call of f may hold what no symbol names. lopenv(s): so is s's declared type.
 .decl lopenret(f: symbol)
-lopenret(f) :- types__rtype(f, _, ""), !lself(f).
+lopenret(f) :- types__ropen(f), !lself(f).
 .decl lopenv(s: symbol)
 lopenv(s) :- types__vtype(s, _, ""), !struct__def(s, _).
 .decl lself(f: symbol)
@@ -962,12 +970,33 @@ lv(n, k, v) :- lwlook(n, b, a), types__attr(b, a, d, _), d != "", lval(d, k, v).
 // Calls: a library class makes its instance, a library function holds what it is declared to return, an instance
 // what its `__call__` does; a method declared `-> Self` its receiver.
 lv(c, "inst", k) :- callee(c, e), lv(e, "cls", k).
-lv(c, k, v) :- callee(c, e), lv(e, "fn", f), lret(f, k, v).
+lv(c, k, v) :- lcfn(c, e, f), lret(f, k, v).
+// lcfn(c, e, f): call c of e runs library function f, or an overload of it its positional arguments fit (as `cfn`,
+// by the overload's `struct__shape`): `os.environ.get(k)` is not typed by `get(k, default: T)`. A method's `self` is
+// bound by an attribute call.
+.decl lcfn(c: node, e: node, f: symbol)
+lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), !struct__flag(f, "overload").
+lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), cwild(c).
+lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), !lmethod(f), cposk(c, n, w), lfit(f, n, w).
+lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), lmethod(f), !attr_of(e, _, _), cposk(c, n, w), lfit(f, n, w).
+lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), lmethod(f), attr_of(e, _, _), cposk(c, m, w), pred(n, m), lfit(f, n, w).
+// lfit(f, n, w): n positional arguments, with keywords (w = 1) or without, fit overload f.
+.decl lfit(f: symbol, n: number, w: number)
+lfit(f, n, 0) :- struct__shape(f, r, p, 0), slot(n), r <= n, n <= p.
+lfit(f, n, 1) :- struct__shape(f, _, p, _), slot(n), n <= p.
+// lmethod(f): overloaded library function f is defined in a class. Asked only of overloads, so it starts from them:
+// over every library function (splitting each symbol, in every chunk) it was the cold run's costliest stratum.
+.decl lmethod(f: symbol)
+lmethod(f) :- struct__flag(f, "overload"), struct__member(_, _, f).
+.decl struct__member(c: symbol, x: symbol, t: symbol)
+// A call that no overload fits is open: its overloads say nothing of it.
+.decl lunfit(c: node)
+lunfit(c) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), !lcfn(c, e, _).
 .decl lcallf(c: node, f: symbol)
 lcallf(c, f) :- callee(c, e), lv(e, "inst", t), types__attr(t, "__call__", f, _), f != "".
 lv(c, k, v) :- lcallf(c, f), lret(f, k, v).
-lv(c, "inst", t) :- callee(c, e), lv(e, "fn", f), lself(f), attr_of(e, o, _), lv(o, "inst", t).
-pv(c, "inst", w) :- callee(c, e), lv(e, "fn", f), lself(f), attr_of(e, o, _), pv(o, "inst", w).
+lv(c, "inst", t) :- lcfn(c, e, f), lself(f), attr_of(e, o, _), lv(o, "inst", t).
+pv(c, "inst", w) :- lcfn(c, e, f), lself(f), attr_of(e, o, _), pv(o, "inst", w).
 // A call of a library-wrapped workspace function holds the wrapper's declared B.
 lv(c, "inst", b) :- callee(c, e), pv(e, "wfn", f), dec1(f, d), lv(d, "fn", g), lwrap(g, b), struct__def(b, "class").
 // Implicit calls (`o[i]`, a loop, a `with`) on a library instance.
@@ -975,6 +1004,63 @@ lv(c, "inst", b) :- callee(c, e), pv(e, "wfn", f), dec1(f, d), lv(d, "fn", g), l
 lical(c, f) :- icall(c, o, a), lv(o, "inst", t), types__attr(t, a, f, _), f != "".
 lv(c, k, v) :- lical(c, f), lret(f, k, v).
 lv(c, "inst", t) :- lical(c, f), lself(f), icall(c, o, _), lv(o, "inst", t).
+// Library generics: a workspace annotation naming a library generic class (`d: dict[str, C]`, `xs: list[C]`) is a
+// generic value, as a workspace class's is (`gleaf`); a library method declared to return its class's type variable
+// (`get(...) -> _VT | None`), called on one, holds what the value's argument binds it to, through the class's bases
+// (`types__tmap`); one declared to return a generic of it (`__iter__() -> Iterator[_T]`) holds that generic, its
+// argument bound (so a loop's `__next__` binds Iterator's `_T_co` to the list's argument).
+.decl lgleaf(t: node, m: node)
+lgleaf(t, m) :- uann(t), aleaf(t, m), ahead(m, h), m != h, lv(h, "cls", k), types__tparam(k, _, _).
+bv(f, x, "gen", m) :- pann(f, x, t), pread(f, x), lgleaf(t, m).
+bv(c, x, "gen", m) :- cann(c, x, t), cread(c, x), lgleaf(t, m).
+// A workspace module's annotated name (`_ctx: ContextVar[B | None] = ContextVar(...)`): its declared library
+// generic, beside the value assigned.
+.decl wmann(m: node, x: symbol, t: node)
+wmann(m, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", t), nearest(a, m, scope),
+    kind(m, "module"), !py_dead_at(a).
+uann(t) :- wmann(_, _, t).
+bv(m0, x, "gen", m) :- wmann(m0, x, t), lgleaf(t, m).
+// lghcls(v, k): generic value v (an annotation, or a call standing for the generic it returns) is of library class k.
+.decl lghcls(v: node, k: symbol)
+lghcls(m, k) :- lgleaf(_, m), ahead(m, h), lv(h, "cls", k).
+lghcls(x, k) :- sarg(_, _, x), ghead(x, h), x != h, lv(h, "cls", k), types__tparam(k, _, _).
+lghcls(c, k) :- gfn(c, f), rgen(f, r), ahead(r, h), lv(h, "cls", k).
+garg(m, i, x) :- lghcls(m, _), sarg(m, i, x).
+pv(c, "gen", c) :- gfn(c, f), rgen(f, _), lghcls(c, _).
+.decl lgret(f: symbol)
+lgret(f) :- types__rvar(f, _).
+lgret(f) :- types__rgen(f, _, _, _).
+// lgcall(c, o, f): call c (a call, an implicit call) on o runs library method f, declared to return a type variable
+// or a generic of one; lclassof(f, a): f is class a's.
+.decl lgcall(c: node, o: node, f: symbol)
+lgcall(c, o, f) :- lcfn(c, e, f), lgret(f), attr_of(e, o, _).
+lgcall(c, o, f) :- lical(c, f), lgret(f), icall(c, o, _).
+.decl lclassof(f: symbol, a: symbol)
+lclassof(f, a) :- lgret(f), struct__member(a, _, f).
+// lgpar(c, y, x): at call c, the receiver's generic value binds type variable y (a parameter of the method's class)
+// to annotation x.
+.decl lgpar(c: node, y: symbol, x: node)
+lgpar(c, y, x) :- lgcall(c, o, f), lclassof(f, a), pv(o, "gen", g), lghcls(g, k), types__tmap(k, i, a, y), garg(g, i, x).
+.decl lgbound(c: node, y: symbol)
+lgbound(c, y) :- lgpar(c, y, _).
+.decl lgx(c: node, x: node)
+lgx(c, x) :- lgcall(c, _, f), types__rvar(f, y), lgpar(c, y, x).
+gbind(c, x) :- lgx(c, x).
+// A union argument (`ContextVar[B | None]`): each member, the workspace's classes with their subclasses (as `gcls`).
+.decl umem(e: node, m: node)
+umem(e, m) :- kind(e, "binary_operator"), op(e, "|"), field(e, "left", m).
+umem(e, m) :- kind(e, "binary_operator"), op(e, "|"), field(e, "right", m).
+umem(e, m) :- kind(e, "parenthesized_expression"), child(e, m, 0).
+.decl lgxu(c: node, m: node)
+lgxu(c, m) :- lgx(c, e), umem(e, m).
+lgxu(c, m) :- lgxu(c, e), umem(e, m).
+pv(c, "inst", s) :- lgxu(c, m), pv(m, "cls", k), anc(s, k), docof(c, d9), docof(s, e9), rr_cx_reach(d9, e9).
+lv(c, "inst", k) :- lgxu(c, m), lv(m, "cls", k).
+lv(c, "inst", k) :- lgx(c, x), ghead(x, h), lv(h, "cls", k).
+pv(c, "gen", x) :- lgx(c, x), lghcls(x, _).
+lghcls(c, k) :- lgcall(c, _, f), types__rgen(f, k, _, y), lgpar(c, y, _).
+garg(c, j, x) :- lgcall(c, _, f), types__rgen(f, _, j, y), lgpar(c, y, x).
+pv(c, "gen", c) :- lgcall(c, _, f), types__rgen(f, _, _, y), lgpar(c, y, _).
 // For counting: a call that reaches a library's callable.
 .decl call_lib(c: node)
 call_lib(c) :- callee(c, e), lv(e, "fn", _).
@@ -1061,6 +1147,8 @@ bopen(s, x) :- ifrom(s, x, m, _), docof(s, d9), rr_cx_sees(d9, m), ibind(s, x, q
 bopen(s, x) :- ifrom(s, x, m, _), docof(s, d9), rr_cx_sees(d9, m), ibind(s, x, q), !bknown(s, q).
 .decl bknown(s: node, q: symbol)
 bknown(s, q) :- ibind(s, _, q), qv(m9, q, _, _), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9).
+// Or a library's value it holds (`_ctx = contextvars.ContextVar(...)`): `lqv`, as P3 keeps no library node.
+bknown(s, q) :- ibind(s, _, q), lqv(m9, q, _, _), docof(s, d9), docof(m9, e9), rr_cx_reach(d9, e9).
 bopen(s, x) :- live_def(s, x, f), opaque_dec(f, _), !dec1(f, _).
 bopen(s, x) :- live_def(s, x, f), dec1(f, e), !pv(e, "fn", _), !ldec_known(f).
 bopen(s, x) :- live_def(s, x, f), dec1(f, e), vopen(e).
@@ -1097,8 +1185,13 @@ vopen(c) :- vpos(c), callee(c, e), vopen(e).
 vopen(c) :- vpos(c), callee(c, e), !pv(e, _, _), !pv(c, "super", _), !bcall(c, _), !lv(e, _, _).
 // A library call whose value is not declared (no return annotation, a type variable, a special form), or an
 // instance's call with no `__call__`.
-vopen(c) :- vpos(c), callee(c, e), lv(e, "fn", f), !lret(f, _, _), !lself(f).
-vopen(c) :- vpos(c), callee(c, e), lv(e, "fn", f), lopenret(f).
+vopen(c) :- vpos(c), lcfn(c, _, f), !lret(f, _, _), !lself(f), !lgbound(c, _).
+vopen(c) :- vpos(c), lcfn(c, _, f), lopenret(f).
+vopen(c) :- vpos(c), lunfit(c).
+// A library call declared to return a type variable nothing binds at it.
+vopen(c) :- vpos(c), lcfn(c, _, f), types__rvar(f, y), !lgbound(c, y).
+vopen(c) :- vpos(c), lical(c, f), types__rvar(f, y), !lgbound(c, y).
+vopen(c) :- vpos(c), lcallf(c, f), types__rvar(f, y).
 vopen(c) :- vpos(c), lcallf(c, f), lopenret(f).
 vopen(c) :- vpos(c), lical(c, f), lopenret(f).
 // A library name, attribute or declared value whose declared type is partly unknown.
@@ -1129,7 +1222,7 @@ vopen(c) :- vpos(c), callee(c, e), pv(e, "mod", _).
 // return is.
 vopen(c) :- vpos(c), icall(c, o, _), vopen(o).
 vopen(c) :- vpos(c), icall(c, _, _), !ifn(c, _), !lical(c, _).
-vopen(c) :- vpos(c), lical(c, f), !lret(f, _, _), !lself(f).
+vopen(c) :- vpos(c), lical(c, f), !lret(f, _, _), !lself(f), !lgbound(c, _).
 vopen(c) :- vpos(c), icall(c, o, a), pv(o, "inst", k), attr_open(c, k, a).
 vopen(c) :- vpos(c), ifn(c, f), isasync(f).
 vopen(c) :- vpos(c), ifn(c, f), !rclosed(f), isgen(f).

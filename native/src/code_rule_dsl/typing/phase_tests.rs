@@ -79,6 +79,101 @@ v(s, d) :- types__vtype(s, _, d).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// P1 marks `async def`s and `@overload`s, and gives each overload its positional shape (required, room, a required
+/// keyword-only parameter), so a later phase fits a library call to its overloads by symbol.
+#[test]
+fn struct_marks_async_and_overloads_with_their_positional_shapes() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("struct-flags");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("o.py"),
+        "from typing import overload\nimport typing\n\nclass K:\n    @overload\n    def get(self, k: str) -> int: ...\n    @overload\n    def get(self, k: str, d: int, *, strict: bool) -> int: ...\n    @typing.overload\n    def get(self, *ks: str) -> int: ...\n\nasync def fetch(u: str) -> bytes: ...\n\ndef plain(a, b=1): ...\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let reader = r#"
+#include "core.rr"
+.decl struct__flag(f: symbol, k: symbol)
+.decl struct__shape(f: symbol, need: number, cap: number, kw: number)
+.decl fl(f: symbol, k: symbol)
+fl(f, k) :- struct__flag(f, k).
+.decl sh(f: symbol, need: number, cap: number, kw: number)
+sh(f, n, c, w) :- struct__shape(f, n, c, w).
+.output fl, sh
+"#;
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+    let report = corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
+    let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["struct"]);
+    let rows = |rel: &str| -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(rows("fl"), ["o.K.get\toverload", "o.K.get#1\toverload", "o.K.get#2\toverload", "o.fetch\tasync"]);
+    // `self` counted: (self, k); (self, k, d) with `strict` keyword-only and required; (self, *ks).
+    assert_eq!(rows("sh"), ["o.K.get\t2\t2\t0", "o.K.get#1\t3\t3\t1", "o.K.get#2\t1\t9\t0"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// P2 gives a class's type parameters (as `Generic[...]` lists them, else its first generic base's), how a subclass's
+/// parameters stand for an ancestor's, and the returns that name a type variable or a generic of one.
+#[test]
+fn types_gives_type_parameters_their_map_through_bases_and_the_returns_naming_them() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("types-generics");
+    let _ = std::fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("g.py"),
+        "from typing import Generic, TypeVar\n\nT = TypeVar(\"T\")\nK = TypeVar(\"K\")\nV = TypeVar(\"V\")\n\nclass It(Generic[T]):\n    def __next__(self) -> T: ...\n\nclass Map(Generic[K, V]):\n    def get(self, k: K) -> V | None: ...\n    def values(self) -> It[V]: ...\n    def any(self) -> object: ...\n\nclass Dict(Map[K, V]):\n    pass\n\nclass Names(Map[str, T]):\n    pass\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let reader = r#"
+#include "core.rr"
+.decl types__tparam(c: symbol, i: number, y: symbol)
+.decl types__tmap(k: symbol, i: number, a: symbol, y: symbol)
+.decl types__rvar(f: symbol, y: symbol)
+.decl types__rgen(f: symbol, k: symbol, j: number, y: symbol)
+.decl types__ropen(f: symbol)
+.decl tp(c: symbol, i: number, y: symbol)
+tp(c, i, y) :- types__tparam(c, i, y).
+.decl tm(k: symbol, i: number, a: symbol, y: symbol)
+tm(k, i, a, y) :- types__tmap(k, i, a, y), k != a.
+.decl rv(f: symbol, y: symbol)
+rv(f, y) :- types__rvar(f, y).
+.decl rg(f: symbol, k: symbol, j: number, y: symbol)
+rg(f, k, j, y) :- types__rgen(f, k, j, y).
+.decl ro(f: symbol)
+ro(f) :- types__ropen(f).
+.output tp, tm, rv, rg, ro
+"#;
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+    corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
+    let rows = |rel: &str| -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
+        v.sort();
+        v
+    };
+    // `Names(Map[str, T])`: its one parameter is T, at 0 (counted over the base's type variables only).
+    assert_eq!(rows("tp"), ["g.Dict\t0\tg.K", "g.Dict\t1\tg.V", "g.It\t0\tg.T", "g.Map\t0\tg.K", "g.Map\t1\tg.V", "g.Names\t0\tg.T"]);
+    let tm = rows("tm");
+    assert!(tm.contains(&"g.Dict\t1\tg.Map\tg.V".to_owned()) && tm.contains(&"g.Names\t0\tg.Map\tg.V".to_owned()), "{tm:?}");
+    assert!(!tm.iter().any(|r| r.starts_with("g.Names\t") && r.ends_with("\tg.K")), "str fixes K: {tm:?}");
+    assert_eq!(rows("rv"), ["g.It.__next__\tg.T", "g.Map.get\tg.V"]);
+    assert_eq!(rows("rg"), ["g.Map.values\tg.It\t0\tg.V"]);
+    // `object` is a name no module read binds (no builtins here): open; a type variable is not.
+    assert_eq!(rows("ro"), ["g.Map.any"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Spike for note t28 step 4: P1 then P2 over a corpus with typeshed (`RERAIL_PYTHON_CALLS_ROOT`,
 /// `RERAIL_PYTHON_TYPESHED`, `RERAIL_TAPE_CACHE`): each phase's CPU and export rows, cold and unchanged, and how much
 /// of the workspace's imports and annotations P2 resolves to a symbol, and how much of that is a library's.
