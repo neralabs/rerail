@@ -96,6 +96,9 @@ mod wire;
 pub(in crate::code_rule_dsl) mod tokens;
 #[cfg(test)]
 mod tokens_tests;
+pub(in crate::code_rule_dsl) mod walk;
+#[cfg(test)]
+mod walk_tests;
 pub(in crate::code_rule_dsl) mod resident;
 pub(super) use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
@@ -1737,6 +1740,12 @@ pub(super) struct TapeDoc {
     /// the fold kept, and the node API recognizes the other tokens from the source on demand
     /// (`tokens::TokenGrammar::sequence`). `None`: the records hold every node.
     tokens: Option<Arc<tokens::TokenGrammar>>,
+    /// The tokens the records leave out, as a column (`walk::TokenColumn`): built the first time a
+    /// walk needs them, shared by every clone of this document.
+    token_column: Arc<std::sync::OnceLock<walk::TokenColumn>>,
+    /// Whether the `transducer_*` accessors number the column's tokens after the records
+    /// (`walking_tokens`).
+    walking: bool,
 }
 
 #[derive(Clone)]
@@ -2140,6 +2149,8 @@ impl TapeDoc {
             digest: Arc::default(),
             named_only: false,
             tokens: None,
+            token_column: Arc::default(),
+            walking: false,
         })
     }
 
@@ -2319,7 +2330,7 @@ impl TapeDoc {
     }
 
     pub(super) fn transducer_len(&self) -> usize {
-        self.data.len()
+        self.data.len() + self.walk_column().map_or(0, walk::TokenColumn::len)
     }
 
     /// The SHA-256 of this document's image as stored (the store's key for it), computed once.
@@ -2355,7 +2366,10 @@ impl TapeDoc {
     }
 
     pub(super) fn transducer_kind(&self, node: u32) -> u16 {
-        self.data[node as usize].kind
+        match self.at(node) {
+            walk::At::Record(node) => self.data[node as usize].kind,
+            walk::At::Token(_, row) => row.kind,
+        }
     }
 
     fn kind_alias(&self, node: u32) -> Option<&(String, bool)> {
@@ -2373,10 +2387,16 @@ impl TapeDoc {
     }
 
     pub(super) fn transducer_field(&self, node: u32) -> u16 {
-        self.data[node as usize].field
+        match self.at(node) {
+            walk::At::Record(node) => self.data[node as usize].field,
+            walk::At::Token(_, row) => row.field,
+        }
     }
 
     pub(super) fn transducer_flags(&self, node: u32) -> u8 {
+        if let walk::At::Token(..) = self.at(node) {
+            return 0;
+        }
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
             | (u8::from(rec.extra()) << 1)
@@ -2385,21 +2405,37 @@ impl TapeDoc {
     }
 
     pub(super) fn transducer_span(&self, node: u32) -> Range<usize> {
-        let rec = &self.data[node as usize];
-        rec.start as usize..rec.end as usize
+        let (start, end) = match self.at(node) {
+            walk::At::Record(node) => (self.data[node as usize].start, self.data[node as usize].end),
+            walk::At::Token(_, row) => (row.start, row.end),
+        };
+        start as usize..end as usize
     }
 
     /// Whether the node is named (its alias's, else its kind's).
     pub(super) fn transducer_is_named(&self, node: u32) -> bool {
-        self.node_is_named(node)
+        matches!(self.at(node), walk::At::Record(_)) && self.node_is_named(node)
     }
 
     pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
-        let parent = self.data[node as usize].parent;
+        let parent = match (self.at(node), self.walk_column()) {
+            (walk::At::Token(token, _), Some(column)) => return Some(column.parent(token)),
+            _ => self.data[node as usize].parent,
+        };
         (parent != NONE).then_some(parent)
     }
 
-    pub(super) fn transducer_children(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
+    /// The node's children in order; a walk's ([`Self::walking_tokens`]) include the column's tokens.
+    pub(super) fn transducer_children(&self, node: u32) -> walk::Children<'_> {
+        match (self.at(node), self.walk_column()) {
+            (walk::At::Token(..), _) => walk::Children::Listed(Vec::new().into_iter()),
+            (walk::At::Record(record), Some(column)) => walk::Children::Listed(self.walk_children(record, column).into_iter()),
+            (walk::At::Record(record), None) => walk::Children::Linked { doc: self, next: self.data[record as usize].first },
+        }
+    }
+
+    /// A record's children among the records.
+    pub(super) fn record_children(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
         let mut next = self.data[node as usize].first;
         std::iter::from_fn(move || {
             if next == NONE {
@@ -2411,13 +2447,35 @@ impl TapeDoc {
         })
     }
 
+    /// The node's descendants among the records; a walk's tokens below it are
+    /// [`Self::transducer_descendant_tokens`].
     pub(super) fn transducer_descendants(&self, node: u32) -> Range<u32> {
+        if let walk::At::Token(..) = self.at(node) {
+            return node..node;
+        }
         let rec = &self.data[node as usize];
         node + 1..node + rec.size
     }
 
+    /// The column's tokens below `node`, as walk nodes: empty where the walk reads no column.
+    pub(super) fn transducer_descendant_tokens(&self, node: u32) -> Range<u32> {
+        match (self.at(node), self.walk_column()) {
+            (walk::At::Record(record), Some(column)) => {
+                let records = self.data.len() as u32;
+                let tokens = column.below(record..record + self.data[record as usize].size);
+                records + tokens.start..records + tokens.end
+            }
+            _ => 0..0,
+        }
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_next_sibling(&self, node: u32, named: bool) -> Option<u32> {
+        if self.walk_column().is_some() {
+            let parent = self.transducer_parent(node)?;
+            let siblings = self.transducer_children(parent);
+            return siblings.skip_while(|&sibling| sibling != node).skip(1).find(|&sibling| !named || self.transducer_is_named(sibling));
+        }
         let mut next = self.data[node as usize].next;
         while next != NONE {
             if !named || self.node_is_named(next) {
@@ -2447,7 +2505,9 @@ impl TapeDoc {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_is_named_leaf(&self, node: u32) -> bool {
-        self.node_is_named(node) && self.data[node as usize].first == NONE
+        self.transducer_is_named(node)
+            && self.data[node as usize].first == NONE
+            && self.walk_column().is_none_or(|column| column.of(node).is_empty())
     }
 
     /// A collision-free encoding of the recursive kind and child structure used by ast-grep's
@@ -2524,12 +2584,25 @@ impl TapeDoc {
 
     /// A text test's row from the term index, by its slot key (`with_texts`).
     pub(super) fn transducer_text_row(&self, key: &str) -> Option<&Arc<Vec<u64>>> {
+        // The term index's rows cover the records: a walk over tokens scans their text (token
+        // postings: t30 §3, step 5).
+        if self.walking {
+            return None;
+        }
         self.texts.get(key)
     }
 
     /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep
     /// matches on.
     pub(super) fn node(&self, ordinal: u32) -> TapeNode<'_> {
+        // A walk's token (`walking_tokens`): the node API's token of its parent record.
+        if let (walk::At::Token(token, row), Some(column)) = (self.at(ordinal), self.walk_column()) {
+            let parent = column.parent(token);
+            return TapeNode {
+                token: Some(Tok { slot: row.slot, kind: row.kind, field: row.field, start: row.start, end: row.end }),
+                ..self.root_node().at(parent)
+            };
+        }
         self.root_node().at(ordinal)
     }
 

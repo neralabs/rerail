@@ -988,3 +988,20 @@ fn the_statistics_loop_runs_on_the_slices_path() {
 }
 
 mod data_layer;
+
+/// RER-131 probe (scratch): one pack rule on one small file, interpreter only.
+#[test]
+#[ignore = "RER-131 scratch probe"]
+fn rer131_one_rule_probe() {
+    let rule = std::env::var("RERAIL_PROBE_RULE").unwrap_or("ruff-e722-bare-except".into());
+    let source = std::env::var("RERAIL_PROBE_SOURCE").unwrap_or("try:\n    x()\nexcept:\n    pass\n".into());
+    let policies: Vec<_> = policies().into_iter().filter(|(name, _)| *name == rule).collect();
+    assert_eq!(policies.len(), 1);
+    let dir = temp("probe");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), source).unwrap();
+    let store = ContentStore::open(&temp("probe-store").with_extension("sqlite")).unwrap();
+    let mut rules = Rules::lower(&policies, ExecutionBackend::CpuInterpreter).unwrap();
+    let root = directory_root(&store, &dir).unwrap();
+    eprintln!("PROBE keys {:?}", keys(&audit(&store, WS, root, &mut rules).unwrap()));
+}

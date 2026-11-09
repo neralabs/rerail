@@ -3566,7 +3566,9 @@ impl Program {
                         }
                         // Without repeats (whose states are deduplicated as they are queued),
                         // the move's other candidates are one lazy cursor.
-                        CHILD | DESCEND if !has_repeats => {
+                        // A walk over tokens (`TapeDoc::walking_tokens`) has its descendants in two
+                        // ranges, records then tokens: they are listed below.
+                        CHILD | DESCEND if !has_repeats && !(opcode == DESCEND && tape.walks_tokens()) => {
                             let named = mode == NAMED;
                             let next_pc = next.ok_or(Error::InvalidTarget(path.pc as usize))?;
                             if opcode == CHILD {
@@ -3601,6 +3603,7 @@ impl Program {
                                     .collect::<Vec<_>>()
                             } else {
                                 tape.transducer_descendants(path.node)
+                                    .chain(tape.transducer_descendant_tokens(path.node))
                                     .filter(|&node| !named || tape.transducer_flags(node) & 1 != 0)
                                     .collect::<Vec<_>>()
                             };

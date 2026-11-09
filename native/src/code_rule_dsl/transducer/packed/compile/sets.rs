@@ -513,6 +513,12 @@ impl Reader<'_> {
                                 }
                             }
                             covered = covered.max(range.end);
+                            // A walk's tokens below the node (`TapeDoc::walking_tokens`): never named.
+                            if !*named {
+                                for below in self.tape.transducer_descendant_tokens(node) {
+                                    put(&mut bits, below);
+                                }
+                            }
                         }
                     }
                     Step::Parent => {

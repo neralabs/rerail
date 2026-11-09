@@ -89,7 +89,8 @@ impl RootRecord {
 enum Resume {
     Path,
     Children { next: u32, named: bool },
-    Descend { next: u32, end: u32, named: bool },
+    /// `next..end`, then `then` (a walk's tokens below the node, `TapeDoc::walking_tokens`).
+    Descend { next: u32, end: u32, then: [u32; 2], named: bool },
     Following { next: u32, named: bool },
 }
 
@@ -465,7 +466,8 @@ impl Micro {
                             CHILD => Resume::Children { next: tape.transducer_children(state.node).next().unwrap_or(NONE), named },
                             DESCEND => {
                                 let range = tape.transducer_descendants(state.node);
-                                Resume::Descend { next: range.start, end: range.end, named }
+                                let tokens = tape.transducer_descendant_tokens(state.node);
+                                Resume::Descend { next: range.start, end: range.end, then: [tokens.start, tokens.end], named }
                             }
                             _ => Resume::Following { next: tape.transducer_next_sibling(state.node, named).unwrap_or(NONE), named },
                         };
@@ -579,7 +581,7 @@ fn candidate(tape: &TapeDoc, resume: &mut Resume) -> Option<u32> {
             }
             None
         }
-        Resume::Descend { next, end, named } => {
+        Resume::Descend { next, end, then, named } => loop {
             while *next < *end {
                 let node = *next;
                 *next += 1;
@@ -587,8 +589,12 @@ fn candidate(tape: &TapeDoc, resume: &mut Resume) -> Option<u32> {
                     return Some(node);
                 }
             }
-            None
-        }
+            if then[0] >= then[1] {
+                return None;
+            }
+            [*next, *end] = *then;
+            *then = [0, 0];
+        },
         Resume::Following { next, named } => {
             let node = *next;
             (node != NONE).then(|| {

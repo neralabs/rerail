@@ -260,3 +260,76 @@ fixes that.
 
 The device refuses the named-only document ("noncanonical tape image
 header"). Step 4 fixes that.
+
+## 7. Step 3a: the CPU walk reaches tokens
+
+### Why tokens are walk nodes, not two new ops
+
+§2 planned two ops, `NO_TOKEN_BETWEEN` and `TOKEN K`, for the walks
+that care about tokens. The pack's forbid-ast clauses ask for more than
+that:
+
+- E722's root rule matches the `except` keyword itself, and its finding
+  is anchored there.
+- SIM118 steps from a node to the `.` before it (`follows` +
+  `regex "^\\.$"`).
+- E722 also steps to the `:` after the keyword (`precedes`).
+
+So a token must be a node a path can stand on. TEXT and KIND test it,
+PARENT leaves it, and NEXT reaches it.
+
+### The design
+
+A named-only document gets a **token column** (`tape::walk`). Per
+record, it holds an offset into rows of (start, end, slot, kind,
+field), 16 B a row. The rows are ordered by parent, in the records'
+preorder, so the tokens below a record are one range.
+
+`TapeDoc::walking_tokens()` returns the document as a walk sees it, a
+clone that shares the records, the source and the column. Its
+`transducer_*` accessors number token `t` as node `records + t`:
+
+- kind, field, flags and span read the row;
+- parent finds the record by its offsets;
+- children merge the records with the record's own tokens, by slot;
+- descendants are two ranges: records
+  (`transducer_descendants`), then tokens
+  (`transducer_descendant_tokens`);
+- `TapeDoc::node` maps a token id to the node API's token, so host
+  fact labels can test it.
+
+Every other reader of `transducer_*` ids gets a plain document and
+reads records only. That includes facts, matchers, prefilters and stats.
+
+### What changed in the CPU backends
+
+- The waves and the catalog hand the transducer walking documents.
+- The interpreter, micro walks and sets add the token range to
+  DESCEND.
+- The term index's text rows cover the records. A walking document
+  refuses them, so text is scanned.
+- Candidates are a stopgap until token postings (step 5). On a walking
+  document, each token whose kind a clause's root program starts from
+  is a candidate too. That is a superset, and the program tests each one.
+
+### Result
+
+| S7 | Interpreter / JIT keys | CPU |
+|---|---|---|
+| Full documents | 519 | 31 s |
+| Named-only documents (probe) | 519, the same set | 69 s |
+
+The full shape is unchanged on all four backends. Metal refuses
+named-only documents until step 4.
+
+The doubled CPU is the cost of these stopgaps:
+
+- token candidates offered to every clause;
+- sibling steps that rebuild the parent's child list;
+- DESCEND lists that are collected, not walked lazily;
+- text scans in place of index rows;
+- the column built for every document.
+
+Step 3b removes most of them. Mode-0 walks whose target cannot match a
+token become named walks, and only clauses whose root can start at a
+token get token candidates.
