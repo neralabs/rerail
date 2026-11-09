@@ -22,6 +22,11 @@ use crate::code_rule_dsl::transducer::packed::block::BlockRun;
 use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
 use metal::MTLSize;
 
+/// The same programs in the CPU's shape: a thread a segment of blocks, the carry forward by
+/// speculation (`metal_block_serial.rs`).
+#[path = "metal_block_serial.rs"]
+pub(in crate::code_rule_dsl) mod serial;
+
 /// The carries' helpers (`metal_block_carry.metal`), shared by the interpreter and generated MSL.
 const CARRY: &str = include_str!("metal_block_carry.metal");
 /// The sinks: outputs at their delays, extracts and totals (`metal_block_sinks.metal`), shared
@@ -1164,7 +1169,9 @@ fn ascii_form(native: &BlockNative) -> BlockNative {
 
 /// The instructions in `chosen`, as straight-line statements for a word of `width` whose first
 /// byte is chunk `base` (16-byte chunks) and stream byte `offset` (for `const`'s phase).
-/// `carried` writes each carried instruction's statements.
+/// `carried` writes each carried instruction's statements. An empty `base`: the word's chunks
+/// `c0..` and the byte before them, `before`, are loaded already (the serial loop loads a block
+/// ahead).
 fn emit(
     p: usize,
     native: &BlockNative,
@@ -1180,14 +1187,15 @@ fn emit(
     let insts: Vec<&BlockInst> = chosen.iter().map(|&at| &native.insts[at]).collect();
     let mut out = String::new();
     let back = insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
-    if back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))) {
+    let loaded = base.is_empty();
+    if !loaded && (back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_)))) {
         for c in 0..chunks {
             out.push_str(&format!("  const uint4 c{c} = load16(bytes, f, {base} + {c}u);\n"));
         }
     }
     // The byte before the word, read from the source (no carry); and, for `pair` by lookups,
     // the word's bytes one back.
-    if back {
+    if back && !loaded {
         out.push_str(&format!("  const uint before = file_byte_before(bytes, f, {base});\n"));
     }
     let used: std::collections::BTreeSet<u16> = insts

@@ -536,6 +536,61 @@ fn json_gated_regions_equal_the_interpreter() {
     }
 }
 
+/// Tier 1 on Metal in segments (`block_program::serial`), over the corpus as one batch: GPU
+/// seconds (the fastest of `RERAIL_ITERS` runs, default 5), segments run again and checks, for
+/// `RERAIL_SEG` blocks a segment (default 16) and `RERAIL_WARM` warm-up blocks (default 1); the
+/// outputs, positions and totals equal Cranelift's. `RERAIL_REPEAT` and `RERAIL_FORM` as in
+/// `json_metal_bench`.
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
+fn json_metal_serial_bench() {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+    let iters = env("RERAIL_ITERS", 5);
+    let mut paths = files_in("RERAIL_JSON_CORPUS");
+    let mut files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
+    let n = env("RERAIL_REPEAT", 1);
+    (files, paths) = ((0..n).flat_map(|_| files.clone()).collect(), (0..n).flat_map(|_| paths.clone()).collect());
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let total: usize = files.iter().map(Vec::len).sum();
+    let segments = Segments { blocks: env("RERAIL_SEG", 16), warm: env("RERAIL_WARM", 1) };
+    println!("{} files, {} bytes, {segments:?}", files.len(), total);
+    println!("form\tgpu_ms\tGB/s\tfirst_ms\tagain_ms\tsinks_ms\tsegments\treruns\trounds");
+    for name in ["14-json", "15-jsonc"] {
+        if std::env::var("RERAIL_FORM").is_ok_and(|f| !name.starts_with(&f)) {
+            continue;
+        }
+        let c = form(name);
+        let native = &c.native.block_programs[0];
+        let want = c.parser.tier1.run_files(&refs);
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let mut best: Option<metal_program_backend::block_program::serial::SerialRun> = None;
+        for _ in 0..iters {
+            let run = run_serial_split(&[native], &batch, segments).unwrap_or_else(|e| panic!("metal: {e:?}"));
+            for (k, (got, want)) in run.run.files.iter().zip(&want).enumerate() {
+                assert!(got.outputs == want.outputs, "{name}: {} outputs differ", base(&paths[k]));
+                assert!(got.positions == want.positions && got.totals == want.totals, "{name}: {} positions or totals differ", base(&paths[k]));
+            }
+            if best.as_ref().is_none_or(|b| run.run.seconds < b.run.seconds) {
+                best = Some(run);
+            }
+        }
+        let b = best.expect("a run");
+        println!(
+            "{name}\t{:.3}\t{:.2}\t{:.3}\t{:.3}\t{:.3}\t{}\t{}\t{}",
+            b.run.seconds * 1e3,
+            total as f64 / b.run.seconds / 1e9,
+            b.first_seconds * 1e3,
+            b.rerun_seconds * 1e3,
+            b.sink_seconds * 1e3,
+            b.segments,
+            b.reruns,
+            b.rounds
+        );
+    }
+}
+
 /// Tier 1 on Metal, generated MSL, over the corpus as one batch: GPU seconds (the fastest of
 /// `RERAIL_ITERS` runs, default 5) and launches at each lane width, each form; the outputs and
 /// positions equal Cranelift's.

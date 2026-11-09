@@ -1,0 +1,822 @@
+//! Block programs on Metal in the CPU's shape: one thread runs a **segment** of a file's 64-byte
+//! blocks in order, the carried state in its registers, as the Cranelift loop does on one core
+//! (`native_cpu_block`). No thread waits on another.
+//!
+//! The carry goes forward only, by speculation:
+//!
+//! 0. The scans' carries are made exact first (`Levels`): level by level, each segment's table of
+//!    each scan (its carry out for each carry in), then a prefix over each file's segments.
+//! 1. Every segment starts a few blocks early (its **warm-up**): its scans from their exact
+//!    carries, its `prev`s from zero. It writes its state at its first block and at its end.
+//! 2. A check compares each segment's first state with its predecessor's end. A segment whose
+//!    start differs is run again from its predecessor's end; the check repeats until every
+//!    start agrees. A file's first segment starts exact.
+//! 3. Last, the extracts' positions and the totals are made from the finished output words: each
+//!    segment counts its bits, each file's segments take their bases by one SIMD-group prefix,
+//!    and each segment writes its positions.
+//!
+//! A segment's words of the outputs depend only on its start and its bytes, so a run again
+//! rewrites them all with plain stores. The body of a block is the same MSL the lanes kernel
+//! uses (`emit`), at 64 bits; a carried instruction reads the thread's state.
+use super::*;
+
+/// How a batch runs in segments: the blocks a segment holds, and the blocks before it it warms
+/// up on.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::code_rule_dsl) struct Segments {
+    pub(in crate::code_rule_dsl) blocks: usize,
+    pub(in crate::code_rule_dsl) warm: usize,
+}
+
+/// A serial batch's results: the files', and how the speculation went.
+pub(in crate::code_rule_dsl) struct SerialRun {
+    pub(in crate::code_rule_dsl) run: BatchRun,
+    /// Segments in the batch, and segments run again in all.
+    pub(in crate::code_rule_dsl) segments: usize,
+    pub(in crate::code_rule_dsl) reruns: usize,
+    /// Checks until every start agreed (1 when the speculation was right everywhere).
+    pub(in crate::code_rule_dsl) rounds: usize,
+    /// GPU seconds of the first pass, of the runs again with their checks, and of the positions.
+    pub(in crate::code_rule_dsl) first_seconds: f64,
+    pub(in crate::code_rule_dsl) rerun_seconds: f64,
+    pub(in crate::code_rule_dsl) sink_seconds: f64,
+}
+
+/// The carried state of a program in serial form, as packed words: each `prev`'s operand by its
+/// newest bits (the most any `prev` of it reads), then each scan's carry bit. A component never
+/// spans two words.
+struct State {
+    /// `(instruction, bits, word, first bit, scan)`: an operand of `prev`s (its last word `s`),
+    /// or a scan (its carry `c`). A scan read by a `prev` has both.
+    parts: Vec<(usize, u32, usize, u32, bool)>,
+    words: usize,
+}
+
+impl State {
+    fn of(native: &BlockNative) -> Self {
+        let mut reach: std::collections::BTreeMap<usize, u32> = std::collections::BTreeMap::new();
+        for inst in &native.insts {
+            if let BlockInst::Prev(a, k) = *inst {
+                let r = reach.entry(usize::from(a)).or_default();
+                *r = (*r).max(u32::from(k));
+            }
+        }
+        let mut list: Vec<(usize, u32, bool)> = reach.into_iter().map(|(at, bits)| (at, bits, false)).collect();
+        list.extend(native.insts.iter().enumerate().filter(|(_, i)| matches!(i, BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..))).map(|(at, _)| (at, 1, true)));
+        let (mut parts, mut word, mut used) = (Vec::new(), 0usize, 0u32);
+        for (at, bits, scan) in list {
+            if used + bits > 64 {
+                word += 1;
+                used = 0;
+            }
+            parts.push((at, bits, word, used, scan));
+            used += bits;
+        }
+        State { words: word + usize::from(used > 0 || parts.is_empty()), parts }
+    }
+
+    /// The MSL that writes the state's words to `to[0..]`.
+    fn pack(&self, native: &BlockNative, to: &str) -> String {
+        let mut words = vec![Vec::new(); self.words];
+        let _ = native;
+        for &(at, bits, w, first, scan) in &self.parts {
+            let value = if scan { format!("ulong(c{at})") } else { format!("(s{at} >> {}u)", 64 - bits) };
+            words[w].push(format!("({value} << {first}u)"));
+        }
+        words.iter().enumerate().map(|(w, parts)| format!("{to}[{w}] = {};", if parts.is_empty() { "0ul".to_owned() } else { parts.join(" | ") })).collect::<Vec<_>>().join(" ")
+    }
+
+    /// The MSL that sets the state from the words at `from[0..]`.
+    fn unpack(&self, native: &BlockNative, from: &str) -> String {
+        self.parts
+            .iter()
+            .map(|&(at, bits, w, first, scan)| {
+                let _ = native;
+                let field = format!("(({from}[{w}] >> {first}u) & {:#x}ul)", if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 });
+                if scan {
+                    format!("c{at} = uint({field});")
+                } else {
+                    format!("s{at} = {field} << {}u;", 64 - bits)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// Program `p` in serial form: the blocks `first..=last` of a segment after its warm-up (or from
+/// a given state), one body a block: the general one at the file's edges, the full one inside,
+/// and the ASCII one inside where the block and the 16 bytes before it are ASCII.
+fn serial_function(p: usize, native: &BlockNative, state: &State, levels: Option<&Levels>) -> String {
+    let mut out = format!(
+        "static inline void serial_{p}(device const uint4* bytes, FileRow f, uint first, uint last, bool again, uint warm,\n\
+         \x20                          device ulong* out, device ulong* rec, thread const ulong* given, ulong cin, ulong cw) {{\n"
+    );
+    for &(at, .., scan) in &state.parts {
+        if scan {
+            out.push_str(&format!("  uint c{at} = 0u;\n"));
+        } else {
+            out.push_str(&format!("  ulong s{at} = 0ul;\n"));
+        }
+    }
+    let delayed: Vec<usize> = (0..native.outputs.len()).filter(|&k| native.output_delays[k] > 0).collect();
+    for &k in &delayed {
+        assert!(native.output_delays[k] < 64, "an output's delay is below a block");
+        out.push_str(&format!("  ulong q{k} = 0ul;\n"));
+    }
+    let start = state.unpack(native, "given");
+    // The scans' carries are exact (`Levels`): from `cw` at the warm-up's first block, set to
+    // `cin` at its second part's first, `a`.
+    let carries = |x: &str| match levels {
+        Some(levels) => levels.scans.iter().enumerate().filter(|&(i, _)| levels.level[i] > 0).map(|(i, at)| format!(" c{at} = uint(({x} >> {i}u) & 1ul);")).collect::<String>(),
+        None => String::new(),
+    };
+    out.push_str(&format!(
+        "  const uint a = first - min(first, warm);\n\
+         \x20 uint b0 = a - min(a, warm);\n\
+         \x20 if (again) {{ b0 = first; {start} }} else {{{} }}\n",
+        carries("(b0 < a ? cw : cin)")
+    ));
+    out.push_str(&format!(
+        "  const uint len = f.len;\n\
+         \x20 // A block's bytes are loaded a block ahead: the loads of the next overlap this one's work.\n\
+         {load_ahead}\
+         \x20 // The block after the segment only finishes its delayed words.\n\
+         \x20 for (uint b = b0; b <= last; b++) {{\n\
+         {next_block}\
+         \x20   if (!again && b == a) {{{} }}\n\
+         \x20   if (b == first) {{ {} }}\n\
+         \x20   if (b == last) {{ {} }}\n",
+        carries("cin"),
+        state.pack(native, "rec"),
+        state.pack(native, &format!("(rec + {}u)", state.words)),
+        load_ahead = load_ahead("b0"),
+        next_block = NEXT_BLOCK,
+    ));
+    if delayed.is_empty() {
+        out.push_str("    if (b == last) break;\n");
+    }
+    // The tail of every body: the sinks, then the state for the next block.
+    let mut tail = String::new();
+    for (k, &v) in native.outputs.iter().enumerate() {
+        match native.output_delays[k] {
+            0 => tail.push_str(&format!("      if (b >= first && b < last) out[f.out_base + {k}u * f.groups + b] = stream_cut(v{v}, b, len, 0u);\n")),
+            d => tail.push_str(&format!(
+                "      {{ const ulong w = stream_cut(v{v}, b, len, {d}u); if (b > first) out[f.out_base + {k}u * f.groups + b - 1u] = (q{k} >> {d}u) | (w << {}u); q{k} = w; }}\n",
+                64 - u32::from(d)
+            )),
+        }
+    }
+    for &(at, .., scan) in &state.parts {
+        match native.insts[at] {
+            BlockInst::Toggle(_) if scan => tail.push_str(&format!("      c{at} = uint(v{at} >> 63u);\n")),
+            BlockInst::Escaped(_) | BlockInst::Fill(..) if scan => tail.push_str(&format!("      c{at} = o{at};\n")),
+            _ => tail.push_str(&format!("      s{at} = v{at};\n")),
+        }
+    }
+    let body = |values: &BlockNative| {
+        let all: Vec<usize> = (0..values.insts.len()).collect();
+        let mut text = emit(p, values, LaneWidth::W64, &all, "", "b * 64u", carried_serial);
+        text.push_str(&tail);
+        text.lines().map(|l| format!("    {l}\n")).collect::<String>()
+    };
+    let (full, ascii) = (full_form(native), ascii_form(native));
+    out.push_str(&format!(
+        "    if (b > 0u && (b + 1u) * 64u <= len) {{\n\
+         \x20     const uint4 high = pl | c0 | c1 | c2 | c3;\n\
+         \x20     // One body for the SIMD group's threads at once: a thread with a byte above 127 takes the\n\
+         \x20     // others to the full body.\n\
+         \x20     if (simd_all(((high.x | high.y | high.z | high.w) & 0x80808080u) == 0u)) {{\n{}      }} else {{\n{}      }}\n\
+         \x20   }} else {{\n{}    }}\n    pl = c3;\n  }}\n}}\n\n",
+        body(&ascii),
+        body(&full),
+        body(native)
+    ));
+    out
+}
+
+/// A program's scans by level: each scan's level is one more than the highest of the scans it
+/// reads, through anything (`prev`s included). Level by level, a pass over every segment makes
+/// each scan's table (its carry out for each carry in), and a prefix over each file's segments
+/// gives every segment its exact carry in. A scan's table has two entries whatever it reads, so
+/// the levels need no other state: only the `prev`s, which forget in k bytes, are left to the
+/// warm-ups.
+struct Levels {
+    /// The scans in order: scan `i` is bit `i` of a segment's carries.
+    scans: Vec<usize>,
+    /// Each scan's level, from 1; 0 for a scan left to the warm-ups (`exact_scans`).
+    level: Vec<usize>,
+    depth: usize,
+}
+
+/// The scans made exact by levels: `RERAIL_SERIAL_EXACT`, instruction numbers of the planes form
+/// separated by commas, or every scan. The others start from zero at each warm-up, as the
+/// `prev`s do: right when they forget their start within a warm-up.
+fn exact_scans() -> Option<Vec<usize>> {
+    std::env::var("RERAIL_SERIAL_EXACT").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+}
+
+impl Levels {
+    fn of(native: &BlockNative) -> Self {
+        let mut lv = vec![0usize; native.insts.len()];
+        let mut levels = Levels { scans: Vec::new(), level: Vec::new(), depth: 0 };
+        for (at, inst) in native.insts.iter().enumerate() {
+            let below = inst.operands().iter().map(|&x| lv[x]).max().unwrap_or(0);
+            if matches!(inst, BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..)) {
+                let exact = exact_scans().is_none_or(|e| e.contains(&at));
+                lv[at] = below + usize::from(exact);
+                levels.scans.push(at);
+                levels.level.push(if exact { below + 1 } else { 0 });
+                levels.depth = levels.depth.max(lv[at]);
+            } else {
+                lv[at] = below;
+            }
+        }
+        assert!(levels.scans.len() <= 64, "a segment's carries fit a word");
+        levels
+    }
+
+    /// The scans of level `l`, as (bit, instruction).
+    fn at(&self, l: usize) -> Vec<(usize, usize)> {
+        self.scans.iter().enumerate().filter(|&(i, _)| self.level[i] == l).map(|(i, &at)| (i, at)).collect()
+    }
+
+    fn bit(&self, at: usize) -> usize {
+        self.scans.iter().position(|&x| x == at).expect("a scan")
+    }
+}
+
+/// Level `l`'s pass for program `p` over blocks `a..a_next` (one segment's, a warm-up before
+/// them): each scan of the level's table, at `a_next - warm` and at `a_next`. The scans below
+/// start from their exact carries `cw` at the warm-up's first block and are set to `cin` at `a`;
+/// the level's own run from 0 and from 1. Tables: bit c the carry out for carry in c.
+fn cone_function(p: usize, native: &BlockNative, levels: &Levels, l: usize) -> String {
+    let own = levels.at(l);
+    let mut inside = vec![false; native.insts.len()];
+    for &(_, at) in &own {
+        for x in native.insts[at].operands() {
+            inside[x] = true;
+        }
+    }
+    for at in (0..native.insts.len()).rev() {
+        if inside[at] {
+            for x in native.insts[at].operands() {
+                inside[x] = true;
+            }
+        }
+    }
+    let cone: Vec<usize> = (0..native.insts.len()).filter(|&at| inside[at]).collect();
+    let mut out = format!(
+        "static inline void cone_{p}_{l}(device const uint4* bytes, FileRow f, uint a, uint a_next, uint warm, ulong cin, ulong cw, device uint* tab) {{\n\
+         \x20 const uint start = a - min(a, warm);\n\
+         \x20 const ulong from = start < a ? cw : cin;\n"
+    );
+    let (mut set, mut tail) = (String::new(), String::new());
+    let mut prevs: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    for &at in &cone {
+        match native.insts[at] {
+            BlockInst::Prev(a, _) => {
+                prevs.insert(usize::from(a));
+            }
+            BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => {
+                let i = levels.bit(at);
+                if levels.level[i] > 0 {
+                    out.push_str(&format!("  uint c{at} = uint((from >> {i}u) & 1ul);\n"));
+                    set.push_str(&format!(" c{at} = uint((cin >> {i}u) & 1ul);"));
+                } else {
+                    out.push_str(&format!("  uint c{at} = 0u;\n"));
+                }
+                tail.push_str(&match native.insts[at] {
+                    BlockInst::Toggle(_) => format!("      c{at} = uint(v{at} >> 63u);\n"),
+                    _ => format!("      c{at} = o{at};\n"),
+                });
+            }
+            _ => {}
+        }
+    }
+    for a in &prevs {
+        out.push_str(&format!("  ulong s{a} = 0ul;\n"));
+        tail.push_str(&format!("      s{a} = v{a};\n"));
+    }
+    // The level's scans, each from both carries: `x` from 0, `y` from 1.
+    let mut twice = String::new();
+    let mut record = String::new();
+    let mut finish = String::new();
+    for &(k, at) in &own {
+        out.push_str(&format!("  uint x{at} = 0u, y{at} = 1u, tw{at} = 2u;\n"));
+        set.push_str(&format!(" x{at} = 0u; y{at} = 1u;"));
+        twice.push_str(&match native.insts[at] {
+            BlockInst::Toggle(a) => format!("      {{ const uint n = uint(popcount(v{a})) & 1u; x{at} ^= n; y{at} ^= n; }}\n"),
+            BlockInst::Escaped(a) => format!("      {{ uint o = 0u, r = 0u; escaped(v{a}, ulong(x{at}), o); escaped(v{a}, ulong(y{at}), r); x{at} = o; y{at} = r; }}\n"),
+            BlockInst::Fill(a, e) => format!("      {{ uint o = 0u, r = 0u; fill_word(v{a}, v{e}, ulong(x{at}), o); fill_word(v{a}, v{e}, ulong(y{at}), r); x{at} = o; y{at} = r; }}\n"),
+            _ => unreachable!("a scan"),
+        });
+        record.push_str(&format!(" tw{at} = x{at} | (y{at} << 1u);"));
+        finish.push_str(&format!("  tab[{}u] = x{at} | (y{at} << 1u); tab[{}u] = tw{at};\n", 2 * k, 2 * k + 1));
+    }
+    let mut body = emit(p, native, LaneWidth::W64, &cone, "", "b * 64u", carried_serial);
+    body.push_str(&tail);
+    body.push_str(&twice);
+    let body: String = body.lines().map(|line| format!("    {line}\n")).collect();
+    out.push_str(&format!(
+        "  const uint len = f.len;\n{}\
+         \x20 for (uint b = start; b < a_next; b++) {{\n{NEXT_BLOCK}\
+         \x20   if (b == a) {{{set} }}\n\
+         \x20   if (b + warm == a_next && b >= a) {{{record} }}\n\
+         \x20   {{\n{body}    }}\n\
+         \x20   pl = c3;\n\
+         \x20 }}\n{finish}}}\n\n",
+        load_ahead("start")
+    ));
+    out
+}
+
+/// The loads before a serial loop from block `b0`: its first block's chunks, and the chunk
+/// before them (zero before the file).
+fn load_ahead(b0: &str) -> String {
+    format!(
+        "  uint4 n0 = load16(bytes, f, {b0} * 4u), n1 = load16(bytes, f, {b0} * 4u + 1u), n2 = load16(bytes, f, {b0} * 4u + 2u), n3 = load16(bytes, f, {b0} * 4u + 3u);\n\
+         \x20 uint4 pl = {b0} > 0u ? load16(bytes, f, {b0} * 4u - 1u) : uint4(0u);\n"
+    )
+}
+
+/// A serial loop's first statements: the block's chunks, the byte before them, and the next
+/// block's loads.
+const NEXT_BLOCK: &str = "    const uint4 c0 = n0, c1 = n1, c2 = n2, c3 = n3;\n\
+    const uint before = pl.w >> 24u;\n\
+    n0 = load16(bytes, f, b * 4u + 4u); n1 = load16(bytes, f, b * 4u + 5u); n2 = load16(bytes, f, b * 4u + 6u); n3 = load16(bytes, f, b * 4u + 7u);\n";
+
+/// A carried instruction in serial form: the thread's state, `s` a `prev` operand's last word and
+/// `c` a scan's carry.
+fn carried_serial(at: usize, inst: &BlockInst, out: &mut String) {
+    match *inst {
+        BlockInst::Prev(a, k) => out.push_str(&format!("  const ulong v{at} = (v{a} << {k}u) | (s{a} >> {}u);\n", 64 - u32::from(k))),
+        BlockInst::Toggle(a) => out.push_str(&format!("  const ulong v{at} = prefix_xor(v{a}) ^ (0ul - ulong(c{at}));\n")),
+        BlockInst::Escaped(a) => out.push_str(&format!("  uint o{at} = 0u;\n  const ulong v{at} = escaped(v{a}, ulong(c{at}), o{at});\n")),
+        BlockInst::Fill(a, e) => out.push_str(&format!("  uint o{at} = 0u;\n  const ulong v{at} = fill_word(v{a}, v{e}, ulong(c{at}), o{at});\n")),
+        _ => unreachable!("a carried instruction"),
+    }
+}
+
+/// The serial kernels for `programs` (each in its planes form): the segments' runs, the check, and
+/// the positions and totals from the finished words.
+fn generate_serial(programs: &[&BlockNative]) -> (String, usize, usize) {
+    let mut out = format!("{CARRY}\n{}\n{EQ16}\n{TRANSPOSE8}\n", batch_helpers());
+    let states: Vec<State> = programs.iter().map(|n| State::of(n)).collect();
+    let sw = states.iter().map(|s| s.words).max().unwrap_or(1);
+    let counted = programs.iter().map(|n| n.extracts.len()).max().unwrap_or(0).max(1);
+    let levels: Vec<Option<Levels>> = programs.iter().map(|n| cones_on().then(|| Levels::of(n))).collect();
+    let most = levels.iter().flatten().map(|l| l.scans.len()).max().unwrap_or(0).max(1);
+    // Each level's pass and prefix, by program.
+    let (mut cone_cases, mut prefix_cases) = (String::new(), String::new());
+    for (p, native) in programs.iter().enumerate() {
+        out.push_str(&serial_function(p, native, &states[p], levels[p].as_ref()));
+        let Some(lv) = &levels[p] else { continue };
+        let (mut cone, mut prefix) = (String::new(), String::new());
+        for l in 1..=lv.depth {
+            out.push_str(&cone_function(p, native, lv, l));
+            cone.push_str(&format!("        case {l}u: cone_{p}_{l}(bytes, f, a, a_next, q.z, cin[t], cw[t], tables + t * {}u); break;\n", 2 * most));
+            let scans: String = lv.at(l).iter().map(|&(i, _)| format!(" scan_prefix(f, {i}u, l, sg, id, tg, tables, cin, cw);")).collect();
+            prefix.push_str(&format!("        case {l}u:{scans} break;\n"));
+        }
+        cone_cases.push_str(&format!("    case {p}u: switch (q.y) {{\n{cone}        default: break;\n      }} break;\n"));
+        prefix_cases.push_str(&format!("    case {p}u: switch (q.y) {{\n{prefix}        default: break;\n      }} break;\n"));
+    }
+    out.push_str(&format!(
+        "// Scan `i`'s carries over a file's segments, from their tables: `cin` at each segment's `a`, and\n\
+         // `cw` at its warm-up's first block (the table to there of the segment before, applied to\n\
+         // that one's carry in). Each thread of the file's threadgroup composes a run of its segments,\n\
+         // the runs' tables are scanned across the threadgroup (each SIMD group's total through `tg`),\n\
+         // and each thread walks its run again with its carry.\n\
+         static inline void scan_prefix(FileRow f, uint i, uint l, uint sg, uint id, threadgroup uint* tg, device const uint* tables, device ulong* cin, device ulong* cw) {{\n\
+         \x20 const uint n = f.halo_base, run = (n + {pt}u - 1u) / {pt}u;\n\
+         \x20 const uint lo = min(id * run, n), hi = min(lo + run, n);\n\
+         \x20 uint mine = TID1;\n\
+         \x20 for (uint s = lo; s < hi; s++) mine = tcompose1(mine, tables[(f.group0 + s) * {r}u + 2u * i]);\n\
+         \x20 uint total = 0u;\n\
+         \x20 const uint e = texclusive1(mine, l, total);\n\
+         \x20 threadgroup_barrier(mem_flags::mem_threadgroup);\n\
+         \x20 if (l == 0u) tg[sg] = total;\n\
+         \x20 threadgroup_barrier(mem_flags::mem_threadgroup);\n\
+         \x20 uint before = TID1;\n\
+         \x20 for (uint k = 0u; k < sg; k++) before = tcompose1(before, tg[k]);\n\
+         \x20 uint c = tapply1(tcompose1(before, e), 0u);\n\
+         \x20 // Each segment gives the next its carry at the next's warm-up start.\n\
+         \x20 for (uint s = lo; s < hi; s++) {{\n\
+         \x20   const uint j = f.group0 + s;\n\
+         \x20   cin[j] |= ulong(c) << i;\n\
+         \x20   if (s + 1u < n) cw[j + 1u] |= ulong(tapply1(tables[j * {r}u + 2u * i + 1u], c)) << i;\n\
+         \x20   c = tapply1(tables[j * {r}u + 2u * i], c);\n\
+         \x20 }}\n\
+         }}\n\n",
+        r = 2 * most,
+        pt = PREFIX_THREADS,
+    ));
+    let cases: String = (0..programs.len()).map(|p| format!("      case {p}u: serial_{p}(bytes, f, seg.y, seg.z, again, q.z, out, records + s * {}u, st, cin[s], cw[s]); break;\n", 2 * sw)).collect();
+    // The positions and totals of each program, from its output words.
+    let mut count_cases = String::new();
+    let mut write_cases = String::new();
+    for (p, native) in programs.iter().enumerate() {
+        let mut count = String::new();
+        let mut write = String::new();
+        for (e, &k) in native.extracts.iter().enumerate() {
+            count.push_str(&format!(
+                "      {{ uint n = 0u; for (uint j = seg.y; j < seg.z; j++) n += uint(popcount(out[f.out_base + {k}u * f.groups + j])); counts[t * {counted}u + {e}u] = n; }}\n"
+            ));
+            write.push_str(&format!(
+                "      {{ uint at = bases[t * {counted}u + {e}u]; for (uint j = seg.y; j < seg.z; j++) {{ ulong w = out[f.out_base + {k}u * f.groups + j];\n\
+                 \x20       for (uint i = 0u; i < 64u && w != 0ul; i++) {{ positions[f.pos_base + {e}u * max(len, 1u) + at] = j * 64u + uint(ctz(w)); at++; w &= w - 1ul; }} }} }}\n"
+            ));
+        }
+        for (t, &k) in native.totals.iter().enumerate() {
+            count.push_str(&format!(
+                "      {{ ulong any = 0ul; for (uint j = seg.y; j < seg.z; j++) any |= out[f.out_base + {k}u * f.groups + j]; if (any != 0ul) atomic_fetch_or_explicit((device atomic_uint*)&tot[f.tot_base + {}u], 1u, memory_order_relaxed); }}\n",
+                native.extracts.len() + t
+            ));
+        }
+        count_cases.push_str(&format!("    case {p}u: {{\n{count}      break; }}\n"));
+        write_cases.push_str(&format!("    case {p}u: {{\n{write}      break; }}\n"));
+    }
+    let extracts: String = (0..programs.len()).map(|p| format!("    case {p}u: e_count = {}u; break;\n", programs[p].extracts.len())).collect();
+    out.push_str(&format!(
+        "#define SLAB device const uint4* bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3\n\
+         // A segment's run: `q.x` segments, `q.y` 1 for runs again (segment `list[t]`, its start\n\
+         // `given`), `q.z` the warm-up blocks, `q.w` the check that listed them. A segment: (file,\n\
+         // first block, last block, index in the file). A run again goes on into the next segment\n\
+         // while its end differs from the end it had, unless the next is listed too: a stale state\n\
+         // (a fill no byte reads until it resets) can carry through many segments.\n\
+         kernel void serial_run(device const uint4* s0 [[buffer(0)]], device ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]],\n\
+         \x20   device const uint4* segs [[buffer(3)]], device ulong* records [[buffer(4)]], device const uint* list [[buffer(5)]],\n\
+         \x20   device const ulong* given [[buffer(6)]], constant uint4& q [[buffer(7)]], device const ulong* cin [[buffer(10)]],\n\
+         \x20   device const ulong* cw [[buffer(14)]],\n\
+         \x20   device const uint* marks [[buffer(12)]], device atomic_uint* hopped [[buffer(13)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
+         \x20   device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]]) {{\n\
+         \x20 if (t >= q.x) return;\n\
+         \x20 const bool again = q.y != 0u;\n\
+         \x20 uint s = again ? list[t] : t;\n\
+         \x20 ulong st[{sw}];\n\
+         \x20 for (uint i = 0u; i < {sw}u; i++) st[i] = again ? given[t * {sw}u + i] : 0ul;\n\
+         \x20 const uint hops = again ? files[segs[s].x].halo_base : 1u;\n\
+         \x20 uint hop = 0u;\n\
+         \x20 for (; hop < hops; hop++) {{\n\
+         \x20   const uint4 seg = segs[s];\n\
+         \x20   const FileRow f = files[seg.x];\n\
+         \x20   SLAB;\n\
+         \x20   ulong old[{sw}];\n\
+         \x20   for (uint i = 0u; i < {sw}u; i++) old[i] = records[s * {r}u + {sw}u + i];\n\
+         \x20   switch (f.program) {{\n{cases}      default: break;\n    }}\n\
+         \x20   bool same = true;\n\
+         \x20   for (uint i = 0u; i < {sw}u; i++) same = same && records[s * {r}u + {sw}u + i] == old[i];\n\
+         \x20   if (!again || same || seg.w + 1u >= f.halo_base || marks[s + 1u] == q.w) break;\n\
+         \x20   for (uint i = 0u; i < {sw}u; i++) st[i] = records[s * {r}u + {sw}u + i];\n\
+         \x20   s++;\n\
+         \x20 }}\n\
+         \x20 if (again) {{ atomic_fetch_add_explicit(&hopped[0], hop + 1u, memory_order_relaxed); atomic_fetch_max_explicit(&hopped[1], hop + 1u, memory_order_relaxed); }}\n\
+         }}\n\n\
+         // Level `q.y`'s pass: each segment's tables of the level's scans (`cone_function`).\n\
+         kernel void serial_cone(device const uint4* s0 [[buffer(0)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
+         \x20   constant uint4& q [[buffer(7)]], device const ulong* cin [[buffer(10)]], device uint* tables [[buffer(11)]],\n\
+         \x20   device const ulong* cw [[buffer(14)]], device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]],\n\
+         \x20   device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]]) {{\n\
+         \x20 if (t >= q.x) return;\n\
+         \x20 const uint4 seg = segs[t];\n\
+         \x20 const FileRow f = files[seg.x];\n\
+         \x20 SLAB;\n\
+         \x20 const uint a = seg.y - min(seg.y, q.z), a_next = seg.z - min(seg.z, q.z);\n\
+         \x20 switch (f.program) {{\n{cone_cases}    default: break;\n  }}\n\
+         }}\n\n\
+         // Level `q.y`'s prefix: one SIMD group a file.\n\
+         kernel void serial_cone_prefix(device const FileRow* files [[buffer(2)]], constant uint4& q [[buffer(7)]], device ulong* cin [[buffer(10)]],\n\
+         \x20   device const uint* tables [[buffer(11)]], device ulong* cw [[buffer(14)]], uint l [[thread_index_in_simdgroup]],\n\
+         \x20   uint sg [[simdgroup_index_in_threadgroup]], uint id [[thread_index_in_threadgroup]], uint g [[threadgroup_position_in_grid]]) {{\n\
+         \x20 threadgroup uint tg[{tgs}];\n\
+         \x20 const FileRow f = files[g];\n\
+         \x20 switch (f.program) {{\n{prefix_cases}    default: break;\n  }}\n\
+         }}\n\n\
+         // The check: a segment whose start is not its predecessor's end is listed, with that end.\n\
+         kernel void serial_check(device const uint4* segs [[buffer(3)]], device const ulong* records [[buffer(4)]], device uint* list [[buffer(5)]],\n\
+         \x20   device ulong* given [[buffer(6)]], constant uint4& q [[buffer(7)]], device atomic_uint* listed [[buffer(9)]],\n\
+         \x20   device uint* marks [[buffer(12)]], uint t [[thread_position_in_grid]]) {{\n\
+         \x20 if (t >= q.x || segs[t].w == 0u) return;\n\
+         \x20 device const ulong* mine = records + t * {r}u;\n\
+         \x20 device const ulong* end = records + (t - 1u) * {r}u + {sw}u;\n\
+         \x20 bool same = true;\n\
+         \x20 for (uint i = 0u; i < {sw}u; i++) same = same && mine[i] == end[i];\n\
+         \x20 if (same) return;\n\
+         \x20 const uint at = atomic_fetch_add_explicit(listed, 1u, memory_order_relaxed);\n\
+         \x20 list[at] = t;\n\
+         \x20 marks[t] = q.w;\n\
+         \x20 for (uint i = 0u; i < {sw}u; i++) given[at * {sw}u + i] = end[i];\n\
+         }}\n\n\
+         // Each segment's count of each extract's bits, and the totals' flags.\n\
+         kernel void serial_count(device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
+         \x20   device uint* counts [[buffer(4)]], device uint* tot [[buffer(8)]], constant uint4& q [[buffer(7)]], uint t [[thread_position_in_grid]]) {{\n\
+         \x20 if (t >= q.x) return;\n\
+         \x20 const uint4 seg = segs[t];\n\
+         \x20 const FileRow f = files[seg.x];\n\
+         \x20 switch (f.program) {{\n{count_cases}    default: break;\n  }}\n}}\n\n\
+         // A file's segments' bases: one SIMD group a file, 32 segments at a time.\n\
+         kernel void serial_prefix(device const FileRow* files [[buffer(2)]], device const uint* counts [[buffer(4)]], device uint* bases [[buffer(5)]],\n\
+         \x20   device uint* tot [[buffer(8)]], uint l [[thread_index_in_simdgroup]], uint g [[threadgroup_position_in_grid]]) {{\n\
+         \x20 const FileRow f = files[g];\n\
+         \x20 uint e_count = 0u;\n\
+         \x20 switch (f.program) {{\n{extracts}    default: break;\n  }}\n\
+         \x20 for (uint e = 0u; e < e_count; e++) {{\n\
+         \x20   uint run = 0u;\n\
+         \x20   for (uint s = 0u; s < f.halo_base; s += 32u) {{\n\
+         \x20     const uint j = f.group0 + s + l;\n\
+         \x20     const uint c = s + l < f.halo_base ? counts[j * {counted}u + e] : 0u;\n\
+         \x20     if (s + l < f.halo_base) bases[j * {counted}u + e] = run + simd_prefix_exclusive_sum(c);\n\
+         \x20     run += simd_sum(c);\n\
+         \x20   }}\n\
+         \x20   if (l == 0u) tot[f.tot_base + e] = run;\n\
+         \x20 }}\n\
+         }}\n\n\
+         // Each segment's positions, from its base.\n\
+         kernel void serial_write(device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device const uint4* segs [[buffer(3)]],\n\
+         \x20   device const uint* bases [[buffer(5)]], device uint* positions [[buffer(6)]], constant uint4& q [[buffer(7)]], uint t [[thread_position_in_grid]]) {{\n\
+         \x20 if (t >= q.x) return;\n\
+         \x20 const uint4 seg = segs[t];\n\
+         \x20 const FileRow f = files[seg.x];\n\
+         \x20 const uint len = f.len;\n\
+         \x20 switch (f.program) {{\n{write_cases}    default: break;\n  }}\n}}\n",
+        r = 2 * sw,
+        tgs = PREFIX_THREADS / GROUP,
+    ));
+    (out, sw, counted)
+}
+
+/// Whether the scans' carries are made exact first, level by level (`Levels`);
+/// `RERAIL_SERIAL_CONE=0` speculates them like the `prev`s, to see what that costs.
+fn cones_on() -> bool {
+    std::env::var("RERAIL_SERIAL_CONE").map_or(true, |v| v != "0")
+}
+
+/// Threads of each file's prefix of a level (`scan_prefix`): eight SIMD groups.
+const PREFIX_THREADS: usize = 256;
+
+/// Threads a threadgroup of the segment kernels.
+const THREADS: usize = 64;
+
+/// `run_serial`, split while the device refuses it for capacity, as `run_split` does: halves in
+/// the files' order, their counts and seconds summed.
+pub(in crate::code_rule_dsl) fn run_serial_split(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
+    match run_serial(programs, files, segments) {
+        Err(Error::BackendCapacity) if files.len() > 1 => {
+            let (a, b) = files.split_at(files.len() / 2);
+            let mut first = run_serial_split(programs, a, segments)?;
+            let second = run_serial_split(programs, b, segments)?;
+            first.run.files.extend(second.run.files);
+            first.run.launches += second.run.launches;
+            first.run.seconds += second.run.seconds;
+            first.segments += second.segments;
+            first.reruns += second.reruns;
+            first.rounds = first.rounds.max(second.rounds);
+            first.first_seconds += second.first_seconds;
+            first.rerun_seconds += second.rerun_seconds;
+            first.sink_seconds += second.sink_seconds;
+            Ok(first)
+        }
+        other => other,
+    }
+}
+
+/// Run `files` in segments (each under `programs[file.program]`, in its planes form): one first
+/// pass, the checks and runs again until every start agrees, then the positions and totals.
+pub(in crate::code_rule_dsl) fn run_serial(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
+    METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
+    let refs: Vec<&BlockNative> = forms.iter().collect();
+    let (source, sw, counted) = generate_serial(&refs);
+    let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
+    let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
+    let sources = crate::code_rule_dsl::residency::slabs::admit_sources(&bytes)?;
+    let (slabs, slab_of) = crate::code_rule_dsl::residency::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
+    if files.is_empty() {
+        return Ok(SerialRun { run: BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 }, segments: 0, reruns: 0, rounds: 0, first_seconds: 0.0, rerun_seconds: 0.0, sink_seconds: 0.0 });
+    }
+    // The file table: `groups` is the file's words an output (its blocks), `group0` its first
+    // segment, `halo_base` its segments.
+    let (mut rows, mut segs) = (Vec::with_capacity(files.len()), Vec::<[u32; 4]>::new());
+    let (mut out_base, mut pos_base, mut tot_base) = (0usize, 0usize, 0usize);
+    for (i, file) in files.iter().enumerate() {
+        let n = forms.get(file.program).ok_or(Error::BackendFailure)?;
+        let len = file.bytes.len();
+        let blocks = (len + usize::from(n.delay)).div_ceil(64).max(1);
+        let count = blocks.div_ceil(segments.blocks);
+        rows.push(FileRow {
+            src16: fit(sources[i].offset / 16)?,
+            len: fit(len)?,
+            program: fit(file.program)?,
+            group0: fit(segs.len())?,
+            groups: fit(blocks)?,
+            out_base: fit(out_base)?,
+            state_base: 0,
+            halo_base: fit(count)?,
+            ext_base: 0,
+            pos_base: fit(pos_base)?,
+            slab: slab_of[i],
+            tot_base: fit(tot_base)?,
+        });
+        for s in 0..count {
+            segs.push([fit(i)?, fit(s * segments.blocks)?, fit(((s + 1) * segments.blocks).min(blocks))?, fit(s)?]);
+        }
+        out_base += n.outputs.len() * blocks;
+        pos_base += n.extracts.len() * len.max(1);
+        tot_base += super::super::native_cpu_block::counted(n).len();
+    }
+    let total = segs.len();
+    let table = super::super::blocks::upload(&rows)?;
+    let seg_table = super::super::blocks::upload(&segs)?;
+    let out = super::super::blocks::zeroed::<u64>(out_base.max(1))?;
+    let records = super::super::blocks::zeroed::<u64>(total * 2 * sw)?;
+    let list = super::super::blocks::zeroed::<u32>(total)?;
+    let given = super::super::blocks::zeroed::<u64>(total * sw)?;
+    let listed = super::super::blocks::zeroed::<u32>(1)?;
+    let counts = super::super::blocks::zeroed::<u32>(total * counted)?;
+    let bases = super::super::blocks::zeroed::<u32>(total * counted)?;
+    let tot = super::super::blocks::zeroed::<u32>(tot_base.max(1))?;
+    let positions = super::super::blocks::zeroed::<u32>(pos_base.max(1))?;
+    let most = forms.iter().map(|n| Levels::of(n).scans.len()).max().unwrap_or(0).max(1);
+    let depth = if cones_on() { forms.iter().map(|n| Levels::of(n).depth).max().unwrap_or(0) } else { 0 };
+    let tables = super::super::blocks::zeroed::<u32>(total * 2 * most)?;
+    let cins = super::super::blocks::zeroed::<u64>(total)?;
+    let cws = super::super::blocks::zeroed::<u64>(total)?;
+    let marks = super::super::blocks::zeroed::<u32>(total)?;
+    // Segments run again in all, and the most one thread ran.
+    let hopped = super::super::blocks::zeroed::<u32>(2)?;
+    assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
+    let cone = pipeline_named(&source, "serial_cone")?;
+    let cone_prefix = pipeline_named(&source, "serial_cone_prefix")?;
+    let run = pipeline_named(&source, "serial_run").inspect_err(|e| eprintln!("serial: pipeline: {e:?}"))?;
+    let check = pipeline_named(&source, "serial_check")?;
+    let count = pipeline_named(&source, "serial_count")?;
+    let prefix = pipeline_named(&source, "serial_prefix")?;
+    let write = pipeline_named(&source, "serial_write")?;
+    let mut common: Vec<(u64, &metal::BufferRef, u64)> = vec![(1, out.buffer(), 0), (2, table.buffer(), 0), (3, seg_table.buffer(), 0)];
+    for (k, &at) in SLAB_BUFFERS.iter().enumerate() {
+        common.push((at, &slabs.get(k).unwrap_or(&slabs[0]).buffer.buffer, 0));
+    }
+    let with = |extra: &[(u64, &'static str)]| -> Vec<(u64, &metal::BufferRef, u64)> {
+        let mut b = common.clone();
+        for &(at, name) in extra {
+            let buffer = match name {
+                "records" => records.buffer(),
+                "list" => list.buffer(),
+                "given" => given.buffer(),
+                "listed" => listed.buffer(),
+                "counts" => counts.buffer(),
+                "bases" => bases.buffer(),
+                "tot" => tot.buffer(),
+                "tables" => tables.buffer(),
+                "cins" => cins.buffer(),
+                "cws" => cws.buffer(),
+                "marks" => marks.buffer(),
+                "hopped" => hopped.buffer(),
+                _ => positions.buffer(),
+            };
+            b.push((at, buffer, 0));
+        }
+        b
+    };
+    let groups = |n: usize| n.div_ceil(THREADS).max(1);
+    let args = |a: u32, b: u32| vec![(7u64, bytes_of(&[a, b, fit(segments.warm).unwrap_or(0), 0u32]))];
+    let at_round = |a: u32, b: u32, round: usize| vec![(7u64, bytes_of(&[a, b, fit(segments.warm).unwrap_or(0), round as u32]))];
+    let run_buffers = with(&[(4, "records"), (5, "list"), (6, "given"), (10, "cins"), (12, "marks"), (13, "hopped"), (14, "cws")]);
+    let check_buffers = with(&[(4, "records"), (5, "list"), (6, "given"), (9, "listed"), (12, "marks")]);
+    let mut first = Vec::new();
+    for l in 1..=depth {
+        first.push(Pass { pipeline: &cone, buffers: with(&[(10, "cins"), (11, "tables"), (14, "cws")]), args: args(fit(total)?, fit(l)?), groups: groups(total), threads: THREADS });
+        first.push(Pass { pipeline: &cone_prefix, buffers: with(&[(10, "cins"), (11, "tables"), (14, "cws")]), args: args(0, fit(l)?), groups: files.len(), threads: PREFIX_THREADS });
+    }
+    first.push(Pass { pipeline: &run, buffers: run_buffers.clone(), args: args(fit(total)?, 0), groups: groups(total), threads: THREADS });
+    first.push(Pass { pipeline: &check, buffers: check_buffers.clone(), args: at_round(fit(total)?, 0, 1), groups: groups(total), threads: THREADS });
+    if std::env::var("RERAIL_SERIAL_TIMES").is_ok() {
+        // Each pass alone, for its time; then the run proper.
+        let times: Vec<String> = first.iter().map(|p| encode_passes(std::slice::from_ref(p)).map(|s| format!("{:.3}", s * 1e3)).unwrap_or_default()).collect();
+        eprintln!("serial: passes ms {}", times.join(" "));
+        unsafe { std::ptr::write_bytes(listed.host().cast::<u32>(), 0, 1) };
+        unsafe { std::ptr::write_bytes(cins.host().cast::<u64>(), 0, total) };
+        unsafe { std::ptr::write_bytes(cws.host().cast::<u64>(), 0, total) };
+    }
+    let first_seconds = encode_passes(&first)?;
+    if std::env::var("RERAIL_SERIAL_DEBUG").is_ok() {
+        let lv = Levels::of(&forms[0]);
+        let sizes: Vec<String> = (1..=lv.depth).map(|l| format!("L{l}: {:?}", lv.at(l).iter().map(|&(_, at)| format!("{:?}", forms[0].insts[at])).collect::<Vec<_>>())).collect();
+        eprintln!("serial: {} scans, depth {}; {}", lv.scans.len(), lv.depth, sizes.join("; "));
+    }
+    if std::env::var("RERAIL_SERIAL_DEBUG").is_ok() {
+        // Which parts of the state the first pass's starts got wrong, over the segments.
+        let rec = records.read::<u64>(total * 2 * sw);
+        let state = State::of(&forms[0]);
+        let mut wrong = vec![0usize; state.parts.len()];
+        let mut any = 0usize;
+        for t in 1..total {
+            if segs[t][3] == 0 {
+                continue;
+            }
+            let (mine, end) = (&rec[t * 2 * sw..], &rec[(t - 1) * 2 * sw + sw..]);
+            let mut differs = false;
+            for (i, &(_, bits, w, first, _)) in state.parts.iter().enumerate() {
+                let m = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
+                if (mine[w] >> first) & m != (end[w] >> first) & m {
+                    wrong[i] += 1;
+                    differs = true;
+                }
+            }
+            any += usize::from(differs);
+            if differs && any <= 6 {
+                let row = &rows[segs[t][0] as usize];
+                let at = segs[t][1] as usize * 64;
+                let bytes = files[segs[t][0] as usize].bytes;
+                let lo = at.saturating_sub(48);
+                eprintln!("serial: segment {t} (file {}, byte {at}): {:?} | {:?}", segs[t][0], String::from_utf8_lossy(&bytes[lo..at.min(bytes.len())]), String::from_utf8_lossy(&bytes[at.min(bytes.len())..(at + 16).min(bytes.len())]));
+                let _ = row;
+            }
+        }
+        let parts: Vec<String> = state.parts.iter().zip(&wrong).filter(|(_, n)| **n > 0).map(|(&(at, bits, _, _, scan), n)| format!("%{at}{}/{bits}={:?}:{n}", if scan { "c" } else { "s" }, forms[0].insts[at])).collect();
+        eprintln!("serial: {any} of {total} starts wrong; {}", parts.join(" "));
+        if let Ok(at) = std::env::var("RERAIL_SERIAL_DEBUG").map(|v| v.parse::<usize>().unwrap_or(0)) {
+            if at > 0 {
+                let mut inside = vec![false; forms[0].insts.len()];
+                inside[at] = true;
+                for x in (0..=at).rev() {
+                    if inside[x] {
+                        for o in forms[0].insts[x].operands() {
+                            inside[o] = true;
+                        }
+                    }
+                }
+                for (x, i) in forms[0].insts.iter().enumerate().filter(|(x, _)| inside[*x]) {
+                    eprintln!("  %{x} = {i:?}");
+                }
+            }
+        }
+    }
+    let (mut rerun_seconds, mut reruns, mut rounds, mut launches) = (0.0, 0usize, 1usize, 1usize);
+    loop {
+        let n = listed.read::<u32>(1)[0] as usize;
+        if n == 0 {
+            break;
+        }
+        if rounds > total {
+            return Err(Error::BackendFailure);
+        }
+        reruns += n;
+        rounds += 1;
+        if std::env::var("RERAIL_SERIAL_DEBUG").is_ok() && rounds < 8 {
+            let l = list.read::<u32>(n.min(8));
+            eprintln!("serial: round {rounds}: {n} listed, first {l:?}; hops so far {:?}", hopped.read::<u32>(2));
+        }
+        // SAFETY: one word, written between launches, when no kernel runs.
+        unsafe { std::ptr::write_bytes(listed.host().cast::<u32>(), 0, 1) };
+        // The list and the starts it gives are read by the run before the check writes them.
+        let again = [
+            Pass { pipeline: &run, buffers: run_buffers.clone(), args: at_round(fit(n)?, 1, rounds - 1), groups: groups(n), threads: THREADS },
+            Pass { pipeline: &check, buffers: check_buffers.clone(), args: at_round(fit(total)?, 0, rounds), groups: groups(total), threads: THREADS },
+        ];
+        rerun_seconds += encode_passes(&again)?;
+        launches += 1;
+    }
+    let sinks = [
+        Pass { pipeline: &count, buffers: with(&[(4, "counts"), (8, "tot")]), args: args(fit(total)?, 0), groups: groups(total), threads: THREADS },
+        Pass { pipeline: &prefix, buffers: with(&[(4, "counts"), (5, "bases"), (8, "tot")]), args: args(0, 0), groups: files.len(), threads: GROUP },
+        Pass { pipeline: &write, buffers: with(&[(5, "bases"), (6, "positions")]), args: args(fit(total)?, 0), groups: groups(total), threads: THREADS },
+    ];
+    let sink_seconds = encode_passes(&sinks)?;
+    launches += 1;
+    let words = out.read::<u64>(out_base.max(1));
+    let tot = tot.read::<u32>(tot_base.max(1));
+    let positions = positions.read::<u32>(pos_base.max(1));
+    let mut results = Vec::with_capacity(files.len());
+    for row in &rows {
+        let n = &forms[row.program as usize];
+        let len = row.len as usize;
+        let blocks = row.groups as usize;
+        let outputs: Vec<Vec<u64>> = (0..n.outputs.len())
+            .map(|k| {
+                let at = row.out_base as usize + k * blocks;
+                words[at..at + len.div_ceil(64)].to_vec()
+            })
+            .collect();
+        let capacity = len.max(1);
+        let count = |c: usize| tot[row.tot_base as usize + c];
+        let positions = (0..n.extracts.len())
+            .map(|e| {
+                let from = row.pos_base as usize + e * capacity;
+                positions[from..from + (count(e) as usize).min(capacity)].to_vec()
+            })
+            .collect();
+        let totals = (0..n.totals.len()).map(|t| u64::from(count(n.extracts.len() + t))).collect();
+        results.push(BlockRun { outputs, positions, totals });
+    }
+    Ok(SerialRun {
+        run: BatchRun { files: results, launches, seconds: first_seconds + rerun_seconds + sink_seconds },
+        segments: total,
+        reruns,
+        rounds,
+        first_seconds,
+        rerun_seconds,
+        sink_seconds,
+    })
+}
