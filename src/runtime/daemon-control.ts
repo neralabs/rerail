@@ -442,10 +442,11 @@ export async function readDaemonState(stateFile: string, platform: NodeJS.Platfo
 export async function probeDaemon(
   state: Pick<DaemonState, "url" | "accessToken" | "tlsFingerprint256">,
   fetchImpl?: DaemonFetch,
+  timeoutMs: number = PROBE_TIMEOUT_MS,
 ): Promise<DaemonProbe> {
   try {
     const endpoint = daemonEndpoint(state, "/healthz");
-    const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(timeoutMs) });
     if (response.status === 401) return { status: "refused" };
     if (!response.ok) return { status: "unreachable" };
     const body = await response.json() as DaemonHealth;
@@ -523,7 +524,15 @@ async function recordedDaemonMayBeOwn(state: DaemonState, machine: DaemonMachine
   return liveness === "own" || (state.accessToken !== undefined && await machine.holdsCapability(state.kernelSocketPath, state.accessToken));
 }
 
-export async function lookupDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<DaemonLookup> {
+/**
+ * What the state file in `home` says, checked against the machine. `probeTimeoutMs` bounds the health probe; a hook
+ * waiting out a busy daemon passes more (`patientLookup`).
+ */
+export async function lookupDaemon(
+  home: string,
+  machine: DaemonMachine = THIS_MACHINE,
+  probeTimeoutMs: number = PROBE_TIMEOUT_MS,
+): Promise<DaemonLookup> {
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
@@ -533,7 +542,7 @@ export async function lookupDaemon(home: string, machine: DaemonMachine = THIS_M
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
-  const probe = await probeDaemon(state);
+  const probe = await probeDaemon(state, undefined, probeTimeoutMs);
   if (probe.status === "refused") return { status: "refused", state };
   if (probe.status === "unreachable") return { status: "unresponsive", state };
   if (probe.health.pid !== state.pid) {
@@ -705,16 +714,17 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
   let daemon: RunningDaemon | undefined;
   try {
     if (process.env.RERAIL_AUTOSTART === "0") {
-      const lookup = await lookupDaemon(home);
+      const lookup = await patientLookup(home);
       if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
       daemon = lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
     } else {
       daemon = (replaceOtherPackage ? await startDaemonForPackage(control, options) : await startDaemon(control, options)).daemon;
     }
   } catch (error) {
-    const busy = error instanceof LiveDaemonError ? await busyEngineEndpoint(error.lookup, packageRoot) : undefined;
-    if (busy === undefined) throw error;
-    return busy;
+    if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
+    const answered = await patientLookup(home, error.lookup);
+    if (answered.status !== "running") throw error;
+    daemon = { state: answered.state, health: answered.health };
   }
   if (daemon === undefined) throw new Error("RERAIL_AUTOSTART=0 requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, packageRoot))) {
@@ -726,27 +736,28 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
 /**
  * The engine endpoint for a hook after a session's start, or undefined when no daemon is alive to take the event. A
  * daemon that is down is not started: each tool call then costs one failed probe instead of an autostart that can
- * outlast the coding agent's hook timeout (design N11). A busy one still gets the event (`busyEngineEndpoint`). A
- * healthy daemon from another package (an update installed mid-session) is replaced as `daemonEngineEndpoint(true)`
- * replaces it, so steering carries on with this package's engine.
+ * outlast the coding agent's hook timeout (design N11). A busy one is waited for (`patientLookup`). A healthy daemon
+ * from another package (an update installed mid-session) is replaced as `daemonEngineEndpoint(true)` replaces it, so
+ * steering carries on with this package's engine.
  */
 export async function runningDaemonEngineEndpoint(): Promise<EngineEndpoint | undefined> {
-  const lookup = await lookupDaemon(defaultRerailHome());
-  if (lookup.status === "unresponsive") return await busyEngineEndpoint(lookup, PACKAGE_ROOT);
+  const lookup = await patientLookup(defaultRerailHome());
   if (lookup.status !== "running") return undefined;
   return await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true);
 }
 
+/** How long, in all, a hook's second health probe waits for a busy daemon to answer as itself. */
+const BUSY_DAEMON_WAIT_MS = 10_000;
+
 /**
- * The engine socket of a daemon of this package whose pid is alive but which missed the health probe's 2 s, as one does
- * while its single event loop runs an audit or a long garbage collection. Its socket queues the event and the event's
- * own request timeout bounds the wait, so a missed probe does not drop the event, and with it the session's record. A
- * daemon that refused the capability, or one of another package (which cannot be replaced while it does not answer),
- * gets nothing.
+ * The daemon lookup a hook acts on. A daemon whose pid is alive but which missed the first probe's 2 s, as one does
+ * while its one event loop runs an audit or a long garbage collection, is probed once more with up to
+ * `BUSY_DAEMON_WAIT_MS`; only an answer from the recorded pid makes it running. Nothing, the capability included, goes
+ * to its engine socket before that answer: a pid Windows reused, or a socket another process holds, is not the daemon.
  */
-async function busyEngineEndpoint(lookup: DaemonLookup, packageRoot: string): Promise<EngineEndpoint | undefined> {
-  if (lookup.status !== "unresponsive" || !(await daemonUsesPackageRoot(lookup.state, packageRoot))) return undefined;
-  return engineEndpointOf(lookup.state);
+async function patientLookup(home: string, first?: DaemonLookup): Promise<DaemonLookup> {
+  const lookup = first ?? await lookupDaemon(home);
+  return lookup.status === "unresponsive" ? await lookupDaemon(home, THIS_MACHINE, BUSY_DAEMON_WAIT_MS) : lookup;
 }
 
 export interface LaunchedDaemon {

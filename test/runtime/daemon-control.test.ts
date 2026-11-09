@@ -555,6 +555,23 @@ describe("a state file Windows left behind", () => {
     expect(await lookupDaemon(home, windows(["rerail-0123456789abcdef01234567"]))).toMatchObject({ status: "unresponsive" });
   });
 
+  it("finds the engine pipe whatever its case, and leaves a daemon whose pipes cannot be listed to the health probe", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("connect ECONNREFUSED 127.0.0.1:1");
+    }));
+    await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
+    expect(await lookupDaemon(home, windows(["other", "RERAIL-0123456789ABCDEF01234567"]))).toMatchObject({ status: "unresponsive" });
+    const unlisted = {
+      ...windows([]),
+      pipes: (): readonly string[] => {
+        throw Object.assign(new Error("EACCES"), { code: "EACCES" });
+      },
+    };
+    expect(await lookupDaemon(home, unlisted)).toMatchObject({ status: "unresponsive" });
+    expect(existsSync(stateFile)).toBe(true);
+  });
+
   it("asks a Windows daemon to stop over its API before any kill, since no signal reaches its shutdown there", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native" })));

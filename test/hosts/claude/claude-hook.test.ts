@@ -1,4 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,36 +40,84 @@ describe("Claude Code hook without a daemon", () => {
 });
 
 describe("Claude Code hook with a daemon that misses its health probe", () => {
-  afterEach(closeNativeTestDaemons);
+  const servers: Server[] = [];
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve))));
+    await closeNativeTestDaemons();
+  });
+
+  /** A listener at a new loopback URL that answers each request as `upstream` does, `delayMs` late: a busy daemon. */
+  async function slowFront(upstream: string, delayMs: number): Promise<string> {
+    const server = createHttpServer((request, response) => {
+      setTimeout(() => {
+        const headers = Object.fromEntries(Object.entries(request.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+        fetch(new URL(request.url ?? "/", upstream), { headers }).then(async answer => {
+          response.writeHead(answer.status, { "content-type": answer.headers.get("content-type") ?? "application/json" });
+          response.end(await answer.text());
+        }, () => response.destroy());
+      }, delayMs);
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  }
+
+  /** Rewrites the home's daemon.json with `change` applied; returns the state as the daemon wrote it. */
+  async function rewriteState(change: (state: Record<string, unknown>) => Record<string, unknown>): Promise<Record<string, unknown>> {
+    const stateFile = join(process.env.RERAIL_HOME!, "daemon.json");
+    const state = JSON.parse(await readFile(stateFile, "utf8")) as Record<string, unknown>;
+    await writeFile(stateFile, JSON.stringify(change(state)));
+    return state;
+  }
+
+  function eventIds(): string[] {
+    const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+    try {
+      return database.prepare<[], { eventId: string }>("SELECT event_id AS eventId FROM events ORDER BY sequence").all().map(row => row.eventId);
+    } finally {
+      database.close();
+    }
+  }
 
   // RERAIL_AUTOSTART=1 is a person's session, where the session-start hook may start a daemon; 0 starts none.
-  it.each(["1", "0"])("sends each event to the daemon's engine socket anyway, so a busy daemon records the session (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+  it.each(["1", "0"])("waits for a busy daemon to answer as itself, then records the session (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
     const root = await temporaryDirectory();
     startTestRepository(root);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     vi.stubEnv("RERAIL_AUTOSTART", autostart);
-    try {
-      await startNativeTestDaemon(root);
-      // Nothing answers at the recorded URL, as when the daemon's one event loop is busy past the probe's 2 s; its pid
-      // is alive and its engine socket still serves.
-      const stateFile = join(process.env.RERAIL_HOME!, "daemon.json");
-      const state = JSON.parse(await readFile(stateFile, "utf8")) as Record<string, unknown>;
-      await writeFile(stateFile, JSON.stringify({ ...state, url: "http://127.0.0.1:1/", port: 1 }));
-      const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
-      const common = { session_id: "busy-session", cwd: root };
-      await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
-      await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+    const daemon = await startNativeTestDaemon(root);
+    // The daemon answers 3 s late, past the first probe's 2 s, as one does while an audit holds its event loop.
+    const front = await slowFront(daemon.url, 3_000);
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const common = { session_id: "busy-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+    expect(eventIds()).toEqual(expect.arrayContaining(["busy-session:SessionStart", "busy-session:prompt:p1"]));
+  });
 
-      const database = new Database(defaultRerailDatabasePath(), { readonly: true });
-      try {
-        const rows = database.prepare<[], { eventId: string }>("SELECT event_id AS eventId FROM events ORDER BY sequence").all();
-        expect(rows.map(row => row.eventId)).toEqual(expect.arrayContaining(["busy-session:SessionStart", "busy-session:prompt:p1"]));
-      } finally {
-        database.close();
-      }
-    } finally {
-      vi.unstubAllEnvs();
-    }
+  it("sends nothing to an engine socket whose daemon never answers as itself, so a squatter gets no capability", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    await startNativeTestDaemon(root);
+    // Something else listens where the state file says the engine is, and nothing answers at the recorded URL.
+    const received: string[] = [];
+    const squatter = createHttpServer((request, response) => {
+      received.push(String(request.headers["x-rerail-access"] ?? "no capability"));
+      response.writeHead(500).end();
+    });
+    servers.push(squatter);
+    const squatted = process.platform === "win32" ? `\\\\.\\pipe\\rerail-squatted-${process.pid}-${Date.now()}` : join(root, "squatted.sock");
+    await new Promise<void>(resolve => squatter.listen(squatted, resolve));
+    await rewriteState(state => ({ ...state, url: "http://127.0.0.1:1/", port: 1, kernelSocketPath: squatted }));
+    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const common = { session_id: "squatted-session", cwd: root };
+    await expect(runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath)).rejects.toThrow();
+    expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath)).toEqual({});
+    expect(received).toEqual([]);
   });
 });
 
