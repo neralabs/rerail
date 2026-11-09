@@ -520,7 +520,7 @@ mod settings_tests {
 //   rerail-engine check-rr <rule>... | convert-rr <rule>...
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr <rule>...";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr <rule>...";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -541,6 +541,7 @@ pub fn cli(args: &[String]) -> Result<String, String> {
             _ => Err("usage: rerail-engine sql <store.sqlite> <request.json>".into()),
         },
         Some("logic") => logic_command(&args[1..]),
+        Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("run-rr") if args.len() == 4 || args.len() == 5 => {
             let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
             serde_json::to_string(&crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &options)?).map_err(|e| e.to_string())
@@ -591,6 +592,12 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             "--modes" => modes = Some(args.next().ok_or("--modes requires a value")?.clone()),
             "--env" => env.push(args.next().ok_or("--env requires key=value")?.clone()),
             "--chunk" => chunk = args.next().ok_or("--chunk requires a value")?.parse().map_err(|_| "--chunk takes a node count")?,
+            // Where `artifact=` inputs are read (data-layer/RUN-FACTS.md section 2); `<root>/.rerail/facts` without it.
+            "--facts" => crate::code_rule_dsl::logic::plan::corpus::inputs::set_facts_dir(args.next().ok_or("--facts requires a directory")?.into())?,
+            // In CI: a missing, stale or malformed artifact fails the run (RUN-FACTS.md section 5).
+            "--require-facts" => crate::code_rule_dsl::logic::plan::corpus::inputs::require_facts(),
+            // The revision `at="base"` inputs are read at: a commit id or a reference name.
+            "--base" => crate::code_rule_dsl::logic::plan::corpus::inputs::set_base(args.next().ok_or("--base requires a revision")?.clone())?,
             other => positional.push(other.to_owned()),
         }
     }
@@ -638,6 +645,32 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     }
     let run = || crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
     if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
+}
+
+/// `facts-stamp <raw> --out <dir> --root <repository> <policy.rr>…` (data-layer/RUN-FACTS.md section 1, `rerail facts
+/// stamp`): wraps each producer's output with the digest of the inputs the policies declare for it.
+fn facts_stamp_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::logic::plan::corpus::inputs;
+    let (mut raw, mut out, mut root, mut policies) = (None, None, None, Vec::new());
+    let mut args = args.iter();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--out" => out = Some(args.next().ok_or("--out requires a directory")?.clone()),
+            "--root" => root = Some(args.next().ok_or("--root requires a directory")?.clone()),
+            other if raw.is_none() => raw = Some(other.to_owned()),
+            other => policies.push(other.to_owned()),
+        }
+    }
+    let (Some(raw), Some(out)) = (raw, out) else { return Err(USAGE.into()) };
+    let root = root.unwrap_or_else(|| ".".into());
+    // The declarations, from each policy with its `#include`s read in: `.artifact` lines only.
+    let mut settings = Vec::new();
+    for policy in &policies {
+        let text = crate::tools::program_text(Path::new(policy))?;
+        settings.extend(text.lines().filter_map(|l| l.trim().strip_prefix(".artifact ")).map(|rest| ("artifact".to_owned(), rest.to_owned())));
+    }
+    let declared = inputs::artifacts(&settings).map_err(|e| e.to_string())?;
+    inputs::stamp(Path::new(&raw), Path::new(&out), Path::new(&root), &declared)
 }
 
 /// `gc`: collects a store until nothing is left to collect (decision 0053): converts a store made before 0053 to

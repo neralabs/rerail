@@ -2960,6 +2960,26 @@ The design is written (`docs/rule-syntax/lib/core.rr`, run artifacts; `data-laye
 **Closure:** both checks lower and run on the sample with no artifact (static findings, withheld rules reported) and
 with a stamped one (their artifact findings), and a stale stamp gives `input_error(…, "stale", …)`.
 
+**Built 2026-11-08 (items 1–6):** `corpus/inputs.rs` reads `artifact=` from `--facts DIR` (default
+`<root>/.rerail/facts`), checks the envelope and the digest (git blob ids over the files the corpus walk sees), and
+gives one `input_error("artifact:NAME", kind, …)` per artifact. `withhold` removes, to a fixpoint, every rule that
+reads an incomplete relation through `!` or an aggregate, and the run prints each finding relation that may be
+missing rows, with how many of its rules read the artifact (`unknown: budget_exceeded (artifact:test_collection
+missing; 2 of its 3 rules)`). `rerail-engine facts-stamp RAW --out DIR --root REPO POLICY…` stamps. On the 133-file
+sample both checks now run, in 0.2 s and 1.0 s of CPU: without artifacts, with a failed producer, and with a fresh
+artifact (no Unknown). Tests: `corpus::inputs` (12).
+
+**Built 2026-11-08 (item 7, `--require-facts`):** `at="base"` reads a `filename=` input from the object store, through
+`gix`, at `logic --base REV` (a commit id or a reference name), under the corpus root's prefix in the repository.
+Without a base, or with a path the base lacks, the input gives `input_error("PATH@base", kind, …)` and its readers
+under `!` are withheld, as an artifact's are: a burn-down comparison never reports every entry as new.
+`--require-facts` fails the run on an artifact that is missing, stale or malformed, and on a failed one unless a rule
+reads `input_error` (RUN-FACTS §5). Tests: `corpus::inputs` (16).
+
+**Still open:** the merge base. `--base` names the revision; computing the merge base of a change and giving
+`git_rev`, `git_has` and `git_commit` as facts is the git provider's (0094's order of work, last). Unknown *places*
+(FINDINGS-LAYER §2's second evaluation), which needs the findings layer.
+
 ## O139. `RERAIL_PROFILE` adds 5–8 s of CPU to every run
 
 Measured 2026-11-08, load 47–110: `data-layer-compat-aliases` over 133 files takes 0.17–0.25 s of user CPU, and 5.0–8.3
@@ -2968,6 +2988,14 @@ per check at that load, lies outside every phase and span: the profile's own rep
 checks taken before this was found are inflated by it.
 
 **Closure:** the report's cost found and made proportional to the program, and the profile states its own CPU.
+
+**Found and fixed 2026-11-08.** The cost was the roofline's calibration (`profile/roofline.rs`): before writing
+each report, about ten micro-benchmarks of 1–64 M iterations, five times over, 7.25 s in a debug build at load 33.
+The report now measures only the kinds of work the run charged, and keeps the roofs per engine binary (its path, size
+and modification time) for a day in `<temp>/rerail-roofs/`. The report says where they came from and how long it
+took ("read from the roof cache in 0.00 s"). data-layer-compat-aliases: 0.25 s with the profile, the same as without;
+the first profiled run of a new binary still pays the calibration once. Test:
+`the_roof_cache_reads_back_what_it_wrote`. Profiled timings taken before this are inflated by 5–9 s each.
 
 ## O140. Engine rules that make per-file facts look global
 
@@ -2985,6 +3013,23 @@ findings layer's stages 2–3.
 
 **Closure:** the classification rerun with both fixed shows no check global through lowering alone, with findings
 equal on the 65 checks that finish both ways.
+
+**2026-11-08, worked:**
+
+- **Item 2 is not a leak.** In the 39 checks with `x(c) :- x_at(_, c)`, none of the projections' 144 readers binds
+  the projected row's document; the 7 that bind some document read the projection by a value. A projection is a union
+  of per-file rows, a unit fact (0092 §4), and there is nothing to rewrite (0093 §4, corrected).
+- **Item 3 is fixed.** `file_local::push_with` closes each candidate's variables under the rule's `a = b` equalities,
+  both when it groups the atoms and when it counts their independent node groups. `deco_word`'s four cross-file rules
+  are now pushed into the chunks (bootstrap-engine-invariants, graph-lazy-sql-plan, schema-bootstrap-contracts).
+  Test: `an_equality_between_two_pieces_joins_them_in_the_chunks`. Over the 25 checks with variable equalities in
+  their cross part, findings are equal with and without the grouping half of the fix, and CPU is within noise.
+- **Found while checking: a nested aggregate lost the rule's variables.** `count : { bei_identity(x), count : {
+  def_walk(n, f), bei_ref(n, x) } = 0 } > 0` made a helper of x alone, so bootstrap-engine-invariants failed to plan
+  after the final-rerail-shape merge ("unplaced literals … in rr_agg72($x)"). The helper now has every variable the
+  rule shares with its nested aggregates, bound by the context. Test:
+  `a_nested_aggregate_keeps_the_rules_variables_it_reads`.
+- The findings assembly (`rr_diagnostic`, `violation`) is a union too; it moves when the findings layer is built.
 
 ## O141. The 66-rule pack costs 70% more instructions after the merges of 2026-11-08
 
