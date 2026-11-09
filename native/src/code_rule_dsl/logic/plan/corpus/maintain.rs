@@ -78,6 +78,25 @@ fn named(rel: &str, suffix: &str) -> String {
     format!("{rel}__{suffix}")
 }
 
+/// An insert rule of `h`, carrying only rows new against the survivors (`h__old` and not `h__del`): an insert
+/// stops where a row survived, as semi-naive evaluation stops at a row already held. Without it one new edge
+/// derived a recursive relation's whole closure again (9,000,000 inserted rows for 2 new, `session_costs`).
+/// Not a survivor is not old, or deleted: two rules, each a lower stratum's read. A head with a call keeps the
+/// rule unguarded.
+fn insert(rules: &mut Vec<Rule>, h: &str, args: &[Term], body: Vec<Literal>) {
+    let head = Atom { rel: named(h, "ins"), args: args.to_vec(), neg: false, gated: false };
+    if !args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) {
+        rules.push(Rule { head, body });
+        return;
+    }
+    let mut new = body.clone();
+    new.push(atom(named(h, "old"), args.to_vec(), true));
+    rules.push(Rule { head: head.clone(), body: new });
+    let mut deleted = body;
+    deleted.push(atom(named(h, "del"), args.to_vec(), false));
+    rules.push(Rule { head, body: deleted });
+}
+
 fn atom(rel: String, args: Vec<Term>, neg: bool) -> Literal {
     Literal::Atom(Atom { rel, args, neg, gated: false })
 }
@@ -234,7 +253,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                     rules.push(Rule { head: Atom { rel: named(h, "del"), args: rule.head.args.clone(), neg: false, gated: false }, body: over_old });
                     let mut over_new = vec![atom(grp, key, false)];
                     over_new.extend(rule.body.iter().cloned());
-                    rules.push(Rule { head: Atom { rel: named(h, "ins"), args: rule.head.args.clone(), neg: false, gated: false }, body: over_new });
+                    insert(&mut rules, h, &rule.head.args, over_new);
                     continue;
                 }
                 let Literal::Atom(at) = lit else { continue };
@@ -271,7 +290,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                         false => vec![l.clone()],
                     })
                     .collect();
-                rules.push(Rule { head: Atom { rel: named(h, "ins"), args: rule.head.args.clone(), neg: false, gated: false }, body: ins });
+                insert(&mut rules, h, &rule.head.args, ins);
             }
             for b in rule.body.iter().filter_map(|l| match l {
                 Literal::Atom(b) | Literal::Agg { atom: b, .. } if moves(b) && !scc.contains(&b.rel) => Some(b),

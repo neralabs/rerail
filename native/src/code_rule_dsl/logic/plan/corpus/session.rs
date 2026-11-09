@@ -269,6 +269,53 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// An insert into a recursive stratum stops at the rows that survived (decision 0090): an edge that adds no
+    /// reachability (`a` imports `c`, which it reached through `b`) inserts the new edge and nothing of `reach`.
+    /// Without the stop, the inserts walked the closure from the new edge again (9,000,000 rows on `session_costs`).
+    #[test]
+    fn a_session_inserts_only_rows_new_against_the_survivors() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-ins-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("reach.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-import-reach" revision 1
+.description "An import of a module that reaches back to its importer."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl reach(a: number, b: number)
+reach(a, b) :- dep(a, b).
+reach(a, c) :- reach(a, b), dep(b, c).
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from d import z\n"), ("d.py", "x = 1\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        start(&base.join("session")).unwrap();
+        run();
+        std::fs::write(src.join("a.py"), "from b import x\nfrom c import q\n").unwrap();
+        // SAFETY: the session tests run one at a time (`SERIAL`), and only a session's run reads the variable.
+        unsafe { std::env::set_var("RERAIL_CROSS_DELTA_COUNTS", "1") };
+        let report = run();
+        unsafe { std::env::remove_var("RERAIL_CROSS_DELTA_COUNTS") };
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+        let [_, inserted, _, _, _, new] = report.cross_delta_counts;
+        assert!(report.cross_maintained.1 > 0, "the recursive stratum is maintained: {:?}", report.cross_maintained);
+        assert_eq!(inserted, new, "the insert rules carry only rows truly new (the edge a -> c), not reach's rows again");
+    }
+
     /// A cross-file stratum with aggregates is maintained by its changed groups (decision 0077 §3): a module's
     /// importers counted, up and down to none, give a full run's findings.
     #[test]
