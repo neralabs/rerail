@@ -2162,6 +2162,7 @@ impl Lowerer {
             "min" => AggOp::Min,
             "max" => AggOp::Max,
             "sum" => AggOp::Sum,
+            "product" => AggOp::Product,
             "join" => AggOp::Join { by: by.clone(), sep: sep.clone().unwrap_or_default() },
             other => return not_yet(format!("the aggregate {other}")),
         };
@@ -2205,7 +2206,7 @@ impl Lowerer {
                 inner.extend(groups(re));
             }
         }
-        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum) || own(v) || outer.contains(*v)).cloned().collect();
+        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum | AggOp::Product) || own(v) || outer.contains(*v)).cloned().collect();
         let name = self.fresh("agg");
         let mut bodies = self.conjunction(body, outer)?;
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by

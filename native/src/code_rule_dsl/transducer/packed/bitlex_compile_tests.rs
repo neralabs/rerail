@@ -494,6 +494,27 @@ pub(super) fn json_variant_block_program(src: &str) -> block::BlockProgram {
 /// `json.bitlex`'s text.
 pub(super) const JSON_BITLEX: &str = JSON;
 
+/// JSON's tier 2 tells every token's row by its first byte: no `ROW` word. Its rows share bytes
+/// (a string's text and a number begin with nearly any), but never in one state: a string's
+/// text is read inside a string, a number outside (the toggle's modes, `row_modes`), and a
+/// number never begins with a quote (an escaped one follows a word's `\\`, `bitlex_prove`).
+#[test]
+fn json_tier2_switches_on_the_first_byte_alone() {
+    use ast_grep_language::LanguageExt;
+    let grammar = crate::code_rule_dsl::language::GrammarDialect::Json.get_ts_language();
+    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
+        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
+        id => Some(id),
+    };
+    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
+    let text = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("compiles: {e}")).text();
+    let rows: Vec<&str> = text.lines().filter(|l| l.split_whitespace().nth(1) == Some("ROW")).collect();
+    assert!(text.contains(" SWITCH "), "no tier 2 words:\n{text}");
+    assert!(rows.is_empty(), "{} ROW words: {rows:?}", rows.len());
+}
+
 /// JSON's fallback outputs (`bitlex_compile::Compiled::fallbacks`).
 fn json_fallbacks() -> Vec<u16> {
     use ast_grep_language::LanguageExt;
@@ -1021,6 +1042,10 @@ fn json_compiled_path_equals_the_interpreters() {
     let native = native_ir::lower(&p).expect("lowers");
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
+    // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
+    // reorder, and its only loop heads are the stream's and the masks').
+    assert!(!tier2.wraps);
+    assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs()[0].run_files(&[f]).remove(0);
@@ -1029,5 +1054,67 @@ fn json_compiled_path_equals_the_interpreters() {
         let want = stream::run(&p, f, &want1).map_err(|r| r.pc);
         let got = tier2.run(f, &got1).map_err(|r| r.pc);
         assert_eq!(got, want, "tier 2: {}", String::from_utf8_lossy(f));
+    }
+}
+
+/// `rounds until settled`: strings with escapes and `//` comments, each hiding the other's
+/// openers, through one carry (the reference's own test lexer). Its masks equal the
+/// evaluator's on the CPU executors (Metal refuses a fixed point so far), over every short
+/// string of the bytes that matter and long ones that cross blocks.
+const ROUNDS: &str = r#"
+lexer t
+class quote = '"'
+class backslash = '\\'
+class slash = '/'
+class lf = '\n'
+mask q0 = quote & ~escaped(backslash)
+rounds until settled {
+  carry hidden = empty
+  mask q = q0 & ~hidden
+  mask s = toggle(q)
+  mask open = slash & prev(slash & ~s)
+  mask line = fill(open, lf)
+  next hidden = line
+}
+mask comment = line | (slash & next(open))
+"#;
+
+#[test]
+fn rounds_equal_the_evaluator() {
+    let names = ["q", "s", "open", "line", "comment"];
+    let stmts = ::bitlex::syntax::parse(ROUNDS).expect("parses");
+    let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
+    assert!(compiled.rows.contains(" rounds %"), "a group\n{}", compiled.rows);
+    let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
+    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let run = Executors::new(&p);
+    let alphabet = b"\"\\/\na";
+    let mut cases = inputs();
+    for len in 1..=5u32 {
+        for code in 0..5usize.pow(len) {
+            cases.push((0..len).map(|k| alphabet[code / 5usize.pow(k) % 5]).collect());
+        }
+    }
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    for _ in 0..200 {
+        let len = (seed % 300) as usize;
+        cases.push(
+            (0..len)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    alphabet[(seed % 5) as usize]
+                })
+                .collect(),
+        );
+    }
+    for bytes in cases {
+        let want = evaluated(&stmts, &bytes, &names);
+        for (executor, got) in run.run(&bytes, false).0 {
+            for (k, name) in names.iter().enumerate() {
+                assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {:?}\n{}", String::from_utf8_lossy(&bytes), compiled.rows);
+            }
+        }
     }
 }

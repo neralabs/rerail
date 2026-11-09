@@ -269,6 +269,13 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
     const WORTH: usize = 24;
     const MOST: usize = 4;
     let n = native.insts.len();
+    // A fixed point's members are made in its loop, never behind a gate.
+    let mut grouped = vec![false; n];
+    for g in &native.groups {
+        for &m in &g.members {
+            grouped[m] = true;
+        }
+    }
     let mut region_of: Vec<Option<usize>> = vec![None; n];
     let mut gates = vec![false; n];
     let mut out: Vec<Region> = Vec::new();
@@ -276,7 +283,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
         let mut z = vec![false; n];
         z[g] = true;
         for (at, inst) in native.insts.iter().enumerate().skip(g + 1) {
-            if lanes[at] || region_of[at].is_some() || full[at].is_some() {
+            if lanes[at] || region_of[at].is_some() || full[at].is_some() || grouped[at] {
                 continue;
             }
             let is = |x: u16| z[usize::from(x)] || matches!(native.insts[usize::from(x)], BlockInst::Const(0));
@@ -294,6 +301,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
         let mut worthy: Vec<(usize, usize, Vec<bool>, Vec<bool>)> = Vec::new();
         for (g, inst) in native.insts.iter().enumerate() {
             let candidate = !lanes[g]
+                && !grouped[g]
                 && region_of[g].is_none()
                 && !gates[g]
                 && match *inst {
@@ -310,7 +318,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
             // The values only the region reads, with no carried field of their own: made inside it.
             let mut only = vec![false; n];
             for x in (0..n).rev() {
-                if z[x] || x == g || gates[x] || region_of[x].is_some() || output[x] || field[x] || users[x].is_empty() || (lanes[x] && !mask[x]) {
+                if z[x] || x == g || gates[x] || region_of[x].is_some() || output[x] || field[x] || users[x].is_empty() || (lanes[x] && !mask[x]) || grouped[x] {
                     continue;
                 }
                 let inside = |u: usize| z[u] || only[u];

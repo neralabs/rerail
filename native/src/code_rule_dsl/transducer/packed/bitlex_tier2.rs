@@ -6,13 +6,13 @@
 //!   closes its node and returns at once.
 //! - **The switch** maps each byte to an arm: the token row whose tokens can begin with it
 //!   (`first_bytes`), and a keyword of the row by its bytes (a switch per byte of the keyword,
-//!   then one `WORD`). Where two rows can begin with one byte, the narrower takes it and tier 1
-//!   gets a guard: the other row starting with it sends the file to tree-sitter.
+//!   then one `WORD`). Where two rows can begin with one byte, tier 1's start mask of each tells
+//!   them apart: `ROW m` takes the next word (its `GOTO`) when the token starts at a bit of mask
+//!   `m` (docs/parser-generators/24-rr-and-bitlex-plan.md, A15).
 //! - **An arm** is its acts (`CLOSE`, `OPEN`, `LEAF`, `NODE_FIELD`, `NODE_SUPER`), its `PUSH` and its `GOTO`.
 //! - **The end:** the root closes and accepts at the end of the stream; a nested level closes
 //!   its node and returns to switch on the token again.
 
-use super::block::{BlockOp, ClassTable};
 use super::grammar::{Act, ArmRow, StateRow};
 use super::stream::{ByteSwitch, REFUSE};
 use std::collections::HashMap;
@@ -22,10 +22,6 @@ pub(super) type ByteSet = [u64; 4];
 
 fn has(s: &ByteSet, b: u8) -> bool {
     s[usize::from(b / 64)] >> (b % 64) & 1 == 1
-}
-
-fn count(s: &ByteSet) -> u32 {
-    s.iter().map(|w| w.count_ones()).sum()
 }
 
 /// A token row, as tier 2 reads it.
@@ -38,9 +34,15 @@ pub(super) struct Row {
     pub(super) first: ByteSet,
     /// Its keywords: a token whose text is the word has the kind.
     pub(super) keywords: Vec<(Vec<u8>, u16)>,
+    /// Its soft keywords: a token whose text is the word has the kind where an arm takes it, and
+    /// the row's own elsewhere.
+    pub(super) soft: Vec<(Vec<u8>, u16)>,
     /// With a check, the bytes a token passing it can begin with. The check itself is tier 1's
     /// (masks joining the fallback); tier 2 uses the bytes only to tell rows apart.
     pub(super) check: Option<ByteSet>,
+    /// Its start mask, the program's mask of that index, when another row can begin with one
+    /// of its bytes: `ROW` tests it.
+    pub(super) mask: Option<u16>,
 }
 
 impl Row {
@@ -50,102 +52,6 @@ impl Row {
     pub(super) fn takes_last(&self) -> bool {
         !self.one_byte
     }
-}
-
-/// The bytes a value's set bits can be at, at delay `d` (bit `i` is byte `i - d`): each byte for
-/// which the value's operations can give a bit, with every carried value (and every byte but
-/// the one asked about) free. Sound: a byte left out never has a bit. With too many free values,
-/// every byte.
-pub(super) fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> ByteSet {
-    // The free values: (operation, lag) pairs the value reads, other than the byte at lag `d`.
-    let mut atoms: HashMap<(u16, u32), usize> = HashMap::new();
-    let mut seen: HashMap<(u16, u32), ()> = HashMap::new();
-    let mut work = vec![(v, 0u32)];
-    while let Some((at, lag)) = work.pop() {
-        if seen.insert((at, lag), ()).is_some() {
-            continue;
-        }
-        match ops[usize::from(at)] {
-            BlockOp::Eq(_) | BlockOp::Class { .. } if lag == u32::from(d) => {}
-            BlockOp::Not(a) => work.push((a, lag)),
-            BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) => work.extend([(a, lag), (b, lag)]),
-            BlockOp::Prev(a, k) => work.push((a, lag + u32::from(k))),
-            BlockOp::Const(0) | BlockOp::Const(u64::MAX) => {}
-            _ => {
-                let n = atoms.len();
-                atoms.entry((at, lag)).or_insert(n);
-            }
-        }
-    }
-    if atoms.len() > 12 {
-        // Too many to try each: every free value unknown, in three-valued logic. Still sound (a
-        // byte for which the value is false whatever they are is left out), less sharp.
-        fn kleene(ops: &[BlockOp], tables: &[ClassTable], at: u16, lag: u32, b: u8, atoms: &HashMap<(u16, u32), usize>) -> Option<bool> {
-            let e = |a: u16, l: u32| kleene(ops, tables, a, l, b, atoms);
-            if atoms.contains_key(&(at, lag)) {
-                return None;
-            }
-            match ops[usize::from(at)] {
-                BlockOp::Eq(c) => Some(c == b),
-                BlockOp::Class { table, bits } => Some(tables[usize::from(table)].member(b, bits)),
-                BlockOp::Not(a) => e(a, lag).map(|x| !x),
-                BlockOp::And(a, c) => match (e(a, lag), e(c, lag)) {
-                    (Some(false), _) | (_, Some(false)) => Some(false),
-                    (Some(true), Some(true)) => Some(true),
-                    _ => None,
-                },
-                BlockOp::Or(a, c) => match (e(a, lag), e(c, lag)) {
-                    (Some(true), _) | (_, Some(true)) => Some(true),
-                    (Some(false), Some(false)) => Some(false),
-                    _ => None,
-                },
-                BlockOp::Xor(a, c) => match (e(a, lag), e(c, lag)) {
-                    (Some(x), Some(y)) => Some(x != y),
-                    _ => None,
-                },
-                BlockOp::AndNot(a, c) => match (e(a, lag), e(c, lag)) {
-                    (Some(false), _) | (_, Some(true)) => Some(false),
-                    (Some(true), Some(false)) => Some(true),
-                    _ => None,
-                },
-                BlockOp::Prev(a, k) => e(a, lag + u32::from(k)),
-                BlockOp::Const(c) => Some(c != 0),
-                _ => unreachable!("every other operation is free"),
-            }
-        }
-        let mut out = [0u64; 4];
-        for b in 0..=255u8 {
-            if kleene(ops, tables, v, 0, b, &atoms) != Some(false) {
-                out[usize::from(b / 64)] |= 1 << (b % 64);
-            }
-        }
-        return out;
-    }
-    fn eval(ops: &[BlockOp], tables: &[ClassTable], at: u16, lag: u32, d: u32, b: u8, atoms: &HashMap<(u16, u32), usize>, set: u32) -> bool {
-        let e = |a: u16, l: u32| eval(ops, tables, a, l, d, b, atoms, set);
-        if let Some(&k) = atoms.get(&(at, lag)) {
-            return set >> k & 1 == 1;
-        }
-        match ops[usize::from(at)] {
-            BlockOp::Eq(c) => c == b,
-            BlockOp::Class { table, bits } => tables[usize::from(table)].member(b, bits),
-            BlockOp::Not(a) => !e(a, lag),
-            BlockOp::And(a, c) => e(a, lag) && e(c, lag),
-            BlockOp::Or(a, c) => e(a, lag) || e(c, lag),
-            BlockOp::Xor(a, c) => e(a, lag) != e(c, lag),
-            BlockOp::AndNot(a, c) => e(a, lag) && !e(c, lag),
-            BlockOp::Prev(a, k) => e(a, lag + u32::from(k)),
-            BlockOp::Const(c) => c != 0,
-            _ => unreachable!("every other operation is free"),
-        }
-    }
-    let mut out = [0u64; 4];
-    for b in 0..=255u8 {
-        if (0..1u32 << atoms.len()).any(|set| eval(ops, tables, v, 0, u32::from(d), b, &atoms, set)) {
-            out[usize::from(b / 64)] |= 1 << (b % 64);
-        }
-    }
-    out
 }
 
 /// An operand as `rir` prints it.
@@ -159,6 +65,9 @@ enum Arg {
     Table(u16),
     /// A state's entry, known once every state is laid out.
     State(u16),
+    /// Where a call returns to a state: its entry, or for a state that takes no token, its
+    /// return entry (`Emit::returns`).
+    Return(u16),
     /// A word's place.
     Pc(u16),
 }
@@ -177,17 +86,34 @@ enum Pre {
     Word(Vec<u8>),
 }
 
-/// Tier 2 as words: their `rir` text (strings, switches, words), and the guards tier 1 adds
-/// (a token row, and the bytes it must not begin with).
+/// Tier 2 as words: their `rir` text (strings, switches, words).
 pub(super) struct Lowered {
     pub(super) text: String,
-    pub(super) guards: Vec<(usize, ByteSet)>,
+    /// The rows `ROW` tests, in order: those that need a start mask.
+    pub(super) tested: Vec<usize>,
+}
+
+/// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
+/// starts, and whether it is hidden (skipped where no arm takes it).
+#[derive(Clone, Copy)]
+pub(super) struct Mark {
+    pub(super) kind: u16,
+    pub(super) mask: u16,
+    pub(super) hidden: bool,
+    /// The file's end has it, after the last token.
+    pub(super) end: bool,
 }
 
 struct Emit<'a> {
     states: &'a [StateRow],
     arms: &'a [ArmRow],
     rows: &'a [Row],
+    marks: &'a [Mark],
+    /// The rows each state can meet (`bitlex_compile::row_modes`).
+    meets: &'a [Vec<bool>],
+    /// A first lowering, to find the rows `ROW` tests: their masks are not given yet.
+    survey: bool,
+    tested: std::collections::BTreeSet<usize>,
     root: u16,
     words: Vec<(&'static str, u8, Arg)>,
     switches: Vec<ByteSwitch>,
@@ -195,7 +121,9 @@ struct Emit<'a> {
     entry: Vec<u16>,
     /// Each arm's code, once per test before it.
     arm_code: HashMap<(usize, Span, Pre), u16>,
-    guards: HashMap<usize, ByteSet>,
+    /// Where the state being lowered goes on a token none of its arms takes: its level's end
+    /// (the caller then switches on the token), or `REFUSE`.
+    default: u16,
 }
 
 /// One candidate of a byte: an arm, the row its token comes from, and the keyword it is (none:
@@ -252,7 +180,7 @@ impl Emit<'_> {
     fn body(&mut self, arm: usize) -> u16 {
         let at = self.pc();
         let a = &self.arms[arm];
-        let (token, to, ret) = (a.token, a.to, a.push);
+        let (token, to, ret) = (a.token, a.to, a.push.clone());
         for act in a.acts.clone() {
             let (supers, field) = match act {
                 Act::Close => {
@@ -263,9 +191,60 @@ impl Emit<'_> {
                     self.push("OPEN", 0, Arg::Kind(kind));
                     (supers, field)
                 }
-                Act::Leaf { field, supers } => {
-                    self.push("LEAF", 0, Arg::Kind(token));
+                Act::Leaf { field, supers, kind } => {
+                    self.push("LEAF", 0, Arg::Kind(if kind != 0 { kind } else { token }));
                     (supers, field)
+                }
+                Act::Extra => {
+                    self.push("LEAF", 1, Arg::Kind(token));
+                    continue;
+                }
+                Act::ExtraNow => {
+                    self.push("LEAF", 2, Arg::Kind(token));
+                    continue;
+                }
+                Act::Retag { kind } => {
+                    self.push("RETAG", 0, Arg::Kind(kind));
+                    continue;
+                }
+                Act::Merge { kind } => {
+                    self.push("MERGE", 0, Arg::Kind(kind));
+                    continue;
+                }
+                // Mode 1: the open node's two leaves, one.
+                Act::Fold { kind } => {
+                    self.push("MERGE", 1, Arg::Kind(kind));
+                    continue;
+                }
+                // Mode 3: the node made last at this level, and the nodes inside it, read.
+                Act::Reread { reading } => {
+                    self.push("RETAG", 3, Arg::Num(reading));
+                    continue;
+                }
+                Act::Relabel { field, moved, inner } => {
+                    // Mode 2: the node made last at this level; mode 3: the node its wrap holds
+                    // first.
+                    if inner != 0 {
+                        self.push("NODE_FIELD", 3, Arg::Field(inner));
+                    }
+                    if field != 0 {
+                        self.push("NODE_FIELD", 2, Arg::Field(field));
+                    }
+                    if moved != 0 {
+                        self.push("RETAG", 2, Arg::Kind(moved));
+                    }
+                    continue;
+                }
+                Act::Wrap { kind, field, moved } => {
+                    // The wrap takes the moved node's field; then the moved node gets its own.
+                    self.push("WRAP", 0, Arg::Kind(kind));
+                    if field != 0 {
+                        self.push("NODE_FIELD", 1, Arg::Field(field));
+                    }
+                    if moved != 0 {
+                        self.push("RETAG", 1, Arg::Kind(moved));
+                    }
+                    continue;
                 }
             };
             if field != 0 {
@@ -275,10 +254,28 @@ impl Emit<'_> {
                 self.push("NODE_SUPER", 0, Arg::Kind(s));
             }
         }
-        if let Some(p) = ret {
-            self.push("PUSH", 0, Arg::State(p));
+        // The calls, outermost first. When the innermost call's level ends at its first token:
+        // that level's closes, at this token's end, and on to the state it returns to; that call
+        // is not made.
+        let st = &self.states[usize::from(to)];
+        let ends_at_once = !self.arms.iter().any(|b| b.from == to);
+        match (ret.split_last(), st.end) {
+            (Some((&p, outer)), Some(c)) if ends_at_once => {
+                for &o in outer {
+                    self.push("PUSH", 0, Arg::Return(o));
+                }
+                for _ in 0..c + u8::from(st.own) {
+                    self.push("CLOSE", 1, Arg::None);
+                }
+                self.push("GOTO", 0, Arg::State(p));
+            }
+            _ => {
+                for &p in &ret {
+                    self.push("PUSH", 0, Arg::Return(p));
+                }
+                self.push("GOTO", 0, Arg::State(to));
+            }
         }
-        self.push("GOTO", 0, Arg::State(to));
         at
     }
 
@@ -321,7 +318,7 @@ impl Emit<'_> {
                 jumps.push((self.pc(), Some(c.arm)));
                 self.push("GOTO", 0, Arg::Pc(0));
             }
-            // A keyword no arm here takes refuses the file.
+            // A keyword no arm here takes: the state's end, or a refusal.
             for w in &missing {
                 let w = self.string(w);
                 self.push("WORD", 1, Arg::Str(w));
@@ -329,7 +326,7 @@ impl Emit<'_> {
                 self.push("GOTO", 0, Arg::Pc(0));
             }
             self.body(plain[0].arm);
-            let mut stop = None;
+            let mut stop = (self.default != REFUSE).then_some(self.default);
             for (jump, arm) in jumps {
                 let to = match arm {
                     Some(arm) => self.body(arm),
@@ -349,13 +346,87 @@ impl Emit<'_> {
             // word is compared with all of it.
             let span = if row.takes_last() { Span::Last } else { Span::Len(w.len() as u16) };
             // The switches have read every byte of the word, and its length is its row's: no `WORD`.
-            let pre = if depth + 1 >= w.len() && !row.takes_last() { Pre::None } else { Pre::Word(w) };
-            return Ok(self.arm(words[0].arm, span, pre));
+            let pre = if depth + 1 >= w.len() && !row.takes_last() { Pre::None } else { Pre::Word(w.clone()) };
+            if pre == Pre::None || self.default == REFUSE {
+                return Ok(self.arm(words[0].arm, span, pre));
+            }
+            // Where the state may end, a token that is not the word is its caller's: a test, the
+            // arm where the token is the word, else the end.
+            let at = self.pc();
+            match span {
+                Span::Len(n) => self.push("SPAN", 0, Arg::Num(n)),
+                Span::Last => self.push("SPAN", 1, Arg::Num(LASTS)),
+            }
+            let s = self.string(&w);
+            self.push("WORD", 1, Arg::Str(s));
+            let jump = self.pc();
+            self.push("GOTO", 0, Arg::Pc(0));
+            self.push("GOTO", 0, Arg::Pc(self.default));
+            let to = self.body(words[0].arm);
+            self.words[usize::from(jump)].2 = Arg::Pc(to);
+            return Ok(at);
         }
         // Keywords sharing their bytes up to `depth`: a switch on the next.
         let next = depth + 1;
         if words.iter().any(|c| c.word.as_ref().expect("a keyword").len() <= next) {
-            return Err("a keyword that is a prefix of another: not compiled yet".into());
+            // One ends here, a prefix of another (`:` and `:-`). A row whose token ends at its
+            // last byte knows its length from tier 1: the end, then a test per keyword (each
+            // compares the whole token), then the row's own arm, or a refusal.
+            if !row.takes_last() {
+                return Err("a keyword that is a prefix of another, in a row of one-byte tokens".into());
+            }
+            let prefix = words[0].word.clone().expect("a keyword")[..next].to_vec();
+            let missing: Vec<Vec<u8>> = row
+                .keywords
+                .iter()
+                .map(|(w, _)| w.clone())
+                .filter(|w| w.starts_with(&prefix) && !words.iter().any(|c| c.word.as_ref() == Some(w)))
+                .collect();
+            let at = self.pc();
+            self.push("SPAN", 1, Arg::Num(LASTS));
+            let mut jumps = Vec::new();
+            for c in &words {
+                let w = self.string(c.word.as_ref().expect("a keyword"));
+                self.push("WORD", 1, Arg::Str(w));
+                jumps.push((self.pc(), Some(c.arm)));
+                self.push("GOTO", 0, Arg::Pc(0));
+            }
+            for w in &missing {
+                let w = self.string(w);
+                self.push("WORD", 1, Arg::Str(w));
+                jumps.push((self.pc(), None));
+                self.push("GOTO", 0, Arg::Pc(0));
+            }
+            // No word and no plain arm: the state's end, or a refusal.
+            let stop = match plain.first() {
+                Some(p) => {
+                    self.body(p.arm);
+                    (self.default != REFUSE).then_some(self.default)
+                }
+                None if self.default != REFUSE => {
+                    let pc = self.pc();
+                    self.push("GOTO", 0, Arg::Pc(self.default));
+                    Some(pc)
+                }
+                None => {
+                    let pc = self.pc();
+                    self.push("STOP", 0, Arg::None);
+                    Some(pc)
+                }
+            };
+            let mut stop = stop;
+            for (jump, arm) in jumps {
+                let to = match arm {
+                    Some(arm) => self.body(arm),
+                    None => *stop.get_or_insert_with(|| {
+                        let pc = self.pc();
+                        self.push("STOP", 0, Arg::None);
+                        pc
+                    }),
+                };
+                self.words[usize::from(jump)].2 = Arg::Pc(to);
+            }
+            return Ok(at);
         }
         let t = self.switches.len();
         self.switches.push(ByteSwitch::refusing(next as u8));
@@ -366,6 +437,10 @@ impl Emit<'_> {
                 Some(e) => e.1.push(c.clone()),
                 None => by.push((x, vec![c.clone()])),
             }
+        }
+        // A byte no word here has: the state's end, or a refusal.
+        if self.default != REFUSE {
+            self.switches[t].targets = vec![self.default; 256];
         }
         for (x, cs) in by {
             let pc = self.target(x, next, cs)?;
@@ -383,13 +458,32 @@ impl Emit<'_> {
         self.entry[s] = self.pc();
         if nested && mine.is_empty() {
             let Some(c) = st.end else { return Err(format!("state {s} takes no token and may not end")) };
-            for _ in 0..=c {
+            // A nested choice's level has no node of its own to close.
+            for _ in 0..c + u8::from(st.own) {
                 self.push("CLOSE", 1, Arg::None);
             }
             self.push("RETURN", 0, Arg::None);
             return Ok(());
         }
         self.push("TOKEN", 0, Arg::Num(STARTS));
+        // The marks, in order: each the state takes, a test and a jump to its arm; each not
+        // hidden that it does not take, and each its level refuses, a test that refuses.
+        let mut mark_arms = Vec::new();
+        for (k, m) in self.marks.iter().enumerate() {
+            let arm = mine.iter().copied().find(|&a| self.arms[a].token == m.kind);
+            if arm.is_none() && m.hidden && !st.refuses.contains(&m.kind) {
+                continue;
+            }
+            // Its order, and 32 when the end has it.
+            self.push("MARK", k as u8 | if m.end { 32 } else { 0 }, Arg::Num(m.mask));
+            match arm {
+                Some(a) => {
+                    mark_arms.push((self.pc(), a));
+                    self.push("GOTO", 0, Arg::Pc(0));
+                }
+                None => self.push("STOP", 0, Arg::None),
+            }
+        }
         let t = self.switches.len();
         self.switches.push(ByteSwitch::refusing(0));
         self.push("SWITCH", 0, Arg::Table(t as u16));
@@ -399,7 +493,7 @@ impl Emit<'_> {
             None => REFUSE,
             Some(c) => {
                 let pc = self.pc();
-                for _ in 0..c + u8::from(nested) {
+                for _ in 0..c + u8::from(nested && st.own) {
                     self.push("CLOSE", 0, Arg::None);
                 }
                 self.push(if nested { "RETURN" } else { "ACCEPT" }, u8::from(nested), Arg::None);
@@ -408,6 +502,7 @@ impl Emit<'_> {
         };
         self.switches[t].end = end;
         let default = if nested { end } else { REFUSE };
+        self.default = default;
         // Each byte's candidates: the arms whose token can begin with it.
         let mut cands: Vec<Vec<Cand>> = vec![Vec::new(); 256];
         for &a in &mine {
@@ -420,7 +515,7 @@ impl Emit<'_> {
                         }
                     }
                 }
-                for (w, k) in &row.keywords {
+                for (w, k) in row.keywords.iter().chain(&row.soft) {
                     if *k == kind && has(&row.first, w[0]) {
                         cands[usize::from(w[0])].push(Cand { arm: a, row: r, word: Some(w.clone()) });
                     }
@@ -428,28 +523,59 @@ impl Emit<'_> {
             }
         }
         for b in 0..=255u8 {
+            // An arm whose row the state cannot meet is dead (an extra's in a string, say).
             let mut cs = std::mem::take(&mut cands[usize::from(b)]);
+            cs.retain(|c| self.meets[s][c.row]);
             if cs.is_empty() {
                 self.switches[t].targets[usize::from(b)] = default;
                 continue;
             }
-            // Two rows on one byte: the narrower takes it; the other gets a guard.
-            let mut rows: Vec<usize> = cs.iter().map(|c| c.row).collect();
-            rows.sort_unstable();
-            rows.dedup();
-            if rows.len() > 1 {
-                let narrow = *rows.iter().min_by_key(|&&r| count(&self.rows[r].first)).expect("rows");
-                if rows.iter().filter(|&&r| count(&self.rows[r].first) == count(&self.rows[narrow].first)).count() > 1 {
-                    return Err(format!("two token rows as narrow as each other begin with byte {b:#04x}"));
+            // The rows the state can meet that begin with the byte (`meets`): when more than the
+            // one it takes, a test of each one it takes (`ROW`, its start mask) and its jump; the
+            // last untested when the state takes them all. Any other goes to the default.
+            let mut taken: Vec<usize> = cs.iter().map(|c| c.row).collect();
+            taken.sort_unstable();
+            taken.dedup();
+            let met: Vec<usize> = (0..self.rows.len()).filter(|&r| has(&self.rows[r].first, b) && self.meets[s][r]).collect();
+            if met.len() > 1 {
+                let all = met.iter().all(|r| taken.contains(r));
+                let at = self.pc();
+                let mut jumps = Vec::new();
+                for (i, &r) in taken.iter().enumerate() {
+                    if !(all && i + 1 == taken.len()) {
+                        self.tested.insert(r);
+                        let m = match self.rows[r].mask {
+                            Some(m) => m,
+                            None if self.survey => 0,
+                            None => return Err(format!("row {r} shares byte {b:#04x} and has no start mask")),
+                        };
+                        self.push("ROW", 0, Arg::Num(m));
+                    }
+                    jumps.push((self.pc(), r));
+                    self.push("GOTO", 0, Arg::Pc(0));
                 }
-                for &r in rows.iter().filter(|&&r| r != narrow) {
-                    let g = self.guards.entry(r).or_insert([0; 4]);
-                    g[usize::from(b / 64)] |= 1 << (b % 64);
+                if !all {
+                    if default == REFUSE {
+                        self.push("STOP", 0, Arg::None);
+                    } else {
+                        self.push("GOTO", 0, Arg::Pc(default));
+                    }
                 }
-                cs.retain(|c| c.row == narrow);
+                for (jump, r) in jumps {
+                    let these: Vec<Cand> = cs.iter().filter(|c| c.row == r).cloned().collect();
+                    let to = self.target(b, 0, these)?;
+                    self.words[usize::from(jump)] = if to == REFUSE { ("STOP", 0, Arg::None) } else { ("GOTO", 0, Arg::Pc(to)) };
+                }
+                self.switches[t].targets[usize::from(b)] = at;
+                continue;
             }
             let pc = self.target(b, 0, cs)?;
             self.switches[t].targets[usize::from(b)] = pc;
+        }
+        // The marks' arms: their acts, no bytes taken (the next state switches on this token).
+        for (jump, a) in mark_arms {
+            let to = self.body(a);
+            self.words[usize::from(jump)].2 = Arg::Pc(to);
         }
         Ok(())
     }
@@ -462,34 +588,58 @@ pub(super) const STARTS: u16 = 0;
 pub(super) const LASTS: u16 = 0;
 
 /// The words, after `empties` words `EMPTY t` (`t` in `0..empties`): tier 1's fallback totals,
-/// each of which must be zero before the first token is taken.
-pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], empties: u16) -> Result<Lowered, String> {
+/// each of which must be zero before the first token is taken. With a `whole` root, an `OPEN` of
+/// the root follows them: no token is taken yet, so it opens at byte 0.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool) -> Result<Lowered, String> {
     let mut e = Emit {
         states,
         arms,
         rows,
+        marks,
+        meets,
+        survey,
+        tested: Default::default(),
+        default: REFUSE,
         root: states.first().ok_or("no states")?.level,
         words: Vec::new(),
         switches: Vec::new(),
         strings: Vec::new(),
         entry: vec![0; states.len()],
         arm_code: HashMap::new(),
-        guards: HashMap::new(),
     };
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));
     }
+    if whole {
+        let root = e.root;
+        e.push("OPEN", 0, Arg::Kind(root));
+    }
     for s in 0..states.len() {
         e.state(s)?;
     }
-    // A return lands on a state's `TOKEN`.
-    for a in arms {
-        if let Some(p) = a.push {
-            let p = usize::from(p);
-            if e.words[usize::from(e.entry[p])].0 != "TOKEN" {
-                return Err(format!("a call returns to state {p}, which takes no token: not compiled yet"));
-            }
+    // A return lands on a state's `TOKEN` (`RETURN m=0`, the token taken) or its `SWITCH`
+    // (`m=1`, to switch on it again). A state that takes no token, which closes at once, gets a
+    // return entry of that shape: `TOKEN`, a `SWITCH` whose every way is the end, and the end,
+    // its closes at the end of the token before and a return to switch on this one again.
+    let mut returns: HashMap<u16, u16> = HashMap::new();
+    for p in arms.iter().flat_map(|a| a.push.iter().copied()) {
+        if e.words[usize::from(e.entry[usize::from(p)])].0 == "TOKEN" || returns.contains_key(&p) {
+            continue;
         }
+        let st = &states[usize::from(p)];
+        let Some(c) = st.end else { return Err(format!("state {p} takes no token and may not end")) };
+        let at = e.pc();
+        e.push("TOKEN", 0, Arg::Num(STARTS));
+        let t = e.switches.len();
+        e.push("SWITCH", 0, Arg::Table(t as u16));
+        let end = e.pc();
+        e.switches.push(ByteSwitch { offset: 0, targets: vec![end; 256], end });
+        for _ in 0..c + u8::from(st.own) {
+            e.push("CLOSE", 0, Arg::None);
+        }
+        e.push("RETURN", 1, Arg::None);
+        returns.insert(p, at);
     }
     let mut text = String::new();
     use std::fmt::Write as _;
@@ -511,11 +661,10 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], empties:
             Arg::Str(s) => write!(text, " s{s}"),
             Arg::Table(t) => write!(text, " T{t}"),
             Arg::State(s) => write!(text, " @{:04}", e.entry[usize::from(s)]),
+            Arg::Return(s) => write!(text, " @{:04}", returns.get(&s).copied().unwrap_or(e.entry[usize::from(s)])),
             Arg::Pc(p) => write!(text, " @{p:04}"),
         };
         text.push('\n');
     }
-    let mut guards: Vec<(usize, ByteSet)> = e.guards.into_iter().collect();
-    guards.sort_unstable();
-    Ok(Lowered { text, guards })
+    Ok(Lowered { text, tested: e.tested.into_iter().collect() })
 }

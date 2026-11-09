@@ -22,6 +22,11 @@ use crate::code_rule_dsl::transducer::packed::block::BlockRun;
 use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
 use metal::MTLSize;
 
+/// The same programs in the CPU's shape: a thread a segment of blocks, the carry forward by
+/// speculation (`metal_block_serial.rs`).
+#[path = "metal_block_serial.rs"]
+pub(in crate::code_rule_dsl) mod serial;
+
 /// The carries' helpers (`metal_block_carry.metal`), shared by the interpreter and generated MSL.
 const CARRY: &str = include_str!("metal_block_carry.metal");
 /// The sinks: outputs at their delays, extracts and totals (`metal_block_sinks.metal`), shared
@@ -115,6 +120,9 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         // Its second operand in `imm`: `b` is the carry's index.
         BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
+        BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
+        BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
+        BlockInst::Position(_) => unreachable!("refused at `run_batch`: Metal makes no position planes yet"),
         // The period in `a` (`k | r << 8`, never read as a slot: it is clamped), its bits in `b` and `imm`.
         BlockInst::Phase(k, r) => {
             let bits = super::block::period_bits(k);
@@ -185,6 +193,13 @@ pub(in crate::code_rule_dsl) fn run_batch(
     executor: Executor,
     spins: u32,
 ) -> Result<BatchRun, Error> {
+    // A fixed point (`rounds`) is the CPU's for now: each lane would run its rounds in its own
+    // frame, within `block::MAX_ROUNDS`, to the same values.
+    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet;
+    // and a position's planes, which need the word's place in its file.
+    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_) | BlockInst::Position(_)))) {
+        return Err(Error::UnsupportedBackend);
+    }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let word = width.bytes() / 8;
     let span = width.bytes() * GROUP;
@@ -1164,7 +1179,9 @@ fn ascii_form(native: &BlockNative) -> BlockNative {
 
 /// The instructions in `chosen`, as straight-line statements for a word of `width` whose first
 /// byte is chunk `base` (16-byte chunks) and stream byte `offset` (for `const`'s phase).
-/// `carried` writes each carried instruction's statements.
+/// `carried` writes each carried instruction's statements. An empty `base`: the word's chunks
+/// `c0..` and the byte before them, `before`, are loaded already (the serial loop loads a block
+/// ahead).
 fn emit(
     p: usize,
     native: &BlockNative,
@@ -1180,14 +1197,15 @@ fn emit(
     let insts: Vec<&BlockInst> = chosen.iter().map(|&at| &native.insts[at]).collect();
     let mut out = String::new();
     let back = insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
-    if back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))) {
+    let loaded = base.is_empty();
+    if !loaded && (back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_)))) {
         for c in 0..chunks {
             out.push_str(&format!("  const uint4 c{c} = load16(bytes, f, {base} + {c}u);\n"));
         }
     }
     // The byte before the word, read from the source (no carry); and, for `pair` by lookups,
     // the word's bytes one back.
-    if back {
+    if back && !loaded {
         out.push_str(&format!("  const uint before = file_byte_before(bytes, f, {base});\n"));
     }
     let used: std::collections::BTreeSet<u16> = insts
@@ -1273,6 +1291,9 @@ fn emit(
                 format!("{m}({bits:#018x}ul << (({r}u + {k}u - (({offset}) % {k}u)) % {k}u))")
             }
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
+            BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
+            BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
+        BlockInst::Position(_) => unreachable!("refused at `run_batch`: Metal makes no position planes yet"),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
     }

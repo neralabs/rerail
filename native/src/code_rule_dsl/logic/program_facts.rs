@@ -74,6 +74,8 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
+        // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
+        ("ast_pattern", &["p:sym", "s:sym"]),
         ("policy", &["p:sym", "k:int", "json:sym"]),
         ("setting", &["p:sym", "k:int", "key:sym", "text:sym"]),
         // `doc_scopes`: present when the program reads only some documents; each entry k's globs, side 0 the
@@ -83,6 +85,10 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("doc_scope_glob", &["p:sym", "k:int", "side:int", "i:int", "glob:sym"]),
         // `text_globs`: `.scope text`'s, in order.
         ("text_glob", &["p:sym", "i:int", "glob:sym"]),
+        // `ast_patterns`: the tree patterns the program's `ast` atoms match.
+        ("ast_pattern", &["p:sym", "pattern:sym"]),
+        // `answers`: each request relation's answering programs, in order.
+        ("answer", &["p:sym", "req:sym", "i:int", "by:sym"]),
     ];
     SCHEMA
         .iter()
@@ -167,6 +173,7 @@ impl Writer<'_> {
                     AggOp::Min => "min",
                     AggOp::Max => "max",
                     AggOp::Sum => "sum",
+                    AggOp::Product => "product",
                     AggOp::Join { .. } => "join",
                 };
                 self.row("lit_agg", vec![n(l), s(var), s(name), n(a)]);
@@ -309,6 +316,14 @@ impl Writer<'_> {
         for (i, g) in prog.text_globs.iter().enumerate() {
             self.row("text_glob", vec![n(i), s(g)]);
         }
+        for pattern in &prog.ast_patterns {
+            self.row("ast_pattern", vec![s(pattern)]);
+        }
+        for (req, by) in &prog.answers {
+            for (i, b) in by.iter().enumerate() {
+                self.row("answer", vec![s(req), n(i), s(b)]);
+            }
+        }
         for (span, text) in &prog.rx_spans {
             // Kinds and captures carry their names after a unit separator.
             let span = match span {
@@ -319,6 +334,9 @@ impl Writer<'_> {
                 SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
             };
             self.row("rx_span", vec![s(&span), s(text)]);
+        }
+        for text in &prog.ast_patterns {
+            self.row("ast_pattern", vec![s(text)]);
         }
     }
 }
@@ -446,6 +464,7 @@ impl<'a> Reader<'a> {
                 "min" => AggOp::Min,
                 "max" => AggOp::Max,
                 "sum" => AggOp::Sum,
+                "product" => AggOp::Product,
                 "join" => {
                     let sep = join.get(&l).and_then(|r| r.first()).ok_or_else(|| bad(format!("join {l} without its separator")))?;
                     let by = ordered(by.get(&l).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
@@ -588,6 +607,9 @@ impl<'a> Reader<'a> {
             };
             prog.rx_spans.insert((span, text(&row[1])?));
         }
+        for row in self.get("ast_pattern") {
+            prog.ast_patterns.insert(text(&row[0])?);
+        }
         if !self.get("doc_scoped").is_empty() {
             let mut scopes: BTreeMap<i64, (Vec<(i64, String)>, Vec<(i64, String)>)> = self.get("doc_scope").iter().map(|r| Ok((int(&r[0])?, Default::default()))).collect::<Result<_, String>>()?;
             for row in self.get("doc_scope_glob") {
@@ -604,6 +626,12 @@ impl<'a> Reader<'a> {
         let mut text_globs = self.get("text_glob").iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?;
         text_globs.sort();
         prog.text_globs = text_globs.into_iter().map(|(_, g)| g).collect();
+        prog.ast_patterns = self.get("ast_pattern").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
+        let mut answers: BTreeMap<String, Vec<(i64, String)>> = BTreeMap::new();
+        for row in self.get("answer") {
+            answers.entry(text(&row[0])?).or_default().push((int(&row[1])?, text(&row[2])?));
+        }
+        prog.answers = answers.into_iter().map(|(req, by)| (req, ordered(by))).collect();
         Ok(prog)
     }
 
@@ -749,5 +777,17 @@ mod tests {
             assert_eq!(back.doc_scopes, scopes);
             assert_eq!(back.text_globs, prog.text_globs);
         }
+    }
+
+    /// The AST patterns a program matches survive its facts: a stored program read back (a prepared program,
+    /// O-stored-patterns) still asks the batch for `ast_match` rows. Without them, a run that reuses it finds no
+    /// pattern matches.
+    #[test]
+    fn ast_patterns_read_back_as_written() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
+        prog.ast_patterns = ["$O[:-$K]".to_owned(), "print($$$A)".to_owned()].into();
+        let mut facts = super::Facts::new();
+        super::write(&mut facts, "p", &prog);
+        assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
     }
 }

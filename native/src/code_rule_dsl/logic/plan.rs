@@ -580,16 +580,17 @@ thread_local! {
     /// component solved), its order and its work per node when planned. `None` outside a corpus run: every plan is
     /// searched.
     /// When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it with its own work and rows.
-    static PLANS: std::cell::RefCell<Option<HashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
+    static PLANS: std::cell::RefCell<Option<rustc_hash::FxHashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
     /// The last priced body's cheapest start: the least work of any one join literal read first, from no binding.
     /// Every order costs at least this, so a kept order's work over it measures how far the order is from the best
     /// any start allows.
     static SEED: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
 }
 
-/// A kept plan's key: the rule as text, the delta and the component solved. Not the rule's address: each chunk's
-/// program is a new value (the demand split makes one per chunk), so no address is kept between chunks.
-type PlanKey = String;
+/// A kept plan's key: a digest of the rule, the delta and the component solved (`derived::digest`). Not the rule's
+/// address: each chunk's program is a new value (the demand split makes one per chunk), so no address is kept between
+/// chunks. Not the rule's text either: formatting every rule was a tenth of a session run's planning.
+type PlanKey = u128;
 
 /// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, its work over its body's
 /// cheapest start (`SEED`) when searched, and its last price with the sizes it was priced at (`Priced`).
@@ -621,7 +622,7 @@ pub(in crate::code_rule_dsl) struct KeepPlans(Option<u64>);
 
 thread_local! {
     /// A session's plans between its runs, with the session's generation: another session's are not taken.
-    static SESSION_PLANS: std::cell::RefCell<Option<(u64, HashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
+    static SESSION_PLANS: std::cell::RefCell<Option<(u64, rustc_hash::FxHashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
 }
 
 impl KeepPlans {
@@ -756,7 +757,15 @@ impl Model {
     /// A kept plan's key: the rule as text, the delta (`first`) and the component solved, after `kind`.
     fn plan_key(&self, kind: &str, head: &Atom, body: &[Literal], first: Option<usize>) -> PlanKey {
         let _span = super::profile::span(|| "key".into());
-        format!("{kind}{head} :- {} @{first:?} /{}", body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), self.stats.solving.iter().cloned().collect::<Vec<_>>().join(","))
+        super::derived::digest(|d| {
+            d.str(kind);
+            digest_atom(d, head);
+            d.u64(body.len() as u64);
+            body.iter().for_each(|l| digest_literal(d, l));
+            d.u64(first.map_or(u64::MAX, |f| f as u64));
+            d.u64(self.stats.solving.len() as u64);
+            self.stats.solving.iter().for_each(|r| d.str(r));
+        })
     }
 
     /// The sizes a price reads (`Priced`): the corpus's nodes and the rows of each relation the body reads.
@@ -784,7 +793,18 @@ impl Model {
             return self.plan_inner(prog, head, body, first, None, true);
         }
         let key = self.plan_key("live ", head, body, first);
-        let sizes = self.read_sizes(body);
+        // The delta atom is read first and priced by its live size; every later step's rows are per binding of it,
+        // so its size scales every order alike and does not change which is cheapest. It is left out (one row)
+        // unless the body reads its relation again: a wave that only grew the delta keeps the plan. Callers read
+        // the order only, so the kept price is not scaled.
+        let delta_rel = first.and_then(|f| body[f].atom()).map(|a| a.rel.as_str());
+        let once = delta_rel.is_some_and(|d| body.iter().filter(|l| l.atom().is_some_and(|a| a.rel == d)).count() == 1);
+        let sizes: Vec<f64> = std::iter::once(self.stats.nodes.max(1.0))
+            .chain(body.iter().enumerate().filter_map(|(i, l)| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(if once && Some(i) == first { 1.0 } else { self.card(&a.rel) }),
+                _ => None,
+            }))
+            .collect();
         let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| k.4.clone()));
         if let Some(priced) = kept.filter(|k| near(&k.sizes, &sizes)) {
             super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
@@ -829,7 +849,12 @@ impl Model {
             }
         }
         let atom_rows_ = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
-            if let Some(seen) = stats.obs.get(&atom_sig(a, bound))
+            // An atom that shares no bound variable, read after bindings exist, is a cross product: its fanout
+            // observed in one wave or chunk is the relation's size then (none before a guest round makes the rows),
+            // not a property of the join, so it is priced from the relation's own estimate (below).
+            let crossed = !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v)));
+            if !crossed
+                && let Some(seen) = stats.obs.get(&atom_sig(a, bound))
                 && seen[0] >= OBS_MIN
             {
                 return (seen[1] as f64 / seen[0] as f64).max(0.01);
@@ -908,6 +933,13 @@ impl Model {
         };
         let atom_rows = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
             let mut rows = atom_rows_(a, bound);
+            // A cross product never filters a binding: each one reads every matching row, and a relation empty
+            // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
+            // atom of fanout one is never ordered after it.
+            let delta_atom = first.is_some_and(|f| matches!(&body[f], Literal::Atom(d) if std::ptr::eq(d, a)));
+            if !delta_atom && !a.neg && !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
+                rows = rows.max(1.0);
+            }
             // No variable bound on a relation of the component being solved: a scan of it per binding, priced as a
             // pass over the corpus (shared among its constants' values) at least.
             // The delta atom of a probe is not such a scan: it reads the last wave's rows, priced by the relation's
@@ -1888,7 +1920,13 @@ impl Model {
                     if let AggOp::Join { by, .. } = op {
                         local.extend(by.iter().map(String::as_str).filter(|b| !env.contains_key(*b)));
                     }
-                    let conds = neg_conds(atom, &al, &env, &local)?;
+                    let mut conds = neg_conds(atom, &al, &env, &local)?;
+                    // Repeated local value fields are equal within the bag, even when
+                    // the outer rule binds a variable with that name.
+                    if let Some(over)=over {
+                        let columns=atom.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if v==over).then_some(c)).collect::<Vec<_>>();
+                        for pair in columns.windows(2) {conds.push(eq(col(&al,&self.col(&atom.rel,pair[0])),col(&al,&self.col(&atom.rel,pair[1]))));}
+                    }
                     let column = |v: &str| {
                         let c = atom.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("the aggregated column");
                         let symbol = prog.decls.get(&atom.rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
@@ -1898,7 +1936,9 @@ impl Model {
                         (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
                         (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o).0]),
                         // Soufflé's sum is 0 over no rows.
-                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(o).0]), integer(0)]),
+                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("rr_exact_sum", vec![column(o).0]), integer(0)]),
+                        // 1 over no rows (`strings::functions::Product`).
+                        (AggOp::Product, Some(o)) => call("coalesce", vec![call("rr_product", vec![column(o).0]), integer(1)]),
                         // `rr_join(sep, value, key, …)` (`strings::functions`) orders and joins text; symbols in as text.
                         (AggOp::Join { by, sep }, Some(o)) => {
                             let text = |(e, symbol): (Expr, bool)| if symbol { self.inputs.text_of(&e) } else { e };
@@ -2584,6 +2624,7 @@ fn decline_class(lit: &Literal, prog: &Program, native: &BTreeSet<String>) -> St
             super::front::AggOp::Min => "min",
             super::front::AggOp::Max => "max",
             super::front::AggOp::Sum => "sum",
+            super::front::AggOp::Product => "product",
             super::front::AggOp::Join { .. } => "join (string concatenation)",
         }),
         Literal::Atom(a) if prog.inputs.iter().any(|i| *i == a.rel) => format!("{}read of input {}", if a.neg { "negated " } else { "" }, a.rel),
@@ -2691,7 +2732,12 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
                     by.iter().for_each(|b| d.str(b));
                     d.str(sep);
                 }
-                other => d.u64(match other { AggOp::Count => 0, AggOp::Min => 1, AggOp::Max => 2, _ => 3 }),
+                // Each aggregate its own tag: `sum` and `product` over one atom are different values.
+                AggOp::Count => d.u64(0),
+                AggOp::Min => d.u64(1),
+                AggOp::Max => d.u64(2),
+                AggOp::Sum => d.u64(3),
+                AggOp::Product => d.u64(5),
             }
             d.str(over.as_deref().unwrap_or("\u{0}"));
             digest_atom(d, atom);
@@ -2862,12 +2908,16 @@ impl Run<'_, '_> {
             match t {
                 Term::Int(_) => Some("int".to_owned()),
                 Term::Str(_) => Some("sym".to_owned()),
+                // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's
+                // value is a number.
                 Term::Var(n) => order.iter().find_map(|s| match &s.lit {
                     Literal::Atom(l) if !l.neg => l
                         .args
                         .iter()
                         .position(|x| matches!(x, Term::Var(v) if v == n))
                         .and_then(|c| Some(prog.decls.get(&l.rel)?.get(c)?.1.clone())),
+                    Literal::Agg { var, op: AggOp::Count | AggOp::Sum | AggOp::Product, .. } if var == n => Some("int".to_owned()),
+                    Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } if v == n && numeric_call(r) => Some("int".to_owned()),
                     _ => None,
                 }),
                 _ => None,
@@ -2884,29 +2934,37 @@ impl Run<'_, '_> {
                 _ => None,
             }
         }
-        // `@concat(a, b)` (nested on either side) as `str_concat` functions of bound arguments, each into a slot of
-        // its own (`rr_concat<step>_<k>`); the term of the outermost one's slot.
-        fn concat(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<String>) -> Option<Term> {
+        // A computed term (`@concat`, the text and number functions `strings::functions::native_call` names) of
+        // bound arguments, nested on either side, as `func` steps, inner ones first, each into a slot of its own
+        // (`rr_fn<step>_<k>`): the term of its value. A bound variable or a constant is itself; anything else (an
+        // unbound variable, a call with no native function) has none.
+        fn expr(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<String>) -> Option<Term> {
             match t {
-                Term::Call(f, args) if f == "concat" && args.len() == 2 => {
-                    let a = concat(&args[0], idx, slots, lines)?;
-                    let b = concat(&args[1], idx, slots, lines)?;
-                    let bound = |t: &Term, slots: &HashMap<String, usize>| match t {
-                        Term::Var(v) => slots.contains_key(v),
-                        Term::Int(_) | Term::Str(_) => true,
-                        _ => false,
-                    };
-                    if !bound(&a, slots) || !bound(&b, slots) {
-                        return None;
-                    }
-                    let out = Term::Var(format!("rr_concat{idx}_{}", lines.len()));
-                    let (ta, tb) = (tok(&a, slots)?, tok(&b, slots)?);
-                    lines.push(format!("func str_concat {} {ta} {tb}", tok(&out, slots)?));
+                Term::Var(v) => slots.contains_key(v).then(|| t.clone()),
+                Term::Int(_) | Term::Str(_) => Some(t.clone()),
+                Term::Call(f, args) => {
+                    let name = call_name(f, args.len())?;
+                    let made: Vec<Term> = args.iter().map(|a| expr(a, idx, slots, lines)).collect::<Option<_>>()?;
+                    let toks: Vec<String> = made.iter().map(|a| tok(a, slots)).collect::<Option<_>>()?;
+                    let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()));
+                    lines.push(format!("func {name} {} {}", tok(&out, slots)?, toks.join(" ")));
                     Some(out)
                 }
-                Term::Call(..) => None,
-                t => Some(t.clone()),
+                _ => None,
             }
+        }
+        // The native function of call `f` with `n` arguments (`@concat` is `str_concat`).
+        fn call_name(f: &str, n: usize) -> Option<&'static str> {
+            if f == "concat" {
+                return (n == 2).then_some("str_concat");
+            }
+            let (name, kinds, _) = crate::code_rule_dsl::logic::strings::functions::native_call(f)?;
+            (kinds.len() == n).then_some(name)
+        }
+        // Whether a computed term's value is a number (a function's result kind), not a symbol.
+        fn numeric_call(t: &Term) -> bool {
+            matches!(t, Term::Call(f, _) if f != "concat"
+                && crate::code_rule_dsl::logic::strings::functions::native_call(f).is_some_and(|(_, _, k)| k == crate::code_rule_dsl::logic::strings::functions::Kind::Number))
         }
         // The atom's source and tokens. An input relation is loaded with its constant columns as a filter and
         // projected away (`field($n, "path", $p)` loads the `path` edges only), so it is read in the size it is used.
@@ -3009,100 +3067,132 @@ impl Run<'_, '_> {
                     let pattern = match crate::code_rule_dsl::logic::strings::patterns(&args[1]) {
                         Some(ps) => Term::Str(ps.join(&crate::code_rule_dsl::logic::strings::SET_SEP.to_string())),
                         // A computed pattern (`@suffix($s, @concat(".", $x))`): made first, into its own slot.
-                        None if matches!(&args[1], Term::Call(f, _) if f == "concat") => concat(&args[1], idx, &mut slots, &mut lines)?,
+                        None if matches!(&args[1], Term::Call(..)) => expr(&args[1], idx, &mut slots, &mut lines)?,
                         None => args[1].clone(),
                     };
-                    // A constant string is a symbol (`Int`) once lowered.
+                    // A constant string is a symbol (`Int`) once lowered; a computed string (`@lower($s)`) is made first.
+                    let tested = expr(&args[0], idx, &mut slots, &mut lines)?;
                     let bound = |t: &Term| match t {
                         Term::Var(v) => slots.contains_key(v),
                         Term::Str(_) | Term::Int(_) => true,
                         _ => false,
                     };
-                    if !bound(&args[0]) || !bound(&pattern) {
+                    if !bound(&tested) || !bound(&pattern) {
                         return None;
                     }
-                    let (ts, tp) = (tok(&args[0], &mut slots)?, tok(&pattern, &mut slots)?);
+                    let (ts, tp) = (tok(&tested, &mut slots)?, tok(&pattern, &mut slots)?);
                     lines.push(format!("test {f} {ts} {tp} {want}"));
                 }
-                Literal::Cmp { l: l @ Term::Var(_), op: "=", r: r @ Term::Call(f, _) } if f == "concat" => {
-                    // `$s = @concat(@concat($m, "."), $r)`: each concatenation a native function, inner ones first.
-                    let made = concat(r, idx, &mut slots, &mut lines)?;
-                    let (ta, tb) = (tok(l, &mut slots)?, tok(&made, &mut slots)?);
-                    lines.push(format!("eq {ta} {tb}"));
-                }
-                Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
-                    if let Term::Call(f, args) = r
-                        && f != "cat"
+                Literal::Cmp { l, op, r } if (*op == "=" || *op == "!=") && !matches!(r, Term::Call(f, _) if f == "cat") => {
+                    // `$v = @f(…)` (a text or number function, `@concat`, nested calls): the call's value straight into
+                    // `$v`, bound or tested; any other `=` or `!=`, of variables, constants or computed terms, as a test
+                    // (or `$v = <bound term>`, binding `$v`). Calls on either side are made first, inner ones first.
+                    let unbound = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Var(v) if !slots.contains_key(v));
+                    let (l, r) = if matches!(r, Term::Var(_)) && matches!(l, Term::Call(..)) { (r, l) } else { (l, r) };
+                    if *op == "="
+                        && let (Term::Var(_), Term::Call(f, args)) = (l, r)
                     {
-                        // A text function (`strings::functions`) of bound arguments, its value bound or tested.
-                        let (Some((name, kinds, _)), Term::Var(_)) = (crate::code_rule_dsl::logic::strings::functions::signature(f), l) else {
-                            return None;
-                        };
-                        let bound = |t: &Term| match t {
-                            Term::Var(v) => slots.contains_key(v),
-                            Term::Int(_) | Term::Str(_) => true,
-                            _ => false,
-                        };
-                        if *op != "=" || args.len() != kinds.len() || !args.iter().all(bound) {
-                            return None;
-                        }
-                        let toks: Vec<String> = args.iter().map(|a| tok(a, &mut slots)).collect::<Option<_>>()?;
+                        let name = call_name(f, args.len())?;
+                        let made: Vec<Term> = args.iter().map(|a| expr(a, idx, &mut slots, &mut lines)).collect::<Option<_>>()?;
+                        let toks: Vec<String> = made.iter().map(|a| tok(a, &mut slots)).collect::<Option<_>>()?;
                         lines.push(format!("func {name} {} {}", tok(l, &mut slots)?, toks.join(" ")));
-                    } else if let Term::Call(f, args) = r {
-                        if *op != "=" || f != "cat" || !matches!(l, Term::Var(_)) {
-                            return None;
-                        }
-                        let (a, b) = (&args[0], &args[1]);
-                        let (tl, ta) = (tok(l, &mut slots)?, tok(a, &mut slots)?);
-                        lines.push(format!("cat {tl} {ta} {}", tok(b, &mut slots)?));
                     } else {
-                        let unbound = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Var(v) if !slots.contains_key(v));
                         // The bound side goes right.
                         let (a, b) = if unbound(r, &slots) { (r, l) } else { (l, r) };
-                        if unbound(b, &slots) {
+                        if unbound(b, &slots) || (*op == "!=" && unbound(a, &slots)) {
                             return None;
                         }
-                        let ta = tok(a, &mut slots)?;
-                        lines.push(format!("{} {ta} {}", if *op == "=" { "eq" } else { "ne" }, tok(b, &mut slots)?));
+                        let b = expr(b, idx, &mut slots, &mut lines)?;
+                        let a = if unbound(a, &slots) { a.clone() } else { expr(a, idx, &mut slots, &mut lines)? };
+                        let (ta, tb) = (tok(&a, &mut slots)?, tok(&b, &mut slots)?);
+                        lines.push(format!("{} {ta} {tb}", if *op == "=" { "eq" } else { "ne" }));
                     }
                 }
+                Literal::Cmp { l, op: "=", r: Term::Call(f, args) } if f == "cat" => {
+                    if !matches!(l, Term::Var(_)) {
+                        return None;
+                    }
+                    let (a, b) = (&args[0], &args[1]);
+                    let (tl, ta) = (tok(l, &mut slots)?, tok(a, &mut slots)?);
+                    lines.push(format!("cat {tl} {ta} {}", tok(b, &mut slots)?));
+                }
                 Literal::Cmp { l, op, r } if matches!(*op, "<" | "<=" | ">" | ">=") => {
-                    // Integers (and nodes) only: symbols are numbered in the order they are met.
+                    // Integers (and nodes) only: symbols are numbered in the order they are met. A number function's
+                    // value (`@strlen($s) > 1`, `@add($i, $j) <= 2`) is made first.
                     let bad = |t: &Term| {
-                        matches!(t, Term::Call(..))
-                            || matches!(t, Term::Var(v) if !slots.contains_key(v))
-                            || matches!(typ(t).as_deref(), None | Some("sym"))
+                        if matches!(t, Term::Call(..)) {
+                            return !numeric_call(t);
+                        }
+                        matches!(t, Term::Var(v) if !slots.contains_key(v)) || matches!(typ(t).as_deref(), None | Some("sym"))
                     };
                     if bad(l) || bad(r) {
                         return None;
                     }
-                    let (a, b) = if matches!(*op, "<" | "<=") { (l, r) } else { (r, l) };
+                    let (l, r) = (expr(l, idx, &mut slots, &mut lines)?, expr(r, idx, &mut slots, &mut lines)?);
+                    let (a, b) = if matches!(*op, "<" | "<=") { (&l, &r) } else { (&r, &l) };
                     let ta = tok(a, &mut slots)?;
                     lines.push(format!("{} {ta} {}", if matches!(*op, "<" | ">") { "lt" } else { "le" }, tok(b, &mut slots)?));
                 }
-                Literal::Agg { var, op: AggOp::Count, atom: a, .. } => {
-                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) {
-                        return None;
+                Literal::Agg { var, op: op @ (AggOp::Count | AggOp::Sum | AggOp::Min | AggOp::Max), over, atom: a } => {
+                    // The over-variable belongs to the bag even if an outer step bound the same name.
+                    let local=a.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if Some(v)==over.as_ref()).then_some(c)).collect::<Vec<_>>();
+                    let mut a = a.clone();
+                    let col = over.as_ref().and_then(|o| a.args.iter().position(|t| matches!(t, Term::Var(v) if v==o)));
+                    if *op != AggOp::Count && col.is_none() { return None; }
+                    if let Some(c) = col {
+                        let typ = prog_types(prog, &a.rel).get(c).copied();
+                        if *op == AggOp::Sum && typ == Some("sym") { return None; }
+                        // Text extrema compare text unless this program holds symbols as atoms on both paths.
+                        if *op != AggOp::Count && self.model.inputs.atoms.is_none() && typ == Some("sym") { return None; }
                     }
-                    let (sc, toks) = atom(a, None, &mut slots)?;
-                    lines.push(format!("count {sc} {} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
+                    for term in &mut a.args {
+                        if matches!(term, Term::Var(v) if Some(&*v)==over.as_ref()) { *term=Term::Wild; }
+                    }
+                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) { return None; }
+                    // Input constant filters are projected out by `atom`; its value column uses that projection too.
+                    let value_col = col.map(|c| if scc.contains(&a.rel) || native_rels.contains(&a.rel) {c} else {
+                        a.args[..c].iter().filter(|t| !matches!(t, Term::Int(_) | Term::Str(_))).count()
+                    });
+                    let (sc, mut toks) = atom(&a, None, &mut slots)?;
+                    if local.len()>1 {
+                        for c in local {
+                            let c=if scc.contains(&a.rel)||native_rels.contains(&a.rel) {c} else {a.args[..c].iter().filter(|t|!matches!(t,Term::Int(_)|Term::Str(_))).count()};
+                            toks[c]="a0".into();
+                        }
+                    }
+                    let name=match op {AggOp::Count=>"count",AggOp::Sum=>"sum",AggOp::Min=>"min",_=>"max"};
+                    let value=if *op==AggOp::Count {String::new()} else {format!(" {}",value_col?)};
+                    lines.push(format!("{name} {sc} {}{value} {}",toks.join(" "),tok(&Term::Var(var.clone()),&mut slots)?));
                 }
-                Literal::Agg { var, op: op @ (AggOp::Min | AggOp::Max), over: Some(o), atom: a } => {
-                    // The aggregated variable is the atom's one free variable, in one column; the rest are bound.
-                    let col = a.args.iter().position(|t| matches!(t, Term::Var(v) if v == o))?;
-                    let free = |t: &Term| matches!(t, Term::Var(v) if !slots.contains_key(v));
-                    if slots.contains_key(o) || a.args.iter().enumerate().any(|(c, t)| c != col && (free(t) || matches!(t, Term::Var(v) if v == o))) {
+                Literal::Agg { var, op: AggOp::Join { by, sep }, over: Some(o), atom: a } => {
+                    // `$s = join $x by ($k…) sep "…" : { atom }`: x and the unbound k are the atom's own columns, one
+                    // each; every other variable is bound. A bound k is the same for every row, so it orders nothing.
+                    // Symbols order by their names natively, as SQL orders their text.
+                    let column = |v: &str| a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v));
+                    let uses = |v: &str| a.args.iter().filter(|t| matches!(t, Term::Var(x) if x == v)).count();
+                    let local: Vec<&String> = std::iter::once(o).chain(by.iter().filter(|b| !slots.contains_key(*b))).collect();
+                    if slots.contains_key(o) || local.iter().any(|v| uses(v) != 1) {
                         return None;
                     }
-                    // Symbols order by text in SQL; as atoms (a corpus run) by atom on both sides, else not native.
-                    if self.model.inputs.atoms.is_none() && prog_types(prog, &a.rel).get(col).copied() == Some("sym") {
+                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v) && !local.contains(&v))) {
                         return None;
+                    }
+                    let sym = |c: usize| u8::from(prog_types(prog, &a.rel).get(c).copied() == Some("sym"));
+                    let xc = column(o)?;
+                    let mut bycols = Vec::new();
+                    for b in by.iter().filter(|b| !slots.contains_key(*b)) {
+                        let c = column(b)?;
+                        bycols.push(format!("{c}:{}", sym(c)));
                     }
                     let mut a = a.clone();
-                    a.args[col] = Term::Wild;
+                    for v in &local {
+                        let c = column(v)?;
+                        a.args[c] = Term::Wild;
+                    }
                     let (sc, toks) = atom(&a, None, &mut slots)?;
-                    let name = if *op == AggOp::Min { "min" } else { "max" };
-                    lines.push(format!("{name} {sc} {} {col} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
+                    let sep = const_tok(&Term::Str(sep.clone()))?;
+                    let bylist = if bycols.is_empty() { "-".to_owned() } else { bycols.join(",") };
+                    lines.push(format!("strjoin {sc} {} {xc}:{} {bylist} {sep} {}", toks.join(" "), sym(xc), tok(&Term::Var(var.clone()), &mut slots)?));
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;
@@ -3122,9 +3212,10 @@ impl Run<'_, '_> {
                     let t0 = tok(&args[0], &mut slots)?;
                     head.push(format!("cat:{t0}:{}", tok(&args[1], &mut slots)?));
                 }
-                // `q(…, cat(m, ".", a))`: the concatenation made into a slot before the head reads it.
-                Term::Call(f, _) if f == "concat" => {
-                    let made = concat(t, order.len(), &mut slots, &mut lines)?;
+                // `q(…, @concat(m, ".", a))`, `q(…, @add($i, 1))`: the computed term made into a slot before the head
+                // reads it.
+                Term::Call(..) => {
+                    let made = expr(t, order.len(), &mut slots, &mut lines)?;
                     head.push(tok(&made, &mut slots)?);
                 }
                 _ => head.push(tok(t, &mut slots)?),
@@ -4075,6 +4166,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let lowered=adjusted.as_ref();
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
+    super::native::aggregation::register_sum(db)?;
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
     // positions table (`rdl_int`) is the same for every run.
     let temp: Vec<(String, String, String)> = db

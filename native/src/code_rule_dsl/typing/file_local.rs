@@ -228,6 +228,12 @@ pub(crate) fn option_input(rel: &str) -> bool {
     matches!(rel, "option" | "option_item")
 }
 
+/// An input with one value for the whole run, as a fact has: the run's options (`option_input`), or an earlier
+/// phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
+pub(crate) fn run_constant(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> bool {
+    option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.inputs.iter().any(|i| i == rel))
+}
+
 /// Derived relations made from the program's constants alone (`la_side_queue(x) :- la_set("…", x)`): every rule
 /// reads only facts, the run's options (`option_input`), other such relations and comparisons. They are constants to
 /// the split, like facts: a rule reading one joins no document by it, and both parts derive them.
@@ -243,7 +249,7 @@ pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Prog
                 prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
                     r.body.iter().all(|l| match l {
                         Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                            constant.contains(&a.rel) || option_input(&a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
+                            constant.contains(&a.rel) || run_constant(prog, &a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
                         }
                         Literal::Cmp { .. } => true,
                         _ => false,
@@ -519,7 +525,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
                     }
                     Literal::Cmp { .. } => continue,
                 };
-                let constant = (!derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel)) || constants.contains(&atom.rel) || option_input(&atom.rel);
+                let constant = (!derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel)) || constants.contains(&atom.rel) || run_constant(prog, &atom.rel);
                 // A tape operation's rows (decision 0058 §4) are made in the chunk that asked: they place nothing.
                 let chunk_value = !derived.contains(atom.rel.as_str()) && CHUNK_VALUES.contains(&atom.rel.as_str());
                 if constant || chunk_value || test_relation(&atom.rel) || filters.contains(&atom.rel) || filters.contains(&rule.head.rel) {

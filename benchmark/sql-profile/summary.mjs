@@ -34,6 +34,13 @@ export function sqlShape(sql) {
 
 function recommendation(query) {
   const flags = names(query);
+  if (query.kind === "operator" && query.sql === "SQL phase preparation") return {
+    key: "sql-phase-preparation", title: "Reduce fused SQL preparation", certainty: "measured cost",
+    reason: "The recorded span measures statement preparation and cache lookup separately from SQL execution.",
+    change: "Reduce repeated result arms, CTE size, or unstable statement shapes while preserving materialization fences.",
+    source: "native/src/code_rule_dsl/sql_executor/phase.rs; native/src/code_rule_dsl/sql_executor/phase/reads.rs",
+    verify: "Compare preparation CPU and unprofiled first edits. Preserve complete relation parity, rollback, and execution limits.",
+  };
   if (query.contextDetails?.some(context => context.scope === "relational")) {
     const source = "native/src/code_rule_dsl/relational.rs: Session::advance/publish; use the recorded clause and stage to locate the authored policy";
     const verify = "Compare the same workload without SQL profiling. Preserve complete diagnostic parity, source gates, cancellation, and work limits.";
@@ -124,6 +131,7 @@ function recommendation(query) {
 }
 
 function bucket(query) {
+  if (query.kind === "operator" && query.sql === "SQL phase preparation") return "SQL statement preparation";
   if (/^\s*CREATE\s+(?:TEMP\s+)?TABLE\b[\s\S]*\bAS\s+(?:SELECT|WITH)\b/i.test(query.sql)) return "Relation materialization SQL";
   if (/^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(query.sql)) return "SQL index construction";
   if (rootInsert(query.sql)) return "Selected-root input inserts";

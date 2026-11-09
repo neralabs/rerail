@@ -70,6 +70,13 @@ pub(crate) trait Source: Send + Sync {
     }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
+    /// Row `row`'s values of `columns`, into `out`: one value at a time by default; a source that finds a row's
+    /// place first (a view of a batch's documents) finds it once.
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        for (o, &c) in out.iter_mut().zip(columns) {
+            *o = self.value(row, c);
+        }
+    }
     fn estimated_len(&self) -> usize {
         self.len()
     }

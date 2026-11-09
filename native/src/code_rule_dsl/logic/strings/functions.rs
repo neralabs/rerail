@@ -34,6 +34,10 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("count_matches", &[Text, Text], Number),
     ("sha256", &[Text], Text),
     ("ed25519_ok", &[Text, Text, Text], Number),
+    // Git objects of the repository holding the run's root (`strings::git`): never stale, so never invalidated.
+    ("git_commit", &[Text], Number),
+    ("git_has", &[Text, Text], Number),
+    ("git_tracked", &[Text], Number),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
@@ -55,7 +59,28 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("float_str", &[Number], Text),
     // `.rr`'s `match("(?<x>…)", s)`: the named group's text (`strings::group`), none when the regex does not match.
     ("rx_group", &[Text, Text, Text], Text),
+    // `.rr`'s integer arithmetic, `strlen` and `to_string`, as the native engine computes them (`native_call`); SQL
+    // lowers the calls to its own operators, and these names give it the same functions. No value on overflow or
+    // for a zero divisor; division truncates, as SQLite's does.
+    ("rr_add", &[Number, Number], Number),
+    ("rr_sub", &[Number, Number], Number),
+    ("rr_mul", &[Number, Number], Number),
+    ("rr_div", &[Number, Number], Number),
+    ("rr_max", &[Number, Number], Number),
+    ("rr_min", &[Number, Number], Number),
+    // Characters, as SQLite's `length` counts a text's.
+    ("rr_strlen", &[Text], Number),
+    ("rr_to_string", &[Number], Text),
 ];
+
+/// The function the native engine computes `.rr`'s call `f` with: `f` itself when it is one of these, or its
+/// `rr_` name (`@add`, `@strlen`, …).
+pub(in crate::code_rule_dsl) fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
+    match f {
+        "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" => signature(&format!("rr_{f}")),
+        _ => signature(f),
+    }
+}
 
 /// A function's name (as SQL names it), arguments and result, if `name` is one of these.
 pub(in crate::code_rule_dsl) fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
@@ -69,12 +94,34 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
     db.create_aggregate_function("rr_join", -1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Join)?;
+    db.create_aggregate_function("rr_product", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Product)?;
     Ok(())
 }
 
 /// `core.rr`'s `join x by k sep s` as the SQL aggregate `rr_join(s, x, k, …)`: the distinct (k…, x) rows ordered by
 /// their keys, then x (numbers by value, text by code point, as Python's `sorted`), their x joined by s.
 struct Join;
+
+/// `product x : {…}` as the SQL aggregate `rr_product(x)`: the product of the integers, saturating at i64's range;
+/// NULL over no rows (the caller's `coalesce` makes that 1), and NULL arguments are skipped as `sum` skips them.
+struct Product;
+
+impl rusqlite::functions::Aggregate<Option<i64>, Option<i64>> for Product {
+    fn init(&self, _: &mut Context<'_>) -> rusqlite::Result<Option<i64>> {
+        Ok(None)
+    }
+
+    fn step(&self, ctx: &mut Context<'_>, acc: &mut Option<i64>) -> rusqlite::Result<()> {
+        if let Some(v) = ctx.get::<Option<i64>>(0)? {
+            *acc = Some(acc.map_or(v, |a| a.saturating_mul(v)));
+        }
+        Ok(())
+    }
+
+    fn finalize(&self, _: &mut Context<'_>, acc: Option<Option<i64>>) -> rusqlite::Result<Option<i64>> {
+        Ok(acc.flatten())
+    }
+}
 
 /// A `rr_join` row's keys and value, ordered as `rr_join` orders them.
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -154,7 +201,18 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "rx_group" => super::group(t(0), t(1), t(2)),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
+        "git_commit" => return super::git::git_commit(t(0)),
+        "git_has" => return super::git::git_has(t(0), t(1)),
+        "git_tracked" => return super::git::git_tracked(t(0)),
         "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
+        "rr_add" => return numbers[0].checked_add(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_mul" => return numbers[0].checked_mul(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_div" => return numbers[0].checked_div(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_max" => return Value::Integer(numbers[0].max(numbers[1])),
+        "rr_min" => return Value::Integer(numbers[0].min(numbers[1])),
+        "rr_strlen" => return Value::Integer(t(0).chars().count() as i64),
+        "rr_to_string" => Some(numbers[0].to_string()),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {

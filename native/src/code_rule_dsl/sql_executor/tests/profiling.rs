@@ -19,6 +19,8 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
         .unwrap();
     assert!(status.success());
     let mut native = false;
+    let mut preparation = false;
+    let mut shared_reads = false;
     let mut cold = false;
     let mut recursive = false;
     let mut query = false;
@@ -56,11 +58,31 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
                 && event["context"]["error"].is_string();
             if event["kind"] == "operator" {
                 native = true;
+                let q = &queries[event["query"].as_u64().unwrap() as usize];
+                if q["sql"] == "SQL phase preparation" {
+                    assert_eq!(event["completed"], true);
+                    assert!(event["selfCpuNs"].is_u64());
+                    let inputs = event["context"]["inputs"].as_array().unwrap();
+                    assert!(
+                        inputs
+                            .iter()
+                            .any(|p| p[0] == "sql_bytes" && p[1].as_u64().unwrap() > 0)
+                    );
+                    let protocol = &event["context"]["outputProtocol"];
+                    let actual = protocol["sqlArms"].as_u64().unwrap();
+                    let logical = protocol["logicalReads"].as_u64().unwrap();
+                    assert!(actual > 0 && actual <= logical);
+                    preparation = true;
+                    shared_reads |= actual < logical;
+                }
             }
             if event["kind"] != "sql" {
                 continue;
             }
-            logical |= event["context"]["logicalAnalyses"].as_array().is_some_and(|a| !a.is_empty()) || event["context"]["logicalAnalysis"].is_object();
+            logical |= event["context"]["logicalAnalyses"]
+                .as_array()
+                .is_some_and(|a| !a.is_empty())
+                || event["context"]["logicalAnalysis"].is_object();
             let stage = event["context"]["stage"].as_str().unwrap_or("");
             cold |= stage == "cold rule";
             recursive |= event["context"].get("frame").is_some();
@@ -89,6 +111,8 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
     assert!(
         files >= 2
             && native
+            && preparation
+            && shared_reads
             && cold
             && recursive
             && query
@@ -132,7 +156,11 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
         report.contains("full query") && report.contains("delta query"),
         "{report}"
     );
-    assert!(report.contains("logical uniqueness and scalar summaries") && report.contains("support_uniqueness"),"{report}");
+    assert!(
+        report.contains("logical uniqueness and scalar summaries")
+            && report.contains("support_uniqueness"),
+        "{report}"
+    );
 }
 
 #[test]
@@ -154,8 +182,17 @@ fn profiled_session_child() {
     e.run(PROGRAM.into(), "python".into(), None).unwrap();
     let totals = e.sql_profile_totals();
     let explanation: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
-    assert!(!explanation["executions"][0]["recursive"].as_array().unwrap().is_empty());
-    assert_eq!(e.sql_profile_totals(), totals, "explain must not execute SQL");
+    assert!(
+        !explanation["executions"][0]["recursive"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        e.sql_profile_totals(),
+        totals,
+        "explain must not execute SQL"
+    );
     let patch = json!([{"name":"edge","delete":[[2,1,1]]}]).to_string();
     e.set_limits(json!({"max_steps":1}).to_string()).unwrap();
     assert!(e.apply_changes(patch.clone(), None).is_err());
