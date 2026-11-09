@@ -1,6 +1,10 @@
 # Binaries are stored in Git LFS: install git-lfs before cloning (CONTRIBUTING.md). CI pulls them through
 # .github/actions/lfs.
 model/model.safetensors filter=lfs diff=lfs merge=lfs -text
+# The model's manifest pins each file's SHA-256 and the engine refuses a model that differs, so no checkout may rewrite
+# these files' line ends (Git for Windows converts text to CRLF by default).
+model/config.json -text
+model/tokenizer.json -text
 native/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text
 native/grammars/*/src/parser.generated.c.gz filter=lfs diff=lfs merge=lfs -text
 
