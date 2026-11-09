@@ -24,7 +24,7 @@
 #include "python/conditions.rr"
 
 .phase struct
-.export unit, def, binds, base, member, param, ret, vann, module_file, at
+.export unit, def, binds, base, member, param, ret, vann, alias, module_file, at
 // Where a definition is: kept, and handed on to the findings that cite it, but not part of its granule's digest.
 .positions at
 // Which document each definition is in: the store replaces a changed document's granules on their own.
@@ -111,6 +111,11 @@ ret(q, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "return_type", r), t
 .decl vann(s: symbol, a: symbol)
 vann(@dot(q, x), a) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "type", t), text(t, w),
     nearest(g, s, scope), pscope(s), sym(s, q), !py_dead_at(g), a = @replace_all(w, "\\s+", " ").
+// alias(s, e): a module- or class-level name s assigned a name or a dotted name, as written (`local = _thread._local`
+// in a stub): s is what e names.
+.decl alias(s: symbol, e: symbol)
+alias(@dot(q, x), e) :- kind(g, "assignment"), field(g, "left", l), kind(l, "identifier"), text(l, x), field(g, "right", r), text(r, e),
+    match("^[A-Za-z_][A-Za-z_0-9.]*$", e), nearest(g, s, scope), pscope(s), sym(s, q), !py_dead_at(g).
 // module_file(m, p): the file module m was read from, a workspace file or the library file its import resolved to.
 .decl module_file(m: symbol, p: symbol)
 module_file(q, p) :- modnode(d, m), modname(m, q), doc(d, p, _).
