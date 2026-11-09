@@ -1356,9 +1356,17 @@ fn run_observed(
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
     let (phased, phase_runs) = phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?;
+    // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
+    // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
+    // The split takes them as constants of the run (`file_local::run_constant`).
     let add_bridged = |prog: &mut front::Program| {
-        for (rel, rows) in bridged.iter().chain(&phased) {
+        for (rel, rows) in &bridged {
             prog.facts.entry(rel.clone()).or_default().extend(rows.iter().cloned());
+        }
+        for rel in phased.keys() {
+            if !prog.inputs.contains(rel) {
+                prog.inputs.push(rel.clone());
+            }
         }
     };
     add_bridged(&mut prog);
@@ -1373,7 +1381,9 @@ fn run_observed(
             None => constants::fold(prog, programs, root, out, modes, binding, chunk_nodes, typing, options),
         }
     };
+    phase("combine", 0);
     let mut folded = fold_constants(&mut prog)?;
+    phase("constants", 0);
     // Plans are kept across this run's chunks (decision 0038), and a session's across its runs (decision 0090 step 5).
     let across = session::generation();
     let _plans = super::KeepPlans::start(across);
@@ -1679,7 +1689,10 @@ fn run_observed(
     let memo_program = {
         let digest = memo::program_digest(&split.local);
         let reads_options = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(&a.rel));
-        if reads_options { memo::with_options(digest, options) } else { digest }
+        let digest = if reads_options { memo::with_options(digest, options) } else { digest };
+        // And under the rows of the phases' exports it reads, which are not in its text.
+        let reads_phased: BTreeSet<&str> = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).filter(|r| phased.contains_key(*r)).collect();
+        if reads_phased.is_empty() { digest } else { memo::with_rows(digest, reads_phased.iter().map(|r| (*r, &phased[*r]))) }
     };
     let cross_plan = match &cross_declared {
         Some(declared) => cross_memo::split(&mut split.cross, declared, &memo_program, &split.same_doc)?,
@@ -1851,6 +1864,25 @@ fn run_observed(
                 (name.to_owned(), source, measured)
             })
             .collect()
+    };
+    // The phases' exports the program reads, as relations of atoms (`add_bridged`).
+    let repository = {
+        let mut repository = repository;
+        for (rel, rows) in phased.iter().filter(|(rel, _)| read.contains(*rel)) {
+            let names: Vec<String> = (0..prog.decls[rel].len()).map(|c| format!("c{c}")).collect();
+            let cols: Vec<&str> = names.iter().map(String::as_str).collect();
+            let texts: Vec<&str> = rows.iter().flatten().filter_map(|v| if let front::Value::Str(s) = v { Some(s.as_str()) } else { None }).collect();
+            let mut atoms = store.intern_atoms(&texts).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(i64::from);
+            let mut relation = crate::code_rule_dsl::facts::vtab::Relation::new(&cols);
+            for row in rows {
+                let row: Vec<i64> = row.iter().map(|v| match v { front::Value::Int(i) => *i, _ => atoms.next().expect("an atom per string") }).collect();
+                relation.push(&row);
+            }
+            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(relation);
+            let measured = syntax::statistics(source.as_ref());
+            repository.push((rel.clone(), source, measured));
+        }
+        repository
     };
     for rel in split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;

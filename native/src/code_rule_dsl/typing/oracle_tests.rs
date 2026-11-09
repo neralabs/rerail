@@ -1120,7 +1120,11 @@ ats(s, p, l) :- struct__at(s, p, l).
         println!("PHASE {what}: freshness: definitions {} ({} changed, {} gone); granules {} ({} changed, frontier {}, unattributed {}); bookkeeping {:.2} s",
             p.units.0, p.units.1, p.units.2, p.granules.0, p.granules.1, p.granules.2, p.granules.3, p.bookkeeping);
         let changed: Vec<String> = p.exports.iter().filter(|e| e.2 + e.3 > 0).map(|(rel, n, add, gone)| format!("{rel} {n} (+{add} -{gone})")).collect();
-        println!("PHASE {what}: exports changed: {}; how: {}", if changed.is_empty() { "none".to_owned() } else { changed.join(", ") }, p.full_because.as_deref().map_or_else(|| p.report.phases.last().map_or("", |x| x.0).to_owned(), |w| format!("in full: {w}")));
+        println!("PHASE {what}: exports changed: {}; how: {}", if changed.is_empty() { "none".to_owned() } else { changed.join(", ") }, p.full_because.as_deref().map_or_else(|| p.report.phases.first().map_or("", |x| x.0).to_owned(), |w| format!("in full: {w}")));
+        let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
+        println!("PHASE {what}: parts: {}", parts.join(", "));
+        let outer: Vec<String> = r.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
+        println!("PHASE {what}: the reader's run (phase included): {:.2} s: {}", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>(), outer.join(", "));
     };
     let outputs = ["units", "modules", "defs", "imports", "bindings", "bases", "members", "params", "rets", "ats"];
     let dump = || -> BTreeMap<&str, Vec<String>> {

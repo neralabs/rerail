@@ -118,7 +118,7 @@ pub(crate) struct PhaseRun {
 pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// The store a phase keeps its exports in, beside the content store: `<content store>.phases`.
-fn store_path() -> Option<PathBuf> {
+pub(super) fn store_path() -> Option<PathBuf> {
     super::tape_cache_path().map(|p| PathBuf::from(format!("{}.phases", p.display())))
 }
 
@@ -288,6 +288,8 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
     own["phase_no_loads"] = serde_json::Value::Bool(true);
     let out = job.scratch.join(format!("phase-{}-changed", job.name));
     let mut report = super::run_with_options(&[job.text], job.root, None, &out, job.modes, job.binding, job.chunk_nodes, job.typing, &own)?;
+    let ran = super::thread_usage();
+    let constants = report.phases.iter().find(|p| p.0 == "constants").map_or(0.0, |p| p.1 + p.2);
     let began = thread_cpu();
     let rows = read_exports(job.name, job.program, job.declared, &out)?;
     let refuse = |why: String| {
@@ -324,6 +326,7 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
     }
     drop(db);
     let (exports, units, granules) = keep(job.name, &rows, &job.declared.positions, job.producer, Some(&only))?;
+    let kept = super::thread_usage();
     // The record: the changed documents' bytes as now, the rest as consulted.
     let now: BTreeMap<&str, &str> = report.consulted.iter().filter(|c| c.0 == "doc").map(|c| (c.1.as_str(), c.2.as_str())).collect();
     let consulted: Vec<(String, String, String)> = consulted.into_iter().map(|(w, p, d)| if w == "doc" && let Some(n) = now.get(p.as_str()) { (w, p, (*n).to_owned()) } else { (w, p, d) }).collect();
@@ -332,9 +335,17 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
     // The reader's facts: every document's rows, from the store.
     let all = stored_rows(job.name, &job.declared.exports)?;
     report.files = documents(&consulted);
-    // The whole of it, the changed documents' run included, as the phase's one entry.
+    // Its parts: the changed documents' run (of it, the run's constants), the granules replaced, the reader's rows read.
     let at = super::thread_usage();
-    report.phases = vec![("maintained: changed documents run alone, their granules replaced", at.0 - started.0, at.1 - started.1, super::usage().2, changed.len())];
+    let rss = super::usage().2;
+    let cpu = |a: (f64, f64), b: (f64, f64)| (b.0 - a.0, b.1 - a.1);
+    let (run, keeping, reading) = (cpu(started, ran), cpu(ran, kept), cpu(kept, at));
+    report.phases = vec![
+        ("maintained: changed documents run alone, their granules replaced", run.0 - constants, run.1, rss, changed.len()),
+        ("maintained: the run's constants", constants, 0.0, rss, 0),
+        ("maintained: granules replaced", keeping.0, keeping.1, rss, 0),
+        ("maintained: the reader's rows read", reading.0, reading.1, rss, 0),
+    ];
     crate::code_rule_dsl::logic::profile::decision("phase maintained (decision 0094 §4)", || format!("phase {}: {} documents run alone, {} granules replaced", job.name, changed.len(), only.len()));
     Ok(Ok((report, all, exports, units, granules, began)))
 }
@@ -687,7 +698,7 @@ own(s, p) :- fn(_, s, p).
         let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
-        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(".decl p1__def(s: symbol, k: symbol)\n.decl r(s: symbol)\nr(s) :- p1__def(s, _).\n.output r\n").unwrap()).unwrap();
+        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl p1__def(s: symbol, k: symbol)\n.decl p1__own(s: symbol, p: symbol)\n.decl r(s: symbol)\nr(s) :- p1__def(s, _).\n.decl q(x: symbol, s: symbol)\nq(x, s) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x), x = \"f\", p1__own(s, \"b.py\").\n.output r, q\n").unwrap()).unwrap();
         let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
         let r = || std::fs::read_to_string(out.join("r.csv")).unwrap();
         let how = |report: &crate::code_rule_dsl::logic::plan::corpus::Report| {
@@ -701,6 +712,8 @@ own(s, p) :- fn(_, s, p).
         assert!(maintained && what == "maintained", "an edit to b.py is maintained: {what}");
         assert_eq!(units, (2, 2, 0), "b.py's definitions only: g changed, h new");
         assert_eq!(r(), "a.py:f\nb.py:g\nb.py:h\n", "a.py's rows stand, b.py's replaced");
+        // a.py's file-local rows read b.py's exports: its bytes are as they were, yet its memo entry is not taken.
+        assert_eq!(std::fs::read_to_string(out.join("q.csv")).unwrap(), "f\tb.py:g\nf\tb.py:h\n", "a.py's rows over b.py's exports, as they are now");
         write("b.py", "def h():\n    pass\n");
         let (maintained, _, units) = how(&run());
         assert!(maintained, "a definition removed is maintained");
