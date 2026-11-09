@@ -1585,6 +1585,7 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
     let analysis = {
         let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
         let analysis = super::analysis::ProgramAnalysis::analyze(prog);
+        let _explain = super::profile::span(|| "explain analysis".into());
         analysis.explain();
         std::sync::Arc::new(analysis)
     };
