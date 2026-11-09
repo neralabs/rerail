@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, rm } from "node:fs/promises";
 import { renameWithRetry } from "../file-replace.js";
 import { openNoFollow } from "../no-follow.js";
-import { keepFolderToOwner, type PrivateFolder } from "./windows-acl.js";
+import { keepFolderPrivate, type PrivateMachine } from "./private-files.js";
 import { resolve, sep } from "node:path";
 
 /**
@@ -43,7 +43,7 @@ function errno(error: unknown): string | undefined {
  * them. With `create`, makes each missing one (`0700`), and the folders above `.rerail` as `mkdir -p` would; without
  * it, stops at the first missing one.
  */
-async function ledgerFolder(directory: string, create: boolean, windows: Omit<PrivateFolder, "folder"> = {}): Promise<void> {
+async function ledgerFolder(directory: string, create: boolean, machine: PrivateMachine = {}): Promise<void> {
   const absolute = resolve(directory);
   const segments = absolute.split(sep);
   const start = segments.lastIndexOf(LEDGER_FOLDER);
@@ -65,7 +65,7 @@ async function ledgerFolder(directory: string, create: boolean, windows: Omit<Pr
         return false;
       });
       // Windows ignores the mode: the folder of session records gets an owner-only ACL, which every record inherits.
-      if (made && end === start + 2) keepFolderToOwner({ ...windows, folder });
+      if (made && end === start + 2) keepFolderPrivate(folder, { ...machine, made });
       stats = await lstat(folder);
     }
     if (stats.isSymbolicLink()) refuse(folder, "a symbolic link");
@@ -79,8 +79,8 @@ async function ledgerFolder(directory: string, create: boolean, windows: Omit<Pr
  * outside the profile folder: a checkout under `C:\` would otherwise let every local user read prompts and preimages,
  * and change held steers.
  */
-export async function makeLedgerFolder(directory: string, windows: Omit<PrivateFolder, "folder"> = {}): Promise<void> {
-  await ledgerFolder(directory, true, windows);
+export async function makeLedgerFolder(directory: string, machine: PrivateMachine = {}): Promise<void> {
+  await ledgerFolder(directory, true, machine);
 }
 
 /**

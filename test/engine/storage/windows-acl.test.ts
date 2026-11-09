@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeLedgerFolder } from "../../../src/engine/storage/ledger-paths.js";
-import { makeRerailHome } from "../../../src/engine/storage/private-files.js";
-import { insideProfile, keepFolderToOwner, sddlOtherReaders, WINDOWS_ACL, type WindowsAcl } from "../../../src/engine/storage/windows-acl.js";
+import { keepFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
+import { insideProfile, sddlOtherReaders, WINDOWS_ACL, type WindowsAcl } from "../../../src/engine/storage/windows-acl.js";
 
 const USER = "S-1-5-21-1-2-3-1001";
 /** A profile no test folder is under, so every folder here counts as outside it. */
@@ -44,11 +44,20 @@ describe("who an ACL lets read a file", () => {
 describe("an owner-only ACL on Windows", () => {
   it("goes on a folder outside the profile, never inside it, and never on macOS or Linux", () => {
     const acl = recordingAcl();
-    keepFolderToOwner({ folder: String.raw`D:\rerail`, acl, platform: "win32", profile: String.raw`C:\Users\me` });
-    keepFolderToOwner({ folder: String.raw`c:\users\ME\.rerail`, acl, platform: "win32", profile: String.raw`C:\Users\me` });
-    keepFolderToOwner({ folder: "/srv/rerail", acl, platform: "linux", profile: "/home/me" });
+    keepFolderPrivate(String.raw`D:\rerail`, { acl, platform: "win32", profile: String.raw`C:\Users\me`, made: true });
+    keepFolderPrivate(String.raw`c:\users\ME\.rerail`, { acl, platform: "win32", profile: String.raw`C:\Users\me`, made: true });
+    keepFolderPrivate("/srv/rerail", { acl, platform: "linux", profile: "/home/me", made: true });
     expect(acl.restricted).toEqual([[String.raw`D:\rerail`, true]]);
     expect(insideProfile(String.raw`C:\Users\me2\x`, String.raw`C:\Users\me`)).toBe(false);
+  });
+
+  it("goes on only a folder just made, or one a rare command repairs, so a hook's call starts no program", () => {
+    const acl = recordingAcl();
+    keepFolderPrivate(String.raw`D:\rerail`, { acl, platform: "win32", profile: ELSEWHERE });
+    keepFolderPrivate(String.raw`D:\rerail`, { acl, platform: "win32", profile: ELSEWHERE, made: false });
+    expect(acl.restricted).toEqual([]);
+    keepFolderPrivate(String.raw`D:\rerail`, { acl, platform: "win32", profile: ELSEWHERE, repair: true });
+    expect(acl.restricted).toEqual([[String.raw`D:\rerail`, true]]);
   });
 
   it("never fails its caller when Windows refuses it, and says so", () => {
@@ -56,7 +65,7 @@ describe("an owner-only ACL on Windows", () => {
     const acl: WindowsAcl = { restrictToOwner: () => {
       throw new Error("icacls failed");
     }, otherReaders: () => [] };
-    expect(() => keepFolderToOwner({ folder: String.raw`D:\rerail`, acl, platform: "win32", profile: ELSEWHERE })).not.toThrow();
+    expect(() => keepFolderPrivate(String.raw`D:\rerail`, { acl, platform: "win32", profile: ELSEWHERE, made: true })).not.toThrow();
     expect(written).toHaveBeenCalledWith(expect.stringContaining("icacls failed"));
   });
 
@@ -76,6 +85,16 @@ describe("an owner-only ACL on Windows", () => {
     expect(acl.restricted).toEqual([[join(checkout, ".rerail", "sessions"), true]]);
     await makeLedgerFolder(join(checkout, ".rerail", "sessions", "codex-locks"), { acl, platform: "win32", profile: ELSEWHERE });
     expect(acl.restricted).toHaveLength(1);
+  });
+
+  it("names the accounts beyond the owner its ACL lets read a file, and none for an owner-only one", async () => {
+    const reader = (readers: string[]) => ({ platform: "win32" as const, acl: { otherReaders: () => readers } });
+    expect(await openToOthers(String.raw`C:\certs\key.pem`, reader(["BU", "AU"]))).toBe("can be read by other accounts (BU, AU)");
+    expect(await openToOthers(String.raw`C:\certs\key.pem`, reader([]))).toBeUndefined();
+    const unread = { platform: "win32" as const, acl: { otherReaders: (): string[] => {
+      throw new Error("Get-Acl failed");
+    } } };
+    await expect(openToOthers(String.raw`C:\certs\key.pem`, unread)).rejects.toThrow("Get-Acl failed");
   });
 
   it.runIf(process.platform === "win32")("leaves only this user, SYSTEM and Administrators able to read a folder", async () => {

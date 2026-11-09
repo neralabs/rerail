@@ -6,9 +6,9 @@
  * checkout's `.rerail\sessions`, and reads a daemon's TLS private key, wherever the person points them.
  *
  * Both work through programs Windows ships, by absolute path and with no window: `icacls` sets an ACL, Windows
- * PowerShell's `Get-Acl` reads one in SDDL, which names every account by SID whatever the system's language.
+ * PowerShell's `Get-Acl` reads one in SDDL, which names every account by SID whatever the system's language. This is
+ * the Windows half of `private-files.ts`, which callers use.
  */
-import { homedir } from "node:os";
 import { win32 } from "node:path";
 import { execFileSync } from "../child-process.js";
 import { windowsPowerShell, windowsSystemProgram } from "../system-programs.js";
@@ -93,26 +93,4 @@ export const WINDOWS_ACL: WindowsAcl = {
 export function insideProfile(path: string, profile: string): boolean {
   const below = win32.relative(profile.toLowerCase(), path.toLowerCase());
   return below === "" || (!below.startsWith("..") && !win32.isAbsolute(below));
-}
-
-/** A private folder, and what keeps it private; tests pass their own machine. */
-export interface PrivateFolder {
-  folder: string;
-  acl?: WindowsAcl;
-  platform?: NodeJS.Platform;
-  profile?: string;
-}
-
-/**
- * On Windows, gives `folder`, outside the profile folder, an owner-only ACL (`restrictToOwner`); elsewhere, and inside
- * the profile, does nothing. A failure is reported on stderr and never fails the caller: the folder stays as private as
- * its parent left it, as before.
- */
-export function keepFolderToOwner({ folder, acl = WINDOWS_ACL, platform = process.platform, profile = homedir() }: PrivateFolder): void {
-  if (platform !== "win32" || insideProfile(folder, profile)) return;
-  try {
-    acl.restrictToOwner(folder, true);
-  } catch (error) {
-    process.stderr.write(`rerail: could not keep ${folder} to this user alone: ${error instanceof Error ? error.message : String(error)}\n`);
-  }
 }
