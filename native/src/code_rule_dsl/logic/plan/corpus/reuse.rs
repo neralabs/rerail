@@ -11,8 +11,7 @@
 //! 0's observer about each consulted thing. That costs a `stat` each, and a read only for what changed. When all
 //! are as they were, the run writes the kept outputs and evaluates nothing: the empty delta stops before phase 1.
 //!
-//! The cutoff is on with `options.reuse` (the command line's runs) or `RERAIL_RUN_REUSE=on`, and off with
-//! `RERAIL_RUN_REUSE=off`. A run that reads something it cannot name does not record. That covers typing inputs,
+//! The cutoff is on with `options.reuse`: the command line's runs, and phase 0's. A run that reads something it cannot name does not record. That covers typing inputs,
 //! T facts, a program reading another phase's exports, or a run that consulted no file.
 
 use super::{Report, Result, Typing, observe, unchanged};
@@ -22,11 +21,7 @@ use std::path::Path;
 
 /// Whether the cutoff applies to a run with these options and typing inputs.
 pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Path>) -> bool {
-    let asked = match std::env::var("RERAIL_RUN_REUSE").as_deref() {
-        Ok("off") => return false,
-        Ok("on") => true,
-        _ => options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false),
-    };
+    let asked = options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false);
     asked && t_facts.is_none() && typing.declarations.is_empty() && typing.site.is_none() && typing.summarize.is_none() && super::tape_cache_path().is_some()
 }
 

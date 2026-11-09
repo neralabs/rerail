@@ -323,10 +323,10 @@ pub(super) enum TypeAnswer {
 
 /// The spans the types scorer reads: each typed or open node's.
 const TYPE_SPANS: &str = "
-.decl rr_type_at(n: node, s: number, e: number)
-rr_type_at(n, s, e) :- type_of(n, _), node(_, n, _, s, e).
-rr_type_at(n, s, e) :- type_open(n), node(_, n, _, s, e).
-.output rr_type_at
+.decl oracle_type_at(n: node, s: number, e: number)
+oracle_type_at(n, s, e) :- type_of(n, _), node(_, n, _, s, e).
+oracle_type_at(n, s, e) :- type_open(n), node(_, n, _, s, e).
+.output oracle_type_at
 ";
 
 /// What the type relations say at a node: listed classes, open, proven classes, possible classes, possible open.
@@ -350,7 +350,7 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
     let rows = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
-    let at: BTreeMap<String, (String, usize, usize)> = rows("rr_type_at")
+    let at: BTreeMap<String, (String, usize, usize)> = rows("oracle_type_at")
         .into_iter()
         .map(|r| (r[0].clone(), (r[0].rsplit_once(':').unwrap().0.to_owned(), r[1].parse().unwrap(), r[2].parse().unwrap())))
         .collect();
@@ -919,6 +919,7 @@ fn benchmark_python_calls_program_corpus() {
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
     // `RERAIL_PYTHON_CALLS_OUT`: write the outputs there and keep them (the program's other `.output`s too, for counting).
     let out = std::env::var_os("RERAIL_PYTHON_CALLS_OUT").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi"));
+    // `RERAIL_PYTHON_REUSE=on`: phase 0's cutoff, as the command line's runs have it (`corpus::reuse`).
     // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so calls.rr loads the standard library's stubs (t21).
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
     let mut text = format!("{}\n{JEDI_SPANS}", program(&calls_name()));
@@ -930,7 +931,7 @@ fn benchmark_python_calls_program_corpus() {
     if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
         text.push_str(&format!("\n.pragma \"cross-memo\" \"{rels}\"\n"));
     }
-    let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("cross-file memo: {} components found, {} derived", report.cross.0, report.cross.1);
     println!("phase 0: {}; {}", report.files_observed, report.phases.first().map_or("", |p| p.0));
@@ -1088,7 +1089,7 @@ imports(m, x, t) :- struct__binds(m, x, "import", t).
 .output modules, defs, imports
 "#;
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
-    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let count = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).map_or(0, |t| t.lines().count());
     let show = |what: &str, r: &corpus::Report| {
         let p = &r.phase_runs[0];
@@ -1136,7 +1137,7 @@ fn spike_o125_a_session_maintains_calls_rr() {
     let text = format!("{}\n{JEDI_SPANS}", program("calls"));
     let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension("o125");
     let out = base.join("out");
-    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let dump = || -> BTreeMap<String, Vec<String>> {
         let mut all = BTreeMap::new();
         for e in std::fs::read_dir(&out).unwrap().flatten() {
@@ -1321,7 +1322,7 @@ fn spike_o125_replay() {
         overlay(step);
     }
     let text = format!("{}\n{JEDI_SPANS}", program("calls"));
-    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let rels = ["call_target", "call_open", "type_of", "possible_type"];
     let outputs = || -> Vec<Vec<String>> {
         rels.iter().map(|r| {

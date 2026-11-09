@@ -181,7 +181,77 @@ pub(in crate::code_rule_dsl) fn included_files(src: &str) -> Result<Vec<PathBuf>
 
 /// `statements`' `#include`s resolved in the library: its files (`core.rr` first unless the statements are in T's
 /// shape, each once, includes first) and the statements without the includes.
+///
+/// Phase 0 resolves them (`plan::corpus::phase0`): `bootstrap.rr`'s run loads each file as a document, and the
+/// files are read here off their stored tapes, in the graph's order.
 fn resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syntax::Statement>), Error> {
+    use super::plan::corpus::phase0;
+    if phase0::active() {
+        return builtin_resolve(statements);
+    }
+    let (includes, own): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+    let t_shape = own.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
+    let names: Vec<(i64, String, usize)> = includes
+        .iter()
+        .enumerate()
+        .filter_map(|(k, (item, line))| match item {
+            syntax::Item::Include(name) => Some((k as i64, name.clone(), *line)),
+            _ => None,
+        })
+        .collect();
+    let g = phase0::graph(&phase0::Seed::Text { t_shape, includes: names.iter().map(|(k, n, _)| (*k, n.clone())).collect() })?;
+    if let Some((_, at, name)) = g.missing.iter().find(|(f, _, _)| f == phase0::TEXT) {
+        let line = names.iter().find(|(k, _, _)| k == at).map_or(0, |(_, _, l)| *l);
+        return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
+    }
+    let mut order = Vec::new();
+    g.order(phase0::TEXT, &mut order)?;
+    Ok((modules_of(order)?, own))
+}
+
+/// Each module's statements, without its includes (the graph placed them), read off its stored tape.
+fn modules_of(paths: Vec<PathBuf>) -> Result<Files, Error> {
+    paths
+        .into_iter()
+        .map(|p| {
+            let (statements, _) = read(&p)?;
+            Ok((p, statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect()))
+        })
+        .collect()
+}
+
+/// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
+/// for a text that includes nothing, or while phase 0 itself runs.
+pub(in crate::code_rule_dsl) fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
+    use super::plan::corpus::phase0;
+    let statements = from_tape::statements(src, &tape(src))?;
+    let names: Vec<(i64, String)> = statements
+        .iter()
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Include(name) => Some(name.clone()),
+            _ => None,
+        })
+        .enumerate()
+        .map(|(k, n)| (k as i64, n))
+        .collect();
+    if names.is_empty() || phase0::active() {
+        return Ok(None);
+    }
+    let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
+    Ok(Some(phase0::Seed::Text { t_shape, includes: names }))
+}
+
+/// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.
+/// `None` for a text that includes nothing.
+pub(in crate::code_rule_dsl) fn graph_digest(src: &str) -> Result<Option<[u8; 32]>, Error> {
+    match text_seed(src)? {
+        Some(seed) => Ok(Some(super::plan::corpus::phase0::graph(&seed)?.digest())),
+        None => Ok(None),
+    }
+}
+
+/// The resolution phase 0's own program (`bootstrap.rr`) is read with: the library, then beside the includer.
+fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syntax::Statement>), Error> {
     let (includes, own): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
     let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
     let t_shape = own.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
@@ -478,6 +548,58 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
 /// A file and everything it includes, each once, includes first: (path, statements without the
 /// includes); and every library file read or probed, in reading order.
 fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+    use super::plan::corpus::phase0;
+    if phase0::active() {
+        return builtin_program(path);
+    }
+    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let g = phase0::graph(&phase0::Seed::File(path.clone()))?;
+    let mut order = Vec::new();
+    g.order(&path.to_string_lossy(), &mut order)?;
+    order.retain(|p| *p != path);
+    order.push(path.clone());
+    // The files in reading order, as `LibraryFile`s check them: `core.rr` (an include at offset -1), then the
+    // file, then each include, its library probe first where it was found beside the file.
+    let library = library();
+    let mut files = Vec::new();
+    let mut seen = Vec::new();
+    let key = path.to_string_lossy().into_owned();
+    let (first, rest): (Vec<_>, Vec<_>) = g.includes.get(&key).cloned().unwrap_or_default().into_iter().partition(|(at, _, _)| *at < 0);
+    for (_, _, target) in first {
+        trace(&g, &library, &target, &mut files, &mut seen);
+    }
+    seen.push(path.clone());
+    files.push(LibraryFile { path: path.clone(), sha256: g.digests.get(&path).copied() });
+    for (_, name, target) in rest {
+        probe(&library, &name, &target, &mut files);
+        trace(&g, &library, &target, &mut files, &mut seen);
+    }
+    Ok((modules_of(order)?, files))
+}
+
+/// `path` and what it includes, each once, as phase 0 found them: the reading order of the builtin reader.
+fn trace(g: &super::plan::corpus::phase0::Graph, library: &Path, path: &Path, files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>) {
+    if seen.iter().any(|p| p == path) {
+        return;
+    }
+    seen.push(path.to_path_buf());
+    files.push(LibraryFile { path: path.to_path_buf(), sha256: g.digests.get(path).copied() });
+    for (_, name, target) in g.includes.get(&*path.to_string_lossy()).cloned().unwrap_or_default() {
+        probe(library, &name, &target, files);
+        trace(g, library, &target, files, seen);
+    }
+}
+
+/// The library candidate an include probed and did not find, when its file is the one beside the includer.
+fn probe(library: &Path, name: &str, target: &Path, files: &mut Vec<LibraryFile>) {
+    let in_library = library.join(name);
+    if in_library.canonicalize().ok().as_deref() != Some(target) {
+        files.push(LibraryFile { path: in_library, sha256: None });
+    }
+}
+
+/// `program` for phase 0's own reads.
+fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
     // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries

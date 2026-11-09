@@ -107,14 +107,14 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             columns.insert(b.output.as_str(), nodes);
         }
         // The spans of the nodes the bridged outputs name.
-        let mut spans = String::from("\n.decl rr_bridge_at(n: node, k: symbol, s: number, e: number)\n");
+        let mut spans = String::from("\n.decl typing_bridge_at(n: node, k: symbol, s: number, e: number)\n");
         for (output, nodes) in &columns {
-            let vars: Vec<String> = (0..nodes.len()).map(|i| format!("rr_v{i}")).collect();
+            let vars: Vec<String> = (0..nodes.len()).map(|i| format!("typing_v{i}")).collect();
             for (i, _) in nodes.iter().enumerate().filter(|(_, n)| **n) {
-                spans.push_str(&format!("rr_bridge_at(rr_v{i}, k, s, e) :- {output}({}), node(_, rr_v{i}, k, s, e).\n", vars.join(", ")));
+                spans.push_str(&format!("typing_bridge_at(typing_v{i}, k, s, e) :- {output}({}), node(_, typing_v{i}, k, s, e).\n", vars.join(", ")));
             }
         }
-        spans.push_str(".output rr_bridge_at\n");
+        spans.push_str(".output typing_bridge_at\n");
         let out = scratch.join(format!("typing-{name}"));
         // The program's language is its name's: `calls_rust` reads the `.rs` files, the others the `.py` files.
         let typing = Typing { rust: Some(name.ends_with("_rust")), ..typing.clone() };
@@ -124,7 +124,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             Ok(text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect())
         };
         let mut at: BTreeMap<String, [String; 4]> = BTreeMap::new();
-        for r in rows("rr_bridge_at")? {
+        for r in rows("typing_bridge_at")? {
             let path = r[0].rsplit_once(':').map(|(p, _)| p.to_owned()).ok_or_else(|| Error::Plan(format!("{name}: node {}", r[0])))?;
             at.insert(r[0].clone(), [path, r[1].clone(), r[2].clone(), r[3].clone()]);
         }

@@ -39,6 +39,7 @@ mod inputs;
 pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
 mod world;
 mod reuse;
+pub(in crate::code_rule_dsl) mod phase0;
 mod cross_memo;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
@@ -376,6 +377,11 @@ fn texts_digest(programs: &[&str], extra: &str) -> [u8; 32] {
     for text in programs.iter().copied().chain([extra]) {
         hash.update((text.len() as u64).to_le_bytes());
         hash.update(text.as_bytes());
+        // What the text includes, as phase 0 found it: its modules' paths and digests, and the graph's edges. A text
+        // is a function of these, not of its `#include` lines alone.
+        if let Ok(Some(graph)) = crate::code_rule_dsl::logic::rr::graph_digest(text) {
+            hash.update(graph);
+        }
     }
     hash.finalize().into()
 }
@@ -1207,6 +1213,12 @@ pub(crate) fn run_with_options(
         o.begin();
         o.counts
     });
+    // Phase 0 first: each text's include graph, from `bootstrap.rr`'s run, before anything reads a text (the later
+    // reads keep it while its files hold).
+    let seeds: Vec<phase0::Seed> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+    if !seeds.is_empty() {
+        phase0::graphs(&seeds)?;
+    }
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
     let reuse = reuse::wanted(options, typing, t_facts);
     let kept = if reuse { reuse::reused(programs, root, out, modes, typing, options) } else { Ok(None) };
