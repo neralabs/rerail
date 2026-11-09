@@ -1,6 +1,7 @@
 """Compare blocker discovery, positive sets, path allowlists, and duplicate-class findings."""
 import argparse
 import ast
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -33,13 +34,31 @@ CASES = [
     dict(id='link-as-explicit-root', dirs=['link'], files=[dict(path='steps/a.py', source=BAD), dict(path='link', symlink='steps')]),
     dict(id='invalid-file-is-not-a-blocker', files=[dict(path='steps/bad.py', source='def :\n'), dict(path='steps/a.py', source=BAD)]),
     dict(id='missing-roots', dirs=['missing'], files=[]),
+    dict(id='decorated-tag-method', files=[dict(path='steps/a.py',source=BAD.replace(
+        '    def step_tags(self): return {"side_effect"}',
+        '    @wrap("side_effect")\n    def step_tags(self): return {"read"}'))],direct='steps/a.py'),
+    dict(id='hook-in-compile-decorator',files=[dict(path='steps/a.py',source=BAD.replace(
+        '    def compile(self, ctx): return CompiledStep(post_op=callback)',
+        '    @wrap(CompiledStep())\n    def compile(self, ctx): return result'))],direct='steps/a.py'),
+    dict(id='relative-root',dirs=['steps'],relativeDirs=True,files=[dict(path='steps/a.py',source=BAD)]),
+    dict(id='relative-discovery-and-owned-read-root',root='owned',dirs=['steps'],relativeDirs=True,
+         files=[dict(path='steps/a.py',source=BAD),dict(path='owned/steps/a.py',source='pass\n')]),
+    dict(id='outside-owned-root',root='owned',dirs=['outside'],absoluteDirect=True,directScan=True,
+         files=[dict(path='owned',directory=True),dict(path='outside/a.py',source=BAD)],direct='outside/a.py'),
 ]
 ENTRIES = ['collect_current_step022_blockers', 'collect_current_step023_blockers']
 DIRECT = ['check_side_effect_tag_allowlist', 'check_zero_io_l0_execution_role_guardrail']
 
 
 def normalize(rows, root):
-    return [dict(code=v['code'], file=v['file'].replace(str(root), '$ROOT'), line=v['line'], message=v['message']) for v in rows]
+    return [dict(code=v['code'], file=v['file'].replace(str(root), '$ROOT'), line=v['line'], message=v['message'].replace(str(root),'$ROOT')) for v in rows]
+
+
+def capture(call, root):
+    try:
+        return call()
+    except ValueError as error:
+        return dict(error=dict(type='builtins.ValueError',args=[str(v).replace(str(root),'$ROOT') for v in error.args]))
 
 
 def main():
@@ -64,47 +83,67 @@ def main():
         compare(CASES, [c['input'] for c in baseline['cases']])
         report['engineSha256'] = sha(args.engine.read_bytes())
     rule = ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr'
+    collector_rule = rule.with_name('serverplan-steps-collectors.rr')
     for i, case in enumerate(CASES):
         results, native_runs = {}, []
         if args.command == 'source':
             with tempfile.TemporaryDirectory(prefix='steps-blockers-source-') as temporary:
                 root = Path(temporary)
                 write_fixture(root, case['files'])
-                linter.ROOT = root
-                linter.STEP_DIRS = tuple(root/p for p in case.get('dirs', ['steps']))
+                linter.ROOT = root/case.get('root','.')
+                linter.STEP_DIRS = tuple(Path(p) if case.get('relativeDirs') else root/p for p in case.get('dirs', ['steps']))
                 linter.LEGACY_SIDE_EFFECT_TAG_ALLOWLIST = frozenset(case.get('allowlist', []))
-                for entry in ENTRIES: results[entry] = sorted(getattr(linter, entry)())
+                previous_cwd = Path.cwd()
+                try:
+                    if case.get('relativeDirs'): os.chdir(root)
+                    for entry in ENTRIES: results[entry] = capture(lambda: sorted(getattr(linter, entry)()),root)
+                finally:
+                    os.chdir(previous_cwd)
                 if 'direct' in case:
                     file = root/case['direct']
                     tree = ast.parse(file.read_text())
                     for entry in DIRECT:
-                        rows = [dict(code=v.code,file=str(v.file),line=v.line,message=v.message) for v in getattr(linter,entry)(file,tree)]
-                        results[entry] = normalize(rows,root)
+                        def call():
+                            return normalize([dict(code=v.code,file=str(v.file),line=v.line,message=v.message)
+                                              for v in getattr(linter,entry)(file,tree)],root)
+                        results[entry] = capture(call,root)
+                    if case.get('directScan'):
+                        results['_scan_file'] = normalize([dict(code=v.code,file=str(v.file),line=v.line,message=v.message)
+                                                          for v in linter._scan_file(file)],root)
             row = dict(input=case, expected=results)
         else:
             for entry in ENTRIES:
                 def options(root):
-                    return dict(entryPoint=entry, rootPath=str(root), cwdPath=str(root),
-                        stepDirs=[str(root/p) for p in case.get('dirs', ['steps'])],
-                        sideEffectAllowlist=case.get('allowlist', []), env=['ssp.root='+str(root),
+                    directories = [p if case.get('relativeDirs') else str(root/p) for p in case.get('dirs',['steps'])]
+                    return dict(entryPoint=entry, rootPath=str(root/case.get('root','.')), cwdPath=str(root),
+                        stepDirs=directories,
+                        sideEffectAllowlist=case.get('allowlist', []), env=['ssp.root='+str(root/case.get('root','.')), 'ssp.workspace='+str(root),
                             'ssp.cwd='+str(root), 'ssp.collector='+entry,
-                            *['ssp.step.'+str(i)+'='+str(root/p) for i,p in enumerate(case.get('dirs', ['steps']))]])
-                native = execute_workspace_context(args.engine.absolute(),rule,case['files'],options)
+                            *['ssp.step.'+str(i)+'='+p for i,p in enumerate(directories)]])
+                native = execute_workspace_context(args.engine.absolute(),collector_rule,case['files'],options)
                 native_runs.append(native)
                 assert all(r['code']=='SSP_BLOCKER' for r in native['diagnostics'])
                 results[entry] = sorted({r['parameters']['value'] for r in native['diagnostics']})
             if 'direct' in case:
                 source = next(f['source'] for f in case['files'] if f['path']==case['direct'])
                 for entry in DIRECT:
+                    path = '/source/'+case['direct'] if case.get('absoluteDirect') else case['direct']
                     native = execute_native(args.engine.absolute(),rule,[dict(path='input.py',source=source)],
-                        dict(entryPoint=entry,argumentPath=case['direct'],rootPath='/source',sideEffectAllowlist=case.get('allowlist', [])))
+                        dict(entryPoint=entry,argumentPath=path,rootPath=str(Path('/source')/case.get('root','.')),sideEffectAllowlist=case.get('allowlist', [])))
                     native_runs.append(native)
-                    results[entry] = [dict(r,file='$ROOT/'+r['file']) for r in scan_rows(native['diagnostics'])]
+                    results[entry] = capture(lambda: normalize(scan_rows(native['diagnostics']),Path('/source'))
+                        if case.get('absoluteDirect') else [dict(r,file='$ROOT/'+r['file']) for r in scan_rows(native['diagnostics'])],Path('/source'))
+                if case.get('directScan'):
+                    native = execute_native(args.engine.absolute(),rule,[dict(path='input.py',source=source)],
+                        dict(entryPoint='_scan_file',argumentPath='/source/'+case['direct'],rootPath=str(Path('/source')/case.get('root','.')),inputName=Path(case['direct']).name))
+                    native_runs.append(native)
+                    results['_scan_file'] = normalize(scan_rows(native['diagnostics']),Path('/source'))
             row = dict(input=case, expected=baseline['cases'][i]['expected'], actual=results, native=native_runs)
             for native in native_runs:
-                if 'programs' not in report:
-                    report['programs'] = {p['path']:dict(sha256=p['sha256'],text=(ROOT/p['path']).read_text()) for p in native['programInputs']}
-                for p in native['programInputs']: compare(p['sha256'],sha(report['programs'][p['path']]['text'].encode()))
+                programs = report.setdefault('programs', {})
+                for p in native['programInputs']:
+                    programs.setdefault(p['path'],dict(sha256=p['sha256'],text=(ROOT/p['path']).read_text()))
+                    compare(p['sha256'],sha(programs[p['path']]['text'].encode()))
         report['cases'].append(row)
         write_json(args.out,report)
         if args.command=='native': compare(row['expected'],row['actual'])

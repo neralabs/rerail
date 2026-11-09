@@ -2119,7 +2119,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "fa4d597624ec48b4b84567e6951ae136ff41cafda1dab222b6fae4301f9f0920",
+      "sha256": "d061302a5c3a2fd0145be9b0ed8e75d9622003d25015f0e04fa6acd36ac6c695",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2197,13 +2197,28 @@
           "before": "f8376dfcae7a1b8275fd6541967cbd71127ff415cf016518382c8a0347588aa1",
           "after": "fa4d597624ec48b4b84567e6951ae136ff41cafda1dab222b6fae4301f9f0920",
           "reason": "Translate native blocker discovery and preserve path/class candidate keys"
+        },
+        {
+          "before": "fa4d597624ec48b4b84567e6951ae136ff41cafda1dab222b6fae4301f9f0920",
+          "after": "d061302a5c3a2fd0145be9b0ed8e75d9622003d25015f0e04fa6acd36ac6c695",
+          "reason": "Share step AST/candidate definitions with a focused collector policy and preserve scoped path errors"
         }
       ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/step-discovery.rr",
-      "sha256": "b95fec3e8d76d3dbf97a34af4bef206b275f8d934e495d90171d3262ba05ea5f",
+      "sha256": "e2a157bde99ed4b1c045d4e40e40cc76e3667b68a5889071c015ca2f50af08d5",
       "origin": "authored native filesystem membership for ServerPlan step collectors"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/step-core.rr",
+      "sha256": "98b4f27025900c59121441a31d2c9a8f35fa88fceb42093ec7fec7e8617cf8c8",
+      "origin": "authored shared step definitions and collector API consumer"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-collectors.rr",
+      "sha256": "40d96d30034ae524c1d891b4d95a82c146b4f1c66cedc1df94a5cfe7c1e41007",
+      "origin": "authored shared step definitions and collector API consumer"
     }
   ],
   "rules": [
@@ -2673,7 +2688,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "fa4d597624ec48b4b84567e6951ae136ff41cafda1dab222b6fae4301f9f0920"
+      "ruleSha256": "d061302a5c3a2fd0145be9b0ed8e75d9622003d25015f0e04fa6acd36ac6c695"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3383,7 +3398,31 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038"
+    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038",
+    "cliArtifact": {
+      "engineCommit": "44a5c0e3cbea1e7eebfde73ddd988989ff62b29c",
+      "upstreamCommit": "1345219782280410efcc0b9b712594a6a8489619",
+      "sourceTrees": {
+        "native": "f2dc3050feb8d11d41081a8c0ed4f18cc18eba0a",
+        "tools/bitlex": "4abd73b7e2f3bcb7f7f90d9cf3183abbd8edbec1",
+        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
+        "Cargo.lock": "36d03ae745ce0a93a9c95b7f57d15c49f1635bff"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-e0cc0cb8a4aaadcb",
+      "sha256": "e0cc0cb8a4aaadcbd3c5b13a6a1dfe3b54986f36d01d557216c92f14e45af179",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "rerail-engine",
+        "--features",
+        "headless",
+        "--bin",
+        "rerail-engine",
+        "--release"
+      ],
+      "seconds": 478.732
+    }
   },
   "engineSourceSnapshots": [
     {

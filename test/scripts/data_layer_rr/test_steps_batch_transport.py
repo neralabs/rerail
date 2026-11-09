@@ -90,6 +90,20 @@ class StepsBatchTransportTests(unittest.TestCase):
         self.assertEqual(2, len(self.backend.calls))
         self.assertEqual(['check_can_batch_allowlist'], self.backend.calls[1][3]['requestedChecks'])
 
+    def test_error_in_one_check_does_not_poison_an_independent_check_in_the_batch(self):
+        original = self.backend.native
+        def native(*args, **kwargs):
+            return original(*args, **kwargs)+[dict(code='SSP_ERROR',parameters=dict(
+                entry='check_zero_io_l0_execution_role_guardrail',detail='outside root'))]
+        self.backend.native = native
+        self.backend.requested_entries = ['check_compile_no_data_branching','check_zero_io_l0_execution_role_guardrail']
+        tree = ast.parse('value = 1\n')
+        result = self.module.check_compile_no_data_branching(Path('a.py'),tree)
+        self.assertEqual(['STEP-016'],[r.code for r in result])
+        with self.assertRaisesRegex(ValueError,'outside root'):
+            self.module.check_zero_io_l0_execution_role_guardrail(Path('a.py'),tree)
+        self.assertEqual(1,len(self.backend.calls))
+
 
 if __name__ == '__main__':
     unittest.main()

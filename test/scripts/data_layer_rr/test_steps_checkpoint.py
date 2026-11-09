@@ -21,7 +21,8 @@ class StepsCheckpointTests(unittest.TestCase):
             harnessFiles={'contract':'hash'}, selectedCases=['negative','positive'],
             cases={t:[dict(phase=p,outcome='passed') for p in ['setup','call','teardown']]
                    for t in ['negative','positive']}, calls=copy.deepcopy(self.source['calls'][:2]),
-            nativeCalls=[dict(status='passed',programInputs=['program'])])
+            nativeCalls=[dict(status='passed',check='serverplan_steps',entry='check',
+                programInputs=[dict(path='rules/serverplan-steps.rr',sha256='main'),dict(path='lib/core.rr',sha256='core')])])
 
     def test_complete_selected_observations_keep_the_unported_case_explicit(self):
         result = assemble(self.source, [self.report])
@@ -69,3 +70,20 @@ class StepsCheckpointTests(unittest.TestCase):
         report.update(selectedEntries='check')
         with self.assertRaises((AssertionError, ValueError)):
             assemble(self.source, [report])
+
+    def test_distinct_api_policies_keep_their_shared_library_identity(self):
+        entry = 'collect_current_step022_blockers'
+        self.source['calls'][1]['entry'] = entry
+        self.report['calls'][1]['entry'] = entry
+        self.report['selectedEntries'] = 'check,'+entry
+        self.report['nativeCalls'].append(dict(status='passed',check='serverplan_steps',entry=entry,
+            programInputs=[dict(path='rules/serverplan-steps-collectors.rr',sha256='collectors'),
+                           dict(path='lib/core.rr',sha256='core')]))
+        result = assemble(self.source,[self.report])
+        self.assertEqual(3,len(result['programInputs']))
+        self.report['nativeCalls'][1]['programInputs'][1]['sha256'] = 'changed'
+        with self.assertRaises(AssertionError): assemble(self.source,[self.report])
+
+    def test_unrelated_policy_cannot_certify_an_api(self):
+        self.report['nativeCalls'][0]['programInputs'][0]['path'] = 'rules/unrelated.rr'
+        with self.assertRaises(ValueError): assemble(self.source,[self.report])

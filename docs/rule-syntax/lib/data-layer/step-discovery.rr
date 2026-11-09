@@ -1,6 +1,5 @@
 // Path.rglob("*.py") membership for the step collectors. Tests and hidden trees
 // remain included. A descendant directory link is not followed; an explicit root is.
-.decl ssp_collecting(entry: symbol)
 ssp_collecting("collect_current_step022_blockers") :- env("ssp.collector","collect_current_step022_blockers").
 ssp_collecting("collect_current_step023_blockers") :- env("ssp.collector","collect_current_step023_blockers").
 .decl ssp_directory(i: number, logical: symbol, physical: symbol)

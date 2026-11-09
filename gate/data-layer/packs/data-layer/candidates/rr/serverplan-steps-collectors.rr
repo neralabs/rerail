@@ -1,0 +1,14 @@
+.policy "data-layer-serverplan-steps-collectors" revision 1
+.description "ServerPlan step blocker collection"
+.language python
+.mode block
+.scope include "**/*.py"
+// These API consumers use the same definitions as serverplan-steps.rr.
+#include "python/ast.rr"
+#include "data-layer/step-core.rr"
+#include "data-layer/step-discovery.rr"
+ssp_doc(d,path) :- ssp_file_request(_,path,_), loaded(physical,cat("ssp:",path),"python"), doc(d,physical,_), doc_role(d,"primary"), !syntax_error(d,_,_).
+ssp_doc(d,path) :- ssp_file_request(_,path,absolute), env("ssp.workspace",workspace), doc(d,relative,_), !prefix("/",relative), absolute = cat(workspace,"/",relative), doc_role(d,"primary"), !syntax_error(d,_,_).
+.violation SSPBlocker(at: span, value: symbol) code "SSP_BLOCKER" "{value}"
+SSPBlocker(@place("",0),key) :- ssp_collecting("collect_current_step022_blockers"), ssp_tag_candidate(c), ssp_step(c,name), docof(c,d), ssp_doc(d,path), !ssp_suppressed("check_side_effect_tag_allowlist",c,path), ssp_class_key(path,name,key).
+SSPBlocker(@place("",0),key) :- ssp_collecting("collect_current_step023_blockers"), ssp_zero_candidate(c), ssp_step(c,name), docof(c,d), ssp_doc(d,path), ssp_class_key(path,name,key).

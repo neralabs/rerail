@@ -1,8 +1,10 @@
 """Audit a partial step-contract checkpoint against every selected original observation."""
 import hashlib
 import json
+from pathlib import Path
 
 from migration import PIN, compare
+from policy_routes import policy_filename
 
 
 def digest(value):
@@ -17,7 +19,8 @@ def assemble(source, reports):
     for call in source['calls']:
         calls.setdefault(call['test'], []).append(call)
     seen, parts, selected, observations, native_calls = set(), None, [], [], []
-    entries = engine = programs = harness = None
+    entries = engine = harness = None
+    programs, policy_inputs = {}, {}
     for report in reports:
         if report['sourcePin'] != PIN or report['exitCode'] not in (0, 5):
             raise ValueError('A native shard failed or used another source')
@@ -60,9 +63,16 @@ def assemble(source, reports):
         for call in report['nativeCalls']:
             if call['status'] != 'passed':
                 raise ValueError('A native execution failed')
-            if programs is None:
-                programs = call['programInputs']
-            compare(programs, call['programInputs'])
+            expected_policy = policy_filename('serverplan_steps',call['entry'])
+            policies = [p for p in call['programInputs'] if Path(p['path']).name == expected_policy]
+            if len(policies) != 1:
+                raise ValueError('A native API did not consume its declared policy')
+            policy = policies[0]['path']
+            previous = policy_inputs.setdefault(policy,call['programInputs'])
+            compare(previous,call['programInputs'])
+            for program in call['programInputs']:
+                previous = programs.setdefault(program['path'],program)
+                compare(previous,program)
             native_calls.append(call)
         selected.extend(expected_cases)
     if parts is None or seen != set(range(parts)):
@@ -72,5 +82,6 @@ def assemble(source, reports):
                 fullMigrationAcceptance=False, sourceAssertions=len(source['collected']),
                 selectedEntries=entries.split(','), selectedAssertions=len(selected), selectedCases=selected,
                 untestedCases=[t for t in source['collected'] if t not in selected],
-                observations=observations, nativeCalls=native_calls, programInputs=programs,
+                observations=observations, nativeCalls=native_calls,
+                programInputs=[programs[p] for p in sorted(programs)],
                 engineSha256=engine, harnessFiles=harness)

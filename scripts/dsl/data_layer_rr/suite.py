@@ -106,9 +106,10 @@ class Suite:
         setattr(module, name, value)
 
     def native(self, check, entry, files, options=None):
-        rule = self.rule_root / (check.replace('_', '-') + '.rr')
+        from policy_routes import policy_filename
+        rule = self.rule_root / policy_filename(check, entry)
         request = dict(rule=str(rule), files=files, options=dict(({} if entry is None else dict(entryPoint=entry)), **(options or {})))
-        call = dict(test=self.item.nodeid if self.item else '<native-configuration>', check=check, entry=entry, files=len(files), status='started',
+        call = dict(test=self.item.nodeid if self.item else '<native-configuration>', check=check, entry=entry, policy=str(rule), files=len(files), status='started',
                     inputFiles=[dict(path=f['path'], sourceSha256=sha(f['source'].encode())) for f in files],
                     options=request['options'])
         self.calls.append(call)
@@ -125,7 +126,7 @@ class Suite:
             call.update(status='failed', error=response['error'])
             raise AssertionError(response['error'])
         result = response['result']
-        previous = self.inputs.setdefault(check, result['programInputs'])
+        previous = self.inputs.setdefault((check, rule.name), result['programInputs'])
         if previous != result['programInputs']:
             raise AssertionError('Program changed during original assertions')
         rows = result['diagnostics']

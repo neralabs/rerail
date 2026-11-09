@@ -6,7 +6,7 @@
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_steps.py
 #include "python/ast.rr"
 #include "data-layer/signing.rr"
-#include "data-layer/step-discovery.rr"
+#include "data-layer/step-core.rr"
 
 // Verification receives whole signature batches and uses the shared signed-message layout.
 .decl ssp_verification(i: number, name: symbol, sig: symbol)
@@ -31,10 +31,8 @@ SSPValue(@place("",0),cat(code,": ",path,":",line,": ",detail)) :- option("entry
 
 // Direct API calls use their supplied AST's original source. Production calls
 // use the same relations over selected documents, without a Python callback.
-.decl ssp_doc(d: number, path: symbol)
 ssp_doc(d,path) :- option("entryPoint",_), option_item("inputFiles",_,input), doc(d,input,_), doc_role(d,"primary"), option("argumentPath",path), !syntax_error(d,_,_).
 ssp_doc(d,path) :- !option("entryPoint",_), doc(d,path,_), doc_role(d,"primary"), !syntax_error(d,_,_).
-ssp_doc(d,path) :- ssp_file_request(_,path,_), loaded(physical,cat("ssp:",path),"python"), doc(d,physical,_), doc_role(d,"primary"), !syntax_error(d,_,_).
 .decl ssp_entry(name: symbol)
 ssp_entry("check_compile_no_data_branching").
 ssp_entry("check_compile_no_object_manipulation").
@@ -52,8 +50,6 @@ ssp_run(name) :- ssp_entry(name), option("entryPoint","_scan_file").
 ssp_run(name) :- ssp_entry(name), option("entryPoint","_all_checks"), !option_item("requestedChecks",_,_).
 ssp_run(name) :- ssp_entry(name), option("entryPoint","_all_checks"), option_item("requestedChecks",_,name).
 ssp_run(name) :- ssp_entry(name), !option("entryPoint",_).
-ssp_run("check_side_effect_tag_allowlist") :- ssp_collecting("collect_current_step022_blockers").
-ssp_run("check_zero_io_l0_execution_role_guardrail") :- ssp_collecting("collect_current_step023_blockers").
 
 // Scanner phase order and caller-text gates belong to the native contract.
 .decl ssp_order(entry: symbol, ordinal: number)
@@ -105,68 +101,23 @@ ssp_enabled(entry,d) :- ssp_entry(entry), ssp_doc(d,_), !ssp_scanning().
 ssp_enabled(entry,d) :- ssp_entry(entry), ssp_doc(d,_), ssp_scanning(), !ssp_text_gated(entry).
 ssp_enabled(entry,d) :- ssp_text_gated(entry), entry != "check_runtime_refs_post_op_requires_runtime_refs_guardrail", ssp_scanning(), ssp_gate_text(d,value), contains("closed_post_op",value), contains("runtime_ref",value).
 ssp_enabled("check_runtime_refs_post_op_requires_runtime_refs_guardrail",d) :- ssp_scanning(), ssp_gate_text(d,value), contains("runtime_refs_post_op",value).
-.violation SSPError(at: span, detail: symbol) code "SSP_ERROR" "{detail}"
-SSPError(@place("",0),"AST tree is required; parsing is owned by the fact framework") :- option("entryPoint","_scan_source"), option("suppliedTree","0").
+.violation SSPError(at: span, entry: symbol, detail: symbol) code "SSP_ERROR" "{detail}"
+SSPError(@place("",0),"_scan_source","AST tree is required; parsing is owned by the fact framework") :- option("entryPoint","_scan_source"), option("suppliedTree","0").
+.decl ssp_needs_key(entry: symbol, c: node)
+ssp_needs_key("check_side_effect_tag_allowlist",c) :- ssp_run("check_side_effect_tag_allowlist"), ssp_step(c,_), ssp_first(c,_,"step_tags").
+ssp_needs_key("check_zero_io_l0_execution_role_guardrail",c) :- ssp_run("check_zero_io_l0_execution_role_guardrail"), ssp_step(c,_).
+.decl ssp_key_error(entry: symbol, path: symbol, detail: symbol)
+ssp_key_error(entry,path,cat(@python_repr(path)," is not in the subpath of ",@python_repr(root))) :- ssp_needs_key(entry,c), docof(c,d), ssp_doc(d,path), prefix("/",path), option("rootPath",root), !ssp_relative_path(path,_).
+.decl ssp_failed_entry(entry: symbol, path: symbol)
+ssp_failed_entry(entry,path) :- ssp_key_error(entry,path,_).
+ssp_failed_entry(entry,path) :- ssp_scanning(), ssp_entry(entry), ssp_key_error(_,path,_).
+SSPError(@place("",0),entry,detail) :- !ssp_scanning(), ssp_key_error(entry,_,detail).
+SSPError(@place("",0),"_scan_source",detail) :- option("entryPoint","_scan_source"), ssp_key_error(_,_,detail).
 
-.decl ssp_base(n: node, name: symbol)
-ssp_base(n,@nfkc(name)) :- kind(n,"identifier"), text(n,name).
-ssp_base(n,@nfkc(name)) :- attr_of(n,_,name).
-ssp_base(n,name) :- kind(n,"subscript"), field(n,"value",raw), unparen(raw,v), ssp_base(v,name).
-ssp_base(n,name) :- kind(n,"generic_type"), child(n,v,0), ssp_base(v,name).
-.decl ssp_step(c: node, name: symbol)
-ssp_step(c,@nfkc(name)) :- kind(c,"class_definition"), docof(c,d), ssp_doc(d,_), def_name(c,name), field(c,"superclasses",al), child(al,raw,_), !kind(raw,"keyword_argument"), unparen(raw,base), ssp_base(base,"ServerPlanStep").
-.decl ssp_body(p: node, n: node, i: number)
-ssp_body(p,n,i) :- field(p,"body",b), body_stmt(b,n,i), !kind(n,"decorated_definition"), !kind(n,"expression_statement").
-ssp_body(p,n,i) :- field(p,"body",b), body_stmt(b,s,i), kind(s,"expression_statement"), child(s,n,0).
-ssp_body(p,n,i) :- field(p,"body",b), body_stmt(b,dd,i), kind(dd,"decorated_definition"), field(dd,"definition",n).
-.decl ssp_method(c: node, f: node, name: symbol)
-ssp_method(c,f,@nfkc(name)) :- ssp_step(c,_), ssp_body(c,f,_), kind(f,"function_definition"), def_name(f,name).
-.decl ssp_first(c: node, f: node, name: symbol)
-ssp_first(c,f,name) :- ssp_method(c,f,name), visit_index(f,i), i = min j : { ssp_method(c,g,name), visit_index(g,j) }.
-.decl ssp_under(n: node, a: node)
-ssp_under(n,n) :- kind(n,_).
-ssp_under(n,a) :- ast_parent(n,p), ssp_under(p,a).
-.decl ssp_nested(n: node)
-ssp_nested(n) :- kind(n,k), (k = "function_definition" ; k = "class_definition" ; k = "lambda").
-.decl ssp_walk(f: node, n: node)
-ssp_walk(f,n) :- kind(f,"function_definition"), ssp_body(f,n,_), !ssp_nested(n).
-ssp_walk(f,n) :- ssp_walk(f,p), ast_parent(n,p), !ssp_nested(n).
-.decl ssp_func(c: node, f: node)
-ssp_func(c,f) :- kind(c,"call"), field(c,"function",raw), unparen(raw,f).
-.decl ssp_call_name(c: node, name: symbol)
-ssp_call_name(c,@nfkc(name)) :- ssp_func(c,f), ast_name(f,name).
-ssp_call_name(c,@nfkc(name)) :- ssp_func(c,f), attr_of(f,_,name).
-.decl ssp_name(n: node, name: symbol)
-ssp_name(n,@nfkc(name)) :- ast_name(n,name).
-.decl ssp_attr(n: node, object: node, name: symbol)
-ssp_attr(n,v,@nfkc(name)) :- attr_of(n,raw,name), unparen(raw,v).
+// Collectors consume only these method bodies. Bind the ancestor before the
+// native subtree lookup, instead of constructing every node/ancestor pair.
 .decl ssp_self_private(n: node, name: symbol)
 ssp_self_private(n,name) :- ssp_attr(n,v,name), ssp_name(v,"self"), prefix("_",name).
-.decl ssp_ret(r: node, v: node)
-ssp_ret(r,v) :- kind(r,"return_statement"), child(r,raw,0), unparen(raw,v).
-.decl ssp_pos(c: node, i: number, value: node)
-ssp_pos(c,i,v) :- kind(c,"call"), field(c,"arguments",al), child(al,raw,k), !kind(raw,"keyword_argument"), !kind(raw,"dictionary_splat"), !kind(raw,"comment"), unparen(raw,v), i = count : { child(al,other,j), j < k, !kind(other,"keyword_argument"), !kind(other,"dictionary_splat"), !kind(other,"comment") }.
-.decl ssp_kw(c: node, name: symbol, value: node)
-ssp_kw(c,@nfkc(name),v) :- kind(c,"call"), field(c,"arguments",al), child(al,k,_), kind(k,"keyword_argument"), field(k,"name",nm), text(nm,name), field(k,"value",raw), unparen(raw,v).
-.decl ssp_first_kw(c: node, name: symbol, value: node)
-ssp_first_kw(c,name,v) :- ssp_kw(c,name,v), visit_index(v,i), i = min j : { ssp_kw(c,name,w), visit_index(w,j) }.
-.decl ssp_last_kw(c: node, name: symbol, value: node)
-ssp_last_kw(c,name,v) :- ssp_kw(c,name,v), visit_index(v,i), i = max j : { ssp_kw(c,name,w), visit_index(w,j) }.
-.decl ssp_true(n: node)
-ssp_true(n) :- kind(n,"true").
-.decl ssp_false(n: node)
-ssp_false(n) :- kind(n,"false").
-.decl ssp_none(n: node)
-ssp_none(n) :- kind(n,"none").
-.decl ssp_level_value(c: node, r: node, value: number)
-.decl ssp_zero_integer(n: node)
-ssp_zero_integer(n) :- kind(n,"integer"), text(n,raw), match_all("\\A(?:0[0_]*|0[xX][0_]+|0[bB][0_]+|0[oO][0_]+)\\z",raw).
-ssp_level_value(c,r,0) :- ssp_method(c,f,"level"), ssp_under(r,f), ssp_ret(r,n), ssp_zero_integer(n).
-ssp_level_value(c,r,1) :- ssp_method(c,f,"level"), ssp_under(r,f), ssp_ret(r,n), kind(n,"integer"), !ssp_zero_integer(n), text(n,raw), !suffix("j",raw), !suffix("J",raw).
-ssp_level_value(c,r,0) :- ssp_method(c,f,"level"), ssp_under(r,f), ssp_ret(r,n), ssp_false(n).
-ssp_level_value(c,r,1) :- ssp_method(c,f,"level"), ssp_under(r,f), ssp_ret(r,n), ssp_true(n).
-.decl ssp_level(c: node, value: number)
-ssp_level(c,value) :- ssp_level_value(c,r,value), visit_index(r,i), i = min j : { ssp_level_value(c,s,_), visit_index(s,j) }.
 .decl ssp_hit(entry: symbol, c: node, f: node, n: node, sub: number, code: symbol, message: symbol)
 
 // STEP-016: only attributes assigned outside __init__ are resolved data.
@@ -205,40 +156,15 @@ ssp_post_hit(c,f,p,n,1,cat(name,": post_op calls __setattr__ on '",alias,"' (cap
 
 ssp_hit("check_can_batch_allowlist",c,f,f,0,"STEP-020",cat(name,".can_batch() returns False — not in the signed allowlist. All steps must be batchable unless explicitly exempted.")) :- ssp_step(c,name), ssp_method(c,f,"can_batch"), ssp_body(f,r,_), ssp_ret(r,v), ssp_false(v), !option_item("canBatchAllowlist",_,name).
 ssp_hit("check_runtime_state_allowlist",c,c,t,0,"STEP-021",cat(name," stores runtime state on 'self.",attr,"' — only signed lifecycle exceptions may retain live txn/conn objects on steps.")) :- ssp_step(c,name), !option_item("runtimeStateAllowlist",_,name), ssp_under(a,c), assign_target(a,t), ssp_attr(t,v,attr), ssp_name(v,"self"), (attr = "txn" ; attr = "_txn" ; attr = "conn" ; attr = "_conn").
-.decl ssp_side_effect(c: node)
-ssp_side_effect(c) :- ssp_first(c,f,"step_tags"), ssp_under(n,f), str_const(n,"side_effect").
-.decl ssp_side_effect_key(d: number, name: symbol)
-ssp_side_effect_key(d,name) :- ssp_step(c,name), docof(c,d), ssp_side_effect(c).
-.decl ssp_relative_path(path: symbol, relative: symbol)
-ssp_relative_path(path,path) :- ssp_doc(_,path), !prefix("/",path).
-ssp_relative_path(path,".") :- ssp_doc(_,path), option("rootPath",path).
-ssp_relative_path(path,@slice(path,strlen(root)+1,strlen(path))) :- ssp_doc(_,path), option("rootPath",root), root != "/", prefix(cat(root,"/"),path).
-ssp_relative_path(path,@slice(path,1,strlen(path))) :- ssp_doc(_,path), option("rootPath","/"), path != "/", prefix("/",path).
-.decl ssp_class_key(path: symbol, name: symbol, key: symbol)
-ssp_class_key(path,name,cat(relative,":",name)) :- ssp_step(c,name), docof(c,d), ssp_doc(d,path), ssp_relative_path(path,relative).
-.decl ssp_suppressed(entry: symbol, c: node, path: symbol)
-ssp_suppressed("check_side_effect_tag_allowlist",c,path) :- ssp_step(c,name), docof(c,d), ssp_doc(d,path), ssp_class_key(path,name,key), option_item("sideEffectAllowlist",_,key).
-ssp_hit("check_side_effect_tag_allowlist",c,f,f,0,"STEP-022",cat(name,".step_tags() includes 'side_effect' — do not use tags as a scheduling signal; migrate to explicit execution_role() semantics.")) :- ssp_step(c,name), docof(c,d), ssp_side_effect_key(d,name), ssp_first(c,f,"step_tags").
+ssp_hit("check_side_effect_tag_allowlist",c,f,f,0,"STEP-022",cat(name,".step_tags() includes 'side_effect' — do not use tags as a scheduling signal; migrate to explicit execution_role() semantics.")) :- ssp_step(c,name), ssp_tag_candidate(c), ssp_first(c,f,"step_tags").
 
-.decl ssp_empty_collection(n: node)
-ssp_empty_collection(n) :- kind(n,k), (k = "list" ; k = "tuple" ; k = "set"), count : { child(n,x,_), !kind(x,"comment") } = 0.
-.decl ssp_empty_frozenset(f: node)
-ssp_empty_frozenset(f) :- kind(f,"function_definition"), ssp_under(r,f), ssp_ret(r,c), ssp_func(c,func), ssp_name(func,"frozenset"), !ssp_pos(c,_,_), !ssp_kw(c,_,_), field(c,"arguments",al), !child(al,_,_).
-ssp_empty_frozenset(f) :- kind(f,"function_definition"), ssp_under(r,f), ssp_ret(r,c), ssp_func(c,func), ssp_name(func,"frozenset"), ssp_pos(c,0,n), ssp_empty_collection(n), !ssp_pos(c,1,_), !ssp_kw(c,_,_), field(c,"arguments",al), count : { child(al,x,_), kind(x,"dictionary_splat") } = 0.
-.decl ssp_runtime_hooks(f: node)
-ssp_runtime_hooks(f) :- kind(f,"function_definition"), ssp_under(c,f), ssp_func(c,func), ssp_name(func,"CompiledStep"), field(c,"arguments",al), !child(al,_,_).
-ssp_runtime_hooks(f) :- kind(f,"function_definition"), ssp_under(c,f), ssp_func(c,func), ssp_name(func,"CompiledStep"), ssp_kw(c,name,v), (name = "pre_op" ; name = "post_op" ; name = "on_commit" ; name = "on_rollback"), !ssp_none(v).
-.decl ssp_zero_io(c: node)
-ssp_zero_io(c) :- ssp_level(c,0), ssp_first(c,r,"tables_read"), ssp_first(c,w,"tables_written"), ssp_first(c,f,"compile"), ssp_empty_frozenset(r), ssp_empty_frozenset(w), ssp_runtime_hooks(f).
-.decl ssp_zero_key(d: number, name: symbol)
-ssp_zero_key(d,name) :- ssp_step(c,name), docof(c,d), ssp_zero_io(c), !ssp_first(c,_,"execution_role").
-ssp_hit("check_zero_io_l0_execution_role_guardrail",c,c,c,0,"STEP-023",cat(name," is an L0 zero-I/O step without execution_role() — add an explicit execution role that matches the scheduler semantics.")) :- ssp_step(c,name), docof(c,d), ssp_zero_key(d,name).
+ssp_hit("check_zero_io_l0_execution_role_guardrail",c,c,c,0,"STEP-023",cat(name," is an L0 zero-I/O step without execution_role() — add an explicit execution role that matches the scheduler semantics.")) :- ssp_step(c,name), ssp_zero_candidate(c).
 ssp_hit("check_zero_io_l0_execution_role_enum_semantics",c,f,f,0,"STEP-024",cat(name,".execution_role() is annotated as str — annotate it as StepExecutionRole.")) :- ssp_step(c,name), ssp_zero_io(c), ssp_first(c,f,"execution_role"), field(f,"return_type",raw), unparen(raw,ann), (ssp_name(ann,"str") ; str_const(ann,"str") ; kind(ann,"type"), child(ann,inner,0), ssp_name(inner,"str")).
 ssp_hit("check_zero_io_l0_execution_role_enum_semantics",c,f,f,1,"STEP-025",cat(name,".execution_role() returns a raw string literal — return a StepExecutionRole enum member.")) :- ssp_step(c,name), ssp_zero_io(c), ssp_first(c,f,"execution_role"), ssp_walk(f,r), ssp_ret(r,v), str_const(v,value), (value = "sql" ; value = "virtual" ; value = "apply" ; value = "control").
 
 .violation SSPRow(at: span, violation_code: symbol, detail: symbol, class_order: number, method_order: number, callback_order: number, node_order: number, suborder: number, entry: symbol, check_order: number) code "SSP_ROW" "{detail}"
-SSPRow(@place(path,l),code,message,ci,fi,0,ni,sub,entry,checkOrder) :- !ssp_collecting(_), ssp_order(entry,checkOrder), ssp_enabled(entry,d), ssp_run(entry), ssp_hit(entry,c,f,n,sub,code,message), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(n,ni), !ssp_suppressed(entry,c,path).
-SSPRow(@place(path,l),"STEP-019",message,ci,fi,pi,ni,sub,"check_postop_no_resolved_data_manipulation",checkOrder) :- !ssp_collecting(_), ssp_order("check_postop_no_resolved_data_manipulation",checkOrder), ssp_enabled("check_postop_no_resolved_data_manipulation",d), ssp_run("check_postop_no_resolved_data_manipulation"), ssp_post_hit(c,f,p,n,sub,message), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(p,pi), visit_index(n,ni).
+SSPRow(@place(path,l),code,message,ci,fi,0,ni,sub,entry,checkOrder) :- !ssp_failed_entry(entry,path), !ssp_collecting(_), ssp_order(entry,checkOrder), ssp_enabled(entry,d), ssp_run(entry), ssp_hit(entry,c,f,n,sub,code,message), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(n,ni), !ssp_suppressed(entry,c,path).
+SSPRow(@place(path,l),"STEP-019",message,ci,fi,pi,ni,sub,"check_postop_no_resolved_data_manipulation",checkOrder) :- !ssp_failed_entry("check_postop_no_resolved_data_manipulation",path), !ssp_collecting(_), ssp_order("check_postop_no_resolved_data_manipulation",checkOrder), ssp_enabled("check_postop_no_resolved_data_manipulation",d), ssp_run("check_postop_no_resolved_data_manipulation"), ssp_post_hit(c,f,p,n,sub,message), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(p,pi), visit_index(n,ni).
 
 // Global checks retain the source module's traversal order, independently of
 // the class/compile ordering used by the step-specific checks.
@@ -269,7 +195,7 @@ ssp_explain(problem,cat(problem,". This is an architectural problem: legacy post
 .decl ssp_problem_hit(entry: symbol, c: node, f: node, event: node, at: node, sub: number, code: symbol, problem: symbol)
 ssp_problem(problem) :- ssp_problem_hit(_,_,_,_,_,_,_,problem).
 ssp_extra(entry,c,f,event,at,sub,code,message) :- ssp_problem_hit(entry,c,f,event,at,sub,code,problem), ssp_explain(problem,message).
-SSPRow(@place(path,l),code,message,ci,fi,0,ni,sub,entry,checkOrder) :- !ssp_collecting(_), ssp_order(entry,checkOrder), ssp_enabled(entry,d), ssp_run(entry), ssp_extra(entry,c,f,event,at,sub,code,message), docof(c,d), ssp_doc(d,path), line(at,l), visit_index(c,ci), visit_index(f,fi), visit_index(event,ni), !ssp_suppressed(entry,c,path).
+SSPRow(@place(path,l),code,message,ci,fi,0,ni,sub,entry,checkOrder) :- !ssp_failed_entry(entry,path), !ssp_collecting(_), ssp_order(entry,checkOrder), ssp_enabled(entry,d), ssp_run(entry), ssp_extra(entry,c,f,event,at,sub,code,message), docof(c,d), ssp_doc(d,path), line(at,l), visit_index(c,ci), visit_index(f,fi), visit_index(event,ni), !ssp_suppressed(entry,c,path).
 
 ssp_entry("check_misc_runtime_is_deleted").
 ssp_entry("check_runtime_builder_names_are_enum_members").
@@ -387,7 +313,7 @@ ssp_cb_problem(cb,kind,n,2,"calls an authority-returning helper — callbacks mu
 ssp_cb_problem(cb,kind,n,3,"uses runtime txn/conn authority — callbacks must stay authority-free.") :- ssp_callback(_,_,_,kind,cb), ssp_walk(cb,n), kind(n,"call"), ssp_pos(n,_,arg), ssp_name(arg,name), ssp_cb_authority(cb,name).
 .decl ssp_cb_first(cb: node, kind: symbol, n: node, priority: number, tail: symbol)
 ssp_cb_first(cb,kind,n,priority,tail) :- ssp_cb_problem(cb,kind,n,priority,tail), visit_index(n,i), i = min j : { ssp_cb_problem(cb,kind,m,_,_), visit_index(m,j) }, priority = min p : { ssp_cb_problem(cb,kind,n,p,_) }.
-SSPRow(@place(path,l),"STEP-026",cat(cls,".compile() callback '",@nfkc(name),"' ",tail),ci,fi,calli,kwi,0,"check_compile_callbacks_no_runtime_authority",checkOrder) :- !ssp_collecting(_), ssp_order("check_compile_callbacks_no_runtime_authority",checkOrder), ssp_enabled("check_compile_callbacks_no_runtime_authority",d), ssp_run("check_compile_callbacks_no_runtime_authority"), ssp_step(c,cls), ssp_method(c,f,"compile"), ssp_callback(f,call,kw,kind,cb), ssp_cb_first(cb,kind,n,_,tail), def_name(cb,name), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(call,calli), visit_index(kw,kwi).
+SSPRow(@place(path,l),"STEP-026",cat(cls,".compile() callback '",@nfkc(name),"' ",tail),ci,fi,calli,kwi,0,"check_compile_callbacks_no_runtime_authority",checkOrder) :- !ssp_failed_entry("check_compile_callbacks_no_runtime_authority",path), !ssp_collecting(_), ssp_order("check_compile_callbacks_no_runtime_authority",checkOrder), ssp_enabled("check_compile_callbacks_no_runtime_authority",d), ssp_run("check_compile_callbacks_no_runtime_authority"), ssp_step(c,cls), ssp_method(c,f,"compile"), ssp_callback(f,call,kw,kind,cb), ssp_cb_first(cb,kind,n,_,tail), def_name(cb,name), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(call,calli), visit_index(kw,kwi).
 
 ssp_entry("check_runtime_refs_post_op_requires_runtime_refs_guardrail").
 ssp_entry("check_runtime_ref_closed_post_op_consumption_guardrail").
@@ -517,7 +443,7 @@ ssp_literal_materializer(call,value,c) :- ssp_payload_root(call,root), ssp_named
 .decl ssp_literal_problem(message: symbol)
 ssp_problem("literal_payload embeds a materializer that performs Python raw-row shaping; moving a materializer from row_materializer into a marker payload is still row shaping that belongs in SQL-visible relations or executor result routing").
 ssp_literal_problem(message) :- ssp_explain("literal_payload embeds a materializer that performs Python raw-row shaping; moving a materializer from row_materializer into a marker payload is still row shaping that belongs in SQL-visible relations or executor result routing",message).
-SSPRow(@place(path,l),"STEP-039",message,mi,calli,vi,ci,0,"check_literal_payload_materializer_dispatch_guardrail",checkOrder) :- !ssp_collecting(_), ssp_order("check_literal_payload_materializer_dispatch_guardrail",checkOrder), ssp_enabled("check_literal_payload_materializer_dispatch_guardrail",d), ssp_run("check_literal_payload_materializer_dispatch_guardrail"), ssp_module(d,m), ssp_doc(d,path), docof(call,d), ssp_literal_materializer(call,value,c), ssp_literal_problem(message), line(value,l), visit_index(m,mi), visit_index(call,calli), visit_index(value,vi), visit_index(c,ci).
+SSPRow(@place(path,l),"STEP-039",message,mi,calli,vi,ci,0,"check_literal_payload_materializer_dispatch_guardrail",checkOrder) :- !ssp_failed_entry("check_literal_payload_materializer_dispatch_guardrail",path), !ssp_collecting(_), ssp_order("check_literal_payload_materializer_dispatch_guardrail",checkOrder), ssp_enabled("check_literal_payload_materializer_dispatch_guardrail",d), ssp_run("check_literal_payload_materializer_dispatch_guardrail"), ssp_module(d,m), ssp_doc(d,path), docof(call,d), ssp_literal_materializer(call,value,c), ssp_literal_problem(message), line(value,l), visit_index(m,mi), visit_index(call,calli), visit_index(value,vi), visit_index(c,ci).
 
 .decl ssp_bool_method(c: node, f: node, method: symbol, value: number)
 ssp_bool_method(c,f,method,1) :- ssp_first(c,f,method), ssp_walk(f,r), ssp_ret(r,v), ssp_true(v).
@@ -688,12 +614,13 @@ ssp_legacy_hit(call,v,0,v,"CompiledStep(post_op_with_refs=...) receives a callab
 ssp_legacy_hit(call,v,0,v,cat("CompiledStep(",key,"=...) references a likely user-provided callable")) :- ssp_legacy_value(call,key,v), !kind(v,"call"), ssp_user_shape(v).
 ssp_legacy_hit(call,v,1,n,cat("legacy ",key," callback '",name,"' invokes or forwards a likely user-provided callable")) :- ssp_legacy_value(call,key,v), ssp_name(v,name), docof(call,d), ssp_last_function(d,name,f), ssp_under(n,f), ssp_call_user(n).
 ssp_problem(problem) :- ssp_legacy_hit(_,_,_,_,problem).
-SSPRow(@place(path,l),"STEP-028",message,mi,phase,calli,vi,ni,"check_legacy_postop_user_callable_escape_hatches",checkOrder) :- !ssp_collecting(_), ssp_order("check_legacy_postop_user_callable_escape_hatches",checkOrder), ssp_enabled("check_legacy_postop_user_callable_escape_hatches",d), ssp_run("check_legacy_postop_user_callable_escape_hatches"), ssp_module(d,m), ssp_doc(d,path), ssp_legacy_gate(d), docof(call,d), ssp_legacy_hit(call,v,phase,n,problem), ssp_explain(problem,message), line(n,l), visit_index(m,mi), visit_index(call,calli), visit_index(v,vi), visit_index(n,ni).
+SSPRow(@place(path,l),"STEP-028",message,mi,phase,calli,vi,ni,"check_legacy_postop_user_callable_escape_hatches",checkOrder) :- !ssp_failed_entry("check_legacy_postop_user_callable_escape_hatches",path), !ssp_collecting(_), ssp_order("check_legacy_postop_user_callable_escape_hatches",checkOrder), ssp_enabled("check_legacy_postop_user_callable_escape_hatches",d), ssp_run("check_legacy_postop_user_callable_escape_hatches"), ssp_module(d,m), ssp_doc(d,path), ssp_legacy_gate(d), docof(call,d), ssp_legacy_hit(call,v,phase,n,problem), ssp_explain(problem,message), line(n,l), visit_index(m,mi), visit_index(call,calli), visit_index(v,vi), visit_index(n,ni).
 
 // Fact-framework parse errors retain their exception class, filename and line.
 SSPRow(@place(path,l),"PARSE",cat("SyntaxError: ",detail," (",filename,", line ",to_string(l),")"),0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_scan_file"), option("argumentPath",path), option("inputName",filename), option_item("inputFiles",_,input), doc(d,input,_), doc_role(d,"primary"), syntax_error(d,l,detail), detail != "source code string cannot contain null bytes".
 SSPRow(@place(path,1),"PARSE","SyntaxError: source code string cannot contain null bytes",0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_scan_file"), option("argumentPath",path), option_item("inputFiles",_,input), doc(d,input,_), doc_role(d,"primary"), syntax_error(d,_,"source code string cannot contain null bytes").
+.decl ssp_error_line(detail: symbol, line: number)
+ssp_error_line(detail,n) :- ssp_key_error(_,_,detail), contains("line ",detail), tail = @replace_all(detail,"(?s)\\A.*line ",""), match_all("\\A(?<digits>[0-9]+)(?s:.*)\\z",tail), n = to_number(digits).
+SSPRow(@place(path,n),"PARSE",cat("ValueError: ",detail),0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_scan_file"), ssp_key_error(_,path,detail), ssp_error_line(detail,n).
+SSPRow(@place(path,1),"PARSE",cat("ValueError: ",detail),0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_scan_file"), ssp_key_error(_,path,detail), !ssp_error_line(detail,_).
 
-.violation SSPBlocker(at: span, value: symbol) code "SSP_BLOCKER" "{value}"
-SSPBlocker(@place("",0),key) :- ssp_collecting("collect_current_step022_blockers"), ssp_step(c,name), docof(c,d), ssp_doc(d,path), ssp_hit("check_side_effect_tag_allowlist",c,_,_,_,_,_), !ssp_suppressed("check_side_effect_tag_allowlist",c,path), ssp_class_key(path,name,key).
-SSPBlocker(@place("",0),key) :- ssp_collecting("collect_current_step023_blockers"), ssp_step(c,name), docof(c,d), ssp_doc(d,path), ssp_hit("check_zero_io_l0_execution_role_guardrail",c,_,_,_,_,_), ssp_class_key(path,name,key).

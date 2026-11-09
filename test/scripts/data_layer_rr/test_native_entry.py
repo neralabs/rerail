@@ -11,6 +11,18 @@ from suite import Suite
 
 
 class NativeEntryTests(unittest.TestCase):
+    def test_step_collectors_use_their_focused_native_policy(self):
+        suite = Suite.__new__(Suite)
+        suite.rule_root, suite.item = Path('/rules'), None
+        suite.calls, suite.inputs = [], {}
+        class Worker:
+            stdin = io.StringIO()
+            stdout = io.StringIO(json.dumps(dict(result=dict(programInputs=[],diagnostics=[],phases={})))+'\n')
+        suite.worker = Worker()
+        with patch('suite.select.select',return_value=([suite.worker.stdout],[],[])):
+            suite.native('serverplan_steps','collect_current_step022_blockers',[])
+        self.assertEqual('/rules/serverplan-steps-collectors.rr',json.loads(suite.worker.stdin.getvalue())['rule'])
+
     def test_production_and_named_entries_cross_the_same_worker_boundary(self):
         for entry in [None, 'check_file']:
             with self.subTest(entry=entry):

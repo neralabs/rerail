@@ -33,7 +33,7 @@ class Contract:
         self.host_protocol_calls = []
         self.baseline = read_json(args.baseline) if args.command == 'native' else None
         self.backend = None
-        names = ['serverplan_steps_port.py', 'ast_sources.py', 'ast_transport.py', 'suite.py', 'replay.py', 'dto.py', 'migration.py']
+        names = ['serverplan_steps_port.py', 'ast_sources.py', 'ast_transport.py', 'suite.py', 'replay.py', 'dto.py', 'migration.py', 'policy_routes.py']
         paths = [Path(__file__), *[Path(__file__).with_name(n) for n in names], ROOT/'scripts/dsl/data_layer_audit/native_guard.py']
         self.harness = {p.relative_to(ROOT).as_posix(): sha(p.read_bytes()) for p in paths if p.is_file()}
         if self.baseline:

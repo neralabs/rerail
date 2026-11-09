@@ -1,0 +1,97 @@
+// Shared step AST and candidate definitions. Consumers bind their document scope.
+.decl ssp_collecting(entry: symbol)
+.decl ssp_doc(d: number, path: symbol)
+.decl ssp_base(n: node, name: symbol)
+ssp_base(n,@nfkc(name)) :- kind(n,"identifier"), text(n,name).
+ssp_base(n,@nfkc(name)) :- attr_of(n,_,name).
+ssp_base(n,name) :- kind(n,"subscript"), field(n,"value",raw), unparen(raw,v), ssp_base(v,name).
+ssp_base(n,name) :- kind(n,"generic_type"), child(n,v,0), ssp_base(v,name).
+.decl ssp_step(c: node, name: symbol)
+ssp_step(c,@nfkc(name)) :- kind(c,"class_definition"), docof(c,d), ssp_doc(d,_), def_name(c,name), field(c,"superclasses",al), child(al,raw,_), !kind(raw,"keyword_argument"), unparen(raw,base), ssp_base(base,"ServerPlanStep").
+.decl ssp_body(p: node, n: node, i: number)
+ssp_body(p,n,i) :- field(p,"body",b), body_stmt(b,n,i), !kind(n,"decorated_definition"), !kind(n,"expression_statement").
+ssp_body(p,n,i) :- field(p,"body",b), body_stmt(b,s,i), kind(s,"expression_statement"), child(s,n,0).
+ssp_body(p,n,i) :- field(p,"body",b), body_stmt(b,dd,i), kind(dd,"decorated_definition"), field(dd,"definition",n).
+.decl ssp_method(c: node, f: node, name: symbol)
+ssp_method(c,f,@nfkc(name)) :- ssp_step(c,_), ssp_body(c,f,_), kind(f,"function_definition"), def_name(f,name).
+.decl ssp_first(c: node, f: node, name: symbol)
+ssp_first(c,f,name) :- ssp_method(c,f,name), visit_index(f,i), i = min j : { ssp_method(c,g,name), visit_index(g,j) }.
+.decl ssp_under(n: node, a: node)
+ssp_under(n,n) :- !ssp_collecting(_), kind(n,_).
+ssp_under(n,a) :- !ssp_collecting(_), ast_parent(n,p), ssp_under(p,a).
+.decl ssp_collect_anchor(a: node)
+ssp_collect_anchor(f) :- ssp_collecting(_), ssp_method(_,f,name), (name = "level" ; name = "tables_read" ; name = "tables_written" ; name = "compile" ; name = "step_tags").
+ssp_under(a,a) :- ssp_collect_anchor(a).
+ssp_under(n,a) :- ssp_collect_anchor(a), within(n,a).
+ssp_under(e,a) :- ssp_collect_anchor(a), decorator(a,e).
+ssp_under(n,a) :- ssp_collect_anchor(a), decorator(a,e), within(n,e).
+.decl ssp_nested(n: node)
+ssp_nested(n) :- kind(n,k), (k = "function_definition" ; k = "class_definition" ; k = "lambda").
+.decl ssp_walk(f: node, n: node)
+ssp_walk(f,n) :- kind(f,"function_definition"), ssp_body(f,n,_), !ssp_nested(n).
+ssp_walk(f,n) :- ssp_walk(f,p), ast_parent(n,p), !ssp_nested(n).
+.decl ssp_func(c: node, f: node)
+ssp_func(c,f) :- kind(c,"call"), field(c,"function",raw), unparen(raw,f).
+.decl ssp_call_name(c: node, name: symbol)
+ssp_call_name(c,@nfkc(name)) :- ssp_func(c,f), ast_name(f,name).
+ssp_call_name(c,@nfkc(name)) :- ssp_func(c,f), attr_of(f,_,name).
+.decl ssp_name(n: node, name: symbol)
+ssp_name(n,@nfkc(name)) :- ast_name(n,name).
+.decl ssp_attr(n: node, object: node, name: symbol)
+ssp_attr(n,v,@nfkc(name)) :- attr_of(n,raw,name), unparen(raw,v).
+.decl ssp_ret(r: node, v: node)
+ssp_ret(r,v) :- kind(r,"return_statement"), child(r,raw,0), unparen(raw,v).
+.decl ssp_pos(c: node, i: number, value: node)
+ssp_pos(c,i,v) :- kind(c,"call"), field(c,"arguments",al), child(al,raw,k), !kind(raw,"keyword_argument"), !kind(raw,"dictionary_splat"), !kind(raw,"comment"), unparen(raw,v), i = count : { child(al,other,j), j < k, !kind(other,"keyword_argument"), !kind(other,"dictionary_splat"), !kind(other,"comment") }.
+.decl ssp_kw(c: node, name: symbol, value: node)
+ssp_kw(c,@nfkc(name),v) :- kind(c,"call"), field(c,"arguments",al), child(al,k,_), kind(k,"keyword_argument"), field(k,"name",nm), text(nm,name), field(k,"value",raw), unparen(raw,v).
+.decl ssp_first_kw(c: node, name: symbol, value: node)
+ssp_first_kw(c,name,v) :- ssp_kw(c,name,v), visit_index(v,i), i = min j : { ssp_kw(c,name,w), visit_index(w,j) }.
+.decl ssp_last_kw(c: node, name: symbol, value: node)
+ssp_last_kw(c,name,v) :- ssp_kw(c,name,v), visit_index(v,i), i = max j : { ssp_kw(c,name,w), visit_index(w,j) }.
+.decl ssp_true(n: node)
+ssp_true(n) :- kind(n,"true").
+.decl ssp_false(n: node)
+ssp_false(n) :- kind(n,"false").
+.decl ssp_none(n: node)
+ssp_none(n) :- kind(n,"none").
+.decl ssp_level_value(c: node, r: node, value: number)
+.decl ssp_zero_integer(n: node)
+ssp_zero_integer(n) :- kind(n,"integer"), text(n,raw), match_all("\\A(?:0[0_]*|0[xX][0_]+|0[bB][0_]+|0[oO][0_]+)\\z",raw).
+ssp_level_value(c,r,0) :- ssp_method(c,f,"level"), ssp_under(r,f), ssp_ret(r,n), ssp_zero_integer(n).
+ssp_level_value(c,r,1) :- ssp_method(c,f,"level"), ssp_under(r,f), ssp_ret(r,n), kind(n,"integer"), !ssp_zero_integer(n), text(n,raw), !suffix("j",raw), !suffix("J",raw).
+ssp_level_value(c,r,0) :- ssp_method(c,f,"level"), ssp_under(r,f), ssp_ret(r,n), ssp_false(n).
+ssp_level_value(c,r,1) :- ssp_method(c,f,"level"), ssp_under(r,f), ssp_ret(r,n), ssp_true(n).
+.decl ssp_level(c: node, value: number)
+ssp_level(c,value) :- ssp_level_value(c,r,value), visit_index(r,i), i = min j : { ssp_level_value(c,s,_), visit_index(s,j) }.
+.decl ssp_side_effect(c: node)
+ssp_side_effect(c) :- ssp_first(c,f,"step_tags"), ssp_under(n,f), str_const(n,"side_effect").
+.decl ssp_side_effect_key(d: number, name: symbol)
+ssp_side_effect_key(d,name) :- ssp_step(c,name), docof(c,d), ssp_side_effect(c).
+.decl ssp_relative_path(path: symbol, relative: symbol)
+ssp_relative_path(path,path) :- ssp_doc(_,path), !prefix("/",path).
+ssp_relative_path(path,".") :- ssp_doc(_,path), prefix("/",path), option("rootPath",path).
+ssp_relative_path(path,@slice(path,strlen(root)+1,strlen(path))) :- ssp_doc(_,path), option("rootPath",root), root != "/", root != "//", prefix(cat(root,"/"),path).
+ssp_relative_path(path,@slice(path,1,strlen(path))) :- ssp_doc(_,path), option("rootPath","/"), path != "/", prefix("/",path), !prefix("//",path).
+ssp_relative_path(path,@slice(path,2,strlen(path))) :- ssp_doc(_,path), option("rootPath","//"), path != "//", prefix("//",path).
+.decl ssp_class_key(path: symbol, name: symbol, key: symbol)
+ssp_class_key(path,name,cat(relative,":",name)) :- ssp_step(c,name), docof(c,d), ssp_doc(d,path), ssp_relative_path(path,relative).
+.decl ssp_suppressed(entry: symbol, c: node, path: symbol)
+ssp_suppressed("check_side_effect_tag_allowlist",c,path) :- ssp_step(c,name), docof(c,d), ssp_doc(d,path), ssp_class_key(path,name,key), option_item("sideEffectAllowlist",_,key).
+.decl ssp_empty_collection(n: node)
+ssp_empty_collection(n) :- kind(n,k), (k = "list" ; k = "tuple" ; k = "set"), count : { child(n,x,_), !kind(x,"comment") } = 0.
+.decl ssp_empty_frozenset(f: node)
+ssp_empty_frozenset(f) :- kind(f,"function_definition"), ssp_under(r,f), ssp_ret(r,c), ssp_func(c,func), ssp_name(func,"frozenset"), !ssp_pos(c,_,_), !ssp_kw(c,_,_), field(c,"arguments",al), !child(al,_,_).
+ssp_empty_frozenset(f) :- kind(f,"function_definition"), ssp_under(r,f), ssp_ret(r,c), ssp_func(c,func), ssp_name(func,"frozenset"), ssp_pos(c,0,n), ssp_empty_collection(n), !ssp_pos(c,1,_), !ssp_kw(c,_,_), field(c,"arguments",al), count : { child(al,x,_), kind(x,"dictionary_splat") } = 0.
+.decl ssp_runtime_hooks(f: node)
+ssp_runtime_hooks(f) :- kind(f,"function_definition"), ssp_under(c,f), ssp_func(c,func), ssp_name(func,"CompiledStep"), field(c,"arguments",al), !child(al,_,_).
+ssp_runtime_hooks(f) :- kind(f,"function_definition"), ssp_under(c,f), ssp_func(c,func), ssp_name(func,"CompiledStep"), ssp_kw(c,name,v), (name = "pre_op" ; name = "post_op" ; name = "on_commit" ; name = "on_rollback"), !ssp_none(v).
+.decl ssp_zero_io(c: node)
+ssp_zero_io(c) :- ssp_level(c,0), ssp_first(c,r,"tables_read"), ssp_first(c,w,"tables_written"), ssp_first(c,f,"compile"), ssp_empty_frozenset(r), ssp_empty_frozenset(w), ssp_runtime_hooks(f).
+.decl ssp_zero_key(d: number, name: symbol)
+ssp_zero_key(d,name) :- ssp_step(c,name), docof(c,d), ssp_zero_io(c), !ssp_first(c,_,"execution_role").
+
+.decl ssp_tag_candidate(c: node)
+ssp_tag_candidate(c) :- ssp_step(c,name), docof(c,d), ssp_side_effect_key(d,name), ssp_first(c,_,"step_tags").
+.decl ssp_zero_candidate(c: node)
+ssp_zero_candidate(c) :- ssp_step(c,name), docof(c,d), ssp_zero_key(d,name).

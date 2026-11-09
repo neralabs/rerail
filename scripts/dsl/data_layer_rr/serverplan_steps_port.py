@@ -105,14 +105,17 @@ def install(suite, module):
             batches[key] = suite.native('serverplan_steps', '_all_checks',
                             [dict(path='input.py', source=source)], settings)
         rows = batches[key]
+        if any(row['code'] not in {'SSP_ROW','SSP_ERROR'} for row in rows):
+            raise ValueError('Unexpected native step result')
+        selected = [row for row in rows if row['parameters']['entry'] == entry]
+        if any(row['code'] == 'SSP_ERROR' for row in selected):
+            scan_rows(selected)
         result = []
-        for row in sorted(rows, key=lambda r: tuple(r['parameters'][k] for k in
+        for row in sorted(selected, key=lambda r: tuple(r['parameters'][k] for k in
                           ['class_order', 'method_order', 'callback_order', 'node_order', 'suborder'])):
             if row['code'] != 'SSP_ROW':
                 raise ValueError('Unexpected native step DTO: '+row['code'])
             p = row['parameters']
-            if p['entry'] != entry:
-                continue
             result.append(module.Violation(p['violation_code'], Path(row['path']), row['line'], p['detail']))
         return result
 
