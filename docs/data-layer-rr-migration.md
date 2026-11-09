@@ -2531,3 +2531,30 @@ These are source observations only; none is claimed as native coverage.
 They show why the two mocked original CLI tests were insufficient.
 The source ignores `--require-baseline`, verifies existing signatures even when skipping unsigned checks, and excludes string counts from comparison ceilings.
 Its CLI also returns zero after a failed signed baseline update. These observed behaviors are part of the parity target.
+
+### 2026-11-10 — Latest Final integration acceptance
+
+The optimized root engine now includes Final `04e3b5b83` through merge `08381b39e`.
+Its artifact is `89215924f4a71755…`, built from committed native tree `be8bcd87e27af3937e5ed3d8d8d1cd71f54467bb`.
+The [engine receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final04e3-engine-validation.json.gz) records 158 passing focused tests and two existing ignored helpers.
+All 199 tooling tests pass. Unit, debug CLI, and optimized CLI builds took 200.146, 140.457, and 911.326 seconds.
+Compilation is separate from rule execution. No full-repository or full-100-rule cold run was performed.
+
+The [authority checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-authority-final04e3-checkpoint.json.gz) independently verifies all 577 native executions again.
+Both original APIs, all supplemental cases, production and installed frontends, malformed inputs, controls, and persistent updates pass.
+Its accepted manifest entry now references the new engine. Both earlier evidence cohorts remain available.
+
+The [direct-execution checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-final04e3-checkpoint.json.gz) verifies 445 native executions on this engine.
+All 174 original tests pass through each API, including every original CLI and module assertion.
+There are 35 positive scanner observations per API. All 63 API cases, 20 production cases, eight controls, and fifteen persistent steps pass.
+The [signing checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-signing-final04e3-checkpoint.json.gz) verifies another 112 native executions across all 38 cases.
+Exact streams and complete rewritten bytes remain checked.
+
+Three aggregate controllers reached their 115-second limits. Completed shards were retained; unfinished shards passed as individually bounded commands with less concurrency.
+Those controller timeouts are embedded in both rule checkpoints.
+The final signing shard also reached its cap after four cases. The next case passed alone, and the complete shard passed on retry in 27.846 seconds with its own tape cache.
+This isolates the acceptance failure to the bounded run, but does not establish the earlier wall-time cost's cause. Its partial report remains in the signing checkpoint.
+
+Direct execution remains a draft. Real ratchet reads and writes remain unported; the separate red native fixture demonstrates this gap.
+The inventory remains one accepted rule, 94 drafts, and five absent translations. The global migration remains unfinished.
+The next implementation starts with the recorded missing-baseline check, then works through the full 30-case ratchet corpus.

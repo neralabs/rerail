@@ -1,0 +1,1847 @@
+{
+  "format": "rerail.execution-authority-bypass-original-contracts/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "pytest_exit_code": 0,
+  "exitCode": 0,
+  "oracle": false,
+  "source_mismatches": [],
+  "fullMigrationAcceptance": false,
+  "mode": "snapshot",
+  "part": 0,
+  "parts": 1,
+  "collected": [
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_explicit_authority_contextvar_mutation",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_legacy_boundary_contextvar_mutation",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_authority_internals_monkeypatching",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_unsigned_explicit_execution_authority_callsite",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_allows_signed_explicit_plan_execution_scope_callsite",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_signed_callsite_outside_curated_set",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_curated_callsite_without_signature"
+  ],
+  "selectedCases": [
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_explicit_authority_contextvar_mutation",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_legacy_boundary_contextvar_mutation",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_authority_internals_monkeypatching",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_unsigned_explicit_execution_authority_callsite",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_allows_signed_explicit_plan_execution_scope_callsite",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_signed_callsite_outside_curated_set",
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_curated_callsite_without_signature"
+  ],
+  "selectedEntries": null,
+  "cases": {
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_explicit_authority_contextvar_mutation": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_legacy_boundary_contextvar_mutation": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_authority_internals_monkeypatching": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_unsigned_explicit_execution_authority_callsite": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_allows_signed_explicit_plan_execution_scope_callsite": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_signed_callsite_outside_curated_set": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_curated_callsite_without_signature": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "calls": [
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_explicit_authority_contextvar_mutation",
+      "entry": "scan_source",
+      "arguments": {
+        "kind": "dict",
+        "items": [
+          [
+            "source",
+            "\nfrom l2050_transaction import execution_boundary\n\ndef helper():\n    token = execution_boundary._explicit_authority_var().set(True)\n    try:\n        return 1\n    finally:\n        execution_boundary._explicit_authority_var().reset(token)\n"
+          ],
+          [
+            "rel_path",
+            "impl/fake/authority_sample.py"
+          ]
+        ]
+      },
+      "return": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_execution_authority_bypass.AuthorityViolation",
+          "fields": {
+            "path": "impl/fake/authority_sample.py",
+            "line": 5,
+            "code": "AUTH001",
+            "message": "direct access to private execution authority ContextVar _explicit_authority_var"
+          }
+        },
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_execution_authority_bypass.AuthorityViolation",
+          "fields": {
+            "path": "impl/fake/authority_sample.py",
+            "line": 9,
+            "code": "AUTH001",
+            "message": "direct access to private execution authority ContextVar _explicit_authority_var"
+          }
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_legacy_boundary_contextvar_mutation",
+      "entry": "scan_source",
+      "arguments": {
+        "kind": "dict",
+        "items": [
+          [
+            "source",
+            "\nfrom l2050_transaction import execution_boundary\n\ndef helper():\n    return execution_boundary._legacy_boundary_var().set(True)\n"
+          ],
+          [
+            "rel_path",
+            "impl/fake/authority_sample.py"
+          ]
+        ]
+      },
+      "return": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_execution_authority_bypass.AuthorityViolation",
+          "fields": {
+            "path": "impl/fake/authority_sample.py",
+            "line": 5,
+            "code": "AUTH001",
+            "message": "direct access to private execution authority ContextVar _legacy_boundary_var"
+          }
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_authority_internals_monkeypatching",
+      "entry": "scan_source",
+      "arguments": {
+        "kind": "dict",
+        "items": [
+          [
+            "source",
+            "\ndef test_case(monkeypatch):\n    monkeypatch.setattr(\"l2050_transaction.execution_boundary._caller_token\", lambda: object())\n    monkeypatch.setattr(\"l2050_transaction.execution_boundary.verify_callsite_authorization\", lambda *a: None)\n"
+          ],
+          [
+            "rel_path",
+            "impl/fake/authority_sample.py"
+          ]
+        ]
+      },
+      "return": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_execution_authority_bypass.AuthorityViolation",
+          "fields": {
+            "path": "impl/fake/authority_sample.py",
+            "line": 3,
+            "code": "AUTH003",
+            "message": "monkeypatching execution authority internals is forbidden"
+          }
+        },
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_execution_authority_bypass.AuthorityViolation",
+          "fields": {
+            "path": "impl/fake/authority_sample.py",
+            "line": 4,
+            "code": "AUTH003",
+            "message": "monkeypatching execution authority internals is forbidden"
+          }
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_unsigned_explicit_execution_authority_callsite",
+      "entry": "scan_source",
+      "arguments": {
+        "kind": "dict",
+        "items": [
+          [
+            "source",
+            "\nfrom l2050_transaction.execution_boundary import explicit_execution_authority\n\ndef helper():\n    with explicit_execution_authority():\n        return 1\n"
+          ],
+          [
+            "rel_path",
+            "impl/fake/authority_sample.py"
+          ]
+        ]
+      },
+      "return": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_execution_authority_bypass.AuthorityViolation",
+          "fields": {
+            "path": "impl/fake/authority_sample.py",
+            "line": 5,
+            "code": "AUTH002",
+            "message": "explicit_execution_authority() may only be called from signed callsites; route through explicit_plan_execution_scope or update the signed token registry"
+          }
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_allows_signed_explicit_plan_execution_scope_callsite",
+      "entry": "scan_source",
+      "arguments": {
+        "kind": "dict",
+        "items": [
+          [
+            "source",
+            "\nfrom l2050_transaction.execution_boundary import explicit_execution_authority\n\ndef explicit_plan_execution_scope():\n    with explicit_execution_authority():\n        yield\n"
+          ],
+          [
+            "rel_path",
+            "impl/common/l2070_server_plan/execution_context.py"
+          ]
+        ]
+      },
+      "return": [],
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_signed_callsite_outside_curated_set",
+      "entry": "_registry_violations",
+      "arguments": {
+        "kind": "dict",
+        "items": []
+      },
+      "return": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_execution_authority_bypass.AuthorityViolation",
+          "fields": {
+            "path": "l2050_transaction/execution_authority_tokens.py",
+            "line": 0,
+            "code": "AUTH004",
+            "message": "signed explicit execution authority callsite is not in the curated set: impl.fake:helper"
+          }
+        },
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_execution_authority_bypass.AuthorityViolation",
+          "fields": {
+            "path": "l2050_transaction/execution_authority_tokens.py",
+            "line": 0,
+            "code": "AUTH005",
+            "message": "curated explicit execution authority callsite is unsigned: impl.fake:other_helper"
+          }
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_curated_callsite_without_signature",
+      "entry": "_registry_violations",
+      "arguments": {
+        "kind": "dict",
+        "items": []
+      },
+      "return": [
+        {
+          "kind": "dataclass",
+          "type": "scripts.lint_execution_authority_bypass.AuthorityViolation",
+          "fields": {
+            "path": "l2050_transaction/execution_authority_tokens.py",
+            "line": 0,
+            "code": "AUTH005",
+            "message": "curated explicit execution authority callsite is unsigned: impl.fake:helper"
+          }
+        }
+      ],
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "events": [],
+  "missingResults": [],
+  "semanticFallbacks": [],
+  "hostProtocolCalls": [],
+  "harnessFiles": {
+    "scripts/dsl/data_layer_rr/execution_authority_bypass_contract.py": "b48ca10563eb8ca698dfecbda9b83da15601cf181b2d6cd84b20efcbabde479b",
+    "scripts/dsl/data_layer_rr/execution_authority_bypass_port.py": "4c9594e2b4d560e2ed0b545b09d6890304f35e3d5e803df2522ada9f649ba4fb",
+    "scripts/dsl/data_layer_rr/ast_sources.py": "f466aebe668f72f00e0c878604d7da1ec3264b13e98c230d56db74553a88e54a",
+    "scripts/dsl/data_layer_rr/ast_transport.py": "30b3c597ff7570dab6ebacaf806767ab268dc90adf3950fe0555fc9643781c8a",
+    "scripts/dsl/data_layer_rr/suite.py": "b69eae0eae34516b985f168584a0a2a2a2b57863d7b21691b6c2b8c202b4cb8b",
+    "scripts/dsl/data_layer_rr/replay.py": "05d4c2b8a540b508d6687ff021f8df4309610b39e982e4161cfdb691c717a8dd",
+    "scripts/dsl/data_layer_rr/dto.py": "a94d1342fe9900ba05f972d613089a07fe58a472f3faac1c6a5112931cf6e262",
+    "scripts/dsl/data_layer_rr/migration.py": "dd478b3034026afeb113aed74c46e594fbb33b5f18ce7eb0573b238aae6138c8",
+    "scripts/dsl/data_layer_audit/native_guard.py": "9de4f513c0855f77870f14a3de6723cc0f65ca933cb6df28a7f49c8ed53f68b8"
+  },
+  "sourceFiles": {
+    "scripts/lint_execution_authority_bypass.py": "d6544f403f06075e717f674185dc2a6fe558c3b44d6f84e608d9d51539f64184",
+    "scripts/tests/test_lint_execution_authority_bypass.py": "b30cff4fc409e680eee669c3e28d9de0b13160b86da86ad0803e4ba940daf5a5"
+  },
+  "engineSha256": "89215924f4a71755e92e21d9c5ff784e24b9c5dddaf0d829bd7de61e21699f59",
+  "nativeCalls": [
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_explicit_authority_contextvar_mutation",
+      "check": "execution_authority_bypass",
+      "entry": "scan_source",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "input.py",
+          "sourceSha256": "f6d32ed5e946ce24418272d0907e782ae907e6009d6be8956b6c0a0936a6a126"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_source",
+        "signedCount": "11",
+        "env": [
+          "auth.api=true",
+          "auth.config=arguments"
+        ],
+        "signedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "signedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "curatedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "curatedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "privateExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py",
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "privateExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite",
+          "test_raw_explicit_authority_contextvar_value_does_not_authorize"
+        ],
+        "explicitExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "explicitExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper"
+        ],
+        "privateSymbols": [
+          "_explicit_authority_var",
+          "_legacy_boundary_var"
+        ],
+        "monkeypatchMarkers": [
+          "execution_boundary._explicit_authority_var",
+          "execution_boundary._legacy_boundary_var",
+          "execution_boundary._caller_token",
+          "execution_boundary.verify_callsite_authorization",
+          "l2050_transaction.execution_boundary._explicit_authority_var",
+          "l2050_transaction.execution_boundary._legacy_boundary_var",
+          "l2050_transaction.execution_boundary._caller_token",
+          "l2050_transaction.execution_boundary.verify_callsite_authorization"
+        ],
+        "argumentPath": "impl/fake/authority_sample.py"
+      },
+      "findings": 2,
+      "diagnostics": [
+        {
+          "policy": "data-layer-execution-authority-bypass",
+          "clause": "AuthRow",
+          "code": "AUTH_ROW",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "direct access to private execution authority ContextVar _explicit_authority_var",
+          "parameters": {
+            "ordinal": 16,
+            "path": "impl/fake/authority_sample.py",
+            "line": 5,
+            "code": "AUTH001",
+            "message": "direct access to private execution authority ContextVar _explicit_authority_var"
+          }
+        },
+        {
+          "policy": "data-layer-execution-authority-bypass",
+          "clause": "AuthRow",
+          "code": "AUTH_ROW",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "direct access to private execution authority ContextVar _explicit_authority_var",
+          "parameters": {
+            "ordinal": 33,
+            "path": "impl/fake/authority_sample.py",
+            "line": 9,
+            "code": "AUTH001",
+            "message": "direct access to private execution authority ContextVar _explicit_authority_var"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-paths.rr",
+          "sha256": "530f3da39f72dbe055a71add8ecda38f5df1e4105f28bab68786e867d05229a0"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-settings.rr",
+          "sha256": "a7279ede5376ab7292decc1c46fca51c7554af518106aa42ec01abb8baa22146"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+          "sha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.042386999999999994,
+          "systemCpuSeconds": 0.002045999999999999,
+          "peakRssMB": 48.054272,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 0.000826,
+          "systemCpuSeconds": 0.00046,
+          "peakRssMB": 72.843264,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.000285,
+          "systemCpuSeconds": 0.000327,
+          "peakRssMB": 72.843264,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.07204700000000001,
+          "systemCpuSeconds": 0.005831000000000003,
+          "peakRssMB": 56.328192,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.08571700000000004,
+          "systemCpuSeconds": 0.0062439999999999996,
+          "peakRssMB": 72.843264,
+          "submittedStatements": 7
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00016199999999999548,
+          "systemCpuSeconds": 0.0011559999999999973,
+          "peakRssMB": 72.843264,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.010258999999999963,
+          "systemCpuSeconds": 0.0007539999999999977,
+          "peakRssMB": 72.843264,
+          "submittedStatements": 152
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.011400999999999994,
+          "systemCpuSeconds": 0.0005830000000000002,
+          "peakRssMB": 72.843264,
+          "submittedStatements": 197
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 2.9000000000001247e-05,
+          "systemCpuSeconds": 0.001362000000000002,
+          "peakRssMB": 72.843264,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_direct_legacy_boundary_contextvar_mutation",
+      "check": "execution_authority_bypass",
+      "entry": "scan_source",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "input.py",
+          "sourceSha256": "9d81d259f997f908b8899bc050ee3658b779582a9001dba94079cd20165b9b98"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_source",
+        "signedCount": "11",
+        "env": [
+          "auth.api=true",
+          "auth.config=arguments"
+        ],
+        "signedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "signedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "curatedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "curatedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "privateExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py",
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "privateExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite",
+          "test_raw_explicit_authority_contextvar_value_does_not_authorize"
+        ],
+        "explicitExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "explicitExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper"
+        ],
+        "privateSymbols": [
+          "_explicit_authority_var",
+          "_legacy_boundary_var"
+        ],
+        "monkeypatchMarkers": [
+          "execution_boundary._explicit_authority_var",
+          "execution_boundary._legacy_boundary_var",
+          "execution_boundary._caller_token",
+          "execution_boundary.verify_callsite_authorization",
+          "l2050_transaction.execution_boundary._explicit_authority_var",
+          "l2050_transaction.execution_boundary._legacy_boundary_var",
+          "l2050_transaction.execution_boundary._caller_token",
+          "l2050_transaction.execution_boundary.verify_callsite_authorization"
+        ],
+        "argumentPath": "impl/fake/authority_sample.py"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-execution-authority-bypass",
+          "clause": "AuthRow",
+          "code": "AUTH_ROW",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "direct access to private execution authority ContextVar _legacy_boundary_var",
+          "parameters": {
+            "ordinal": 14,
+            "path": "impl/fake/authority_sample.py",
+            "line": 5,
+            "code": "AUTH001",
+            "message": "direct access to private execution authority ContextVar _legacy_boundary_var"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-paths.rr",
+          "sha256": "530f3da39f72dbe055a71add8ecda38f5df1e4105f28bab68786e867d05229a0"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-settings.rr",
+          "sha256": "a7279ede5376ab7292decc1c46fca51c7554af518106aa42ec01abb8baa22146"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+          "sha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.04162299999999999,
+          "systemCpuSeconds": 0.0008680000000000007,
+          "peakRssMB": 34.881536,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 0.000875,
+          "systemCpuSeconds": 0.000868,
+          "peakRssMB": 55.721984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.000264,
+          "systemCpuSeconds": 0.00036300000000000004,
+          "peakRssMB": 55.721984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.06125800000000001,
+          "systemCpuSeconds": 0.005256999999999998,
+          "peakRssMB": 44.843008,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.020388000000000017,
+          "systemCpuSeconds": 0.0025990000000000006,
+          "peakRssMB": 55.45984,
+          "submittedStatements": 7
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00017699999999998273,
+          "systemCpuSeconds": 0.0003489999999999986,
+          "peakRssMB": 55.45984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.008821999999999997,
+          "systemCpuSeconds": 0.001339,
+          "peakRssMB": 55.45984,
+          "submittedStatements": 152
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.011642000000000013,
+          "systemCpuSeconds": 0.0006500000000000013,
+          "peakRssMB": 55.721984,
+          "submittedStatements": 199
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 2.6999999999999247e-05,
+          "systemCpuSeconds": 0.0011570000000000018,
+          "peakRssMB": 55.721984,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_authority_internals_monkeypatching",
+      "check": "execution_authority_bypass",
+      "entry": "scan_source",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "input.py",
+          "sourceSha256": "4cd01ba5f28d762ab380caf1995e9971eabdec5668e2682ba93adda1c1ea16b0"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_source",
+        "signedCount": "11",
+        "env": [
+          "auth.api=true",
+          "auth.config=arguments"
+        ],
+        "signedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "signedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "curatedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "curatedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "privateExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py",
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "privateExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite",
+          "test_raw_explicit_authority_contextvar_value_does_not_authorize"
+        ],
+        "explicitExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "explicitExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper"
+        ],
+        "privateSymbols": [
+          "_explicit_authority_var",
+          "_legacy_boundary_var"
+        ],
+        "monkeypatchMarkers": [
+          "execution_boundary._explicit_authority_var",
+          "execution_boundary._legacy_boundary_var",
+          "execution_boundary._caller_token",
+          "execution_boundary.verify_callsite_authorization",
+          "l2050_transaction.execution_boundary._explicit_authority_var",
+          "l2050_transaction.execution_boundary._legacy_boundary_var",
+          "l2050_transaction.execution_boundary._caller_token",
+          "l2050_transaction.execution_boundary.verify_callsite_authorization"
+        ],
+        "argumentPath": "impl/fake/authority_sample.py"
+      },
+      "findings": 2,
+      "diagnostics": [
+        {
+          "policy": "data-layer-execution-authority-bypass",
+          "clause": "AuthRow",
+          "code": "AUTH_ROW",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "monkeypatching execution authority internals is forbidden",
+          "parameters": {
+            "ordinal": 21,
+            "path": "impl/fake/authority_sample.py",
+            "line": 4,
+            "code": "AUTH003",
+            "message": "monkeypatching execution authority internals is forbidden"
+          }
+        },
+        {
+          "policy": "data-layer-execution-authority-bypass",
+          "clause": "AuthRow",
+          "code": "AUTH_ROW",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "monkeypatching execution authority internals is forbidden",
+          "parameters": {
+            "ordinal": 7,
+            "path": "impl/fake/authority_sample.py",
+            "line": 3,
+            "code": "AUTH003",
+            "message": "monkeypatching execution authority internals is forbidden"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-paths.rr",
+          "sha256": "530f3da39f72dbe055a71add8ecda38f5df1e4105f28bab68786e867d05229a0"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-settings.rr",
+          "sha256": "a7279ede5376ab7292decc1c46fca51c7554af518106aa42ec01abb8baa22146"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+          "sha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.04113599999999999,
+          "systemCpuSeconds": 0.0016520000000000007,
+          "peakRssMB": 34.914304,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 0.000754,
+          "systemCpuSeconds": 0.000615,
+          "peakRssMB": 56.999936,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002549999999999999,
+          "systemCpuSeconds": 0.00031900000000000006,
+          "peakRssMB": 56.999936,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.06161700000000002,
+          "systemCpuSeconds": 0.006588999999999998,
+          "peakRssMB": 43.74528,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.019761,
+          "systemCpuSeconds": 0.0033920000000000027,
+          "peakRssMB": 55.574528,
+          "submittedStatements": 7
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00017499999999998073,
+          "systemCpuSeconds": 0.0003599999999999992,
+          "peakRssMB": 55.574528,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.013727000000000017,
+          "systemCpuSeconds": 0.001472000000000001,
+          "peakRssMB": 55.574528,
+          "submittedStatements": 230
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.01125699999999999,
+          "systemCpuSeconds": 0.0008719999999999978,
+          "peakRssMB": 56.999936,
+          "submittedStatements": 197
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.800000000001025e-05,
+          "systemCpuSeconds": 0.0014589999999999985,
+          "peakRssMB": 56.999936,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_unsigned_explicit_execution_authority_callsite",
+      "check": "execution_authority_bypass",
+      "entry": "scan_source",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "input.py",
+          "sourceSha256": "e80cf328e68c44197280b188703919772cb9e33cf9f60a2f30b5faf6b3b999de"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_source",
+        "signedCount": "11",
+        "env": [
+          "auth.api=true",
+          "auth.config=arguments"
+        ],
+        "signedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "signedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "curatedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "curatedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "privateExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py",
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "privateExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite",
+          "test_raw_explicit_authority_contextvar_value_does_not_authorize"
+        ],
+        "explicitExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "explicitExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper"
+        ],
+        "privateSymbols": [
+          "_explicit_authority_var",
+          "_legacy_boundary_var"
+        ],
+        "monkeypatchMarkers": [
+          "execution_boundary._explicit_authority_var",
+          "execution_boundary._legacy_boundary_var",
+          "execution_boundary._caller_token",
+          "execution_boundary.verify_callsite_authorization",
+          "l2050_transaction.execution_boundary._explicit_authority_var",
+          "l2050_transaction.execution_boundary._legacy_boundary_var",
+          "l2050_transaction.execution_boundary._caller_token",
+          "l2050_transaction.execution_boundary.verify_callsite_authorization"
+        ],
+        "argumentPath": "impl/fake/authority_sample.py"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-execution-authority-bypass",
+          "clause": "AuthRow",
+          "code": "AUTH_ROW",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "explicit_execution_authority() may only be called from signed callsites; route through explicit_plan_execution_scope or update the signed token registry",
+          "parameters": {
+            "ordinal": 14,
+            "path": "impl/fake/authority_sample.py",
+            "line": 5,
+            "code": "AUTH002",
+            "message": "explicit_execution_authority() may only be called from signed callsites; route through explicit_plan_execution_scope or update the signed token registry"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-paths.rr",
+          "sha256": "530f3da39f72dbe055a71add8ecda38f5df1e4105f28bab68786e867d05229a0"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-settings.rr",
+          "sha256": "a7279ede5376ab7292decc1c46fca51c7554af518106aa42ec01abb8baa22146"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+          "sha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.042727,
+          "systemCpuSeconds": 0.0006670000000000009,
+          "peakRssMB": 34.930688,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 0.000921,
+          "systemCpuSeconds": 0.000892,
+          "peakRssMB": 56.60672,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002769999999999999,
+          "systemCpuSeconds": 0.00036700000000000003,
+          "peakRssMB": 56.60672,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.05896199999999999,
+          "systemCpuSeconds": 0.0052289999999999975,
+          "peakRssMB": 44.695552,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.02105399999999999,
+          "systemCpuSeconds": 0.0024419999999999997,
+          "peakRssMB": 56.213504,
+          "submittedStatements": 7
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00019199999999999773,
+          "systemCpuSeconds": 0.0003390000000000025,
+          "peakRssMB": 56.213504,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.010008000000000017,
+          "systemCpuSeconds": 0.0008139999999999988,
+          "peakRssMB": 56.213504,
+          "submittedStatements": 152
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.012180999999999997,
+          "systemCpuSeconds": 0.000792000000000001,
+          "peakRssMB": 56.60672,
+          "submittedStatements": 199
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 2.8000000000000247e-05,
+          "systemCpuSeconds": 0.0011110000000000009,
+          "peakRssMB": 56.60672,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_allows_signed_explicit_plan_execution_scope_callsite",
+      "check": "execution_authority_bypass",
+      "entry": "scan_source",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [
+        {
+          "path": "input.py",
+          "sourceSha256": "d15779df40b1c18dbb78d550094bf948b1e488fd85f3e7c242c09137bfb10cd8"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_source",
+        "signedCount": "11",
+        "env": [
+          "auth.api=true",
+          "auth.config=arguments"
+        ],
+        "signedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "signedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "curatedModules": [
+          "impl.common.l2070_server_plan.execution_context",
+          "l1300_session.bootstrap",
+          "l2000_connection.schema_transaction",
+          "l2000_connection.schema_transaction",
+          "l2050_transaction.execution_boundary",
+          "l2050_transaction.execution_boundary",
+          "l3200_metadata.schema_lock",
+          "l3200_metadata.schema_lock",
+          "l4170_inbound_bridge.process",
+          "l7500_commit_triggers.registry",
+          "l7500_commit_triggers.registry"
+        ],
+        "curatedFunctions": [
+          "explicit_plan_execution_scope",
+          "ensure_system_session_exists.<locals>._insert_if_missing",
+          "AsyncSchemaTransaction._enter_async",
+          "LazySchemaTransaction._enter_sync",
+          "execute_server_plan_async",
+          "execute_server_plan_now",
+          "_schema_lock_bootstrap_row",
+          "_schema_lock_bootstrap_row_async",
+          "_invoke_inbound_bridge_handler_eager",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority",
+          "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async"
+        ],
+        "privateExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py",
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "privateExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite",
+          "test_raw_explicit_authority_contextvar_value_does_not_authorize"
+        ],
+        "explicitExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "explicitExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper"
+        ],
+        "privateSymbols": [
+          "_explicit_authority_var",
+          "_legacy_boundary_var"
+        ],
+        "monkeypatchMarkers": [
+          "execution_boundary._explicit_authority_var",
+          "execution_boundary._legacy_boundary_var",
+          "execution_boundary._caller_token",
+          "execution_boundary.verify_callsite_authorization",
+          "l2050_transaction.execution_boundary._explicit_authority_var",
+          "l2050_transaction.execution_boundary._legacy_boundary_var",
+          "l2050_transaction.execution_boundary._caller_token",
+          "l2050_transaction.execution_boundary.verify_callsite_authorization"
+        ],
+        "argumentPath": "impl/common/l2070_server_plan/execution_context.py"
+      },
+      "findings": 0,
+      "diagnostics": [],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-paths.rr",
+          "sha256": "530f3da39f72dbe055a71add8ecda38f5df1e4105f28bab68786e867d05229a0"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-settings.rr",
+          "sha256": "a7279ede5376ab7292decc1c46fca51c7554af518106aa42ec01abb8baa22146"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+          "sha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.039659999999999994,
+          "systemCpuSeconds": 0.0005459999999999979,
+          "peakRssMB": 34.668544,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 0.0008939999999999999,
+          "systemCpuSeconds": 0.0006889999999999999,
+          "peakRssMB": 55.918592,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.00027400000000000005,
+          "systemCpuSeconds": 0.00027800000000000014,
+          "peakRssMB": 55.918592,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.058307,
+          "systemCpuSeconds": 0.007038000000000003,
+          "peakRssMB": 43.155456,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.020107999999999987,
+          "systemCpuSeconds": 0.004346999999999997,
+          "peakRssMB": 55.427072,
+          "submittedStatements": 7
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00016300000000002424,
+          "systemCpuSeconds": 0.0003799999999999984,
+          "peakRssMB": 55.427072,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.009393999999999986,
+          "systemCpuSeconds": 0.0011060000000000028,
+          "peakRssMB": 55.427072,
+          "submittedStatements": 152
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.011271000000000003,
+          "systemCpuSeconds": 0.0006510000000000023,
+          "peakRssMB": 55.918592,
+          "submittedStatements": 199
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.500000000000725e-05,
+          "systemCpuSeconds": 0.001409999999999998,
+          "peakRssMB": 55.918592,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_signed_callsite_outside_curated_set",
+      "check": "execution_authority_bypass",
+      "entry": "_registry_violations",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_registry_violations",
+        "signedCount": "1",
+        "env": [
+          "auth.api=true",
+          "auth.config=arguments"
+        ],
+        "signedModules": [
+          "impl.fake"
+        ],
+        "signedFunctions": [
+          "helper"
+        ],
+        "curatedModules": [
+          "impl.fake"
+        ],
+        "curatedFunctions": [
+          "other_helper"
+        ],
+        "privateExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py",
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "privateExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite",
+          "test_raw_explicit_authority_contextvar_value_does_not_authorize"
+        ],
+        "explicitExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "explicitExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper"
+        ],
+        "privateSymbols": [
+          "_explicit_authority_var",
+          "_legacy_boundary_var"
+        ],
+        "monkeypatchMarkers": [
+          "execution_boundary._explicit_authority_var",
+          "execution_boundary._legacy_boundary_var",
+          "execution_boundary._caller_token",
+          "execution_boundary.verify_callsite_authorization",
+          "l2050_transaction.execution_boundary._explicit_authority_var",
+          "l2050_transaction.execution_boundary._legacy_boundary_var",
+          "l2050_transaction.execution_boundary._caller_token",
+          "l2050_transaction.execution_boundary.verify_callsite_authorization"
+        ]
+      },
+      "findings": 2,
+      "diagnostics": [
+        {
+          "policy": "data-layer-execution-authority-bypass",
+          "clause": "AuthRow",
+          "code": "AUTH_ROW",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "curated explicit execution authority callsite is unsigned: impl.fake:other_helper",
+          "parameters": {
+            "ordinal": 1,
+            "path": "l2050_transaction/execution_authority_tokens.py",
+            "line": 0,
+            "code": "AUTH005",
+            "message": "curated explicit execution authority callsite is unsigned: impl.fake:other_helper"
+          }
+        },
+        {
+          "policy": "data-layer-execution-authority-bypass",
+          "clause": "AuthRow",
+          "code": "AUTH_ROW",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "signed explicit execution authority callsite is not in the curated set: impl.fake:helper",
+          "parameters": {
+            "ordinal": 0,
+            "path": "l2050_transaction/execution_authority_tokens.py",
+            "line": 0,
+            "code": "AUTH004",
+            "message": "signed explicit execution authority callsite is not in the curated set: impl.fake:helper"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-paths.rr",
+          "sha256": "530f3da39f72dbe055a71add8ecda38f5df1e4105f28bab68786e867d05229a0"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-settings.rr",
+          "sha256": "a7279ede5376ab7292decc1c46fca51c7554af518106aa42ec01abb8baa22146"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+          "sha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.041136,
+          "systemCpuSeconds": 0.0012600000000000007,
+          "peakRssMB": 34.439168,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 50.21696,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 50.21696,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.06062400000000001,
+          "systemCpuSeconds": 0.006477999999999998,
+          "peakRssMB": 43.958272,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.020492999999999983,
+          "systemCpuSeconds": 0.0031040000000000026,
+          "peakRssMB": 50.21696,
+          "submittedStatements": 6
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.013155,
+          "systemCpuSeconds": 0.0008850000000000004,
+          "peakRssMB": 50.21696,
+          "submittedStatements": 183
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 4.799999999999249e-05,
+          "systemCpuSeconds": 0.0018159999999999982,
+          "peakRssMB": 50.21696,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_execution_authority_bypass.py::test_rejects_curated_callsite_without_signature",
+      "check": "execution_authority_bypass",
+      "entry": "_registry_violations",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "snapshot",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_registry_violations",
+        "signedCount": "0",
+        "env": [
+          "auth.api=true",
+          "auth.config=arguments"
+        ],
+        "signedModules": [],
+        "signedFunctions": [],
+        "curatedModules": [
+          "impl.fake"
+        ],
+        "curatedFunctions": [
+          "helper"
+        ],
+        "privateExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py",
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "privateExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite",
+          "test_raw_explicit_authority_contextvar_value_does_not_authorize"
+        ],
+        "explicitExceptionModules": [
+          "l2050_transaction/tests/test_execution_boundary.py"
+        ],
+        "explicitExceptionFunctions": [
+          "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper"
+        ],
+        "privateSymbols": [
+          "_explicit_authority_var",
+          "_legacy_boundary_var"
+        ],
+        "monkeypatchMarkers": [
+          "execution_boundary._explicit_authority_var",
+          "execution_boundary._legacy_boundary_var",
+          "execution_boundary._caller_token",
+          "execution_boundary.verify_callsite_authorization",
+          "l2050_transaction.execution_boundary._explicit_authority_var",
+          "l2050_transaction.execution_boundary._legacy_boundary_var",
+          "l2050_transaction.execution_boundary._caller_token",
+          "l2050_transaction.execution_boundary.verify_callsite_authorization"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-execution-authority-bypass",
+          "clause": "AuthRow",
+          "code": "AUTH_ROW",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "curated explicit execution authority callsite is unsigned: impl.fake:helper",
+          "parameters": {
+            "ordinal": 0,
+            "path": "l2050_transaction/execution_authority_tokens.py",
+            "line": 0,
+            "code": "AUTH005",
+            "message": "curated explicit execution authority callsite is unsigned: impl.fake:helper"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "3affcace26984be6c512d5b8e0d2fae104bae4c2b3f7ea16ef412b8b75582fe9"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-paths.rr",
+          "sha256": "530f3da39f72dbe055a71add8ecda38f5df1e4105f28bab68786e867d05229a0"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/authority-settings.rr",
+          "sha256": "a7279ede5376ab7292decc1c46fca51c7554af518106aa42ec01abb8baa22146"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
+          "sha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.043882,
+          "systemCpuSeconds": 0.0011830000000000018,
+          "peakRssMB": 34.816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 50.282496,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 50.282496,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.059942999999999996,
+          "systemCpuSeconds": 0.006362999999999997,
+          "peakRssMB": 43.319296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.02018500000000001,
+          "systemCpuSeconds": 0.0029980000000000007,
+          "peakRssMB": 50.282496,
+          "submittedStatements": 6
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.014400999999999997,
+          "systemCpuSeconds": 0.0010170000000000005,
+          "peakRssMB": 50.282496,
+          "submittedStatements": 183
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 3.300000000000525e-05,
+          "systemCpuSeconds": 0.0011980000000000011,
+          "peakRssMB": 50.282496,
+          "submittedStatements": 0
+        }
+      ]
+    }
+  ],
+  "policySha256": {
+    "execution_authority_bypass": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
+  }
+}

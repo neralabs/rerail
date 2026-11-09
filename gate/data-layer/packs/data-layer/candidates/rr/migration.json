@@ -2887,50 +2887,6 @@
         "skipped": 0,
         "semanticFallbacks": 0,
         "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
-        "engineCommit": "2c6ee3568474fbe77d599a6403f5972350f34741",
-        "corpusSha256": "d6cd54654e9d32fa7beb478f97e0c38aacc67cc0499dd9c693d3a7148d1a4a69",
-        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-        "engineSha256": "3b770a2b3d625130871eac5061b7be21b550b82b38f44271de88eeecc86d6167",
-        "originalInventory": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory.json",
-          "sha256": "b5b76fa604931179d976db422044913943860448aa6edb2898f9470d688a4e5b"
-        },
-        "reports": [
-          {
-            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-native-snapshot.json",
-            "sha256": "0b406837696314b80251c1a2008a52376998a0a6e7cba22bb412dee68502bc00"
-          },
-          {
-            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-native-workspace.json",
-            "sha256": "f0ed59d167623d3afacd8f6c66e4a748f7b191d680045d848d256f68ccc12ee3"
-          }
-        ],
-        "acceptanceCheckpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-final004-checkpoint.json.gz",
-          "sha256": "4085b6d56b3cda2a18d13bd503bd9ee4fb4311aecfb367a0dbf2db62fd40d941"
-        },
-        "supplemental": {
-          "apiCases": 81,
-          "failures": 0,
-          "frontendCases": 26,
-          "inputRefusals": 8,
-          "mutationControls": 12,
-          "originalTestsPerAPI": 7,
-          "persistentSteps": 15,
-          "productionCases": 26,
-          "semanticFallbacks": 0,
-          "skipped": 0,
-          "verifiedNativeExecutions": 577
-        },
-        "comparison": "Complete values; only unspecified whole-file completion groups may permute. Registry and per-file order and multiplicity remain exact."
-      },
-      "evidence": {
-        "assertions": 7,
-        "positives": 6,
-        "failures": 0,
-        "skipped": 0,
-        "semanticFallbacks": 0,
-        "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
         "engineCommit": "d16c4d68e960cae7aaff7896d4eb9a72d64d9b22",
         "corpusSha256": "d6cd54654e9d32fa7beb478f97e0c38aacc67cc0499dd9c693d3a7148d1a4a69",
         "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2967,7 +2923,97 @@
           "verifiedNativeExecutions": 577
         },
         "comparison": "Complete values; only unspecified whole-file completion groups may permute. Registry and per-file order and multiplicity remain exact."
-      }
+      },
+      "evidence": {
+        "assertions": 7,
+        "positives": 6,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
+        "engineCommit": "158f2531e32e542940f55f0b90abb04e35ec015a",
+        "corpusSha256": "d6cd54654e9d32fa7beb478f97e0c38aacc67cc0499dd9c693d3a7148d1a4a69",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "89215924f4a71755e92e21d9c5ff784e24b9c5dddaf0d829bd7de61e21699f59",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory.json",
+          "sha256": "b5b76fa604931179d976db422044913943860448aa6edb2898f9470d688a4e5b"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-final04e3-native-snapshot.json",
+            "sha256": "9810b117188a930e23d4d69e02f428feaec33ed8bb2162eaf4996286f0a8611f"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-final04e3-native-workspace.json",
+            "sha256": "de3ebd1ea70e0ac84c13685d2668ff9a70cf7f7b22dc1fbb86d3fefa0fd33c2f"
+          }
+        ],
+        "acceptanceCheckpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-final04e3-checkpoint.json.gz",
+          "sha256": "6cbe2a036068334f17d33d3b310aebc41f9e88ae2d43b88a48d0bac512e78eb2"
+        },
+        "supplemental": {
+          "apiCases": 81,
+          "failures": 0,
+          "frontendCases": 26,
+          "inputRefusals": 8,
+          "mutationControls": 12,
+          "originalTestsPerAPI": 7,
+          "persistentSteps": 15,
+          "productionCases": 26,
+          "semanticFallbacks": 0,
+          "skipped": 0,
+          "verifiedNativeExecutions": 577
+        },
+        "comparison": "Complete values; only unspecified whole-file completion groups may permute. Registry and per-file order and multiplicity remain exact."
+      },
+      "evidenceHistory": [
+        {
+          "assertions": 7,
+          "positives": 6,
+          "failures": 0,
+          "skipped": 0,
+          "semanticFallbacks": 0,
+          "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
+          "engineCommit": "2c6ee3568474fbe77d599a6403f5972350f34741",
+          "corpusSha256": "d6cd54654e9d32fa7beb478f97e0c38aacc67cc0499dd9c693d3a7148d1a4a69",
+          "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+          "engineSha256": "3b770a2b3d625130871eac5061b7be21b550b82b38f44271de88eeecc86d6167",
+          "originalInventory": {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory.json",
+            "sha256": "b5b76fa604931179d976db422044913943860448aa6edb2898f9470d688a4e5b"
+          },
+          "reports": [
+            {
+              "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-native-snapshot.json",
+              "sha256": "0b406837696314b80251c1a2008a52376998a0a6e7cba22bb412dee68502bc00"
+            },
+            {
+              "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-native-workspace.json",
+              "sha256": "f0ed59d167623d3afacd8f6c66e4a748f7b191d680045d848d256f68ccc12ee3"
+            }
+          ],
+          "acceptanceCheckpoint": {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-final004-checkpoint.json.gz",
+            "sha256": "4085b6d56b3cda2a18d13bd503bd9ee4fb4311aecfb367a0dbf2db62fd40d941"
+          },
+          "supplemental": {
+            "apiCases": 81,
+            "failures": 0,
+            "frontendCases": 26,
+            "inputRefusals": 8,
+            "mutationControls": 12,
+            "originalTestsPerAPI": 7,
+            "persistentSteps": 15,
+            "productionCases": 26,
+            "semanticFallbacks": 0,
+            "skipped": 0,
+            "verifiedNativeExecutions": 577
+          },
+          "comparison": "Complete values; only unspecified whole-file completion groups may permute. Registry and per-file order and multiplicity remain exact."
+        }
+      ]
     },
     {
       "check": "impl_direct_execution",
@@ -2976,7 +3022,27 @@
       "legacySha256": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
-      "ruleSha256": "cc1c6a8ee318f23dca90bc68912ea945fb2ea5255d15447c8782b0c609fd9f10"
+      "ruleSha256": "cc1c6a8ee318f23dca90bc68912ea945fb2ea5255d15447c8782b0c609fd9f10",
+      "migrationProgress": {
+        "originalTestsPerAPI": 174,
+        "positiveOriginalScannerObservations": 35,
+        "status": "draft",
+        "remaining": "Implement the 30 actual ratchet I/O contracts; the first native missing-baseline check is red.",
+        "checkpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-final04e3-checkpoint.json.gz",
+            "sha256": "4505f9a46b3e6c85a5733da39107da34b6de185b918fc75954996ef6cd3b26ad"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-signing-final04e3-checkpoint.json.gz",
+            "sha256": "c097c48442d3080b795fc01ebada616867652dca86f0f98c4d1a037e21b11a5f"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-ratchet-native-red.json.gz",
+            "sha256": "e8618f54b179abd4649ab309930aafa21d39ec37a6db7f9126e23389fd37ad47"
+          }
+        ]
+      }
     },
     {
       "check": "raw_execute_regression",
@@ -3462,7 +3528,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "04e3b5b83cc915926d842a8fe3ba6d94c78b555b",
-    "status": "Final 04e3b5b83 root optimized CLI built and registered; 158 focused engine tests pass, two existing helpers ignored; affected rule acceptance in progress.",
+    "status": "Final 04e3b5b83 optimized root CLI validated: 158 focused engine tests and 199 tooling tests pass; two existing engine helpers ignored. Authority: 577 verified native executions. Direct execution: all 174 original tests per API, 445 native executions plus 112 signing executions. Native ratchet actions remain open.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3686,6 +3752,10 @@
         "--release"
       ],
       "seconds": 911.326
+    },
+    "validation": {
+      "path": "gate/data-layer/fixtures/host/data-layer-port/rr-final04e3-engine-validation.json.gz",
+      "sha256": "0ec0e549a97827beead675a6318207338f70c1fdffdb82b7eba3ff81ade0e7af"
     }
   },
   "engineSourceSnapshots": [
