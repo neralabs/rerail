@@ -11,6 +11,8 @@ export const ENGINE_PROOF_PATH = "/proof";
 /** The header a challenge travels in: 64 lowercase hex characters, 32 random bytes. */
 export const ENGINE_CHALLENGE_HEADER = "x-rerail-challenge";
 const CHALLENGE = /^[0-9a-f]{64}$/u;
+/** A proof as {@link engineProof} writes one: an HMAC-SHA-256 in 64 lowercase hex characters. */
+const PROOF = CHALLENGE;
 /** Longest answer read: the proof is a JSON object holding 64 hex characters. */
 const MAX_ANSWER_BYTES = 1_024;
 
@@ -27,14 +29,19 @@ export function engineProof(accessToken: string, challenge: string): string {
   return createHmac("sha256", accessToken).update(`rerail-engine-proof\n${challenge}`).digest("hex");
 }
 
+/**
+ * Whether `answer` holds `expected` as its proof. Anything that is not a proof as {@link engineProof} writes one (another
+ * type, another length, a character outside lowercase hex) is refused before the comparison, so a holder can neither make
+ * `timingSafeEqual` throw with an answer of the proof's character count but more bytes, nor pass; and a comparison that
+ * throws all the same is a refusal.
+ */
 function provesChallenge(answer: Buffer, expected: string): boolean {
-  let proof: unknown;
   try {
-    proof = (JSON.parse(answer.toString("utf8")) as { proof?: unknown }).proof;
+    const proof: unknown = (JSON.parse(answer.toString("utf8")) as { proof?: unknown } | null)?.proof;
+    return typeof proof === "string" && PROOF.test(proof) && timingSafeEqual(Buffer.from(proof, "latin1"), Buffer.from(expected, "latin1"));
   } catch {
     return false;
   }
-  return typeof proof === "string" && proof.length === expected.length && timingSafeEqual(Buffer.from(proof), Buffer.from(expected));
 }
 
 /**

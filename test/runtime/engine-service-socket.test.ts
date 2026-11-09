@@ -251,6 +251,27 @@ describe("engine proof", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("refuses a holder whose answer is no proof, a multibyte one of the proof's length among them, without throwing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-engine-proof-"));
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-proof-forged-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    // 64 characters, as a proof has, but 128 bytes in UTF-8; then a proof in upper case, and a number.
+    const answers = [JSON.stringify({ proof: "é".repeat(64) }), JSON.stringify({ proof: "AB".repeat(32) }), JSON.stringify({ proof: 7 })];
+    const squatter = createHttpServer((_incoming, response) => {
+      response.end(answers.shift() ?? "{}");
+    });
+    await new Promise<void>(resolve => squatter.listen(socketPath, resolve));
+    try {
+      expect(await engineHoldsCapability(socketPath, "capability")).toBe(false);
+      expect(await engineHoldsCapability(socketPath, "capability")).toBe(false);
+      expect(await engineHoldsCapability(socketPath, "capability")).toBe(false);
+    } finally {
+      await new Promise<void>(resolve => squatter.close(() => resolve()));
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("an engine pipe another process holds", () => {
