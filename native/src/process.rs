@@ -38,6 +38,15 @@ fn quote_windows_argument(argument: &str, line: &mut String) {
     line.push('"');
 }
 
+/// The console flags the child is created with: `CREATE_NO_WINDOW` (0x0800_0000) and `CREATE_NEW_PROCESS_GROUP`
+/// (0x0000_0200). `CREATE_NO_WINDOW` gives `node.exe` a console that has no window, and every console program it
+/// starts (git, npm, node) shares that console instead of opening a window of its own, which Windows 11 would hand to
+/// Windows Terminal. `DETACHED_PROCESS` (0x0000_0008) would leave it with no console at all, and Windows ignores
+/// `CREATE_NO_WINDOW` beside it. Plain numbers, so the test below runs on every OS; the Windows build checks them
+/// against `windows-sys`.
+#[cfg_attr(not(windows), allow(dead_code))]
+const DAEMON_CONSOLE_FLAGS: u32 = 0x0800_0000 | 0x0000_0200;
+
 #[cfg_attr(not(windows), allow(dead_code))]
 fn windows_command_line(program: &str, args: &[String]) -> String {
     let mut line = String::new();
@@ -49,8 +58,8 @@ fn windows_command_line(program: &str, args: &[String]) -> String {
     line
 }
 
-/// Start `program` detached with NUL stdin, stdout and stderr appended to `log_path`, and no other inherited
-/// handle. Returns the child's process id.
+/// Start `program` detached, in a console with no window (`DAEMON_CONSOLE_FLAGS`), with NUL stdin, stdout and
+/// stderr appended to `log_path`, and no other inherited handle. Returns the child's process id.
 #[napi]
 pub fn spawn_detached(
     program: String,
@@ -89,12 +98,15 @@ mod windows {
         FILE_SHARE_WRITE, OPEN_ALWAYS, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::Threading::{
-        CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DETACHED_PROCESS,
+        CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
         DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
         InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
         PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
         STARTUPINFOEXW, UpdateProcThreadAttribute,
     };
+
+    const _: () =
+        assert!(super::DAEMON_CONSOLE_FLAGS == CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
 
     fn wide(value: &str) -> Vec<u16> {
         OsStr::new(value).encode_wide().chain(Some(0)).collect()
@@ -247,8 +259,7 @@ mod windows {
                 1,
                 EXTENDED_STARTUPINFO_PRESENT
                     | CREATE_UNICODE_ENVIRONMENT
-                    | DETACHED_PROCESS
-                    | CREATE_NEW_PROCESS_GROUP,
+                    | super::DAEMON_CONSOLE_FLAGS,
                 environment.as_ptr().cast(),
                 directory.as_ref().map_or(null(), |path| path.as_ptr()),
                 &startup.StartupInfo,
@@ -266,7 +277,18 @@ mod windows {
 
 #[cfg(test)]
 mod tests {
-    use super::windows_command_line;
+    use super::{DAEMON_CONSOLE_FLAGS, windows_command_line};
+
+    #[test]
+    fn starts_the_daemon_with_a_hidden_console_not_without_one() {
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        let flags = DAEMON_CONSOLE_FLAGS;
+        assert_eq!(flags & DETACHED_PROCESS, 0);
+        assert_eq!(flags & CREATE_NO_WINDOW, CREATE_NO_WINDOW);
+        assert_eq!(flags & CREATE_NEW_PROCESS_GROUP, CREATE_NEW_PROCESS_GROUP);
+    }
 
     #[test]
     fn quotes_windows_arguments_for_the_c_runtime_parser() {

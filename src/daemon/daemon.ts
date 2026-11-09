@@ -649,6 +649,8 @@ interface DaemonArguments {
   port?: number;
   dev: boolean;
   stateFile?: string;
+  /** The checkout native sessions address (`--workspace-root`); the folder it runs in when absent. */
+  workspaceRoot?: string;
   tls?: DaemonTlsFiles;
 }
 
@@ -741,7 +743,7 @@ function certificateFingerprint(pem: string): string {
 function parseDaemonArguments(argv: readonly string[]): DaemonArguments {
   const { flags, options } = parseArguments(
     argv,
-    { flags: ["--dev", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--host", "--port", "--state-file", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
+    { flags: ["--dev", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--host", "--port", "--state-file", "--workspace-root", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
     (argument) => `Unknown daemon argument: ${argument}`,
   );
   const host = options.get("--host") ?? DEFAULT_DAEMON_HOST;
@@ -750,12 +752,14 @@ function parseDaemonArguments(argv: readonly string[]): DaemonArguments {
   const { tls } = parseDaemonTransport({ flags, options }, host, publicHosts);
   const port = options.get("--port");
   const stateFile = options.get("--state-file");
+  const workspaceRoot = options.get("--workspace-root");
   return {
     host,
     publicHosts,
     ...(port === undefined ? {} : { port: parsePort(port) }),
     dev: flags.has("--dev"),
     ...(stateFile === undefined ? {} : { stateFile: resolve(stateFile) }),
+    ...(workspaceRoot === undefined ? {} : { workspaceRoot: resolve(workspaceRoot) }),
     ...(tls === undefined ? {} : { tls }),
   };
 }
@@ -788,7 +792,8 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   if (!existsSync(join(uiRoot, "index.html"))) {
     throw new Error(`Rerail page is missing at ${uiRoot}; run npm run build:ui.`);
   }
-  const workspaceRoot = process.cwd();
+  // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`).
+  const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
   const databasePath = defaultRerailDatabasePath();
   const daemon = await RerailDaemon.start({
     version: await packageVersion(),

@@ -11,14 +11,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** Tests that open pages install an interceptor; every other spawn reaches the real child_process. */
 const opener = vi.hoisted(() => ({
-  intercept: undefined as ((command: string, args: readonly string[]) => ChildProcess) | undefined,
+  intercept: undefined as ((command: string, args: readonly string[], options: ChildProcessModule.SpawnOptions) => ChildProcess) | undefined,
 }));
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof ChildProcessModule>("node:child_process");
   return {
     ...actual,
-    spawn: (command: string, args: readonly string[], options: object) =>
-      opener.intercept?.(command, args) ?? actual.spawn(command, args, options),
+    spawn: (command: string, args: readonly string[], options: ChildProcessModule.SpawnOptions) =>
+      opener.intercept?.(command, args, options) ?? actual.spawn(command, args, options),
+  };
+});
+/** Tests that launch on Windows install a native spawn; every other call reaches the real binding. */
+const native = vi.hoisted(() => ({
+  spawnDetached: undefined as ((program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string) => number) | undefined,
+}));
+vi.mock("../../src/engine/native/native.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/native/native.js")>("../../src/engine/native/native.js");
+  return {
+    ...actual,
+    loadNativeBinding: () => native.spawnDetached === undefined
+      ? actual.loadNativeBinding()
+      // Only spawnDetached is read on this path; the cast stands in for the rest of the binding.
+      : { spawnDetached: native.spawnDetached } as unknown as ReturnType<typeof actual.loadNativeBinding>,
   };
 });
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
@@ -31,6 +45,7 @@ import {
   daemonUsesPackageRoot,
   findRunningDaemon,
   isUsableEngineSocketPath,
+  launchDetached,
   lookupDaemon,
   openDashboard,
   processAlive,
@@ -428,9 +443,65 @@ describe("openDashboard", () => {
   });
 });
 
+describe("launching the daemon", () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "rerail-launch-"));
+  });
+
+  afterEach(async () => {
+    opener.intercept = undefined;
+    native.spawnDetached = undefined;
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it("goes through the native spawn on Windows, whose hidden console the daemon's Git and npm share, never Node's detached spawn", () => {
+    const launched: Array<{ args: string[]; cwd: string | null; logPath: string }> = [];
+    native.spawnDetached = (_program, args, cwd, _env, logPath) => {
+      launched.push({ args, cwd, logPath });
+      return DEAD_PID;
+    };
+    opener.intercept = () => {
+      throw new Error("Node's spawn must not start a detached process on Windows");
+    };
+    const log = join(home, DAEMON_LOG_FILE);
+    const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, "win32");
+    expect(daemon.pid).toBe(DEAD_PID);
+    expect(daemon.exitReason()).toBe("exited");
+    expect(launched).toEqual([{ args: ["cli.js", "daemon", "start"], cwd: null, logPath: log }]);
+  });
+
+  it("starts the daemon in the Rerail home and names the caller's folder as its workspace root", async () => {
+    const launches: Array<{ args: readonly string[]; cwd: unknown }> = [];
+    opener.intercept = (_command, args, options) => {
+      launches.push({ args, cwd: options.cwd });
+      const child = Object.assign(new EventEmitter(), { pid: DEAD_PID, unref() {} });
+      process.nextTick(() => child.emit("exit", 1, null));
+      return child as unknown as ChildProcess;
+    };
+    native.spawnDetached = (_program, args, cwd) => {
+      launches.push({ args, cwd });
+      return DEAD_PID;
+    };
+    const repository = join(home, "repository");
+    await mkdir(repository);
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    await expect(startDaemon(
+      { home, packageRoot, ensureSqlite: async root => ({ prefix: root, rebuilt: false }) },
+      { dev: true, port: 0, cwd: repository },
+    )).rejects.toThrow(/exited/u);
+    expect(launches).toHaveLength(1);
+    expect(launches[0]!.cwd).toBe(home);
+    const args = launches[0]!.args;
+    expect(args[args.indexOf("--workspace-root") + 1]).toBe(resolve(repository));
+  });
+});
+
 describe("autostartDaemon", () => {
   afterEach(() => {
     opener.intercept = undefined;
+    native.spawnDetached = undefined;
     vi.unstubAllEnvs();
   });
 
@@ -441,6 +512,10 @@ describe("autostartDaemon", () => {
     opener.intercept = (_command, args) => {
       spawned.push(args);
       return Object.assign(new EventEmitter(), { unref() {} }) as unknown as ChildProcess;
+    };
+    native.spawnDetached = (_program, args) => {
+      spawned.push(args);
+      return DEAD_PID;
     };
     autostartDaemon();
     expect(spawned).toHaveLength(1);

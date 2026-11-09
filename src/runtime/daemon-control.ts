@@ -629,7 +629,7 @@ export async function runningDaemonEngineEndpoint(): Promise<EngineEndpoint | un
   return await daemonUsesPackageRoot(daemon.state, PACKAGE_ROOT) ? engineEndpointOf(daemon.state) : await daemonEngineEndpoint(true);
 }
 
-interface LaunchedDaemon {
+export interface LaunchedDaemon {
   pid: number | undefined;
   /** Why the launched process is gone, or undefined while it runs. */
   exitReason: () => string | undefined;
@@ -639,6 +639,7 @@ function daemonArguments(control: DaemonControl, options: DaemonLaunchOptions, s
   const args = [
     join(control.packageRoot, ENTRY_POINTS.daemon),
     "--state-file", stateFile,
+    "--workspace-root", resolve(options.cwd ?? process.cwd()),
   ];
   if (options.dev) args.push("--dev");
   if (options.host !== undefined) args.push("--host", options.host);
@@ -650,28 +651,55 @@ function daemonArguments(control: DaemonControl, options: DaemonLaunchOptions, s
   return args;
 }
 
-function launchDaemonProcess(args: string[], options: DaemonLaunchOptions, env: NodeJS.ProcessEnv, logFile: string): LaunchedDaemon {
-  if (process.platform === "win32") {
-    // Node's spawn hands the child every inheritable handle in this process, not just its stdio. A Rust launcher
-    // such as `just` leaves its own stdout inheritable, so a daemon started below it held the caller's output
-    // pipe open and a captured `rerail setup | tee` never finished. The native spawn passes only NUL stdin and the log.
-    const definedEnv = Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
-    const pid = loadNativeBinding().spawnDetached(nodeExecutable(), args, options.cwd ?? null, definedEnv, logFile);
+/** A Node process to start detached, with NUL stdin and its stdout and stderr appended to `logFile`. */
+export interface DetachedLaunch {
+  args: readonly string[];
+  /** The folder it runs in; undefined keeps this process's. */
+  cwd: string | undefined;
+  env: NodeJS.ProcessEnv;
+  logFile: string;
+}
+
+/**
+ * Starts `launch` under {@link nodeExecutable}, detached from this process. On Windows it goes through the native spawn,
+ * for two reasons. Node's `detached: true` there adds DETACHED_PROCESS, so the child has no console, and every console
+ * program it starts (Git, node, npm) without windowsHide gets a console window of its own, which Windows 11 hands to
+ * Windows Terminal; the native spawn uses CREATE_NO_WINDOW instead, a console with no window that those programs share.
+ * And Node's spawn hands the child every inheritable handle in this process, not just its stdio: a Rust launcher such
+ * as `just` leaves its own stdout inheritable, so a daemon started below it held the caller's output pipe open and a
+ * captured `rerail setup | tee` never finished. The native spawn passes only NUL stdin and the log.
+ */
+export function launchDetached(launch: DetachedLaunch, platform: NodeJS.Platform = process.platform): LaunchedDaemon {
+  if (platform === "win32") {
+    const definedEnv = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+    const pid = loadNativeBinding().spawnDetached(nodeExecutable(), [...launch.args], launch.cwd ?? null, definedEnv, launch.logFile);
     return { pid, exitReason: () => processAlive(pid) ? undefined : "exited" };
   }
-  const log = openSync(logFile, "a", 0o600);
+  const log = openSync(launch.logFile, "a", 0o600);
   let child;
   try {
-    child = spawn(nodeExecutable(), args, { detached: true, stdio: ["ignore", log, log], cwd: options.cwd, env });
+    child = spawn(nodeExecutable(), [...launch.args], { detached: true, stdio: ["ignore", log, log], cwd: launch.cwd, env: launch.env });
   } finally {
     closeSync(log);
   }
-  let exited: number | null | undefined;
+  let exited: string | undefined;
+  child.once("error", error => {
+    exited = `could not start: ${error.message}`;
+  });
   child.once("exit", code => {
-    exited = code;
+    exited = `exited with code ${code ?? "signal"}`;
   });
   child.unref();
-  return { pid: child.pid, exitReason: () => exited === undefined ? undefined : `exited with code ${exited ?? "signal"}` };
+  return { pid: child.pid, exitReason: () => exited };
+}
+
+/**
+ * Starts the daemon in the Rerail home, not the caller's folder: Windows holds a process's current folder open, so a
+ * daemon started from a repository kept that checkout, and every folder above it, from being deleted or renamed for as
+ * long as it ran. The repository goes to it as `--workspace-root` instead.
+ */
+function launchDaemonProcess(control: DaemonControl, args: string[], env: NodeJS.ProcessEnv, logFile: string): LaunchedDaemon {
+  return launchDetached({ args, cwd: control.home, env, logFile });
 }
 
 async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
@@ -682,7 +710,7 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions)
   const env = { ...(options.env ?? process.env), RERAIL_HOME: control.home };
   // The log is appended to across runs; a failure shows only what this launch wrote.
   const logOffset = await stat(logFile).then(info => info.size, () => 0);
-  const { pid, exitReason } = launchDaemonProcess(daemonArguments(control, options, stateFile), options, env, logFile);
+  const { pid, exitReason } = launchDaemonProcess(control, daemonArguments(control, options, stateFile), env, logFile);
 
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -713,7 +741,9 @@ let autostartAttempted = false;
  * would leave its probes and poll timers on the event loop, and a one-shot
  * hook would then sit through daemon startup, or the 15 s timeout, before
  * it could exit. The launcher's own output goes to `daemon.log`; a failure
- * is visible there and through `rerail status`, never in the host.
+ * is visible there and through `rerail status`, never in the host. The
+ * launcher starts as the daemon does ({@link launchDetached}), so on Windows
+ * the SQLite probe, npm and the managed-version dispatch it runs open no window.
  *
  * Every session records into the one database in the Rerail home, and the one
  * daemon serves every repository; sessions in any repository reuse it for their
@@ -725,21 +755,14 @@ export function autostartDaemon(): void {
   const setting = process.env.RERAIL_AUTOSTART;
   if (setting === "0" || setting === "false") return;
   const home = defaultRerailHome();
-  const packageRoot = PACKAGE_ROOT;
   try {
     makeRerailHome(home);
-    const log = openSync(join(home, DAEMON_LOG_FILE), "a", 0o600);
-    try {
-      const child = spawn(
-        nodeExecutable(),
-        [join(packageRoot, ENTRY_POINTS.cli), "daemon", "start"],
-        { detached: true, stdio: ["ignore", log, log], env: process.env },
-      );
-      child.on("error", () => undefined);
-      child.unref();
-    } finally {
-      closeSync(log);
-    }
+    launchDetached({
+      args: [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "daemon", "start"],
+      cwd: undefined,
+      env: process.env,
+      logFile: join(home, DAEMON_LOG_FILE),
+    });
   } catch {
     // Autostart is a convenience; the session must never notice it failing.
   }
