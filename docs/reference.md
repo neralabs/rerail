@@ -706,7 +706,7 @@ A file written and committed in one command stays an edit, measured from the tre
 <details>
 <summary>What counts as another session's write</summary>
 
-A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp. Each session notes when each of its tool calls ran, for every other session in the same process to see: the daemon, for every coding agent but a Pi running Rerail in process. A change stamped while one of another session's calls ran, and none of this session's, is the other session's: it steers only that session, and once this one's walk has seen it, its next shell edit of the file is measured from what the other left. A change stamped while no session's call ran (a background job, your editor) is still taken as the walking session's. When two sessions' calls ran at once, both take the change.
+A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp. Each session notes when each of its tool calls ran, for every other session in the same process to see: the daemon, for every coding agent but a Pi running Rerail in process. A change stamped while a call ran of another session working on the same files (its folder is this session's, holds it or lies in it), and none of this session's, is the other session's: it steers only that session, and once this one's walk has seen it, its next shell edit of the file is measured from what the other left. A change stamped while no such call ran (a background job, your editor, a session in another folder) is still taken as the walking session's. When two sessions' calls ran at once, both take the change; a file removed has no stamp, and its removal is taken as the walking session's.
 
 </details>
 

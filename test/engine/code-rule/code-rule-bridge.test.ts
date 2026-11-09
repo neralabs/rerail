@@ -1210,12 +1210,21 @@ describe("CodeRuleBridge and another session's writes", () => {
     return [await open("session-a"), await open("session-b")] as const;
   }
   const mine = { path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" };
+  /**
+   * Waits until the filesystem clock has passed every window sampled so far: on Linux a window's end can share the next
+   * call's tick, so the call of the next session starts strictly after the last one ended.
+   */
+  async function awaitClockPastNow(): Promise<void> {
+    const probe = await mkdtemp(join(tmpdir(), "rerail-policy-now-"));
+    directories.push(probe);
+    await awaitClockAfter(probe);
+  }
 
   it("checks a shell write for the session that ran it, and not for one whose read-only command or turn end came after", async () => {
     const root = await twoBranches();
     const [a, b] = await twoSessions(root);
     await shell(a.bridge, () => appendFile(join(root, "src", "a.py"), "mine\n"));
-    await awaitClockAfter(join(root, "src", "a.py"));
+    await awaitClockPastNow();
     await expect(shell(b.bridge, () => undefined)).resolves.toEqual([]);
     await b.bridge.checkpoint("turn");
     expect(a.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([[mine]]);
@@ -1227,7 +1236,7 @@ describe("CodeRuleBridge and another session's writes", () => {
     const [a, b] = await twoSessions(root);
     await a.bridge.begin("shell-a", "shell", { command: "./long.sh" });
     await appendFile(join(root, "src", "a.py"), "mine\n");
-    await awaitClockAfter(join(root, "src", "a.py"));
+    await awaitClockPastNow();
     await shell(b.bridge, () => undefined);
     await a.bridge.finish("shell-a");
     expect(b.auditGeneratedEdits).not.toHaveBeenCalled();
@@ -1238,7 +1247,7 @@ describe("CodeRuleBridge and another session's writes", () => {
     const root = await twoBranches();
     const [a, b] = await twoSessions(root);
     await shell(a.bridge, () => appendFile(join(root, "src", "a.py"), "mine\n"));
-    await awaitClockAfter(join(root, "src", "a.py"));
+    await awaitClockPastNow();
     await shell(b.bridge, () => undefined);
     await shell(b.bridge, () => appendFile(join(root, "src", "a.py"), "theirs\n"));
     expect(b.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
@@ -1250,14 +1259,26 @@ describe("CodeRuleBridge and another session's writes", () => {
     const root = await twoBranches();
     const [a, b] = await twoSessions(root);
     await shell(b.bridge, () => appendFile(join(root, "src", "a.py"), "theirs\n"));
-    await awaitClockAfter(join(root, "src", "a.py"));
+    await awaitClockPastNow();
     await shell(a.bridge, () => appendFile(join(root, "src", "a.py"), "mine\n"));
-    await awaitClockAfter(join(root, "src", "a.py"));
     await b.bridge.checkpoint("turn");
     expect(b.auditGeneratedEdits.mock.calls.at(-1)?.[1]).toMatchObject({
       mode: "log",
       edits: [{ path: "src/a.py", language: "python", previousText: "old\ntheirs\nmine\n", generatedText: "old\ntheirs\nmine\n" }],
     });
     expect(b.auditGeneratedEdits).toHaveBeenCalledTimes(2);
+  });
+
+  it("still takes a write no call of its own covers for its own while only a session in another folder has a call running", async () => {
+    const root = await twoBranches();
+    const [, b] = await twoSessions(root);
+    const elsewhere = createBridge(await workspace(), auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    await elsewhere.openWorkspace("session-elsewhere");
+    await elsewhere.begin("shell-elsewhere", "shell", { command: "./long.sh" });
+    await appendFile(join(root, "src", "a.py"), "background\n");
+    await b.bridge.checkpoint("turn");
+    expect(b.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nbackground\n" }],
+    ]);
   });
 });
