@@ -3138,3 +3138,47 @@ Decision 0095 §6. **Closure:** `git_rev("head", …)` from `HEAD` as an observe
 `merge_base` (the `revision` feature) of `HEAD` and the base reference, kept under the two ids; `at="base"` reading
 at it; the whole-run cutoff checking `HEAD` and the reference.
 
+## O147. A relation the request cone derives is written empty as an output
+
+Numbered O143 on investigate-bend-vs-datalog; renumbered at the merge, since final-rerail-shape's O143 is the
+annotation stratum.
+
+**Seen (2026-11-08, t25).** `bootstrap.rr` first declared `p0_resolved` as an output. It is in the cone of `load`
+requests (a load is asked from it), and its output table was written empty, though the run had the rows. The cross
+path holds back cone relations that are outputs and expects them to be read from their table
+(`corpus.rs`, `held.extend(cone.reads … !outputs_of(r))`); the table is not filled.
+
+**Worked around.** `bootstrap.rr` outputs copies (`p0_include`, `p0_missing`, `p0_absent`) that no request reads.
+
+**Closure:** a cone relation declared `.output` is written with its rows, and `bootstrap.rr` drops the copies.
+
+## O144. A per-file relation with no node column is lost for documents a `load` brings in
+
+**Seen (2026-11-08, t25).** A loaded document's rows of the per-file relations the cone reads are found by its
+node range (`corpus.rs`, the `rr_load_new` join on the relation's first location column). A per-file relation
+whose columns are all symbols and numbers (`p0_names(f, at, name)`) has no location, so a loaded module's
+`#include`s did not reach the cone: phase 0 stopped after the first level.
+
+**Worked around.** `p0_names` and `p0_declares_doc` carry the node `i` as their first column.
+
+**Closure:** the per-file rows of a loaded document are found by the document they were derived from (the chunk
+builder knows it), so a relation needs no node column; or the engine refuses such a relation with a message.
+
+## O145. Tests against the shared default tape cache wait on its atoms lease
+
+**Seen (2026-11-08, t25).** `$TMPDIR/rerail-tape-cache.sqlite` (425 MB) is shared with other sessions. Each phase-0
+run takes the atoms lease, and while another process holds it a test waits (`LEASE_WAIT`, 60 s); a run of
+`logic::rr::` took minutes against seconds on an isolated store (`RERAIL_TAPE_CACHE=<own path>`). Phase-0 runs take
+no corpus session (a session held across the nested run deadlocked against the lease).
+
+**Closure:** the lease is held only across the atoms write, not the run; or tests default to a per-process store.
+
+## O146. Each phase-0 run costs about 0.25 s, paid once per seed set
+
+**Seen (2026-11-08, t25).** A run of `bootstrap.rr` over one text with includes costs about 0.25 s CPU when nothing
+is kept. Callers that resolve programs one at a time pay it each time: `rule_syntax_files_pass_check_rr` took about
+1,300 such runs until it asked for all its files in one (`phase0::graphs`). The pack loader and the corpus run batch
+already. A process keeps each seed's graph while its modules' stats hold.
+
+**Closure:** every caller that resolves more than one program batches its seeds, or a run's fixed cost (planning
+`bootstrap.rr`, opening the store) is below 50 ms.
