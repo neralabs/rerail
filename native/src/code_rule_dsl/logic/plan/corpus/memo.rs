@@ -173,6 +173,23 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, path: &str, key: i6
     }
 }
 
+/// `lookup` of many documents, each `(source, path, key)`, in their order: one statement whatever their number.
+pub(super) fn lookup_all(store: &ContentStore, program: &[u8; 32], docs: &[(SourceId, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
+    off();
+    let set = plan(program);
+    let keys: Vec<(SourceId, &str)> = docs.iter().map(|(s, p, _)| (*s, *p)).collect();
+    let found = store.facts_results_for(SCHEMA, set.plans[0], &keys)?;
+    docs.iter().zip(found).map(|((_, _, key), bytes)| Ok(match bytes { Some(b) => Some(decode(&b)?).filter(|e| e.key == *key), None => None })).collect()
+}
+
+/// `source` of many texts, in their order: the stored ones found (and pinned) in one statement, the others stored.
+pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<SourceId>> {
+    off();
+    let hashes: Vec<HashKey> = texts.iter().map(|t| HashKey::sha256(t.as_bytes())).collect();
+    let found = store.held_sources_by_hash(&hashes)?;
+    texts.iter().zip(hashes).zip(found).map(|((text, hash), id)| match id { Some(id) => Ok(id), None => store.put_source_hashed(text.as_bytes(), hash, &[]) }).collect()
+}
+
 /// Memoises `entry` as the document's at `path`.
 pub(super) fn remember(store: &ContentStore, source: SourceId, path: &str, key: i64, program: &[u8; 32], entry: &Entry) -> StoreResult<()> {
     off();
@@ -234,6 +251,29 @@ impl Memo<'_> {
         match self {
             Memo::Stored(store) => source(store, text).map(Content::Stored),
             Memo::Held(_) => Ok(Content::Held(Sha256::digest(text.as_bytes()).into())),
+        }
+    }
+
+    /// `content` of many texts, in their order (`sources`).
+    pub(super) fn contents(self, texts: &[&str]) -> StoreResult<Vec<Content>> {
+        match self {
+            Memo::Stored(store) => Ok(sources(store, texts)?.into_iter().map(Content::Stored).collect()),
+            Memo::Held(_) => Ok(texts.iter().map(|t| Content::Held(Sha256::digest(t.as_bytes()).into())).collect()),
+        }
+    }
+
+    /// `lookup` of many documents, each `(content, path, key)`, in their order: stored ones in one statement.
+    pub(super) fn lookup_all(self, program: &[u8; 32], docs: &[(Content, &str, i64)]) -> StoreResult<Vec<Option<Entry>>> {
+        match self {
+            Memo::Stored(store) => {
+                let mut out: Vec<Option<Entry>> = vec![None; docs.len()];
+                let (at, stored): (Vec<usize>, Vec<(SourceId, &str, i64)>) = docs.iter().enumerate().filter_map(|(i, (c, p, k))| c.stored().map(|id| (i, (id, *p, *k)))).unzip();
+                for (i, e) in at.into_iter().zip(lookup_all(store, program, &stored)?) {
+                    out[i] = e;
+                }
+                Ok(out)
+            }
+            Memo::Held(_) => docs.iter().map(|(c, p, k)| self.lookup(*c, p, *k, program)).collect(),
         }
     }
 

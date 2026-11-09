@@ -279,18 +279,22 @@ Node columns are exact (§1) and are not sketched.
 | --- | --- | --- |
 | 1 | A phase export's statistics counted once, then patched by each version's plus and minus | built (`8da5e1b01`): `PhasedSource` keeps its `RelStats` |
 | 2 | A base relation's statistics patched by file: a file's old rows out (by the content counted), its new in; replayed rows not counted again | built for memoised runs, in a session (`e388adcc3`) and over the tape cache, durable as one blob per memo plan (`5f7def8b8`) |
-| 3 | An unchanged file is neither replayed nor counted: the session keeps the base sources and exports, and patches a changed file's rows in | counted: the exports' statistics are kept by file too (phased-facts branch); replayed: open, the hits' exports are still held again each run (0.46 s at O125 step 07) |
+| 3 | An unchanged file is neither replayed nor counted: the session keeps the base sources and exports, and patches a changed file's rows in | built for the exports, in a session: the keeper counts each export row by the files holding it (`exports::Counted`), a changed file's old rows out and new in, a gone file's out; an unchanged hit's export rows are not held again. The base relations' columns, tree counts and lines are still gathered from every hit (0.04 s at O125) |
 | 4 | Derived relations: a maintained relation's statistics patched by its delta rather than read from its postings | open |
 
 Measured on the O125 replay (calls.rr over real history, a session, load 65–140), per one-to-four-file step:
 
-| Cost | Before | After steps 1–2 |
-| --- | --- | --- |
-| Base relations measured (`measure the base rows held`) | 0.56 s | 0.08–0.09 s (making the sources) |
-| Memo hits' rows measured again (`measure <rel> (memo)`) | about 0.6 s | none |
-| Kept relations' `r__old` (`bind and measure kept`, step 4) | 0.58–0.88 s | the same |
-| The memo replay (`local/memo replay`, step 3) | 1.3–1.5 s | the same |
-| The step | 27–40 s, nearly all of it the cross-file evaluation | the same within the load's noise |
+| Cost | Before | After steps 1–2 | After step 3 |
+| --- | --- | --- | --- |
+| Base relations measured (`measure the base rows held`) | 0.56 s | 0.08–0.09 s (making the sources) | the same |
+| Memo hits' rows measured again (`measure <rel> (memo)`) | about 0.6 s | none | none |
+| Kept relations' `r__old` (`bind and measure kept`, step 4) | 0.58–0.88 s | the same | the same |
+| The memo replay (`local/memo replay`) | 1.3–1.5 s | 0.45–0.52 s (after the feeders' merges), 0.43 s of it holding the hits' export rows | 0.04 s; the counted exports installed in 0.002 s |
+| Counting a changed file out and in (`memo remember`) | | 0.48–0.68 s for a 13,300-row file, over 207 relations | 0.79 s, its export rows counted too |
+| The step | 27–40 s, nearly all of it the cross-file evaluation | the same within the load's noise | 20.5–24.3 s, 16.5–22 s of it the cross-file part |
+
+Step 3's numbers are O125 steps 1–2 (2026-11-09, load 80–115); each step's outputs equal a full run's, with the
+counted exports and with them given up (the hits held from the memo instead).
 
 The gate's replay over commits patches 1–3 files a step from the kept blob; its CPU is the same with the keeper on
 and off (alternated, load 90–117), as its statistics were a small share. Every step compared with a full run
@@ -298,9 +302,17 @@ gave the same outputs (O125 steps 1–2; the struct phase spike, E1–E3).
 
 What steps 3 and 4 need:
 
-- **Step 3** keeps last run's base sources, exports and file-local lines in the session and replaces a changed
-  file's rows in each, rather than rebuilding them from every file's memo entry. The statistics need nothing
-  more: the keeper already counts only the files whose content changed.
+- **Step 3, as built.** The keeper counts a session's exports by file (`exports::Counted`: each row with how
+  many files hold it), alongside the statistics, by the same old-content lookup. A memo hit whose content it
+  counted is not held again; the run's exports are the counted ones, installed once every file was seen (before
+  the cone of requests' digests, or before the statistics). The cone starts from the counted rows less those of
+  the files it has not seen yet (gone, or loaded only last run); its loads' rows are held as before. A keeper
+  that gives up mid-run (a chunk not attributed to its files, a memo entry gone) holds the skipped hits from the
+  memo, as the replay did, and counts every file in again next run. Only a session keeps them: a process over the
+  tape cache would count them in each run for nothing. `RERAIL_COUNT_EXPORTS=off` turns it off.
+- **Step 3, what is left.** The base relations' columns, tree counts and lines are still gathered from every
+  hit's entry (0.04 s at O125). The changed file's own count (out and in, 0.79 s for a large file in a debug
+  build) is now the largest local cost: four hash passes per column, which one pass could do.
 - **Step 4** takes a maintained relation's delta from the engine (the rows it truly inserted and deleted) and
   patches the `RelStats` kept with the last run's relation, rather than walking its postings
   (`InRel::posted`, O(rows) for a few-valued column, whose postings are all long).
