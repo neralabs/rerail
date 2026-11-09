@@ -43,7 +43,7 @@ class EngineAlignmentTests(unittest.TestCase):
 
     def artifact(self,root):
         binary=root/'frozen-cli';binary.write_bytes(b'compiled modern engine')
-        trees={name:'tree:'+name for name in ['native','tools/bitlex','Cargo.toml','Cargo.lock']}
+        trees={name:'tree:'+name for name in migration.ENGINE_SOURCE_TREES}
         receipt=dict(engineCommit='build',upstreamCommit='modern',sourceTrees=trees,sha256=migration.sha(binary.read_bytes()))
         return binary,dict(upstreamCommit='modern',cliArtifact=receipt)
 
@@ -255,9 +255,9 @@ class EngineAlignmentTests(unittest.TestCase):
                 dict(path=name, sha256=replay.sha(path.read_bytes()))])
             def git(_root, *args):
                 if args == ('merge-base', '--is-ancestor', 'modern', 'HEAD'): return ''
-                if args == ('diff', '--name-only', 'modern', '--', 'native', 'Cargo.toml', 'Cargo.lock'):
+                if args == ('diff', '--name-only', 'modern', '--', 'native', 'accel', 'Cargo.toml', 'Cargo.lock'):
                     return name
-                if args == ('ls-files', '--others', '--exclude-standard', '--', 'native'): return ''
+                if args == ('ls-files', '--others', '--exclude-standard', '--', 'native', 'accel'): return ''
                 raise AssertionError(args)
             with patch.object(migration, 'git', git):
                 migration.verify_engine_alignment(root, receipt)

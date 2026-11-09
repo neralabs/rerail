@@ -15,7 +15,7 @@ PIN = '2b1504adc4291daaf080b2e932962b134da1a69a'
 MANIFEST = Path('gate/data-layer/packs/data-layer/candidates/rr/migration.json')
 DESTINATION = Path('gate/data-layer/packs/data-layer/candidates/rr')
 LIBRARY = Path('docs/rule-syntax/lib')
-ENGINE_SOURCE_TREES = ('native', 'tools/bitlex', 'Cargo.toml', 'Cargo.lock')
+ENGINE_SOURCE_TREES = ('native', 'accel', 'tools/bitlex', 'Cargo.toml', 'Cargo.lock')
 _ARTIFACT_DIGESTS = {}
 _SOURCE_COHORTS = set()
 # Generic compatibility extensions only. Runtime architecture comes from Final shape.
@@ -294,8 +294,8 @@ def verify_engine_snapshot(root, source):
         if not any(name == boundary or boundary.endswith('python_') and name.startswith(boundary)
                    for boundary in ENGINE_EXTENSION_BOUNDARIES):
             raise ValueError(f'{name}: outside the generic extension boundary')
-    changed = set(git(root, 'diff', '--name-only', upstream, '--', 'native', 'Cargo.toml', 'Cargo.lock').splitlines())
-    changed.update(git(root, 'ls-files', '--others', '--exclude-standard', '--', 'native').splitlines())
+    changed = set(git(root, 'diff', '--name-only', upstream, '--', 'native', 'accel', 'Cargo.toml', 'Cargo.lock').splitlines())
+    changed.update(git(root, 'ls-files', '--others', '--exclude-standard', '--', 'native', 'accel').splitlines())
     if changed != set(reviewed):
         raise ValueError('Unreviewed engine changes: ' + repr(sorted(changed ^ set(reviewed))))
     for name, digest in reviewed.items():
