@@ -1,4 +1,4 @@
-import { type BigIntStats, constants } from "node:fs";
+import { type BigIntStats, closeSync, constants, fstatSync, lstatSync, openSync } from "node:fs";
 import { type FileHandle, lstat, open } from "node:fs/promises";
 
 function symlinkRefusal(path: string): Error {
@@ -34,6 +34,32 @@ export async function openNoFollow(path: string, flags: number, mode?: number, n
     return handle;
   } catch (error) {
     await handle.close();
+    throw error;
+  }
+}
+
+function lstatOrMissingSync(path: string): BigIntStats | undefined {
+  try {
+    return lstatSync(path, { bigint: true });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/** {@link openNoFollow} for synchronous code: a file descriptor the caller closes. */
+export function openNoFollowSync(path: string, flags: number, mode?: number, noFollow: number | undefined = constants.O_NOFOLLOW): number {
+  if (noFollow !== undefined) return openSync(path, flags | noFollow, mode);
+  const before = lstatOrMissingSync(path);
+  if (before?.isSymbolicLink() === true) throw symlinkRefusal(path);
+  const descriptor = openSync(path, flags, mode);
+  try {
+    const opened = fstatSync(descriptor, { bigint: true });
+    const now = before ?? lstatOrMissingSync(path);
+    if (now === undefined || now.isSymbolicLink() || opened.dev !== now.dev || opened.ino !== now.ino) throw symlinkRefusal(path);
+    return descriptor;
+  } catch (error) {
+    closeSync(descriptor);
     throw error;
   }
 }
