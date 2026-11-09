@@ -85,6 +85,54 @@ pub(in crate::code_rule_dsl) fn compiled_tape(src: &str) -> Option<Columns> {
     compiled().ok()?.parser.columns(src.as_bytes()).ok()
 }
 
+/// The node tables of `files`, in order, as `tape` gives each: tier 1 over the whole batch on
+/// the device (Metal's forward carry), then tier 2 over each file reading tier 1's buffers where
+/// the device left them; without a device, `tape` file by file.
+pub(in crate::code_rule_dsl) fn tapes(files: &[&str]) -> Vec<Columns> {
+    let mut out = Vec::with_capacity(files.len());
+    #[cfg(target_os = "macos")]
+    if let Ok(c) = compiled() {
+        if metal_tapes(c, files, &mut out) {
+            return out;
+        }
+        out.clear();
+    }
+    for file in files {
+        out.push(tape(file));
+    }
+    out
+}
+
+/// Tier 1's segments on the device: 29 blocks and a warm-up block each side, a SIMD group.
+#[cfg(target_os = "macos")]
+const SEGMENTS: super::metal_program_backend::block_program::serial::Segments = super::metal_program_backend::block_program::serial::Segments { blocks: 29, warm: 1 };
+
+/// `tapes` on Metal: halves while the device refuses the batch for capacity; `false` when it
+/// cannot run it at all.
+#[cfg(target_os = "macos")]
+fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Columns>) -> bool {
+    use super::metal_program_backend::block_program::serial::run_resident;
+    let mut batch = Vec::with_capacity(files.len());
+    for file in files {
+        batch.push(super::block::BatchFile { bytes: file.as_bytes(), program: 0 });
+    }
+    match run_resident(&[&c.native], &batch, SEGMENTS) {
+        Ok((_, run)) => {
+            let mut i = 0;
+            for file in files {
+                out.push(c.parser.columns_on(&run, i).unwrap_or_else(|_| engine_columns(&rr::tape(file))));
+                i += 1;
+            }
+            true
+        }
+        Err(super::Error::BackendCapacity) if files.len() > 1 => {
+            let (a, b) = files.split_at(files.len() / 2);
+            metal_tapes(c, a, out) && metal_tapes(c, b, out)
+        }
+        Err(_) => false,
+    }
+}
+
 /// The fallback: the engine's parser's nodes, in the compiled parser's columns.
 pub(in crate::code_rule_dsl) fn engine_columns(nodes: &[rr::tape::Node]) -> Columns {
     let mut c = Columns { size: vec![1; nodes.len()], ..Columns::default() };
@@ -173,7 +221,10 @@ mod tests {
             ("native_cpu_stream.rs", "pub(super) fn tape(&self, n: usize)"),
             ("native_cpu_stream.rs", "pub(super) fn words(&self, batch"),
             ("native_cpu_stream.rs", "fn stream<'b>(&self"),
-            ("native_cpu_stream.rs", "pub(super) unsafe fn call(&self, padded"),
+            ("native_cpu_stream.rs", "pub(super) unsafe fn call(&self, bytes"),
+            ("native_cpu_stream.rs", "pub(super) fn columns_on(&self"),
+            ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn tapes("),
+            ("rr_parser.rs", "fn metal_tapes("),
             ("native_cpu_block.rs", "pub(super) fn new(program: &CompiledBlock, files"),
             ("native_cpu_block.rs", "pub(super) fn call(&mut self, program: &CompiledBlock)"),
         ];
@@ -219,6 +270,39 @@ mod tests {
         }
         let bytes: usize = refs.iter().map(|b| b.len()).sum();
         eprintln!("{} files, {bytes} bytes: {differ} differ; GPU {:.2} ms ({:.2} GB/s), {} launches, {} segments, {} reruns", files.len(), got.run.seconds * 1e3, bytes as f64 / got.run.seconds / 1e9, got.run.launches, got.segments, got.reruns);
+        assert_eq!(differ, 0);
+    }
+
+    /// `tapes` (tier 1 on Metal, tier 2 over its buffers in place) gives `tape`'s tables: on
+    /// small documents, the ones the grammar refuses among them.
+    #[test]
+    fn tapes_are_tape() {
+        let deep = format!(".policy {{\"a\": {}{}}}", "[".repeat(127), "]".repeat(127));
+        let long = "r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n".repeat(200);
+        let files = ["r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n", "r(x) :- ````a````.", ".policy {\"a\": [1, {\"b\": null}]}\n/* d */ r(x) :- x ~ `a`, y = \"s\".", deep.as_str(), "", long.as_str()];
+        let got = super::tapes(&files);
+        #[cfg(target_os = "macos")]
+        {
+            let mut on = Vec::new();
+            assert!(super::metal_tapes(super::compiled().expect("compiles"), &files, &mut on), "Metal runs the batch");
+            assert_eq!(on, got);
+        }
+        for (src, g) in files.iter().zip(&got) {
+            assert_eq!(*g, super::tape(src), "{src:?}");
+        }
+    }
+
+    /// `tapes` over the corpus as one batch equals `tape` file by file. Prints the time.
+    #[test]
+    #[ignore = "the corpus on Metal: run by hand"]
+    fn corpus_tapes_are_tape() {
+        let files = corpus();
+        let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+        let _ = super::compiled();
+        let t = cpu();
+        let got = super::tapes(&refs);
+        eprintln!("tapes: {} files in {:?} CPU", refs.len(), cpu() - t);
+        let differ = refs.iter().zip(&got).filter(|(src, g)| super::tape(src) != **g).count();
         assert_eq!(differ, 0);
     }
 

@@ -75,6 +75,13 @@ pub(super) struct Ctx {
     /// (`NO_PARENT` for the root) and whether it is an extra.
     parent: *mut u32,
     extra: *mut u8,
+    /// Tier 1's layout: the bytes from one output's words to the next's (8 on the CPU, where a
+    /// block's outputs are together; a file's blocks times 8 on Metal, an output's words
+    /// together); the bytes from one total to the next, and the mask of a total's bits (64-bit
+    /// totals on the CPU, 32-bit on Metal).
+    output_stride: u64,
+    totals_stride: u64,
+    totals_mask: u64,
 }
 
 /// The field offsets of `Ctx`.
@@ -110,6 +117,9 @@ const OUT_END: i32 = 224;
 const OUT_SIZE: i32 = 232;
 const PARENT: i32 = 240;
 const EXTRA: i32 = 248;
+const OUTPUT_STRIDE: i32 = 256;
+const TOTALS_STRIDE: i32 = 264;
+const TOTALS_MASK: i32 = 272;
 
 /// The root's parent in the table's `parent` column.
 pub(super) const NO_PARENT: u32 = u32::MAX;
@@ -736,6 +746,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         let nlasts = load(&mut f, NLASTS);
         let lasts_stride = load(&mut f, LASTS_STRIDE);
         let totals_p = load(&mut f, TOTALS);
+        let (output_stride, totals_stride, totals_mask) = (load(&mut f, OUTPUT_STRIDE), load(&mut f, TOTALS_STRIDE), load(&mut f, TOTALS_MASK));
         let outputs_p = load(&mut f, OUTPUTS);
         let cols: Vec<Value> = [KIND, FIELD, START, END, SIZE, SUPER_NODE, SUPER_KIND, OPEN, RETURNS, COUNTS].iter().map(|&at| load(&mut f, at)).collect();
         let (kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c) =
@@ -955,7 +966,8 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     f.switch_to_block(look);
                     let start = f.use_var(v.start);
                     let w = f.ins().ushr_imm(start, 6);
-                    let base = f.ins().iadd_imm(outputs_p, 8 * output as i64);
+                    let off = f.ins().imul_imm(output_stride, output as i64);
+                    let base = f.ins().iadd(outputs_p, off);
                     let word = mask_word(&mut f, base, lasts_stride, w);
                     let s = f.ins().band_imm(start, 63);
                     let bit = f.ins().ushr(word, s);
@@ -974,7 +986,8 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
                     let start = f.use_var(v.start);
                     let w = f.ins().ushr_imm(start, 6);
-                    let base = f.ins().iadd_imm(outputs_p, 8 * output as i64);
+                    let off = f.ins().imul_imm(output_stride, output as i64);
+                    let base = f.ins().iadd(outputs_p, off);
                     let word = mask_word(&mut f, base, lasts_stride, w);
                     let s = f.ins().band_imm(start, 63);
                     let bit = f.ins().ushr(word, s);
@@ -1503,7 +1516,11 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     fin_used = true;
                 }
                 Op::Empty { total } => {
-                    let t = f.ins().load(types::I64, flags, totals_p, 8 * i32::from(total));
+                    // A total of tier 1's layout: 8 readable bytes at each (`Ctx::totals_mask`).
+                    let off = f.ins().imul_imm(totals_stride, i64::from(total));
+                    let at = f.ins().iadd(totals_p, off);
+                    let t = f.ins().load(types::I64, flags, at, 0);
+                    let t = f.ins().band(t, totals_mask);
                     let some = f.ins().icmp_imm(IntCC::NotEqual, t, 0);
                     guard(&mut f, some, pc);
                     f.ins().jump(fall, &[]);
@@ -1554,11 +1571,23 @@ fn framed(words: &[super::native_ir::StructuralBlock]) -> bool {
     words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::Inner, .. }))
 }
 
-/// A mask's words for `CompiledStream::call`: word `i` is `words[i * stride]`, `count` of them.
-pub(super) struct MaskWords<'a> {
-    pub(super) words: &'a [u64],
-    pub(super) stride: usize,
-    pub(super) count: usize,
+/// Tier 1's buffers as tier 2 reads them, where tier 1 wrote them (the CPU's batch, or the
+/// device's buffers in shared memory): the starts (two readable slots past `nstarts`); the
+/// mask's words, word `i` at `lasts + i * lasts_stride` bytes, `nlasts` of them; output `o`'s
+/// words from `outputs + o * output_stride` bytes, a word every `lasts_stride`; total `t` the
+/// bits `totals_mask` of the 8 readable bytes at `totals + t * totals_stride`.
+#[derive(Clone, Copy)]
+pub(super) struct Tier1View {
+    pub(super) starts: *const u32,
+    pub(super) nstarts: usize,
+    pub(super) lasts: *const u64,
+    pub(super) nlasts: usize,
+    pub(super) lasts_stride: usize,
+    pub(super) outputs: *const u64,
+    pub(super) output_stride: usize,
+    pub(super) totals: *const u8,
+    pub(super) totals_stride: usize,
+    pub(super) totals_mask: u64,
 }
 
 /// The buffers one call writes, sized from the stream and the program's `Bounds`.
@@ -1611,22 +1640,20 @@ impl CompiledStream {
         }
     }
 
-    /// One call over a file. `padded` is the file with one byte before it and 64 zero bytes after
-    /// (`len` its length); `starts` has two readable slots past its count; `lasts` holds the
-    /// mask's words, a word every `stride`.
+    /// One call over a file. `bytes` is the file (`len` its length), with 64 readable bytes
+    /// after it; `tier1` is tier 1's buffers for it.
     ///
     /// # Safety
-    /// The slices must be as stated, and `tape` from `self.tape(nstarts)`.
-    pub(super) unsafe fn call(&self, padded: *const u8, len: usize, starts: (&[u32], usize), lasts: MaskWords<'_>, outputs: *const u64, totals: &[u64], tape: &mut Tape) -> u64 {
-        assert!(lasts.count == 0 || (lasts.count - 1) * lasts.stride < lasts.words.len(), "the mask's words lie in its slice");
+    /// The pointers must be as stated, and `tape` from `self.tape(tier1.nstarts)`.
+    pub(super) unsafe fn call(&self, bytes: *const u8, len: usize, tier1: Tier1View, tape: &mut Tape) -> u64 {
         let ctx = Ctx {
-            bytes: padded,
+            bytes,
             len: len as u64,
-            starts: starts.0.as_ptr(),
-            nstarts: starts.1 as u64,
-            lasts: lasts.words.as_ptr(),
-            nlasts: lasts.count as u64,
-            totals: totals.as_ptr(),
+            starts: tier1.starts,
+            nstarts: tier1.nstarts as u64,
+            lasts: tier1.lasts,
+            nlasts: tier1.nlasts as u64,
+            totals: tier1.totals.cast(),
             kind: tape.kind.as_mut_ptr(),
             field: tape.field.as_mut_ptr(),
             start: tape.start.as_mut_ptr(),
@@ -1637,8 +1664,8 @@ impl CompiledStream {
             open: tape.open.as_mut_ptr(),
             returns: tape.returns.as_mut_ptr(),
             counts: tape.counts.as_mut_ptr(),
-            lasts_stride: 8 * lasts.stride as u64,
-            outputs,
+            lasts_stride: tier1.lasts_stride as u64,
+            outputs: tier1.outputs,
             frame_base: tape.frames[0].as_mut_ptr(),
             frame_last: tape.frames[1].as_mut_ptr(),
             frame_last_base: tape.frames[2].as_mut_ptr(),
@@ -1652,6 +1679,9 @@ impl CompiledStream {
             out_size: tape.out[4].as_mut_ptr(),
             parent: tape.parent.as_mut_ptr(),
             extra: tape.extra.as_mut_ptr(),
+            output_stride: tier1.output_stride as u64,
+            totals_stride: tier1.totals_stride as u64,
+            totals_mask: tier1.totals_mask,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers.
         unsafe { (self.entry)(&ctx) }
@@ -1677,15 +1707,27 @@ impl CompiledStream {
                 all[o + w * n] = x;
             }
         }
-        let (words, count) = match self.lasts {
-            Some(m) => (&all[m..], tier1.outputs[m].len()),
-            None => (&all[..0], 0),
+        let (lasts, nlasts) = match self.lasts {
+            Some(m) => (all[m..].as_ptr(), tier1.outputs[m].len()),
+            None => (all.as_ptr(), 0),
         };
         let mut tape = self.tape(starts.1);
         let totals = if tier1.totals.is_empty() { vec![0] } else { tier1.totals.clone() };
         // SAFETY: `padded` has the byte before and 64 after; each stream two slots past its count;
         // the tape is sized for the stream; every output has `count` words in `all`.
-        let r = unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), (&starts.0, starts.1), MaskWords { words, stride: n, count }, all.as_ptr(), &totals, &mut tape) };
+        let view = Tier1View {
+            starts: starts.0.as_ptr(),
+            nstarts: starts.1,
+            lasts,
+            nlasts,
+            lasts_stride: 8 * n,
+            outputs: all.as_ptr(),
+            output_stride: 8,
+            totals: totals.as_ptr().cast(),
+            totals_stride: 8,
+            totals_mask: u64::MAX,
+        };
+        let r = unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), view, &mut tape) };
         if r != 0 {
             return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
         }
@@ -1771,6 +1813,49 @@ impl Parser {
         Ok(tape.columns())
     }
 
+    /// File `i`'s node table from tier 1's buffers as the device left them (`Resident`): tier 2
+    /// reads the file's bytes, positions, mask words and totals in the device's shared memory,
+    /// where tier 1 wrote them. Or the word that refused it.
+    #[cfg(target_os = "macos")]
+    pub(super) fn columns_on(&self, run: &super::metal_program_backend::block_program::serial::Resident, i: usize) -> Result<Columns, Refused> {
+        let f = run.files[i];
+        let source = &run.sources[i];
+        let (pos, tot, out) = (run.positions.host().cast::<u32>(), run.tot.host().cast::<u32>(), run.out.host().cast::<u64>());
+        // SAFETY: the run's buffers hold each file's counts from `tot_base`, its positions from
+        // `pos_base` (`capacity` a stream), its output words from `out_base` (`blocks` an output),
+        // with slack past the last of each for tier 2's reads; the device finished writing them.
+        let count = |c: usize| unsafe { *tot.add(f.tot_base + c) } as usize;
+        let starts = match self.tier2.starts {
+            Some(e) => (pos.wrapping_add(f.pos_base + e * f.capacity), count(e)),
+            None => (pos, 0),
+        };
+        let outputs = out.wrapping_add(f.out_base);
+        let (lasts, nlasts) = match self.tier2.lasts {
+            Some(m) => (outputs.wrapping_add(m * f.blocks), f.blocks),
+            None => (outputs, 0),
+        };
+        let view = Tier1View {
+            starts: starts.0,
+            nstarts: starts.1,
+            lasts,
+            nlasts,
+            lasts_stride: 8,
+            outputs,
+            output_stride: 8 * f.blocks,
+            totals: tot.wrapping_add(f.tot_base + self.tier1.extracts.len()).cast(),
+            totals_stride: 4,
+            totals_mask: u64::from(u32::MAX),
+        };
+        let mut tape = self.tier2.tape(starts.1);
+        // SAFETY: as above; the source's bytes have `SOURCE_MARGIN` readable bytes after them in
+        // its slab; the tape is sized for the stream.
+        let r = unsafe { self.tier2.call(source.slab.buffer.host().add(source.offset), source.len, view, &mut tape) };
+        if r != 0 {
+            return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
+        }
+        Ok(tape.columns())
+    }
+
     /// The nodes of `bytes` as `stream::Node`s, for the tests' comparisons with the interpreter.
     #[cfg(test)]
     pub(super) fn parse(&self, bytes: &[u8]) -> Result<Vec<Node>, Refused> {
@@ -1805,11 +1890,10 @@ impl Parser {
         let row = batch.rows[0];
         let extracts = self.tier1.extracts.len();
         let starts = self.stream(batch, self.tier2.starts);
-        let lasts = match self.tier2.lasts {
-            Some(m) => {
-                MaskWords { words: &batch.out[row.out as usize + m..], stride: self.tier1.outputs, count: row.blocks as usize }
-            }
-            None => MaskWords { words: &[], stride: 1, count: 0 },
+        let outputs = batch.out[row.out as usize..].as_ptr();
+        let (lasts, nlasts) = match self.tier2.lasts {
+            Some(m) => (batch.out[row.out as usize + m..].as_ptr(), row.blocks as usize),
+            None => (outputs, 0),
         };
         let none = [0u64];
         let totals = match batch.counts.get(row.counts as usize + extracts..) {
@@ -1820,8 +1904,19 @@ impl Parser {
         // SAFETY: the file's bytes in the batch have `FRONT` zero bytes before them and 64 after
         // its blocks; each stream has `capacity` slots, at least two past its count; the tape is
         // sized for the stream.
-        let outputs = batch.out[row.out as usize..].as_ptr();
-        let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, starts, lasts, outputs, totals, tape) };
+        let view = Tier1View {
+            starts: starts.0.as_ptr(),
+            nstarts: starts.1,
+            lasts,
+            nlasts,
+            lasts_stride: 8 * self.tier1.outputs,
+            outputs,
+            output_stride: 8,
+            totals: totals.as_ptr().cast(),
+            totals_stride: 8,
+            totals_mask: u64::MAX,
+        };
+        let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) };
         if r != 0 {
             return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
         }

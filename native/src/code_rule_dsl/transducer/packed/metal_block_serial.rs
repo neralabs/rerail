@@ -962,10 +962,63 @@ pub(in crate::code_rule_dsl) fn run_serial_split(programs: &[&BlockNative], file
 /// Run `files` in segments (each under `programs[file.program]`, in its planes form): one first
 /// pass, the checks and runs again until every start agrees, then the positions and totals.
 pub(in crate::code_rule_dsl) fn run_serial(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
+    Ok(run_kept(programs, files, segments, true)?.0)
+}
+
+/// `run_serial` with tier 1's buffers left where the device wrote them (`Resident`): no copy of
+/// them back. The run's `files` are empty.
+pub(in crate::code_rule_dsl) fn run_resident(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<(SerialRun, Resident), Error> {
+    let (run, kept) = run_kept(programs, files, segments, false)?;
+    Ok((run, kept.ok_or(Error::BackendFailure)?))
+}
+
+fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
     if programs.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
-        return run_passes(programs, files, segments);
+        return run_passes(programs, files, segments, read);
     }
-    run_serial_io(programs, files, segments, None)
+    let (run, kept) = run_serial_io(programs, files, segments, None, read)?;
+    Ok((run, kept.map(|k| k.with(None))))
+}
+
+/// A file of a `Resident` run: its output words (output `k`'s from `out_base + k * blocks`),
+/// its streams' positions (stream `e`'s from `pos_base + e * capacity`), and its counts (from
+/// `tot_base`: a stream's count, then the totals).
+#[derive(Clone, Copy, Debug)]
+pub(in crate::code_rule_dsl) struct ResidentFile {
+    pub(in crate::code_rule_dsl) out_base: usize,
+    pub(in crate::code_rule_dsl) blocks: usize,
+    pub(in crate::code_rule_dsl) pos_base: usize,
+    pub(in crate::code_rule_dsl) capacity: usize,
+    pub(in crate::code_rule_dsl) tot_base: usize,
+}
+
+/// Tier 1's buffers after a run, in the device's shared memory, where tier 2 reads them: the
+/// output words, the positions (two readable slots past the last), the counts (32-bit, one
+/// readable past the last), each file's place in them, and the files' bytes as the device read
+/// them (`ResidentSource`: 64 readable bytes past each).
+pub(in crate::code_rule_dsl) struct Resident {
+    pub(in crate::code_rule_dsl) out: super::super::blocks::Block,
+    pub(in crate::code_rule_dsl) tot: super::super::blocks::Block,
+    pub(in crate::code_rule_dsl) positions: super::super::blocks::Block,
+    pub(in crate::code_rule_dsl) files: Vec<ResidentFile>,
+    pub(in crate::code_rule_dsl) sources: Vec<std::sync::Arc<crate::code_rule_dsl::residency::slabs::ResidentSource>>,
+}
+
+/// `Resident` before its output buffer is known (a pass of a program in passes writes to the
+/// buffer `run_passes` owns).
+struct Kept {
+    out: Option<super::super::blocks::Block>,
+    tot: super::super::blocks::Block,
+    positions: super::super::blocks::Block,
+    files: Vec<ResidentFile>,
+    sources: Vec<std::sync::Arc<crate::code_rule_dsl::residency::slabs::ResidentSource>>,
+}
+
+impl Kept {
+    fn with(self, out: Option<super::super::blocks::Block>) -> Resident {
+        let out = self.out.or(out).expect("a run's output buffer");
+        Resident { out, tot: self.tot, positions: self.positions, files: self.files, sources: self.sources }
+    }
 }
 
 /// A pass of a program in passes, as `run_serial_io` runs it: the output buffer every pass
@@ -989,7 +1042,7 @@ fn blocks_of(len: usize, delay: u8) -> usize {
 /// as made; each backward pass's fills from the files' last blocks to their first
 /// (`back_kernels`). The slots stay in the device's buffer from pass to pass. One program a
 /// batch.
-fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
+fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
     let [program] = programs else { return Err(Error::UnsupportedBackend) };
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let passes = program.passes();
@@ -1031,7 +1084,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segm
         match pass {
             super::super::native_ir::Pass::Forward { body, stores } => {
                 let io = Io { out: &out, offset, slot_base: &slot_base, slots: passes.slots, stores };
-                let run = run_serial_io(&[body], files, segments, Some(&io))?;
+                let (run, kept) = run_serial_io(&[body], files, segments, Some(&io), read && i == last)?;
                 seconds += run.run.seconds;
                 launches += run.run.launches;
                 reruns += run.reruns;
@@ -1040,7 +1093,8 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segm
                 rerun_seconds += run.rerun_seconds;
                 sink_seconds += run.sink_seconds;
                 if i == last {
-                    return Ok(SerialRun { run: BatchRun { files: run.run.files, launches, seconds }, segments: segs.len(), reruns, rounds, first_seconds, rerun_seconds, sink_seconds });
+                    let run = SerialRun { run: BatchRun { files: run.run.files, launches, seconds }, segments: segs.len(), reruns, rounds, first_seconds, rerun_seconds, sink_seconds };
+                    return Ok((run, if read { None } else { kept.map(|k| k.with(Some(out))) }));
                 }
             }
             super::super::native_ir::Pass::Back(fills) => {
@@ -1123,7 +1177,7 @@ fn back_kernels(fills: &[(u16, u16, u16)], slots: u16) -> String {
 }
 
 /// `run_serial` over programs without passes, or one forward pass of a program in passes (`io`).
-fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments, io: Option<&Io<'_>>) -> Result<SerialRun, Error> {
+fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments, io: Option<&Io<'_>>, read: bool) -> Result<(SerialRun, Option<Kept>), Error> {
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
     let refs: Vec<&BlockNative> = forms.iter().collect();
@@ -1133,7 +1187,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
     let sources = crate::code_rule_dsl::residency::slabs::admit_sources(&bytes)?;
     let (slabs, slab_of) = crate::code_rule_dsl::residency::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
     if files.is_empty() {
-        return Ok(SerialRun { run: BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 }, segments: 0, reruns: 0, rounds: 0, first_seconds: 0.0, rerun_seconds: 0.0, sink_seconds: 0.0 });
+        return Ok((SerialRun { run: BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 }, segments: 0, reruns: 0, rounds: 0, first_seconds: 0.0, rerun_seconds: 0.0, sink_seconds: 0.0 }, None));
     }
     // The file table: `groups` is the file's words an output (its blocks), `group0` its first
     // segment, `halo_base` its segments.
@@ -1169,13 +1223,14 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
     let total = segs.len();
     let table = super::super::blocks::upload(&rows)?;
     let seg_table = super::super::blocks::upload(&segs)?;
-    let owned;
-    let out = match io {
-        Some(io) => io.out,
-        None => {
-            owned = super::super::blocks::zeroed::<u64>(out_base.max(1))?;
-            &owned
-        }
+    let owned = match io {
+        Some(_) => None,
+        None => Some(super::super::blocks::zeroed::<u64>(out_base.max(1))?),
+    };
+    let out = match (io, &owned) {
+        (Some(io), _) => io.out,
+        (None, Some(o)) => o,
+        (None, None) => unreachable!("an output buffer, given or owned"),
     };
     let records = super::super::blocks::zeroed::<u64>(total * 2 * sw)?;
     let list = super::super::blocks::zeroed::<u32>(total)?;
@@ -1183,8 +1238,10 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
     let listed = super::super::blocks::zeroed::<u32>(1)?;
     let counts = super::super::blocks::zeroed::<u32>(total * counted)?;
     let bases = super::super::blocks::zeroed::<u32>(total * counted)?;
-    let tot = super::super::blocks::zeroed::<u32>(tot_base.max(1))?;
-    let positions = super::super::blocks::zeroed::<u32>(pos_base.max(1))?;
+    // Slack for tier 2's reads in place: an 8-byte load at the last count, two slots past the
+    // last position.
+    let tot = super::super::blocks::zeroed::<u32>(tot_base + 2)?;
+    let positions = super::super::blocks::zeroed::<u32>(pos_base + 2)?;
     let most = forms.iter().map(|n| Levels::of(n).scans.len()).max().unwrap_or(0).max(1);
     let depth = if cones_on() { forms.iter().map(|n| Levels::of(n).depth).max().unwrap_or(0) } else { 0 };
     let tables = super::super::blocks::zeroed::<u32>(total * 2 * most)?;
@@ -1359,10 +1416,19 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
     }
     let sink_seconds = encode_passes(&sinks)?;
     launches += 1;
+    let mut results = Vec::with_capacity(files.len());
+    let times = (first_seconds, rerun_seconds, sink_seconds);
+    let serial = |files: Vec<BlockRun>| SerialRun { run: BatchRun { files, launches, seconds: times.0 + times.1 + times.2 }, segments: total, reruns, rounds, first_seconds, rerun_seconds, sink_seconds };
+    if !read {
+        let placed = rows
+            .iter()
+            .map(|r| ResidentFile { out_base: r.out_base as usize, blocks: r.groups as usize, pos_base: r.pos_base as usize, capacity: (r.len as usize).max(1), tot_base: r.tot_base as usize })
+            .collect();
+        return Ok((serial(Vec::new()), Some(Kept { out: owned, tot, positions, files: placed, sources })));
+    }
     let words = out.read::<u64>(out_base.max(1));
     let tot = tot.read::<u32>(tot_base.max(1));
     let positions = positions.read::<u32>(pos_base.max(1));
-    let mut results = Vec::with_capacity(files.len());
     for row in &rows {
         let n = &forms[row.program as usize];
         let len = row.len as usize;
@@ -1384,13 +1450,5 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: S
         let totals = (0..n.totals.len()).map(|t| u64::from(count(n.extracts.len() + t))).collect();
         results.push(BlockRun { outputs, positions, totals });
     }
-    Ok(SerialRun {
-        run: BatchRun { files: results, launches, seconds: first_seconds + rerun_seconds + sink_seconds },
-        segments: total,
-        reruns,
-        rounds,
-        first_seconds,
-        rerun_seconds,
-        sink_seconds,
-    })
+    Ok((serial(results), None))
 }
