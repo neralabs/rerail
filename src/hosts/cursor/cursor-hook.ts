@@ -6,6 +6,7 @@ import {
   type CursorHookOutput,
 } from "./cursor-hook-adapter.js";
 import { launchedDirectly, serveHook } from "../../harness/hook-adapter.js";
+import { exitWhenParentGone } from "../../harness/parent-watch.js";
 import { hookRerailStarted, runHostHook, type HookOptions } from "../../harness/hook-host.js";
 
 export { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "./cursor-hook-adapter.js";
@@ -22,4 +23,7 @@ export async function runCursorHook(
 
 // `serveHook` answers `{}` and exits 0 whatever fails, as Rerail does where it is not started, so Cursor carries on: a
 // failed hook would put an error on every tool call (design N11). The reason goes to stderr, out of the chat.
-if (launchedDirectly(import.meta.url)) await serveHook(input => runCursorHook(input as CursorHookInput));
+if (launchedDirectly(import.meta.url)) {
+  exitWhenParentGone();
+  await serveHook(input => runCursorHook(input as CursorHookInput));
+}

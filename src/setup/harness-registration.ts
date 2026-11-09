@@ -201,7 +201,7 @@ function shellArgument(value: string, platform: NodeJS.Platform): string {
 }
 
 /** `<recorded node> <root>/<executable>`, both quoted for the platform's shell; `executable` is an `ENTRY_POINTS` path. */
-function directCommand(context: Context, executable: string): string {
+function directCommand(context: HookCommandContext, executable: string): string {
   return `${shellArgument(context.nodePath, context.platform)} ${shellArgument(join(context.root, executable), context.platform)}`;
 }
 
@@ -286,20 +286,47 @@ interface HookTarget {
   script: string;
 }
 
+/** What the generated hook commands are written from: the recorded node, the package root, and the platform. */
+type HookCommandContext = Pick<Context, "platform" | "nodePath" | "root">;
+
+/** The Windows `cmd` fallback releases before this one wrote: a bare `node`, which cmd looks for in the current folder first. */
+const LEGACY_WINDOWS_FALLBACK = /^cmd \/d \/c "if exist ("[^"]+") \(\1 ("[^"]+")\) else \(node \2\)"$/u;
+const WINDOWS_FALLBACK = /^cmd \/d \/c "if exist ("[^"]+") \(\1 ("[^"]+")\) else \(for %I in \(node\.exe\) do @"%~\$PATH:I" \2\)"$/u;
+
+/** `command` as the two words `"<node>" "<hook>"` a Windows `cmd` fallback runs, or undefined when it is none. */
+function windowsFallbackWords(command: string): string | undefined {
+  const fallback = WINDOWS_FALLBACK.exec(command) ?? LEGACY_WINDOWS_FALLBACK.exec(command);
+  return fallback === null ? undefined : `${fallback[1]} ${fallback[2]}`;
+}
+
+/**
+ * Every command an entry for `recorded` may hold as Rerail's: the forms this release writes and, on Windows, the forms
+ * earlier releases wrote, which doubled each `%` in a path and fell back to a bare `node`. Registering replaces those.
+ */
+function generatedHookCommands(recorded: HookCommandContext, executable: string): string[] {
+  const commands = [hookCommand(recorded, executable), directCommand(recorded, executable), powershellHookCommand(recorded, executable)];
+  if (recorded.platform !== "win32") return commands;
+  for (const word of [(value: string) => `"${value}"`, (value: string) => `"${value.replaceAll("%", "%%")}"`]) {
+    const node = word(recorded.nodePath);
+    const hook = word(join(recorded.root, executable));
+    commands.push(`cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`, `${node} ${hook}`);
+  }
+  return commands;
+}
+
 /**
  * Node and hook script of a generated shell-form entry: direct, the POSIX `sh` fallback, the Windows `cmd` fallback, or
  * Codex's PowerShell fallback.
  */
-function shellHookTarget(context: Context, command: string, executable: string): HookTarget | undefined {
+function shellHookTarget(context: Pick<Context, "platform">, command: string, executable: string): HookTarget | undefined {
   const windows = context.platform === "win32";
   const fallbackPrefix = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
-  const windowsFallback = /^cmd \/d \/c "if exist ("[^"]+") \(\1 ("[^"]+")\) else \(node \2\)"$/u.exec(command);
   const literal = String.raw`('(?:[^'\u2018-\u201B]|['\u2018-\u201B]{2})*')`;
   const powershellFallback = new RegExp(
     String.raw`^\$LASTEXITCODE = 1; if \(Test-Path -LiteralPath ${literal}\) \{ & \1 ${literal} \} else \{ node \2 \}; exit \$LASTEXITCODE$`,
     "u",
   ).exec(command);
-  let direct = windowsFallback === null ? command : `${windowsFallback[1]} ${windowsFallback[2]}`;
+  let direct = windowsFallbackWords(command) ?? command;
   if (command.startsWith(fallbackPrefix)) direct = command.slice(fallbackPrefix.length);
   if (powershellFallback !== null && windows) {
     direct = [powershellFallback[1]!, powershellFallback[2]!]
@@ -308,12 +335,21 @@ function shellHookTarget(context: Context, command: string, executable: string):
   }
   const words = shellWords(direct, windows);
   if (words.length !== 2 || words.join(" ") !== direct) return undefined;
-  const target = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
-  const root = registeredRoot(target.script, executable);
-  if (root === undefined) return undefined;
-  const recorded = { ...context, root, nodePath: target.nodePath };
-  return [hookCommand(recorded, executable), directCommand(recorded, executable), powershellHookCommand(recorded, executable)]
-    .includes(command) ? target : undefined;
+  const written = { nodePath: unquoteShellWord(words[0]!, windows), script: unquoteShellWord(words[1]!, windows) };
+  // Earlier Windows releases doubled each `%` in a path; the path they meant has it once.
+  const targets = windows && direct.includes("%%")
+    ? [{ nodePath: written.nodePath.replaceAll("%%", "%"), script: written.script.replaceAll("%%", "%") }, written]
+    : [written];
+  return targets.find(target => {
+    const root = registeredRoot(target.script, executable);
+    return root !== undefined
+      && generatedHookCommands({ platform: context.platform, root, nodePath: target.nodePath }, executable).includes(command);
+  });
+}
+
+/** The node and hook script of `command` when it is a hook command Rerail generated, or undefined. */
+export function generatedHookTarget(command: string, executable: string, platform: NodeJS.Platform): HookTarget | undefined {
+  return shellHookTarget({ platform }, command, executable);
 }
 
 /** A node binary as setup records it: `node` or `node.exe`, bare or at any path. */
@@ -351,11 +387,22 @@ async function isRerailHookEntry(context: Context, entry: JsonObject, executable
  * on PATH. The POSIX form execs only inside the test, so a non-zero hook exit never re-runs the hook
  * through the fallback; `exec` also leaves stdio alone, so hook input still arrives on stdin.
  */
-function hookCommand(context: Context, executable: string): string {
+function hookCommand(context: HookCommandContext, executable: string): string {
   const node = shellArgument(context.nodePath, context.platform);
   const hook = shellArgument(join(context.root, executable), context.platform);
-  if (context.platform === "win32") return `cmd /d /c "if exist ${node} (${node} ${hook}) else (node ${hook})"`;
+  if (context.platform === "win32") return windowsCmdHookCommand(node, hook);
   return `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hook}`;
+}
+
+/**
+ * The Windows form of {@link hookCommand}, for hosts that run a hook's command in cmd.exe, from `node` and `hook` as
+ * quoted words. The fallback finds `node.exe` with `%~$PATH:I`, which searches PATH alone: a bare `node` would make cmd
+ * look in the current folder first, where a repository's own node.exe, node.bat or node.cmd would run on every hook.
+ * `@` keeps cmd from echoing the command onto the hook's output. cmd stays node's parent, as it has no `exec`, so a
+ * host that kills it on a timeout leaves node running; the hook then ends itself (`exitWhenParentGone`).
+ */
+export function windowsCmdHookCommand(node: string, hook: string): string {
+  return `cmd /d /c "if exist ${node} (${node} ${hook}) else (for %I in (node.exe) do @"%~$PATH:I" ${hook})"`;
 }
 
 /**
@@ -364,7 +411,7 @@ function hookCommand(context: Context, executable: string): string {
  * `%` as they are; a quote inside is doubled, and PowerShell reads ‘ ’ ‚ ‛ as single quotes too. `$LASTEXITCODE` starts
  * at 1 so the hook still fails when neither node runs, and `exit` passes on the hook's own exit code.
  */
-function powershellHookCommand(context: Context, executable: string): string {
+function powershellHookCommand(context: HookCommandContext, executable: string): string {
   const node = powershellLiteral(context.nodePath);
   const hook = powershellLiteral(join(context.root, executable));
   return `$LASTEXITCODE = 1; if (Test-Path -LiteralPath ${node}) { & ${node} ${hook} } else { node ${hook} }; exit $LASTEXITCODE`;
