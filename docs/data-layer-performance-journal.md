@@ -9275,3 +9275,40 @@ No full repository cold run occurs. This cohort makes no performance claim.
 The raw-execute callback-collector/factory/CLI and registry/lifecycle contracts remain open.
 Rule 89 deletion and production integration also remain open.
 The inventory remains 90 drafts and ten absent translations. Full migration acceptance remains open.
+### 2026-11-08 — Native raw-execute CLI and persistent consumers
+
+The native rule now implements CLI file selection, ordered violation strings, and check status.
+The source CLI and plugin use different exclusion sets.
+The CLI preserves production-root order and Python Path component order within each root.
+Its text findings precede AST findings and survive syntax errors.
+Only AST findings pass through the source fact formatter.
+
+The first native CLI shard fails all ten selected cases.
+The repaired CLI passes 38 source observations.
+Two further source cases expose layer-name and absolute-ancestor exclusions.
+The expanded corpus contains 44 cases, including file aliases, root symlinks, nested directory symlinks, and unusual names.
+All 44 cases pass after those repairs.
+Nine changed-clause controls produce complete mismatches through successful native execution.
+
+Thirteen steps reuse one workspace and output cache.
+Both the CLI and plugin match their source recordings on all 26 runs.
+The steps cover file deletion, restoration, same-path stub edits, hidden caches, Unicode roots, syntax failure, and unchanged repeats.
+
+The final rule bytes also pass all four original tests and five complete observations.
+They pass 187 API cases, 31 snapshot reporter cases, and 31 actual workspace cases.
+All fourteen detector controls and three combined-scope cases pass again.
+All 101 readers pass in one invocation. All 163 tooling tests pass, with 127 subtests.
+The 38 cohort commands finish within their 115-second bounds.
+The same immutable engine supplies the preceding 136 native regression results.
+No engine build or full repository cold run occurs in this CLI cohort.
+
+The [CLI receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-raw-execute-cli-acceptance.json.gz) retains source observations, results, controls, update traces, consumed programs, logs, commands, and its validator.
+It records Final engine base `d60c1a832` and the documentation-only merge `06b9b015d`.
+Final advances to `49035cc90` during the cohort.
+The completed cohort retains its actual engine identity before that next merge.
+
+The next missing rule, imperative-private-functions, now has a complete offline source recording.
+All 144 original tests pass, with 129 API observations, including the collection-time directory call.
+Its native port remains absent.
+The inventory remains 90 drafts and ten absent translations.
+Raw-execute callback/factory transport, shared registry integration, rule 89 deletion, and full migration acceptance remain open.

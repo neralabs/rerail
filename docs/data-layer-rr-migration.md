@@ -118,7 +118,8 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory contains **89 target drafts and 11 absent translations**. None has full acceptance yet.
+The current inventory contains **90 target drafts and 10 absent translations**. None has full acceptance yet.
+The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.
 Dead-code analysis handles the tested randomized mixin alternatives through a reachability proof. Raw target ordering remains separate.
@@ -2147,3 +2148,21 @@ The [receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-raw-execute-na
 It also retains earlier failed verifier runs and source references.
 Raw-execute callback-collector/factory/CLI and registry/lifecycle acceptance remain open.
 The inventory contains 90 drafts and ten absent translations. Full migration acceptance remains open.
+
+### 2026-11-08 — Raw-execute CLI and persistent workspace acceptance
+
+Native CLI relations now preserve the source's discovery exclusions, root order, Path component order, violation strings, and check status.
+All 44 source-derived CLI cases pass, including positives, duplicate occurrences, aliases, symlinks, and unusual names.
+Nine CLI controls produce complete mismatches through successful native execution.
+Both consumers pass thirteen update steps in one persistent workspace and cache.
+
+The final bytes also pass the four original tests, 187 API cases, 31 snapshot cases, and 31 workspace cases.
+The fourteen detector controls and three combined-scope cases pass again.
+All 101 readers and 163 tooling tests pass, with 127 tooling subtests.
+The [CLI receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-raw-execute-cli-acceptance.json.gz) retains complete evidence and exact programs.
+Its engine remains source `fa47dda79`, based on Final `d60c1a832`.
+The documentation-only Final commit `06b9b015d` is merged. Later Final engine changes await the next adoption.
+
+Raw-execute callback/factory transport and shared registry integration remain open.
+The [next source recording](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-private-functions-original-source.json.gz) retains all 144 original imperative-private-function tests and 129 API observations.
+That native translation remains absent. The inventory remains 90 drafts and ten absent translations.
