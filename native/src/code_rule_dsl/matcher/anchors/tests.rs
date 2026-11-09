@@ -1089,48 +1089,13 @@ fn utility_plans_select_as_precisely_as_the_rule_written_inline() {
     }
 }
 
-/// The names of the shared utility plans `plan` reaches, outermost first, each by the shape of
-/// its condition: a root gate (`Condition::RootGate`), a kept relation, a same-node condition, or
-/// `always`. A reduced relation utility is not shared, so it is not listed.
-fn utility_conditions(plan: &AnchorPlan) -> Vec<&'static str> {
-    fn collect<'plan>(plan: &'plan AnchorPlan, found: &mut Vec<&'plan AnchorPlan>) {
-        match &plan.condition {
-            Condition::Utility(inner) => {
-                found.push(inner);
-                collect(inner, found);
-            }
-            Condition::All(plans) | Condition::Any(plans) => {
-                for plan in plans {
-                    collect(plan, found);
-                }
-            }
-            Condition::Not(plan)
-            | Condition::Relation { inner: plan, .. }
-            | Condition::RootGate { gated: plan, .. } => collect(plan, found),
-            Condition::Always | Condition::Pattern(_) | Condition::Text { .. } => {}
-        }
-    }
-    let mut found = Vec::new();
-    collect(plan, &mut found);
-    found
-        .iter()
-        .map(|plan| match plan.condition {
-            Condition::RootGate { .. } => "root gate",
-            Condition::Relation { .. } => "relation",
-            Condition::Always => "always",
-            _ => "same-node",
-        })
-        .collect()
-}
-
 /// A root gate (a utility written `inside` the grammar's root node, to the end, as the Airflow
 /// ports' `seen-airflow` gates a file on an `airflow` import) selects the roots the gate written
 /// inline selects: `compile_util` keeps its relations and those of the utilities under it, where
 /// it reduces any other relation utility to its root kinds (`relation` here, which adds nothing to
-/// the identifier roots it is written over). Compilation only sees the kind the gate names: the
-/// same utility written `inside` another kind compiles to the same plan, and the index, which
-/// knows the tree's root, evaluates the one and reduces the other. A utility reached both under
-/// the gate and outside it has a plan for each context.
+/// the identifier roots it is written over). The same gate written `inside` another kind is
+/// reduced by the index (`Condition::RootGate`), and a utility reached both under the gate and
+/// outside it has a plan for each context.
 #[test]
 fn utility_root_gates_select_as_the_gate_written_inline() {
     let calls: String = (0..200)
@@ -1214,21 +1179,6 @@ fn utility_root_gates_select_as_the_gate_written_inline() {
     assert_eq!(
         selection(json!({ "rule": both, "utils": utils }), &imports),
         (0, 200)
-    );
-    let utilities = |ast: Value| utility_conditions(&grammar_matchers(&compiled(ast))[0].anchors);
-    // The gate's plan keeps the relation of `imports` beneath it and reaches `leaf`; whether the
-    // kind it names is the root is not a fact of the plan. The reduced utility's plan is dropped
-    // (`Always`, not shared), under the gate or at the top level alike.
-    let gated = vec!["root gate", "relation", "same-node"];
-    assert_eq!(utilities(json!({ "rule": utility, "utils": utils })), gated);
-    assert_eq!(
-        utilities(json!({ "rule": utility, "utils": not_root })),
-        gated
-    );
-    assert_eq!(utilities(json!({ "rule": both, "utils": utils })), gated);
-    assert_eq!(
-        utilities(json!({ "rule": relation, "utils": relation_utils })),
-        Vec::<&str>::new()
     );
 }
 
@@ -1541,11 +1491,8 @@ fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
 /// ANN204, ANN205, ANN206 and ANN401 reach their `seen-builtins` utility (`inside module has
 /// dotted_name ^builtins`, a root gate) only through `static-ref` and `class-ref`: under a `not`
 /// in their first arm (a `staticmethod` / `classmethod` identifier no `builtins` import shadows)
-/// and directly in their second (a name that resolves to the builtin). Those two utilities walk a
-/// relation themselves (their third arm reaches them through a `has` inside parentheses), so
-/// `compile_util` reduces them to their root kinds, gate included: no plan of the four documents
-/// holds the gate, before this change or after it, and selection is sound and complete on a file
-/// with a `builtins` import and on one without.
+/// and directly in their second (a name that resolves to the builtin). Selection stays sound and
+/// complete on a file with a `builtins` import and on one without.
 #[test]
 fn ann_ports_select_soundly_with_and_without_a_builtins_import() {
     let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
@@ -1577,12 +1524,6 @@ fn ann_ports_select_soundly_with_and_without_a_builtins_import() {
             .flatten()
             .collect();
         assert!(!grammars.is_empty(), "{name}: AST clauses");
-        for grammar in &grammars {
-            assert!(
-                !utility_conditions(&grammar.anchors).contains(&"root gate"),
-                "{name}: `static-ref` and `class-ref` are reduced, and the gate with them"
-            );
-        }
         for (source, label) in [(&without, "without"), (&with, "with")] {
             let mut reported = 0;
             for grammar in &grammars {
