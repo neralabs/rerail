@@ -2,6 +2,7 @@
 import ast
 import json
 from pathlib import Path
+import sys
 
 from serverplan_steps_contract import FUNCTIONS
 
@@ -55,6 +56,15 @@ def install(suite, module):
         if tree is not origin.tree or ast.dump(tree, include_attributes=True) != origin.snapshot:
             raise NotImplementedError('Changed AST arguments need structured transport')
         return origin.source
+
+    def verify_allowlists():
+        rows = suite.native('serverplan_steps', '_verify_allowlists', [], options())
+        if len(rows) != 1 or rows[0]['code'] != 'SSP_VERIFY' or rows[0]['parameters']['ordinal'] != 0:
+            raise ValueError('One native verification result required')
+        result = rows[0]['parameters']
+        sys.stdout.write(result['stdout'])
+        sys.stderr.write(result['stderr'])
+        return bool(result['valid'])
 
     def scan_source(file, source, tree=None):
         settings = dict(options(), argumentPath=str(file), callSource=source,
@@ -121,7 +131,9 @@ def install(suite, module):
                    'check_compiled_result_builders_do_not_fail_closed',
                    'check_legacy_postop_user_callable_escape_hatches'}
     for name in FUNCTIONS:
-        if name == '_scan_source':
+        if name == '_verify_allowlists':
+            suite.replace(module, name, verify_allowlists)
+        elif name == '_scan_source':
             suite.replace(module, name, scan_source)
         elif name == '_scan_file':
             suite.replace(module, name, scan_file)

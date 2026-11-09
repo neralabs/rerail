@@ -453,6 +453,10 @@
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
 // layout, and verifies it: lib/data-layer/signing.rr does this for the data layer's two layouts.
 .functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
+// The same verifier's failure reason; empty on success. Base64 transport and signature
+// failures use Python base64/PyNaCl spelling. An invalid key gives "invalid Ed25519 public key".
+// No signing operation or private key access occurs. Payload storage is bounded to 64 decoded bytes.
+.functor ed25519_error(key: symbol, message: symbol, sig: symbol): symbol
 // @tree_digest(n): a structural tree digest. It does not reproduce CPython AST identity or dump bytes.
 .functor tree_digest(n: node): symbol
 // Existing hashes of CPython ast.dump text require exact native serialization and field defaults.

@@ -2119,7 +2119,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "30dfaa65d6c80152523fef24673b961a22d20304465d892e8d93b97634d285fd",
+      "sha256": "f8376dfcae7a1b8275fd6541967cbd71127ff415cf016518382c8a0347588aa1",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2187,6 +2187,11 @@
           "before": "647c79bc00f977a98006e17a8f56ee9042d7fcc00ec66851bfc15176c39605e3",
           "after": "30dfaa65d6c80152523fef24673b961a22d20304465d892e8d93b97634d285fd",
           "reason": "Translate source/file scanner order and text gates; restrict helper summaries to their demanded consumers"
+        },
+        {
+          "before": "30dfaa65d6c80152523fef24673b961a22d20304465d892e8d93b97634d285fd",
+          "after": "f8376dfcae7a1b8275fd6541967cbd71127ff415cf016518382c8a0347588aa1",
+          "reason": "Translate full allowlist verification through shared signing messages and native failure reasons"
         }
       ]
     }
@@ -2658,7 +2663,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "30dfaa65d6c80152523fef24673b961a22d20304465d892e8d93b97634d285fd"
+      "ruleSha256": "f8376dfcae7a1b8275fd6541967cbd71127ff415cf016518382c8a0347588aa1"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3336,7 +3341,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "929231432fa9a84f5187808b649e1d79c37703f5f02b876212c45cf5d235cf76"
+        "sha256": "3844ce66a028e693595a2f05e774594e292a1f70ab3d8399cbd05bcc1bb979c8"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
@@ -3345,6 +3350,10 @@
       {
         "path": "native/src/code_rule_dsl/logic/strings/signature-errors.json",
         "sha256": "d0b1c63f0ece1e791339013ff176d1506e6ae2e2ace4ecaa32d1475aa94bd44c"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/strings/signatures.rs",
+        "sha256": "7a294368348879ae1e3555dd0e7471e72c045a1aefd3af46501918404a4dc7a2"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/tests.rs",

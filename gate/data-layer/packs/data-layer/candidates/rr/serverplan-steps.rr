@@ -5,6 +5,21 @@
 .scope include "**/l2070_server_plan/steps/**/*.py", "**/l7300_sql_versioned_transactions/steps/**/*.py", "**/l9700_sql_graph_query/steps/**/*.py", "**/l2070_batching/post_op.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_steps.py
 #include "python/ast.rr"
+#include "data-layer/signing.rr"
+
+// Verification receives whole signature batches and uses the shared signed-message layout.
+.decl ssp_verification(i: number, name: symbol, sig: symbol)
+ssp_verification(0,"serverplan_steps/0",sig) :- option("entryPoint","_verify_allowlists"), option("signature",sig), !option_item("verificationSignatures",_,_).
+ssp_verification(i,cat("serverplan_steps/",to_string(i)),sig) :- option("entryPoint","_verify_allowlists"), option_item("verificationSignatures",i,sig).
+multi_sig(name,"serverplan_steps",sig) :- ssp_verification(_,name,sig).
+multi_name(name,"can_batch_false") :- ssp_verification(_,name,_).
+multi_name(name,"lifecycle_runtime_state") :- ssp_verification(_,name,_).
+multi_entry(name,"can_batch_false",value) :- ssp_verification(_,name,_), option_item("canBatchAllowlist",_,value).
+multi_entry(name,"lifecycle_runtime_state",value) :- ssp_verification(_,name,_), option_item("runtimeStateAllowlist",_,value).
+.violation SSPVerification(at: span, ordinal: number, valid: number, stdout: symbol, stderr: symbol) code "SSP_VERIFY" "{stderr}"
+SSPVerification(@place("",0),i,1,"","") :- ssp_verification(i,name,_), multi_status(name,"valid").
+SSPVerification(@place("",0),i,0,"",cat("FAIL: WARNING: Allowlists for serverplan_steps are ",label,". Sign with --sign-allowlist.\n")) :- ssp_verification(i,name,sig), multi_status(name,"unsigned"), (sig = "NEEDS_SIGNING", label = "needs signing" ; sig != "NEEDS_SIGNING", label = "unsigned").
+SSPVerification(@place("",0),i,0,"",cat("FAIL: Allowlist signature verification failed for serverplan_steps: ",error,"\n")) :- ssp_verification(i,name,sig), multi_status(name,"invalid"), multi_message(name,message), nera_key(key), error = @ed25519_error(key,message,sig).
 
 .decl ssp_display(path: symbol)
 ssp_display(".") :- option("entryPoint","Violation.__str__"), option("argumentPath",path), option("rootPath",path).
