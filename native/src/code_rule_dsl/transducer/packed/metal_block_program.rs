@@ -22,6 +22,11 @@ use crate::code_rule_dsl::transducer::packed::block::BlockRun;
 use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
 use metal::MTLSize;
 
+/// The same programs in the CPU's shape: a thread a segment of blocks, the carry forward by
+/// speculation (`metal_block_serial.rs`).
+#[path = "metal_block_serial.rs"]
+pub(in crate::code_rule_dsl) mod serial;
+
 /// The carries' helpers (`metal_block_carry.metal`), shared by the interpreter and generated MSL.
 const CARRY: &str = include_str!("metal_block_carry.metal");
 /// The sinks: outputs at their delays, extracts and totals (`metal_block_sinks.metal`), shared
@@ -115,6 +120,8 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         // Its second operand in `imm`: `b` is the carry's index.
         BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
+        BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
+        BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
         // The period in `a` (`k | r << 8`, never read as a slot: it is clamped), its bits in `b` and `imm`.
         BlockInst::Phase(k, r) => {
             let bits = super::block::period_bits(k);
@@ -140,10 +147,11 @@ pub(in crate::code_rule_dsl) struct BatchRun {
     pub(in crate::code_rule_dsl) seconds: f64,
 }
 
-/// Workers of the persistent dispatch: SIMD groups that take the batch's groups in order. On an
-/// M5 Max (40 GPU cores) 512 ran JSON's tier 1 fastest: at 1,024 and more, groups waiting on
-/// their predecessors take issue slots from the groups they wait on (doc 22).
-const WORKERS: usize = 512;
+/// Workers of the persistent dispatch: SIMD groups that take the batch's tickets in order. Every
+/// worker must be resident: a worker waiting on a ticket held by one that is not polls until its
+/// budget runs out and the launch is repeated. On an M5 Max (40 GPU cores) JSON's tier 1 ran
+/// fastest at 768 (step 15) and 1,024 (step 14), and fell off a cliff past 1,024 (doc 22).
+const WORKERS: usize = 768;
 
 /// `run_batch`, split while the device refuses it for capacity (lessons ledger #26: a batch over
 /// a budget is split, never refused). Halves run one after another, in the files' order; a file
@@ -184,6 +192,12 @@ pub(in crate::code_rule_dsl) fn run_batch(
     executor: Executor,
     spins: u32,
 ) -> Result<BatchRun, Error> {
+    // A fixed point (`rounds`) is the CPU's for now: each lane would run its rounds in its own
+    // frame, within `block::MAX_ROUNDS`, to the same values.
+    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet.
+    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
+        return Err(Error::UnsupportedBackend);
+    }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let word = width.bytes() / 8;
     let span = width.bytes() * GROUP;
@@ -214,6 +228,11 @@ pub(in crate::code_rule_dsl) fn run_batch(
     for (i, file) in files.iter().enumerate() {
         let n = forms.get(file.program).ok_or(Error::BackendFailure)?;
         let len = file.bytes.len();
+        // Generated MSL's groups each start with `warm_lanes` lanes whose sinks write nothing.
+        let span = match executor {
+            Executor::Interpreter => span,
+            Executor::Generated(_) => width.bytes() * (GROUP - warm_lanes(n, width)),
+        };
         let groups = (len + usize::from(n.delay)).div_ceil(span).max(1);
         rows.push(FileRow {
             src16: fit(sources[i].offset / 16)?,
@@ -539,10 +558,7 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
                 out.push_str(&lookup_helper(p, t, table));
             }
         }
-        let plan = Plan::new(native);
-        if !plan.windowed.is_empty() {
-            out.push_str(&halo_window(p, native, &plan));
-        }
+        let plan = Plan::new(native).at(native, width);
         out.push_str(&program_function(p, native, &plan, width));
     }
     let cases: String = (0..programs.len())
@@ -631,8 +647,10 @@ static inline uint file_byte_before(device const uint4* bytes, FileRow f, uint c
 }
 ";
 
-/// Polls of a predecessor's state after the first.
-const SPINS: u32 = 64;
+/// Polls of a predecessor's state after the first: bounded, so a launch whose predecessors never
+/// publish ends and is repeated. 64 polls ran out on full batches: the launch was repeated while
+/// the predecessor was only slow.
+pub(in crate::code_rule_dsl) const SPINS: u32 = 65536;
 /// The extract look-back's polls per predecessor, as a multiple of the carries'.
 const EXTRACT_POLLS: u32 = 64;
 
@@ -696,6 +714,10 @@ static inline bool halo_exchange(device atomic_uint* halos, uint g, uint l, ulon
 /// published nothing after `spins` polls; a lane past the exchange's words (`owns` false) has
 /// nothing to do. Every lane of a group polls its own word at once, so an
 /// exchange of many values waits about as long as one.
+///
+/// A table that gives the same carry for either carry in has one state: a group whose own table
+/// is constant publishes it as its inclusive prefix at once, and a look-back stops at the first
+/// constant prefix, since nothing before it changes the carry.
 const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint* rec, uint g, uint stride, uint kind, uint mine, uint spins, bool owns, thread uint& got) {
   got = 0u;
   if (!owns) return true;
@@ -713,7 +735,8 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
     got = x & 0x3ffffffful;
     return (x & HALO_FLAG) != 0u;
   }
-  atomic_store_explicit(&rec[g * stride], CARRY_AGGREGATE | mine, memory_order_relaxed);
+  const bool single = kind == 1u && tapply1(mine, 0u) == tapply1(mine, 1u);
+  atomic_store_explicit(&rec[g * stride], select(CARRY_AGGREGATE, CARRY_INCLUSIVE, single) | mine, memory_order_relaxed);
   uint prefix = select(0u, TID1, kind == 1u);
   for (uint back = 1u; back <= g; back++) {
     uint st = 0u;
@@ -722,7 +745,7 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
     }
     if ((st >> 30u) == 0u) return false;
     prefix = select(prefix + (st & CARRY_VALUE), tcompose1(st & CARRY_VALUE, prefix), kind == 1u);
-    if ((st >> 30u) == 2u) break;
+    if ((st >> 30u) == 2u || (kind == 1u && tapply1(prefix, 0u) == tapply1(prefix, 1u))) break;
   }
   atomic_store_explicit(&rec[g * stride], CARRY_INCLUSIVE | select(prefix + mine, tcompose1(prefix, mine), kind == 1u), memory_order_relaxed);
   got = prefix;
@@ -733,13 +756,18 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
 
 /// How generated MSL treats each carried instruction.
 struct Plan {
-    /// The local `prev`s: of a value of the bytes alone with no `prev` in it; their halo is
-    /// recomputed over the 64 bytes before the lane (`halo_window`).
+    /// The local `prev`s: of a value of the bytes alone (local `prev`s of such values included);
+    /// their halo comes from the lanes before, by shuffles, the group's warm-up lanes included
+    /// (`warm_lanes`).
     windowed: Vec<usize>,
     /// The scanned carries (`toggle`, `escaped`, `fill`), in order: a state per group each.
     scanned: Vec<usize>,
     /// The other `prev`s, in order: a published halo per group each.
     halos: Vec<usize>,
+    /// The warm-up lanes of each group at the lane width (`warm_lanes`); 0 until `at`.
+    warm: usize,
+    /// Each local value's reach: the bytes before it that it reads, through its local `prev`s.
+    reach: Vec<usize>,
     /// Each instruction's level: the exchanges between groups it waits on. A carried
     /// instruction (not windowed) of level `L + 1` is resolved in exchange `L`, with every other
     /// one whose operands are of level `L` at most.
@@ -750,30 +778,28 @@ impl Plan {
     fn new(native: &BlockNative) -> Self {
         let n = native.insts.len();
         let mut local = vec![true; n];
-        let mut has_prev = vec![false; n];
-        let mut plan = Plan { windowed: Vec::new(), scanned: Vec::new(), halos: Vec::new(), level: vec![0; n] };
+        let mut plan = Plan { windowed: Vec::new(), scanned: Vec::new(), halos: Vec::new(), warm: 0, reach: vec![0; n], level: vec![0; n] };
         for at in 0..n {
             let ops = operands(&native.insts[at]);
             let ops_local = ops.iter().all(|&a| local[a]);
-            let ops_prev = ops.iter().any(|&a| has_prev[a]);
+            let reach = ops.iter().map(|&a| plan.reach[a]).max().unwrap_or(0);
             match native.insts[at] {
-                BlockInst::Prev(a, _) if ops_local && !has_prev[usize::from(a)] => {
+                // A `prev` of a local value is local however deep: the warm-up lanes cover its reach.
+                BlockInst::Prev(_, k) if ops_local => {
                     plan.windowed.push(at);
-                    has_prev[at] = true;
+                    plan.reach[at] = reach + usize::from(k);
                 }
                 BlockInst::Prev(..) => {
                     local[at] = false;
-                    has_prev[at] = true;
                     plan.halos.push(at);
                 }
                 ref inst if inst.carried() => {
                     local[at] = false;
-                    has_prev[at] = ops_prev;
                     plan.scanned.push(at);
                 }
                 _ => {
                     local[at] = ops_local;
-                    has_prev[at] = ops_prev;
+                    plan.reach[at] = reach;
                 }
             }
             let below = ops.iter().map(|&a| plan.level[a]).max().unwrap_or(0);
@@ -781,6 +807,13 @@ impl Plan {
             plan.level[at] = below + usize::from(exchanged);
         }
         plan
+    }
+
+    /// The plan at lane width `width`: with its warm-up lanes.
+    fn at(mut self, native: &BlockNative, width: LaneWidth) -> Self {
+        let _ = native;
+        self.warm = self.windowed.iter().map(|&at| self.reach[at].div_ceil(width.bytes())).max().unwrap_or(0);
+        self
     }
 
     /// The exchanges, in order: each one's halos and scans (instructions it resolves). Every
@@ -795,10 +828,12 @@ impl Plan {
             .collect()
     }
 
-    /// Words per group of the exchanges' records: three per halo, one per scan, and one per
-    /// counted output for the counts' exchange.
+    /// Words per group of the exchanges' records: each exchange's halo words (`halo_words`), one
+    /// per scan, and one per counted output for the counts' exchange.
     fn record_words(&self, native: &BlockNative) -> usize {
-        3 * self.halos.len() + self.scanned.len() + super::native_cpu_block::counted(native).len()
+        // The extracts' counts; a total is a flag, set without an exchange (`totals_or`).
+        let halos: usize = self.exchanges().iter().map(|(h, _)| halo_words(native, h).len()).sum();
+        halos + self.scanned.len() + native.extracts.len()
     }
 }
 
@@ -808,18 +843,20 @@ impl Plan {
 /// threads a threadgroup.
 pub(in crate::code_rule_dsl) fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, Error> {
     let form = native.planes_form();
-    let plan = Plan::new(&form);
+    let plan = Plan::new(&form).at(&form, width);
     let exchanges: Vec<String> = plan.exchanges().iter().map(|(h, s)| format!("{}h+{}s", h.len(), s.len())).collect();
     let source = generate_forms(&[&form], width);
     let pipeline = pipeline_named(&source, "tempo_batch")?;
     Ok(format!(
-        "{} instructions; {} windowed prevs, {} halos, {} scans; exchanges [{}] + counts {}; record {} words a group; MSL {} lines;          pipeline: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
+        "{} instructions; {} local prevs ({} warm-up lanes a group), {} halos, {} scans; exchanges [{}] + counts {}, totals {}; record {} words a group; MSL {} lines; pipeline: {} threads a threadgroup at most, SIMD width {}, {} bytes of threadgroup memory; launched as {} threadgroups of {GROUP}",
         form.insts.len(),
         plan.windowed.len(),
+        plan.warm,
         plan.halos.len(),
         plan.scanned.len(),
         exchanges.join(", "),
-        super::native_cpu_block::counted(&form).len(),
+        form.extracts.len(),
+        form.totals.len(),
         plan.record_words(&form),
         source.lines().count(),
         pipeline.max_total_threads_per_threadgroup(),
@@ -827,6 +864,14 @@ pub(in crate::code_rule_dsl) fn kernel_report(native: &BlockNative, width: LaneW
         pipeline.static_threadgroup_memory_length(),
         workers(usize::MAX),
     ))
+}
+
+/// The lanes each group of generated MSL spends warming up: enough lanes of `width` bytes to
+/// hold the farthest local `prev`'s look-back, whose bytes the shuffles of the group's first
+/// useful lane read. A group's useful lanes start after them, so that groups overlap by these
+/// lanes and no lane recomputes the bytes before it.
+fn warm_lanes(native: &BlockNative, width: LaneWidth) -> usize {
+    Plan::new(native).at(native, width).warm
 }
 
 /// The persistent workers of a launch over `groups` groups: `RERAIL_WORKERS`, or `WORKERS`.
@@ -837,6 +882,40 @@ fn workers(groups: usize) -> usize {
 /// The words per group generated MSL keeps of a program's exchanges (`Plan::exchanges`).
 pub(in crate::code_rule_dsl) fn record_words(native: &BlockNative) -> usize {
     Plan::new(native).record_words(native)
+}
+
+/// A piece of a halo in an exchange word: bits `lo..lo + len` of halo `at`'s newest k bits, at
+/// bit `first` of the word.
+#[derive(Clone, Copy)]
+struct Piece {
+    at: usize,
+    first: u32,
+    lo: u32,
+    len: u32,
+}
+
+/// An exchange's halos packed in words: a `prev` by k reads only the newest k bits of the group
+/// before, so each halo takes k bits of 30-bit words (the flag is above them), in order, split
+/// where a word fills. The same in every body: a group reads the words of the group before by
+/// place, whatever body that group ran.
+fn halo_words(native: &BlockNative, halos: &[usize]) -> Vec<Vec<Piece>> {
+    let mut words: Vec<Vec<Piece>> = Vec::new();
+    let mut used = 30u32;
+    for &at in halos {
+        let BlockInst::Prev(_, k) = native.insts[at] else { unreachable!("a halo is a prev") };
+        let mut lo = 0u32;
+        while lo < u32::from(k) {
+            if used == 30 {
+                words.push(Vec::new());
+                used = 0;
+            }
+            let len = (u32::from(k) - lo).min(30 - used);
+            words.last_mut().expect("a word").push(Piece { at, first: used, lo, len });
+            used += len;
+            lo += len;
+        }
+    }
+    words
 }
 
 fn operands(inst: &BlockInst) -> Vec<usize> {
@@ -876,24 +955,32 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
         "static inline bool program_{p}(device const uint4* bytes, FileRow f, uint g, uint l, uint spins, device {m}* out,\n\
          \x20                              device atomic_uint* states, device atomic_uint* halos, device atomic_uint* ext_states,\n\
          \x20                              device uint* positions, device uint* counts) {{\n\
-         \x20 const uint gl = g * {GROUP}u + l;\n\
+         \x20 // The group's first {h} lanes warm up (`warm_lanes`): they make the bytes before its\n\
+         \x20 // first useful lane, for the shuffles of local `prev`s, and their sinks write nothing.\n\
+         \x20 const int glw = int(g * {useful}u + l) - {h};\n\
+         \x20 const uint gl = uint(max(glw, 0));\n\
+         \x20 const bool keep = l >= {h}u;\n\
+         \x20 const bool before_file = glw < 0;\n\
          \x20 const uint lanes = f.groups * {GROUP}u;\n\
-         \x20 const uint len = f.len;\n"
+         \x20 const uint len = f.len;\n",
+        h = plan.warm,
+        useful = GROUP - plan.warm,
     );
-    if !plan.windowed.is_empty() {
-        let mut ops: Vec<usize> = plan.windowed.iter().flat_map(|&at| operands(&native.insts[at])).collect();
-        ops.sort_unstable();
-        ops.dedup();
-        for a in &ops {
-            out.push_str(&format!("  ulong w{a} = 0ul;\n"));
-        }
-        let wargs: String = ops.iter().map(|a| format!(", w{a}")).collect();
-        out.push_str(&format!("  halo_window_{p}(bytes, f, int(gl * {w}u) - 64{wargs});\n"));
-    }
     // A full group's body (`full_form`): the same in every lane of the group. Then the general one.
     let full = full_form(native);
-    let span = w * GROUP;
-    out.push_str(&format!("  if (g > 0u && (g + 1u) * {span}u <= len) {{\n{}  return true;\n  }}\n", levels(p, native, &full, plan, width)));
+    let span = w * (GROUP - plan.warm);
+    // In a full group, a group of ASCII bytes takes a third body (`ascii_form`): each lane's bytes
+    // and the 16 before them below 0x80, the warm-up lanes' included, so every byte a byte-local
+    // value reads.
+    let ascii = ascii_form(native);
+    let chunks = w / 16;
+    let loads: Vec<String> = (0..=chunks).map(|c| format!("load16(bytes, f, gl * {chunks}u + {c}u - 1u)")).collect();
+    out.push_str(&format!(
+        "  if (g > 0u && (g + 1u) * {span}u <= len) {{\n    const uint4 high = {};\n    const bool ascii = ((high.x | high.y | high.z | high.w) & 0x80808080u) == 0u;\n    if (simd_all(ascii)) {{\n{}    return true;\n    }}\n{}  return true;\n  }}\n",
+        loads.join(" | "),
+        levels(p, native, &ascii, plan, width),
+        levels(p, native, &full, plan, width)
+    ));
     out.push_str(&levels(p, native, native, plan, width));
     out.push_str("  return true;\n}\n\n");
     out
@@ -944,19 +1031,27 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
     let mut offset = 0usize;
     for level in 0..=exchanges.len() {
         let chosen: Vec<usize> = (0..native.insts.len()).filter(|&at| plan.level[at] == level && (!values.insts[at].carried() || plan.windowed.contains(&at))).collect();
+        // A local `prev` takes the bytes before its lane from the lanes before it, by shuffles:
+        // the group's warm-up lanes make those before its first useful lane, and a lane before
+        // the file gives zeros.
         out.push_str(&emit(p, values, width, &chosen, &format!("gl * {chunks}u"), &format!("gl * {w}u"), |at, inst, out| match *inst {
-            BlockInst::Prev(a, k) => out.push_str(&format!("  const {m} v{at} = apply_prev(v{a}, {k}u, w{a});\n")),
+            BlockInst::Prev(a, k) => out.push_str(&format!("  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(select(v{a}, {m}(0), before_file), l, 0ul));\n")),
             _ => unreachable!("only windowed prevs are emitted in a level"),
         }));
         let Some((halos, scans)) = exchanges.get(level) else { break };
-        // Each value's words, the same in every lane: three per halo (the group's last 64 bits),
-        // then a scan's aggregate table each.
+        // Each value's words, the same in every lane: the halos' newest bits, packed
+        // (`halo_words`), then a scan's aggregate table each.
+        let packed = halo_words(native, halos);
         let mut words: Vec<String> = Vec::new();
         for &at in halos {
-            let BlockInst::Prev(a, _) = native.insts[at] else { unreachable!() };
-            out.push_str(&format!("  const ulong last{at} = halo_last(v{a});\n"));
-            words.extend([format!("uint(last{at} & 0x3ffffffful)"), format!("uint((last{at} >> 30u) & 0x3ffffffful)"), format!("uint(last{at} >> 60u)")]);
+            let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
+            out.push_str(&format!("  const ulong last{at} = halo_last(v{a}) >> {}u;\n", 64 - u32::from(k)));
         }
+        for word in &packed {
+            let parts: Vec<String> = word.iter().map(|p| format!("(uint((last{} >> {}u) & {}ul) << {}u)", p.at, p.lo, (1u64 << p.len) - 1, p.first)).collect();
+            words.push(parts.join(" | "));
+        }
+        let halo_count = packed.len();
         for &at in scans {
             // The lane's table: bit c its carry out for carry in c.
             match native.insts[at] {
@@ -969,25 +1064,36 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
                 )),
                 _ => unreachable!("a scanned instruction"),
             }
-            out.push_str(&format!("  uint agg{at} = 0u;\n  const uint e{at} = texclusive1(tt{at}, l, agg{at});\n"));
+            // A warm-up lane's bytes are the group before's: its table is the identity.
+            out.push_str(&format!("  uint agg{at} = 0u;\n  const uint e{at} = texclusive1(select(2u, tt{at}, keep), l, agg{at});\n"));
             words.push(format!("agg{at}"));
         }
-        // A halo known in this body is published, for a general group after, and not waited on.
-        let known = |j: usize| j < 3 * halos.len() && !matches!(values.insts[halos[j / 3]], BlockInst::Prev(..));
-        let got = exchange_kinds(&mut out, &format!("x{level}"), &words, |j| if known(j) { "3u" } else if j < 3 * halos.len() { "0u" } else { "1u" }.to_owned(), offset, record);
-        for (h, &at) in halos.iter().enumerate() {
+        // A halo word whose halos are all known in this body is published, for a general group
+        // after, and not waited on.
+        let known = |j: usize| j < halo_count && packed[j].iter().all(|p| !matches!(values.insts[p.at], BlockInst::Prev(..)));
+        let got = exchange_kinds(&mut out, &format!("x{level}"), &words, |j| if known(j) { "3u" } else if j < halo_count { "0u" } else { "1u" }.to_owned(), offset, record);
+        for &at in halos {
             let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
-            if known(3 * h) {
+            if !matches!(values.insts[at], BlockInst::Prev(..)) {
                 // Its value: a constant, emitted with the next level.
                 continue;
             }
+            // The group before's newest k bits, from their pieces, at the top of the halo.
+            let pieces: Vec<String> = packed
+                .iter()
+                .enumerate()
+                .flat_map(|(j, word)| word.iter().filter(|p| p.at == at).map(move |p| (j, *p)))
+                .map(|(j, p)| format!("(ulong(({} >> {}u) & {}u) << {}u)", got[j], p.first, (1u64 << p.len) - 1, p.lo))
+                .collect();
             out.push_str(&format!(
-                "  const ulong h{at} = ulong({}) | (ulong({}) << 30u) | (ulong({}) << 60u);\n  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l, h{at}));\n",
-                got[3 * h], got[3 * h + 1], got[3 * h + 2]
+                "  const ulong h{at} = ({}) << {}u;\n  const {m} v{at} = apply_prev(v{a}, {k}u, halo_before(v{a}, l - {}u, h{at}));\n",
+                pieces.join(" | "),
+                64 - u32::from(k),
+                plan.warm
             ));
         }
         for (s_, &at) in scans.iter().enumerate() {
-            let cin = format!("tapply1(e{at}, tapply1({}, 0u))", got[3 * halos.len() + s_]);
+            let cin = format!("tapply1(e{at}, tapply1({}, 0u))", got[halo_count + s_]);
             match native.insts[at] {
                 BlockInst::Toggle(a) => out.push_str(&format!("  const {m} v{at} = apply_toggle(v{a}, {cin});\n")),
                 _ => out.push_str(&format!("  const {m} v{at} = select(f{at}_0, f{at}_1, {cin} != 0u);\n")),
@@ -999,29 +1105,32 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
     // the counted outputs' counts, exchanged together, their positions and their totals.
     for (k, v) in native.outputs.iter().enumerate() {
         match native.output_delays[k] {
-            0 => out.push_str(&format!("  out[f.out_base + {k}u * lanes + gl] = stream_cut(v{v}, gl, len, 0u);\n")),
-            d => out.push_str(&format!("  write_output(out, f.out_base + {k}u * lanes, gl, len, {d}u, v{v});\n")),
+            // A warm-up lane's word goes to the output's last word, which no stream reaches.
+            0 => out.push_str(&format!("  out[f.out_base + {k}u * lanes + select(lanes - 1u, gl, keep)] = stream_cut(v{v}, gl, len, 0u);\n")),
+            d => out.push_str(&format!("  write_output(out, f.out_base + {k}u * lanes, gl, len, {d}u, select({m}(0), v{v}, keep));\n")),
         }
     }
-    let counted = super::native_cpu_block::counted(native);
-    if !counted.is_empty() {
+    // A total is a flag (`BlockProgram::totals`): a group with a bit sets it, in any order and
+    // again on a relaunch, so it waits on no other group.
+    let extracts = native.extracts.len();
+    for (t, &k) in native.totals.iter().enumerate() {
+        out.push_str(&format!("  totals_or(select({m}(0), stream_cut(v{}, gl, len, {}u), keep), l, counts + f.tot_base + {}u);\n", native.outputs[k], native.output_delays[k], extracts + t));
+    }
+    if extracts > 0 {
         let mut words = Vec::new();
-        for (c, &k) in counted.iter().enumerate() {
+        for (c, &k) in native.extracts.iter().enumerate() {
             out.push_str(&format!(
-                "  const {m} cw{c} = stream_cut(v{}, gl, len, {}u);\n  const uint cn{c} = uint(popcount(lane_bits(cw{c})));\n  const uint ca{c} = simd_sum(cn{c});\n",
+                "  const {m} cw{c} = select({m}(0), stream_cut(v{}, gl, len, {}u), keep);\n  const uint cn{c} = uint(popcount(lane_bits(cw{c})));\n  const uint ca{c} = simd_sum(cn{c});\n",
                 native.outputs[k], native.output_delays[k]
             ));
             words.push(format!("ca{c}"));
         }
         let got = exchange_kinds(&mut out, "xc", &words, |_| "2u".to_owned(), offset, record);
-        for (c, &k) in counted.iter().enumerate() {
-            let e = (c < native.extracts.len()).then_some(c);
+        for (c, &k) in native.extracts.iter().enumerate() {
             out.push_str(&format!(
-                "  count_finish(cw{c}, cn{c}, ca{c}, {}, gl, g, l, f.groups, {}u, positions + f.pos_base + {}u * max(len, 1u), max(len, 1u), {}, counts + f.tot_base + {c}u);\n",
+                "  count_finish(cw{c}, cn{c}, ca{c}, {}, gl, g, l, f.groups, {}u, positions + f.pos_base + {c}u * max(len, 1u), max(len, 1u), true, counts + f.tot_base + {c}u);\n",
                 got[c],
                 native.output_delays[k],
-                e.unwrap_or(0),
-                e.is_some(),
             ));
         }
     }
@@ -1050,9 +1159,27 @@ fn full_form(native: &BlockNative) -> BlockNative {
     form
 }
 
+/// A program's form in a full group of ASCII bytes: `full_form`, with each byte-local value known
+/// on ASCII bytes (`native_cpu_lanes::Plan::ascii`) a constant: a UTF-8 check's, say.
+fn ascii_form(native: &BlockNative) -> BlockNative {
+    let plan = super::native_cpu_lanes::Plan::of(native);
+    let mut form = full_form(native);
+    for (at, inst) in form.insts.iter_mut().enumerate() {
+        if inst.carried() || !plan.lanes[at] {
+            continue;
+        }
+        if let Some(one) = plan.ascii[at] {
+            *inst = BlockInst::Const(if one { u64::MAX } else { 0 });
+        }
+    }
+    form
+}
+
 /// The instructions in `chosen`, as straight-line statements for a word of `width` whose first
 /// byte is chunk `base` (16-byte chunks) and stream byte `offset` (for `const`'s phase).
-/// `carried` writes each carried instruction's statements.
+/// `carried` writes each carried instruction's statements. An empty `base`: the word's chunks
+/// `c0..` and the byte before them, `before`, are loaded already (the serial loop loads a block
+/// ahead).
 fn emit(
     p: usize,
     native: &BlockNative,
@@ -1068,14 +1195,15 @@ fn emit(
     let insts: Vec<&BlockInst> = chosen.iter().map(|&at| &native.insts[at]).collect();
     let mut out = String::new();
     let back = insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
-    if back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))) {
+    let loaded = base.is_empty();
+    if !loaded && (back || insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_)))) {
         for c in 0..chunks {
             out.push_str(&format!("  const uint4 c{c} = load16(bytes, f, {base} + {c}u);\n"));
         }
     }
     // The byte before the word, read from the source (no carry); and, for `pair` by lookups,
     // the word's bytes one back.
-    if back {
+    if back && !loaded {
         out.push_str(&format!("  const uint before = file_byte_before(bytes, f, {base});\n"));
     }
     let used: std::collections::BTreeSet<u16> = insts
@@ -1161,60 +1289,12 @@ fn emit(
                 format!("{m}({bits:#018x}ul << (({r}u + {k}u - (({offset}) % {k}u)) % {k}u))")
             }
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
+            BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
+            BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
     }
     let _ = bits;
-    out
-}
-
-/// The instructions `at` reads, transitively, with `at`, in order.
-fn cone(native: &BlockNative, roots: &[usize]) -> Vec<usize> {
-    let mut keep = vec![false; native.insts.len()];
-    let mut stack: Vec<usize> = roots.to_vec();
-    while let Some(at) = stack.pop() {
-        if std::mem::replace(&mut keep[at], true) {
-            continue;
-        }
-        match native.insts[at] {
-            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => stack.push(usize::from(a)),
-            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
-                stack.push(usize::from(a));
-                stack.push(usize::from(b));
-            }
-            _ => {}
-        }
-    }
-    (0..native.insts.len()).filter(|&at| keep[at]).collect()
-}
-
-/// `halo_window_P`: program `p`'s operands of local `prev`s over the 64 bytes from file byte `base`
-/// (a multiple of 16; before the file, zero), as 64-bit words. A lane calls it once, with `base`
-/// 64 bytes before its first byte: the words are those operands' halos.
-fn halo_window(p: usize, native: &BlockNative, plan: &Plan) -> String {
-    let operands: Vec<usize> = plan
-        .windowed
-        .iter()
-        .map(|&at| if let BlockInst::Prev(a, _) = native.insts[at] { usize::from(a) } else { unreachable!() })
-        .collect();
-    let mut wanted = operands.clone();
-    wanted.sort_unstable();
-    wanted.dedup();
-    let params: String = wanted.iter().map(|a| format!(", thread ulong& w{a}")).collect();
-    let mut out = format!(
-        "// The 64 bytes from `base` (zero before the file): the local prevs' operands.\n\
-         static inline void halo_window_{p}(device const uint4* bytes, FileRow f, int base{params}) {{\n\
-         \x20 const uint b = uint(max(base, 0));\n\
-         \x20 const uint len = f.len;\n"
-    );
-    out.push_str(&emit(p, native, LaneWidth::W64, &cone(native, &wanted), "b / 16u", "b", |_, _, _| unreachable!("local")));
-    for a in &wanted {
-        // A window that starts before the stream: its bits from the stream's start on.
-        out.push_str(&format!(
-            "  w{a} = select(select(ulong(v{a}) << uint(-base), ulong(v{a}), base >= 0), 0ul, base <= -64);\n"
-        ));
-    }
-    out.push_str("}\n\n");
     out
 }
 

@@ -720,6 +720,9 @@ fn rule_syntax_files_pass_check_rr() {
         given.extend(check::fix_relations(&read(f).unwrap().0));
     }
     let mut problems = Vec::new();
+    // Phase 0 resolves every file's includes in one run of `bootstrap.rr`, not one run each.
+    let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonicalize().unwrap())).collect();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
     for f in rr_files() {
         for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
@@ -2868,4 +2871,17 @@ Hit(span,value) :- source(_,span),text(span,source),triggers(value),contains(val
         .map(|r| r["parameters"]["value"].as_str().unwrap()).collect();
     assert_eq!(actual,vec!["_fetchone"],"{report}");
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// bootstrap-engine-invariants' BEI027: `count : { bei_identity(x), count : { def_walk(n, f), bei_ref(n, x) } = 0 } > 0`.
+/// The inner count is per (f, x), f the rule's: the outer helper is a relation of f and x, f bound by the context.
+/// It lost f, and planning failed with "unplaced literals … in rr_agg72($x)".
+#[test]
+fn a_nested_aggregate_keeps_the_rules_variables_it_reads() {
+    let p = parse(".decl ident(x: symbol)\nident(\"a\").\n.decl fn(f: number)\n.decl ref(n: number, f: number, x: symbol)\n.input fn, ref\n.decl hit(f: number)\n.output hit\nhit(f) :- fn(f), count : { ident(x), count : { ref(n, f, x) } = 0 } > 0.\n").unwrap();
+    let shown: Vec<String> = p.rules.iter().map(ToString::to_string).collect();
+    let helper = shown.iter().find(|r| r.contains("count { ref(")).expect("the inner count's rule");
+    assert!(helper.starts_with("rr_agg") && helper.contains("($f, $x) :- rr_ctx"), "{shown:#?}");
+    let hit = shown.iter().find(|r| r.starts_with("hit(")).unwrap();
+    assert!(hit.contains("($f, _)"), "the outer count groups by f: {hit}");
 }

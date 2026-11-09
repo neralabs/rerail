@@ -149,7 +149,7 @@ fn diff(prog: &[Stmt], list: &str) {
         let mut j = 0;
         let lx = &out.tokens;
         let same = |a: &(usize, usize, String), b: &bitlex::eval::Token| {
-            a.0 == b.start && a.1 == b.end && (a.2 == b.kind || (b.soft && a.2.as_bytes() == &src[b.start..b.end]))
+            a.0 == b.start && a.1 == b.end && (a.2 == b.kind || b.soft.as_deref() == Some(a.2.as_str()))
         };
         while i < ts.len() || j < lx.len() {
             if i < ts.len() && j < lx.len() && same(&ts[i], &lx[j]) {
@@ -681,7 +681,7 @@ fn main() {
             match Ev::run(&prog, &src, &tabs) {
                 Ok(o) => {
                     for t in &o.tokens {
-                        println!("{:6} {:6} {:20} {:?}{}", t.start, t.end, t.kind, String::from_utf8_lossy(&src[t.start..t.end]), if t.soft { " soft" } else { "" });
+                        println!("{:6} {:6} {:20} {:?}{}", t.start, t.end, t.kind, String::from_utf8_lossy(&src[t.start..t.end]), if t.soft.is_some() { " soft" } else { "" });
                     }
                     for e in &o.errors {
                         println!("ERROR {e}");

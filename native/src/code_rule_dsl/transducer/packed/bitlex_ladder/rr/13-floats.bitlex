@@ -1,0 +1,435 @@
+# `.rr`, step 13: floats.
+#
+#   .mode 1.5
+#   r(x) :- s(x, y), y > 0.10, x = -2.5 * y.
+#   .version 1.2.3
+#
+# The engine's parser (logic/rr/syntax.rs) is the reference. Its lexer reads a `.` between a
+# number's digits and a digit as a float's, and the digits after it as the float's fraction;
+# a `.` after a fraction is no float's, so `1.2.3` is `1.2`, `.` and `3`, and `1.2.3.4` is
+# `1.2`, `.` and `3.4`. What this step adds:
+#   - Tier 1 finds a float's `.` by a carry over the bytes (`rounds until settled`): a `.`
+#     after digits that are no fraction, before a digit. The fraction is a token of its own
+#     from that `.` through its digits.
+#   - Tier 2 merges the fraction into the number before it: one `float` leaf. A `-` before a
+#     number merges as before.
+# The rest is step 12's.
+#
+# Not in this step yet: a column in braces that is no single name; `fix`, `suppress` or
+# `options` starting a clause right after a `.violation`; `min (…) : { … }`, an aggregate as
+# another's value; a `` `` `` with no closing pair and a run of four backticks or more; a
+# policy document nested deeper than the JSON reader's limit.
+
+lexer rr
+
+class quote     = '"'
+class backslash = '\\'
+class ws        = ' ' '\t' '\n' '\r' 0x0c
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class hash      = '#'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class alpha     = 'a'..'z' 'A'..'Z' '_'
+class digit     = '0'..'9'
+class nonzero   = '1'..'9'
+class dot       = '.'
+class comma     = ','
+class u         = 'u'
+class punct     = '(' ')' ',' '.' ';' ':' '=' '<' '>' '!' '|' '@' '*' '[' ']' '-' '+' '/' '%' '~' '^' '&' '{' '}'
+class colon     = ':'
+class minus     = '-'
+class eq        = '='
+class lt        = '<'
+class gt        = '>'
+class bang      = '!'
+class tick      = '`'
+class ctl       = 0x00..0x1f
+class jesc      = '"' '\\' '/' 'b' 'f' 'n' 'r' 't' 'u'
+class ff        = 0x0c
+class zero      = '0'
+class at_sign   = '@'
+class lparen    = '('
+class rbrace    = '}'
+class c_i       = 'i'
+class c_n       = 'n'
+class c_p       = 'p'
+class c_t       = 't'
+class c_o       = 'o'
+
+mask last_byte  = ~next(~empty)
+
+# --- Regions -----------------------------------------------------------------------------------
+
+# Each kind of region by its opener `o_*` and its closer, from the raw bytes: the bytes from an
+# opener to before its closer are `f_* = fill(o_*, closer)`. The hidden bytes, where no opener
+# counts, run from the byte after an opener through its closer: `prev` of the fills (a two- or
+# three-byte closer, `prev` by two or three too). A line comment's `\n` is not hidden: it ends
+# the line.
+mask escaped    = escaped(backslash)
+mask q          = quote & ~escaped
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+mask tt         = tick & next(tick)
+mask ttt        = tt & next(tick, 2)
+mask tick1      = tick & ~next(tick)
+mask tick2      = tt & ~next(tick, 2)
+mask tick3      = ttt & ~next(tick, 3)
+rounds until settled {
+  carry hidden  = empty
+  mask code0    = ~hidden
+  mask o_str    = q & code0
+  mask o_line   = line_open & code0
+  mask o_block  = block_open & code0
+  mask o_t1     = tick1 & code0
+  mask o_t2     = tick2 & code0
+  mask o_t3     = tick3 & code0
+  mask f_str    = fill(o_str, q)
+  mask f_line   = fill(o_line, lf)
+  mask f_block  = fill(o_block, block_end)
+  mask f_t1     = fill(o_t1, tick)
+  mask f_t2     = fill(o_t2, tt)
+  mask f_t3     = fill(o_t3, ttt)
+  next hidden   = prev(f_str | f_block | f_t1 | f_t2 | f_t3) | (prev(f_line) & ~lf) | prev(f_t2 | f_t3, 2) | prev(f_t3, 3)
+}
+
+# Each region's last byte.
+mask closing    = prev(f_str) & ~f_str
+mask line_last  = f_line & ~next(f_line)
+mask block_last = prev(f_block) & ~f_block
+mask t1_last    = prev(f_t1) & ~f_t1
+mask t2_last    = prev(f_t2, 2) & ~prev(f_t2)
+mask t3_last    = prev(f_t3, 3) & ~prev(f_t3, 2)
+mask o_tick     = o_t1 | o_t2 | o_t3
+mask region     = hidden | o_str | o_line | o_block | o_tick
+
+error "a string open at the end of the file" when f_str & last_byte
+error "a block comment open at the end of the file" when f_block & last_byte
+error "a backtick literal open at the end of the file" when (f_t1 | f_t3) & last_byte
+escape "a `` with no closing pair" when f_t2 & last_byte
+escape "a run of four backticks or more" when ttt & next(tick, 3) & ~hidden
+# `\u{…}` and `\uXXXX` are checked by the engine's lexer, which refuses some: the file goes to it.
+escape "a \\u escape in a string" when f_str & ~o_str & escaped & u
+
+# --- Code --------------------------------------------------------------------------------------
+
+mask code       = ~region
+
+# `#` and its word.
+mask directive  = code & hash
+mask hashword   = fill(directive, ~(code & word))
+
+# --- Words and numbers -------------------------------------------------------------------------
+
+mask w          = code & word & ~hashword
+mask ident      = fill(w & alpha, ~w)           # from a run's first letter to its end
+mask num        = w & ~ident                    # the digits before it
+# A float, `1.5`: a `.` after digits that are no fraction and before a digit (`f_dot`); the
+# digits after it, its fraction. A `.` after a fraction is no float's: `1.2.3` is `1.2`, `.`
+# and `3`. Each float's `.` needs the one before it settled: a carry, a byte more a round.
+rounds until settled {
+  carry fraction = empty
+  mask f_dot     = code & dot & prev(num & ~fraction) & next(digit)
+  next fraction  = fill(prev(f_dot), ~digit)
+}
+mask frac       = fill(prev(f_dot), ~digit)
+mask int        = num & ~frac                   # an integer's digits
+# The engine reads an integer as an i64: one of 19 or more digits (leading zeros aside) is
+# checked by it. A float's digits are its text: no limit.
+mask sig        = fill(int & nonzero, ~int)
+mask sig2       = sig & prev(sig)
+mask sig4       = sig2 & prev(sig2, 2)
+mask sig8       = sig4 & prev(sig4, 4)
+mask sig16      = sig8 & prev(sig8, 8)
+mask long_int   = fill(sig16 & prev(sig2, 16) & prev(sig, 18), ~int)
+escape "a number of 19 digits or more" when long_int & ~next(int) & ~next(f_dot)
+
+# --- Directives the engine refuses by the token after them ------------------------------------
+
+# Between two tokens: blanks and comments. `after(X)`: the first byte past them after `X`'s.
+mask blank      = (code & ws) | f_line | f_block | block_last
+mask solid      = ~blank
+# A functor named, not called: `@`, then its name; past the name, a `(` calls it, and only a
+# `,` or a `}` (in a lattice) may follow one not called.
+mask at_gap     = fill(code & at_sign, solid)
+mask fn_name    = fill(alpha & ident & ~prev(ident) & prev(at_gap), ~ident)
+mask fn_last    = fn_name & ~next(fn_name)
+mask fn_past    = prev(fn_last)
+mask fn_run     = fill(fn_past & blank, solid)
+mask fn_next    = (fn_past & solid) | (prev(fn_run) & ~fn_run)
+escape "a functor named, not called, before what can not follow it" when fn_next & code & ~lparen & ~comma & ~rbrace
+# `.input` and `.output`: relations, or none before a `.`; before an `#include`, or at the
+# file's end, the engine refuses the directive.
+mask dot_gap    = fill(code & dot, solid)
+mask dir_start  = alpha & ident & ~prev(ident) & prev(dot_gap)
+mask input_w    = dir_start & c_i & next(c_n) & next(c_p, 2) & next(u, 3) & next(c_t, 4) & ~next(ident, 5)
+mask output_w   = dir_start & c_o & next(u) & next(c_t, 2) & next(c_p, 3) & next(u, 4) & next(c_t, 5) & ~next(ident, 6)
+mask io_last    = prev(input_w, 4) | prev(output_w, 5)
+mask io_past    = prev(io_last)
+mask io_run     = fill(io_past & blank, solid)
+mask io_next    = (io_past & solid) | (prev(io_run) & ~io_run)
+escape "an I/O directive with no relation, and no `.` after it" when (io_next & hash) | ((io_last | io_run) & last_byte)
+
+# --- Punctuation -------------------------------------------------------------------------------
+
+# A two-byte spelling's first byte; in a run of them (`:->`), every other one, from the left.
+mask two        = code & ((colon & next(minus)) | (eq & next(gt)) | (bang & next(eq)) | (lt & next(eq | colon)) | (gt & next(eq)) | (minus & next(gt)))
+mask two_start  = two & ~escaped(two)
+mask second     = prev(two_start)
+mask p          = code & punct & ~f_dot
+mask p_start    = p & ~second
+mask p_last     = (p_start & ~two_start) | second
+
+error "a byte no token takes" when code & ~ws & ~hashword & ~ident & ~num & ~p & ~f_dot
+
+# --- Tokens ------------------------------------------------------------------------------------
+
+token string     = start quote & o_str last closing
+token comment    = start slash & (o_line | o_block) last line_last | block_last
+token code_literal = start tick & o_tick last t1_last | t2_last | t3_last
+token hash_word  = start hash & directive last hashword & ~next(hashword & ~directive)
+keywords hash_word { "#include" } required
+token identifier = start alpha & ident & ~prev(ident) last ident & ~next(ident)
+token number     = start digit & int & ~prev(int) last int & ~next(int)
+# A float's `.` and its fraction: tier 2 merges it into the number before it.
+token fraction   = start f_dot last frac & ~next(frac)
+token punct      = start punct & p_start last p_last
+# The directives' words are words, keywords only where a statement's `.` comes before them;
+# `_`, only where a term can be a wildcard; `must` and `may`, only at a head's start; the
+# aggregates' words, `by` and `sep`, only where an aggregate can be; a `.violation`'s words
+# only in one; `true`, `false` and `null`, only in JSON.
+keywords identifier { } soft { "decl" "violation" "policy" "edit" "functor" "type" "input" "output" "lattice" "pragma" "true" "false" "null" "_" "must" "may" "count" "min" "max" "sum" "mean" "join" "by" "sep" "code" "in" "tag" "fix" "safe" "suppress" "over" "options" }
+keywords punct { "(" ")" "," "." ";" ":" "=" "<" ">" "!" "|" "@" "*" "[" "]" "-" "+" "/" "%" "~" "^" "&" "{" "}" ":-" "=>" "!=" "<=" ">=" "<:" "->" } required
+
+skip code & ws
+
+# --- Line breaks -------------------------------------------------------------------------------
+
+# Every grammar token's start (the comments' left out): a mark goes before the next one.
+mask starts_g   = o_str | o_tick | (directive) | (alpha & ident & ~prev(ident)) | (digit & int & ~prev(int)) | f_dot | p_start
+mask after_comma = fill(code & comma & p_start, starts_g)
+# The file's end ends a line too: a setting ends there.
+mark line        = lf, end
+mark newline     = lf & ~after_comma, end
+# What JSON refuses: in a string, a control byte or an escape it has not; a comment; a form
+# feed; a `-` not right before a digit; a leading zero. Only a JSON document's levels refuse it.
+mask in_str      = f_str & ~o_str
+mark json_bad    = (in_str & ctl) | (in_str & escaped & ~jesc) | o_line | o_block | (code & ff) | (code & minus & ~next(digit)) | (int & zero & ~prev(int) & next(int))
+
+# --- The tree ----------------------------------------------------------------------------------
+
+tree rr {
+  node source_file whole = (include | setting | clause)*
+  node include          = '#include' path: string
+  # A setting's arguments to its line's end; a JSON object ends it.
+  # `.policy`: a setting, or before a `{` a policy document.
+  node setting          = '.' (directive
+                              | line (directive | name: identifier | name: ('policy' as identifier) [policy_tail])
+                              | name: identifier (argument: word | setting_punctuation)* (argument: json | newline)
+                              | name: ('policy' as identifier) (policy_tail | (argument: word | setting_punctuation)+ (argument: json | newline) | newline))
+  # A word of a setting's, a declaration's tail: a leaf with a field.
+  choice word           = value | code_literal
+  # Each directive: the node opened as a setting at the `.` is its node, the word one leaf with
+  # the `.`.
+  choice directive      = declaration_tail | violation_tail | edit_tail | functor_tail | type_tail | io_tail | lattice_tail | pragma_tail
+  choice edit_tail      = retag edit_declaration merge '.edit' 'edit' name: identifier columns: column_list
+  choice functor_tail   = retag functor_declaration merge '.functor' 'functor' name: identifier columns: column_list ':' return_type: functor_type (modifier: word | punctuation)* line
+  # A type of its own level: a `<` after its name is its own, not a modifier's (the engine reads
+  # the type first).
+  node functor_type nested = retag type name: identifier ['<' [argument: identifier] '>']
+  # `.type`: the rest of the line, one leaf; none, and the name takes its field.
+  choice type_tail      = retag type_declaration merge '.type' 'type' name: identifier (definition: raw_line | relabel definition line)
+  choice raw_line       = any as raw_text (merge raw_text any)* line
+  # `.input`, `.output`: a nested level, which takes every word after it as a relation.
+  choice io_tail nested = retag io_directive (merge '.input' 'input' | merge '.output' 'output') [relation: io_relation (',' relation: io_relation)*]
+  node io_relation      = name: identifier ['(' (parameters: io_parameters ')' | relabel parameters ')')]
+  # The tokens inside the parentheses, pairs counted: one leaf.
+  choice io_parameters nested = (any except '(' ')' as raw_text | '(' as raw_text io_inner) (merge raw_text any except '(' ')' | merge raw_text '(' io_inner)*
+  choice io_inner nested = (merge raw_text any except '(' ')' | merge raw_text '(' io_inner)* merge raw_text ')'
+  choice pragma_tail    = retag pragma merge '.pragma' 'pragma' (argument: string)*
+  choice lattice_tail   = retag lattice_declaration merge '.lattice' 'lattice' name: identifier '<' [base: identifier] '>' '{' [operation: lattice_operation (',' operation: lattice_operation)*] '}'
+  node lattice_operation = name: identifier '->' value: lattice_term
+  # A term whose first primary may be a functor named, not called.
+  choice lattice_term nested = lattice_product (wrap binary_expression left operator: additive right: product)*
+  choice lattice_product = (numeric | lattice_unsigned) (wrap binary_expression left operator: multiplicative right: primary)*
+  choice lattice_unsigned nested = string | code_literal | '_' as wildcard | minus | lattice_functor | json
+                        | identifier as variable [wrap call function as identifier arguments: argument_list
+                                                 | wrap named_argument name as identifier ':' value: term]
+                        | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
+                        | 'min' as variable [min_agg | wrap call function as identifier arguments: argument_list]
+                        | 'max' as variable [max_agg | wrap call function as identifier arguments: argument_list]
+                        | 'sum' as variable [sum_agg | wrap call function as identifier arguments: argument_list]
+                        | 'mean' as variable [mean_agg | wrap call function as identifier arguments: argument_list]
+                        | 'join' as variable [join_agg | wrap call function as identifier arguments: argument_list]
+                        | parenthesized_expression
+  node lattice_functor  = retag functor_call '@' function: identifier [arguments: argument_list]
+  # The setting's `.` and name, one `.policy` leaf; the node a policy document.
+  choice policy_tail    = fold '.policy' retag policy_document document: json_document
+  # JSON, every token merged into the document's leaf.
+  choice json_document nested = '{' as json_object [json_member (merge json_object ',' json_member)*] merge json_object '}'
+  choice json_member    = merge json_object string merge json_object ':' json_value
+  choice json_value     = merge json_object string | merge json_object number [merge json_object fraction] | merge json_object '-' merge json_object number [merge json_object fraction]
+                        | merge json_object 'true' | merge json_object 'false' | merge json_object 'null'
+                        | json_inner_object | json_inner_array
+  choice json_inner_object nested = merge json_object '{' [json_member (merge json_object ',' json_member)*] merge json_object '}'
+  choice json_inner_array nested = merge json_object '[' [json_value (merge json_object ',' json_value)*] merge json_object ']'
+  refuse json_bad in json_document json_inner_object json_inner_array
+  # A `.decl`: the node opened as a setting at the `.` is a declaration.
+  choice declaration_tail = retag declaration merge '.decl' 'decl' name: identifier columns: column_list (modifier: word | punctuation)* line
+  # A `.violation`: the node opened as a setting at the `.` is one. It goes on while a part
+  # follows.
+  choice violation_tail = retag violation_declaration merge '.violation' 'violation' name: identifier columns: column_list (code_part | tag_part)* message: string (fix: fix_line | suppress: suppress_line | 'options' options: json)*
+  # `code "X"`; `code {c}`, the word and the column in a node, which takes the word's field.
+  choice code_part      = 'code' (code: string | relabel code (wrap code_column _ braced_column ['in' codes: string]))
+  choice tag_part       = 'tag' relabel tag (wrap tag_column _ braced_column)
+  choice braced_column  = '{' column: identifier '}'
+  # `fix safe rel "…"`; before a string `safe` is the relation.
+  node fix_line         = 'fix' ('safe' (relation: identifier description: string | relabel relation as identifier description: string)
+                               | relation: identifier description: string)
+  node suppress_line    = 'suppress' tool: identifier rule: string (',' rule: string)* ['over' '{' over: identifier '}']
+  choice json           = balanced json_object '{' '}'
+  node column_list      = '(' [column: column (',' column: column)*] ')'
+  node column           = name: identifier ':' type: type
+  node type             = name: identifier ['<' [argument: identifier] '>']
+  choice value          = identifier | numeric | string
+  node clause           = head: head (',' head: head)* [':-' body: body] ['=>' edit: term (',' edit: term)*] '.'
+  # A head's modal: `must` or `may`, then the relation. Before a `(` it was the relation: the
+  # `(` relabels it, an identifier.
+  node head             = modal: ('must' | 'may') (relation: identifier arguments: argument_list
+                                                  | relabel relation as identifier arguments: argument_list)
+                        | relation: identifier arguments: argument_list
+  node argument_list nested = '(' [argument: term (',' argument: term)*] ')'
+  # A body: a conjunction; a `;` after it wraps it in a disjunction of alternatives.
+  choice body           = conjunction [wrap disjunction alternative (';' alternative: conjunction)+]
+  node conjunction nested = literal: literal (',' literal: literal)*
+  node group nested     = '(' body: body ')'
+  # A literal: an atom, a comparison of two terms, a pattern match or a negation. A word is a
+  # variable, unless a `(` after it makes it an atom's relation. `_` is a term here: a
+  # wildcard. A term at a literal's start goes on as one (`more`); a comparison or a pattern
+  # after it makes it a literal's (`literal_tail`), else it is `bare`, which only a group a
+  # term turns out to be may hold.
+  # An operator after an atom: it was a call, its word the function (`relabel … inner`).
+  choice literal        = bare: (numeric | string | code_literal | '_' as wildcard | minus | functor_call | json) more [literal_tail]
+                        | bare: (identifier as variable) (relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)]
+                                                       | more [literal_tail])
+                        | bare: aggregate_literal
+                        | literal: negation
+                        | literal: group [group_term]
+  choice literal_tail   = relabel literal (comparison_tail | pattern_tail)
+  # After a group's `)`: an operator or a comparison, it was a term; a `~`, a term too, unless
+  # it holds an atom (then the engine keeps the group, which no `~` follows).
+  choice group_term     = reread parenthesized (relabel bare more1 [literal_tail] | comparison_tail)
+                        | reread parenthesized_strict pattern_tail
+  provisional bare
+  reading parenthesized = group as parenthesized_expression, conjunction gone, atom as call, '(', ')', identifier,
+                          keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object argument_list,
+                          field literal as expression, field bare as expression, field relation as function
+  reading parenthesized_strict = group as parenthesized_expression, conjunction gone, '(', ')',
+                          keep variable number float string code_literal wildcard unary_expression binary_expression parenthesized_expression call functor_call aggregate json_object,
+                          field literal as expression, field bare as expression
+  # A term's rest, at least one operator.
+  choice more1          = (wrap binary_expression left operator: multiplicative right: primary)+ (wrap binary_expression left operator: additive right: product)*
+                        | (wrap binary_expression left operator: additive right: product)+
+  # `!` before an atom, a pattern match or a negation: never a comparison.
+  node negation nested  = '!' operand: negated
+  choice negated        = (numeric | string | code_literal | '_' as wildcard | minus | functor_call | json) more pattern_tail
+                        | identifier as variable ((wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail]
+                                                 | more pattern_tail)
+                        | aggregate_negated
+                        | negation | group [negated_term]
+  choice negated_term   = reread parenthesized more1 pattern_tail
+                        | reread parenthesized_strict pattern_tail
+  choice comparison_tail = wrap comparison left operator: comparison_operator right: term
+  choice pattern_tail   = wrap pattern_match subject '~' pattern: code_literal
+  # After a primary: the rest of its product, then of its term.
+  choice more           = (wrap binary_expression left operator: multiplicative right: primary)* (wrap binary_expression left operator: additive right: product)*
+  choice comparison_operator = '=' | '!=' | '<' | '<=' | '>' | '>='
+  # Terms by precedence, each operator around the left side so far.
+  choice term nested    = product (wrap binary_expression left operator: additive right: product)*
+  choice product        = primary (wrap binary_expression left operator: multiplicative right: primary)*
+  choice additive       = '+' | '-'
+  choice multiplicative = '*' | '/' | '%'
+  # A word is a variable, unless a `(` or a `:` after it makes it a call's function or a named
+  # argument's name.
+  choice primary        = numeric | unsigned
+  # A number, and a fraction after it: one float leaf.
+  choice numeric        = number [merge float fraction]
+  choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call | json
+                        | identifier as variable [wrap call function as identifier arguments: argument_list
+                                                 | wrap named_argument name as identifier ':' value: term]
+                        | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
+                        | 'min' as variable [min_agg | wrap call function as identifier arguments: argument_list]
+                        | 'max' as variable [max_agg | wrap call function as identifier arguments: argument_list]
+                        | 'sum' as variable [sum_agg | wrap call function as identifier arguments: argument_list]
+                        | 'mean' as variable [mean_agg | wrap call function as identifier arguments: argument_list]
+                        | 'join' as variable [join_agg | wrap call function as identifier arguments: argument_list]
+                        | parenthesized_expression
+  # `-` and a number: one number leaf (a float, with a fraction). Else `-` and its operand,
+  # a primary that is no number.
+  choice minus          = '-' (merge number number [merge float fraction] | wrap unary_expression operator operand: unsigned)
+  node parenthesized_expression = '(' expression: term ')'
+  node functor_call     = '@' function: identifier arguments: argument_list
+  # An aggregate's word at a literal's start: the aggregate, then the rest of a term and a
+  # comparison or a pattern; else the word as any other.
+  choice aggregate_literal = 'count' as variable (count_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
+                           | 'min' as variable (min_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
+                           | 'max' as variable (max_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
+                           | 'sum' as variable (sum_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
+                           | 'mean' as variable (mean_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
+                           | 'join' as variable (join_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
+  choice aggregate_negated = 'count' as variable (count_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'min' as variable (min_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'max' as variable (max_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'sum' as variable (sum_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'mean' as variable (mean_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+                           | 'join' as variable (join_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
+  # The aggregate around its word, which takes its own kind back.
+  choice count_agg      = wrap aggregate operator as 'count' ':' '{' body: body '}'
+  choice min_agg       = wrap aggregate operator as 'min' aggregated
+  choice max_agg       = wrap aggregate operator as 'max' aggregated
+  choice sum_agg       = wrap aggregate operator as 'sum' aggregated
+  choice mean_agg      = wrap aggregate operator as 'mean' aggregated
+  choice join_agg      = wrap aggregate operator as 'join' aggregated
+  # What a value's aggregate holds after its word.
+  choice aggregated     = value: agg_value ['by' ('(' key: term (',' key: term)* ')' | key: agg_value)] ['sep' separator: string] ':' '{' body: body '}'
+  # An aggregate's value or single key: a term with no named argument in it, starting with no
+  # `-` or `(` (after the word those make it a variable's or a call's). A word of an aggregate
+  # here is a variable, or `count`'s aggregate: before a term or a `(` it would be another
+  # aggregate, which goes to the engine.
+  choice agg_value = (numeric | string | code_literal | '_' as wildcard | functor_nn | json) more_nn
+                   | identifier as variable [wrap call function as identifier arguments: argument_list_nn] more_nn
+                   | count_value
+                   | 'min' as variable more_nn
+                   | 'max' as variable more_nn
+                   | 'sum' as variable more_nn
+                   | 'mean' as variable more_nn
+                   | 'join' as variable more_nn
+  # `count` in a value: a `:` after it is its aggregate's, as the engine reads it (a nested
+  # level takes what it can before it ends).
+  choice count_value nested = 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list_nn] more_nn
+  # Terms with no named argument.
+  choice more_nn        = (wrap binary_expression left operator: multiplicative right: primary_nn)* (wrap binary_expression left operator: additive right: product_nn)*
+  choice term_nn nested = product_nn (wrap binary_expression left operator: additive right: product_nn)*
+  choice product_nn     = primary_nn (wrap binary_expression left operator: multiplicative right: primary_nn)*
+  choice primary_nn     = numeric | unsigned_nn
+  choice unsigned_nn nested = string | code_literal | '_' as wildcard | minus_nn | functor_nn | json
+                            | identifier as variable [wrap call function as identifier arguments: argument_list_nn]
+                            | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'min' as variable [min_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'max' as variable [max_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'sum' as variable [sum_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'mean' as variable [mean_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | 'join' as variable [join_agg | wrap call function as identifier arguments: argument_list_nn]
+                            | parenthesized_nn
+  choice minus_nn       = '-' (merge number number [merge float fraction] | wrap unary_expression operator operand: unsigned_nn)
+  # The same nodes as their named kinds, retagged at their first token.
+  node parenthesized_nn = retag parenthesized_expression '(' expression: term_nn ')'
+  node functor_nn       = retag functor_call '@' function: identifier arguments: argument_list_nn
+  node argument_list_nn nested = retag argument_list '(' [argument: term_nn (',' argument: term_nn)*] ')'
+  choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '{' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
+  # A setting's: every punctuation but `{`, which opens a JSON object.
+  choice setting_punctuation = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
+  hidden line newline json_bad
+  extra comment
+}

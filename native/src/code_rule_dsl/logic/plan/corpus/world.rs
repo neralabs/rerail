@@ -59,7 +59,6 @@ pub(super) struct Loaded {
 #[derive(Clone, Debug)]
 struct DirectoryEntry {
     name: String,
-    is_dir: bool,
     is_file: bool,
     is_symlink: bool,
     bytes: i64,
@@ -69,7 +68,8 @@ struct DirectoryEntry {
 pub(super) struct World {
     roots: Vec<PathBuf>,
     root: PathBuf,
-    dirs: BTreeMap<String, Vec<DirectoryEntry>>,
+    dirs: BTreeMap<String, Vec<(String, bool)>>,
+    metadata: BTreeMap<String, Vec<DirectoryEntry>>,
     dir_requests: BTreeSet<String>,
     metadata_requests: BTreeSet<String>,
     files: BTreeMap<String, Vec<String>>,
@@ -127,19 +127,8 @@ impl World {
             self.refused.insert(asked.to_owned());
             return;
         };
-        let mut entries: Vec<DirectoryEntry> = std::fs::read_dir(&path)
-            .map(|it| it.filter_map(|e| e.ok()).map(|e| {
-                let metadata = e.path().metadata().ok();
-                DirectoryEntry {
-                    name: e.file_name().to_string_lossy().into_owned(),
-                    is_dir: metadata.as_ref().is_some_and(|m| m.is_dir()),
-                    is_file: metadata.as_ref().is_some_and(|m| m.is_file()),
-                    is_symlink: e.file_type().is_ok_and(|t| t.is_symlink()),
-                    bytes: metadata.as_ref().map_or(0, |m| m.len() as i64),
-                }
-            }).collect())
-            .unwrap_or_default();
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        // Adopt Final's phase-0 observer for the common names/type projection.
+        let entries = super::observe(|o| o.listing(&path)).map(|l| l.as_ref().clone()).unwrap_or_default();
         self.dirs.insert(asked.to_owned(), entries);
     }
 
@@ -147,14 +136,29 @@ impl World {
     pub(super) fn dir(&mut self, asked: &str) -> Vec<(String, bool)> {
         self.dir_requests.insert(asked.to_owned());
         self.read_directory(asked);
-        self.dirs.get(asked).into_iter().flatten().map(|e| (e.name.clone(), e.is_dir)).collect()
+        self.dirs.get(asked).cloned().unwrap_or_default()
     }
 
     /// File type, link flag, and followed-target size from that same listing.
     pub(super) fn metadata(&mut self, asked: &str) -> Vec<(String, bool, bool, i64)> {
         self.metadata_requests.insert(asked.to_owned());
+        self.read_metadata(asked);
+        self.metadata.get(asked).into_iter().flatten().map(|e| (e.name.clone(), e.is_file, e.is_symlink, e.bytes)).collect()
+    }
+
+    /// Child size/type can change without changing the parent directory stat.
+    /// Refresh one metadata batch per requested directory, only when demanded.
+    fn read_metadata(&mut self, asked: &str) {
+        if self.metadata.contains_key(asked) { return; }
         self.read_directory(asked);
-        self.dirs.get(asked).into_iter().flatten().map(|e| (e.name.clone(), e.is_file, e.is_symlink, e.bytes)).collect()
+        let Some(path) = self.allowed(asked) else { return; };
+        let names = self.dirs.get(asked).cloned().unwrap_or_default();
+        let paths: Vec<_> = names.iter().map(|(name, _)| path.join(name)).collect();
+        let stats = super::observe(|o| o.metadata_batch(&paths));
+        let entries = names.into_iter().zip(stats).map(|((name, _),(kind,stat,is_symlink))| DirectoryEntry {
+            name, is_file: kind == crate::content_store::observe::Kind::File, is_symlink, bytes: stat.size,
+        }).collect();
+        self.metadata.insert(asked.to_owned(), entries);
     }
 
     /// A file's lines (none when it is refused or missing).
@@ -162,7 +166,7 @@ impl World {
         if let Some(lines) = self.files.get(asked) {
             return lines.clone();
         }
-        let Some(text) = self.allowed(asked).and_then(|p| std::fs::read_to_string(p).ok()) else {
+        let Some(text) = self.allowed(asked).and_then(|p| super::observe(|o| o.read(&p))).and_then(|(bytes, _)| String::from_utf8(bytes).ok()) else {
             self.refused.insert(asked.to_owned());
             return Vec::new();
         };
@@ -222,15 +226,15 @@ impl World {
             }
         }
         for asked in &self.metadata_requests {
-            if let Some(entries) = self.dirs.get(asked) {
+            if let Some(entries) = self.metadata.get(asked) {
                 out.push(("metadata".to_owned(), asked.clone(), metadata_digest(entries)));
             }
         }
         for (key,value) in &self.host {
             out.push(("host".to_owned(),key.clone(),host_digest(value.as_deref())));
         }
-        for (asked, lines) in &self.files {
-            out.push(("file".to_owned(), asked.clone(), lines_digest(lines)));
+        for asked in self.files.keys() {
+            out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
         }
         for path in self.loads.keys() {
             out.push(("load".to_owned(), path.clone(), bytes_digest(Path::new(path))));
@@ -241,17 +245,18 @@ impl World {
         out
     }
 
-    /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike.
+    /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike. Phase 0's
+    /// observer answers each by a `stat`, reading only what changed.
     pub(super) fn still(&mut self, consulted: &[(String, String, String)]) -> bool {
         consulted.iter().all(|(what, path, digest)| {
             let now = match what.as_str() {
-                "dir" | "metadata" => {
-                    self.read_directory(path);
-                    let entries = self.dirs.get(path).map_or(&[][..],Vec::as_slice);
-                    if what == "dir" { listing_digest(entries) } else { metadata_digest(entries) }
+                "dir" => listing_digest(&self.dir(path)),
+                "metadata" => {
+                    self.read_metadata(path);
+                    metadata_digest(self.metadata.get(path).map_or(&[][..],Vec::as_slice))
                 },
                 "host" => host_digest(self.host(path).as_deref()),
-                "file" => lines_digest(&self.file(path)),
+                "file" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
                 _ => return false,
@@ -262,11 +267,12 @@ impl World {
 
     /// What a refused path is now: outside the roots or missing, a file, or a directory.
     fn probe(&self, asked: &str) -> String {
-        match self.allowed(asked) {
-            None => "none",
-            Some(p) if p.is_file() => "file",
-            Some(p) if p.is_dir() => "dir",
-            Some(_) => "other",
+        use crate::content_store::observe::Kind;
+        match self.allowed(asked).map(|p| super::observe(|o| o.kind(&p))) {
+            None | Some(Kind::Missing) => "none",
+            Some(Kind::File) => "file",
+            Some(Kind::Dir) => "dir",
+            Some(Kind::Other) => "other",
         }
         .to_owned()
     }
@@ -306,12 +312,12 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn listing_digest(entries: &[DirectoryEntry]) -> String {
+fn listing_digest(entries: &[(String,bool)]) -> String {
     use sha2::Digest;
     let mut h = sha2::Sha256::new();
-    for entry in entries {
-        h.update(entry.name.as_bytes());
-        h.update([0, u8::from(entry.is_dir)]);
+    for (name,is_dir) in entries {
+        h.update(name.as_bytes());
+        h.update([0, u8::from(*is_dir)]);
     }
     hex(&h.finalize())
 }
@@ -335,20 +341,9 @@ fn host_digest(value: Option<&str>) -> String {
     hex(&h.finalize())
 }
 
-fn lines_digest(lines: &[String]) -> String {
-    use sha2::Digest;
-    let mut h = sha2::Sha256::new();
-    for l in lines {
-        h.update(l.as_bytes());
-        h.update([b'\n']);
-    }
-    hex(&h.finalize())
-}
-
 /// A file's bytes' digest ("" when it cannot be read).
 pub(super) fn bytes_digest(path: &Path) -> String {
-    use sha2::Digest;
-    std::fs::read(path).map(|b| hex(&sha2::Sha256::digest(&b))).unwrap_or_default()
+    super::observe(|o| o.digest(path)).map(|d| hex(&d)).unwrap_or_default()
 }
 
 #[cfg(test)]

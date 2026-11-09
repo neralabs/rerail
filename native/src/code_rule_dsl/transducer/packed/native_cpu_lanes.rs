@@ -38,7 +38,7 @@ pub(super) struct Plan {
     /// May be set on a byte of 0x00 (the zeros before a file), for a shiftable value.
     at_zero: Vec<bool>,
     /// Its value on every window of ASCII bytes, when it is the same on all of them.
-    ascii: Vec<Option<bool>>,
+    pub(super) ascii: Vec<Option<bool>>,
     /// Some value reads the 16 bytes before the block.
     pub(super) before: bool,
     /// The full-block body has an ASCII twin: some value is known on ASCII windows.
@@ -59,6 +59,11 @@ pub(super) struct Plan {
 #[derive(Debug)]
 pub(super) struct Region {
     pub(super) gate: usize,
+    /// A test before the gate's: the gate's other operand, when the gate's byte class is made a
+    /// mask for the gate alone. A block where it has no bit skips the class's mask too, and one
+    /// where it has bits makes the class and tests the gate (the class and the gate are then
+    /// members). An escape's `u`, say: most blocks have no escape.
+    pub(super) pre: Option<usize>,
     /// The values provably zero with the gate (the gate itself not among them).
     pub(super) zero: Vec<usize>,
     /// Every value the region computes, in order: `zero`, and values only the region reads.
@@ -264,6 +269,13 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
     const WORTH: usize = 24;
     const MOST: usize = 4;
     let n = native.insts.len();
+    // A fixed point's members are made in its loop, never behind a gate.
+    let mut grouped = vec![false; n];
+    for g in &native.groups {
+        for &m in &g.members {
+            grouped[m] = true;
+        }
+    }
     let mut region_of: Vec<Option<usize>> = vec![None; n];
     let mut gates = vec![false; n];
     let mut out: Vec<Region> = Vec::new();
@@ -271,7 +283,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
         let mut z = vec![false; n];
         z[g] = true;
         for (at, inst) in native.insts.iter().enumerate().skip(g + 1) {
-            if lanes[at] || region_of[at].is_some() || full[at].is_some() {
+            if lanes[at] || region_of[at].is_some() || full[at].is_some() || grouped[at] {
                 continue;
             }
             let is = |x: u16| z[usize::from(x)] || matches!(native.insts[usize::from(x)], BlockInst::Const(0));
@@ -289,6 +301,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
         let mut worthy: Vec<(usize, usize, Vec<bool>, Vec<bool>)> = Vec::new();
         for (g, inst) in native.insts.iter().enumerate() {
             let candidate = !lanes[g]
+                && !grouped[g]
                 && region_of[g].is_none()
                 && !gates[g]
                 && match *inst {
@@ -305,7 +318,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
             // The values only the region reads, with no carried field of their own: made inside it.
             let mut only = vec![false; n];
             for x in (0..n).rev() {
-                if z[x] || x == g || gates[x] || region_of[x].is_some() || output[x] || field[x] || users[x].is_empty() || (lanes[x] && !mask[x]) {
+                if z[x] || x == g || gates[x] || region_of[x].is_some() || output[x] || field[x] || users[x].is_empty() || (lanes[x] && !mask[x]) || grouped[x] {
                     continue;
                 }
                 let inside = |u: usize| z[u] || only[u];
@@ -351,12 +364,27 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
         let best = best.cloned();
         let Some((g, _, z, only)) = best else { break };
         let r = out.len();
-        let members: Vec<usize> = (0..n).filter(|&x| z[x] || only[x]).collect();
+        // The gate's class, made a mask only for the gate, and carried by no field.
+        let pre = match native.insts[g] {
+            BlockInst::And(a, b) | BlockInst::AndNot(a, b) => {
+                let (a, b) = (usize::from(a), usize::from(b));
+                let (word, class) = if lanes[a] { (b, a) } else { (a, b) };
+                let alone = lanes[class] && !lanes[word] && !output[class] && !field[class] && region_of[class].is_none() && users[class].iter().all(|&u| lanes[u] || u == g);
+                alone.then_some((word, class))
+            }
+            _ => None,
+        };
+        let mut members: Vec<usize> = (0..n).filter(|&x| z[x] || only[x]).collect();
+        if let Some((_, class)) = pre {
+            members.extend([class, g]);
+            members.sort_unstable();
+        }
+        let pre = pre.map(|(word, _)| word);
         for &x in &members {
             region_of[x] = Some(r);
         }
         gates[g] = true;
-        out.push(Region { gate: g, zero: (0..n).filter(|&x| z[x]).collect(), members });
+        out.push(Region { gate: g, pre, zero: (0..n).filter(|&x| z[x]).collect(), members });
     }
     (out, region_of)
 }

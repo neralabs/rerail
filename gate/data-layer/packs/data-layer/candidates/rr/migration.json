@@ -3093,8 +3093,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "d8fad367bc743e40b78e9b8b7ddcaa9e163a25df",
-    "status": "Root Final through d8fad367b with source-backed generic compatibility repairs; current imperative and bypass kernel acceptance recorded separately from global migration completion",
+    "upstreamCommit": "f59b58d6f8cbbb2a71ef9ec191549fd5527f5869",
+    "status": "Adopting Final f59 observer, execution reuse, and parser work; integration acceptance pending",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3118,11 +3118,11 @@
     "nativeExtensions": [
       {
         "path": "Cargo.lock",
-        "sha256": "7e2be5fd1f2388803b9519afbdcddd69f40748c743baea32a95f29e208ef3f9a"
+        "sha256": "dce52683cd25065c545b6d22f1647076ced0c9575bb125d820ae82b35bfe11ad"
       },
       {
         "path": "native/Cargo.toml",
-        "sha256": "1a5c00cd50bbe5943b0d4850c399e9b01b5eb9a5b6706232f2fb0ee96494f660"
+        "sha256": "8fefb1be8ea42ebf246139b8533125d04fabe544033627824e25e8b9545678b0"
       },
       {
         "path": "native/src/code_rule_dsl/facts/repository.rs",
@@ -3130,7 +3130,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "8462df6093609b74ec607845e3768bbf8b0919f5b149bd403c54e1f5beab4e2b"
+        "sha256": "b684c1c5916a53a73dd1ddfe198563f60e3cc291706f353b609066fe311a7f4f"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
@@ -3174,7 +3174,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "0daa1550312db8d2610dbeb72bd75bd94e8429d2a0a66b6a04b691ce2b0ca1f7"
+        "sha256": "3d4f7e9e2d669fb403ab1674989029f80aebf60089cb8a7835e8386854b07d47"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
@@ -3190,15 +3190,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "1485de6e763e4aa646a0d52c6d7192c3feabef1a171d7b05cf44e81d5a62647a"
+        "sha256": "7d773a6753348a6e2bd0af690b49759f94ef3f4534c46fe2583cbb0485e7fb57"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "b434763f6c7325c90c8518c58e672c6a5caf9ced1ab0dfb0b66e7d576c2cfa9d"
+        "sha256": "f4b94383f79e56dbe6a4355552c70754fec9e0953ae0315f47565cb3194c9d83"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "1b9a6bd2908ec98fd4ecc7c555407fa0f737307cb3a8b327b75d8cf3422bd893"
+        "sha256": "d8237affd8f5d009280f6505cf6d72dfec3c458fa7d729f4e10e64bbd20cf154"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -3206,11 +3206,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
-        "sha256": "c5e605336582b31696e9d910f67ddd8e366af83e5f4f94472fd15cafeb533923"
+        "sha256": "9772743e2f656fc2f55bf50296fb6b2be1e7d4a3925d576d9d856d6b00531e9f"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "5e763837a97da6c85af54089c55cce46714e776bce0f632a2f27725420eb294c"
+        "sha256": "86d9781872e35c6c7fd5bd674d2a95f4b76a4790944e9951ad07f1e5b2275f83"
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
@@ -3218,7 +3218,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "2c7683d5850bf3cc220ab7291ef54c6aed8d07f25087ea32e6532f087a648ddd"
+        "sha256": "dc82f9918b945e35a76b725b2a1b543d32339a6c987bb836f91ae6ca77d58925"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
@@ -3226,7 +3226,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "bea7723a5d39098756b5f9e768662b48b18d60b75c6898932bd2f510e66b2c3a"
+        "sha256": "0b43b4b9908a65c73893e65517506dba1d08f115c0a90199f1e8327c940dc2da"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -3251,33 +3251,14 @@
       {
         "path": "native/src/code_rule_dsl/value/python.rs",
         "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
+      },
+      {
+        "path": "native/src/content_store/observe.rs",
+        "sha256": "95034aae016c04d45b016beff349c167c696767da0bb3dddd6564d69165aeeac"
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "50a4b75ece5dc142555177a1aca4c4a05e2f7096",
-    "cliArtifact": {
-      "engineCommit": "c3a50416c71ca1b190ca758cc30d39608b8e2651",
-      "upstreamCommit": "d8fad367bc743e40b78e9b8b7ddcaa9e163a25df",
-      "sourceTrees": {
-        "native": "4348a6e538c4ee32c8f42a0d1b808c149bbf712b",
-        "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "da7438cb5a1700a6c0b730b245f453a344ae8b9c"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-a92caf913c514ca8",
-      "sha256": "a92caf913c514ca8ea697f8a8c26dd4a0d76d16edcb8d21a88301bc65a76b91f",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine"
-      ],
-      "seconds": 17.142
-    }
+    "upstreamMerge": "50a4b75ece5dc142555177a1aca4c4a05e2f7096"
   },
   "engineSourceSnapshots": [
     {

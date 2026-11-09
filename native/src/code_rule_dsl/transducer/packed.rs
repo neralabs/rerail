@@ -273,6 +273,7 @@ mod block_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
 mod grammar;
+mod bitlex_prove;
 mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
@@ -281,6 +282,8 @@ mod bitlex_compile_tests;
 mod bitlex_corpus_tests;
 #[cfg(test)]
 mod bitlex_ladder_tests;
+#[cfg(test)]
+mod bitlex_rr_tests;
 #[cfg(test)]
 mod bitlex_json_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
@@ -333,6 +336,19 @@ const ACCEPT: u8 = 0x5b;
 const SPAN: u8 = 0x5c;
 /// Refuses unless one of tier 1's totals is zero: the fallback.
 const EMPTY: u8 = 0x5d;
+/// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
+const MARK: u8 = 0x5e;
+/// Runs the next word when the token starts at a bit of mask `operand`, else skips it: which of
+/// two rows beginning with one byte the token is.
+const ROW: u8 = 0x5f;
+/// The innermost open node becomes a node of kind `operand`: its kind decided by this token.
+const RETAG: u8 = 0x60;
+/// The token's leaf joins the grammar's leaf before it (the pending extras between are its text,
+/// dropped): one leaf of kind `operand`, to this token's end.
+const MERGE: u8 = 0x61;
+/// A node of kind `operand` around the node last made at this level, open: it takes that node's
+/// field and start; `NODE_FIELD m=1` and `RETAG m=1` then act on the moved node.
+const WRAP: u8 = 0x62;
 
 pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;
@@ -844,6 +860,8 @@ pub(in crate::code_rule_dsl) struct Program {
     block_programs: Vec<block::BlockProgram>,
     /// Tier 2's switch tables (`SWITCH`, decision 0087).
     switches: Vec<stream::ByteSwitch>,
+    /// Tier 2's readings (`RETAG m=3`) and provisional fields.
+    readings: stream::Readings,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
 }
@@ -1898,6 +1916,7 @@ impl Program {
             ast_pattern: None,
             block_programs: Vec::new(),
             switches: Vec::new(),
+            readings: stream::Readings::default(),
             digest: DigestMemo::default(),
         };
         program.validate()?;
@@ -2142,6 +2161,28 @@ impl Program {
                 for t in s.targets.iter().chain([&s.end]) {
                     digest.update(t.to_le_bytes());
                 }
+            }
+        }
+        if !self.readings.is_empty() {
+            digest.update(b"readings");
+            digest.update((self.readings.maps.len() as u64).to_le_bytes());
+            for r in &self.readings.maps {
+                for list in [&r.kinds, &r.fields] {
+                    digest.update((list.len() as u64).to_le_bytes());
+                    for (a, b) in list {
+                        digest.update(a.to_le_bytes());
+                        digest.update(b.to_le_bytes());
+                    }
+                }
+                // A root's way, when it has one, tagged.
+                if let Some(w) = r.root {
+                    digest.update(b"root");
+                    digest.update(w.to_le_bytes());
+                }
+            }
+            digest.update((self.readings.provisional.len() as u64).to_le_bytes());
+            for f in &self.readings.provisional {
+                digest.update(f.to_le_bytes());
             }
         }
         format!("{:x}", digest.finalize())

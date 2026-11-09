@@ -352,3 +352,34 @@ hit(n, l) :- pick(n), line(n, l).
         assert!(!semijoin_bases(&parts.cross, &parts.base).unwrap().contains("tape"));
     }
 }
+
+/// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
+/// The equality names one value, so the pieces are one join, pushed into the chunks whole; apart, the split pushed each
+/// and left their join to the cross-file part (decision 0093 §4, O140).
+#[test]
+fn an_equality_between_two_pieces_joins_them_in_the_chunks() {
+    use crate::code_rule_dsl::logic::front::{Literal, Term};
+    use crate::code_rule_dsl::logic::rr::parse;
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input node, field, text
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text(c, s).
+.decl finding(f: node, x: symbol)
+.output finding
+finding(f, x) :- node(_, f, "decorated_definition", _, _), field(f, "decorator", d), e = d, field(e, "name", c), text(c, x), !defined(x).
+"#;
+    let mut prog = parse(text).unwrap();
+    let made = push_local_joins(&mut prog);
+    let local = split(&prog);
+    assert!(made.iter().all(|m| local.contains(m)), "{made:?}");
+    let finding: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "finding").collect();
+    assert_eq!(finding.len(), 1);
+    let body = &finding[0].body;
+    let equal = body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(_), op: "=", r: Term::Var(_) }));
+    assert!(!equal, "the equality stays in the cross-file rule: {}", finding[0]);
+    let pushed: Vec<&str> = body.iter().filter_map(|l| l.atom()).filter(|a| made.contains(&a.rel)).map(|a| a.rel.as_str()).collect();
+    assert_eq!(pushed.len(), 1, "one pushed join, not one per piece: {}", finding[0]);
+}

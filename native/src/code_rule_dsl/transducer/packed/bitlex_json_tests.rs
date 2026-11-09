@@ -419,12 +419,24 @@ fn json_shapes() {
             })
             .collect();
         eprintln!("  hot loop blocks: {}; carried words {}", blocks.join(", "), super::block_tests::carried_params(&c.parser.tier1.clif) - super::block_tests::sink_params(&c.native.block_programs[0]));
-        let plan = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan;
+        let state = super::native_cpu_block::State::of(&c.native.block_programs[0]);
+        let insts = &c.native.block_programs[0].insts;
+        let fields: Vec<String> = state
+            .fields()
+            .iter()
+            .map(|&(at, bits, word)| {
+                let kind = if state.plan.lanes[at] { "lane" } else if state.plan.region_of[at].is_some() { "region" } else { "word" };
+                format!("w{word}:%{at}={:?}/{bits}/{kind}", insts[at])
+            })
+            .collect();
+        eprintln!("  carried state: {} words; {}", state.words, fields.join(" "));
+        let plan = state.plan;
         for r in &plan.regions {
             let insts = &c.native.block_programs[0].insts;
             let gate = insts[r.gate];
             let of: Vec<String> = gate.operands().iter().map(|&o| format!("%{o} = {:?}", insts[o])).collect();
-            eprintln!("  gated region: gate %{} = {gate:?} ({}), {} values zero without it, {} skipped", r.gate, of.join(", "), r.zero.len(), r.members.len());
+            let pre = r.pre.map_or(String::new(), |p| format!(", tested first on %{p}"));
+            eprintln!("  gated region: gate %{} = {gate:?} ({}){pre}, {} values zero without it, {} skipped", r.gate, of.join(", "), r.zero.len(), r.members.len());
         }
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
         eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
@@ -500,9 +512,11 @@ fn json_gated_regions_equal_the_interpreter() {
     for name in ["14-json", "15-jsonc"] {
         let c = form(name);
         // Each region behind its branch in both full bodies, none computed in place.
-        let regions = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan.regions.len();
-        assert!(regions > 0, "{name}: no gated region");
-        assert_eq!(c.parser.tier1.gate_branches, regions * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
+        // A region with a test before its gate's has two branches.
+        let plan = super::native_cpu_block::State::of(&c.native.block_programs[0]).plan;
+        assert!(!plan.regions.is_empty(), "{name}: no gated region");
+        let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
+        assert_eq!(c.parser.tier1.gate_branches, tests * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
         let block = &c.program.block_programs()[0];
         let mut files: Vec<Vec<u8>> = Vec::new();
         for t in tokens {
@@ -522,6 +536,61 @@ fn json_gated_regions_equal_the_interpreter() {
     }
 }
 
+/// Tier 1 on Metal in segments (`block_program::serial`), over the corpus as one batch: GPU
+/// seconds (the fastest of `RERAIL_ITERS` runs, default 5), segments run again and checks, for
+/// `RERAIL_SEG` blocks a segment (default 29) and `RERAIL_WARM` warm-up blocks (default 1); the
+/// outputs, positions and totals equal Cranelift's. `RERAIL_REPEAT` and `RERAIL_FORM` as in
+/// `json_metal_bench`.
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
+fn json_metal_serial_bench() {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+    let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+    let iters = env("RERAIL_ITERS", 5);
+    let mut paths = files_in("RERAIL_JSON_CORPUS");
+    let mut files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
+    let n = env("RERAIL_REPEAT", 1);
+    (files, paths) = ((0..n).flat_map(|_| files.clone()).collect(), (0..n).flat_map(|_| paths.clone()).collect());
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    let total: usize = files.iter().map(Vec::len).sum();
+    let segments = Segments { blocks: env("RERAIL_SEG", 29), warm: env("RERAIL_WARM", 1) };
+    println!("{} files, {} bytes, {segments:?}", files.len(), total);
+    println!("form\tgpu_ms\tGB/s\tfirst_ms\tagain_ms\tsinks_ms\tsegments\treruns\trounds");
+    for name in ["14-json", "15-jsonc"] {
+        if std::env::var("RERAIL_FORM").is_ok_and(|f| !name.starts_with(&f)) {
+            continue;
+        }
+        let c = form(name);
+        let native = &c.native.block_programs[0];
+        let want = c.parser.tier1.run_files(&refs);
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let mut best: Option<metal_program_backend::block_program::serial::SerialRun> = None;
+        for _ in 0..iters {
+            let run = run_serial_split(&[native], &batch, segments).unwrap_or_else(|e| panic!("metal: {e:?}"));
+            for (k, (got, want)) in run.run.files.iter().zip(&want).enumerate() {
+                assert!(got.outputs == want.outputs, "{name}: {} outputs differ", base(&paths[k]));
+                assert!(got.positions == want.positions && got.totals == want.totals, "{name}: {} positions or totals differ", base(&paths[k]));
+            }
+            if best.as_ref().is_none_or(|b| run.run.seconds < b.run.seconds) {
+                best = Some(run);
+            }
+        }
+        let b = best.expect("a run");
+        println!(
+            "{name}\t{:.3}\t{:.2}\t{:.3}\t{:.3}\t{:.3}\t{}\t{}\t{}",
+            b.run.seconds * 1e3,
+            total as f64 / b.run.seconds / 1e9,
+            b.first_seconds * 1e3,
+            b.rerun_seconds * 1e3,
+            b.sink_seconds * 1e3,
+            b.segments,
+            b.reruns,
+            b.rounds
+        );
+    }
+}
+
 /// Tier 1 on Metal, generated MSL, over the corpus as one batch: GPU seconds (the fastest of
 /// `RERAIL_ITERS` runs, default 5) and launches at each lane width, each form; the outputs and
 /// positions equal Cranelift's.
@@ -529,7 +598,7 @@ fn json_gated_regions_equal_the_interpreter() {
 #[cfg(target_os = "macos")]
 #[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
 fn json_metal_bench() {
-    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_split};
     let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
     let mut paths = files_in("RERAIL_JSON_CORPUS");
     let mut files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
@@ -574,7 +643,7 @@ fn json_metal_bench() {
             let mut best = f64::MAX;
             let mut launches = 0;
             for _ in 0..iters {
-                let run = run_split(&[native], &batch, width, Executor::Generated(ClassStrategy::Planes), std::env::var("RERAIL_SPINS").ok().and_then(|v| v.parse().ok()).unwrap_or(64)).unwrap_or_else(|e| panic!("metal: {e:?}"));
+                let run = run_split(&[native], &batch, width, Executor::Generated(ClassStrategy::Planes), std::env::var("RERAIL_SPINS").ok().and_then(|v| v.parse().ok()).unwrap_or(SPINS)).unwrap_or_else(|e| panic!("metal: {e:?}"));
                 for (k, (got, want)) in run.files.iter().zip(&want).enumerate() {
                     assert!(got.outputs == want.outputs && got.positions == want.positions, "{name}, {}-byte lanes: {} differs", width.bytes(), base(&paths[k]));
                 }
