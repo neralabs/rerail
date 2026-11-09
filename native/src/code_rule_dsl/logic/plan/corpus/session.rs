@@ -31,6 +31,15 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) memo: memo::Held,
     /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed.
     pub(super) cross: Mutex<Option<super::retain::Retained>>,
+    /// Which session this is: its runs' kept plans and derived values are taken back only by its own runs.
+    generation: u64,
+}
+
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The generation of the session this thread's next run is a run of (`None`: no session, or a full run).
+pub(super) fn generation() -> Option<u64> {
+    current().as_ref().map(|s| s.generation)
 }
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
@@ -49,6 +58,7 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         store,
         memo: Default::default(),
         cross: Mutex::new(None),
+        generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         #[cfg(test)]
         thread: std::thread::current().id(),
     });
@@ -273,6 +283,53 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// An insert into a recursive stratum stops at the rows that survived (decision 0090): an edge that adds no
+    /// reachability (`a` imports `c`, which it reached through `b`) inserts the new edge and nothing of `reach`.
+    /// Without the stop, the inserts walked the closure from the new edge again (9,000,000 rows on `session_costs`).
+    #[test]
+    fn a_session_inserts_only_rows_new_against_the_survivors() {
+        let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("rerail-session-ins-{}", std::process::id()));
+        let (src, out) = (base.join("src"), base.join("out"));
+        std::fs::create_dir_all(&src).unwrap();
+        let rule = base.join("reach.rr");
+        std::fs::write(
+            &rule,
+            r#".policy "test-import-reach" revision 1
+.description "An import of a module that reaches back to its importer."
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/names.rr"
+.decl dep(a: number, b: number)
+dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl reach(a: number, b: number)
+reach(a, b) :- dep(a, b).
+reach(a, c) :- reach(a, b), dep(b, c).
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
+"#,
+        )
+        .unwrap();
+        for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from d import z\n"), ("d.py", "x = 1\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        start(&base.join("session")).unwrap();
+        run();
+        std::fs::write(src.join("a.py"), "from b import x\nfrom c import q\n").unwrap();
+        // SAFETY: the session tests run one at a time (`SERIAL`), and only a session's run reads the variable.
+        unsafe { std::env::set_var("RERAIL_CROSS_DELTA_COUNTS", "1") };
+        let report = run();
+        unsafe { std::env::remove_var("RERAIL_CROSS_DELTA_COUNTS") };
+        stop();
+        let _ = std::fs::remove_dir_all(&base);
+        let [_, inserted, _, _, _, new] = report.cross_delta_counts;
+        assert!(report.cross_maintained.1 > 0, "the recursive stratum is maintained: {:?}", report.cross_maintained);
+        assert_eq!(inserted, new, "the insert rules carry only rows truly new (the edge a -> c), not reach's rows again");
+    }
+
     /// A cross-file stratum with aggregates is maintained by its changed groups (decision 0077 §3): a module's
     /// importers counted, up and down to none, give a full run's findings.
     #[test]
@@ -447,7 +504,13 @@ HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
             // The costliest strata, and their parts: loading inputs and indexes, and the joins.
             let mut strata: Vec<(&String, f64)> = spans.iter().filter(|(p, _)| p.contains("session/plan and evaluate/stratum ") && p.matches('/').count() == 3).map(|(p, t)| (p, t.total)).collect();
             strata.sort_by(|a, b| b.1.total_cmp(&a.1));
-            for (path, total) in strata.into_iter().take(4) {
+            // `RERAIL_SESSION_COST_SPANS`: every span of the session's run past 0.1 s, at any depth.
+            if std::env::var_os("RERAIL_SESSION_COST_SPANS").is_some() {
+                for (path, t) in spans.iter().filter(|(p, t)| p.contains("session/") && t.total > 0.1) {
+                    eprintln!("    {:>7.3} s  {}", t.total, path.split_once("session/").map_or(path.as_str(), |(_, r)| r));
+                }
+            }
+            for (path, total) in strata.into_iter().take(12) {
                 let part = |name: &str| spans.get(&format!("{path}/native/{name}")).map_or(0.0, |t| t.total);
                 eprintln!("    {total:>7.3} s  {}: open {:.3} s, joins {:.3} s", path.rsplit('/').next().unwrap_or(""), part("engine open (load inputs, build indexes)"), part("engine run (joins)"));
             }
