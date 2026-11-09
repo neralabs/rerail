@@ -3194,19 +3194,45 @@ a phase output (t24, "not built").
 
 ## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
 
-Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`. **Closure:** the `product`
-aggregate; `python/pytest-collect.rr`; `collect_disabled` for
-`conform/l5250_matching/test_phase1_case_matrix.py`, reported as a finding; the per-file counts of
-`notes/t13/est-full-6.json` reproduced (1,131 of 1,143 exact) on the corpus.
+Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+
+**Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
+model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
+tree; `test-budget` counting with it, the artifact optional, `collect_disabled` reported as `collection_disabled`.
+On `conform/l1*`, 77 of 78 files are exact against real pytest.
+
+**Left.** The whole of `conform/` against `notes/t13/truth-full.json`; the scope (see O-names-cost). Known
+differences from the model: a nested Test class reached through two parents counts once (the owner is a node, not
+a path).
+
+## O-names-cost. Name resolution costs about 75 ms of CPU per file
+
+**Seen (2026-11-08).** `python/pytest-collect.rr` over the 9,010-file data layer ran past 9 min of CPU and 1.8 GB,
+and was stopped. On the 133-file sample, `resolve_export` alone costs 15 s of the run's 28 s (debug build), and
+nearly all of that is `qn`, which reads `look`: the LEGB walk of every name reference (`type_checking_block` reads
+`qn`, and `import_time` negates it). Every check that reads `sym_of` pays this.
+
+**Worked around.** `test-budget` reads `conform/` and the root's files only (1,416 files). A case list or enum
+imported from outside is then open, counted as 1.
+
+**Closure:** the walk computed only for the references a rule asks about (demand), or `qn` without the walk for
+names no import binds; a run of `sym_of` over the data layer within the run and memory budgets.
 
 ## O-git-tracked. `git_tracked` is declared and never made
 
-Decision 0095 §6. `markdown_docs` needs tracked against on-disk. **Closure:** `@git_tracked(path)` answered from the
-index phase 0's Git provider reads, with a staged-add and a deleted-file test.
+**Status:** closed (2026-11-08, `3cb7d0d0a`). `@git_tracked(path)` is a functor over the index phase 0's Git
+provider reads (`strings/git.rs`), read again when the index file's digest moves; the test stages an add and reads
+it again. Decision 0095 §6.
 
 ## O-git-merge-base. `git_rev` is declared and never made; `--base` is the caller's
 
-Decision 0095 §6. **Closure:** `git_rev("head", …)` from `HEAD` as an observed read, `git_rev("base", …)` from gix's
-`merge_base` (the `revision` feature) of `HEAD` and the base reference, kept under the two ids; `at="base"` reading
-at it; the whole-run cutoff checking `HEAD` and the reference.
+**Status:** closed (2026-11-08, `3cb7d0d0a`). `git_rev("head", …)` and `git_rev("base", …)`, the merge base of
+`HEAD` and `--base` by gix's `merge_base`, are made when a rule reads `git_rev`; `at="base"` reads at the merge base;
+the whole-run cutoff records both as a read (`git_rev`, with the index as `git_index`) and checks them again. A bad
+`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0095 §6.
 
+## O-replay-intermittent. The replay gate gave 3988 248 243 once
+
+**Seen (2026-11-08).** `converted_rules_give_the_recorded_findings` gave `3988 248 243 0` once and `3988 303 298 0`
+on the next run, with the same code. Suspect: the shared default tape cache (O146), which other sessions write.
+**Closure:** the cause found, or twenty runs on an isolated store all `3988 303 298 0`.
