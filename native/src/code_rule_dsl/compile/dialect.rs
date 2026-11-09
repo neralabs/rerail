@@ -234,4 +234,22 @@ mod tests {
              /clauses/0/forbid/ast/rule/any/1/kind: Kind `type_assertion` is invalid. (javascript grammar)"
         );
     }
+
+    #[test]
+    fn a_policy_targets_rr_files_through_the_shipped_capabilities() {
+        // `capabilities.json` names `rr` (`native:rr`), so a clause over `.rr` files compiles
+        // against the engine's own tree (decision 0061) and reads its kinds.
+        let compiled = compile_document_with(
+            clause_document(json!({
+                "id": "c",
+                "forbid": { "ast": { "language": "rr", "rule": { "kind": "head" } } },
+                "violation": violation(),
+            })),
+            &serde_json::from_str::<serde_json::Value>(CAPABILITIES).expect("capabilities"),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let source = "a(x) :- b(x).\n";
+        let result = evaluate_file(&compiled, "rr", "rules.rr", source);
+        assert_eq!(matched_texts(&result, source), ["a(x)"], "{result}");
+    }
 }
