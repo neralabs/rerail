@@ -2782,14 +2782,16 @@ fn run_observed(
             }
             let mut fresh = Vec::new();
             let mut loaded_rows = Vec::new();
+            let mut answered_paths = Vec::new();
             for row in rows {
                 let (asked, module, grammar) = (text(row[0])?, text(row[1])?, text(row[2])?);
-                if let Some(doc) = world.load(&asked, &module, &grammar, label, &corpus) {
+                if let Some(answer) = world.load(&asked, &module, &grammar, label, &corpus) {
                     loaded_rows.push(vec![0, row[1], row[2]]);
-                    fresh.push(doc);
+                    answered_paths.push(answer.document.path.clone());
+                    if answer.fresh { fresh.push(answer.document); }
                 }
             }
-            for (row, path) in loaded_rows.iter_mut().zip(atoms(&fresh.iter().map(|doc| doc.path.as_str()).collect::<Vec<_>>())?) {
+            for (row, path) in loaded_rows.iter_mut().zip(atoms(&answered_paths.iter().map(String::as_str).collect::<Vec<_>>())?) {
                 row[0] = path;
             }
             let mut out = vec![(world::LOADED.to_owned(), loaded_rows)];

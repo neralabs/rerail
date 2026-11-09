@@ -42,7 +42,7 @@ def install(suite, module):
     batches = {}
 
     def options():
-        return dict(canBatchAllowlist=list(module.CAN_BATCH_FALSE_ALLOWLIST),
+        return dict(rootPath=str(module.ROOT), canBatchAllowlist=list(module.CAN_BATCH_FALSE_ALLOWLIST),
                     runtimeStateAllowlist=list(module.LIFECYCLE_RUNTIME_STATE_ALLOWLIST),
                     sideEffectAllowlist=list(module.LEGACY_SIDE_EFFECT_TAG_ALLOWLIST),
                     signature=module.ALLOWLIST_SIGNATURE,
@@ -65,6 +65,17 @@ def install(suite, module):
         sys.stdout.write(result['stdout'])
         sys.stderr.write(result['stderr'])
         return bool(result['valid'])
+
+    def blockers(entry):
+        directories = [str(path) for path in module.STEP_DIRS]
+        environment = ['ssp.root='+str(module.ROOT), 'ssp.cwd='+str(Path.cwd()), 'ssp.collector='+entry]
+        environment += ['ssp.dir'+str(i)+'='+str(Path(path).absolute()) for i,path in enumerate(directories)]
+        environment += ['ssp.step.'+str(i)+'='+path for i,path in enumerate(directories)]
+        rows = suite.native('serverplan_steps', entry, [],
+                            dict(options(), stepDirs=directories, cwdPath=str(Path.cwd()), env=environment))
+        if any(row['code'] != 'SSP_BLOCKER' for row in rows):
+            raise ValueError('Unexpected native blocker result')
+        return {row['parameters']['value'] for row in rows}
 
     def scan_source(file, source, tree=None):
         settings = dict(options(), argumentPath=str(file), callSource=source,
@@ -137,6 +148,10 @@ def install(suite, module):
             suite.replace(module, name, scan_source)
         elif name == '_scan_file':
             suite.replace(module, name, scan_file)
+        elif name in {'collect_current_step022_blockers', 'collect_current_step023_blockers'}:
+            def bind_blockers(entry):
+                return lambda: blockers(entry)
+            suite.replace(module, name, bind_blockers(name))
         elif name in implemented:
             def bind(entry):
                 return lambda file, tree, **kwargs: check(entry, file, tree, **kwargs)

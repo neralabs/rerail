@@ -2119,7 +2119,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "f8376dfcae7a1b8275fd6541967cbd71127ff415cf016518382c8a0347588aa1",
+      "sha256": "fa4d597624ec48b4b84567e6951ae136ff41cafda1dab222b6fae4301f9f0920",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2192,8 +2192,18 @@
           "before": "30dfaa65d6c80152523fef24673b961a22d20304465d892e8d93b97634d285fd",
           "after": "f8376dfcae7a1b8275fd6541967cbd71127ff415cf016518382c8a0347588aa1",
           "reason": "Translate full allowlist verification through shared signing messages and native failure reasons"
+        },
+        {
+          "before": "f8376dfcae7a1b8275fd6541967cbd71127ff415cf016518382c8a0347588aa1",
+          "after": "fa4d597624ec48b4b84567e6951ae136ff41cafda1dab222b6fae4301f9f0920",
+          "reason": "Translate native blocker discovery and preserve path/class candidate keys"
         }
       ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/step-discovery.rr",
+      "sha256": "b95fec3e8d76d3dbf97a34af4bef206b275f8d934e495d90171d3262ba05ea5f",
+      "origin": "authored native filesystem membership for ServerPlan step collectors"
     }
   ],
   "rules": [
@@ -2663,7 +2673,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "f8376dfcae7a1b8275fd6541967cbd71127ff415cf016518382c8a0347588aa1"
+      "ruleSha256": "fa4d597624ec48b4b84567e6951ae136ff41cafda1dab222b6fae4301f9f0920"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3301,7 +3311,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "76def7e4da0471d02a958fbd5c46984c54395c0db301005649d1881c147ed3b4"
+        "sha256": "2062af1bf972d0bb63234c355a1d82d7d95f9a9ab1c1c4f1864600d993a1258b"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -3313,7 +3323,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "ed4e1c592ecf667dff4806fa2849e7e0e2a58bab7cb1bb40c7144bc1b4400b73"
+        "sha256": "15c26a2b31ff7d66e2c0b1b0c0ef40559f173601b64b4b198e1a4d04700ea7ec"
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
@@ -3373,30 +3383,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038",
-    "cliArtifact": {
-      "engineCommit": "ec63ae922d1a1f8f0f688168fb41d4c121c8a970",
-      "upstreamCommit": "1345219782280410efcc0b9b712594a6a8489619",
-      "sourceTrees": {
-        "native": "b47f2afdadc82e9032b172a8aa50f067f67e2ae4",
-        "tools/bitlex": "4abd73b7e2f3bcb7f7f90d9cf3183abbd8edbec1",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "36d03ae745ce0a93a9c95b7f57d15c49f1635bff"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-b83a05f91b712ed2",
-      "sha256": "b83a05f91b712ed278150ffdd85bc5387734b7085e43b1c4fed48cf9c67f2765",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine"
-      ],
-      "seconds": 15.498
-    }
+    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038"
   },
   "engineSourceSnapshots": [
     {

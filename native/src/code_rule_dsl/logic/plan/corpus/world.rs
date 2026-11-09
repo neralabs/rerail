@@ -56,6 +56,12 @@ pub(super) struct Loaded {
     pub(super) grammar: String,
 }
 
+/// Each accepted logical request has an answer. Only a fresh physical document needs parsing.
+pub(super) struct LoadAnswer {
+    pub(super) document: Loaded,
+    pub(super) fresh: bool,
+}
+
 #[derive(Clone, Debug)]
 struct DirectoryEntry {
     name: String,
@@ -76,6 +82,7 @@ pub(super) struct World {
     files: BTreeMap<String, Vec<String>>,
     host: BTreeMap<String, Option<String>>,
     loads: BTreeMap<String, Loaded>,
+    load_targets: BTreeMap<String, String>,
     refused: BTreeSet<String>,
     budget: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
@@ -198,8 +205,8 @@ impl World {
         out
     }
 
-    pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
-        if corpus.contains(asked) || self.refused.contains(asked) {
+    pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<LoadAnswer> {
+        if self.refused.contains(asked) {
             return None;
         }
         let Some(path) = self.allowed(asked).filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
@@ -207,18 +214,17 @@ impl World {
             self.refused.insert(asked.to_owned());
             return None;
         };
-        // `corpus` is canonical (`canonical_corpus`): a workspace file reached through an import is not loaded again.
-        if corpus.contains(&path) || self.loads.contains_key(&path) {
-            return None;
-        }
-        if grammar != run_grammar || self.loads.len() >= self.budget {
+        // Physical work is shared; the answer for a different module or path is still required.
+        let fresh = !corpus.contains(asked) && !corpus.contains(&path) && !self.loads.contains_key(&path);
+        if grammar != run_grammar || fresh && self.loads.len() >= self.budget {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
         }
         let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
-        self.loads.insert(path, loaded.clone());
-        Some(loaded)
+        self.load_targets.insert(asked.to_owned(), path.clone());
+        if fresh { self.loads.insert(path, loaded.clone()); }
+        Some(LoadAnswer { document: loaded, fresh })
     }
 
     /// What the run's requests consulted, each as (what, path, digest): a directory's entries, a file's lines, a
@@ -245,6 +251,9 @@ impl World {
         for path in self.loads.keys() {
             out.push(("load".to_owned(), path.clone(), bytes_digest(Path::new(path))));
         }
+        for (asked,path) in &self.load_targets {
+            out.push(("load_target".to_owned(), asked.clone(), load_target_digest(Path::new(path))));
+        }
         for asked in &self.refused {
             out.push(("refused".to_owned(), asked.clone(), self.probe(asked)));
         }
@@ -264,6 +273,7 @@ impl World {
                 "host" => host_digest(self.host(path).as_deref()),
                 "file" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
+                "load_target" => self.allowed(path).map(|p| load_target_digest(&p)).unwrap_or_default(),
                 "refused" => self.probe(path),
                 _ => return false,
             };
@@ -347,6 +357,15 @@ fn host_digest(value: Option<&str>) -> String {
     hex(&h.finalize())
 }
 
+fn load_target_digest(path: &Path) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(path.as_os_str().as_encoded_bytes());
+    h.update([0]);
+    h.update(bytes_digest(path).as_bytes());
+    hex(&h.finalize())
+}
+
 /// A file's bytes' digest ("" when it cannot be read).
 pub(super) fn bytes_digest(path: &Path) -> String {
     super::observe(|o| o.digest(path)).map(|d| hex(&d)).unwrap_or_default()
@@ -355,6 +374,44 @@ pub(super) fn bytes_digest(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_logical_load_answers_while_one_physical_document_is_admitted() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-load-alias");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "value = 1\n").unwrap();
+        let mut world = World::new(&root, &front::parse("").unwrap());
+        let first = world.load("a.py","first","python","python",&BTreeSet::new()).unwrap();
+        assert!(first.fresh);
+        let second = world.load("a.py","second","python","python",&BTreeSet::new()).unwrap();
+        assert!(!second.fresh);
+        assert_eq!(first.document.path, second.document.path);
+        assert_eq!(second.document.module, "second");
+        assert_eq!(world.loads.len(), 1);
+        let mut existing = World::new(&root, &front::parse("").unwrap());
+        let corpus = existing.canonical_corpus([&"a.py".to_owned()]);
+        assert!(!existing.load("a.py","corpus-alias","python","python",&corpus).unwrap().fresh);
+        assert!(existing.loads.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn consulted_load_targets_reject_retargeted_links_with_identical_bytes() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-load-target");
+        std::fs::create_dir_all(&root).unwrap();
+        for name in ["a.py","b.py"] { std::fs::write(root.join(name), "value = 1\n").unwrap(); }
+        std::os::unix::fs::symlink("a.py",root.join("alias.py")).unwrap();
+        let program = front::parse("").unwrap();
+        let mut before = World::new(&root,&program);
+        assert!(before.load("alias.py","module","python","python",&BTreeSet::new()).is_some());
+        let consulted = before.consulted();
+        assert!(World::new(&root,&program).still(&consulted));
+        std::fs::remove_file(root.join("alias.py")).unwrap();
+        std::os::unix::fs::symlink("b.py",root.join("alias.py")).unwrap();
+        assert!(!World::new(&root,&program).still(&consulted));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn consulted_metadata_rejects_a_changed_file_size() {

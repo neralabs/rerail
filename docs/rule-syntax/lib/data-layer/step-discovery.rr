@@ -1,0 +1,17 @@
+// Path.rglob("*.py") membership for the step collectors. Tests and hidden trees
+// remain included. A descendant directory link is not followed; an explicit root is.
+.decl ssp_collecting(entry: symbol)
+ssp_collecting("collect_current_step022_blockers") :- env("ssp.collector","collect_current_step022_blockers").
+ssp_collecting("collect_current_step023_blockers") :- env("ssp.collector","collect_current_step023_blockers").
+.decl ssp_directory(i: number, logical: symbol, physical: symbol)
+ssp_directory(to_number(index),path,path) :- ssp_collecting(_), env(key,path), match_all("\\Assp\\.step\\.(?<index>[0-9]+)\\z",key), prefix("/",path).
+ssp_directory(to_number(index),path,cat(cwd,"/",path)) :- ssp_collecting(_), env(key,path), match_all("\\Assp\\.step\\.(?<index>[0-9]+)\\z",key), !prefix("/",path), env("ssp.cwd",cwd).
+.decl ssp_directory_walk(i: number, physical: symbol)
+ssp_directory_walk(i,physical) :- ssp_directory(i,_,physical).
+ssp_directory_walk(i,cat(physical,"/",name)) :- ssp_directory_walk(i,physical), dir_entry(physical,name,1), dir_metadata(physical,name,_,0,_).
+.decl ssp_requested_file(i: number, path: symbol)
+ssp_requested_file(i,@replace_all(cat(path,@slice(physical,strlen(base),strlen(physical)),"/",name),"\\A\\./","")) :- ssp_directory(i,path,base), ssp_directory_walk(i,physical), dir_entry(physical,name,0), dir_metadata(physical,name,1,_,_), suffix(".py",name).
+.decl ssp_file_request(i: number, path: symbol, absolute: symbol)
+ssp_file_request(i,path,path) :- ssp_requested_file(i,path), prefix("/",path).
+ssp_file_request(i,path,cat(root,"/",path)) :- ssp_requested_file(i,path), !prefix("/",path), env("ssp.root",root).
+load(absolute,cat("ssp:",path),"python") :- ssp_file_request(_,path,absolute).
