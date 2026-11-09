@@ -7,9 +7,19 @@ export function withinCheckout(root: string, candidate: string): boolean {
   return !isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`);
 }
 
+/**
+ * The realpath every checkout key goes through. On Windows it is the native one, which spells each name as stored and
+ * the drive letter in upper case, as Git prints a top level: the JS realpath keeps the caller's spelling, so a session
+ * opened at `c:\work\app` (VS Code's spelling) never matched the checkout Git names `C:/work/app`, and no rule ran in
+ * it. Elsewhere it is the JS realpath, which keeps the case a macOS path was typed in (see {@link storedPath}).
+ */
+export function checkoutRealpath(platform: NodeJS.Platform = process.platform): (path: string) => string {
+  return platform === "win32" ? realpathSync.native : realpathSync;
+}
+
 /** The canonical location of `path`: its deepest existing ancestor resolved through symlinks, plus the part not yet created. */
 export function physicalPath(path: string): string {
-  return resolvedThrough(path, realpathSync);
+  return resolvedThrough(path, checkoutRealpath());
 }
 
 /**

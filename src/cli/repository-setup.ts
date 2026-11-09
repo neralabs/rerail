@@ -1,8 +1,9 @@
 import { existsSync, statSync } from "node:fs";
 import { readRemoteConfig } from "../runtime/remote-config.js";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { posix, win32 } from "node:path";
 import { and, eq } from "drizzle-orm";
+import { physicalPath } from "../engine/catalog/checkout-control.js";
 import type { RulesDashboardScope } from "../api/session-contracts.js";
 import { CODING_AGENT_NAMES, type ConnectResult } from "../setup/coding-agents.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
@@ -337,10 +338,22 @@ async function choose<K extends string>(run: Run, form: QuestionForm, keys: read
   }
 }
 
+/**
+ * The folder a typed answer names, absolute. `~` stands for the home folder, and on Windows so does `~\`, and one pair
+ * of double quotes around the answer goes: Explorer's "Copy as path" adds them, and no Windows file name holds one.
+ */
+export function folderFromAnswer(answer: string, home: string, platform: NodeJS.Platform = process.platform): string {
+  const windows = platform === "win32";
+  const paths = windows ? win32 : posix;
+  let trimmed = answer.trim();
+  if (windows && trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) trimmed = trimmed.slice(1, -1);
+  const fromHome = trimmed === "~" || trimmed.startsWith("~/") || (windows && trimmed.startsWith("~\\"));
+  return paths.resolve(fromHome ? paths.join(home, trimmed.slice(1)) : trimmed);
+}
+
 /** The repository at a folder the person named: its Git root, or the folder itself outside Git. */
 function repositoryAt(folder: string): Repository | undefined {
-  const trimmed = folder.trim();
-  const path = resolve(trimmed === "~" || trimmed.startsWith("~/") ? `${homedir()}${trimmed.slice(1)}` : trimmed);
+  const path = folderFromAnswer(folder, homedir());
   try {
     if (!statSync(path).isDirectory()) return undefined;
   } catch {
@@ -352,7 +365,8 @@ function repositoryAt(folder: string): Repository | undefined {
 
 const HOME_FOLDER_REFUSED = "Start Rerail inside a repository, not your home folder.";
 
-const isHomeFolder = (root: string): boolean => resolve(root) === resolve(homedir());
+// Through the stored spelling: Windows paths ignore case, and a home spelled `c:\users\me` is still the home folder.
+const isHomeFolder = (root: string): boolean => physicalPath(root) === physicalPath(homedir());
 
 /** The Git repository set-up ran in, if any. A plain folder, or the home folder, is no repository to offer. */
 function repositoryHere(cwd: string): Repository | undefined {

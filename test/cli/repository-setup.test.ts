@@ -1,7 +1,7 @@
 /** Set-up and the repository's own lint config, a database from before set-up, `rerail setup` itself, and rule packs from npm. */
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
@@ -18,7 +18,7 @@ vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
 });
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { listRepositoryRules, loadRuleCatalog, lookupCheckout, recordCheckout, ruleSettings } from "../../src/engine/index.js";
-import { runSetup, setupPacks, startRerail, startRerailStep } from "../../src/cli/repository-setup.js";
+import { folderFromAnswer, runSetup, setupPacks, startRerail, startRerailStep } from "../../src/cli/repository-setup.js";
 import { workspaceStartState } from "../../src/runtime/index.js";
 import { noBrowserReason, runSetupCommand, type SetupIo } from "../../src/cli/setup-cli.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
@@ -480,5 +480,20 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(loadRuleCatalog(storeHome).packs.get("typescript")?.version).toBe(TYPESCRIPT[0]!.version);
     expect(loadRuleCatalog().packs.size).toBe(0);
     expect(selected(setup)).toEqual(TS_PACKS);
+  });
+});
+
+describe("the folder a set-up answer names", () => {
+  it("reads a Windows path with ~\\ or the quotes Explorer's Copy as path adds", () => {
+    const home = String.raw`C:\Users\me`;
+    expect(folderFromAnswer(String.raw`~\code\app`, home, "win32")).toBe(String.raw`C:\Users\me\code\app`);
+    expect(folderFromAnswer("~/code/app", home, "win32")).toBe(String.raw`C:\Users\me\code\app`);
+    expect(folderFromAnswer(String.raw` "C:\x y" `, home, "win32")).toBe(String.raw`C:\x y`);
+    expect(folderFromAnswer("~", home, "win32")).toBe(home);
+  });
+
+  it("keeps POSIX answers as before", () => {
+    expect(folderFromAnswer("~/code/app", "/home/me", "linux")).toBe("/home/me/code/app");
+    expect(folderFromAnswer(String.raw`~\code`, "/home/me", "linux")).toBe(posix.resolve(String.raw`~\code`));
   });
 });

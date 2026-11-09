@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
-import { physicalPath } from "../catalog/checkout-control.js";
+import { checkoutRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { runGit } from "../git.js";
 import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits } from "../storage/schema.js";
@@ -79,7 +79,7 @@ function ancestors(path: string): string[] {
   for (let folder = dirname(path); folder !== folders.at(-1); folder = dirname(folder)) folders.push(folder);
   return folders;
 }
-function canonicalWorkspace(path: string): string { try { return realpathSync(path); } catch { return resolve(path); } }
+function canonicalWorkspace(path: string): string { try { return checkoutRealpath()(path); } catch { return resolve(path); } }
 function controls(
   databasePath: string,
   row: { cwd: string; endedAt: number | null },

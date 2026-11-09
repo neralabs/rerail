@@ -326,6 +326,13 @@ describe("rerail support-bundle", () => {
 describe("scrubText", () => {
   const scrub = (text: string): string => scrubText(text, { knownValues: [] });
 
+  it("takes out a known Windows path whatever case a log spells it in", () => {
+    const knownValues = [{ value: String.raw`D:\src\client-x`, label: "<checkout>" }];
+    expect(scrubText(String.raw`d:\src\client-x\a.ts and D:/SRC/Client-X/b.ts`, { knownValues })).toBe(String.raw`<checkout>\a.ts and <checkout>/b.ts`);
+    // A POSIX path keeps its case: another case is another folder there.
+    expect(scrubText("/src/Client-X/a.ts", { knownValues: [{ value: "/src/client-x", label: "<checkout>" }] })).toBe("/src/Client-X/a.ts");
+  });
+
   it.each([
     ["a GitHub token", "ghp_abcdefghijklmnopqrstuvwxyz0123456789"],
     ["a fine-grained GitHub token", "github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz"],

@@ -226,9 +226,11 @@ export function scrubText(text: string, { knownValues }: { knownValues: readonly
   for (const { value, label, word, pathOnly } of forms.sort((left, right) => right.value.length - left.value.length)) {
     // A home or checkout of `/`, as a container can have, would take every slash with it.
     if (value.length < 2) continue;
-    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, "gu"), () => label);
-    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, "gu"), () => label);
-    else scrubbed = scrubbed.replaceAll(value, () => label);
+    // Windows paths ignore case, and a host can spell one with another drive letter case than Git does (VS Code's `d:\`).
+    const flags = /^[A-Za-z]:[\\/]/u.test(value) ? "giu" : "gu";
+    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, flags), () => label);
+    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, flags), () => label);
+    else scrubbed = scrubbed.replace(new RegExp(escapeRegExp(value), flags), () => label);
   }
   for (const [pattern, replacement] of SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, replacement);
   return scrubbed;
