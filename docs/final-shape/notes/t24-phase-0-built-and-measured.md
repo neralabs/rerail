@@ -119,7 +119,7 @@ average was 10–46.
 | t23 step | state |
 |---|---|
 | 1. store the loader's answers and the read set, stat provider | built: the observer and the whole-run record |
-| 2. `#include` resolution in P0r, the module graph as the prepared key | half: includes are checked by stat; the prepared key is still the flattened text |
+| 2. `#include` resolution in P0r, the module graph as the prepared key | half: includes are checked by stat; the prepared key is still the flattened text (since t25: resolved by `bootstrap.rr`, keyed by the graph) |
 | 3. the Git provider | built: listing and blob aliases; per file by index stat, not unchanged prefixes by tree id |
 | 4. the validation scan | built, with its test |
 | 5. events | not asked for |

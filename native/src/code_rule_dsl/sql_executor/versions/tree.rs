@@ -285,36 +285,72 @@ impl<V: Clone> Node<V> {
         minus: &mut Vec<V>,
         visited: &mut usize,
     ) {
-        *visited += 1;
-        match (old, new) {
-            (None, _) => Self::visit(new, &mut |v| {
-                *visited += 1;
-                plus.push(v.clone());
-            }),
-            (_, None) => Self::visit(old, &mut |v| {
-                *visited += 1;
-                minus.push(v.clone());
-            }),
-            (Some(a), Some(b)) => {
-                assert!(
-                    a.hashed && b.hashed,
-                    "version differences require complete-row indexes"
-                );
-                if a.size == b.size && a.digest == b.digest {
-                    return;
-                }
-                if a.key == b.key {
-                    Self::difference(&a.left, &b.left, plus, minus, visited);
-                    Self::difference(&a.right, &b.right, plus, minus, visited);
+        // Compare borrowed bounded subtrees. Splitting an immutable tree just to
+        // inspect it would copy paths and calculate Merkle hashes during a read.
+        fn bounded<'a, V>(
+            mut root: &'a Link<V>,
+            lower: Option<&Key>,
+            upper: Option<&Key>,
+            visited: &mut usize,
+        ) -> &'a Link<V> {
+            while let Some(n) = root {
+                if lower.is_some_and(|k| n.key <= *k) {
+                    *visited += 1;
+                    root = &n.right;
+                } else if upper.is_some_and(|k| n.key >= *k) {
+                    *visited += 1;
+                    root = &n.left;
                 } else {
-                    let (left, found, right) = Self::split_counted(new, &a.key, visited);
-                    Self::difference(&a.left, &left, plus, minus, visited);
-                    if found.is_none() {
-                        minus.push(a.value.clone());
-                    }
-                    Self::difference(&a.right, &right, plus, minus, visited);
+                    break;
                 }
             }
+            root
         }
+        fn walk<V: Clone>(
+            old: &Link<V>,
+            new: &Link<V>,
+            lower: Option<&Key>,
+            upper: Option<&Key>,
+            plus: &mut Vec<V>,
+            minus: &mut Vec<V>,
+            visited: &mut usize,
+        ) {
+            *visited += 1;
+            let old = bounded(old, lower, upper, visited);
+            let new = bounded(new, lower, upper, visited);
+            match (old, new) {
+                (None, None) => {}
+                (Some(a), Some(b)) if a.size == b.size && a.digest == b.digest => {}
+                (Some(a), Some(b)) if a.key == b.key => {
+                    walk(&a.left, &b.left, lower, Some(&a.key), plus, minus, visited);
+                    walk(
+                        &a.right,
+                        &b.right,
+                        Some(&a.key),
+                        upper,
+                        plus,
+                        minus,
+                        visited,
+                    );
+                }
+                (Some(a), _) if new.is_none() || Node::before(a, new.as_ref().unwrap()) => {
+                    // The least-priority old root cannot occur in the new range.
+                    walk(&a.left, new, lower, Some(&a.key), plus, minus, visited);
+                    minus.push(a.value.clone());
+                    walk(&a.right, new, Some(&a.key), upper, plus, minus, visited);
+                }
+                (_, Some(b)) => {
+                    walk(old, &b.left, lower, Some(&b.key), plus, minus, visited);
+                    plus.push(b.value.clone());
+                    walk(old, &b.right, Some(&b.key), upper, plus, minus, visited);
+                }
+                _ => unreachable!(),
+            }
+        }
+        assert!(
+            old.as_ref().is_none_or(|n| n.hashed) && new.as_ref().is_none_or(|n| n.hashed),
+            "version differences require complete-row indexes"
+        );
+        walk(old, new, None, None, plus, minus, visited);
     }
 }

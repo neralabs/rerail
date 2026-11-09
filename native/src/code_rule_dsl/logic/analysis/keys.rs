@@ -108,3 +108,22 @@ impl Projection {
         Some(key)
     }
 }
+
+/// Individually unique producers remain unique when literal head tags separate every pair.
+pub(in crate::code_rule_dsl) fn union_support(producers: &[(bool, Vec<super::scalars::Expression>)]) -> Decision {
+    use super::scalars::Expression as E;
+    if producers.is_empty() || producers.iter().any(|(unique,_)| !unique) {
+        return Decision::new(false,"Every producer needs a witness uniqueness proof");
+    }
+    for (i,(_,a)) in producers.iter().enumerate() {
+        for (_,b) in &producers[..i] {
+            let disjoint = a.iter().zip(b).any(|(a,b)| match (a,b) {
+                (E::Integer(a),E::Integer(b)) => a != b,
+                (E::Text(a),E::Text(b)) => a != b,
+                _ => false,
+            });
+            if !disjoint { return Decision::new(false,"Producer head domains can overlap; support reconciliation is required"); }
+        }
+    }
+    Decision::new(true,"Unique witnesses and pairwise distinct literal head tags prove disjoint producer supports")
+}

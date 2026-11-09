@@ -27,7 +27,7 @@ impl Retained {
             Some(store),
             true,
         )?;
-        for rule in &self.rules {
+        for rule in self.rules.iter() {
             owned_phase(
                 db,
                 objects,
@@ -98,7 +98,7 @@ impl Retained {
         }
         let store = w.versions.unwrap();
         let mut contributions = vec![];
-        for rule in &self.rules {
+        for rule in self.rules.iter() {
             let contexts = phase.relation(rule.width, &rule.context_query.render());
             let evaluated = phase.relation(
                 rule.width + self.width,

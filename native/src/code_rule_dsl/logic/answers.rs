@@ -196,6 +196,8 @@ pub(in crate::code_rule_dsl) fn split(prog: &Program) -> Option<Loading> {
         .flat_map(|r| r.body.iter().filter_map(Literal::atom))
         .filter(|a| cone.contains(&a.rel))
         .map(|a| a.rel.clone())
+        // An output made in the cone is handed on too, and written by the rest as its other outputs are.
+        .chain(prog.outputs.iter().filter(|o| cone.contains(*o)).cloned())
         .collect();
     let mut load = prog.clone();
     load.rules.retain(|r| cone.contains(&r.head.rel));
@@ -209,7 +211,7 @@ pub(in crate::code_rule_dsl) fn split(prog: &Program) -> Option<Loading> {
     load.gates.retain(|(g, _)| cone.contains(g));
     let mut rest = prog.clone();
     rest.rules.retain(|r| !cone.contains(&r.head.rel));
-    rest.outputs.retain(|o| !cone.contains(o));
+    rest.outputs.retain(|o| !cone.contains(o) || reads.contains(o));
     rest.lattice.retain(|rel, _| !cone.contains(rel));
     rest.gates.retain(|(g, _)| !cone.contains(g));
     rest.answers.clear();

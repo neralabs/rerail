@@ -68,6 +68,33 @@ def session_request(groups):
             "queries": ["SELECT count(*) FROM distance"]}
 
 
+def document_session_request(files, scalar_consumers=False, projection=False):
+    if files < 2:
+        raise ValueError("use at least two files")
+    def file(path, name):
+        return {"path": path, "language": "python", "source": f"def {name}(x):\n    return x + 1\n"}
+    initial = [file(f"f{i}.py", f"item_{i}") for i in range(files)]
+    edited = [file("f0.py", "renamed"), *initial[1:]]
+    program = ".decl name(n:node,s:symbol)\n.input name\n.decl names(s:symbol)\nnames(s) :- name(_,s).\n.decl level(n:node,d:max<>) widen 3\nlevel(n,0) :- name(n,_).\nlevel(n,d+1) :- level(n,d), d<2.\n.output names,level\n"
+    if not projection:
+        program = program.replace("names(s) :- name(_,s).\n", "names(s) :- name(_,s).\nnames(s) :- names(s).\n")
+    if scalar_consumers:
+        program = ".decl name(n:node,s:symbol)\n.input name\n.decl names(s:symbol)\nnames(s) :- name(_,s).\nnames(s) :- names(s).\n.decl total(n:number)\ntotal(n) :- n=count : {name(_,_)}.\n.output names,total\n"
+    return {
+        "program": program,
+        "snapshot": {"files": initial},
+        "steps": [
+            {"snapshot": {"files": edited}, "limits": {"max_steps": 1}, "expected_error": "execution-limit"},
+            {"snapshot": {"files": edited}},
+            {"file_changes": {"delete": ["f1.py"], "upsert": [file("added.py", "added"), file("f0.py", "again")]}},
+            {"file_changes": {"upsert": [file("f0.py", "again")]}},
+            {"snapshot": {"files": initial}},
+            {"file_changes": {"delete": [f"f{i}.py" for i in range(files)]}},
+        ],
+        "queries": ["SELECT sym_text(c0) FROM names ORDER BY 1", "SELECT count(*) FROM " + ("total" if scalar_consumers else "level")],
+    }
+
+
 def cases(corpus):
     result = [(f"update-recursive-lattice-{groups}", recursive_lattice(groups)) for groups in [1000, 10000]]
     for n in [64, 128, 256, 512, 1024]:
@@ -423,7 +450,26 @@ def main():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] == ["--session-request"]:
+    if sys.argv[1:2] == ["--recursive-edit-request"]:
+        parser = argparse.ArgumentParser(description="Generate repeated sparse recursive edits for CPU measurements.")
+        parser.add_argument("--recursive-edit-request", type=int, required=True, metavar="REGIONS")
+        parser.add_argument("--cycles", type=int, default=10)
+        parser.add_argument("output", type=Path)
+        args = parser.parse_args()
+        if args.recursive_edit_request < 18 or args.cycles < 1:
+            parser.error("use at least 18 regions and one cycle")
+        request = recursive_lattice(args.recursive_edit_request)
+        request["changes"] *= args.cycles
+        args.output.write_text(json.dumps(request))
+    elif sys.argv[1:2] == ["--document-session-request"]:
+        parser = argparse.ArgumentParser(description="Generate snapshot and file-change replay with rollback and recovery.")
+        parser.add_argument("--document-session-request", type=int, required=True, metavar="FILES")
+        parser.add_argument("--scalar-consumers", action="store_true")
+        parser.add_argument("--projection", action="store_true")
+        parser.add_argument("output", type=Path)
+        args = parser.parse_args()
+        args.output.write_text(json.dumps(document_session_request(args.document_session_request, args.scalar_consumers, args.projection)))
+    elif sys.argv[1:2] == ["--session-request"]:
         parser = argparse.ArgumentParser(description="Generate a recursive request with rollback and recovery checks.")
         parser.add_argument("--session-request", type=int, required=True, metavar="REGIONS")
         parser.add_argument("output", type=Path)

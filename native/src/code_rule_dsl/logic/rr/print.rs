@@ -140,6 +140,7 @@ fn literal(l: &Literal, prog: &Program) -> Result<String, Error> {
                 AggOp::Min => format!("min {}", over()),
                 AggOp::Max => format!("max {}", over()),
                 AggOp::Sum => format!("sum {}", over()),
+                AggOp::Product => format!("product {}", over()),
                 AggOp::Join { by, sep } => {
                     let by: Vec<String> = by.iter().map(|k| var(k)).collect();
                     let by = if by.is_empty() { String::new() } else { format!(" by ({})", by.join(", ")) };

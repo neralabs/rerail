@@ -646,7 +646,9 @@ impl CoreRows {
                         self.str_part.push([n, i as i64, string(&v) as i64, at, i64::from(spec)]);
                     }
                     if wants_part_starts {
-                        let absolute = f.start[p.core[at as u32 as usize] as usize] + offset as u32;
+                        // `at` is a node id: its low bits are a preorder index only under preorder ids.
+                        let Some(at_local) = p.local_of(at as u32) else { continue };
+                        let absolute = f.start[p.core[at_local as usize] as usize] + offset as u32;
                         let (line, _, col) = p.extra.as_ref().expect("core spans").lines.place([absolute, absolute]);
                         self.str_part_start.push([n, i as i64, i64::from(line), i64::from(col)]);
                     }

@@ -300,6 +300,9 @@ already produces.
 - Libraries: `docs/rule-syntax/lib/python/{names,imports,calls,pytest}.rr`,
   `docs/rule-syntax/lib/core.rr`. Aggregates: `logic/rr/lower.rs`
   (`AggOp`)
-- Scratchpad (spike session): `collect_est.py` (the model), plus
-  `truth-full.json` / `truth-head.json` (real collection per file) and
-  `est-full-*.json` / `est-head-*.json` (per level)
+- The spike's files, copied from its session's scratchpad on
+  2026-11-08 into `notes/t13/`: `collect_est.py` (the model, a dev
+  tool), `pytest-collect.draft.rr` (the rules, not compiled),
+  `truth-full.json` / `truth-head.json` (real collection per file),
+  `est-full-6.json` / `est-head-6.json` (level 6, with `unresolved`)
+  and the level tables `est-*-levels*.txt`

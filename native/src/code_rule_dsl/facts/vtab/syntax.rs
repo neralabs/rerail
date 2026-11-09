@@ -377,19 +377,43 @@ pub(crate) fn comment_body(text: &str) -> &str {
     body.trim()
 }
 
-/// A file's nodes as `shape` numbers them (`node` ids are `key << 32 | local`): each local id's core id and kind name.
-/// For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
-pub(crate) fn numbering(doc: &Document, shape: Shape) -> StoreResult<Vec<(u32, &'static str)>> {
+/// A file's nodes as `shape` numbers them: each local id's core id and kind name, and the way from a node id's low
+/// 32 bits to its local id (they differ when nodes are numbered per definition, `DefIds`). For making guests from
+/// requests that name host nodes (decision 0055, `corpus::guests`).
+pub(crate) struct Numbering {
+    pub(crate) nodes: Vec<(u32, &'static str)>,
+    /// `(low, local)`, ascending, under `DefIds`; `None` when the low bits are the local id.
+    back: Option<Vec<(u32, u32)>>,
+}
+
+impl Numbering {
+    /// The local id of the node whose id's low 32 bits are `low`.
+    pub(crate) fn local(&self, low: u32) -> Option<u32> {
+        match &self.back {
+            None => Some(low),
+            Some(b) => b.binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| b[i].1),
+        }
+    }
+    /// The node whose id's low 32 bits are `low`: its local id, core id and kind.
+    pub(crate) fn at(&self, low: u32) -> Option<(u32, u32, &'static str)> {
+        let l = self.local(low)?;
+        self.nodes.get(l as usize).map(|&(id, k)| (l, id, k))
+    }
+}
+
+pub(crate) fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     // A document read as text only has no nodes.
     if doc.facts.len() == 0 {
-        return Ok(Vec::new());
+        return Ok(Numbering { nodes: Vec::new(), back: None });
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::new(tag)?;
     // In `core.rr`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
     let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&dialect), shape, false, guest);
-    Ok(p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect())
+    let nodes = p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect();
+    // The ids the projection gives (`Projected::id`): per definition where it numbered the document so.
+    Ok(Numbering { nodes, back: p.defs.map(|d| d.back) })
 }
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
@@ -2467,10 +2491,15 @@ pub(crate) fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)>
             let mut values: Vec<(i64, i64)> = (0..rows).map(|row| (source.value(row, c), docs[row])).collect();
             values.sort_unstable();
             let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
+            let shadow = crate::code_rule_dsl::logic::plan::sketch::shadowing();
+            let mut sketch = crate::code_rule_dsl::logic::plan::sketch::Sketch::default();
             let mut at = 0;
             while at < values.len() {
                 let v = values[at].0;
                 let end = at + values[at..].partition_point(|x| x.0 == v);
+                if shadow {
+                    sketch.add(v, (end - at) as i64);
+                }
                 ndv += 1;
                 sq += ((end - at) * (end - at)) as i64;
                 let mut d = at;
@@ -2481,6 +2510,9 @@ pub(crate) fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)>
                     d = de;
                 }
                 at = end;
+            }
+            if shadow {
+                crate::code_rule_dsl::logic::plan::sketch::shadow("measured", &name, rows as i64, ndv, sq, &sketch);
             }
             (name, rows as i64, ndv, sq, sqd)
         })

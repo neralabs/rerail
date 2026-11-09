@@ -78,6 +78,11 @@ enum Move {
     /// To a node nearer the root, and further from it (`Depths`).
     Shallower,
     Deeper,
+    /// To a greater and a smaller value, by `<` between two variables, where that is not document order: under node
+    /// ids per definition (`RERAIL_NODE_IDS=definition`, decision 0094 §2) a node's id follows preorder only inside
+    /// its granule, so `$a < $b` and a tree edge are moves in two orders, and a cycle may not mix them.
+    Greater,
+    Smaller,
 }
 
 impl Move {
@@ -89,13 +94,15 @@ impl Move {
             Move::Shorter => Move::Longer,
             Move::Shallower => Move::Deeper,
             Move::Deeper => Move::Shallower,
+            Move::Greater => Move::Smaller,
+            Move::Smaller => Move::Greater,
         }
     }
 
     /// The type of the values the move is between.
     fn ty(self) -> &'static str {
         match self {
-            Move::Later | Move::Earlier | Move::Shallower | Move::Deeper => "node",
+            Move::Later | Move::Earlier | Move::Shallower | Move::Deeper | Move::Greater | Move::Smaller => "node",
             Move::Longer | Move::Shorter => "sym",
         }
     }
@@ -118,6 +125,21 @@ fn base(prog: &Program) -> Moves {
         add(rel, 1, 0);
     }
     moves
+}
+
+/// Whether `<` between variables is its own order (`Move::Greater`), not document order: node ids per definition.
+fn by_value() -> bool {
+    crate::code_rule_dsl::facts::vtab::syntax::definition_ids()
+}
+
+/// The orders a node key may move along: document order, and under node ids per definition, values'
+/// (`Move::Greater`).
+fn ways() -> Vec<Move> {
+    let mut out = vec![Move::Later, Move::Earlier];
+    if by_value() {
+        out.extend([Move::Greater, Move::Smaller]);
+    }
+    out
 }
 
 /// A rule's variables' edges: `var → [(var, Some((move, strictly)) or None for the same value)]`. The head's
@@ -174,13 +196,17 @@ fn edges(rule: &Rule, moves: &Moves) -> Edges {
                     add(x, v, m);
                 }
             }
-            Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } => match *op {
-                "<" => add(x, y, Some((Move::Later, true))),
-                "<=" => add(x, y, Some((Move::Later, false))),
-                ">" => add(x, y, Some((Move::Earlier, true))),
-                ">=" => add(x, y, Some((Move::Earlier, false))),
-                _ => {}
-            },
+            Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } => {
+                // A node is its preorder index, so `<` moves later, unless ids are per definition (`Move::Greater`).
+                let (later, earlier) = if by_value() { (Move::Greater, Move::Smaller) } else { (Move::Later, Move::Earlier) };
+                match *op {
+                    "<" => add(x, y, Some((later, true))),
+                    "<=" => add(x, y, Some((later, false))),
+                    ">" => add(x, y, Some((earlier, true))),
+                    ">=" => add(x, y, Some((earlier, false))),
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
@@ -685,7 +711,7 @@ fn summarize(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
     let mut assumed = BTreeMap::<String, BTreeMap<(usize, usize), BTreeMap<Move, bool>>>::new();
     for rel in &rels {
         let entry = assumed.entry((*rel).clone()).or_default();
-        for way in [Move::Later, Move::Earlier, Move::Longer, Move::Shorter] {
+        for way in ways().into_iter().chain([Move::Longer, Move::Shorter]) {
             let cols = columns(prog, rel, way.ty());
             for &i in &cols {
                 for &j in cols.iter().filter(|&&j| j != i) {
@@ -750,7 +776,9 @@ fn count_step(rule: &Rule, bounds: &Bounds<'_>, edges: &Edges, head: Option<usiz
     let outside_value = |t: &Term| {
         rule.body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } if outside.contains(v) && r == t))
     };
-    let above = |x: &String| outside.contains(x) && reach(edges, x, b, Move::Earlier) == Some(true);
+    // A comparison is a move in values' order: document order's under preorder ids (`by_value`).
+    let smaller = if by_value() { Move::Smaller } else { Move::Earlier };
+    let above = |x: &String| outside.contains(x) && reach(edges, x, b, smaller) == Some(true);
     match rule.head.args.get(j)? {
         Term::Var(x) if x == b => Some(false),
         Term::Var(x) => rule
@@ -1013,7 +1041,7 @@ pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<Str
         let mut first = None;
         // Strings get only shorter: a longer one is no bound. Keys without counts first, then with them.
         let ok = [false, true].into_iter().any(|counted| {
-            [Move::Later, Move::Earlier, Move::Longer, Move::Shallower, Move::Deeper].into_iter().any(|way| {
+            ways().into_iter().chain([Move::Longer, Move::Shallower, Move::Deeper]).any(|way| {
                 let choices: Vec<(&str, Vec<Key>)> = component
                     .iter()
                     .filter(|rel| !functions.contains_key(rel.as_str()))

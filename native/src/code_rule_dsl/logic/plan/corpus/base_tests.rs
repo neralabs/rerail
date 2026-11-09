@@ -1142,8 +1142,9 @@ fn an_unbound_relation_is_named() {
     let fails = |out: &str, program: &str| {
         super::run(program, &dir, None, &dir.join(out), "program", Binding::Cpu, 1 << 18).err().map(|e| e.to_string()).unwrap_or_default()
     };
-    let e = fails(".out-git", ".decl v(p: symbol)\nv(p) :- git_tracked(p).\n.output v\n");
-    assert!(e.contains("git_tracked is read, and nothing derives it or binds it"), "{e}");
+    // `git_tracked` is a functor now (`@git_tracked`); `signed_list` is still a core.rr input no producer binds (O80).
+    let e = fails(".out-signed", ".decl v(p: symbol, e: symbol)\nv(p, e) :- signed_list(p, e).\n.output v\n");
+    assert!(e.contains("signed_list is read, and nothing derives it or binds it"), "{e}");
     let e = fails(".out-str", ".decl v(n: node)\nv(n) :- str_part(n, 0, _, _, _).\n.output v\n");
     assert!(e.contains("str_part is read") && e.contains("CPython"), "{e}");
     let e = fails(".out-mine", ".decl mine(n: node)\n.input mine\n.decl v(n: node)\nv(n) :- mine(n).\n.output v\n");

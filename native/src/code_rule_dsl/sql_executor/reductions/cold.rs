@@ -71,7 +71,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn execute(
         };
         if !state.ready {
             let _context = w.profile_scope(|| json!({"stage":"cold retained scalar initialization","relation":output,"logicalAnalysis":state.explain()}));
-            state.initialize(w.db, &mut run.objects, None)
+            state.initialize(w, &mut run.objects, None)
                 .map_err(|e| crate::content_store::StoreError::Invalid(e.reason))?;
             state.ready = true;
             state.cold_initialized = true;

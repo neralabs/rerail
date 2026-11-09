@@ -5,6 +5,7 @@ use parking_lot::RwLock;
 use std::cell::RefCell;
 mod bindings;
 mod bulk;
+mod difference;
 pub(super) mod fork;
 mod patch;
 mod probes;
@@ -24,6 +25,15 @@ pub(super) struct Schema {
     pub positive: BTreeMap<usize, bool>,
 }
 impl Schema {
+    fn valid_row(&self, values: &[Option<i64>]) -> bool {
+        values.len() == self.columns.len()
+            && values.iter().enumerate().all(|(c, v)| {
+                (v.is_some() || self.nullable[c])
+                    && self.positive.get(&c).is_none_or(|&strict| {
+                        v.is_some_and(|v| if strict { v > 0 } else { v >= 0 })
+                    })
+            })
+    }
     pub fn integers(width: usize, keys: usize) -> Self {
         Self {
             columns: (0..width).map(|i| format!("c{i}")).collect(),
@@ -196,6 +206,13 @@ impl Version {
         match (&self.full, &other.full) {
             (None, None) => true,
             (Some(a), Some(b)) => a.size == b.size && a.digest == b.digest,
+            _ => false,
+        }
+    }
+    pub fn shares_rows(&self, other: &Self) -> bool {
+        match (&self.full, &other.full) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -653,7 +670,9 @@ pub(super) struct Transaction<'a> {
     committed: bool,
 }
 impl Store {
-    pub fn current_scope(&self) -> usize { self.scope.get() }
+    pub fn current_scope(&self) -> usize {
+        self.scope.get()
+    }
     pub fn scope_mark(&self) -> usize {
         self.next_scope.get()
     }

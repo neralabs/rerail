@@ -234,13 +234,27 @@ Native positive phases can reconstruct pure contribution projections from retain
 Computed heads and checked predicates keep materialized results. Explain reports the proof and the applied storage choice.
 The reconstruction query uses shared immutable text across frames. Tree priorities use each key's existing digest without a duplicate node field.
 Validated unique primary prefixes already order complete rows, so bulk construction omits a second sort.
+A unique witness proof also permits incremental head-set differences without support grouping.
+Those differences supply output deltas directly. Other paths retain signed reconciliation.
+Equal ordered initial outputs can share validated roots within a phase. Version differences retain existing row cells and row IDs.
 
 `lower()` and `run()` include an `analysis` object with relation keys, key inferences, rule uniqueness, and scalar compatibility checks.
 `explain()` adds retained cache choices, cold reuse decisions, shared lookup counts, native publication strategies, and recursive operator analyses.
 Its `scalar_storage` reports include global families, representative witnesses, candidate partitions, and named storage groups.
 Rule reports identify context stores, reconstructed contributions, retained contribution stores, and support-phase admission decisions.
 It also reports opaque SQL producers. Rejected optimizations include their reasons.
-The native planner records the same logical analysis in its existing explain report. SQL applies the optimizations described here.
+The native planner also applies the shared bag analysis to count, sum, min, and max steps.
+Compatible consumers share one fold per demanded group and input version, including consumers in separate rules.
+Each consumer keeps its own lookup mapping. Count can adopt one compatible value family without connecting different value expressions.
+Rebound inputs own new caches. Component caches distinguish the complete relation from each visible delta range.
+Dependent scalars retain separate evaluation. Ordered strings and unsupported expressions retain their SQL fallback.
+
+Native sums retain wide values through aliases and check the final range when an operation observes the value.
+Filters can remove rows before that use. Unused sum bindings retain no range check.
+Native execution and SQL fallback use the same final sum range check.
+The generated `rr_exact_sum` aggregate preserves cancellation before that check. SQLite's built-in `sum` keeps its usual behavior.
+Native explain records the compatibility analysis, applied cache boundary, and sum contract.
+Profiling records the native summary fold and its inspected values.
 SQL profiling receipts include these proofs as `logicalAnalysis` and `logicalAnalyses` context fields.
 The generated Markdown and HTML profiles show them beside each query's SQLite plan and bytecode.
 
@@ -428,7 +442,8 @@ The connection belongs to the session, so Rust statements and cursors borrow tha
 
 ## Catalog and typed views
 
-After every run, removal and reset, the session rebuilds a catalog of its retained programs as temporary tables:
+Runs, removals, resets, and successful fact changes invalidate the catalog.
+A catalog query refreshes these temporary tables:
 - `rr_relation`, `rr_column`, `rr_rule`, `rr_atom` and `rr_plan` (`sql_executor/catalog.rs`);
 - for each relation, the typed view `rr_rel_<name>`, whose columns are the `.decl`'s names.
 
@@ -579,11 +594,26 @@ node scripts/profiling/sql-report.mjs --sql-session /tmp/sql-profile/raw /tmp/sq
 ```
 
 The report contains SQL text, EXPLAIN plans, bytecode, CPU time, VM instructions, and native table counters.
+Explain includes disjoint-producer proofs, dependent bag-storage decisions, and the requirements for shared transitions across wave gates.
+Shared transitions require the same input snapshot, prior summary roots, pending delta journal, projection, layout, and ordering.
+Each consumer retains its own lookup mapping and dependency index. Nullable values and opaque callbacks retain their existing effect boundaries.
 Contexts identify the API operation, preparation stage, recursive component, frame, relation, and rule step.
 Native version differences have separate operator records. Failed operations and rollback remain in the trace.
-Retained support initialization records its native CPU separately from child SQL.
+Retained support initialization records exclusive native CPU, excluding child SQL and child operators.
+
 Native table counters include compound-key prefix probes and candidate inspections, including candidates that SQLite rejects.
 The benchmark probe reuses this profiler when capture is active, preserving SQLite's single callback.
+
+Fully retained schedules expose immutable row-count metadata through `temp.wave_stats`.
+Edits publish those counts without helper SQL writes. Rollback restores the previous metadata snapshot.
+A later cold program atomically restores the writable SQL table before its scheduler runs.
+SQL views and text predicates can read the same count interface.
+
+Fused phase preparation has its own CPU span and report category.
+Its context records SQL bytes, CTE definitions, result branches, and logical reads.
+`explain()` describes result sharing and its evaluation boundary.
+A phase can distribute one materialized result to several destinations.
+Each destination retains its own key width and constraint checks.
 
 The standalone report is diagnostic. It does not supply an output oracle or grant performance acceptance.
 The existing complete-job execution allowance and missing-parity checks remain visible in the report.
@@ -602,7 +632,25 @@ The independent cold kernel runs in a separate process without SQL capture.
 Every checkpoint includes all explicit facts, derived relations, and widening counters.
 The adapter also compares output deltas, failed-operation rollback, recovery, and final queries.
 Integer cells use decimal strings, so JavaScript does not round them.
-Snapshot and file publication need separate replay support. The verifier rejects those requests.
+The verifier also accepts an initial `snapshot` and snapshot/file publication steps.
+Each step supplies exactly one action: `changes`, `snapshot`, or `file_changes`.
+`file_changes` uses the session API's `upsert` and `delete` fields.
+
+Every checkpoint includes the native inputs that the program reads, derived tables, projection views, and widening counters.
+Document checkpoints also compare every path, language, and source text.
+Symbols compare by text. Nodes compare by document path and local identity. Direct document-key copies compare by path.
+Numeric cells retain exact decimal strings. Queries that return symbols can use `sym_text` to compare their text across stores.
+Failure checkpoints preserve the previous facts and documents. Successful retries must match a fresh cold execution.
+
+The document generator covers replacement snapshots, file additions and deletions, no-op edits, restoration, and empty inputs:
+
+```sh
+python3 benchmark/sql-executor.py --document-session-request 32 /tmp/documents.json
+node scripts/profiling/sql-session.mjs target/profiling/examples/sql-session-verify /tmp/documents.json /tmp/sql-documents
+```
+
+`--projection` adds projection-view coverage. `--scalar-consumers` selects the mixed set/scalar fallback case.
+The report enforces the same complete-job allowance for every variant. Correct parity alone does not satisfy that allowance.
 
 `steps` supplies changes, optional limits, and an optional expected error class.
 The generated request includes instruction-limit and wave-limit failures, followed by a successful retry and six edits.

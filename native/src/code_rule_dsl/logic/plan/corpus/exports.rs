@@ -87,6 +87,48 @@ impl Exports {
         crate::code_rule_dsl::logic::native::component::columns_source(names, values)
     }
 
+    /// Each of export `rel`'s rows held so far, read where it is held (`width` columns).
+    pub(super) fn each_row(&self, rel: &str, width: usize, mut f: impl FnMut(Vec<i64>)) {
+        match self.rels.get(rel) {
+            Some(Held { source: Some(s), .. }) => (0..s.len()).for_each(|r| f((0..width).map(|c| s.value(r, c)).collect())),
+            Some(Held { source: None, columns, .. }) if columns.len() >= width => {
+                (0..columns.first().map_or(0, Vec::len)).for_each(|r| f(columns[..width].iter().map(|col| col[r]).collect()))
+            }
+            _ => {}
+        }
+    }
+
+    /// Export `rel`'s rows held so far whose column `at` is a node of one of `documents` (`memo::document_of`):
+    /// a load's new documents' rows, for the cone of requests that asked for them.
+    pub(super) fn rows_of(&self, rel: &str, width: usize, at: usize, documents: &std::collections::HashSet<i64>) -> Vec<Vec<i64>> {
+        let columns: &[Vec<i64>] = match self.rels.get(rel) {
+            Some(Held { source: None, columns, .. }) => columns,
+            Some(Held { source: Some(s), .. }) => {
+                return (0..s.len()).filter(|&r| documents.contains(&super::memo::document_of(s.value(r, at)))).map(|r| (0..width).map(|c| s.value(r, c)).collect()).collect();
+            }
+            None => return Vec::new(),
+        };
+        let Some(keys) = columns.get(at) else { return Vec::new() };
+        (0..keys.len()).filter(|&r| documents.contains(&super::memo::document_of(keys[r]))).map(|r| columns.iter().map(|col| col[r]).collect()).collect()
+    }
+
+    /// Visits held rows without a scratch SQL table or a second column store.
+    pub(super) fn visit(&self,rel:&str,width:usize,mut row:impl FnMut(&[i64])) {
+        let Some(held)=self.rels.get(rel) else {return;};
+        let mut cells=vec![0;width];
+        if let Some(source)=&held.source {
+            for r in 0..source.len() {
+                for (c,v) in cells.iter_mut().enumerate() {*v=source.value(r,c);}
+                row(&cells);
+            }
+        } else {
+            for r in 0..held.len() {
+                for (c,v) in cells.iter_mut().enumerate() {*v=held.columns[c][r];}
+                row(&cells);
+            }
+        }
+    }
+
     /// Export `rel` as a source of columns `c0…`: its rows, or none when no chunk added any. Made once. The rows
     /// move into it, and the set that kept them distinct is dropped.
     pub(super) fn source(&mut self, rel: &str, width: usize) -> Arc<dyn Source> {
