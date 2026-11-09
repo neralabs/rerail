@@ -106,7 +106,7 @@ def install(suite, module):
         parser.add_argument('--require-baseline',action='store_true',help='Require an existing ratchet baseline in CI mode')
         args=parser.parse_args()
         if args.sign_allowlist:
-            raise NotImplementedError('Native direct-execution allowlist signing is not yet ported')
+            return sign_allowlist()
         if not module.lint_signing.verify_allowlist('lint_impl_direct_execution',sorted(module.ALLOWED_FILES),module._ALLOWED_FILES_SIGNATURE):
             return cli_report('_cli_signature_failure',Path(module.__file__).parent.parent)['status']
         root=Path(module.__file__).parent.parent
@@ -125,3 +125,20 @@ def install(suite, module):
         return report['status']
 
     suite.replace(module,'cli_main',cli_main)
+
+    def sign_allowlist():
+        result=rows('_sign_request',options=dict(allowlistEntries=sorted(module.ALLOWED_FILES)))
+        if len(result)!=1 or result[0]['code']!='IDE_SIGN_REQUEST':raise ValueError('One native signing request is required')
+        request=result[0]['parameters']
+        replies=suite.sign_ed25519([dict(id=request['request_id'],key_env=request['key_env'],message=request['message'])])
+        if len(replies)!=1 or replies[0]['id']!=request['request_id']:raise ValueError('One matching signing response is required')
+        reply=replies[0];path=Path(module.__file__)
+        if reply['status']=='signed':
+            result=rows('_sign_update',options=dict(scriptSource=path.read_text(encoding='utf-8'),scriptPath=str(path),newSignature=reply['signature']))
+        else:
+            result=rows('_sign_error',options=dict(signStatus=reply['status'],signDetail=reply['detail']))
+        if len(result)!=1 or result[0]['code']!='IDE_SIGN_RESULT':raise ValueError('One native signing result is required')
+        value=result[0]['parameters']
+        if value['write_file']:path.write_text(value['updated_source'],encoding='utf-8')
+        sys.stdout.write(value['stdout']);sys.stderr.write(value['stderr'])
+        return value['status']

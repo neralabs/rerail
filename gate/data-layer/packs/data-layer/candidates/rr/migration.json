@@ -2318,7 +2318,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
-      "sha256": "e9f1202beae0703a78bea58ddd016cde1e9f3009d005c2312ce1ce2043e6df3d",
+      "sha256": "cc1c6a8ee318f23dca90bc68912ea945fb2ea5255d15447c8782b0c609fd9f10",
       "origin": "authored",
       "repairs": [
         {
@@ -2345,6 +2345,11 @@
           "before": "f7022ae92ca6e15b15128c38c79ecc557998c3b4e3738e7134e630e89f842904",
           "after": "e9f1202beae0703a78bea58ddd016cde1e9f3009d005c2312ce1ce2043e6df3d",
           "reason": "Implement native CLI discovery, signature verification and exact report formatting; nine original CLI assertions pass."
+        },
+        {
+          "before": "e9f1202beae0703a78bea58ddd016cde1e9f3009d005c2312ce1ce2043e6df3d",
+          "after": "cc1c6a8ee318f23dca90bc68912ea945fb2ea5255d15447c8782b0c609fd9f10",
+          "reason": "Implement native signing requests, error streams and exact signature source edits; 38 public-key fixture contracts pass."
         }
       ]
     },
@@ -2971,7 +2976,7 @@
       "legacySha256": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
-      "ruleSha256": "e9f1202beae0703a78bea58ddd016cde1e9f3009d005c2312ce1ce2043e6df3d"
+      "ruleSha256": "cc1c6a8ee318f23dca90bc68912ea945fb2ea5255d15447c8782b0c609fd9f10"
     },
     {
       "check": "raw_execute_regression",

@@ -180,3 +180,22 @@ IdeCliOutput(@place("",0),2,"",0,"\n--------------------------------------------
 .violation IdeCliExit(at: span, status: number, count: number) code "IDE_EXIT" "status"
 IdeCliExit(@place("",0),1,0) :- option("entryPoint",entry), (entry = "_cli_missing" ; entry = "_cli_signature_failure").
 IdeCliExit(@place("",0),0,n) :- option("entryPoint","_cli_format"), n = count : { ide_cli_row(_,_,_,_) }.
+
+allow_sig("ide-signing","lint_impl_direct_execution","UNSIGNED") :- option("entryPoint","_sign_request").
+allow_entry("ide-signing",value) :- option("entryPoint","_sign_request"), option_item("allowlistEntries",_,value).
+.violation IdeSignRequest(at: span, request_id: symbol, key_env: symbol, message: symbol) code "IDE_SIGN_REQUEST" "Signing request"
+IdeSignRequest(@place("",0),"impl_direct_execution.signing","NERA_SIGNING_KEY",message) :- option("entryPoint","_sign_request"), allow_message("ide-signing",message).
+
+.violation IdeSignResult(at: span, status: number, write_file: number, updated_source: symbol, stdout: symbol, stderr: symbol) code "IDE_SIGN_RESULT" "Signing result"
+IdeSignResult(@place("",0),1,0,"","","ERROR: NERA_SIGNING_KEY environment variable not set.\nOnly the user may have access to NERA_SIGNING_KEY. Ask the user to run the documented `uv run ... --sign-allowlist` command in an environment where the key is already present.\nAI agents must never have access to this proof-of-human key and must never try to obtain it.\n") :- option("entryPoint","_sign_error"), option("signStatus","missing-key").
+IdeSignResult(@place("",0),1,0,"","","ERROR: NERA_SIGNING_KEY must be 32 bytes\n") :- option("entryPoint","_sign_error"), option("signStatus","key-length").
+IdeSignResult(@place("",0),1,0,"","",cat("ERROR: Failed to decode NERA_SIGNING_KEY: ",detail,"\n")) :- option("entryPoint","_sign_error"), option("signStatus","invalid-hex"), option("signDetail",detail).
+
+// CPython's Unicode 15.1 str whitespace includes U+001C..U+001F in addition
+// to Unicode White_Space. Match the source's re.MULTILINE replacement exactly.
+.decl ide_signs_pattern(pattern: symbol)
+ide_signs_pattern(cat("(?m)^(_ALLOWED_FILES_SIGNATURE(?:",space,"*:",space,"*str)?",space,"*=",space,"*)(?:\"[^\"]*\"|NEEDS_SIGNING|UNSIGNED)(.*)")) :- space = "[\\t\\n\\v\\f\\r \\x1c-\\x1f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]".
+.decl ide_signs_matched()
+ide_signs_matched() :- option("entryPoint","_sign_update"), option("scriptSource",source), ide_signs_pattern(pattern), @count_matches(pattern,source) > 0.
+IdeSignResult(@place("",0),0,1,@replace_all(source,pattern,cat("${1}\"",signature,"\"${2}")),cat("Updated _ALLOWED_FILES_SIGNATURE in ",path,"\n"),"") :- option("entryPoint","_sign_update"), option("scriptSource",source), option("newSignature",signature), option("scriptPath",path), ide_signs_pattern(pattern), ide_signs_matched().
+IdeSignResult(@place("",0),1,0,"","",cat("ERROR: Could not find _ALLOWED_FILES_SIGNATURE in ",path,"\n")) :- option("entryPoint","_sign_update"), option("scriptPath",path), !ide_signs_matched().
