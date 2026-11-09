@@ -333,6 +333,62 @@ hundred values). Every step equals a full run.
   step 3).
 - the key analysis is 0.28 s; its JSON `explain` (0.23 s) runs only while profiling.
 
+## Measured: DRed against counting, the data for the open choice (2026-11-09)
+
+O125 replay steps 06–08 (2, 6 and 6 files; every step equal to a full run), CPU time, load 25–45. Rows from
+`RERAIL_CROSS_DELTA_COUNTS=each`; derivations (every row a rule emitted, new or already held) from
+`RERAIL_SPIKE_DERIVATIONS` with `O125_DERIVATIONS=<dir>`; time from the strata's spans. A relation counts as
+recursive when it never ran as a stratum of its own; 79 of the 280 maintained relations are, nearly all in one
+component of 58 (`pv`, `bv`, `alook`, `cfn`, `found`, …).
+
+**Rows deleted by DRed against rows truly gone**
+
+| step | non-recursive: over-deleted / gone | recursive: over-deleted / gone |
+| --- | --- | --- |
+| 06 | 1,863 / 1,465 (1.3×) | 3,951 / 179 (22×) |
+| 07 | 6,148 / 3,914 (1.6×) | 8,785 / 658 (13×) |
+| 08 | 19,305 / 13,783 (1.4×) | 41,094 / 6,108 (6.7×) |
+
+The worst relation is `pv`: at step 08 it over-deletes 14,711 rows, and 448 are gone.
+
+**The cross-file part's strata, by kind (seconds)**
+
+| step | cross | non-recursive del / redo / ins | recursive del | recursive ins + redo | derived again, other |
+| --- | --- | --- | --- | --- | --- |
+| 06 | 9.3 | 0.40 / 0.32 / 0.93 | 0.57 | 3.76 | 0.54 |
+| 07 | 11.8 | 0.48 / 0.47 / 1.33 | 0.70 | 4.68 | 0.78 |
+| 08 | 14.7 | 0.53 / 0.46 / 1.38 | 1.54 | 6.63 | 0.69 |
+
+**Derivations emitted in the recursive component** (emitted / new rows)
+
+| step | del | redo | ins | the relations themselves |
+| --- | --- | --- | --- | --- |
+| 06 | 13,024 / 3,951 | 12,795 / 3,772 | 14,447 / 4,335 | 8,107 / 4,335 |
+| 07 | 24,100 / 8,785 | 23,160 / 8,127 | 60,135 / 17,624 | 25,751 / 18,047 |
+| 08 | 162,646 / 41,094 | 126,276 / 34,986 | 153,884 / 39,096 | 74,082 / 42,894 |
+
+A full run derives the recursive relations with 571,010 derivations, for 291,061 rows (1.96 a row); the other
+cross-file relations take 1.18 a row.
+
+What the data says:
+
+- **Non-recursive relations.** DRed already deletes close to what is gone (1.3–1.6×). Counting would save their
+  redo (about 0.3–0.5 s a step) and some of their del, and needs a count per row: about 1.1 M rows held, so 4–9 MB.
+  Small either way.
+- **Recursive relations.** This is where DRed costs: 13–22× over-deletion at small steps. Rederiving and
+  over-deleting is about 1.7 s of step 07's 11.8 s and about 3.9 s of step 08's 14.7 s (del, plus the redo share of
+  the ins + redo stratum by derivations). Plain counting is not exact here: rows in a cycle hold each other's counts
+  above zero. The choices are DRed, a counting scheme that holds across cycles (derivation depth, or
+  backward–forward), or deriving the component again.
+- **Deriving the component again.** At step 08 DRed emits 517 k derivations in the recursive component; deriving it
+  from scratch takes 571 k. At step 07 it is 133 k against 571 k. So by step 08's size, §4's threshold would derive
+  this component again.
+
+The caveats:
+- Emitted rows approximate derivations: a semi-naive wave with two delta literals can find one derivation twice.
+- Recursive versus not is taken from the strata's spans, not the program.
+- This is one replay over one 84-file repository.
+
 ## What the prior work says
 
 - **Target architecture (03):**

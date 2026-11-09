@@ -345,9 +345,14 @@ impl Cands<'_> {
     }
 }
 
-/// New tuples of one relation found in a wave, flat; duplicates are dropped when they are pushed.
+/// New tuples of one relation found in a wave, flat; duplicates are dropped when they are pushed. `emitted`: every
+/// row a rule derived this wave, new or not (`RERAIL_SPIKE_DERIVATIONS`: the derivations a counting scheme would
+/// count).
 #[derive(Clone, Default)]
-struct Fresh { data: Vec<i64>, n: usize }
+struct Fresh { data: Vec<i64>, n: usize, emitted: u64 }
+
+/// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the process.
+pub(crate) static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 impl Fresh {
     fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; }
 }
@@ -713,6 +718,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                 for (v, &ty) in vals.iter().zip(&types) {
                     row.push(read_value(ValueRef::from(v), ty, &mut syms).map_err(|e| err(format!("{}: {e}", store.rels[head].table)))?);
                 }
+                fresh[head].emitted += 1;
                 if !store.rels[head].contains(&row) { fresh[head].add(&row); }
             }
         }
@@ -776,6 +782,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
                         Term::Const(c) => *c,
                         Term::Cat(a, b) => cat(syms, slots[*a], slots[*b]),
                     }));
+                    fresh[rule.head].emitted += 1;
                     if !store.rels[rule.head].contains(&row) { fresh[rule.head].add(&row); }
                 };
                 if !rule.has_edge { emit(&slots, store, &mut syms, &mut fresh); continue; }
@@ -793,10 +800,17 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         seeded = true;
         let mut any = false;
         let mut lo_of = vec![0; nrels];
+        let counting = std::env::var_os("RERAIL_SPIKE_DERIVATIONS").is_some();
         for (r, f) in fresh.into_iter().enumerate() {
             let rel = &mut store.rels[r];
             let (lo, k) = (rel.n, rel.k);
             for i in 0..f.n { any |= rel.push(&f.data[i * k..][..k]); }
+            if counting && f.emitted > 0 {
+                let mut all = DERIVATIONS.lock().unwrap();
+                let e = all.entry(rel.table.clone()).or_default();
+                e.0 += f.emitted;
+                e.1 += (rel.n - lo) as u64;
+            }
             lo_of[r] = lo;
             if !gates_done.contains(&r) { let hi = rel.n; rel.set_delta(lo, hi); }
         }
@@ -2504,6 +2518,7 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
             }
             cx.n += 1;
             if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
+            cx.fresh[cx.head].emitted += 1;
             if !store.rels[cx.head].contains(&cx.row) { cx.fresh[cx.head].add(&cx.row); }
             return;
         };

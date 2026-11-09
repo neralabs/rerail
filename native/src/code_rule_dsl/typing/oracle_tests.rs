@@ -1546,7 +1546,18 @@ fn spike_o125_replay() {
         }
     };
     session::start(&base.join("session")).unwrap();
+    // `O125_DERIVATIONS=<dir>` (with `RERAIL_SPIKE_DERIVATIONS`): each run's rows derived and rows new, by relation,
+    // `<dir>/<step>-<run>.tsv`: the derivations a counting scheme would keep a count of.
+    let derivations = |step: usize, what: &str| {
+        let taken = std::mem::take(&mut *crate::code_rule_dsl::logic::native::DERIVATIONS.lock().unwrap());
+        if let Some(dir) = std::env::var_os("O125_DERIVATIONS").map(PathBuf::from) {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("{step:02}-{what}.tsv")), taken.iter().map(|(r, (d, n))| format!("{r}\t{d}\t{n}\n")).collect::<String>()).unwrap();
+        }
+    };
+    derivations(0, "before");
     let cold = run();
+    derivations(a - 1, "cold");
     keep(a - 1, "cold");
     println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s; rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), outputs().iter().map(Vec::len).collect::<Vec<_>>());
     // `O125_FULL_ONLY`: each step a full run alone (to profile it apart from the session's runs).
@@ -1559,6 +1570,7 @@ fn spike_o125_replay() {
             continue;
         }
         let r = run();
+        derivations(step, "session");
         show_spans(step);
         keep(step, "session");
         let got = outputs();
@@ -1573,6 +1585,7 @@ fn spike_o125_replay() {
         }
         if std::env::var_os("O125_NO_FULL").is_none() && (each || step == b) {
             let f = session::full(run);
+            derivations(step, "full");
             keep(step, "full");
             let want = outputs();
             line += &format!("; full {:.1} s CPU, cross {:.1} s; same as full: {}", cpu(&f), phase(&f, "cross"), got == want);
