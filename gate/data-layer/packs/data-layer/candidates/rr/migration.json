@@ -1938,7 +1938,7 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
       "origin": "authored",
-      "sha256": "e2ecc29be31342e5917fc0ca67644de528a52f4fb562be73e37fee05fd2abd0e",
+      "sha256": "95cd068327a0cf2f61df5cf7f191587caa8cf71d4002697d87098a980e6c6168",
       "importedSha256": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730",
       "repairs": [
         {
@@ -1955,6 +1955,11 @@
           "before": "8878f8f4dc34215c1545e82054195df6f945dd37236bf610d8237a5081ea9177",
           "after": "e2ecc29be31342e5917fc0ca67644de528a52f4fb562be73e37fee05fd2abd0e",
           "reason": "Drive source-file execution through the existing typed SymbolGraph producer and native production scope"
+        },
+        {
+          "before": "e2ecc29be31342e5917fc0ca67644de528a52f4fb562be73e37fee05fd2abd0e",
+          "after": "95cd068327a0cf2f61df5cf7f191587caa8cf71d4002697d87098a980e6c6168",
+          "reason": "Complete extractor DTOs and enforce the actual production trigger-file scope, driven by successful native mismatches"
         }
       ]
     },
@@ -2432,7 +2437,7 @@
       "legacySha256": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
-      "ruleSha256": "e2ecc29be31342e5917fc0ca67644de528a52f4fb562be73e37fee05fd2abd0e"
+      "ruleSha256": "95cd068327a0cf2f61df5cf7f191587caa8cf71d4002697d87098a980e6c6168"
     },
     {
       "check": "serverplan_bypass",
@@ -3102,7 +3107,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
-        "sha256": "b945bb8c2e8eb3382f18daab9bd605d62ca57c658ef3d3113a10da2c4f141a6f"
+        "sha256": "aa173f855d5da20d7d7224c1fc18386f65964c96592f18562e94bf533d326c37"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
@@ -3114,7 +3119,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "ab99059cf125788cc498eb9870ee9e2033681628aec744e0a433b731ca6892e8"
+        "sha256": "6cfdc613e80bdee5e698624879712130f38c20076d2f46c62735da81a3cba100"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",

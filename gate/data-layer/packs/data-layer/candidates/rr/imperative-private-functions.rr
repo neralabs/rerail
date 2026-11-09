@@ -79,6 +79,12 @@ IPFError(@place("",0),0,sid) :- option("entryPoint",entry), (entry = "_should_se
 IPFError(@place("",0),i,sid) :- option("entryPoint","analyze_imperative_private_functions"), ipf_visit(sid,i), !sg_symbol(_,sid,_,_,_,_,_,_,_,_).
 .violation IPFFinding(at: span, sid: symbol, ordinal: number, reason: symbol, detail: symbol) code "IPF_FINDING" "finding"
 IPFFinding(@place("",0),sid,i,reason,detail) :- option("entryPoint",entry), (entry = "analyze_imperative_private_functions" ; entry = "analyze_source"), ipf_finding(sid,i,reason,detail).
+// Expose every extractor field in source reporter order, including private.
+.decl ipf_fact(sid: symbol, ordinal: number, path: symbol, line: number, qualname: symbol, private: number, reason: symbol, detail: symbol)
+ipf_fact(sid,rank,path,line,qual,private,reason,detail) :- ipf_finding(sid,i,reason,detail), ipfr_symbol(sid,path,line,qual), (private = 1, ipf_private(sid) ; private = 0, !ipf_private(sid)), rank = count : { ipf_finding(other,j,_,_), ipfr_symbol(other,p,l,_), (@str_cmp(p,path) < 0 ; (p = path,l < line) ; (p = path,l = line,j < i)) }.
+.violation IPFFact(at: span, symbol_id: symbol, ordinal: number, path: symbol, line: number, qualname: symbol, private: number, reason: symbol, detail: symbol) code "IPF_FACT" "fact"
+IPFFact(@place(path,line),sid,i,path,line,qual,private,reason,detail) :- option("entryPoint","analyze_source"), ipf_fact(sid,i,path,line,qual,private,reason,detail).
+
 .violation IPFCount(at: span, ordinal: number, path: symbol, count: number) code "IPF_COUNT" "file count"
 ipfr_mode("count") :- option("entryPoint","_by_file").
 ipfr_mode("text") :- option("entryPoint","_print_text").
@@ -94,15 +100,17 @@ IPFOutput(@place("",0),stage,i,text) :- ipfr_output(stage,i,text).
 .violation IPFExit(at: span, status: number) code "IPF_EXIT" "CLI status"
 IPFExit(@place("",0),1) :- option("entryPoint","_cli_exit"), option("cliCheck","true"), option_item("findingSymbols",_,_).
 IPFExit(@place("",0),0) :- option("entryPoint","_cli_exit"), (!option("cliCheck","true") ; !option_item("findingSymbols",_,_)).
+.decl ipf_plugin_enabled()
+ipf_plugin_enabled() :- dir_entry("scripts","lint_imperative_private_functions.py",0).
 .severity IPFDirect error
 .severity IPFEager error
 .severity IPFCalls error
 .violation IPFDirect(at: span, qualname: symbol, detail: symbol) code "direct_execution" "{qualname}: {detail}"
 .violation IPFEager(at: span, qualname: symbol, detail: symbol) code "eager_signature" "{qualname}: {detail}"
 .violation IPFCalls(at: span, qualname: symbol, detail: symbol) code "calls_imperative" "{qualname}: {detail}"
-IPFDirect(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_finding(sid,_,"direct_execution",detail), ipfr_symbol(sid,path,line,qual).
-IPFEager(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_finding(sid,_,"eager_signature",detail), ipfr_symbol(sid,path,line,qual).
-IPFCalls(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_finding(sid,_,"calls_imperative",detail), ipfr_symbol(sid,path,line,qual).
+IPFDirect(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_plugin_enabled(), ipf_finding(sid,_,"direct_execution",detail), ipfr_symbol(sid,path,line,qual).
+IPFEager(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_plugin_enabled(), ipf_finding(sid,_,"eager_signature",detail), ipfr_symbol(sid,path,line,qual).
+IPFCalls(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_plugin_enabled(), ipf_finding(sid,_,"calls_imperative",detail), ipfr_symbol(sid,path,line,qual).
 
 ipf_hint("path",0,"/connection").
 ipf_hint("path",1,"/graph_query").

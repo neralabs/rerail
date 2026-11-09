@@ -2815,6 +2815,10 @@ Item(@place("",0),t,v,i) :- python_set_rows(t,v,i,empty).
     let decoded = super::super::program_facts::decode(&super::super::program_facts::encode(&facts)).unwrap();
     let restored = super::super::program_facts::program(&decoded,"sets").unwrap();
     assert_eq!(restored.natives, program.natives);
+    let document = super::super::program_facts::document(&facts, &Default::default()).unwrap();
+    let document_facts = super::super::program_facts::document_facts(&document).unwrap();
+    assert_eq!(super::super::program_facts::program(&document_facts, "sets").unwrap().natives, program.natives);
+
     let printed = print(&restored).unwrap();
     assert_eq!(parse(&printed).unwrap().natives, restored.natives);
     let report = crate::code_rule_dsl::tools::run_rr(&rule,&root,&root.join("out"),&serde_json::json!({"inputFiles":[]})).unwrap();

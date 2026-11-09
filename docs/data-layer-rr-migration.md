@@ -2196,3 +2196,12 @@ The real-file corpus still fails one of 32 cases: reversing definitions exposes 
 The [failure receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-private-functions-order-red.json.gz) preserves the complete ordered difference.
 These checks precede the final source integration bytes. Final acceptance, plugin scope, production CLI, and lifecycle checks remain open.
 The inventory contains 91 drafts and nine absent translations. This rule is not complete.
+
+### 2026-11-08 — Final 6ae merge and imperative ordering
+
+Final `6ae30c48a` is merged. The native set-order operator passes five tests, including Unicode hashing, duplicate insertions, and growth to 50,001 values.
+The 96 frontend tests pass. The codec suite exposes duplicate AST-pattern metadata after the merge.
+The repair keeps one upstream writer and schema, while retaining legacy request recovery.
+The expanded real-file source recording contains 37 cases and actual plugin planning, extraction, and complete reporter results.
+Two [production mismatches](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-production-red.json.gz) expose missing extractor fields and a missing trigger-file gate.
+Those repairs now await a new engine build and acceptance rerun. Full migration acceptance remains open.
