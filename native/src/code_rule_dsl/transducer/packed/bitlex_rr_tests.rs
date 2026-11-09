@@ -111,6 +111,16 @@ const CASES: &[(&str, &str)] = &[
     ("r(x) :- s // c\n(x), t /* d */ (x).", "05"),
     ("r(n) :- n = count : { s(_) }.", "08"),
     ("r(-1).", "06"),
+    // Arithmetic: precedence, left to right; `-` and a number one leaf, across an extra too;
+    // unary minus over a primary; parentheses; functor calls.
+    ("r(x) :- s(y), x = y * 2 + -1, z = -(y - @f(x)) % 3.", "06"),
+    ("r(x) :- x = a - b - c, y = a + b * c - d / e % f, z = (a + b) * (c - d).", "06"),
+    ("r(- 1, - // c\n 2, -x, --1, -(1), - - x, -@f(1)).", "06"),
+    ("r(x) :- x + 1 > y, -x < 2, @f(x, -2) = 1, 1 + 2 ~ `a`, !x * 2 ~ `b`.", "06"),
+    ("r(k: v + 1, a * b: c) :- s(f(x) + g(y) * 2).", "06"),
+    // A call on a comparison's left, a `(` at a literal's start: later steps.
+    ("r(x) :- f(x) > 1.", "07"),
+    ("r(x) :- (x + 1) > 1.", "07"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.

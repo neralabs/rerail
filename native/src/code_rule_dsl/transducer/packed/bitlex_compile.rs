@@ -1397,8 +1397,12 @@ fn row_modes(
     // The states each level returns to.
     let mut returns: HashMap<u16, Vec<u16>> = HashMap::new();
     for a in arms {
-        if let Some(p) = a.push {
-            returns.entry(states[usize::from(a.to)].level).or_default().push(p);
+        // The innermost call returns from the level it enters; each outer one from the level of
+        // the call inside it, which it returns to.
+        let mut from = a.to;
+        for &p in a.push.iter().rev() {
+            returns.entry(states[usize::from(from)].level).or_default().push(p);
+            from = p;
         }
     }
     let root = states.first().ok_or("no states")?.level;

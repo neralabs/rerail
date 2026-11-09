@@ -69,7 +69,7 @@ Python needs too.
 | A8 | no opaque nodes | a `{…}` JSON object, a `raw_text`, are one leaf each | — | **opaque** nested nodes: their tokens make one leaf |
 | A9 | newlines are never tokens | a setting ends at its line's end; a declaration's tail is on one line | `NEWLINE` | **hidden tokens**: a token the grammar may name; in a state that does not name it, it is skipped and makes no node |
 | A10 | keywords are reserved everywhere they have rows | `decl` after a statement's `.` only; `count`, `min`, `code`, `fix` are words elsewhere | soft keywords | **soft keywords**: the keyword's kind only in a state with an arm for it, the word's kind elsewhere. **Done** (`keywords K { } soft { … }`) |
-| A11 | a nested level cannot start with another nested call, nor end optionally | `((a + b))`, an aggregate's body | suites, calls | lift both limits in the automaton. **Done** for ending optionally (§2.5); a call at a level's first token is still refused |
+| A11 | a nested level cannot start with another nested call, nor end optionally | `((a + b))`, an aggregate's body | suites, calls | lift both limits in the automaton. **Done** for ending optionally (§2.5), and for a call at a level's first token inside another: an arm makes every call it enters, outermost first (`PUSH` each), so the innermost returns first |
 | A12 | with a tree, a byte in no token is not refused by the compiled path | — | — | refuse it, as the evaluator does |
 | A13 | the file's end is no line break | a setting on the file's last line | NEWLINE at the end | **`mark K = E, end`**: the mark comes after the last token too. **Done** |
 | A14 | an extra's leaf goes where its token is | a comment after a setting's last word | comments, everywhere | **extras placed late** (§2.3). **Done** |

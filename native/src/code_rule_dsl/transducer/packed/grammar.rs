@@ -59,15 +59,16 @@ pub(in crate::code_rule_dsl) enum Act {
     /// between are its text (`merge 'K' A`).
     Merge { kind: u16 },
 }
-/// A transition: from a state, on a token of a kind, its acts, to a state; `push`: a call, which
-/// enters a nested level and keeps the state to return to.
+/// A transition: from a state, on a token of a kind, its acts, to a state; `push`: the calls it
+/// makes, each entering a nested level and keeping the state to return to, outermost first (a
+/// call at a level's first token makes one inside another).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::code_rule_dsl) struct ArmRow {
     pub(super) from: u16,
     pub(super) token: u16,
     pub(super) acts: Vec<Act>,
     pub(super) to: u16,
-    pub(super) push: Option<u16>,
+    pub(super) push: Vec<u16>,
 }
 
 /// The state machine as text, a line per state and per arm, for tests and dumps:
@@ -119,7 +120,7 @@ pub(super) fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 }
             }
         }
-        let push = arm.push.map_or(String::new(), |p| format!(" push {p}"));
+        let push: String = arm.push.iter().map(|p| format!(" push {p}")).collect();
         let _ = writeln!(out, "arm {} token {} to {}{push} do{acts}", arm.from, arm.token, arm.to);
     }
     out
@@ -432,7 +433,7 @@ fn closes(exits: &[Wrap], acts: &mut Vec<Act>) {
 struct Raw {
     level: usize,
     end: Option<u8>,
-    arms: Vec<(u16, Vec<Act>, usize, Option<usize>)>,
+    arms: Vec<(u16, Vec<Act>, usize, Vec<usize>)>,
 }
 
 /// The state machine of the tree section's rules in `stmts`.
@@ -500,9 +501,9 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
         from: Option<usize>,
         prefix: Vec<Act>,
         pending: Pending,
-        push: Option<usize>,
+        push: Vec<usize>,
         depth: usize,
-        out: &mut Vec<(u16, Vec<Act>, usize, Option<usize>)>,
+        out: &mut Vec<(u16, Vec<Act>, usize, Vec<usize>)>,
     ) -> Result<(), String> {
         if depth > 16 {
             return Err("calls nest at the first token without end".into());
@@ -516,7 +517,7 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
             match positions[q].1 {
                 Pos::Tok(kind, leaf) => {
                     acts.push(Act::Leaf { field: p.field, supers: p.supers, kind: leaf });
-                    out.push((kind, acts, q, push));
+                    out.push((kind, acts, q, push.clone()));
                 }
                 Pos::Merge { token, into } => {
                     if p.field != 0 || !p.supers.is_empty() {
@@ -526,13 +527,14 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
                         return Err("a merge after a node opens or closes: it joins the leaf just before".into());
                     }
                     acts.push(Act::Merge { kind: into });
-                    out.push((token, acts, q, push));
+                    out.push((token, acts, q, push.clone()));
                 }
                 Pos::Call(rule) => {
                     let child = level_of_rule[&rule];
-                    if push.is_some() {
-                        return Err("a call at a level's first token inside another: not handled".into());
-                    }
+                    // A call at the first token of a level entered by a call: both are made,
+                    // the outer one first, so the inner one returns first.
+                    let mut calls = push.clone();
+                    calls.push(q);
                     // A nested choice opens no node: the call's field and supertypes go to its
                     // first node, as an inlined choice's do.
                     let inner = if levels[child].own {
@@ -542,7 +544,7 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
                         p.supers.extend(levels[child].supertype);
                         p
                     };
-                    arms_from(levels, positions, level_of_rule, child, None, acts, inner, Some(q), depth + 1, out)?;
+                    arms_from(levels, positions, level_of_rule, child, None, acts, inner, calls, depth + 1, out)?;
                 }
             }
         }
@@ -557,8 +559,8 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
         let mut arms = Vec::new();
         // The root's start opens the root node first.
         let prefix = if from.is_none() && !whole { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![] }] } else { vec![] };
-        arms_from(&levels, &positions, &level_of_rule, level, from, prefix, Pending::default(), None, 0, &mut arms)?;
-        let arms: Vec<_> = arms.into_iter().map(|(t, a, q, push)| (t, a, state_of(q), push.map(state_of))).collect();
+        arms_from(&levels, &positions, &level_of_rule, level, from, prefix, Pending::default(), Vec::new(), 0, &mut arms)?;
+        let arms: Vec<_> = arms.into_iter().map(|(t, a, q, push)| (t, a, state_of(q), push.into_iter().map(state_of).collect::<Vec<_>>())).collect();
         let end = match from {
             // A whole root that may be empty ends at its start: the file has no token.
             None => (whole && root_empty).then_some(0),
@@ -594,10 +596,10 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
             class.push(c);
         }
         loop {
-            let mut sigs: Vec<(usize, Vec<(u16, &Vec<Act>, usize, Option<usize>)>)> = Vec::new();
+            let mut sigs: Vec<(usize, Vec<(u16, &Vec<Act>, usize, Vec<usize>)>)> = Vec::new();
             let mut next = Vec::with_capacity(raw.len());
             for (i, r) in raw.iter().enumerate() {
-                let mut arms: Vec<_> = r.arms.iter().map(|(t, a, q, p)| (*t, a, class[*q], p.map(|p| class[p]))).collect();
+                let mut arms: Vec<_> = r.arms.iter().map(|(t, a, q, p)| (*t, a, class[*q], p.iter().map(|&p| class[p]).collect::<Vec<_>>())).collect();
                 arms.sort_by_key(|a| a.0);
                 let sig = (class[i], arms);
                 let c = sigs.iter().position(|s| *s == sig).unwrap_or_else(|| {
@@ -625,9 +627,7 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
         order.push(i);
         for (_, _, q, p) in &raw[i].arms {
             queue.push_back(*q);
-            if let Some(p) = p {
-                queue.push_back(*p);
-            }
+            queue.extend(p.iter().copied());
         }
     }
     let mut states = Vec::new();
@@ -636,7 +636,7 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
         let r = &raw[i];
         states.push(StateRow { level: levels[r.level].kind, own: levels[r.level].own, end: r.end });
         for (token, acts, q, p) in &r.arms {
-            arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.map(|p| number[&class[p]]) });
+            arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.iter().map(|&p| number[&class[p]]).collect() });
         }
     }
     Ok((states, arms, whole))
@@ -672,7 +672,7 @@ pub(super) fn with_extras(
     if let Some(a) = arms.iter().find(|a| extras.contains(&a.token)) {
         return Err(format!("extra kind {} is a token of the grammar too", a.token));
     }
-    if arms.iter().any(|a| a.to == 0 || a.push == Some(0)) {
+    if arms.iter().any(|a| a.to == 0 || a.push.contains(&0)) {
         return Err("extras with the root's start state entered again: not compiled yet".into());
     }
     let root = states[0].level;
@@ -695,7 +695,7 @@ pub(super) fn with_extras(
     }
     if zero_takes {
         for &k in extras {
-            new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), Act::ExtraNow], to: opened, push: None });
+            new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), Act::ExtraNow], to: opened, push: Vec::new() });
         }
     }
     }
@@ -719,7 +719,7 @@ pub(super) fn with_extras(
         // puts it.
         if nested && end.is_some() {
             for &k in extras {
-                new_arms.push(ArmRow { from: s, token: k, acts: vec![Act::Extra], to: s, push: None });
+                new_arms.push(ArmRow { from: s, token: k, acts: vec![Act::Extra], to: s, push: Vec::new() });
             }
             s += 1;
             continue;
@@ -744,7 +744,7 @@ pub(super) fn with_extras(
                 for a in here {
                     let c = before + closes(&a.acts);
                     if marks.contains(&a.token) {
-                        if a.push.is_some() {
+                        if !a.push.is_empty() {
                             return None;
                         }
                         work.push((a.to, c, depth + 1));
@@ -776,11 +776,11 @@ pub(super) fn with_extras(
             let mut acts = vec![Act::Close; m];
             acts.push(Act::ExtraNow);
             for &k in extras {
-                new_arms.push(ArmRow { from: s, token: k, acts: acts.clone(), to, push: None });
+                new_arms.push(ArmRow { from: s, token: k, acts: acts.clone(), to, push: Vec::new() });
             }
         } else {
             for &k in extras {
-                new_arms.push(ArmRow { from: s, token: k, acts: vec![Act::Extra], to: s, push: None });
+                new_arms.push(ArmRow { from: s, token: k, acts: vec![Act::Extra], to: s, push: Vec::new() });
             }
         }
         s += 1;

@@ -177,7 +177,7 @@ impl Emit<'_> {
     fn body(&mut self, arm: usize) -> u16 {
         let at = self.pc();
         let a = &self.arms[arm];
-        let (token, to, ret) = (a.token, a.to, a.push);
+        let (token, to, ret) = (a.token, a.to, a.push.clone());
         for act in a.acts.clone() {
             let (supers, field) = match act {
                 Act::Close => {
@@ -237,19 +237,23 @@ impl Emit<'_> {
                 self.push("NODE_SUPER", 0, Arg::Kind(s));
             }
         }
-        // A call whose level ends at its first token: the level's closes, at this token's end,
-        // and on to the state it returns to; no call made.
+        // The calls, outermost first. When the innermost call's level ends at its first token:
+        // that level's closes, at this token's end, and on to the state it returns to; that call
+        // is not made.
         let st = &self.states[usize::from(to)];
         let ends_at_once = !self.arms.iter().any(|b| b.from == to);
-        match (ret, st.end) {
-            (Some(p), Some(c)) if ends_at_once => {
+        match (ret.split_last(), st.end) {
+            (Some((&p, outer)), Some(c)) if ends_at_once => {
+                for &o in outer {
+                    self.push("PUSH", 0, Arg::Return(o));
+                }
                 for _ in 0..c + u8::from(st.own) {
                     self.push("CLOSE", 1, Arg::None);
                 }
                 self.push("GOTO", 0, Arg::State(p));
             }
             _ => {
-                if let Some(p) = ret {
+                for &p in &ret {
                     self.push("PUSH", 0, Arg::Return(p));
                 }
                 self.push("GOTO", 0, Arg::State(to));
@@ -573,8 +577,7 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &
     // return entry of that shape: `TOKEN`, a `SWITCH` whose every way is the end, and the end,
     // its closes at the end of the token before and a return to switch on this one again.
     let mut returns: HashMap<u16, u16> = HashMap::new();
-    for a in arms {
-        let Some(p) = a.push else { continue };
+    for p in arms.iter().flat_map(|a| a.push.iter().copied()) {
         if e.words[usize::from(e.entry[usize::from(p)])].0 == "TOKEN" || returns.contains_key(&p) {
             continue;
         }
