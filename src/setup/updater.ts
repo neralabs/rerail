@@ -293,20 +293,32 @@ export function launcherShim(currentLink: string, nodePath: string, platform: No
 /**
  * The launcher Git Bash runs on Windows, `<home>/bin/rerail` beside `rerail.cmd`: Git Bash finds a command without
  * an extension or with `.exe`, never `rerail.cmd`.
+ *
+ * Git Bash's own window, mintty, hands a Windows program pipes, not a console, unless its pseudo console support is on
+ * (`enable_pcon` in `MSYS`). Node then reads stdin and stdout as no terminal, and set-up gave a person at that window the
+ * text it writes for a coding agent instead of its menu. Run from a terminal there, the launcher starts node through
+ * Git for Windows' winpty, which gives it a console, as Git for Windows' own `node` alias does. Windows Terminal and
+ * VS Code's terminal give node a console already, and pipes (an agent's shell) never get winpty.
  */
 export function gitBashShim(currentLink: string, nodePath: string): string {
-  return shLauncher(nodePath, windowsPath.join(currentLink, ENTRY_POINTS.cli));
+  return shLauncher(nodePath, windowsPath.join(currentLink, ENTRY_POINTS.cli), true);
 }
 
-function shLauncher(nodePath: string, cliPath: string): string {
+function shLauncher(nodePath: string, cliPath: string, mintty = false): string {
   const escapedSingleQuote = String.raw`'\''`;
   const quotedNodePath = `'${nodePath.replaceAll("'", escapedSingleQuote)}'`;
   const quotedCliPath = `'${cliPath.replaceAll("'", escapedSingleQuote)}'`;
+  const winpty = [
+    'if [ -t 0 ] && [ -t 1 ] && [ "${TERM_PROGRAM-}" = mintty ] && [ -x /usr/bin/winpty ]; then',
+    `  case "\${MSYS-}" in *enable_pcon*) ;; *) exec /usr/bin/winpty "$NODE" ${quotedCliPath} "$@" ;; esac`,
+    "fi",
+  ];
   return [
     "#!/bin/sh",
     `# ${LAUNCHER_HEADER}`,
     `NODE=${quotedNodePath}`,
     '[ -x "$NODE" ] || NODE=node',
+    ...(mintty ? winpty : []),
     `exec "$NODE" ${quotedCliPath} "$@"`,
     "",
   ].join("\n");

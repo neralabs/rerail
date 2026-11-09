@@ -251,7 +251,8 @@ On macOS and Linux, a block between `# >>> rerail >>>` and `# <<< rerail <<<` go
 The block adds the directory only when `PATH` lacks it, so a file sourced twice adds it once. On Windows the
 directory is appended to the user `Path` (`HKCU\Environment`), keeping that value's registry kind. The Windows
 launcher is `rerail.cmd`, with an sh launcher `rerail` beside it for Git Bash, which runs neither `.cmd` nor `.bat`
-files by bare name.
+files by bare name. In Git Bash's own window (mintty), which gives Windows programs pipes instead of a console, that
+launcher starts node through winpty, so set-up shows a person its menu.
 
 </details>
 
