@@ -970,7 +970,9 @@ impl Model {
             if let Literal::Atom(a) = l
                 && !a.neg
                 && a.rel == "kind"
-                && let (Term::Var(v), Some(k)) = (&a.args[0], constant(&a.args[1]))
+                // The keep chooser also prices projected input schemas.
+                && let [Term::Var(v), kind] = a.args.as_slice()
+                && let Some(k) = constant(kind)
             {
                 // Lowered programs' kinds are kind atoms, and their statistics are keyed by the atoms' text.
                 kinds.insert(v.as_str(), match k {
@@ -4066,7 +4068,7 @@ impl Run<'_, '_> {
                 .iter()
                 .enumerate()
                 .filter(|(_, l)| {
-                    matches!(l, Literal::Atom(a) if !a.neg && a.rel == "kind" && matches!((key, &a.args[0]), (Term::Var(k), Term::Var(x)) if k == x))
+                    matches!(l, Literal::Atom(a) if !a.neg && a.rel == "kind" && a.args.len() == 2 && matches!((key, &a.args[0]), (Term::Var(k), Term::Var(x)) if k == x))
                 })
                 .map(|(i, _)| i)
                 .collect();
