@@ -2318,25 +2318,35 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
-      "sha256": "1640380b412effd59d1a7b81bdccdd7f10e1168c26c2c2ff2820d95e43a54a4d",
+      "sha256": "a4416e300fd342797be230a0c98d6dea3f5a924b7dff6a427377378a542de5c9",
       "origin": "authored",
       "repairs": [
         {
           "before": "e19a658d8198c3e099fc3569d15cb96186e41cc1f63f6bf75058a82f6d3b9124",
           "after": "1640380b412effd59d1a7b81bdccdd7f10e1168c26c2c2ff2820d95e43a54a4d",
           "reason": "Implement production discovery and preserve separate logical path contexts for aliased documents."
+        },
+        {
+          "before": "1640380b412effd59d1a7b81bdccdd7f10e1168c26c2c2ff2820d95e43a54a4d",
+          "after": "a4416e300fd342797be230a0c98d6dea3f5a924b7dff6a427377378a542de5c9",
+          "reason": "Expose typed native settings for the unchanged original module assertions."
         }
       ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/impl-direct-settings.rr",
-      "sha256": "d925dc823b267d4345c6633d2c8897c6251588f9a65bde1ef4e35d4c5738906d",
+      "sha256": "d6f849202e58718c6ace0b91e0ea6062af623026ab451abecca6548e8119f240",
       "origin": "authored",
       "repairs": [
         {
           "before": "8993bacf60a47afe64c4135ec92ac37222fce3fe4a4e13f72ff1dc498589a4ab",
           "after": "d925dc823b267d4345c6633d2c8897c6251588f9a65bde1ef4e35d4c5738906d",
           "reason": "Implement production discovery and preserve separate logical path contexts for aliased documents."
+        },
+        {
+          "before": "d925dc823b267d4345c6633d2c8897c6251588f9a65bde1ef4e35d4c5738906d",
+          "after": "d6f849202e58718c6ace0b91e0ea6062af623026ab451abecca6548e8119f240",
+          "reason": "Expose typed native settings for the unchanged original module assertions."
         }
       ]
     }
@@ -2903,7 +2913,7 @@
       "legacySha256": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr",
-      "ruleSha256": "1640380b412effd59d1a7b81bdccdd7f10e1168c26c2c2ff2820d95e43a54a4d"
+      "ruleSha256": "a4416e300fd342797be230a0c98d6dea3f5a924b7dff6a427377378a542de5c9"
     },
     {
       "check": "raw_execute_regression",

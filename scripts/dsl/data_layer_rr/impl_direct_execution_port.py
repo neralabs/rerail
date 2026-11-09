@@ -16,7 +16,15 @@ def install(suite, module):
     for name,key,kind in [('ALLOWED_FILES','allowed_file',set),('ALLOWED_DIR_PATTERNS','allowed_dir_pattern',list),('DIRECT_EXECUTION_PATTERNS','direct_pattern',list),('FTS_MANAGER_DIRECT_EXECUTION_PATTERNS','fts_pattern',list)]:
         values=setting(key)
         if not values:raise ValueError('Native configuration omits '+name)
-        suite.replace(module,name,kind(values))
+        native_values=kind(values)
+        if kind is set:
+            # The host set's iteration order is not a rule contract. Keep its exact
+            # object for original caller fixtures after validating all native values.
+            if native_values!=getattr(module,name):raise ValueError('Native settings differ from caller metadata: '+name)
+        else:suite.replace(module,name,native_values)
+    signatures=setting('signature')
+    if len(signatures)!=1:raise ValueError('One native allowlist signature is required')
+    suite.replace(module,'_ALLOWED_FILES_SIGNATURE',signatures[0])
 
     def allowed(path):
         result = rows('is_allowed_file', options=dict(argumentPath=str(path)))

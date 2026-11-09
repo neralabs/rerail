@@ -7,6 +7,13 @@
 #include "python/ast.rr"
 #include "data-layer/impl-direct-settings.rr"
 
+.violation IdeSetting(at: span, setting: symbol, ordinal: number, value: symbol) code "IDE_SETTING" "{setting}"
+IdeSetting(@place("",0),"allowed_file",i,p) :- option("entryPoint","configuration"), ide_allowed_file(p), i = count : { ide_allowed_file(q), q < p }.
+IdeSetting(@place("",0),"allowed_dir_pattern",i,p) :- option("entryPoint","configuration"), ide_directory_pattern(i,p).
+IdeSetting(@place("",0),"direct_pattern",i,p) :- option("entryPoint","configuration"), ide_pattern(i,p,_).
+IdeSetting(@place("",0),"fts_pattern",i,p) :- option("entryPoint","configuration"), ide_pattern(i,p,_), i < 2.
+IdeSetting(@place("",0),"signature",0,p) :- option("entryPoint","configuration"), ide_allowlist_signature(p).
+
 .decl ide_allowed(path: symbol)
 ide_allowed(p) :- option("argumentPath",p), ide_allowed_file(p).
 ide_allowed(p) :- option("argumentPath",p), ide_allowed_file(a), suffix(cat("/",a),p).

@@ -2,7 +2,8 @@
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_impl_direct_execution.py
 // Source SHA256: dffc6a976ee9eb6ccf9e79e3c3fd5a07e4e63bc1c2090793bf7139a0e1652cf6
 .decl ide_allowed_file(path: symbol)
-.decl ide_allowed_pattern(pattern: symbol)
+.decl ide_directory_pattern(index: number, pattern: symbol)
+.decl ide_allowlist_signature(value: symbol)
 .decl ide_pattern(priority: number, pattern: symbol, attribute: symbol)
 ide_allowed_file("impl/browser/sqljs_sqlite3.py").
 ide_allowed_file("impl/common/l1000_cache/backends/sqlite.py").
@@ -32,53 +33,54 @@ ide_allowed_file("impl/common/l7350_revision_graph/revision_graph.py").
 ide_allowed_file("impl/common/l9700_sql_graph_query/sql_graph_query.py").
 ide_allowed_file("impl/l1595_llm_cache/write_back_queue.py").
 ide_allowed_file("impl/sqlite/native_async_wrapper.py").
-ide_allowed_pattern("(^|/)impl/[^/]+/connection\\.py$").
+ide_allowlist_signature("Pvh9rxI2uXfjv9O7TXWKFIr79T5ZK1Jn+ze2InORADbgAQxhn6yzGespKbkmBvr+rHt8dcYh1Cx/Y62VRYZeBg==").
+ide_directory_pattern(0,"impl/[^/]+/connection\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/connection\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/tests/").
+ide_directory_pattern(1,"impl/[^/]+/tests/").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/tests/",p).
-ide_allowed_pattern("(^|/)impl/common/.*/tests/").
+ide_directory_pattern(2,"impl/common/.*/tests/").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/common/.*/tests/",p).
-ide_allowed_pattern("(^|/)impl/.*/test_[^/]+\\.py$").
+ide_directory_pattern(3,"impl/.*/test_[^/]+\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/.*/test_[^/]+\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/introspector\\.py$").
+ide_directory_pattern(4,"impl/[^/]+/introspector\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/introspector\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/validator\\.py$").
+ide_directory_pattern(5,"impl/[^/]+/validator\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/validator\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/fts/").
+ide_directory_pattern(6,"impl/[^/]+/fts/").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/fts/",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/vector/").
+ide_directory_pattern(7,"impl/[^/]+/vector/").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/vector/",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/sql_batch\\.py$").
+ide_directory_pattern(8,"impl/[^/]+/sql_batch\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/sql_batch\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/transaction\\.py$").
+ide_directory_pattern(9,"impl/[^/]+/transaction\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/transaction\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/versioned_.*_transaction\\.py$").
+ide_directory_pattern(10,"impl/[^/]+/versioned_.*_transaction\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/versioned_.*_transaction\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/query\\.py$").
+ide_directory_pattern(11,"impl/[^/]+/query\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/query\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/graph_query\\.py$").
+ide_directory_pattern(12,"impl/[^/]+/graph_query\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/graph_query\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/deferred\\.py$").
+ide_directory_pattern(13,"impl/[^/]+/deferred\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/deferred\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/merge_strategy\\.py$").
+ide_directory_pattern(14,"impl/[^/]+/merge_strategy\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/merge_strategy\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/backend_operations\\.py$").
+ide_directory_pattern(15,"impl/[^/]+/backend_operations\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/backend_operations\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/query_instrumentation\\.py$").
+ide_directory_pattern(16,"impl/[^/]+/query_instrumentation\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/query_instrumentation\\.py$",p).
-ide_allowed_pattern("(^|/)impl/common/l2070_server_plan/sql_backend_executor\\.py$").
+ide_directory_pattern(17,"impl/common/l2070_server_plan/sql_backend_executor\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/common/l2070_server_plan/sql_backend_executor\\.py$",p).
-ide_allowed_pattern("(^|/)impl/[^/]+/backend_executor\\.py$").
+ide_directory_pattern(18,"impl/[^/]+/backend_executor\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/[^/]+/backend_executor\\.py$",p).
-ide_allowed_pattern("(^|/)impl/common/l3500_bulk_ops/database_importer\\.py$").
+ide_directory_pattern(19,"impl/common/l3500_bulk_ops/database_importer\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/common/l3500_bulk_ops/database_importer\\.py$",p).
-ide_allowed_pattern("(^|/)impl/common/l7050_versioned_schema_builder/polymorphic_widening\\.py$").
+ide_directory_pattern(20,"impl/common/l7050_versioned_schema_builder/polymorphic_widening\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/common/l7050_versioned_schema_builder/polymorphic_widening\\.py$",p).
-ide_allowed_pattern("(^|/)impl/common/l7100_versioned_operations/ddl_constraint_management\\.py$").
+ide_directory_pattern(21,"impl/common/l7100_versioned_operations/ddl_constraint_management\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)impl/common/l7100_versioned_operations/ddl_constraint_management\\.py$",p).
-ide_allowed_pattern("(^|/)l3200_metadata/schema_lock\\.py$").
+ide_directory_pattern(22,"l3200_metadata/schema_lock\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)l3200_metadata/schema_lock\\.py$",p).
-ide_allowed_pattern("(^|/)l5200_vector_index/content_addressable_pgvector\\.py$").
+ide_directory_pattern(23,"l5200_vector_index/content_addressable_pgvector\\.py$").
 ide_allowed(p) :- ide_path(p), match_all("(^|/)l5200_vector_index/content_addressable_pgvector\\.py$",p).
 ide_pattern(0,"\\._execute_direct_internal\\(","_execute_direct_internal").
 ide_raw_match(d,p,m,0) :- ide_active(d,p,0,_,_), source(d,sp), match_all("(?<m>\\._execute_direct_internal\\()",sp).
