@@ -450,10 +450,13 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                 let mut from = None;
                 let mut based: Option<(String, String)> = None;
                 let mut kept_base = false;
+                let mut seeded = false;
                 let mut t = 3;
                 while t < toks.len() {
                     match toks[t] {
                         "empty" => { empty = true; t += 1; }
+                        // With `base`: rows a SQL seed or the program's facts wrote to the table, added to it.
+                        "seeded" => { seeded = true; t += 1; }
                         "base" => {
                             let (old, gone) = (toks.get(t + 1).ok_or_else(|| err("rel: base needs two tables"))?, toks.get(t + 2).ok_or_else(|| err("rel: base needs two tables"))?);
                             based = Some((unhex(old)?, unhex(gone)?));
@@ -486,6 +489,9 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
                                 if !gone_rows.contains(&row) { rel.push(&row); }
                             }
                         }
+                    }
+                    if seeded {
+                        for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
                     }
                 } else if let Some(sql) = from {
                     for row in read_sql(conn, &sql, &rel.types.clone(), &mut syms)? { rel.push(&row); }
@@ -1305,7 +1311,8 @@ pub fn materialize(conn: &Connection, table: &str) -> Result<i64> {
     }
     // One statement: the rows come from `set_derived` (a scan of the native relation), not one INSERT each.
     let cols: Vec<String> = (0..rel.k).map(|i| format!("c{i}")).collect();
-    conn.execute(&format!("INSERT INTO {} SELECT {} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::table(table), cols.join(", ")), [table])?;
+    // OR IGNORE: a relation started from a kept one (`base … seeded`) holds rows its table has too.
+    conn.execute(&format!("INSERT OR IGNORE INTO {} SELECT {} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::table(table), cols.join(", ")), [table])?;
     Ok((rel.len() - rel.stored) as i64)
 }
 

@@ -1336,6 +1336,32 @@ fn spike_o125_replay() {
     };
     let phase = |r: &corpus::Report, name: &str| -> f64 { r.phases.iter().filter(|p| p.0 == name).map(|p| p.1 + p.2).sum() };
     let cpu = |r: &corpus::Report| -> f64 { r.phases.iter().map(|p| p.1 + p.2).sum() };
+    // `O125_SPANS`: each step's session spans, and its costliest span names summed over every stratum.
+    let spans_on = std::env::var_os("O125_SPANS").is_some();
+    if spans_on {
+        crate::code_rule_dsl::logic::profile::set(true);
+    }
+    let show_spans = |step: usize| {
+        if !spans_on {
+            return;
+        }
+        let spans = crate::code_rule_dsl::logic::profile::spans();
+        let mut by: BTreeMap<String, f64> = BTreeMap::new();
+        for (path, t) in spans.iter() {
+            let Some((_, rest)) = path.split_once("session/") else { continue };
+            if !rest.contains('/') {
+                println!("o125s {step:02}   {:>7.3} s  session/{rest}", t.total);
+            }
+            let last = rest.rsplit('/').next().unwrap_or(rest);
+            let name = if last.starts_with("stratum ") { "stratum (all)".to_owned() } else if last.starts_with("plan #") { "plan # (all rules)".to_owned() } else if last.starts_with("cold rule") { "cold rule (all)".to_owned() } else { last.to_owned() };
+            *by.entry(name).or_default() += t.total;
+        }
+        let mut v: Vec<_> = by.into_iter().collect();
+        v.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (name, t) in v.into_iter().take(14) {
+            println!("o125s {step:02}   {t:>7.3} s  (sum) {name}");
+        }
+    };
     session::start(&base.join("session")).unwrap();
     let cold = run();
     keep(a - 1, "cold");
@@ -1343,6 +1369,7 @@ fn spike_o125_replay() {
     for step in a..=b {
         let files = overlay(step);
         let r = run();
+        show_spans(step);
         keep(step, "session");
         let got = outputs();
         let mut line = format!(

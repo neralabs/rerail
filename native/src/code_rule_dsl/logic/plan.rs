@@ -3181,8 +3181,10 @@ impl Run<'_, '_> {
                 let cols = (0..prog.decls[*r].len()).map(|c| self.model.col(r, c)).collect::<Vec<_>>().join(", ");
                 let sql = format!("SELECT {cols} FROM {}", self.model.relation(prog, r, false).render());
                 rel_lines.push(format!("rel {r} {} from {}", types(r), hex(&sql)));
-            } else if let Some((old, gone)) = based.get(*r).filter(|_| prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r)) {
-                rel_lines.push(format!("rel {r} {} base {} {}", types(r), hex(old), hex(gone)));
+            } else if let Some((old, gone)) = based.get(*r) {
+                // Its survivors rule is gone: it starts from the kept relation, plus what facts or SQL seeds wrote.
+                let seeded = !(prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r));
+                rel_lines.push(format!("rel {r} {} base {} {}{}", types(r), hex(old), hex(gone), if seeded { " seeded" } else { "" }));
             } else {
                 let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
                 rel_lines.push(format!("rel {r} {}{}", types(r), if empty { " empty" } else { "" }));
