@@ -1132,7 +1132,8 @@ impl TapeImage {
             let flags = reader.u8()?;
             let alias = u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width"));
             let class_count = reader.u8()?;
-            if flags & !(CODE_EXTRA | CODE_ERROR | CODE_MISSING) != 0
+            let allowed = CODE_EXTRA | CODE_ERROR | CODE_MISSING | if widths[0] & NAMED_ONLY != 0 { CODE_TOKENS } else { 0 };
+            if flags & !allowed != 0
                 || (alias != SENTINEL && usize::from(alias) >= alias_count)
                 || usize::from(class_count) > MAX_NODE_SUPERTYPES
             {
@@ -1586,6 +1587,20 @@ impl TapeImage {
     #[cfg(test)]
     pub(super) fn aliased_nodes(&self) -> usize {
         (0..self.node_count()).filter(|&i| self.codes[usize::from(self.code_at(i))].alias != SENTINEL).count()
+    }
+
+    /// Whether this image is named-only (`tokens::fold`): its default tokens are not stored.
+    pub(in crate::code_rule_dsl) fn is_named_only(&self) -> bool {
+        self.widths[0] & NAMED_ONLY != 0
+    }
+
+    /// The full image of a named-only one over `source` (RER-131 stage A: a reader of stored
+    /// bytes that needs the full tree's preorder, as the SQL fallback's structure does).
+    pub(in crate::code_rule_dsl) fn unfolded(&self, grammar: &Arc<Grammar>, source: &str) -> Result<TapeImage, String> {
+        let source = Arc::new(source.to_owned());
+        let lines = Arc::new(LineTable::new(&source, Terminators::of(grammar.lang)));
+        let doc = TapeDoc::restore_tree(source, Arc::clone(grammar), self, lines, &|| false)?;
+        Ok((*doc.image).clone())
     }
 
     pub(super) fn node_count(&self) -> usize {
