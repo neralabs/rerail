@@ -77,3 +77,107 @@ fn a_tier2_program_holds_only_its_words() {
     let bad_return = RUN.replace("  0004 LEAF #2\n", "  0004 PUSH @0002\n");
     assert!(rir::assemble(&bad_return).is_err());
 }
+
+/// A root over `a(`: the `(` wraps the `a` leaf made before it (`WRAP`): the wrap takes the
+/// leaf's place, field and start, and the leaf gets its own field and kind (`NODE_FIELD m=1`,
+/// `RETAG m=1`). The wrap's record is made after the leaf's; at `ACCEPT` it goes before it.
+const WRAPPED: &str = "program -
+  mode set=0 query=0
+  block 0 %0 = eq 0x61
+  block 0 output %0
+  block 0 extract %0
+  block 0 mask %0
+  switch 0 at 0 end refuse
+  switch 0 0x61-0x61 @0002
+  switch 1 at 0 end refuse
+  switch 1 0x28-0x28 @0007
+  switch 2 at 0 end @0014
+  0000 TOKEN 0
+  0001 SWITCH T0
+  0002 OPEN #1
+  0003 SPAN 1
+  0004 LEAF #2
+  0005 TOKEN 0
+  0006 SWITCH T1
+  0007 SPAN 1
+  0008 WRAP #3
+  0009 NODE_FIELD m=1 #5
+  0010 RETAG m=1 #4
+  0011 LEAF #6
+  0012 TOKEN 0
+  0013 SWITCH T2
+  0014 CLOSE 0
+  0015 ACCEPT 0
+";
+
+/// The wrap's nodes, in preorder, from the interpreter and from Cranelift.
+#[test]
+fn a_wrap_goes_before_the_node_it_wraps() {
+    let p = rir::assemble(WRAPPED).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(rir::assemble(&rir::disassemble(&p, None)).expect("round trips").plain_digest(), p.plain_digest());
+    let t1 = tier1(&[0, 1], &[]);
+    let nodes = run(&p, b"a(", &t1).expect("parses");
+    let got: Vec<(u16, u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.field, n.start, n.end, n.size)).collect();
+    // The root; the wrap, from the leaf's start; the leaf, now kind 4 with field 5; the `(`.
+    let want = [(1, 0, 0, 2, 4), (3, 0, 0, 2, 3), (4, 5, 0, 1, 1), (6, 0, 1, 2, 1)];
+    assert_eq!(got, want);
+    let native = native_ir::lower(&p).expect("lowers");
+    let compiled = native_cpu_stream::compile(&native).expect("compiles");
+    assert!(compiled.wraps, "the tape has the wrap's columns");
+    assert_eq!(compiled.run(b"a(", &t1).expect("parses"), nodes);
+    // A wrap with no node made before it at its level: refused.
+    let first = WRAPPED.replace("  0004 LEAF #2\n", "  0004 RETAG #1\n");
+    assert!(run(&rir::assemble(&first).expect("assembles"), b"a(", &t1).is_err());
+}
+
+/// A root over `a a a`, each `a` after the first a call into a level that ends on the token
+/// after: at the stream's end the levels return one after another, each to switch on the end
+/// again (`RETURN m=1`), with no `TOKEN` between.
+const CHAINED: &str = "program -
+  mode set=0 query=0
+  block 0 %0 = eq 0x61
+  block 0 output %0
+  block 0 extract %0
+  block 0 mask %0
+  switch 0 at 0 end refuse
+  switch 0 0x61-0x61 @0002
+  switch 1 at 0 end @0016
+  switch 2 at 0 end @0015
+  switch 2 0x61-0x61 @0011
+  0000 TOKEN 0
+  0001 SWITCH T0
+  0002 OPEN #1
+  0003 SPAN 1
+  0004 LEAF #2
+  0005 PUSH @0007
+  0006 GOTO @0009
+  0007 TOKEN 0
+  0008 SWITCH T1
+  0009 TOKEN 0
+  0010 SWITCH T2
+  0011 SPAN 1
+  0012 LEAF #2
+  0013 PUSH @0009
+  0014 GOTO @0009
+  0015 RETURN m=1 0
+  0016 ACCEPT 0
+";
+
+/// Returns may chain: a cycle through a `RETURN` with no `TOKEN` is allowed, as each turn pops
+/// a call, and the calls are made between tokens. A `RETURN` reached from a `PUSH` before any
+/// `TOKEN` is refused: a call made and popped with no token between could turn without end.
+#[test]
+fn returns_chain_but_a_call_is_never_popped_at_once() {
+    let p = rir::assemble(CHAINED).unwrap_or_else(|e| panic!("{e}"));
+    let t1 = tier1(&[0, 2, 4], &[]);
+    let nodes = run(&p, b"a a a", &t1).expect("parses");
+    let got: Vec<(u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.start, n.end, n.size)).collect();
+    assert_eq!(got, [(1, 0, 5, 4), (2, 0, 1, 1), (2, 2, 3, 1), (2, 4, 5, 1)]);
+    let native = native_ir::lower(&p).expect("lowers");
+    let compiled = native_cpu_stream::compile(&native).expect("compiles: the return's block is a named loop head");
+    assert!(compiled.heads.iter().any(|h| h.1 == native_cpu_shape::Step::Return), "the return is a loop's head");
+    assert_eq!(compiled.run(b"a a a", &t1).expect("parses"), nodes);
+    let popped = CHAINED.replace("  0014 GOTO @0009\n", "  0014 GOTO @0015\n");
+    let e = rir::assemble(&popped).err().expect("a call popped at once");
+    assert!(e.contains("NonProgressingCycle"), "{e}");
+}

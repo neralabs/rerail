@@ -65,6 +65,9 @@ enum Arg {
     Table(u16),
     /// A state's entry, known once every state is laid out.
     State(u16),
+    /// Where a call returns to a state: its entry, or for a state that takes no token, its
+    /// return entry (`Emit::returns`).
+    Return(u16),
     /// A word's place.
     Pc(u16),
 }
@@ -185,8 +188,8 @@ impl Emit<'_> {
                     self.push("OPEN", 0, Arg::Kind(kind));
                     (supers, field)
                 }
-                Act::Leaf { field, supers } => {
-                    self.push("LEAF", 0, Arg::Kind(token));
+                Act::Leaf { field, supers, kind } => {
+                    self.push("LEAF", 0, Arg::Kind(if kind != 0 { kind } else { token }));
                     (supers, field)
                 }
                 Act::Extra => {
@@ -201,6 +204,17 @@ impl Emit<'_> {
                     self.push("MERGE", 0, Arg::Kind(kind));
                     continue;
                 }
+                Act::Wrap { kind, field, moved } => {
+                    // The wrap takes the moved node's field; then the moved node gets its own.
+                    self.push("WRAP", 0, Arg::Kind(kind));
+                    if field != 0 {
+                        self.push("NODE_FIELD", 1, Arg::Field(field));
+                    }
+                    if moved != 0 {
+                        self.push("RETAG", 1, Arg::Kind(moved));
+                    }
+                    continue;
+                }
             };
             if field != 0 {
                 self.push("NODE_FIELD", 0, Arg::Field(field));
@@ -209,10 +223,24 @@ impl Emit<'_> {
                 self.push("NODE_SUPER", 0, Arg::Kind(s));
             }
         }
-        if let Some(p) = ret {
-            self.push("PUSH", 0, Arg::State(p));
+        // A call whose level ends at its first token: the level's closes, at this token's end,
+        // and on to the state it returns to; no call made.
+        let st = &self.states[usize::from(to)];
+        let ends_at_once = !self.arms.iter().any(|b| b.from == to);
+        match (ret, st.end) {
+            (Some(p), Some(c)) if ends_at_once => {
+                for _ in 0..c + u8::from(st.own) {
+                    self.push("CLOSE", 1, Arg::None);
+                }
+                self.push("GOTO", 0, Arg::State(p));
+            }
+            _ => {
+                if let Some(p) = ret {
+                    self.push("PUSH", 0, Arg::Return(p));
+                }
+                self.push("GOTO", 0, Arg::State(to));
+            }
         }
-        self.push("GOTO", 0, Arg::State(to));
         at
     }
 
@@ -368,7 +396,8 @@ impl Emit<'_> {
         self.entry[s] = self.pc();
         if nested && mine.is_empty() {
             let Some(c) = st.end else { return Err(format!("state {s} takes no token and may not end")) };
-            for _ in 0..=c {
+            // A nested choice's level has no node of its own to close.
+            for _ in 0..c + u8::from(st.own) {
                 self.push("CLOSE", 1, Arg::None);
             }
             self.push("RETURN", 0, Arg::None);
@@ -402,7 +431,7 @@ impl Emit<'_> {
             None => REFUSE,
             Some(c) => {
                 let pc = self.pc();
-                for _ in 0..c + u8::from(nested) {
+                for _ in 0..c + u8::from(nested && st.own) {
                     self.push("CLOSE", 0, Arg::None);
                 }
                 self.push(if nested { "RETURN" } else { "ACCEPT" }, u8::from(nested), Arg::None);
@@ -525,14 +554,29 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &
     for s in 0..states.len() {
         e.state(s)?;
     }
-    // A return lands on a state's `TOKEN`.
+    // A return lands on a state's `TOKEN` (`RETURN m=0`, the token taken) or its `SWITCH`
+    // (`m=1`, to switch on it again). A state that takes no token, which closes at once, gets a
+    // return entry of that shape: `TOKEN`, a `SWITCH` whose every way is the end, and the end,
+    // its closes at the end of the token before and a return to switch on this one again.
+    let mut returns: HashMap<u16, u16> = HashMap::new();
     for a in arms {
-        if let Some(p) = a.push {
-            let p = usize::from(p);
-            if e.words[usize::from(e.entry[p])].0 != "TOKEN" {
-                return Err(format!("a call returns to state {p}, which takes no token: not compiled yet"));
-            }
+        let Some(p) = a.push else { continue };
+        if e.words[usize::from(e.entry[usize::from(p)])].0 == "TOKEN" || returns.contains_key(&p) {
+            continue;
         }
+        let st = &states[usize::from(p)];
+        let Some(c) = st.end else { return Err(format!("state {p} takes no token and may not end")) };
+        let at = e.pc();
+        e.push("TOKEN", 0, Arg::Num(STARTS));
+        let t = e.switches.len();
+        e.push("SWITCH", 0, Arg::Table(t as u16));
+        let end = e.pc();
+        e.switches.push(ByteSwitch { offset: 0, targets: vec![end; 256], end });
+        for _ in 0..c + u8::from(st.own) {
+            e.push("CLOSE", 0, Arg::None);
+        }
+        e.push("RETURN", 1, Arg::None);
+        returns.insert(p, at);
     }
     let mut text = String::new();
     use std::fmt::Write as _;
@@ -554,6 +598,7 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &
             Arg::Str(s) => write!(text, " s{s}"),
             Arg::Table(t) => write!(text, " T{t}"),
             Arg::State(s) => write!(text, " @{:04}", e.entry[usize::from(s)]),
+            Arg::Return(s) => write!(text, " @{:04}", returns.get(&s).copied().unwrap_or(e.entry[usize::from(s)])),
             Arg::Pc(p) => write!(text, " @{p:04}"),
         };
         text.push('\n');

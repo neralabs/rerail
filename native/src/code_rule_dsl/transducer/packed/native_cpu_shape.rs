@@ -8,7 +8,10 @@
 //!   - `File`: the next file of a batch;
 //!   - `Block`: the next 64 bytes;
 //!   - `Bits`: the next eight set bits of a mask (an extract's flattening);
-//!   - `Token`: the next token of tier 1's stream.
+//!   - `Token`: the next token of tier 1's stream;
+//!   - `Node`: the next record of the node table (placing the wraps at the end);
+//!   - `Return`: the next call of the call stack, popped (the words' verifier: no call is made
+//!     on a cycle without a token, so the returns are at most the calls).
 //!
 //!   So no loop steps a byte at a time. The check is on the graph: with the named blocks taken
 //!   out, it must have no cycle (a depth-first search), as the words' verifier cuts `TOKEN`'s
@@ -25,6 +28,8 @@ pub(super) enum Step {
     Block,
     Bits,
     Token,
+    Node,
+    Return,
 }
 
 /// Why a function was refused.

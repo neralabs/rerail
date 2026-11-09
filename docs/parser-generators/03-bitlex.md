@@ -95,9 +95,10 @@ directed acyclic graph of mask operations.
 | `escape "WHY" when E` | A construct the lexer does not handle: a file with a bit of `E` goes to tree-sitter (§2.5). |
 | `tree NAME { … }` | The tree section: the grammar of the tokens, for the tape (`18-tree-as-grammar.md`). It holds the statements below. |
 | `node KIND [nested] = G` | A node of `KIND` spans what grammar `G` matches. The first is the root. `nested`: it may contain itself, and runs on a stack frame. |
-| `choice NAME [supertype S] = A \| B …` | No node of its own; each alternative's node is in supertype `S`. |
+| `choice NAME [supertype S] [nested] = A \| B …` | No node of its own; each alternative's node is in supertype `S`. `nested`: it may use itself, and runs on a stack frame that opens no node. |
 | `'x'`, `NAME`, `f: X`, `A B`, `A \| B`, `[A]`, `A*`, `A+`, `(A)` | In a grammar: a keyword's kind; a token kind, node or choice; field `f` on the node `X` gives; sequence, alternative, optional, repetitions, grouping. |
 | `retag K A`, `merge 'K' A` | In a grammar: entering `A`, the innermost open node becomes a `K`; the token `A`'s leaf and the leaf before it become one leaf of kind `K` (extras between them are its text). |
+| `wrap K F [as M] REST`, `A as K` | In a grammar: a `K` around the last node made at this level, holding it and then `REST`; `K` takes that node's place and field, and the node takes field `F` (`_`: none) and kind `M`. The leaf of token `A` is a `K` (`24-rr-and-bitlex-plan.md` §2.1). |
 | `extra KIND …` | Nodes of these kinds carry the extra flag. |
 | `mark K = E [, end]`, `hidden K …` | A token of no width before the first grammar token at or after each bit of `E` (and after the last token, with `end`); a hidden mark is skipped where the grammar does not take it (`24-rr-and-bitlex-plan.md` §2.3). |
 

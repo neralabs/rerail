@@ -73,7 +73,8 @@ impl<'a> Parser<'a> {
                 (b | x, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.first(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) => self.first(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a),
+            Gram::Wrap { body, .. } => self.first(body),
         }
     }
 
@@ -199,6 +200,52 @@ impl<'a> Parser<'a> {
                 let me = *self.open.last()?;
                 self.out[me].kind = kind.clone();
                 Some(next)
+            }
+            Gram::As(kind, a) => {
+                let me = self.out.len();
+                let next = self.matches(a, at, follow)?;
+                if self.out.len() != me + 1 {
+                    return None;
+                }
+                self.out[me].kind = kind.clone();
+                Some(next)
+            }
+            Gram::Wrap { kind, field, moved, body } => {
+                // The node just made at this level: the innermost open node's last child.
+                let o = *self.open.last()?;
+                let mut c = None;
+                let mut j = o + 1;
+                while j < self.out.len() {
+                    c = Some(j);
+                    j += self.out[j].size.max(1);
+                }
+                let c = c?;
+                let was = (self.out[c].field.clone(), self.out[c].kind.clone());
+                let node = Node { kind: kind.clone(), field: was.0.clone(), supertypes: vec![], extra: false, start: self.out[c].start, end: 0, size: 0 };
+                self.out.insert(c, node);
+                self.out[c + 1].field = field.clone();
+                if let Some(m) = moved {
+                    self.out[c + 1].kind = m.clone();
+                }
+                let len = self.out.len();
+                self.open.push(c);
+                let r = self.matches(body, at, follow);
+                self.open.pop();
+                match r {
+                    Some(next) => {
+                        let end = (at..next).rev().find(|&i| !self.tokens[i].mark).map_or(self.out[c + 1].end, |i| self.tokens[i].end);
+                        self.out[c].end = end;
+                        self.out[c].size = self.out.len() - c;
+                        Some(next)
+                    }
+                    None => {
+                        // Undone: the tree as it was before the wrap.
+                        self.out.truncate(len);
+                        self.out.remove(c);
+                        (self.out[c].field, self.out[c].kind) = was;
+                        None
+                    }
+                }
             }
             Gram::Merge(kind, a) => {
                 // The leaf just before, and the token's: one leaf.

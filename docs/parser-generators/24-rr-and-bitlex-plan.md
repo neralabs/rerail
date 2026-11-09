@@ -63,18 +63,20 @@ Python needs too.
 | A2 | `rounds … until settled` is not compiled | comments that hide quotes; quotes that hide `//` | the same, f-strings | a fixed number of rounds per block, each a copy of the body; a file that does not settle falls back |
 | A3 | `text("…")` is refused | directive words: `.decl` is one token, `.mode` two | keywords in tier 1 | a chain of `next` tests |
 | A4 | a token's kind comes only from its first byte | `:` and `:-`, `<` and `<=` and `<:` | operators | one row per first byte, the longer spellings as keywords. **Done**: a row whose tokens run to their last byte tests each keyword, then takes the plain token |
-| A5 | no wrap: a node cannot start before the token that decides it | `a - b * c`, comparisons, `x ~ \`…\``, `;` | every binary, call and attribute chain | **wrap**: open a node at a saved anchor, around what came since (§2.1) |
+| A5 | no wrap: a node cannot start before the token that decides it | `a - b * c`, comparisons, `x ~ \`…\``, `;` | every binary, call and attribute chain | **wrap**: open a node around the last node made at this level (§2.1). **Done** (`wrap K F [as M]`, word `WRAP`) |
 | A6 | no retag: a node's kind is fixed when it opens | `.decl` and `.mode` both open at `.`; an atom and a call look alike until the token after | — | **retag** a node by the next token (§2.1). **Done** for the open node (`retag K A`, word `RETAG`); the node just closed is rr-07's |
 | A7 | no merge: two tokens cannot make one leaf | `.` and `decl` are one `.decl` leaf; `- 1` is one `number` leaf | — | **merge**: the previous leaf and this token become one leaf (§2.1). **Done** (`merge 'K' A`, word `MERGE`): the extras between are the leaf's text |
 | A8 | no opaque nodes | a `{…}` JSON object, a `raw_text`, are one leaf each | — | **opaque** nested nodes: their tokens make one leaf |
 | A9 | newlines are never tokens | a setting ends at its line's end; a declaration's tail is on one line | `NEWLINE` | **hidden tokens**: a token the grammar may name; in a state that does not name it, it is skipped and makes no node |
 | A10 | keywords are reserved everywhere they have rows | `decl` after a statement's `.` only; `count`, `min`, `code`, `fix` are words elsewhere | soft keywords | **soft keywords**: the keyword's kind only in a state with an arm for it, the word's kind elsewhere. **Done** (`keywords K { } soft { … }`) |
-| A11 | a nested level cannot start with another nested call, nor end optionally | `((a + b))`, an aggregate's body | suites, calls | lift both limits in the automaton |
+| A11 | a nested level cannot start with another nested call, nor end optionally | `((a + b))`, an aggregate's body | suites, calls | lift both limits in the automaton. **Done** for ending optionally (§2.5); a call at a level's first token is still refused |
 | A12 | with a tree, a byte in no token is not refused by the compiled path | — | — | refuse it, as the evaluator does |
 | A13 | the file's end is no line break | a setting on the file's last line | NEWLINE at the end | **`mark K = E, end`**: the mark comes after the last token too. **Done** |
 | A14 | an extra's leaf goes where its token is | a comment after a setting's last word | comments, everywhere | **extras placed late** (§2.3). **Done** |
 | A15 | two rows may not begin with one byte | `//` beside the `/` operator | `#` comments, `.` and `...` | **`ROW`**: a word tests a row's start mask at the token's start (§2.4). **Done** |
 | A17 | a keyword is at most 8 bytes | `violation` | `__future__`, `nonlocal` | `WORD` compares up to 64 bytes, 8 at a time, unrolled. **Done** |
+| A18 | a choice cannot use itself | a term inside a named argument's value | every expression | **nested choices**: `choice N nested`, a level with no node of its own (§2.5). **Done** |
+| A19 | a token's leaf has its token's kind | a word that is a variable, or a call's function, by the token after | names, attributes | **`A as K`**: the leaf of `A` is a `K`; a wrap gives the moved leaf its final kind. **Done** |
 | A16 | which rows a state can meet is not known | — (it keeps `ROW` off JSON's strings) | string prefixes, f-strings | **proofs over the block program and modes from toggles** (§2.4). **Done** |
 
 ### 2.1 Wrap, retag and merge
@@ -87,15 +89,29 @@ choice term    = product (wrap binary_expression left operator: ('+' | '-') righ
 choice product = unary (wrap binary_expression left operator: ('*' | '/' | '%') right: unary)*
 ```
 
-- **An anchor** is saved where a rule with a `wrap` takes its first token: the node table's
-  next index. A frame of a nested level holds its anchors.
-- **`wrap K f`** opens a `K` around everything since the anchor. The first node moved gives
-  `K` its field and takes `f`. A wrap nested in a repetition wraps again: `a - b - c` is
-  `(a - b) - c`.
+- **`wrap K F [as M] REST`** opens a `K` around the last node made at this level (the last
+  child of the innermost open node), then matches the rest of its sequence inside it. `K`
+  takes the moved node's place, field and start; the moved node takes field `F` (`_`: none)
+  and, with `as M`, kind `M`. In a repetition it wraps again: `a - b - c` is `(a - b) - c`.
+  Each operand is one node, so this is the Pratt scheme above: in `a + b * c`, the `*` wraps
+  `b`, the last node made inside the `+`.
+- **`A as K`**: the leaf of token `A` is a `K`. A word is a `variable` until the token after
+  makes it a call's function:
+
+  ```
+  choice term nested = number | string | '_' as wildcard
+                     | identifier as variable [wrap call function as identifier arguments: argument_list
+                                              | wrap named_argument name as identifier ':' value: term]
+  ```
+
 - The node table is written in preorder, so a wrap's node must go before nodes already
-  written. A wrap is written at the end of the table with a link to its anchor. The final
-  extract pass, which writes the tape, puts each wrap before the node it was anchored at: one
-  pass, linear, run only when a wrap was made.
+  written. Each open node's frame holds its subtree's base (the first of its records, by
+  when they were made) and the last node made at its level. A wrap's record is written at the
+  end of the table and linked into its base's chain. At `ACCEPT`, one generated pass over the
+  table writes it in preorder: each record in the order made, and before each its base's
+  chain, latest (outermost) first; a second pass maps the supertypes' nodes to their places.
+  Both run only when the file made a wrap, and a program without `WRAP` has no frames, no
+  chains and no pass.
 - **`retag`** changes a node's kind when the next token decides. `retag K A`: entering `A`,
   the innermost open node becomes a `K`. A statement opened at `.` is a setting until `decl`
   makes it a declaration:
@@ -113,6 +129,29 @@ choice product = unary (wrap binary_expression left operator: ('*' | '/' | '%') 
 A step reserves the words of what it does not parse yet: `keywords identifier { "edit" ->
 reserved … }`. The grammar never takes `reserved`, so a file with one goes to the engine's
 parser. The last step reserves nothing.
+
+### 2.5 Levels that end optionally, nested choices, chained returns
+
+A nested level is a call: `PUSH` the state to return to, and go to the level's start. Three
+things are new.
+
+- **A level may end where it could go on.** After a word, a term may end, or a `(` or a `:`
+  may wrap it. The state takes what its arms take and ends on any other token: it closes and
+  returns to switch on that token again (`RETURN m=1`). The reference tries what may come
+  before what follows; where that fails later, the reference may go back and the words refuse,
+  so the file goes to tree-sitter, never to a different tree. An extra in such a state is
+  deferred: the token after it, an arm's or the level's end, places it (§2.3).
+- **A nested choice** (`choice N nested`) is a level with no node of its own. Its call opens
+  nothing: the call's field and supertypes go to the level's first node, as an inlined
+  choice's do, and its end closes only what it opened inside.
+- **Returns chain.** A level that ends returns to a state that may end too, on the same
+  token. That is a cycle with no `TOKEN`, through `RETURN`. The verifier allows it: from a
+  `PUSH`, no `RETURN` is reached before a `TOKEN`, so a cycle with no `TOKEN` makes no call,
+  and each turn pops one. A file's returns are at most its calls. Cranelift names each
+  `RETURN` a loop's head (`Return`) where returns chain, and the tape's bounds count a
+  return's segment once per call. A call whose level ends at its first token makes no call:
+  the arm writes the level's closes and goes to the state it would return to. A state that
+  takes no token gets a second entry, of a state's shape, for returns to land on.
 
 ### 2.3 Line breaks: marks, hidden marks, extras placed late
 
@@ -251,9 +290,9 @@ reference on the corpus.
 | rr-01 | `//` comments, `#include "…"` | — |
 | rr-02 | settings: `.mode x`, `.scope "a", "b"`, the line's end, continued after a `,` | A3, A9 |
 | rr-03 | `.decl r(a: t, b: t<u>)` and its tail on the same line | A4 |
-| rr-04 | facts and clauses: heads, `:-`, atoms, numbers, strings, variables, `_` | A12 |
-| rr-05 | `!`, comparisons, `~` with backtick literals, strings and comments in either order | A1, A2, A5 |
-| rr-06 | arithmetic with precedence, unary `-`, `- 1` as one leaf, `( )`, `@f(…)`, `n: v` | A5, A7, A11 |
+| rr-04 | facts and clauses: heads, `:-`, atoms, numbers, strings, variables, `_`, calls, `n: v`, comparisons of single terms | A5, A11, A12, A18, A19 |
+| rr-05 | `!`, `must`/`may` heads, `~` with backtick literals, strings and comments in either order | A1, A2, A5 |
+| rr-06 | arithmetic with precedence, unary `-`, `- 1` as one leaf, `( )`, `@f(…)` | A5, A7, A11 |
 | rr-07 | `;` alternatives, groups, atom or call | A5, A6 |
 | rr-08 | aggregates: `count`, `min`, `max`, `sum`, `mean`, `join … by … sep` | A10 |
 | rr-09 | `.violation` (code, tag, fix, suppress, options), `=>` edits, JSON objects, `.policy {…}` | A8, A10 |

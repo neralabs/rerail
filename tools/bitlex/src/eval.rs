@@ -362,7 +362,7 @@ impl<'a> Ev<'a> {
                 }
                 tree.rules.push((kind.clone(), *nested, body.clone()));
             }
-            Stmt::Choice { name, supertype, body } => self.tree.get_or_insert_with(TreeDecl::default).choices.push((name.clone(), supertype.clone(), body.clone())),
+            Stmt::Choice { name, supertype, body, .. } => self.tree.get_or_insert_with(TreeDecl::default).choices.push((name.clone(), supertype.clone(), body.clone())),
             Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
             Stmt::Hidden(kinds) => self.tree.get_or_insert_with(TreeDecl::default).hidden.extend(kinds.iter().cloned()),
@@ -1169,6 +1169,6 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) => return Err("check: a field, a retag or a merge in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
     })
 }

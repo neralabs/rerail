@@ -6,6 +6,7 @@
 //! Cranelift lower the same words.
 
 use super::*;
+use std::collections::{HashMap, HashSet};
 
 /// A target that refuses: the file goes to tree-sitter.
 pub(in crate::code_rule_dsl) const REFUSE: u16 = u16::MAX;
@@ -27,7 +28,7 @@ impl ByteSwitch {
 
 /// Whether a word is one of tier 2's.
 pub(super) fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=MERGE).contains(&opcode)
+    (TOKEN..=WRAP).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -53,8 +54,10 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
         MARK => mode < 64 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
-        RETAG | MERGE => mode == 0,
-        NODE_FIELD => mode == 0 && operand != 0,
+        // `m=1`: the node a wrap moved.
+        RETAG => mode <= 1,
+        NODE_FIELD => mode <= 1 && operand != 0,
+        MERGE | WRAP => mode == 0,
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
@@ -117,11 +120,15 @@ pub(super) fn validate(program: &Program) -> Result<(), Error> {
     if starts.len() > 1 || lasts.len() > 1 {
         return Err(Error::InvalidOperand(0));
     }
-    // Every cycle passes a `TOKEN`: with `TOKEN`'s edges cut, the graph is acyclic.
-    let successors = |pc: usize| -> Vec<usize> {
+    // Every cycle passes a `TOKEN` or a `RETURN`: with their edges cut, the graph is acyclic.
+    // A `RETURN` pops a call, and from a `PUSH` no `RETURN` is reached before a `TOKEN` (below):
+    // a cycle with no `TOKEN` pushes nothing, so it turns at most once per call made, and calls
+    // are made only between tokens. The returns of a file are at most its calls.
+    let step = |pc: usize, cut_return: bool| -> Vec<usize> {
         let (opcode, mode, operand) = split(words[pc]);
         match opcode {
             STOP | ACCEPT | TOKEN => vec![],
+            RETURN if cut_return => vec![],
             GOTO => vec![usize::from(operand)],
             SWITCH => {
                 let s = &program.switches[usize::from(operand)];
@@ -136,6 +143,28 @@ pub(super) fn validate(program: &Program) -> Result<(), Error> {
             _ => vec![pc + 1],
         }
     };
+    let successors = |pc: usize| step(pc, true);
+    // From a `PUSH`, no `RETURN` before a `TOKEN`.
+    for (pc, &w) in words.iter().enumerate() {
+        if split(w).0 != PUSH {
+            continue;
+        }
+        let mut seen = vec![false; words.len()];
+        let mut todo = vec![pc];
+        while let Some(q) = todo.pop() {
+            for n in step(q, false) {
+                if n >= words.len() {
+                    return Err(Error::InvalidTarget(q));
+                }
+                if split(words[n]).0 == RETURN {
+                    return Err(Error::NonProgressingCycle(n));
+                }
+                if !std::mem::replace(&mut seen[n], true) {
+                    todo.push(n);
+                }
+            }
+        }
+    }
     // 0: unseen, 1: on the path, 2: done.
     let mut mark = vec![0u8; words.len()];
     for root in 0..words.len() {
@@ -227,6 +256,16 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
     };
     let mut nodes: Vec<Node> = Vec::new();
     let mut open: Vec<usize> = Vec::new();
+    // Wraps (docs/parser-generators/24-rr-and-bitlex-plan.md §2.5). Each open node's frame: its
+    // subtree's base (the first of its records, by when they were made) and the last node made
+    // at its level, as (record, base). A wrap's record goes at the table's end, linked into its
+    // base's chain (`head`, `link`); at `ACCEPT` each chain goes before its base, latest
+    // (outermost) first. `moved`: the node the last wrap moved.
+    let mut bases: Vec<usize> = Vec::new();
+    let mut lasts_made: Vec<Option<(usize, usize)>> = Vec::new();
+    let (mut head, mut link): (HashMap<usize, usize>, HashMap<usize, usize>) = (HashMap::new(), HashMap::new());
+    let mut wraps: HashSet<usize> = HashSet::new();
+    let mut moved = 0usize;
     let mut returns: Vec<u16> = Vec::new();
     let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
     loop {
@@ -310,9 +349,26 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                     pc += 1;
                 }
             }
+            RETAG if mode == 1 => nodes[moved].kind = operand,
             RETAG => {
                 let Some(&at) = open.last() else { return refuse(pc - 1, "a retag with no open node") };
                 nodes[at].kind = operand;
+            }
+            WRAP => {
+                let Some(Some((r, base))) = lasts_made.last().copied() else { return refuse(pc - 1, "a wrap with no node before it") };
+                let w = nodes.len();
+                let (field, start) = (nodes[r].field, nodes[r].start);
+                nodes[r].field = 0;
+                nodes.push(Node { kind: operand, field, supers: vec![], start, end: 0, size: 0 });
+                wraps.insert(w);
+                if let Some(h) = head.insert(base, w) {
+                    link.insert(w, h);
+                }
+                moved = r;
+                pending = 0;
+                open.push(w);
+                bases.push(base);
+                lasts_made.push(Some((r, base)));
             }
             MERGE => {
                 // The grammar's leaf before the pending extras, which are its text.
@@ -330,20 +386,33 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
             OPEN => {
                 pending = 0;
                 open.push(nodes.len());
+                bases.push(nodes.len());
+                lasts_made.push(None);
                 nodes.push(Node { kind: operand, field: 0, supers: vec![], start, end: 0, size: 0 });
             }
             CLOSE => {
                 let Some(at) = open.pop() else { return refuse(pc - 1, "a close with no open node") };
+                let base = bases.pop().expect("a frame per open node");
+                lasts_made.pop();
+                if let Some(l) = lasts_made.last_mut() {
+                    *l = Some((at, base));
+                }
                 nodes[at].end = if mode == 1 { end } else if pending > 0 { keep } else { last_end };
-                nodes[at].size = (nodes.len() - pending - at) as u32;
+                nodes[at].size = (nodes.len() - pending - base) as u32;
             }
             LEAF => {
                 if mode == 1 && pending == 0 {
                     keep = last_end;
                 }
                 pending = if mode == 1 { pending + 1 } else { 0 };
+                if mode == 0 {
+                    if let Some(l) = lasts_made.last_mut() {
+                        *l = Some((nodes.len(), nodes.len()));
+                    }
+                }
                 nodes.push(Node { kind: operand, field: 0, supers: vec![], start, end, size: 1 });
             }
+            NODE_FIELD if mode == 1 => nodes[moved].field = operand,
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
             PUSH => returns.push(operand),
@@ -358,7 +427,23 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 let at = open[0];
                 nodes[at].end = bytes.len() as u32;
                 nodes[at].size = (nodes.len() - at) as u32;
-                return Ok(nodes);
+                if head.is_empty() {
+                    return Ok(nodes);
+                }
+                // Each wrap before its base, outermost first; the wraps' own records are placed so.
+                let mut order = Vec::with_capacity(nodes.len());
+                for i in 0..nodes.len() {
+                    if wraps.contains(&i) {
+                        continue;
+                    }
+                    let mut c = head.get(&i).copied();
+                    while let Some(w) = c {
+                        order.push(w);
+                        c = link.get(&w).copied();
+                    }
+                    order.push(i);
+                }
+                return Ok(order.into_iter().map(|i| nodes[i].clone()).collect());
             }
             EMPTY => {
                 if tier1.totals[usize::from(operand)] != 0 {

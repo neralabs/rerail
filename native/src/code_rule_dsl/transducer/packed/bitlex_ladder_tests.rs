@@ -139,7 +139,8 @@ impl Lang {
             Gram::Seq(gs) => gs.iter().map(|g| self.cost(g)).fold(0, |a, b| (a + b).min(FAR)),
             Gram::Alt(gs) => gs.iter().map(|g| self.cost(g)).min().unwrap_or(FAR),
             Gram::Opt(_) | Gram::Star(_) => 0,
-            Gram::Plus(g) | Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) => self.cost(g),
+            Gram::Plus(g) | Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.cost(g),
+            Gram::Wrap { body, .. } => self.cost(body),
         }
     }
 
@@ -169,7 +170,8 @@ impl Lang {
                     self.derive(rng, g, depth, out)
                 }
             }
-            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) => self.derive(rng, g, depth, out),
+            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.derive(rng, g, depth, out),
+            Gram::Wrap { body, .. } => self.derive(rng, body, depth, out),
         }
     }
 
@@ -236,7 +238,8 @@ impl Lang {
                     self.bytes(rng, g, long, out)
                 }
             }
-            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) => self.bytes(rng, g, long, out),
+            Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.bytes(rng, g, long, out),
+            Gram::Wrap { body, .. } => self.bytes(rng, body, long, out),
         }
     }
 }
@@ -449,8 +452,9 @@ pub(super) fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
 
 /// The step's shape: tier 1's body branches only for its loop, its extracts' flattening and, when
 /// it has values known on ASCII bytes, one all-ASCII test, and one branch per gated region;
-/// tier 2 loops only over tokens and over a mask's words, 64 bytes a turn (a `check` is tier 1's
-/// masks); nothing calls.
+/// tier 2 loops only over tokens, over a mask's words, 64 bytes a turn (a `check` is tier 1's
+/// masks), over the calls it pops, and (a grammar with wraps) over the node table once, at the
+/// end; nothing calls.
 pub(super) fn check_shape(name: &str, c: &Compiled) {
     let block = &c.native.block_programs[0];
     let body = super::block_tests::body_of(&c.parser.tier1.clif);
@@ -460,7 +464,12 @@ pub(super) fn check_shape(name: &str, c: &Compiled) {
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
     for (b, step) in heads {
-        assert!(matches!(step, Step::Token | Step::Block), "{name}: tier 2 loops at {b} over {step:?}");
+        let ok = match step {
+            Step::Token | Step::Block | Step::Return => true,
+            Step::Node => c.parser.tier2.wraps,
+            Step::File | Step::Bits => false,
+        };
+        assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }
     for (tier, asm) in [("tier 1", &c.parser.tier1.disassembly), ("tier 2", &c.parser.tier2.disassembly)] {
         assert!(!asm.contains(" bl ") && !asm.contains("blr") && !asm.contains(" br "), "{name}: {tier} calls or jumps out");

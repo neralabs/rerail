@@ -76,6 +76,12 @@ pub enum Gram {
     /// `merge 'K' A`, `A` a token: its leaf and the leaf just before it become one leaf of kind
     /// `K`, from the first's start to its end (`.` and `decl`, `.decl`).
     Merge(String, Box<Gram>),
+    /// `wrap K F [as M] REST…`: a node `K` around the node just made at this level (the last
+    /// child of the innermost open node) and what `REST` matches. `K` takes the moved node's
+    /// field; the moved node takes field `F` (`_`: none) and, with `as M`, kind `M`.
+    Wrap { kind: String, field: Option<String>, moved: Option<String>, body: Box<Gram> },
+    /// `A as K`, `A` a token: its leaf has kind `K` (`identifier as variable`).
+    As(String, Box<Gram>),
 }
 
 #[derive(Clone, Debug)]
@@ -119,7 +125,9 @@ pub enum Stmt {
     Node { kind: String, nested: bool, whole: bool, body: Gram },
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
-    Choice { name: String, supertype: Option<String>, body: Gram },
+    /// `choice N [supertype S] [nested] = …`: `nested`, a level of its own, called where it is
+    /// used (it may use itself), with no node of its own.
+    Choice { name: String, supertype: Option<String>, nested: bool, body: Gram },
     /// `check KIND = G`: each token of the kind (after `keywords`) must match `G` over its bytes,
     /// a grammar whose names are byte classes and whose literals are bytes; one that does not
     /// sends the file to tree-sitter. Tier 2 checks it in the token's arm, as simdjson's stage 2
@@ -379,12 +387,24 @@ impl P {
     fn gram_seq(&mut self) -> R<Gram> {
         let mut items = vec![];
         while matches!(self.peek(), Some(Tok::Str(_) | Tok::Ident(_) | Tok::P("(") | Tok::P("["))) {
+            // `wrap K F [as M]`: the rest of the sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "wrap") {
+                self.i += 1;
+                let kind = self.ident()?;
+                let field = Some(self.ident()?).filter(|f| f != "_");
+                let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Wrap { kind, field, moved, body });
+                break;
+            }
             let mut item = self.gram_atom()?;
             loop {
                 if self.eat_p("*") {
                     item = Gram::Star(Box::new(item));
                 } else if self.eat_p("+") {
                     item = Gram::Plus(Box::new(item));
+                } else if self.eat_kw("as") {
+                    item = Gram::As(self.kind()?, Box::new(item));
                 } else {
                     break;
                 }
@@ -720,8 +740,9 @@ impl P {
             "choice" => {
                 let name = self.ident()?;
                 let supertype = if self.eat_kw("supertype") { Some(self.ident()?) } else { None };
+                let nested = self.eat_kw("nested");
                 self.want_p("=")?;
-                Stmt::Choice { name, supertype, body: self.gram()? }
+                Stmt::Choice { name, supertype, nested, body: self.gram()? }
             }
             "check" => {
                 let kind = self.kind()?;
@@ -904,7 +925,7 @@ tree json {
         assert_eq!(pair, &Gram::Seq(vec![Gram::Field("key".into(), Box::new(sym("string"))), lit(":"), Gram::Field("value".into(), Box::new(sym("value")))]));
         let Stmt::Node { body: string, .. } = &body[4] else { panic!("string") };
         assert_eq!(string, &Gram::Seq(vec![lit("\""), Gram::Star(Box::new(Gram::Alt(vec![sym("string_content"), sym("escape_sequence")]))), lit("\"")]));
-        let Stmt::Choice { name, supertype: Some(s), body: Gram::Alt(alts) } = &body[5] else { panic!("value: {:?}", body[5]) };
+        let Stmt::Choice { name, supertype: Some(s), body: Gram::Alt(alts), .. } = &body[5] else { panic!("value: {:?}", body[5]) };
         assert_eq!((name.as_str(), s.as_str(), alts.len()), ("value", "_value", 7));
         let Stmt::Node { body: Gram::Alt(alts), .. } = &body[6] else { panic!("list") };
         assert_eq!(alts, &vec![Gram::Plus(Box::new(sym("item"))), Gram::Seq(vec![lit("("), lit(")")])]);

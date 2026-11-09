@@ -346,6 +346,9 @@ const RETAG: u8 = 0x60;
 /// The token's leaf joins the grammar's leaf before it (the pending extras between are its text,
 /// dropped): one leaf of kind `operand`, to this token's end.
 const MERGE: u8 = 0x61;
+/// A node of kind `operand` around the node last made at this level, open: it takes that node's
+/// field and start; `NODE_FIELD m=1` and `RETAG m=1` then act on the moved node.
+const WRAP: u8 = 0x62;
 
 pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;

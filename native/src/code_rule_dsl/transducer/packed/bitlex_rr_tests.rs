@@ -68,6 +68,24 @@ const CASES: &[(&str, &str)] = &[
     // only begins with it does not. `violation` is 9 bytes: two 8-byte compares.
     (".mode violations", "02"),
     (".mode violation", "10"),
+    // Clauses: heads, a body of atoms; terms: numbers, strings, wildcards, variables, calls,
+    // named arguments.
+    ("r(x).\ns(1, \"a\", _) :- t(x), u().", "04"),
+    ("r(x, y), s(y) :- t(x, f(y, g(z)), k: z, n: m(1)).", "04"),
+    ("r() :- s(a: b: c).\n.mode x\nt(x) :- u(x).", "04"),
+    // `_` is a word where no term can be: a head's relation. In a term it is a wildcard, so
+    // `_(y)` is no call, and at a literal's start no atom: the engine refuses both.
+    ("_(x) :- r(_, _z).", "04"),
+    ("r(x) :- r(_(y)).", "never"),
+    ("r(x) :- _(y).", "never"),
+    // Comparisons: of a variable, a number, a string, a wildcard; and a call, on the right.
+    ("r(x) :- s(x), x != 1, 2 < x, \"a\" = y, _ >= f(x), x <= y, z > w.", "04"),
+    // A word whose next token decides it, across a comment and a line break.
+    ("r(f // c\n (x), k\n: v, w // d\n).", "04"),
+    // A head's modal, an aggregate's word, `-`, `!`: later steps.
+    ("must r(x) :- s(x).", "05"),
+    ("r(n) :- n = count : { s(_) }.", "08"),
+    ("r(-1).", "06"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.

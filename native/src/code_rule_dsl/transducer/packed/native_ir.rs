@@ -2,7 +2,7 @@ use super::{
     ABSENT_FIELD, ASSERT, CAPTURE, CHILD, DESCEND, EMIT, FIELD, FIRST, FLAGS, FOLLOWING, FORK,
     GOTO, KIND, LAST, NEXT, PARENT, Program, REPEAT_BEGIN, REPEAT_BUMP, REPEAT_END, RESTORE_CURSOR,
     SAVE_CURSOR, SIZE, STOP, SUPERTYPE, TEXT, split,
-    ACCEPT, CLOSE, EMPTY, LEAF, MARK, MERGE, RETAG, ROW, NODE_FIELD, NODE_SUPER, OPEN, PUSH, RETURN, SPAN, SWITCH, TOKEN, WORD_IS,
+    ACCEPT, CLOSE, EMPTY, LEAF, MARK, MERGE, RETAG, WRAP, ROW, NODE_FIELD, NODE_SUPER, OPEN, PUSH, RETURN, SPAN, SWITCH, TOKEN, WORD_IS,
     value::{CaptureProgram, ValueProgram},
 };
 
@@ -103,11 +103,15 @@ pub(super) enum StructuralOperation {
     Mark { mask: u16, order: u8, end: bool },
     /// The token starts at a bit of mask `mask`: run the next word; else skip it.
     Row { mask: u16 },
-    /// The innermost open node becomes a `kind`.
-    Retag { kind: u16 },
+    /// The innermost open node becomes a `kind`; `moved`: the node a wrap moved does.
+    Retag { kind: u16, moved: bool },
+    /// A node of `kind` around the node last made at this level, open: it takes that node's
+    /// field and start (docs/parser-generators/24-rr-and-bitlex-plan.md §2.5).
+    Wrap { kind: u16 },
     /// The token's leaf joins the grammar's leaf before it, as one leaf of `kind`.
     Merge { kind: u16 },
-    NodeField { field: u16 },
+    /// The last node's field; `moved`: the field of the node a wrap moved.
+    NodeField { field: u16, moved: bool },
     NodeSuper { kind: u16 },
     Push { target: u16 },
     /// To switch on this token again (`again`), or to take the next.
@@ -160,9 +164,10 @@ impl StructuralOperation {
             Self::Leaf { kind, deferred } => (LEAF, u8::from(deferred), kind),
             Self::Mark { mask, order, end } => (MARK, order | if end { 32 } else { 0 }, mask),
             Self::Row { mask } => (ROW, 0, mask),
-            Self::Retag { kind } => (RETAG, 0, kind),
+            Self::Retag { kind, moved } => (RETAG, u8::from(moved), kind),
+            Self::Wrap { kind } => (WRAP, 0, kind),
             Self::Merge { kind } => (MERGE, 0, kind),
-            Self::NodeField { field } => (NODE_FIELD, 0, field),
+            Self::NodeField { field, moved } => (NODE_FIELD, u8::from(moved), field),
             Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
             Self::Push { target } => (PUSH, 0, target),
             Self::Return { again } => (RETURN, u8::from(again), 0),
@@ -389,9 +394,10 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode != 0 },
             MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0 },
             ROW => StructuralOperation::Row { mask: operand },
-            RETAG => StructuralOperation::Retag { kind: operand },
+            RETAG => StructuralOperation::Retag { kind: operand, moved: mode != 0 },
+            WRAP => StructuralOperation::Wrap { kind: operand },
             MERGE => StructuralOperation::Merge { kind: operand },
-            NODE_FIELD => StructuralOperation::NodeField { field: operand },
+            NODE_FIELD => StructuralOperation::NodeField { field: operand, moved: mode != 0 },
             NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
             PUSH => StructuralOperation::Push { target: operand },
             RETURN => StructuralOperation::Return { again: mode != 0 },
