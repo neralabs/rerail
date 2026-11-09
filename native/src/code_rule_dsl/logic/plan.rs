@@ -676,6 +676,7 @@ impl KeepPlans {
     pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
         PLANS.with(|p| *p.borrow_mut() = Some(kept.unwrap_or_default()));
+        keeps::observing(true);
         KeepPlans(across)
     }
 }
@@ -683,6 +684,7 @@ impl KeepPlans {
 impl Drop for KeepPlans {
     fn drop(&mut self) {
         let plans = PLANS.with(|p| p.borrow_mut().take());
+        keeps::observing(false);
         if let (Some(g), Some(plans)) = (self.0, plans) {
             SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans)));
         }
@@ -3870,6 +3872,13 @@ impl Run<'_, '_> {
                 probes[k].2 = new;
             }
             chunk *= 2;
+        }
+        // What each rule's steps produced and each relation holds, for a later chunk's choice of what a relation
+        // keeps (decision 0097, `keeps::observe`).
+        {
+            let ruled: Vec<(u64, &[(u64, u64)])> = order_rules.iter().zip(&counted).map(|(&r, c)| (r, c.as_slice())).collect();
+            let sizes: Vec<(&str, f64)> = rels.iter().filter_map(|r| Some((r.as_str(), *self.model.stats.card.get(*r)?))).collect();
+            keeps::observe(&ruled, &sizes, self.model.stats.nodes);
         }
         if profiling {
             let (u, s) = corpus::thread_usage();
