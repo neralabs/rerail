@@ -300,6 +300,9 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     cross.decls.insert(DOCS.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
     cross.inputs.push(DOCS.to_owned());
     for rel in memo.keys() {
+        // Stored, never inlined into its readers (decision 0099): its derived rows are read from its table to be
+        // recorded (`record`), and replayed into it.
+        cross.qualifiers.entry(rel.clone()).or_default().insert("no_inline".to_owned());
         let cols = cross.decls[rel].clone();
         let input = format!("{rel}{SUFFIX}");
         let vars: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("rr_x{i}"))).collect();

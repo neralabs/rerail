@@ -46,8 +46,9 @@ owner(s, s) :- struct__def(s, "module").
 owner(s, p) :- parent(s, p), struct__def(p, "module").
 owner(s, m) :- parent(s, p), !struct__def(p, "module"), owner(p, m).
 // parent(s, p): s is defined in p, by its symbol: made once, so the recursion above joins on p. `split_dot` gives
-// every split of s, so the last part is the one with no dot.
-.decl parent(s: symbol, p: symbol)
+// every split of s, so the last part is the one with no dot. Stored (`no_inline`, decision 0099): unfolded into the
+// recursion, each new owner row scanned every definition and split its symbol (445 M rows, 311 s on the 84 files).
+.decl parent(s: symbol, p: symbol) no_inline
 parent(s, p) :- struct__def(s, k), k != "module", split_dot(s, p, x), !contains(".", x).
 parent(s, p) :- struct__vann(s, _), split_dot(s, p, x), !contains(".", x).
 
