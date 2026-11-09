@@ -34,6 +34,21 @@ CASES=[dict(id='empty',files=[]),dict(id='clean',files=[dict(path='impl/a.py',so
 ]
 
 
+REGISTRY='l2050_transaction/execution_authority_tokens.py'
+
+def registry_source(rows):
+    import json
+    calls=[' ExecutionAuthorityCallsite(module='+json.dumps(m)+', function='+json.dumps(f)+', signature_b64="fixture"),' for m,f in rows]
+    return 'EXPLICIT_EXECUTION_AUTHORITY_CALLSITES = (\n'+'\n'.join(calls)+'\n)\n'
+
+CASES += [
+    dict(id='default-config-positive',defaultConfig=True,files=[dict(path=REGISTRY,source=(ROOT/'.rerail/data-layer-testsuite-positives/upstream-git'/REGISTRY).read_text()),dict(path='impl/a.py',source=BAD+'_legacy_boundary_var\n')]),
+    dict(id='default-config-empty-registry',defaultConfig=True,signed=[],files=[dict(path=REGISTRY,source=registry_source([]))]),
+    dict(id='default-config-duplicate-registry',defaultConfig=True,signed=[['impl.a','helper'],['impl.a','helper']],files=[dict(path=REGISTRY,source=registry_source([['impl.a','helper'],['impl.a','helper']])),dict(path='impl/a.py',source='def helper(): explicit_execution_authority()\n')]),
+    dict(id='default-config-test-exceptions',defaultConfig=True,files=[dict(path=REGISTRY,source=(ROOT/'.rerail/data-layer-testsuite-positives/upstream-git'/REGISTRY).read_text()),dict(path='l2050_transaction/tests/test_execution_boundary.py',source='def test_raw_explicit_authority_contextvar_value_does_not_authorize(): _explicit_authority_var\ndef test_explicit_execution_authority_uses_outer_callsite():\n _legacy_boundary_var\n def helper(): explicit_execution_authority()\n')]),
+]
+
+
 def source_case(module,case):
     from scripts.lint_lib.fact_engine import FactEngine
     from scripts.lint_lib.fact_store import JsonFactStore
@@ -43,17 +58,30 @@ def source_case(module,case):
         if 'curated' in case:changes['CURATED_EXPLICIT_AUTHORITY_CALLSITES']=frozenset(tuple(x) for x in case['curated'])
         with patch.multiple(module,**changes),patch.object(module.scan_repo,'__defaults__',(root,)):
             config=configuration(module);plugin=module.execution_authority_bypass_plugin(root)
+            cli_selected=[str(path.relative_to(root)) for path in module._iter_python_files(root)]
             engine=FactEngine(root=root,fact_store=JsonFactStore(root/'tmp/facts'),extractors=module.execution_authority_bypass_fact_extractors(root),enable_fact_cache=False)
             plan=engine.plan([plugin]);view=engine.materialize((plugin,),max_workers=1)
             findings=[dict(asdict(v),path=str(v.path.relative_to(root))) for v in plugin.reporter(view)]
             facts=[f for path,bundle in sorted(view.files.items()) for f in bundle.facts.get(module.EXECUTION_AUTHORITY_BYPASS_EXTRACTOR.extractor_id,[])]
-            scan=[asdict(v) for v in module.scan_repo(root)]
+            registry=[asdict(v) for v in module._registry_violations()]
+            observed=[];original_materialize=FactEngine.materialize
+            def materialize(engine,*args,**kwargs):
+                result=original_materialize(engine,*args,**kwargs)
+                observed.append([dict(requestPath=str(path.relative_to(root)),rows=bundle.facts.get(module.EXECUTION_AUTHORITY_BYPASS_EXTRACTOR.extractor_id,[]) or []) for path,bundle in result.files.items()])
+                return result
+            with patch.object(FactEngine,'materialize',materialize):
+                scan=[asdict(v) for v in module.scan_repo(root)]
+            scan_groups=dict(prefix=registry,files=[g for g in observed[-1] if g['rows']]) if observed else dict(prefix=registry,files=[])
+            compare(scan,registry+[v for g in scan_groups['files'] for v in g['rows']])
             cli=[]
             for argv in [[],['--check']]:
                 out,err=io.StringIO(),io.StringIO()
-                with contextlib.redirect_stdout(out),contextlib.redirect_stderr(err):status=module.cli_main(argv)
-                cli.append(dict(argv=argv,status=status,stdout=out.getvalue(),stderr=err.getvalue()))
-            return dict(config=config,expected=dict(selectedFiles=[str(p.relative_to(root)) for p in plan.files],facts=facts,findings=findings,scanRepo=scan,cli=cli,
+                observed.clear()
+                with patch.object(FactEngine,'materialize',materialize),contextlib.redirect_stdout(out),contextlib.redirect_stderr(err):status=module.cli_main(argv)
+                groups=dict(prefix=''.join(render(v) for v in registry),files=[dict(requestPath=g['requestPath'],text=''.join(render(v) for v in g['rows'])) for g in (observed[-1] if observed else []) if g['rows']])
+                compare(out.getvalue(),groups['prefix']+''.join(g['text'] for g in groups['files']))
+                cli.append(dict(argv=argv,status=status,stdout=out.getvalue(),stderr=err.getvalue(),groups=groups))
+            return dict(config=config,expected=dict(cliSelectedFiles=cli_selected,selectedFiles=[str(p.relative_to(root)) for p in plan.files],facts=facts,findings=findings,scanRepo=scan,scanGroups=scan_groups,cli=cli,
                 plugin=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description)))
 
 
@@ -61,11 +89,13 @@ def native_case(engine,case,config):
     reports=[]
     def execute(entry=None,extra=None):
         def options(root):
-            result=dict(config,env=['auth.root='+str(root)],**(extra or {}))
+            env=['auth.root='+str(root),'auth.entry='+(entry or 'production')]
+            if not case.get('defaultConfig'):env.append('auth.config=arguments')
+            result=dict({} if case.get('defaultConfig') else config,env=env,**(extra or {}))
             if entry:result['entryPoint']=entry
             return result
         result=execute_workspace_context(engine,RULE,case['files'],options);reports.append(result);return result
-    production=execute();facts=execute('_production_facts');scan=execute('scan_repo')
+    production=execute();facts=execute('_production_facts');scan=execute('scan_repo');cli_paths=execute('_paths')
     selected=[r['parameters']['path'] for r in sorted(facts['diagnostics'],key=lambda r:r['parameters'].get('path_order','')) if r['code']=='AUTH_FILE']
     facts_rows=[r for r in facts['diagnostics'] if r['code']=='AUTH_BATCH_ROW']
     scan_rows=[r for r in scan['diagnostics'] if r['code']=='AUTH_BATCH_ROW']
@@ -73,19 +103,50 @@ def native_case(engine,case,config):
         return [{k:r['parameters'][k] for k in ['path','line','code','message']} for r in sorted(rows,key=lambda r:tuple(r['parameters'][k] for k in ['phase','path_order','ordinal']))]
     if len(facts_rows)+len(selected)!=len(facts['diagnostics']) or len(scan_rows)!=len(scan['diagnostics']):raise ValueError('Unexpected producer rows')
     findings=[dict(linter_name='execution_authority_bypass',code=r['code'],path=r['path'],line=r['line'],message=r['message'],severity='error') for r in sorted(production['diagnostics'],key=lambda r:tuple(r['parameters'][k] for k in ['phase','path_order','ordinal']))]
+    scan_groups=dict(prefix=values([row for row in scan_rows if row['parameters']['phase']==0]),files=[])
+    by_request={}
+    for row in sorted(scan_rows,key=lambda r:tuple(r['parameters'][k] for k in ['phase','path_order','ordinal'])):
+        if row['parameters']['phase']==1:by_request.setdefault(row['parameters']['request_path'],[]).append(row)
+    scan_groups['files']=[dict(requestPath=p,rows=values(rows)) for p,rows in by_request.items()]
     cli=[]
     for check in [False,True]:
         output=execute('_cli_report',dict(checkMode='1' if check else '0'))
         rows=output['diagnostics'];exit_rows=[r['parameters']['status'] for r in rows if r['code']=='AUTH_EXIT']
         if len(exit_rows)!=1:raise ValueError('One native CLI exit result required')
-        cli.append(dict(argv=['--check'] if check else [],status=exit_rows[0],stdout=''.join(r['parameters']['text'] for r in sorted(rows,key=lambda r:tuple(r['parameters'].get(k,0) for k in ['phase','path_order','ordinal'])) if r['code']=='AUTH_OUTPUT'),stderr=''))
+        ordered=sorted((r for r in rows if r['code']=='AUTH_OUTPUT'),key=lambda r:tuple(r['parameters'][k] for k in ['phase','path_order','ordinal']))
+        groups=dict(prefix=''.join(r['parameters']['text'] for r in ordered if r['parameters']['phase']==0),files=[])
+        by_request={}
+        for row in ordered:
+            if row['parameters']['phase']==1:by_request.setdefault(row['parameters']['request_path'],[]).append(row['parameters']['text'])
+        groups['files']=[dict(requestPath=p,text=''.join(texts)) for p,texts in by_request.items()]
+        cli.append(dict(argv=['--check'] if check else [],status=exit_rows[0],stdout=''.join(r['parameters']['text'] for r in ordered),stderr='',groups=groups))
     metadata=production['metadata'];policies=metadata['policies'];settings=metadata['settings']
     if len(policies)!=1 or [v for k,v in settings if k=='mode']!=['block']:raise ValueError('Production policy metadata mismatch')
     import json
     descriptions=[json.loads(v) for k,v in settings if k=='description']
     if len(descriptions)!=1:raise ValueError('One production description required')
-    return dict(selectedFiles=selected,facts=values(facts_rows),findings=findings,scanRepo=values(scan_rows),cli=cli,
+    return dict(cliSelectedFiles=[row['parameters']['path'] for row in sorted(cli_paths['diagnostics'],key=lambda row:row['parameters']['path_order'])],selectedFiles=selected,facts=values(facts_rows),findings=findings,scanRepo=values(scan_rows),scanGroups=scan_groups,cli=cli,
         plugin=dict(name=policies[0]['id'].removeprefix('data-layer-').replace('-','_'),enforcement='hard-fail',description=descriptions[0])),reports
+
+
+def render(row):
+    return f"{row['path']}:{row['line']}: {row['code']} {row['message']}\n"
+
+
+def canonical_completion(value):
+    """Only whole file-completion groups may permute; retain the registry prefix and each group's full order."""
+    import copy
+    value=copy.deepcopy(value)
+    groups=value['scanGroups']
+    compare(value['scanRepo'],groups['prefix']+[row for g in groups['files'] for row in g['rows']])
+    groups['files'].sort(key=lambda g:g['requestPath'])
+    value['scanRepo']=groups['prefix']+[row for g in groups['files'] for row in g['rows']]
+    for cli in value['cli']:
+        groups=cli['groups']
+        compare(cli['stdout'],groups['prefix']+''.join(g['text'] for g in groups['files']))
+        groups['files'].sort(key=lambda g:g['requestPath'])
+        cli['stdout']=groups['prefix']+''.join(g['text'] for g in groups['files'])
+    return value
 
 
 def main():
@@ -103,7 +164,7 @@ def main():
         if any(n.startswith(('scripts.lint_','lint_execution_authority_bypass')) for n in sys.modules):raise ValueError('Native acceptance cannot import source rules')
         baseline=read_json(a.baseline);assert baseline['passed'] and baseline['sourcePin']==PIN;compare(CASES,[c['input'] for c in baseline['cases']]);report.update(engineSha256=sha(a.engine.read_bytes()),baselineSha256=sha(a.baseline.read_bytes()))
         for case in baseline['cases'][a.part::a.parts]:
-            actual,reports=native_case(a.engine.absolute(),case['input'],case['config']);report['cases'].append(dict(case,actual=actual,native=reports,passed=actual==case['expected']));write_json(a.out,report)
+            actual,reports=native_case(a.engine.absolute(),case['input'],case['config']);report['cases'].append(dict(case,actual=actual,native=reports,passed=canonical_completion(actual)==canonical_completion(case['expected'])));write_json(a.out,report)
     for n,v in report['programs'].items():compare(v['sha256'],sha((ROOT/n).read_bytes()))
     report['passed']=all(c.get('passed',True) for c in report['cases']);write_json(a.out,report);print(dict(cases=len(report['cases']),passed=report['passed']));raise SystemExit(0 if report['passed'] else 1)
 

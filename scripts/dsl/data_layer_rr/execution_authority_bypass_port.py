@@ -6,7 +6,7 @@ def configuration(module):
     curated=sorted(module.CURATED_EXPLICIT_AUTHORITY_CALLSITES)
     private=sorted(module.PRIVATE_SYMBOL_TEST_EXCEPTIONS)
     explicit=sorted(module.EXPLICIT_AUTHORITY_TEST_EXCEPTIONS)
-    values={}
+    values=dict(signedCount=str(len(signed)),env=['auth.api=true','auth.config=arguments'])
     for prefix,rows in [('signed',signed),('curated',curated),('privateException',private),('explicitException',explicit)]:
         values[prefix+'Modules']=[r[0] for r in rows]
         values[prefix+'Functions']=[r[1] for r in rows]
@@ -25,6 +25,36 @@ def install(suite,module):
     def registry():return result('_registry_violations')
     suite.replace(module,'scan_source',scan_source)
     suite.replace(module,'_registry_violations',registry)
+    from pathlib import Path
+    import argparse
+    import sys
+    default_root=module.REPO_ROOT
+    def repository(entry,root,extra=None):
+        options=dict(configuration(module),env=['auth.api=true','auth.root='+str(Path(root).absolute()),'auth.entry='+entry,'auth.config=arguments'],**(extra or {}))
+        return suite.native('execution_authority_bypass',entry,[],options)
+    def python_files(root):
+        rows=repository('_paths',root)
+        if any(row['code']!='AUTH_FILE' for row in rows):raise ValueError('Unexpected native file selection')
+        return [Path(root)/row['parameters']['path'] for row in sorted(rows,key=lambda row:row['parameters']['path_order'])]
+    def scan_repo(root=default_root):
+        rows=repository('scan_repo',root)
+        if any(row['code']!='AUTH_BATCH_ROW' for row in rows):raise ValueError('Unexpected native repository result')
+        return [module.AuthorityViolation(**{k:row['parameters'][k] for k in ['path','line','code','message']}) for row in sorted(rows,key=lambda row:tuple(row['parameters'][k] for k in ['phase','path_order','ordinal']))]
+    def cli_main(argv=None):
+        parser=argparse.ArgumentParser(description=module.__doc__)
+        parser.add_argument('--check',action='store_true',help='Exit non-zero when violations exist.')
+        args=parser.parse_args(argv)
+        values=module.scan_repo()
+        rows=suite.native('execution_authority_bypass','_cli_format',[],dict(configuration(module),checkMode='1' if args.check else '0',reportPaths=[v.path for v in values],reportLines=[str(v.line) for v in values],reportCodes=[v.code for v in values],reportMessages=[v.message for v in values]))
+        if any(row['code'] not in {'AUTH_OUTPUT','AUTH_EXIT'} for row in rows):raise ValueError('Unexpected native CLI result')
+        exits=[row['parameters']['status'] for row in rows if row['code']=='AUTH_EXIT']
+        if len(exits)!=1:raise ValueError('One native CLI exit result required')
+        for row in sorted((row for row in rows if row['code']=='AUTH_OUTPUT'),key=lambda row:tuple(row['parameters'][k] for k in ['phase','path_order','ordinal'])):sys.stdout.write(row['parameters']['text'])
+        return exits[0]
+    suite.replace(module,'_iter_python_files',python_files)
+    suite.replace(module,'scan_repo',scan_repo)
+    suite.replace(module,'cli_main',cli_main)
+
 
 
 def argument_columns(tree):

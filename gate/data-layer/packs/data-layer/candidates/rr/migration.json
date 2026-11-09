@@ -2298,13 +2298,18 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
-      "sha256": "0bccd09d36ef896b82bebc3dcbd576d191e4d9872a92603aa2a66003c936279a",
+      "sha256": "8f2ef3d4877c8c1341091c5bf431552df8cee24cfb877ddeff33640bf75da7d1",
       "origin": "Authored native rules from pinned data-layer source; acceptance status remains separate"
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-signing.rr",
       "sha256": "f31d712c527c51d6044f0281cd1d01ef414a8a22563e41fd3362a56e6766012f",
       "origin": "Authored native rules from pinned data-layer source; acceptance status remains separate"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/authority-settings.rr",
+      "sha256": "a7279ede5376ab7292decc1c46fca51c7554af518106aa42ec01abb8baa22146",
+      "origin": "Pinned authority constants shared by native API and production contracts"
     }
   ],
   "rules": [
@@ -2815,7 +2820,7 @@
       "legacySha256": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
-      "ruleSha256": "0bccd09d36ef896b82bebc3dcbd576d191e4d9872a92603aa2a66003c936279a"
+      "ruleSha256": "8f2ef3d4877c8c1341091c5bf431552df8cee24cfb877ddeff33640bf75da7d1"
     },
     {
       "check": "impl_direct_execution",

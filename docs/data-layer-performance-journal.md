@@ -9823,3 +9823,26 @@ The inventory contains 94 drafts and six absent translations. None has full migr
 The step inventory still requires two traversal tests and 44 readiness tests.
 Authority production, remaining helper and CLI contracts, workspace updates, and the full migration gate remain open.
 Earlier port acceptance gaps also remain open. No full-repository cold run occurs.
+
+### 2026-11-09 — Authority production and frontend checkpoint
+
+The [authority production checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-authority-production-checkpoint.json.gz) records 24 complete production cases and 24 frontend cases.
+All cases pass on the registered optimized Final 004 artifact.
+Production compares selected files, complete facts, structured findings, and policy metadata.
+Four cases read the generated signed-callsite registry through the native parser.
+The frontend uses native directory discovery, repository scanning, CLI formatting, and status decisions. It imports no Python detector.
+
+The source CLI includes `venv`, while its production plugin excludes that directory. The native consumers retain this distinction.
+The explicit-file scanner assigns every alias the last owner with the same resolved path.
+The port preserves that behavior and duplicate findings. Production retains each logical file owner independently.
+Source recordings prove that file-completion order changes between identical CLI calls.
+The comparator permits only complete per-request file groups to change order.
+Each group retains every field, byte, duplicate, and internal event order. The registry prefix retains its exact order.
+Both raw streams remain recorded. Production report ordering remains exact.
+
+The first native replay fails before implementation. Further replays expose the request-cone boundary.
+Native requests receive their caller context through the existing phase-zero environment inputs.
+A single physical directory path carries recursive traversal; logical paths derive after discovery.
+No engine feature or optional execution algorithm is added.
+Original-suite replay in both execution modes, persistent updates, mutation controls, and the full migration gate remain open.
+Default registry input errors also need explicit acceptance. The rule remains a draft.

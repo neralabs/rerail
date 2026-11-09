@@ -6,6 +6,9 @@
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_execution_authority_bypass.py
 .violation AuthRow(at: span, ordinal: number, path: symbol, line: number, code: symbol, message: symbol) code "AUTH_ROW" "{message}"
 #include "python/ast.rr"
+#include "data-layer/authority-settings.rr"
+.decl auth_supplied_config()
+auth_supplied_config() :- option("signedCount",_).
 
 .decl auth_signed(i: number, module: symbol, function: symbol)
 auth_signed(i,m,f) :- option_item("signedModules",i,m), option_item("signedFunctions",i,f).
@@ -20,13 +23,20 @@ auth_private(s) :- option_item("privateSymbols",_,s).
 .decl auth_marker(value: symbol)
 auth_marker(s) :- option_item("monkeypatchMarkers",_,s).
 
+auth_curated(m,f) :- !auth_supplied_config(), auth_default_curated(m,f).
+auth_private_exception(p,f) :- !auth_supplied_config(), auth_default_private_exception(p,f).
+auth_explicit_exception(p,f) :- !auth_supplied_config(), auth_default_explicit_exception(p,f).
+auth_private(s) :- !auth_supplied_config(), auth_default_private(s).
+auth_marker(s) :- !auth_supplied_config(), auth_default_marker(s).
+
+.decl auth_registry_finding(ordinal: number, path: symbol, line: number, code: symbol, message: symbol)
 // The source preserves signed registry order and duplicate entries; missing entries sort by both fields.
-AuthRow(@place("",0),i,"l2050_transaction/execution_authority_tokens.py",0,"AUTH004",cat("signed explicit execution authority callsite is not in the curated set: ",m,":",f)) :-
-    option("entryPoint","_registry_violations"), auth_signed(i,m,f), !auth_curated(m,f).
+auth_registry_finding(i,"l2050_transaction/execution_authority_tokens.py",0,"AUTH004",cat("signed explicit execution authority callsite is not in the curated set: ",m,":",f)) :-
+    auth_signed(i,m,f), !auth_curated(m,f).
 .decl auth_missing(module: symbol, function: symbol)
 auth_missing(m,f) :- auth_curated(m,f), !auth_signed(_,m,f).
-AuthRow(@place("",0),n+i,"l2050_transaction/execution_authority_tokens.py",0,"AUTH005",cat("curated explicit execution authority callsite is unsigned: ",m,":",f)) :-
-    option("entryPoint","_registry_violations"), auth_missing(m,f), n = count : { auth_signed(_,_,_) },
+auth_registry_finding(n+i,"l2050_transaction/execution_authority_tokens.py",0,"AUTH005",cat("curated explicit execution authority callsite is unsigned: ",m,":",f)) :-
+    auth_missing(m,f), n = count : { auth_signed(_,_,_) },
     i = count : { auth_missing(a,b), (a < m ; a = m, b < f) }.
 
 // External caller ASTs use raw structural columns. Production still reads native parser facts.
@@ -117,11 +127,90 @@ auth_monkeypatch(c) :- auth_callee(c,f,"setattr"), auth_kind(f,"attribute"), aut
 auth_monkeypatch(c) :- auth_callee(c,f,"setattr"), auth_kind(f,"attribute"), auth_arg(c,0,a), !auth_string(a,_), auth_arg(c,1,b), auth_string(b,s),
     (auth_private(s) ; s = "_caller_token" ; s = "verify_callsite_authorization"), auth_leaf(a,"execution_boundary").
 
-.decl auth_event(n: node, code: symbol, message: symbol)
-auth_event(n,"AUTH001",cat("direct access to private execution authority ContextVar ",s)) :-
+.decl auth_event(path: symbol, n: node, code: symbol, message: symbol)
+auth_event(p,n,"AUTH001",cat("direct access to private execution authority ContextVar ",s)) :-
     auth_symbol(n,s), auth_docof(n,d), auth_doc(d,p,_), p != "l2050_transaction/execution_boundary.py", auth_qual(n,q), !auth_private_exception(p,q).
-auth_event(c,"AUTH002","explicit_execution_authority() may only be called from signed callsites; route through explicit_plan_execution_scope or update the signed token registry") :-
+auth_event(p,c,"AUTH002","explicit_execution_authority() may only be called from signed callsites; route through explicit_plan_execution_scope or update the signed token registry") :-
     auth_callee(c,_,"explicit_execution_authority"), auth_docof(c,d), auth_doc(d,p,m), auth_qual(c,q), !auth_signed(_,m,q), !auth_explicit_exception(p,q).
-auth_event(c,"AUTH003","monkeypatching execution authority internals is forbidden") :-
+auth_event(p,c,"AUTH003","monkeypatching execution authority internals is forbidden") :-
     auth_monkeypatch(c), auth_docof(c,d), auth_doc(d,p,_), auth_qual(c,q), !auth_private_exception(p,q).
-AuthRow(@place("",0),i,p,l,code,message) :- auth_event(n,code,message), auth_docof(n,d), auth_doc(d,p,_), auth_line(n,l), auth_visit(n,i).
+AuthRow(@place("",0),i,p,l,code,message) :- option("entryPoint","scan_source"), auth_event(p,n,code,message), auth_docof(n,d), auth_doc(d,p,_), auth_line(n,l), auth_visit(n,i).
+
+AuthRow(@place("",0),i,p,l,code,message) :- option("entryPoint","_registry_violations"), auth_registry_finding(i,p,l,code,message).
+
+.decl auth_layer_pattern(value: symbol)
+auth_layer_pattern("\\Al[\\x{30}-\\x{39}\\x{b2}-\\x{b3}\\x{b9}\\x{660}-\\x{669}\\x{6f0}-\\x{6f9}\\x{7c0}-\\x{7c9}\\x{966}-\\x{96f}\\x{9e6}-\\x{9ef}\\x{a66}-\\x{a6f}\\x{ae6}-\\x{aef}\\x{b66}-\\x{b6f}\\x{be6}-\\x{bef}\\x{c66}-\\x{c6f}\\x{ce6}-\\x{cef}\\x{d66}-\\x{d6f}\\x{de6}-\\x{def}\\x{e50}-\\x{e59}\\x{ed0}-\\x{ed9}\\x{f20}-\\x{f29}\\x{1040}-\\x{1049}\\x{1090}-\\x{1099}\\x{1369}-\\x{1371}\\x{17e0}-\\x{17e9}\\x{1810}-\\x{1819}\\x{1946}-\\x{194f}\\x{19d0}-\\x{19da}\\x{1a80}-\\x{1a89}\\x{1a90}-\\x{1a99}\\x{1b50}-\\x{1b59}\\x{1bb0}-\\x{1bb9}\\x{1c40}-\\x{1c49}\\x{1c50}-\\x{1c59}\\x{2070}\\x{2074}-\\x{2079}\\x{2080}-\\x{2089}\\x{2460}-\\x{2468}\\x{2474}-\\x{247c}\\x{2488}-\\x{2490}\\x{24ea}\\x{24f5}-\\x{24fd}\\x{24ff}\\x{2776}-\\x{277e}\\x{2780}-\\x{2788}\\x{278a}-\\x{2792}\\x{a620}-\\x{a629}\\x{a8d0}-\\x{a8d9}\\x{a900}-\\x{a909}\\x{a9d0}-\\x{a9d9}\\x{a9f0}-\\x{a9f9}\\x{aa50}-\\x{aa59}\\x{abf0}-\\x{abf9}\\x{ff10}-\\x{ff19}\\x{104a0}-\\x{104a9}\\x{10a40}-\\x{10a43}\\x{10d30}-\\x{10d39}\\x{10e60}-\\x{10e68}\\x{11052}-\\x{1105a}\\x{11066}-\\x{1106f}\\x{110f0}-\\x{110f9}\\x{11136}-\\x{1113f}\\x{111d0}-\\x{111d9}\\x{112f0}-\\x{112f9}\\x{11450}-\\x{11459}\\x{114d0}-\\x{114d9}\\x{11650}-\\x{11659}\\x{116c0}-\\x{116c9}\\x{11730}-\\x{11739}\\x{118e0}-\\x{118e9}\\x{11950}-\\x{11959}\\x{11c50}-\\x{11c59}\\x{11d50}-\\x{11d59}\\x{11da0}-\\x{11da9}\\x{11f50}-\\x{11f59}\\x{16a60}-\\x{16a69}\\x{16ac0}-\\x{16ac9}\\x{16b50}-\\x{16b59}\\x{1d7ce}-\\x{1d7ff}\\x{1e140}-\\x{1e149}\\x{1e2f0}-\\x{1e2f9}\\x{1e4f0}-\\x{1e4f9}\\x{1e950}-\\x{1e959}\\x{1f100}-\\x{1f10a}\\x{1fbf0}-\\x{1fbf9}]").
+
+// FileScopeSpec includes test trees. scan_repo's explicit-file walk also includes venv.
+.decl auth_repository()
+auth_repository() :- !env("auth.api","true").
+auth_repository() :- env("auth.entry",entry), (entry = "_production_facts" ; entry = "scan_repo" ; entry = "_paths" ; entry = "_cli_report").
+.decl auth_cli_scan()
+auth_cli_scan() :- env("auth.entry",entry), (entry = "scan_repo" ; entry = "_cli_report" ; entry = "_paths").
+.decl auth_root(path: symbol)
+auth_root(path) :- auth_repository(), env("auth.root",path).
+auth_root(".") :- auth_repository(), !env("auth.root",_).
+.decl auth_directory(physical: symbol)
+auth_directory(cat(root,"/",name)) :- auth_root(root), dir_entry(root,name,1), (name = "impl" ; name = "data_layer" ; name = "conform" ; name = "tests").
+auth_directory(cat(root,"/",name)) :- auth_root(root), dir_entry(root,name,1), auth_layer_pattern(pattern), @count_matches(pattern,name) > 0.
+.decl auth_skip(value: symbol)
+auth_skip(".git"). auth_skip(".venv"). auth_skip("__pycache__"). auth_skip("tmp").
+auth_skip("venv") :- !auth_cli_scan().
+auth_directory(cat(physical,"/",name)) :- auth_directory(physical), dir_entry(physical,name,1), dir_metadata(physical,name,_,0,_), !auth_skip(name).
+.decl auth_file(path: symbol, physical: symbol)
+auth_file(@slice(cat(physical,"/",name),strlen(root)+1,strlen(cat(physical,"/",name))),cat(physical,"/",name)) :- auth_root(root), auth_directory(physical), dir_entry(physical,name,0), suffix(".py",name).
+load(physical,cat("auth:file:",path),"python") :- auth_file(path,physical), !env("auth.entry","_paths").
+.decl auth_target(request: symbol, canonical: symbol)
+auth_target(path,canonical) :- auth_file(path,_), loaded(canonical,cat("auth:file:",path),"python").
+.decl auth_document_candidate(canonical: symbol, d: number)
+auth_document_candidate(canonical,d) :- auth_target(_,canonical), doc(d,canonical,_), doc_role(d,"primary").
+auth_document_candidate(canonical,d) :- auth_target(logical,canonical), doc(d,logical,_), doc_role(d,"primary").
+.decl auth_physical_doc(canonical: symbol, d: number)
+auth_physical_doc(canonical,d) :- auth_document_candidate(canonical,d), d = min other : { auth_document_candidate(canonical,other) }.
+.decl auth_owner(request: symbol, owner: symbol)
+auth_owner(path,path) :- auth_file(path,_), !auth_cli_scan().
+// The source explicit-file adapter keys owners by resolve() and overwrites in sorted input order.
+auth_owner(path,owner) :- auth_cli_scan(), auth_target(path,canonical), auth_target(owner,canonical), order = @replace_all(owner,"/","\u0000"), order = max o : { auth_target(other,canonical), o = @replace_all(other,"/","\u0000") }.
+.decl auth_request(d: number, request: symbol, owner: symbol)
+auth_request(d,path,owner) :- auth_target(path,canonical), auth_physical_doc(canonical,d), auth_owner(path,owner).
+auth_doc(d,path,@replace_all(@replace_all(path,"\\.[^./]*\\z",""),"/",".")) :- auth_request(d,_,path), !syntax_error(d,_,_), auth_triggered(d).
+
+.violation AuthFile(at: span, path: symbol, physical: symbol, path_order: symbol) code "AUTH_FILE" "{path}"
+AuthFile(@place("",0),path,physical,@replace_all(path,"/","\u0000")) :- option("entryPoint",entry), (entry = "_production_facts" ; entry = "_paths"), auth_file(path,physical).
+.decl auth_finding(request: symbol, path: symbol, line: number, code: symbol, message: symbol, phase: number, path_order: symbol, ordinal: number)
+auth_finding(p,p,l,code,message,0,"",i) :- auth_registry_finding(i,p,l,code,message).
+auth_finding(request,p,l,code,message,1,@replace_all(request,"/","\u0000"),i) :- auth_request(d,request,p), auth_event(p,n,code,message), auth_docof(n,d), auth_line(n,l), auth_visit(n,i).
+.violation AuthBatchRow(at: span, request_path: symbol, path: symbol, line: number, code: symbol, message: symbol, phase: number, path_order: symbol, ordinal: number) code "AUTH_BATCH_ROW" "{message}"
+AuthBatchRow(@place("",0),request,p,l,code,message,phase,order,i) :- option("entryPoint","scan_repo"), auth_finding(request,p,l,code,message,phase,order,i).
+AuthBatchRow(@place("",0),request,p,l,code,message,1,order,i) :- option("entryPoint","_production_facts"), auth_finding(request,p,l,code,message,1,order,i).
+.violation AuthFinding(at: span, request_path: symbol, phase: number, path_order: symbol, ordinal: number, violation_code: symbol, detail: symbol) code {violation_code} "{detail}"
+.severity AuthFinding error
+AuthFinding(@place(p,l),request,phase,order,i,code,message) :- !option("entryPoint",_), auth_finding(request,p,l,code,message,phase,order,i).
+.decl auth_report(request: symbol, path: symbol, line: number, code: symbol, message: symbol, phase: number, path_order: symbol, ordinal: number)
+auth_report(request,p,l,code,message,phase,order,i) :- option("entryPoint","_cli_report"), auth_finding(request,p,l,code,message,phase,order,i).
+auth_report("",p,to_number(l),code,message,0,"",i) :- option("entryPoint","_cli_format"), option_item("reportPaths",i,p), option_item("reportLines",i,l), option_item("reportCodes",i,code), option_item("reportMessages",i,message).
+.violation AuthOutput(at: span, request_path: symbol, phase: number, path_order: symbol, ordinal: number, text: symbol) code "AUTH_OUTPUT" "{text}"
+AuthOutput(@place("",0),request,phase,order,i,cat(p,":",to_string(l),": ",code," ",message,"\n")) :- auth_report(request,p,l,code,message,phase,order,i).
+.decl auth_reporting()
+auth_reporting() :- option("entryPoint",entry), (entry = "_cli_report" ; entry = "_cli_format").
+.violation AuthExit(at: span, status: number) code "AUTH_EXIT" "status"
+AuthExit(@place("",0),1) :- auth_reporting(), option("checkMode","1"), auth_report(_,_,_,_,_,_,_,_).
+AuthExit(@place("",0),0) :- auth_reporting(), option("checkMode","0").
+AuthExit(@place("",0),0) :- auth_reporting(), !auth_report(_,_,_,_,_,_,_,_).
+
+// The generated registry is source data, parsed natively. Signature bytes are not inspected by this linter.
+.decl auth_registry_path(path: symbol)
+auth_registry_path(cat(root,"/l2050_transaction/execution_authority_tokens.py")) :- auth_root(root).
+load(path,"auth:registry","python") :- auth_registry_path(path), !env("auth.config","arguments"), !env("auth.api","true").
+.decl auth_registry_doc(d: number)
+auth_registry_doc(d) :- !auth_supplied_config(), loaded(path,"auth:registry","python"), doc(d,path,_), doc_role(d,"primary"), !syntax_error(d,_,_).
+auth_registry_doc(d) :- !auth_supplied_config(), doc(d,"l2050_transaction/execution_authority_tokens.py",_), doc_role(d,"primary"), !syntax_error(d,_,_).
+.decl auth_registry_tuple(value: node)
+auth_registry_tuple(value) :- auth_registry_doc(d), docof(a,d), assign_target(a,target), ast_name(target,"EXPLICIT_EXECUTION_AUTHORITY_CALLSITES"), assign_value(a,raw), unparen(raw,value), kind(value,"tuple").
+.decl auth_registry_member(call: node)
+auth_registry_member(call) :- auth_registry_tuple(tuple), child(tuple,raw,_), unparen(raw,call), kind(call,"call"), field(call,"function",fn), leaf_name(fn,"ExecutionAuthorityCallsite").
+.decl auth_registry_kw(call: node, name: symbol, value: symbol)
+auth_registry_kw(call,name,value) :- auth_registry_member(call), field(call,"arguments",args), child(args,kw,_), kind(kw,"keyword_argument"), field(kw,"name",key), text(key,name), field(kw,"value",raw), unparen(raw,v), str_const(v,value).
+.decl auth_registry_row(call: node, module: symbol, function: symbol)
+auth_registry_row(call,m,f) :- auth_registry_member(call), auth_registry_kw(call,"module",m), auth_registry_kw(call,"function",f).
+auth_signed(i,m,f) :- !auth_supplied_config(), auth_registry_row(call,m,f), visit_index(call,j), i = count : { auth_registry_row(other,_,_), visit_index(other,k), k < j }.

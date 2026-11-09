@@ -1,0 +1,31 @@
+// Pinned authority rule constants. The signed registry remains a repository input.
+// Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_execution_authority_bypass.py
+.decl auth_default_private(value: symbol)
+auth_default_private("_explicit_authority_var").
+auth_default_private("_legacy_boundary_var").
+.decl auth_default_marker(value: symbol)
+auth_default_marker("execution_boundary._caller_token").
+auth_default_marker("execution_boundary._explicit_authority_var").
+auth_default_marker("execution_boundary._legacy_boundary_var").
+auth_default_marker("execution_boundary.verify_callsite_authorization").
+auth_default_marker("l2050_transaction.execution_boundary._caller_token").
+auth_default_marker("l2050_transaction.execution_boundary._explicit_authority_var").
+auth_default_marker("l2050_transaction.execution_boundary._legacy_boundary_var").
+auth_default_marker("l2050_transaction.execution_boundary.verify_callsite_authorization").
+.decl auth_default_private_exception(path: symbol, function: symbol)
+auth_default_private_exception("l2050_transaction/tests/test_execution_boundary.py","test_explicit_execution_authority_uses_outer_callsite").
+auth_default_private_exception("l2050_transaction/tests/test_execution_boundary.py","test_raw_explicit_authority_contextvar_value_does_not_authorize").
+.decl auth_default_explicit_exception(path: symbol, function: symbol)
+auth_default_explicit_exception("l2050_transaction/tests/test_execution_boundary.py","test_explicit_execution_authority_uses_outer_callsite.<locals>.helper").
+.decl auth_default_curated(module: symbol, function: symbol)
+auth_default_curated("impl.common.l2070_server_plan.execution_context","explicit_plan_execution_scope").
+auth_default_curated("l1300_session.bootstrap","ensure_system_session_exists.<locals>._insert_if_missing").
+auth_default_curated("l2000_connection.schema_transaction","AsyncSchemaTransaction._enter_async").
+auth_default_curated("l2000_connection.schema_transaction","LazySchemaTransaction._enter_sync").
+auth_default_curated("l2050_transaction.execution_boundary","execute_server_plan_async").
+auth_default_curated("l2050_transaction.execution_boundary","execute_server_plan_now").
+auth_default_curated("l3200_metadata.schema_lock","_schema_lock_bootstrap_row").
+auth_default_curated("l3200_metadata.schema_lock","_schema_lock_bootstrap_row_async").
+auth_default_curated("l4170_inbound_bridge.process","_invoke_inbound_bridge_handler_eager").
+auth_default_curated("l7500_commit_triggers.registry","CommitTriggerRegistry._materialize_pending_triggers_under_authority").
+auth_default_curated("l7500_commit_triggers.registry","CommitTriggerRegistry._materialize_pending_triggers_under_authority_async").
