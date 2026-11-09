@@ -45,8 +45,9 @@ pub(in crate::code_rule_dsl) struct Session {
     generation: u64,
 }
 
-/// A phase export bound as a relation, with its statistics.
-pub(super) type PhasedSource = (std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>);
+/// A phase export bound as a relation, with its statistics, and the counts they are read from: the next version's
+/// delta patches them (decision 0096 §3).
+pub(super) type PhasedSource = (std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>, std::sync::Arc<crate::code_rule_dsl::logic::plan::statkeep::RelStats>);
 
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 

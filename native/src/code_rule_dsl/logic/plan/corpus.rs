@@ -290,6 +290,11 @@ fn atoms_source<'a>(store: &ContentStore, width: usize, rows: impl Iterator<Item
     Ok(Arc::new(relation))
 }
 
+/// Statistics under `columns`' names, in order (a kept count's columns are named as the source it was first made of).
+fn rename(measured: Vec<(String, i64, i64, i64, i64)>, columns: &[String]) -> Vec<(String, i64, i64, i64, i64)> {
+    measured.into_iter().zip(columns).map(|((_, a, b, c, d), name)| (name.clone(), a, b, c, d)).collect()
+}
+
 /// `old` with the rows of `minus` gone and those of `plus` added (a set: a row gone is gone however often it stood).
 fn patched(old: &dyn crate::code_rule_dsl::facts::vtab::Source, plus: &dyn crate::code_rule_dsl::facts::vtab::Source, minus: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
     let width = old.columns().len();
@@ -2060,24 +2065,32 @@ fn run_observed(
             let version = versioned.map(|v| v.now);
             let bound = session.as_ref().and_then(|s| s.phased.lock().ok()?.get(rel).cloned());
             let width = prog.decls[rel].len();
+            // Its statistics are counted from its rows once and then patched by each version's delta (decision 0096
+            // §3): an export is never measured again whole. Read as `syntax::measured` reads it.
+            let flat = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vec<i64> { (0..s.len()).flat_map(|r| (0..width).map(move |c| (r, c))).map(|(r, c)| s.value(r, c)).collect() };
+            let read = |kept: &crate::code_rule_dsl::logic::plan::statkeep::RelStats| -> Vec<(String, i64, i64, i64, i64)> { kept.statistics(&|_| true) };
             let (source, measured) = match (bound, versioned) {
-                (Some((at, kept)), Some(v)) if at == v.now => kept,
-                (Some((at, (old, _))), Some(phases::Versioned { delta: Some((before, plus, minus)), now, .. })) if at == *before => {
+                (Some((at, (source, measured, _))), Some(v)) if at == v.now => (source, measured),
+                (Some((at, (old, _, counts))), Some(phases::Versioned { delta: Some((before, plus, minus)), now, .. })) if at == *before => {
                     let decl = &prog.decls[rel];
                     let (plus, minus) = (atoms_source(&store, width, values_of(decl, plus).iter())?, atoms_source(&store, width, values_of(decl, minus).iter())?);
                     let source = patched(old.as_ref(), plus.as_ref(), minus.as_ref());
-                    let measured = syntax::statistics(source.as_ref());
+                    let mut counts = (*counts).clone();
+                    counts.delta(&flat(plus.as_ref()), &flat(minus.as_ref()), width);
+                    let measured = rename(read(&counts), &source.columns());
                     if let Some(s) = session.as_ref() {
-                        s.phased.lock().expect("the session's phase exports").insert(rel.clone(), (*now, (Arc::clone(&source), measured.clone())));
+                        s.phased.lock().expect("the session's phase exports").insert(rel.clone(), (*now, (Arc::clone(&source), measured.clone(), Arc::new(counts))));
                     }
                     (source, measured)
                 }
                 _ => {
                     let rows = phased.get(rel).ok_or_else(|| Error::Plan(format!("{rel}: the phase handed on no rows, and this run holds none")))?;
                     let source = atoms_source(&store, width, rows.iter())?;
-                    let measured = syntax::statistics(source.as_ref());
+                    let mut counts = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(source.columns());
+                    counts.delta(&flat(source.as_ref()), &[], width);
+                    let measured = read(&counts);
                     if let (Some(s), Some(v)) = (session.as_ref(), version) {
-                        s.phased.lock().expect("the session's phase exports").insert(rel.clone(), (v, (Arc::clone(&source), measured.clone())));
+                        s.phased.lock().expect("the session's phase exports").insert(rel.clone(), (v, (Arc::clone(&source), measured.clone(), Arc::new(counts))));
                     }
                     (source, measured)
                 }
