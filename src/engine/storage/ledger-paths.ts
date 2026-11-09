@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { openNoFollow } from "../no-follow.js";
+import { keepFolderToOwner, type PrivateFolder } from "./windows-acl.js";
 import { resolve, sep } from "node:path";
 
 /**
@@ -41,7 +42,7 @@ function errno(error: unknown): string | undefined {
  * them. With `create`, makes each missing one (`0700`), and the folders above `.rerail` as `mkdir -p` would; without
  * it, stops at the first missing one.
  */
-async function ledgerFolder(directory: string, create: boolean): Promise<void> {
+async function ledgerFolder(directory: string, create: boolean, windows: Omit<PrivateFolder, "folder"> = {}): Promise<void> {
   const absolute = resolve(directory);
   const segments = absolute.split(sep);
   const start = segments.lastIndexOf(LEDGER_FOLDER);
@@ -58,9 +59,12 @@ async function ledgerFolder(directory: string, create: boolean): Promise<void> {
     if (stats === undefined) {
       if (!create) return;
       if (end === start + 1) await mkdir(segments.slice(0, start).join(sep) || sep, { recursive: true, mode: 0o700 });
-      await mkdir(folder, { mode: 0o700 }).catch((error: unknown) => {
+      const made = await mkdir(folder, { mode: 0o700 }).then(() => true, (error: unknown) => {
         if (errno(error) !== "EEXIST") throw error;
+        return false;
       });
+      // Windows ignores the mode: the folder of session records gets an owner-only ACL, which every record inherits.
+      if (made && end === start + 2) keepFolderToOwner({ ...windows, folder });
       stats = await lstat(folder);
     }
     if (stats.isSymbolicLink()) refuse(folder, "a symbolic link");
@@ -68,9 +72,14 @@ async function ledgerFolder(directory: string, create: boolean): Promise<void> {
   }
 }
 
-/** Creates the session record folder `directory`, refusing a symlink below `.rerail` (see {@link LEDGER_FOLDER}). */
-export async function makeLedgerFolder(directory: string): Promise<void> {
-  await ledgerFolder(directory, true);
+/**
+ * Creates the session record folder `directory`, refusing a symlink below `.rerail` (see {@link LEDGER_FOLDER}). On
+ * Windows, which ignores `0700`, the folder it makes just below `.rerail` (`sessions`) gets an owner-only ACL when it is
+ * outside the profile folder: a checkout under `C:\` would otherwise let every local user read prompts and preimages,
+ * and change held steers.
+ */
+export async function makeLedgerFolder(directory: string, windows: Omit<PrivateFolder, "folder"> = {}): Promise<void> {
+  await ledgerFolder(directory, true, windows);
 }
 
 /**

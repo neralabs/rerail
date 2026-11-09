@@ -286,6 +286,10 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   (`src/engine/storage/private-files.ts`).
 - State files go through a 0600 temp file and rename; logs open 0600.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
+- Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
+  let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
+  everything written in it inherits; a home an earlier release made gets it at the next daemon launch
+  (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it is refused.
 - The repository identity file is read with `O_NOFOLLOW` plus size and format checks, and created with `wx`
   (`src/engine/catalog/repository-identity.ts`).
 - A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
@@ -766,7 +770,8 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 
 - **Device key** goes to `security -i` on stdin, not `argv` (`src/activation/device-keystore.ts`).
 - **Engine socket** lives in `tmpdir()/rerail-<uid>/`, checked before `listen` to be the person's own, 0700 and not a
-  symlink (`src/runtime/engine-service.ts`). On Linux another user can create that folder first; the daemon then
+  symlink (`src/runtime/engine-service.ts`). On Windows it is a named pipe, which any local user could create first
+  under its predictable name; the engine then listens on that name with a random suffix. On Linux another user can create that folder first; the daemon then
   listens in a `run` folder beside its database under the 0700 Rerail home (`chooseEngineSocketPath`) and records the
   path in `daemon.json` for hooks. Start fails only if no folder is usable, naming each folder, why it was refused,
   and who must remove it.

@@ -101,6 +101,19 @@ describe("TLS daemon", () => {
     expect(await loadDaemonTls(files)).toEqual({ cert, key });
   });
 
+  it("refuses a Windows private key whose ACL lets other accounts read it, which mode bits cannot show", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const { cert, key } = selfSignedCertificate();
+    const files = { certFile: join(root, "cert.pem"), keyFile: join(root, "key.pem") };
+    await writeFile(files.certFile, cert);
+    await writeFile(files.keyFile, key);
+    // What a key under C:\certs inherits: Users may read it.
+    const shared = { platform: "win32" as const, acl: { otherReaders: () => ["BU"] } };
+    await expect(loadDaemonTls(files, shared)).rejects.toThrow(`${files.keyFile} can be read by other accounts (BU)`);
+    await expect(loadDaemonTls(files, shared)).rejects.toThrow(`icacls "${files.keyFile}" /inheritance:r`);
+    expect(await loadDaemonTls(files, { platform: "win32", acl: { otherReaders: () => [] } })).toEqual({ cert, key });
+  });
+
   it("answers Rerail's own client over https pinned to the certificate it recorded, and nothing pinned to another", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
     const certificate = selfSignedCertificate();

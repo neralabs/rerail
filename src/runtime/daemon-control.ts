@@ -12,6 +12,7 @@ import { renameWithRetry } from "../engine/file-replace.js";
 import { windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
+import { keepFolderToOwner } from "../engine/storage/windows-acl.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
@@ -767,6 +768,9 @@ function launchDaemonProcess(control: DaemonControl, args: string[], env: NodeJS
 async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
   await repairSqlite(control);
   await mkdir(control.home, { recursive: true, mode: 0o700 });
+  // A Rerail home an earlier release made outside the profile folder kept its parent's ACL on Windows, which there lets
+  // every local user read the capability and the database; a launch, rare beside hooks, gives it an owner-only one.
+  keepFolderToOwner({ folder: control.home });
   const stateFile = join(control.home, DAEMON_STATE_FILE);
   const logFile = join(control.home, DAEMON_LOG_FILE);
   const env = { ...(options.env ?? process.env), RERAIL_HOME: control.home };

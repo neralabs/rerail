@@ -28,6 +28,7 @@ import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { WINDOWS_ACL, type WindowsAcl } from "../engine/storage/windows-acl.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
@@ -753,13 +754,32 @@ function privateKeyHint(platform: NodeJS.Platform): string {
   return `icacls key.pem /inheritance:r /grant:r "${account}:R"`;
 }
 
+/** What `loadDaemonTls` checks a key's access with; tests pass their own. */
+export interface KeyAccess {
+  platform: NodeJS.Platform;
+  acl: Pick<WindowsAcl, "otherReaders">;
+}
+
 /**
  * The PEM files `tls` names, read once at start. The private key must be its owner's alone: a key other users can read
  * lets any of them impersonate the daemon, so a key with any group or other permission is refused, as ssh refuses
- * one. Windows has no mode bits to check.
+ * one. Windows has no mode bits: there a key whose ACL lets any account beyond the person, SYSTEM and Administrators
+ * read it is refused, as OpenSSH for Windows refuses one. A key outside the profile folder, under `C:\certs` say,
+ * inherits an ACL that lets every local user read it.
  */
-export async function loadDaemonTls(tls: DaemonTlsFiles): Promise<DaemonTlsMaterial> {
-  if (process.platform !== "win32") {
+export async function loadDaemonTls(
+  tls: DaemonTlsFiles,
+  access: KeyAccess = { platform: process.platform, acl: WINDOWS_ACL },
+): Promise<DaemonTlsMaterial> {
+  if (access.platform === "win32") {
+    const readers = access.acl.otherReaders(tls.keyFile);
+    if (readers.length > 0) {
+      throw new Error(
+        `${tls.keyFile} can be read by other accounts (${readers.join(", ")}); a TLS private key must be readable by its `
+        + `owner only: ${privateKeyHint("win32").replace("key.pem", `"${tls.keyFile}"`)}`,
+      );
+    }
+  } else {
     const mode = (await stat(tls.keyFile)).mode & 0o777;
     if ((mode & 0o077) !== 0) {
       throw new Error(
