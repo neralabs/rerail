@@ -33,7 +33,11 @@ pub struct Token {
     pub kind: String,
     pub start: usize,
     pub end: usize,
-    pub soft: bool,
+    /// A soft keyword's kind: the token keeps its own kind, and the grammar may take it as the
+    /// keyword where it can take the keyword (`tree`).
+    pub soft: Option<String>,
+    /// A mark (`mark K = E`): no width, before the token at `start`.
+    pub mark: bool,
 }
 
 /// A `tree` section's grammar (docs/parser-generators/18-tree-as-grammar.md).
@@ -44,6 +48,23 @@ pub struct TreeDecl {
     /// Each `choice`: name, supertype, alternatives.
     pub choices: Vec<(String, Option<String>, crate::syntax::Gram)>,
     pub extra: Vec<String>,
+    /// The root spans the whole file (`node K whole`): from byte 0, and it may hold no token.
+    pub whole: bool,
+    /// The marks (`hidden K`) taken where the grammar can take them, skipped elsewhere.
+    pub hidden: Vec<String>,
+    /// The marks' kinds, in the order declared.
+    pub marks: Vec<String>,
+    /// The soft keywords' kinds (`keywords K { … } soft { … }`).
+    pub soft: Vec<String>,
+    /// Each `refuse MARK in LEVEL …`: a hidden mark between a level's first token and its last
+    /// refuses the file.
+    pub refuse: Vec<(String, Vec<String>)>,
+    /// The nested choices' names (`choice C nested`): levels of their own, as nested nodes.
+    pub nested: Vec<String>,
+    /// Each `reading NAME = …`, by name (`reread`).
+    pub readings: Vec<(String, crate::syntax::Reading)>,
+    /// The `provisional` fields: none may be left in a finished tree.
+    pub provisional: Vec<String>,
 }
 
 pub struct Output {
@@ -87,6 +108,8 @@ pub struct Ev<'a> {
     munch: Vec<(String, Mask, Vec<(Vec<u8>, Option<String>)>)>,
     keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, Vec<Vec<u8>>, bool)>,
     skip: Mask,
+    /// Each `mark`, in the order declared: its kind, its bits, and whether the end has it.
+    marks: Vec<(String, Mask, bool)>,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
     tree: Option<TreeDecl>,
     /// Each class's byte ranges, for `check`; and each `check`: a token kind and its grammar.
@@ -150,6 +173,7 @@ impl<'a> Ev<'a> {
             munch: vec![],
             keywords: vec![],
             skip: Mask::zeros(n),
+            marks: vec![],
             tables,
             tree: None,
             byte_classes: HashMap::new(),
@@ -157,6 +181,10 @@ impl<'a> Ev<'a> {
         };
         ev.exec(prog)?;
         let tokens = ev.finish()?;
+        if let Some(tree) = &mut ev.tree {
+            tree.marks = ev.marks.iter().map(|m| m.0.clone()).collect();
+            tree.soft = ev.keywords.iter().flat_map(|k| k.2.iter().map(|w| String::from_utf8_lossy(w).into_owned())).collect();
+        }
         Ok(Output { tree: ev.tree, tokens, errors: ev.errors, rounds: ev.rounds, vars: ev.vars })
     }
 
@@ -277,7 +305,13 @@ impl<'a> Ev<'a> {
                 self.lane_rejects.push((msg.clone(), m));
             }
             Stmt::Exit(name) => self.lane_exit = Some(name.clone()),
-            Stmt::Rounds { n, body, .. } => self.rounds(*n, body)?,
+            Stmt::Rounds { n: Some(n), body, .. } => self.rounds(*n, body)?,
+            // The fixed point: a strictly causal body is right on a byte more each round, so it
+            // settles within a round per byte, and one to confirm.
+            Stmt::Rounds { n: None, body, .. } => {
+                crate::syntax::strictly_causal(body)?;
+                self.rounds(self.n + 2, body)?
+            }
             Stmt::Carry(..) | Stmt::Next(..) => return Err("carry or next outside rounds".into()),
             Stmt::Ucode { over, classes } => {
                 let over = self.mask(over)?;
@@ -336,10 +370,30 @@ impl<'a> Ev<'a> {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
             }
-            Stmt::Node { kind, nested, body } => self.tree.get_or_insert_with(TreeDecl::default).rules.push((kind.clone(), *nested, body.clone())),
-            Stmt::Choice { name, supertype, body } => self.tree.get_or_insert_with(TreeDecl::default).choices.push((name.clone(), supertype.clone(), body.clone())),
+            Stmt::Node { kind, nested, whole, body } => {
+                let tree = self.tree.get_or_insert_with(TreeDecl::default);
+                if tree.rules.is_empty() {
+                    tree.whole = *whole;
+                }
+                tree.rules.push((kind.clone(), *nested, body.clone()));
+            }
+            Stmt::Choice { name, supertype, body, nested } => {
+                let t = self.tree.get_or_insert_with(TreeDecl::default);
+                t.choices.push((name.clone(), supertype.clone(), body.clone()));
+                if *nested {
+                    t.nested.push(name.clone());
+                }
+            }
             Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
+            Stmt::Hidden(kinds) => self.tree.get_or_insert_with(TreeDecl::default).hidden.extend(kinds.iter().cloned()),
+            Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
+            Stmt::Reading { name, reading } => self.tree.get_or_insert_with(TreeDecl::default).readings.push((name.clone(), reading.clone())),
+            Stmt::Provisional(fields) => self.tree.get_or_insert_with(TreeDecl::default).provisional.extend(fields.iter().cloned()),
+            Stmt::Mark { kind, at, end } => {
+                let m = self.mask(at)?;
+                self.marks.push((kind.clone(), m, *end));
+            }
             Stmt::Error(msg, e) => {
                 let m = self.mask(e)?;
                 self.err(msg, &m);
@@ -1005,7 +1059,11 @@ impl<'a> Ev<'a> {
             for j in i..end {
                 covered.set(j)
             }
-            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: false });
+            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false });
+        }
+        // A token that starts inside the one before (tier 2 refuses it too).
+        if let Some(w) = toks.windows(2).find(|w| w[1].start < w[0].end) {
+            self.errors.push(format!("token {} starts inside {} (byte {})", w[1].kind, w[0].kind, w[1].start));
         }
         let gap = covered.or(&self.skip).not();
         if let Some(i) = gap.first() {
@@ -1016,8 +1074,8 @@ impl<'a> Ev<'a> {
                 let text = &self.src[t.start..t.end];
                 if let Some((w, alias)) = words.iter().find(|(w, _)| w == text) {
                     t.kind = alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned());
-                } else if soft.iter().any(|w| w == text) {
-                    t.soft = true;
+                } else if let Some(w) = soft.iter().find(|w| *w == text) {
+                    t.soft = Some(String::from_utf8_lossy(w).into_owned());
                 } else if *required {
                     self.errors.push(format!("{kind} {:?} is no keyword (byte {})", String::from_utf8_lossy(text), t.start));
                 }
@@ -1031,7 +1089,37 @@ impl<'a> Ev<'a> {
                 }
             }
         }
-        Ok(toks)
+        if self.marks.is_empty() {
+            return Ok(toks);
+        }
+        // Each mark before the first grammar token (not an extra) at or after each of its bits.
+        let extra = self.tree.as_ref().map_or(&[][..], |t| &t.extra[..]);
+        let grammar: Vec<usize> = (0..toks.len()).filter(|&i| !extra.contains(&toks[i].kind)).collect();
+        let mut before: Vec<Vec<bool>> = vec![vec![false; self.marks.len()]; toks.len()];
+        for (k, (_, m, _)) in self.marks.iter().enumerate() {
+            for i in m.ones_iter() {
+                let g = grammar.partition_point(|&t| toks[t].start < i);
+                if let Some(&t) = grammar.get(g) {
+                    before[t][k] = true;
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(toks.len());
+        for (t, tok) in toks.into_iter().enumerate() {
+            for (k, (kind, _, _)) in self.marks.iter().enumerate() {
+                if before[t][k] {
+                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true });
+                }
+            }
+            out.push(tok);
+        }
+        // A bit after the last grammar token's start puts no mark; `, end` puts one at the end.
+        for (kind, _, end) in &self.marks {
+            if *end {
+                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true });
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -1105,6 +1193,106 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) => return Err("check: a field in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
     })
+}
+
+#[cfg(test)]
+mod rounds_tests {
+    use super::*;
+
+    /// Strings `"…"` with `\` escapes and `//` comments, each hiding the other's openers: the
+    /// first opener wins. One carry: the comments' bytes, which hide quotes.
+    const LEXER: &str = r#"
+lexer t
+class quote = '"'
+class backslash = '\\'
+class slash = '/'
+class lf = '\n'
+mask q0 = quote & ~escaped(backslash)
+rounds until settled {
+  carry hidden = empty
+  mask q = q0 & ~hidden
+  mask s = toggle(q)
+  # The second slash of a `//` whose first is in no string.
+  mask open = slash & prev(slash & ~s)
+  mask line = fill(open, lf)
+  next hidden = line
+}
+mask comment = line | (slash & next(open))
+"#;
+
+    /// The engine's way: a byte at a time, the first opener winning. The string's bytes (its
+    /// opening quote to its last byte before the closing one) and the comment's (`//` to the
+    /// line's end).
+    fn oracle(src: &[u8]) -> (Vec<bool>, Vec<bool>) {
+        // A quote after an odd run of backslashes is escaped: inside a string, as the engine's
+        // skip of two; in code, where the engine refuses a backslash, as the lexer's mask.
+        let mut esc = vec![false; src.len()];
+        let mut run = 0;
+        for (i, &b) in src.iter().enumerate() {
+            esc[i] = run % 2 == 1;
+            run = if b == b'\\' { run + 1 } else { 0 };
+        }
+        let (mut s, mut c) = (vec![false; src.len()], vec![false; src.len()]);
+        let mut i = 0;
+        while i < src.len() {
+            if src[i] == b'"' && !esc[i] {
+                s[i] = true;
+                i += 1;
+                while i < src.len() && !(src[i] == b'"' && !esc[i]) {
+                    s[i] = true;
+                    i += 1;
+                }
+                i += 1;
+            } else if src[i] == b'/' && src.get(i + 1) == Some(&b'/') {
+                while i < src.len() && src[i] != b'\n' {
+                    c[i] = true;
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        (s, c)
+    }
+
+    #[test]
+    fn the_fixed_point_is_the_first_opener_winning() {
+        let prog = crate::syntax::parse(LEXER).expect("parses");
+        let tables = HashMap::new();
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut most = 0;
+        for len in (0..300).step_by(3) {
+            let src: Vec<u8> = (0..len)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    b"\"//\\\na "[(seed % 7) as usize]
+                })
+                .collect();
+            let out = Ev::run(&prog, &src, &tables).unwrap_or_else(|e| panic!("{e}"));
+            let mask = |n: &str| match out.vars.get(n) {
+                Some(Val::M(m)) => (0..src.len()).map(|i| m.get(i)).collect::<Vec<bool>>(),
+                _ => panic!("{n}"),
+            };
+            let (s, c) = oracle(&src);
+            assert_eq!((mask("s"), mask("comment")), (s, c), "{:?}", String::from_utf8_lossy(&src));
+            most = most.max(out.rounds.iter().map(|r| r.1).max().unwrap_or(0));
+        }
+        assert!(most > 2, "the inputs interleave: some take more than one round and a confirming one");
+    }
+
+    #[test]
+    fn a_body_that_reads_a_carry_at_its_own_byte_is_refused() {
+        let loose = LEXER.replace("next hidden = line", "next hidden = line | q");
+        let prog = crate::syntax::parse(&loose).expect("parses");
+        let e = Ev::run(&prog, b"\"a\"", &HashMap::new()).err().expect("refused");
+        assert!(e.contains("no `prev` on the way"), "{e}");
+        let ahead = LEXER.replace("mask line = fill(open, lf)", "mask line = fill(open, lf) | next(s)");
+        let prog = crate::syntax::parse(&ahead).expect("parses");
+        let e = Ev::run(&prog, b"\"a\"", &HashMap::new()).err().expect("refused");
+        assert!(e.contains("`next` of a value a carry reaches"), "{e}");
+    }
 }

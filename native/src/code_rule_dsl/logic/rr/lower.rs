@@ -2208,6 +2208,7 @@ impl Lowerer {
             "min" => AggOp::Min,
             "max" => AggOp::Max,
             "sum" => AggOp::Sum,
+            "product" => AggOp::Product,
             "join" => AggOp::Join { by: by.clone(), sep: sep.clone().unwrap_or_default() },
             other => return not_yet(format!("the aggregate {other}")),
         };
@@ -2236,6 +2237,12 @@ impl Lowerer {
         // Otherwise a helper relation of the body. `count` and `sum` read the body's distinct rows, so they keep every
         // variable; `min`, `max` and `join` keep the aggregated one (and a join's keys) and those the rule shares.
         let mut inner = body_vars(body);
+        // A nested aggregate's variables that the rule shares are the helper's too: in `count : { ident(x), count : {
+        // ref(n, f, x) } = 0 }`, the inner count is per (f, x), so the helper is a relation of f and x, and f is bound
+        // inside it by the context. Without f, the inner count read it free, and the outer could not group by it.
+        let mut nested = Vec::new();
+        body.iter().for_each(|l| l.vars(&mut nested));
+        inner.extend(nested.into_iter().filter(|v| outer.contains(v)));
         // `match_all`'s groups are variables of the body too, named in its regex: each match is a row to count.
         for l in body {
             if let Lit::Atom { rel, args, neg: false } = l
@@ -2245,7 +2252,7 @@ impl Lowerer {
                 inner.extend(groups(re));
             }
         }
-        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum) || own(v) || outer.contains(*v)).cloned().collect();
+        let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum | AggOp::Product) || own(v) || outer.contains(*v)).cloned().collect();
         let name = self.fresh("agg");
         let mut bodies = self.conjunction(body, outer)?;
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by

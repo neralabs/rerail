@@ -19,6 +19,7 @@ mod cross_rows;
 mod derivation;
 mod facts_memo;
 mod objects;
+pub(crate) mod observe;
 pub(crate) use objects::ResidentFrames;
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
@@ -223,6 +224,16 @@ impl HashKey {
             }
             bytes[..20].try_into().expect("twenty bytes")
         })
+    }
+
+    /// The key as bytes: its algorithm, then its lanes (an alias table's key).
+    pub(crate) fn key_bytes(self) -> [u8; 40] {
+        let mut out = [0_u8; 40];
+        out[..8].copy_from_slice(&self.algorithm.to_be_bytes());
+        for (chunk, lane) in out[8..].chunks_exact_mut(8).zip(self.lanes) {
+            chunk.copy_from_slice(&lane.to_be_bytes());
+        }
+        out
     }
 
     pub fn git_sha256(bytes: [u8; 32]) -> Self {
@@ -599,6 +610,8 @@ pub struct ContentStore {
     working_set: working_set::WorkingSet,
     /// The owner and lease under which this handle pins each source it stores or finds (`hold_sources`, O95).
     holder: parking_lot::Mutex<Option<(String, i64)>>,
+    /// This handle's shared collection lease (`hold_collection`).
+    lease: std::sync::Arc<collection_guard::SharedLease>,
     #[cfg(test)]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(test)]
@@ -654,6 +667,7 @@ impl ContentStore {
             atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
+            lease: Default::default(),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),
             #[cfg(test)]

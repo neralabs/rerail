@@ -11,11 +11,14 @@
 //! ```
 //!
 //! Kept while a `Keep` is held (`corpus::run_with_options`, with the kept plans, decision 0038); outside one every
-//! value is computed. The digest is 128 bits: two SipHash-1-3 hashers with independent random keys.
+//! value is computed. The digest is 128 bits: two foldhash hashers with independent random seeds (SipHash was a
+//! tenth of a session run's planning).
 
 use std::any::Any;
 use std::cell::RefCell;
-use std::hash::{BuildHasher, Hasher, RandomState};
+use std::hash::{BuildHasher, Hasher};
+
+use foldhash::quality::RandomState;
 use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
@@ -33,27 +36,37 @@ thread_local! {
     static MEMO: RefCell<Option<Memo>> = const { RefCell::new(None) };
 }
 
-/// Derived values kept on this thread while held.
-pub(in crate::code_rule_dsl) struct Keep;
+/// Derived values kept on this thread while held; for a session's run (`across`, the session's generation), the
+/// values its earlier runs kept, put back at the end (decision 0090 step 5).
+pub(in crate::code_rule_dsl) struct Keep(Option<u64>);
+
+thread_local! {
+    /// A session's derived values between its runs, with the session's generation.
+    static SESSION_MEMO: RefCell<Option<(u64, Memo)>> = const { RefCell::new(None) };
+}
 
 impl Keep {
-    pub(in crate::code_rule_dsl) fn start() -> Self {
-        MEMO.with(|m| *m.borrow_mut() = Some(Memo { keys: (RandomState::new(), RandomState::new()), values: FxHashMap::default() }));
-        Keep
+    pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
+        let kept = across.and_then(|g| SESSION_MEMO.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, m)| m)));
+        MEMO.with(|m| *m.borrow_mut() = Some(kept.unwrap_or_else(|| Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() })));
+        Keep(across)
     }
 }
 
 impl Drop for Keep {
     fn drop(&mut self) {
-        MEMO.with(|m| *m.borrow_mut() = None);
+        let memo = MEMO.with(|m| m.borrow_mut().take());
+        if let (Some(g), Some(memo)) = (self.0, memo) {
+            SESSION_MEMO.with(|s| *s.borrow_mut() = Some((g, memo)));
+        }
     }
 }
 
 /// The digest of a value's inputs, written one by one. Each piece is length- or tag-delimited, so two different
 /// input lists never write the same bytes.
 pub(in crate::code_rule_dsl) struct Inputs {
-    a: std::hash::DefaultHasher,
-    b: std::hash::DefaultHasher,
+    a: foldhash::quality::FoldHasher<'static>,
+    b: foldhash::quality::FoldHasher<'static>,
     /// Bytes written: the inputs' size, charged as `Byte` work.
     bytes: u64,
 }
@@ -79,6 +92,21 @@ impl Inputs {
     fn finish(&self) -> u128 {
         (u128::from(self.a.finish()) << 64) | u128::from(self.b.finish())
     }
+
+    /// The digest of what `inputs` writes, under the hashers `keys`, charged as `Byte` work.
+    fn over(keys: &(RandomState, RandomState), inputs: impl FnOnce(&mut Inputs)) -> u128 {
+        let mut d = Inputs { a: keys.0.build_hasher(), b: keys.1.build_hasher(), bytes: 0 };
+        inputs(&mut d);
+        super::profile::work(super::profile::Unit::Byte, d.bytes);
+        d.finish()
+    }
+}
+
+/// The digest of what `inputs` writes, under keys fixed for the process: a key that outlives one run (a session's
+/// kept plans, `plan::PlanKey`). Two different input lists collide with odds of about 2^-128.
+pub(in crate::code_rule_dsl) fn digest(inputs: impl FnOnce(&mut Inputs)) -> u128 {
+    static KEYS: std::sync::OnceLock<(RandomState, RandomState)> = std::sync::OnceLock::new();
+    Inputs::over(KEYS.get_or_init(|| (RandomState::default(), RandomState::default())), inputs)
 }
 
 /// The value `name` over the inputs `inputs` writes: kept from an earlier request with the same digest, or `make`'s.
@@ -87,11 +115,10 @@ pub(in crate::code_rule_dsl) fn value<V: Clone + 'static>(name: &'static str, in
     let digest = MEMO.with(|m| {
         let m = m.borrow();
         let m = m.as_ref()?;
-        let mut d = Inputs { a: m.keys.0.build_hasher(), b: m.keys.1.build_hasher(), bytes: 0 };
-        d.str(name);
-        inputs(&mut d);
-        super::profile::work(super::profile::Unit::Byte, d.bytes);
-        Some(d.finish())
+        Some(Inputs::over(&m.keys, |d| {
+            d.str(name);
+            inputs(d);
+        }))
     });
     let Some(digest) = digest else {
         return make();
@@ -131,7 +158,7 @@ mod tests {
         assert_eq!(get("a"), "<a>");
         assert_eq!(get("a"), "<a>");
         assert_eq!(made.get(), 2);
-        let _keep = Keep::start();
+        let _keep = Keep::start(None);
         assert_eq!(get("a"), "<a>");
         assert_eq!(get("a"), "<a>");
         assert_eq!(made.get(), 3);

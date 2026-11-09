@@ -14,24 +14,34 @@
 //! past it, a relation is not kept and its stratum runs again next time.
 //!
 //! Stage 2 (decision 0077 §3, `maintain`) maintains a changed stratum's rows from the deltas (DRed) instead of deriving
-//! them again; it reads the old rows of what changed, so inputs' rows are kept too.
+//! them again; it reads the old rows of what changed, so inputs' sources are kept too.
+//!
+//! Nothing is copied (decision 0090 step 3): a relation is kept as the engine held it (`InRel`, with the indexes its
+//! waves and readers built), and put back into the next run as a native relation (`adopt`), read in place; an input
+//! is kept as its source.
 
 use super::{Error, Result, lower};
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::front;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
+use crate::code_rule_dsl::logic::native::component::InRel;
 
-/// A relation as the last run derived it: its columns, and its decoded rows when it is an output.
+/// A relation as the last run derived it: the engine's relation, and its decoded rows when it is an output.
 #[derive(Clone)]
-struct Kept {
-    columns: Vec<Vec<i64>>,
-    output: Option<(Vec<String>, Vec<usize>)>,
+pub(in crate::code_rule_dsl) struct Kept {
+    pub(in crate::code_rule_dsl) rel: Arc<InRel>,
+    pub(in crate::code_rule_dsl) width: usize,
+    pub(in crate::code_rule_dsl) output: Option<(Vec<String>, Vec<usize>)>,
 }
 
 impl Kept {
     fn bytes(&self) -> usize {
-        self.columns.iter().map(|c| c.len() * 8).sum::<usize>() + self.output.as_ref().map_or(0, |(lines, _)| lines.iter().map(String::len).sum())
+        self.rel.bytes() + self.output.as_ref().map_or(0, |(lines, _)| lines.iter().map(String::len).sum())
+    }
+    /// Its rows as a source named as the planner reads relation `name` (`sql_col`).
+    fn source(&self, name: &str) -> Arc<dyn Source> {
+        self.rel.source((0..self.width).map(|c| crate::code_rule_dsl::logic::plan::sql_col(name, c)).collect())
     }
 }
 
@@ -43,8 +53,8 @@ pub(in crate::code_rule_dsl) struct Retained {
     /// A digest of each input's rows.
     inputs: HashMap<String, u64>,
     rels: HashMap<String, Kept>,
-    /// Each input's rows, as columns, for its deltas next run (stage 2).
-    input_rows: HashMap<String, Vec<Vec<i64>>>,
+    /// Each input's source, for its deltas next run (stage 2).
+    input_srcs: HashMap<String, Arc<dyn Source>>,
 }
 
 /// The key of a cross-file part: the prepared program's key and the part's program as lowered.
@@ -147,15 +157,15 @@ impl Cut {
         lower::Lowered { program, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
     }
 
-    /// The clean relations `program` reads, as sources over what was kept: bound by the caller, as the other inputs.
-    pub(in crate::code_rule_dsl) fn sources(&self, kept: &Retained, program: &front::Program) -> Vec<(String, Arc<dyn Source>)> {
+    /// The clean relations `program` reads, as kept: each as a source (bound by the caller, as the other inputs) and
+    /// as the engine's relation (adopted by the caller, read in place).
+    pub(in crate::code_rule_dsl) fn sources(&self, kept: &Retained, program: &front::Program) -> Vec<(String, Arc<dyn Source>, Option<Arc<InRel>>)> {
         self.clean
             .iter()
             .filter(|rel| program.inputs.contains(*rel))
             .filter_map(|rel| {
                 let k = kept.rels.get(rel)?;
-                let names = (0..k.columns.len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(rel, c)).collect();
-                Some((rel.clone(), crate::code_rule_dsl::logic::native::component::columns_source(names, k.columns.iter().cloned().map(Some).collect())))
+                Some((rel.clone(), k.source(rel), Some(Arc::clone(&k.rel))))
             })
             .collect()
     }
@@ -177,77 +187,188 @@ impl Cut {
 }
 
 /// The byte budget of what a session keeps of its cross-file part.
-fn budget() -> usize {
+pub(in crate::code_rule_dsl) fn budget() -> usize {
     std::env::var("RERAIL_CROSS_RETAIN_MB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(256) << 20
 }
 
-/// What the next run keeps: the clean relations as they were, and those this run derived (`rows` of each, with its
-/// decoded `outputs`), in stratum order while they fit the budget.
+/// What the next run keeps: the clean relations as they were, and those this run derived (each the engine's
+/// relation, with its width), in stratum order while they fit the budget, with the decoded `outputs`; and every
+/// input's source (held anyway while the session's inputs are: nothing is copied).
 pub(in crate::code_rule_dsl) fn after(
     old: Option<Retained>,
     key: [u8; 32],
     inputs: HashMap<String, u64>,
     cut: &Cut,
-    derived: Vec<(String, usize, Vec<Vec<i64>>)>,
+    derived: Vec<(String, usize, Arc<InRel>)>,
     outputs: &BTreeMap<String, (Vec<String>, Vec<usize>)>,
     sources: &[(String, Arc<dyn Source>)],
 ) -> Retained {
     let mut rels: HashMap<String, Kept> = HashMap::new();
-    let mut old_inputs = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
         for (rel, k) in old.rels {
             if cut.clean.contains(&rel) {
                 rels.insert(rel, k);
             }
         }
-        old_inputs = old.input_rows;
     }
     let mut bytes: usize = rels.values().map(Kept::bytes).sum();
     let budget = budget();
-    for (rel, width, rows) in derived {
-        let mut columns = vec![Vec::with_capacity(rows.len()); width];
-        for row in rows {
-            for (c, v) in row.into_iter().enumerate() {
-                columns[c].push(v);
-            }
-        }
-        let k = Kept { columns, output: outputs.get(&rel).cloned() };
+    for (rel, width, held) in derived {
+        let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };
         bytes += k.bytes();
         if bytes > budget {
             break;
         }
         rels.insert(rel, k);
     }
-    // Inputs' rows after the relations: an input past the budget derives its readers again when it changes. An
-    // unchanged input's rows are the ones kept.
-    let mut input_rows = HashMap::new();
-    for (rel, source) in sources {
-        let width = source.columns().len();
-        if width == 0 || input_rows.contains_key(rel) {
-            continue;
-        }
-        let columns = match old_inputs.remove(rel) {
-            Some(columns) if !cut.changed.contains(rel) => columns,
-            _ => (0..width).map(|c| (0..source.len()).map(|i| source.value(i, c)).collect()).collect(),
-        };
-        bytes += columns.iter().map(|c: &Vec<i64>| c.len() * 8).sum::<usize>();
-        if bytes > budget {
-            break;
-        }
-        input_rows.insert(rel.clone(), columns);
-    }
-    Retained { key, inputs, rels, input_rows }
+    let input_srcs = sources.iter().filter(|(_, s)| !s.columns().is_empty()).map(|(rel, s)| (rel.clone(), Arc::clone(s))).collect();
+    Retained { key, inputs, rels, input_srcs }
+}
+
+/// `source` (input `rel`), or the last run's source of the same rows: same name, columns and digest, in any kept
+/// part. Read in place of the copy, so its column indexes and statistics are kept with it, not built again (0094
+/// §4). Its digest goes to `digests`, which the session's cut reads. An unheld column reads as 0 in both, so the
+/// rows read alike whatever the program.
+pub(in crate::code_rule_dsl) fn kept_source(
+    parts: Option<&HashMap<[u8; 32], Retained>>,
+    rel: &str,
+    source: Arc<dyn Source>,
+    digests: &mut HashMap<String, u64>,
+) -> Arc<dyn Source> {
+    let Some(parts) = parts else { return source };
+    let d = digest(source.as_ref());
+    digests.insert(rel.to_owned(), d);
+    let columns = source.columns();
+    parts
+        .values()
+        .find_map(|p| p.input_srcs.get(rel).filter(|s| p.inputs.get(rel) == Some(&d) && s.columns() == columns).cloned())
+        .unwrap_or(source)
 }
 
 impl Retained {
-    /// A relation's or an input's rows as the last run had them.
-    pub(in crate::code_rule_dsl) fn old(&self, rel: &str) -> Option<&Vec<Vec<i64>>> {
-        self.rels.get(rel).map(|k| &k.columns).or_else(|| self.input_rows.get(rel))
+    /// The inputs of program `key` whose rows are as the last run had them (`inputs`, each input's digest): the
+    /// last run's sources of them, read again in place of this run's copies, so their column indexes and
+    /// statistics are kept with them (0094 §4), not built again.
+    pub(in crate::code_rule_dsl) fn same_inputs(&self, key: [u8; 32], inputs: &HashMap<String, u64>) -> Vec<(String, Arc<dyn Source>)> {
+        if self.key != key {
+            return Vec::new();
+        }
+        inputs
+            .iter()
+            .filter(|(rel, d)| self.inputs.get(*rel) == Some(*d))
+            .filter_map(|(rel, _)| self.input_srcs.get(rel).map(|s| (rel.clone(), Arc::clone(s))))
+            .collect()
+    }
+    /// Whether the last run's rows of a relation or an input are kept.
+    pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
+        self.rels.contains_key(rel) || self.input_srcs.contains_key(rel)
+    }
+    /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
+    /// engine's relation for a derived one (to adopt, read in place).
+    pub(in crate::code_rule_dsl) fn old_source(&self, rel: &str, name: &str) -> Option<(Arc<dyn Source>, Option<Arc<InRel>>)> {
+        match self.rels.get(rel) {
+            Some(k) => Some((k.source(name), Some(Arc::clone(&k.rel)))),
+            None => self.input_srcs.get(rel).map(|s| {
+                let names = (0..s.columns().len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(name, c)).collect();
+                (Arc::new(Renamed(Arc::clone(s), names)) as Arc<dyn Source>, None)
+            }),
+        }
+    }
+    /// A relation's or an input's rows as the last run had them, copied (for the spikes' checks).
+    pub(in crate::code_rule_dsl) fn old_rows(&self, rel: &str) -> Option<Vec<Vec<i64>>> {
+        let (s, _) = self.old_source(rel, rel)?;
+        let w = s.columns().len();
+        Some((0..s.len()).map(|i| (0..w).map(|c| s.value(i, c)).collect()).collect())
     }
     pub(in crate::code_rule_dsl) fn relations(&self) -> usize {
         self.rels.len()
     }
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         self.rels.values().map(Kept::bytes).sum()
+    }
+}
+
+/// An input's source under another relation's column names (`r__old`'s, `sql_col`): read in place, not copied.
+struct Renamed(Arc<dyn Source>, Vec<String>);
+impl Source for Renamed {
+    fn columns(&self) -> Vec<String> {
+        self.1.clone()
+    }
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn estimated_len(&self) -> usize {
+        self.0.estimated_len()
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.0.estimated_matches(column, batch)
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        self.0.estimated_matches_all(columns)
+    }
+    fn composite(&self) -> bool {
+        self.0.composite()
+    }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        self.0.lookup_all(equal)
+    }
+    fn doc_column(&self) -> Option<usize> {
+        self.0.doc_column()
+    }
+    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+        self.0.lookup_in(column, values, doc)
+    }
+    fn kept_to_doc(&self, column: usize) -> bool {
+        self.0.kept_to_doc(column)
+    }
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        self.0.filter_eq(eqs)
+    }
+    fn made_on_lookup(&self) -> bool {
+        self.0.made_on_lookup()
+    }
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        let names = self.0.columns();
+        let stats = self.0.statistics()?;
+        stats.into_iter().map(|(c, a, b, x, y)| Some((self.1[names.iter().position(|n| *n == c)?].clone(), a, b, x, y))).collect()
+    }
+    fn indexed(&self, column: usize) -> bool {
+        self.0.indexed(column)
+    }
+    fn range_upper_compatible(&self, lower: usize, upper: usize) -> bool {
+        self.0.range_upper_compatible(lower, upper)
+    }
+    fn range_indexed(&self, column: usize) -> bool {
+        self.0.range_indexed(column)
+    }
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        self.0.range_lookup(column, lower, upper)
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.0.lookup(column, values)
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.0.value(row, column)
+    }
+    fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
+        self.0.sorted_rows(column, value)
+    }
+    fn prepare_lookup(&self, columns: &[usize]) {
+        self.0.prepare_lookup(columns)
+    }
+    fn prepare_index(&self, columns: &[usize]) {
+        self.0.prepare_index(columns)
+    }
+    fn primary_key_len(&self) -> Option<usize> {
+        self.0.primary_key_len()
+    }
+    fn lookup_primary_batch(&self, values: &[Vec<i64>]) -> Option<Vec<usize>> {
+        self.0.lookup_primary_batch(values)
+    }
+    fn ordered(&self, equal: &[usize], order: &[(usize, bool)]) -> bool {
+        self.0.ordered(equal, order)
+    }
+    fn ordered_range(&self, equal: &[(usize, i64)]) -> Option<std::ops::Range<usize>> {
+        self.0.ordered_range(equal)
     }
 }

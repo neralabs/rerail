@@ -1,5 +1,29 @@
 use super::*;
 
+#[test]
+fn unique_incremental_support_preserves_unchanged_heads_and_empty_transitions() {
+    let p=".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl r(g:number)\nr(g) :- owner(g), n=count : {event(_,g,_)}, s=sum v : {event(_,g,v)}, n>0,s>0.\n.output r\n";
+    let (_directory,mut e)=executor();
+    bind(&mut e,"event",&["id","g","v"],json!([[1,1,4]]));
+    bind(&mut e,"owner",&["g"],json!([[1],[2]]));
+    e.run(p.into(),"python".into(),None).unwrap();
+    let explain:Value=serde_json::from_str(&e.explain().unwrap()).unwrap();
+    assert_eq!(explain["executions"][0]["retained"][0]["support_uniqueness"]["proven"],true);
+    e.connection().execute_batch("CREATE TEMP TRIGGER forbid_r_insert BEFORE INSERT ON r BEGIN SELECT RAISE(ABORT,'unchanged r'); END;
+        CREATE TEMP TRIGGER forbid_r_delete BEFORE DELETE ON r BEGIN SELECT RAISE(ABORT,'unchanged r'); END;").unwrap();
+    e.apply_changes(json!([{"name":"event","delete":[[1,1,4]],"insert":[[1,1,6]]}]).to_string(),None).unwrap();
+    assert_eq!(rows(&e,"SELECT n FROM __sql_state_r_heads"),json!([[1]]));
+    e.connection().execute_batch("DROP TRIGGER forbid_r_insert; DROP TRIGGER forbid_r_delete;").unwrap();
+    for patch in [json!([{"name":"event","delete":[[1,1,6]]}]),json!([{"name":"event","insert":[[1,1,9]]}]),json!([{"name":"owner","delete":[[1]],"insert":[[3]]}])] {
+        e.apply_changes(patch.to_string(),None).unwrap();
+        let (_directory,mut oracle)=executor();oracle.cold_oracle=true;
+        for (name,cols) in [("event",&["id","g","v"][..]),("owner",&["g"][..])] {bind(&mut oracle,name,cols,rows(&e,&format!("SELECT * FROM {name}")));}
+        oracle.run(p.into(),"python".into(),None).unwrap();
+        assert_eq!(rows(&e,"SELECT * FROM r ORDER BY c0"),rows(&oracle,"SELECT * FROM r ORDER BY c0"));
+        assert_eq!(rows(&e,"SELECT count(*) FROM __sql_state_r_heads WHERE n<>1"),json!([[0]]));
+    }
+}
+
 const PROGRAM: &str = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl stats(g:number,n:number,s:number,lo:number,hi:number)\nstats(g,n,s,lo,hi) :- owner(g), n=count : {event(_,g,_)}, s=sum v : {event(_,g,v)}, lo=min x : {event(_,g,x)}, hi=max y : {event(_,g,y)}.\n.decl totals(g:number,n:number,s:number)\ntotals(g,n,s) :- owner(g), n=count : {event(_,g,_)}, s=sum v : {event(_,g,v)}.\n.output stats,totals\n";
 
 fn bind(e: &mut CodeRuleSqlExecutor, name: &str, columns: &[&str], values: Value) {

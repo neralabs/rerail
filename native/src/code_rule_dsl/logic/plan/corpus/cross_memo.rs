@@ -535,22 +535,36 @@ pub(super) fn record(
     let doc_of = |v: i64| if v >= 1 << 32 { v >> 32 } else { v };
     let mut closures = HashMap::new();
     let mut by: BTreeMap<i64, BTreeMap<String, Vec<i64>>> = BTreeMap::new();
+    let grouping = crate::code_rule_dsl::logic::profile::span(|| "group by component and check closures".into());
+    // Each (component, component a row names) pair is checked against the closure once, not once a row.
+    let mut checked: HashSet<(i64, i64)> = HashSet::new();
     for (rel, (first, _)) in &plan.memo {
         let nodes = node_columns.get(rel).cloned().unwrap_or_default();
-        let mut sorted: Vec<&Vec<i64>> = rows.get(rel).into_iter().flatten().collect();
-        sorted.sort();
-        sorted.dedup();
-        for row in sorted {
-            let Some((c, _)) = components.of.get(&doc_of(row[*first])) else { continue };
+        // Grouped by component first, then each group sorted and deduplicated (a relation's rows can come from
+        // several parts of the run).
+        let mut groups: HashMap<i64, Vec<&Vec<i64>>> = HashMap::new();
+        let mut last: Option<(i64, Option<i64>)> = None;
+        for row in rows.get(rel).into_iter().flatten() {
+            let d = doc_of(row[*first]);
+            let c = match last {
+                Some((ld, c)) if ld == d => c,
+                _ => {
+                    let c = components.of.get(&d).map(|(c, _)| *c);
+                    last = Some((d, c));
+                    c
+                }
+            };
+            let Some(c) = c else { continue };
             // A found component's rows are its replayed copies: nothing to check or store unless verifying.
-            if mode == Mode::On && found.hits.contains_key(c) {
+            if mode == Mode::On && found.hits.contains_key(&c) {
                 continue;
             }
-            let reach = components.closure(*c, &mut closures);
             for &n in &nodes {
-                if let Some((e, _)) = components.of.get(&doc_of(row[n]))
-                    && !reach.contains(e)
-                {
+                let Some((e, _)) = components.of.get(&doc_of(row[n])) else { continue };
+                if *e == c || checked.contains(&(c, *e)) {
+                    continue;
+                }
+                if !components.closure(c, &mut closures).contains(e) {
                     return Err(Error::Plan(format!(
                         "{rel}: a row about {} names a node of {}, outside its import closure, so the relation's rows are not a function of the closure (decision 0076): remove it from `.pragma \"{PRAGMA}\"`",
                         paths.get(&doc_of(row[*first])).map_or("?", String::as_str),
@@ -562,10 +576,22 @@ pub(super) fn record(
                         ))
                     )));
                 }
+                checked.insert((c, *e));
             }
-            by.entry(*c).or_default().entry(rel.clone()).or_default().extend_from_slice(row);
+            groups.entry(c).or_default().push(row);
+        }
+        for (c, mut group) in groups {
+            group.sort_unstable();
+            group.dedup();
+            let out = by.entry(c).or_default().entry(rel.clone()).or_default();
+            out.reserve(group.iter().map(|r| r.len()).sum());
+            for row in group {
+                out.extend_from_slice(row);
+            }
         }
     }
+    drop(grouping);
+    let _putting = crate::code_rule_dsl::logic::profile::span(|| "put components' blocks".into());
     let members = components.members();
     let mut recorded = Recorded::default();
     let mut differ: Vec<String> = Vec::new();

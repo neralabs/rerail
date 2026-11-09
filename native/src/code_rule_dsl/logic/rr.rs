@@ -166,9 +166,93 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Progr
     Ok(program)
 }
 
+/// The library files a program's text reads, includes resolved (`core.rr` first unless the text is in T's shape):
+/// what a record of the run must check besides the text (phase 0, t23). Empty for a text that includes nothing.
+pub(in crate::code_rule_dsl) fn included_files(src: &str) -> Result<Vec<PathBuf>, Error> {
+    let statements = from_tape::statements(src, &tape(src))?;
+    let mut paths: Vec<PathBuf> = if statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
+        resolve(statements)?.0.into_iter().map(|(p, _)| p).collect()
+    } else {
+        Vec::new()
+    };
+    // The engine's own library programs, which the runner adds to a run (decision 0076's components).
+    paths.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()));
+    Ok(paths)
+}
+
 /// `statements`' `#include`s resolved in the library: its files (`core.rr` first unless the statements are in T's
 /// shape, each once, includes first) and the statements without the includes.
+///
+/// Phase 0 resolves them (`plan::corpus::phase0`): `bootstrap.rr`'s run loads each file as a document, and the
+/// files are read here off their stored tapes, in the graph's order.
 fn resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syntax::Statement>), Error> {
+    use super::plan::corpus::phase0;
+    if phase0::active() {
+        return builtin_resolve(statements);
+    }
+    let (includes, own): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+    let t_shape = own.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
+    let names: Vec<(i64, String, usize)> = includes
+        .iter()
+        .enumerate()
+        .filter_map(|(k, (item, line))| match item {
+            syntax::Item::Include(name) => Some((k as i64, name.clone(), *line)),
+            _ => None,
+        })
+        .collect();
+    let g = phase0::graph(&phase0::Seed::Text { t_shape, includes: names.iter().map(|(k, n, _)| (*k, n.clone())).collect() })?;
+    if let Some((_, at, name)) = g.missing.iter().find(|(f, _, _)| f == phase0::TEXT) {
+        let line = names.iter().find(|(k, _, _)| k == at).map_or(0, |(_, _, l)| *l);
+        return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
+    }
+    let mut order = Vec::new();
+    g.order(phase0::TEXT, &mut order)?;
+    Ok((modules_of(order)?, own))
+}
+
+/// Each module's statements, without its includes (the graph placed them), read off its stored tape.
+fn modules_of(paths: Vec<PathBuf>) -> Result<Files, Error> {
+    paths
+        .into_iter()
+        .map(|p| {
+            let (statements, _) = read(&p)?;
+            Ok((p, statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect()))
+        })
+        .collect()
+}
+
+/// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
+/// for a text that includes nothing, or while phase 0 itself runs.
+pub(in crate::code_rule_dsl) fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
+    use super::plan::corpus::phase0;
+    let statements = from_tape::statements(src, &tape(src))?;
+    let names: Vec<(i64, String)> = statements
+        .iter()
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Include(name) => Some(name.clone()),
+            _ => None,
+        })
+        .enumerate()
+        .map(|(k, n)| (k as i64, n))
+        .collect();
+    if names.is_empty() || phase0::active() {
+        return Ok(None);
+    }
+    let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
+    Ok(Some(phase0::Seed::Text { t_shape, includes: names }))
+}
+
+/// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.
+/// `None` for a text that includes nothing.
+pub(in crate::code_rule_dsl) fn graph_digest(src: &str) -> Result<Option<[u8; 32]>, Error> {
+    match text_seed(src)? {
+        Some(seed) => Ok(Some(super::plan::corpus::phase0::graph(&seed)?.digest())),
+        None => Ok(None),
+    }
+}
+
+/// The resolution phase 0's own program (`bootstrap.rr`) is read with: the library, then beside the includer.
+fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syntax::Statement>), Error> {
     let (includes, own): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
     let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
     let t_shape = own.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
@@ -279,9 +363,9 @@ pub(in crate::code_rule_dsl) struct LibraryFile {
 }
 
 impl LibraryFile {
+    /// The file as it is now, by phase 0's observer: one `stat`, and a read only when it changed.
     fn now(path: &Path) -> Self {
-        use sha2::{Digest as _, Sha256};
-        Self { path: path.to_owned(), sha256: std::fs::read(path).ok().map(|bytes| Sha256::digest(&bytes).into()) }
+        Self { path: path.to_owned(), sha256: super::plan::corpus::observe(|o| o.digest(path)) }
     }
 
     /// The seeded fact, for a file that exists.
@@ -382,23 +466,63 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
     Ok(())
 }
 
+thread_local! {
+    /// The library files read or probed while `recording` runs on this thread.
+    static READS: std::cell::RefCell<Option<Vec<LibraryFile>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `f`'s result and every library file it read or probed, misses included, each once in reading order: what a
+/// program read from the library, so a later run can tell whether reading it again would read the same (decision
+/// 0094 §6: the loader records what it read).
+pub(in crate::code_rule_dsl) fn recording<T>(f: impl FnOnce() -> T) -> (T, Vec<LibraryFile>) {
+    let outer = READS.with(|r| r.borrow_mut().replace(Vec::new()));
+    let out = f();
+    let read = READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), outer)).unwrap_or_default();
+    // An enclosing recording sees what this one read too.
+    READS.with(|r| {
+        if let Some(outer) = r.borrow_mut().as_mut() {
+            outer.extend(read.iter().cloned());
+        }
+    });
+    let mut seen = std::collections::HashSet::new();
+    (out, read.into_iter().filter(|f| seen.insert(f.path.clone())).collect())
+}
+
+fn noted(file: &LibraryFile) {
+    READS.with(|r| {
+        if let Some(read) = r.borrow_mut().as_mut() {
+            read.push(file.clone());
+        }
+    });
+}
+
+impl LibraryFile {
+    /// Whether the file still reads as recorded: the same bytes, or still no file.
+    pub(in crate::code_rule_dsl) fn unchanged(&self) -> bool {
+        Self::now(&self.path) == *self
+    }
+}
+
 fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
-    use sha2::{Digest as _, Sha256};
-    let bytes = std::fs::read(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     // Each file's statements, kept for the process by its path and bytes' digest: programs that include one library
-    // (the Python pack's files) parse it once, not once per program.
+    // (the Python pack's files) parse it once, not once per program. Phase 0's observer gives the digest by a `stat`
+    // while the file is unchanged, so a kept file is not read again.
     static PARSED: OnceLock<Mutex<HashMap<PathBuf, ([u8; 32], Vec<syntax::Statement>)>>> = OnceLock::new();
-    let digest: [u8; 32] = Sha256::digest(&bytes).into();
-    let file = LibraryFile { path: path.to_owned(), sha256: Some(digest) };
     let cache = PARSED.get_or_init(Default::default);
-    if let Some((kept, statements)) = cache.lock().expect("the parsed files").get(path)
+    if let Some(digest) = super::plan::corpus::observe(|o| o.digest(path))
+        && let Some((kept, statements)) = cache.lock().expect("the parsed files").get(path)
         && *kept == digest
     {
         crate::code_rule_dsl::prof::count("rr.file_reused", 1);
+        let file = LibraryFile { path: path.to_owned(), sha256: Some(digest) };
+        noted(&file);
         return Ok((statements.clone(), file));
     }
+    let (bytes, digest) = super::plan::corpus::observe(|o| o.read(path)).ok_or_else(|| Error::Syntax(format!("{}: cannot read the file", path.display())))?;
+    let file = LibraryFile { path: path.to_owned(), sha256: Some(digest) };
+    noted(&file);
     let src = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let statements = stored_statements(path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     cache.lock().expect("the parsed files").insert(path.to_owned(), (digest, statements.clone()));
@@ -450,7 +574,9 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
         let found = if in_library.exists() {
             in_library
         } else {
-            read_files.push(LibraryFile { path: in_library, sha256: None });
+            let miss = LibraryFile { path: in_library, sha256: None };
+            noted(&miss);
+            read_files.push(miss);
             beside
         };
         if !found.exists() {
@@ -465,6 +591,58 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
 /// A file and everything it includes, each once, includes first: (path, statements without the
 /// includes); and every library file read or probed, in reading order.
 fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+    use super::plan::corpus::phase0;
+    if phase0::active() {
+        return builtin_program(path);
+    }
+    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let g = phase0::graph(&phase0::Seed::File(path.clone()))?;
+    let mut order = Vec::new();
+    g.order(&path.to_string_lossy(), &mut order)?;
+    order.retain(|p| *p != path);
+    order.push(path.clone());
+    // The files in reading order, as `LibraryFile`s check them: `core.rr` (an include at offset -1), then the
+    // file, then each include, its library probe first where it was found beside the file.
+    let library = library();
+    let mut files = Vec::new();
+    let mut seen = Vec::new();
+    let key = path.to_string_lossy().into_owned();
+    let (first, rest): (Vec<_>, Vec<_>) = g.includes.get(&key).cloned().unwrap_or_default().into_iter().partition(|(at, _, _)| *at < 0);
+    for (_, _, target) in first {
+        trace(&g, &library, &target, &mut files, &mut seen);
+    }
+    seen.push(path.clone());
+    files.push(LibraryFile { path: path.clone(), sha256: g.digests.get(&path).copied() });
+    for (_, name, target) in rest {
+        probe(&library, &name, &target, &mut files);
+        trace(&g, &library, &target, &mut files, &mut seen);
+    }
+    Ok((modules_of(order)?, files))
+}
+
+/// `path` and what it includes, each once, as phase 0 found them: the reading order of the builtin reader.
+fn trace(g: &super::plan::corpus::phase0::Graph, library: &Path, path: &Path, files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>) {
+    if seen.iter().any(|p| p == path) {
+        return;
+    }
+    seen.push(path.to_path_buf());
+    files.push(LibraryFile { path: path.to_path_buf(), sha256: g.digests.get(path).copied() });
+    for (_, name, target) in g.includes.get(&*path.to_string_lossy()).cloned().unwrap_or_default() {
+        probe(library, &name, &target, files);
+        trace(g, library, &target, files, seen);
+    }
+}
+
+/// The library candidate an include probed and did not find, when its file is the one beside the includer.
+fn probe(library: &Path, name: &str, target: &Path, files: &mut Vec<LibraryFile>) {
+    let in_library = library.join(name);
+    if in_library.canonicalize().ok().as_deref() != Some(target) {
+        files.push(LibraryFile { path: in_library, sha256: None });
+    }
+}
+
+/// `program` for phase 0's own reads.
+fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
     // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries

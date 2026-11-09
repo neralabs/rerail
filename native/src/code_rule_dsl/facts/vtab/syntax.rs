@@ -334,19 +334,43 @@ pub(crate) struct Document {
     pub module: Option<Arc<str>>,
 }
 
-/// A file's nodes as `core.rr`'s shape numbers them (`node` ids are `key << 32 | local`): each local id's core id and
-/// kind name. For making guests from requests that name host nodes (decision 0055, `corpus::guests`).
-pub(crate) fn numbering(doc: &Document) -> StoreResult<Vec<(u32, &'static str)>> {
+/// A file's nodes as `core.rr`'s shape numbers them: each local id's core id and kind name, and the way from a node
+/// id's low 32 bits to its local id (they differ when nodes are numbered per definition, `DefIds`). For making
+/// guests from requests that name host nodes (decision 0055, `corpus::guests`).
+pub(crate) struct Numbering {
+    pub(crate) nodes: Vec<(u32, &'static str)>,
+    /// `(low, local)`, ascending, under `DefIds`; `None` when the low bits are the local id.
+    back: Option<Vec<(u32, u32)>>,
+}
+
+impl Numbering {
+    /// The local id of the node whose id's low 32 bits are `low`.
+    pub(crate) fn local(&self, low: u32) -> Option<u32> {
+        match &self.back {
+            None => Some(low),
+            Some(b) => b.binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| b[i].1),
+        }
+    }
+    /// The node whose id's low 32 bits are `low`: its local id, core id and kind.
+    pub(crate) fn at(&self, low: u32) -> Option<(u32, u32, &'static str)> {
+        let l = self.local(low)?;
+        self.nodes.get(l as usize).map(|&(id, k)| (l, id, k))
+    }
+}
+
+pub(crate) fn numbering(doc: &Document) -> StoreResult<Numbering> {
     // A document read as text only has no nodes.
     if doc.facts.len() == 0 {
-        return Ok(Vec::new());
+        return Ok(Numbering { nodes: Vec::new(), back: None });
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::new(tag)?;
     // A guest's nodes are its root's subtree.
     let guest = doc.guest.as_deref().map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), &dialect, Shape::Core, false, guest);
-    Ok(p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect())
+    // A unit's own nodes are numbered before its tokens, so the nodes' ids need no tokens.
+    let back = definition_ids().then(|| DefIds::new(&p, &dialect, &[])).flatten().map(|d| d.back);
+    Ok(Numbering { nodes: p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect(), back })
 }
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
@@ -721,6 +745,9 @@ impl Projected {
             let matched = spans.len() as u32;
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
             p.extra = Some(Box::new(Extra { lines, spans, tokens, matched, host }));
+        } else if definition_ids() && guest.is_none() {
+            // T's shape has no token spans: its nodes alone are numbered per definition.
+            p.defs = DefIds::new(&p, dialect, &[]);
         }
         p
     }
@@ -1354,6 +1381,12 @@ impl Source for Viewed {
     fn value(&self, row: usize, column: usize) -> i64 {
         self.row_value(row, column)
     }
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let (p, i) = self.batch.locate(self.view, row);
+        for (o, &c) in out.iter_mut().zip(columns) {
+            *o = self.value_at(p, i, c);
+        }
+    }
 }
 impl Viewed {
     /// The rows whose `column` is one of `values`, in document `only` (by index) where the column spans the
@@ -1680,6 +1713,11 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
     if let Some(known) = source.statistics() {
         return known;
     }
+    measured(source)
+}
+
+/// `statistics`, measured from the rows (a source that keeps its own calls this once).
+pub(crate) fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
     let rows = source.len();
     // Each row's document (the first column's high half), read once for every column.
     let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();

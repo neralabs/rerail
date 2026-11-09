@@ -228,6 +228,12 @@ pub(crate) fn option_input(rel: &str) -> bool {
     matches!(rel, "option" | "option_item")
 }
 
+/// An input with one value for the whole run, as a fact has: the run's options (`option_input`), or an earlier
+/// phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
+pub(crate) fn run_constant(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> bool {
+    option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.inputs.iter().any(|i| i == rel))
+}
+
 /// Derived relations made from the program's constants alone (`la_side_queue(x) :- la_set("…", x)`): every rule
 /// reads only facts, the run's options (`option_input`), other such relations and comparisons. They are constants to
 /// the split, like facts: a rule reading one joins no document by it, and both parts derive them.
@@ -243,7 +249,7 @@ pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Prog
                 prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
                     r.body.iter().all(|l| match l {
                         Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                            constant.contains(&a.rel) || option_input(&a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
+                            constant.contains(&a.rel) || run_constant(prog, &a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
                         }
                         Literal::Cmp { .. } => true,
                         _ => false,
@@ -514,7 +520,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
                     }
                     Literal::Cmp { .. } => continue,
                 };
-                let constant = (!derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel)) || constants.contains(&atom.rel) || option_input(&atom.rel);
+                let constant = (!derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel)) || constants.contains(&atom.rel) || run_constant(prog, &atom.rel);
                 // A tape operation's rows (decision 0058 §4) are made in the chunk that asked: they place nothing.
                 let chunk_value = !derived.contains(atom.rel.as_str()) && CHUNK_VALUES.contains(&atom.rel.as_str());
                 if constant || chunk_value || test_relation(&atom.rel) || filters.contains(&atom.rel) || filters.contains(&rule.head.rel) {
@@ -829,7 +835,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
     // An atom with no node column that meets the rest only through the document, with two or more columns of its
     // own (a document's imports, `la_imp(d, name, symbol)`), is a table per document: joined to the document's
     // nodes it multiplies them by its rows, so it is a group of its own.
-    let independent_node_groups = |atoms: &[&Atom]| {
+    let independent_node_groups = |atoms: &[&Atom], equal: &[(String, String)]| {
         let documents: BTreeSet<&String> = atoms
             .iter()
             .filter_map(|a| match (a.rel.as_str(), a.args.as_slice()) {
@@ -852,6 +858,8 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 }
                 nodes = own;
             }
+            // `a = b` names one node twice.
+            close_under(&mut nodes, equal);
             let mut connected = nodes;
             let mut separate = Vec::new();
             for group in groups {
@@ -877,11 +885,15 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             }
             let base = |rel: &str| prog.inputs.iter().any(|r| r == rel);
             let candidate = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(&a.rel) && (base(&a.rel) || local.contains(&a.rel)));
-            // Components of the candidates by shared variables.
+            // Components of the candidates by shared variables. `a = b` between two variables (a disjunction's
+            // branch, as lowering leaves it: `(e0 = d ; …)`) names one value, so it joins the atoms on each side; apart,
+            // each would be pushed alone and their join left to the cross-file part (decision 0093 §4, O140).
             let idx: Vec<usize> = (0..rule.body.len()).filter(|&j| candidate(&rule.body[j])).collect();
+            let equal = var_equalities(rule);
             let mut comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = Vec::new();
             for &j in &idx {
-                let vars = rule.body[j].vars();
+                let mut vars = rule.body[j].vars();
+                close_under(&mut vars, &equal);
                 let (joined, rest): (Vec<_>, Vec<_>) = comps.into_iter().partition(|(_, v)| !v.is_disjoint(&vars));
                 let mut all = (BTreeSet::from([j]), vars);
                 for (l, v) in joined {
@@ -901,7 +913,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 if !atoms.iter().any(|a| base(&a.rel)) && atoms.len() < 2 {
                     continue;
                 }
-                if independent_node_groups(&atoms) > 1 {
+                if independent_node_groups(&atoms, &equal) > 1 {
                     continue;
                 }
                 // One plain atom, alone or widened by plain attribute lookups of its nodes (`within(n, b)` and n's

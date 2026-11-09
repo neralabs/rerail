@@ -101,7 +101,7 @@ fn releasing_a_lease_unlocks_inherited_descriptors() {
             reader.hold_collection().unwrap()
         };
         // A duplicate shares the open file description, just as a child inherits it at fork.
-        let inherited = lease._file.try_clone().unwrap();
+        let inherited = lease.duplicate();
         assert!(collector.try_collect().unwrap().is_none());
         drop(lease);
         assert!(collector.try_collect().unwrap().is_some());

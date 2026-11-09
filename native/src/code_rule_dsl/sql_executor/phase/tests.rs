@@ -198,3 +198,109 @@ fn computed_keys_publish_updates_and_deletions_without_helper_tables() {
     assert!(invalid.execute(&w).is_err());
     assert!(before.same(&store.version("computed_a")));
 }
+
+#[test]
+fn materialized_reads_share_tags_across_keys_and_rows_without_sharing_validation() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let store = versions::Store::default();
+    for name in ["shared_a", "shared_b"] {
+        initialize(&db, &store, name);
+    }
+    for name in ["shared_wide", "shared_empty"] {
+        store
+            .create(&db, name, versions::Schema::integers(2, 2))
+            .unwrap();
+    }
+    store
+        .load_rows(
+            "shared_wide",
+            vec![vec![Some(1), Some(5)], vec![Some(2), Some(8)]],
+            false,
+        )
+        .unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    db.create_scalar_function(
+        c"shared_probe",
+        1,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+        move |ctx| Ok(ctx.get::<i64>(0)? + observed.fetch_add(1, Ordering::Relaxed) as i64),
+    )
+    .unwrap();
+    let pool = scratch::Pool::default();
+    let mut work = Work::new(&db, &pool);
+    work.versions = Some(&store);
+    let mut phase = Phase::default();
+    let keys = phase.relation(1, "SELECT 1");
+    let wide = phase.relation(2, "SELECT 1,5 UNION ALL SELECT 1,9");
+    let values = phase.relation(2, "SELECT 1,shared_probe(9)");
+    for name in ["shared_a", "shared_b"] {
+        phase.patch_computed(&store, name, &keys, &values).unwrap();
+    }
+    phase
+        .patch_computed(&store, "shared_wide", &wide, &values)
+        .unwrap();
+    phase
+        .patch_computed(&store, "shared_empty", &values, &values)
+        .unwrap();
+    let plan = reads::Plan::new(&phase, 2);
+    assert_eq!((plan.logical_reads, plan.arms.len()), (8, 3));
+    let counts = phase.execute(&work).unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    for name in ["shared_a", "shared_b", "shared_wide"] {
+        assert_eq!(
+            store.version(name).rows(),
+            vec![vec![Some(1), Some(9)], vec![Some(2), Some(8)]]
+        );
+    }
+    assert_eq!(
+        store.version("shared_empty").rows(),
+        vec![vec![Some(1), Some(9)]]
+    );
+    assert_eq!(
+        (
+            counts["shared_a"].keys,
+            counts["shared_wide"].keys,
+            counts["shared_empty"].keys
+        ),
+        (1, 2, 1)
+    );
+    store
+        .create(
+            &db,
+            "shared_nullable",
+            versions::Schema {
+                columns: vec!["c0".into(), "c1".into()],
+                keys: 1,
+                nullable: vec![false, true],
+                positive: BTreeMap::new(),
+            },
+        )
+        .unwrap();
+    store
+        .load_rows("shared_nullable", vec![vec![Some(2), Some(8)]], false)
+        .unwrap();
+    let a = store.version("shared_nullable");
+    let b = store.version("shared_b");
+    let mut failed = Phase::default();
+    let bad = failed.relation(2, "SELECT 1,NULL");
+    for name in ["shared_nullable", "shared_b"] {
+        failed.replace_all(&store, name, &bad).unwrap();
+    }
+    assert_eq!(reads::Plan::new(&failed, 2).arms.len(), 1);
+    assert!(failed.execute(&work).is_err());
+    assert!(a.same(&store.version("shared_nullable")) && b.same(&store.version("shared_b")));
+    let mut separate = Phase::default();
+    let volatile = separate.view(2, "SELECT 1,shared_probe(7)");
+    for name in ["shared_a", "shared_b"] {
+        separate.replace_all(&store, name, &volatile).unwrap();
+    }
+    assert_eq!(reads::Plan::new(&separate, 2).arms.len(), 2);
+    separate.execute(&work).unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 3);
+    assert_ne!(
+        store.version("shared_a").rows(),
+        store.version("shared_b").rows()
+    );
+}

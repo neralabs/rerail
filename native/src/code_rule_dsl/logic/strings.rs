@@ -498,6 +498,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
 
 pub(in crate::code_rule_dsl) mod functions;
 mod signatures;
+pub(in crate::code_rule_dsl) mod git;
 
 #[cfg(test)]
 mod tests;

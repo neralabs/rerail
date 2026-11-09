@@ -169,6 +169,38 @@ That is O125's ratio, 2.3–3.2x a cold part, on a program with no typing at all
 copies and diffs that §1 removes: copying old rows in and indexing them, diffing whole relations, and measuring
 kept rows. The joins over the deltas cost almost nothing (`reach__del`'s joins: 0.000 s).
 
+## Measured: step 5's memoised rewrites and plans
+
+Measured 2026-11-08 on the tree with every branch merged. O125's replay, `calls.rr` over the data layer:
+`O125_STEPS=5-6 O125_SPANS=1`, which runs cold at step 04 and then steps 05 and 06 in one session and one process.
+Debug build, load 10–22. Spans are each step's own, in CPU seconds:
+
+| span | 05 (14 files, plans new) | 06 (2 files, plans kept) |
+|---|---:|---:|
+| session part | 60.8 | 42.6 |
+| `rewrite and old sources` | 0.04 | 0.04 |
+| `bind and measure kept` | 2.71 | 2.76 |
+| `spec` | 6.16 | 2.17 |
+| `plan #` (all rules) | 5.85 | 1.93 |
+| `search` | 4.24 | under 1.4 (not in the top 14) |
+| `statistics and plan` | 1.67 | 1.65 |
+| `logical key and scalar analysis` | about 1.8 | 1.60 |
+| engine run (joins) | 24.05 | 13.16 |
+| the 174-relation over-delete stratum | 26.07 | 17.07 |
+| engine open (inputs, indexes) | 4.46 | 3.42 |
+
+- **The rewrite is not worth memoising.** It costs 0.04 s a step.
+- **Plans are already kept across a session's runs.** `KeepPlans::start(session::generation())` keeps the session's
+  plans. At step 06 they save about 10 s of 43: `spec`, `plan #` and `search` together go from 16.3 s to about 5 s.
+- **What is left each step does not depend on the plans:**
+  - statistics, 1.6 s;
+  - key and scalar analysis, 1.6 s;
+  - binding kept relations, 2.8 s;
+  - opening the engine, 3.4 s.
+  Under §4 these are linear costs. The next step is to make them O(delta), not to memoise more.
+- **Evaluation dominates:** joins and the over-delete stratum are 30 s of 43 at step 06. That is §3's work and
+  O137's stratum, not step 5's.
+
 ## What the prior work says
 
 - **Target architecture (03):**

@@ -140,12 +140,16 @@ restrictions on policies.
 1. **A context that loses its tie to the rule** (fixed in a30c360ee). A demand helper kept `ann_root(a)` and
    dropped `within(s, a)`, so "parse this string" became "parse every string, if any annotation exists anywhere".
    It made 51 of 69 checks global and was the cause of two checks not finishing in 900 s; they now take 17 s.
-2. **Located rows projected to a set** (`x(c) :- x_at(_, c)`). Lowering drops the document column of a per-file
-   relation, and its readers read the union. A reader that binds the document reads `x_at` with it; the projection
-   only feeds findings.
+2. **Located rows projected to a set** (`x(c) :- x_at(_, c)`): *not a leak, on inspection.* `locate` gives a
+   relation with no location column a document column in the chunks, and the cross-file part projects it away. That
+   is the union class of 0092 §4, a unit fact: an edit's delta is the edited file's rows. In the 39 checks that have
+   such projections, none of their 144 readers binds the projected row's document. Seven bind some document, but
+   they read the projection by a value (`er_legacy($t)`, `ma_dep_name($y)`), which is a lookup. So there is nothing
+   to rewrite. The census's rise of unions from 1 check to 19 comes from these, and costs nothing beyond a union.
 3. **Joins between per-file pieces placed in the cross-file part.** When one rule has two per-file pieces joined by
-   an equality between their carriers (`deco_word`'s `$e0 = $d`), the split runs that join across files. An equality
-   between two columns that each name one document is one document: the split joins the pieces in the file.
+   an equality between their carriers (`deco_word`'s `$e0 = $d`), the split ran that join across files. An equality
+   between two variables names one value, so the pieces are one component: `file_local::push_with` now closes each
+   atom's variables under the rule's equalities before grouping them, and the join is pushed into the file.
 
 The findings themselves (`rr_diagnostic` and `violation`) are assembled today by cross-file rules that drop the
 document. They are form 4 by construction, and they are the findings layer's stages 2–3, not Datalog's.
@@ -176,7 +180,7 @@ document. They are form 4 by construction, and they are the findings layer's sta
 
 ## Open
 
-- O140: the engine leaks of §4, items 2 and 3, and the findings assembly.
+- O140: §4 item 3 (fixed), item 2 (not a leak), and the findings assembly.
 - The classifier is the dev measurement `corpus::dump_split`; the check of §2 needs it in the planner, with a test
   per form.
 - The 6 checks that did not reach the split are classed by hand only for the 2 still failing (O138: they read run
