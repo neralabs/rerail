@@ -576,4 +576,23 @@ mod tests {
             assert_eq!(Reprobe::parse(kind, &body).unwrap().text(), (kind, body));
         }
     }
+
+    /// `RERAIL_SPEC_DIR=<dir>`: every spec a run wrote there (`RERAIL_SPIKE_SPECS`: its rules, a blank line, its spec)
+    /// reads back to the same text.
+    #[test]
+    #[ignore]
+    fn captured_specs_read_back_to_their_text() {
+        let dir = std::env::var_os("RERAIL_SPEC_DIR").expect("RERAIL_SPEC_DIR");
+        let mut n = 0;
+        for e in std::fs::read_dir(dir).unwrap() {
+            let path = e.unwrap().path();
+            let file = std::fs::read_to_string(&path).unwrap();
+            let text = file.rsplit("\n\n").next().unwrap();
+            let spec = ComponentSpec::parse(text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert_eq!(spec.to_text(), text, "{}", path.display());
+            n += 1;
+        }
+        eprintln!("{n} specs read back to their text");
+        assert!(n > 0);
+    }
 }
