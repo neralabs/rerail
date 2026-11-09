@@ -580,16 +580,17 @@ thread_local! {
     /// component solved), its order and its work per node when planned. `None` outside a corpus run: every plan is
     /// searched.
     /// When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it with its own work and rows.
-    static PLANS: std::cell::RefCell<Option<HashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
+    static PLANS: std::cell::RefCell<Option<rustc_hash::FxHashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
     /// The last priced body's cheapest start: the least work of any one join literal read first, from no binding.
     /// Every order costs at least this, so a kept order's work over it measures how far the order is from the best
     /// any start allows.
     static SEED: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
 }
 
-/// A kept plan's key: the rule as text, the delta and the component solved. Not the rule's address: each chunk's
-/// program is a new value (the demand split makes one per chunk), so no address is kept between chunks.
-type PlanKey = String;
+/// A kept plan's key: a digest of the rule, the delta and the component solved (`derived::digest`). Not the rule's
+/// address: each chunk's program is a new value (the demand split makes one per chunk), so no address is kept between
+/// chunks. Not the rule's text either: formatting every rule was a tenth of a session run's planning.
+type PlanKey = u128;
 
 /// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, its work over its body's
 /// cheapest start (`SEED`) when searched, and its last price with the sizes it was priced at (`Priced`).
@@ -621,7 +622,7 @@ pub(in crate::code_rule_dsl) struct KeepPlans(Option<u64>);
 
 thread_local! {
     /// A session's plans between its runs, with the session's generation: another session's are not taken.
-    static SESSION_PLANS: std::cell::RefCell<Option<(u64, HashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
+    static SESSION_PLANS: std::cell::RefCell<Option<(u64, rustc_hash::FxHashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
 }
 
 impl KeepPlans {
@@ -756,7 +757,15 @@ impl Model {
     /// A kept plan's key: the rule as text, the delta (`first`) and the component solved, after `kind`.
     fn plan_key(&self, kind: &str, head: &Atom, body: &[Literal], first: Option<usize>) -> PlanKey {
         let _span = super::profile::span(|| "key".into());
-        format!("{kind}{head} :- {} @{first:?} /{}", body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), self.stats.solving.iter().cloned().collect::<Vec<_>>().join(","))
+        super::derived::digest(|d| {
+            d.str(kind);
+            digest_atom(d, head);
+            d.u64(body.len() as u64);
+            body.iter().for_each(|l| digest_literal(d, l));
+            d.u64(first.map_or(u64::MAX, |f| f as u64));
+            d.u64(self.stats.solving.len() as u64);
+            self.stats.solving.iter().for_each(|r| d.str(r));
+        })
     }
 
     /// The sizes a price reads (`Priced`): the corpus's nodes and the rows of each relation the body reads.
@@ -784,7 +793,18 @@ impl Model {
             return self.plan_inner(prog, head, body, first, None, true);
         }
         let key = self.plan_key("live ", head, body, first);
-        let sizes = self.read_sizes(body);
+        // The delta atom is read first and priced by its live size; every later step's rows are per binding of it,
+        // so its size scales every order alike and does not change which is cheapest. It is left out (one row)
+        // unless the body reads its relation again: a wave that only grew the delta keeps the plan. Callers read
+        // the order only, so the kept price is not scaled.
+        let delta_rel = first.and_then(|f| body[f].atom()).map(|a| a.rel.as_str());
+        let once = delta_rel.is_some_and(|d| body.iter().filter(|l| l.atom().is_some_and(|a| a.rel == d)).count() == 1);
+        let sizes: Vec<f64> = std::iter::once(self.stats.nodes.max(1.0))
+            .chain(body.iter().enumerate().filter_map(|(i, l)| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(if once && Some(i) == first { 1.0 } else { self.card(&a.rel) }),
+                _ => None,
+            }))
+            .collect();
         let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| k.4.clone()));
         if let Some(priced) = kept.filter(|k| near(&k.sizes, &sizes)) {
             super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
@@ -2712,7 +2732,12 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
                     by.iter().for_each(|b| d.str(b));
                     d.str(sep);
                 }
-                other => d.u64(match other { AggOp::Count => 0, AggOp::Min => 1, AggOp::Max => 2, _ => 3 }),
+                // Each aggregate its own tag: `sum` and `product` over one atom are different values.
+                AggOp::Count => d.u64(0),
+                AggOp::Min => d.u64(1),
+                AggOp::Max => d.u64(2),
+                AggOp::Sum => d.u64(3),
+                AggOp::Product => d.u64(5),
             }
             d.str(over.as_deref().unwrap_or("\u{0}"));
             digest_atom(d, atom);
