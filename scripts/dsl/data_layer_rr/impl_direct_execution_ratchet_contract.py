@@ -64,7 +64,7 @@ class FixedDatetime:
 
 def environment(case):
     # Never copy an ambient signing key into fixtures.
-    env={k:os.environ[k] for k in ['PATH','HOME','LANG','TMPDIR'] if k in os.environ}
+    env={k:os.environ[k] for k in ['PATH','HOME','LANG','TMPDIR','RERAIL_TAPE_CACHE'] if k in os.environ}
     env.update(PYTHONHASHSEED='0',PYTHONDONTWRITEBYTECODE='1',GIT_CONFIG_NOSYSTEM='1',GIT_CONFIG_GLOBAL='/dev/null',GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='user.email',GIT_CONFIG_VALUE_0='fixture@example.invalid')
     if 'key' in case:env['NERA_SIGNING_KEY']=case['key']
     return env
@@ -123,7 +123,7 @@ def native_one(engine,case,source):
         lint_signing=SimpleNamespace(verify_allowlist=None),lint_ratchet=SimpleNamespace(check_ratchet=None,update_ratchet_baseline=None,get_repo_root=None,datetime=FixedDatetime),__file__='/unused/scripts/linter.py')
     for name in [*FUNCTIONS,'ALLOWED_DIR_PATTERNS','DIRECT_EXECUTION_PATTERNS','FTS_MANAGER_DIRECT_EXECUTION_PATTERNS','_ALLOWED_FILES_SIGNATURE']:setattr(module,name,None)
     install(backend,module)
-    with tempfile.TemporaryDirectory(prefix='impl-direct-ratchet-native-') as temporary:actual=exercise(module,case,Path(temporary))
+    with tempfile.TemporaryDirectory(prefix='impl-direct-ratchet-native-') as temporary,patch.dict(os.environ,environment(case),clear=True):actual=exercise(module,case,Path(temporary))
     return actual,backend.calls,backend.signatures
 
 

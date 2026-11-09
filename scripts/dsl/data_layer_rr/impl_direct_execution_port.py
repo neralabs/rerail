@@ -99,8 +99,33 @@ def install(suite, module):
             except Exception as error:options['readError']=str(error)
         return ratchet_result(rows('_ratchet_check',files,options))
 
-    def update_ratchet(*args,**kwargs):
-        raise NotImplementedError('Native direct-execution baseline writes are not yet ported')
+    def update_ratchet(name,current_counts,*,root=None,sign=False,reason=''):
+        import subprocess
+        from datetime import datetime, UTC
+        root=Path(root) if root is not None else module.lint_ratchet.get_repo_root()
+        path=root/'.ratchet-baselines'/(name+'.json')
+        path.parent.mkdir(parents=True,exist_ok=True)
+        options=dict(ratchetName=name,ratchetPath=str(path),currentKeys=list(current_counts),currentValues=[str(v) for v in current_counts.values()])
+        signature='UNSIGNED'
+        if sign:
+            result=rows('_ratchet_sign_request',options=options)
+            if len(result)!=1 or result[0]['code']!='IR_SIGN_REQUEST':raise ValueError('One native baseline signing request is required')
+            request=result[0]['parameters'];replies=suite.sign_ed25519([dict(id=request['request_id'],key_env=request['key_env'],message=request['message'])])
+            if len(replies)!=1 or replies[0]['id']!=request['request_id']:raise ValueError('One matching baseline signing reply is required')
+            reply=replies[0]
+            if reply['status']!='signed':return ratchet_result(rows('_ratchet_sign_error',options=dict(options,signStatus=reply['status'],signDetail=reply['detail'])))
+            signature=reply['signature']
+        approver='unknown'
+        try:
+            result=subprocess.run(['git','config','user.email'],capture_output=True,text=True,check=False)
+            if result.returncode==0 and result.stdout.strip():approver=result.stdout.strip()
+        except Exception:pass
+        clock=getattr(module.lint_ratchet,'datetime',datetime)
+        result=rows('_ratchet_update',options=dict(options,newSignature=signature,updatedAt=clock.now(UTC).isoformat(),reason=reason,approver=approver))
+        writes=[r['parameters']['contents'] for r in result if r['code']=='IR_WRITE']
+        if len(writes)!=1:raise ValueError('One native baseline write is required')
+        path.write_text(writes[0])
+        return ratchet_result(result)
 
     suite.replace(module.lint_signing,'verify_allowlist',verification)
     suite.replace(module.lint_ratchet,'check_ratchet',check_ratchet)

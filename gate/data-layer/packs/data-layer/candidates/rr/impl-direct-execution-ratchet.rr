@@ -60,3 +60,23 @@ IrResult(@place("",0),1) :- ir_ready(), n = count : { ir_current_base(_,c,b), c 
 .violation IrError(at: span, error_type: symbol, detail: symbol) code "IR_ERROR" "{detail}"
 IrError(@place("",0),"AttributeError","'list' object has no attribute 'get'") :- ir_root_type("array").
 IrError(@place("",0),"NotImplementedError",cat("Native JSON diagnostic compatibility remains unimplemented: ",e)) :- option("missingBaseline","0"), input_error("baseline.json",k,e), k != "missing", !ir_load_error(_).
+
+// Baseline writes are actions. Rules construct the exact bytes; the frontend performs the requested I/O.
+.decl ir_current_json(value: symbol)
+ir_current_json(cat("{",body,"}")) :- body = join q by k sep "," : { ir_current(k,v), q = cat(@json_str(k),":",to_string(v)) }.
+.decl ir_sign_message(value: symbol)
+ir_sign_message(cat("{\"counts\":",counts,",\"linter\":",@json_str(name),"}")) :- ir_current_json(counts), ir_name(name).
+.violation IrSignRequest(at: span, request_id: symbol, key_env: symbol, message: symbol) code "IR_SIGN_REQUEST" "baseline signing request"
+IrSignRequest(@place("",0),cat("ratchet:",name),"NERA_SIGNING_KEY",message) :- option("entryPoint","_ratchet_sign_request"), ir_name(name), ir_sign_message(message).
+.decl ir_pretty_counts(value: symbol)
+ir_pretty_counts("{}") :- !ir_current(_,_).
+ir_pretty_counts(cat("{\n",body,"\n  }")) :- ir_current(_,_), body = join q by k sep ",\n" : { ir_current(k,v), q = cat("    ",@json_str(k),": ",to_string(v)) }.
+.violation IrWrite(at: span, contents: symbol) code "IR_WRITE" "baseline bytes"
+IrWrite(@place("",0),cat("{\n  \"counts\": ",counts,",\n  \"_metadata\": {\n    \"linter\": ",@json_str(name),",\n    \"updated_at\": ",@json_str(now),",\n    \"signature\": ",@json_str(sig),",\n    \"approval_reason\": ",@json_str(reason),",\n    \"approved_by\": ",@json_str(approver),"\n  }\n}\n")) :- option("entryPoint","_ratchet_update"), ir_name(name), ir_pretty_counts(counts), option("updatedAt",now), option("newSignature",sig), option("reason",reason), option("approver",approver).
+IrOutput(@place("",0),0,cat("Baseline updated: ",p,"\n"),"") :- option("entryPoint","_ratchet_update"), ir_path(p).
+IrOutput(@place("",0),1,"  WARNING: Baseline is unsigned. Run with --sign to sign it.\n","") :- option("entryPoint","_ratchet_update"), option("newSignature","UNSIGNED").
+IrResult(@place("",0),1) :- option("entryPoint","_ratchet_update").
+IrOutput(@place("",0),0,"","ERROR: NERA_SIGNING_KEY environment variable not set.\nOnly the user may have access to NERA_SIGNING_KEY. Ask the user to run the documented uv signing command in an environment where the key is already present.\nAI agents must never have access to this proof-of-human key and must never try to obtain it.\nERROR: Failed to sign baseline.\n") :- option("entryPoint","_ratchet_sign_error"), option("signStatus","missing-key").
+IrOutput(@place("",0),0,"","ERROR: NERA_SIGNING_KEY must be 32 bytes\nERROR: Failed to sign baseline.\n") :- option("entryPoint","_ratchet_sign_error"), option("signStatus","key-length").
+IrOutput(@place("",0),0,"",cat("ERROR: Failed to decode NERA_SIGNING_KEY: ",detail,"\nERROR: Failed to sign baseline.\n")) :- option("entryPoint","_ratchet_sign_error"), option("signStatus","invalid-hex"), option("signDetail",detail).
+IrResult(@place("",0),0) :- option("entryPoint","_ratchet_sign_error").
