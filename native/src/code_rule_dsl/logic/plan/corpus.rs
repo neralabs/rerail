@@ -4108,6 +4108,13 @@ impl Totals {
         for ((rel, col), per) in &self.vals {
             let rows = self.rels.get(rel).map_or(0, |r| r.0 as i64);
             let (ndv, sq, sqd) = per.values().fold((0, 0, 0), |(a, b, c), e| (a + 1, b + e[0] * e[0], c + e[2]));
+            if super::sketch::shadowing() {
+                let mut sketch = super::sketch::Sketch::default();
+                for (v, e) in per {
+                    sketch.add(*v, e[0]);
+                }
+                super::sketch::shadow(&format!("totals {rel}"), col, rows, ndv, sq, &sketch);
+            }
             stats.measured(rel, [(col.clone(), [rows, ndv.max(1), sq, sqd])], per.iter().map(|(v, [n, _, _])| (col.clone(), *v, *n)));
         }
     }
