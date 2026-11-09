@@ -99,6 +99,78 @@ mod tokens_tests;
 pub(in crate::code_rule_dsl) mod resident;
 pub(super) use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
+/// What recognizes a named-only document's tokens from facts of its records (`facts::core::Facts::parts`):
+/// the grammar's token tables, each record's tokens-kept bit and the aliased records' names. A record's
+/// own columns (span, kind, field, flags) come from the reader, so no token is stored.
+pub(in crate::code_rule_dsl) struct RecordTokens {
+    grammar: Arc<tokens::TokenGrammar>,
+    kept: Vec<u64>,
+    aliases: Vec<(u32, (String, bool))>,
+}
+
+/// A record's columns as recognition reads them: span, kind, field, error, extra.
+pub(in crate::code_rule_dsl) type RecordColumns = (u32, u32, u16, u16, bool, bool);
+
+impl RecordTokens {
+    fn child(&self, id: u32, (start, end, kind, field, error, extra): RecordColumns) -> tokens::Child<'_> {
+        let alias = self.aliases.binary_search_by_key(&id, |(at, _)| *at).ok().map(|at| &self.aliases[at].1);
+        tokens::Child { start, end, kind, field, alias, error, extra }
+    }
+
+    /// Record `id`'s children in source order, its recognized tokens among them (`Item::Child` holds
+    /// a record id); `None` where it recognizes none (its children are its records).
+    pub(in crate::code_rule_dsl) fn items(&self, id: u32, kids: &[u32], columns: impl Fn(u32) -> RecordColumns, source: &[u8]) -> Option<Vec<tokens::Item>> {
+        let node = self.child(id, columns(id));
+        let kept = self.kept[id as usize / 64] >> (id % 64) & 1 != 0;
+        if !self.grammar.recognizes(&node, kept) {
+            return None;
+        }
+        let described = kids.iter().map(|&kid| self.child(kid, columns(kid))).collect::<Vec<_>>();
+        let mut items = Vec::with_capacity(kids.len() * 2);
+        self.grammar.sequence(&node, kept, &described, source, &mut items).ok()?;
+        for item in &mut items {
+            if let tokens::Item::Child(position) = item {
+                *position = kids[*position as usize];
+            }
+        }
+        Some(items)
+    }
+
+    /// Bytes held.
+    pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
+        self.kept.len() * 8 + self.aliases.iter().map(|(_, (name, _))| 8 + name.len()).sum::<usize>()
+    }
+
+    /// What a digest of the facts reads of it: the tokens follow from it, the records and the source.
+    pub(in crate::code_rule_dsl) fn digest_into(&self, hash: &mut impl sha2::Digest) {
+        hash.update((self.kept.len() as u64).to_le_bytes());
+        for word in &self.kept {
+            hash.update(word.to_le_bytes());
+        }
+        for (id, (name, named)) in &self.aliases {
+            hash.update(id.to_le_bytes());
+            hash.update((name.len() as u64).to_le_bytes());
+            hash.update(name.as_bytes());
+            hash.update([u8::from(*named)]);
+        }
+    }
+}
+
+impl TapeDoc {
+    /// Its tokens' recognizer for its facts, on a named-only document (`RecordTokens`).
+    pub(in crate::code_rule_dsl) fn record_tokens(&self) -> Option<RecordTokens> {
+        let grammar = Arc::clone(self.tokens.as_ref()?);
+        let mut kept = vec![0u64; self.data.len().div_ceil(64)];
+        for (id, rec) in self.data.iter().enumerate() {
+            if rec.tokens_kept() {
+                kept[id / 64] |= 1 << (id % 64);
+            }
+        }
+        let aliases = self.kind_overrides.iter().map(|&(id, alias)| (id, self.kind_aliases[alias as usize].clone())).collect();
+        Some(RecordTokens { grammar, kept, aliases })
+    }
+}
+
 /// Marks a pattern candidate that is a recognized token, not a record (`TapeDoc::pattern_children`).
 pub(in crate::code_rule_dsl) const RECOGNIZED_TOKEN: u32 = 1 << 31;
 const ERROR_SYMBOL: u16 = u16::MAX;
