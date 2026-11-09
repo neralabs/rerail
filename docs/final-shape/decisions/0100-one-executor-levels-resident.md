@@ -1,7 +1,7 @@
 # 0100: One executor for a chunk's strata: levels sent to every lane at once, relations kept on the GPU
 
 Status: draft (2026-11-09). It builds 0095 §5 (device waves) on the executor of 0098 §6. The order of work is
-below; steps 1–3 are done.
+below; steps 1–5 are built and step 6 is measured.
 
 ## Intro
 
@@ -176,10 +176,60 @@ reads the shared symbol table, and new symbols take its write lock, so the gain 
    `begin` then `wait`. A test begins two batches, collects them in reverse order, and checks both against the
    reference.
 4. **The space, and the join forms as kernels:** sort, probe and tile in the executor, with their CPU references
-   (`rows_sort`) and their measured prices.
+   (`rows_sort`) and their measured prices. *Done*:
+   - `Kernel::Join` takes both sides' key columns. It returns the pairs in left row order, then right row order.
+     `by` picks the device's way: sort and probe, or document tiles. The pairs are the same either way.
+   - The CPU reference is `rerail_accel::rows::probe`: a radix sort of the right and a binary search per left row.
+     The host sort moved from the engine into `rerail_accel::rows`. The device's sort, probe and tile moved into
+     `rerail_accel::gpu::join` and `gpu::tile`. The engine's modules re-export them for the lab and the row
+     programs.
+   - Prices, per row of both sides: the cores 5.7 ns (one core); the GPU 1.4 ns by sort and probe, 5 ns by tiles
+     (the host's grouping). The pairs are not known ahead, so they are not priced. At these prices a single join
+     goes to the cores, as the lab found (0095).
+   - **The space.** Every lane keeps a join's right side by the caller's id: the cores its sort; the GPU its sort,
+     or its grouping by document. The id names a relation and its key columns, and a kept entry whose row count
+     differs is refused. `Executor::forget(id)` drops one entry and `Executor::clear()` drops all of them, at the
+     chunk's end. On the GPU, the bytes kept are capped at 256 MiB, and the least recently read entries go first.
+   - **A batch's joins on the GPU** take at most two command buffers. The first holds the sorts the space lacks,
+     every probe and every tile count. The second, only when needed, holds the tile scatters and the probes whose
+     pairs outgrew their first space.
+   - A test runs probes and tiles on both lanes in two batches, and checks them against the reference. The second
+     batch reads the first one's kept sides.
 5. **Levels in the engine:** a level's launches as one batch. Then first joins from the device, with the host
-   continuing from the pairs.
-6. **The cores:** measure strata of one level in parallel, and decide.
+   continuing from the pairs. *Built*:
+   - When a level's first stratum runs, the planner plans the seed rules of every stratum in the level. These are
+     the rules with no recursive atom, and the planner keeps their plans for the strata. Their join specs go to
+     the set engine, which sends the ones that qualify as one batch (`setfix::level`).
+   - A seed qualifies when its first two steps are positive atoms of relations held by earlier levels, and the
+     second is keyed by slots the first binds. Its left rows are the first atom's live rows that pass its tests.
+     The right side is every row of the second atom's relation, named in the space by the relation's id and its
+     key columns.
+   - When the seed's stratum runs, the seed takes its pairs by its spec's digest, if both relations are the ones
+     the batch read (same id, rows and dead rows). It continues from its third step. Each pair's right row is
+     checked as the host's walk checks it: live, every key, every test.
+   - Otherwise, the seed runs as before. Pairs that no seed took are dropped at the chunk's end, with the lanes'
+     space.
+   - `RERAIL_LEVEL_JOINS=off` turns the batch off. Joins with fewer than 4,096 left rows are left to the host
+     (`RERAIL_LEVEL_JOIN_MIN`).
+   - On the Python pack, no seed join reaches 4,096 left rows, so the default sends nothing. The findings are
+     identical either way. With the floor at 0, 153 joins go out over 22 chunks and 132 seeds run from their pairs.
+     The findings are still identical, and the relational lab is exact on the moved kernels (232 of 232 probes, 110
+     of 110 tiles). Whether a lower floor pays is measured on the data layer's 9,010 files (step 7).
+6. **The cores:** measure strata of one level in parallel, and decide. *Measured*: `RERAIL_LEVEL_TRACE=<file>`
+   writes each native stratum's level and thread CPU. On the Python pack (22 chunks, 11,942 native strata in 401
+   levels, load 26–67):
+   - The native strata take 11.3 s of thread CPU, out of 31.5 s user + sys for the run.
+   - A level's slowest stratum, summed over the levels, is 2.8 s. So running a level's strata at once could cut
+     wall time by at most 8.5 s, 4.1 times on that part.
+   - Half the levels have 8 strata or more, and 113 have 20 or more. The median stratum takes 0.11 ms, and the
+     slowest takes 157 ms.
+
+   **Decided: not now.** Parallel strata save no CPU. User + sys can only grow, through the symbol table's
+   write lock (new symbols), the store's locks and the threads' handoffs. CPU is what the gates count, and the
+   machine is shared, so its cores are busy anyway. The wall-time gain is real but bounded by 8.5 s here. It is
+   worth taking when wall time is the target (a single user's run on an idle machine). The trace gives the bound
+   for any corpus. The work queued for that case: strata of one level that read no SQL, on the rayon pool, each
+   with its own interner overlay merged at the level's end.
 7. **Gates:**
    - The pack's findings are identical, and so are the data layer's at scale.
    - Host CPU (user + sys) of the device joins is below the CPU radix sort join's, on the lab's 232 joins and on
