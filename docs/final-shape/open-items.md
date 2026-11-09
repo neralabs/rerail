@@ -3264,7 +3264,8 @@ the model differ read an enum defined outside the scope (`MatchProducerFamily` i
 **Beyond the model (2026-11-09).** Lists a function builds by `append`/`extend`/`+=` under `for` loops, helpers
 with several returns (the largest), function-local names, and `range` bounds given as `len(x)`.
 `test_speculative_publication_scenarios.py` (pytest 66, model 13) and `test_branches.py` (18, model 8) are now
-exact on a scoped run. A list built by introspection (`test_phase1_case_matrix.py`, 819) has no length; it stays in
+exact. The same scope run with them: 1,129 of 1,143 exact, total 13,648; 208 s user + 4.2 s sys, load 20–60; the
+only files below the model are the four enum files above. A list built by introspection (`test_phase1_case_matrix.py`, 819) has no length; it stays in
 `collect_disabled`.
 
 **Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Expected over the whole
