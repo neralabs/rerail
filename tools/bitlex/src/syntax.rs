@@ -120,6 +120,9 @@ pub enum ReadKind {
 pub struct Reading {
     pub kinds: Vec<(String, ReadKind)>,
     pub fields: Vec<(String, String)>,
+    /// `root gone`, `root as M`: what becomes of the node read itself, whatever its kind; the
+    /// kinds then name only the nodes inside it.
+    pub root: Option<ReadKind>,
 }
 
 #[derive(Clone, Debug)]
@@ -869,6 +872,16 @@ impl P {
                         let f = self.ident()?;
                         self.want_kw("as")?;
                         reading.fields.push((f, self.ident()?));
+                    } else if self.eat_kw("root") {
+                        if reading.root.is_some() {
+                            return self.err("a reading's root twice");
+                        }
+                        reading.root = Some(if self.eat_kw("gone") {
+                            ReadKind::Gone
+                        } else {
+                            self.want_kw("as")?;
+                            ReadKind::As(self.kind()?)
+                        });
                     } else if self.eat_kw("keep") {
                         let mut any = false;
                         while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {

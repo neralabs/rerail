@@ -2174,6 +2174,11 @@ impl Program {
                         digest.update(b.to_le_bytes());
                     }
                 }
+                // A root's way, when it has one, tagged.
+                if let Some(w) = r.root {
+                    digest.update(b"root");
+                    digest.update(w.to_le_bytes());
+                }
             }
             digest.update((self.readings.provisional.len() as u64).to_le_bytes());
             for f in &self.readings.provisional {

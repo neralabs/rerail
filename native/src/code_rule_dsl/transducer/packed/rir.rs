@@ -1124,6 +1124,11 @@ pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
         for &(f, g) in &r.fields {
             let _ = writeln!(out, "  reading {at} field #{f} as #{g}");
         }
+        let _ = match r.root {
+            None => Ok(()),
+            Some(stream::GONE) => writeln!(out, "  reading {at} root gone"),
+            Some(m) => writeln!(out, "  reading {at} root as #{m}"),
+        };
     }
     for f in &readings.provisional {
         let _ = writeln!(out, "  provisional #{f}");
@@ -1139,6 +1144,18 @@ fn reading_row(parts: &mut Parts, line: &mut Line<'_>) -> Result<(), String> {
         return Err(format!("reading {at} out of order (expected {})", maps.len()));
     }
     let r = &mut maps[at];
+    if line.peek_word().as_deref() == Some("root") {
+        line.next()?;
+        if r.root.is_some() {
+            return Err(format!("reading {at}: two roots"));
+        }
+        r.root = Some(match line.word()?.as_str() {
+            "gone" => stream::GONE,
+            "as" => line.number("#")?,
+            w => return Err(format!("a reading's root row is `reading N root gone` or `root as #M`, not `{w}`")),
+        });
+        return Ok(());
+    }
     if line.peek_word().as_deref() == Some("field") {
         line.next()?;
         let f: u16 = line.number("#")?;

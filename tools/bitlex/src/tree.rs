@@ -83,12 +83,31 @@ struct Parser<'a> {
     open: Vec<usize>,
     /// Each extra's first byte.
     extras: Vec<usize>,
+    /// A level whose node made last went in a reread (its children in its place), and the
+    /// nodes then: none is made last there until the next (as the machine's).
+    dissolved: Option<(usize, usize)>,
     /// Why the file is refused, whatever else could match: as the machine, which has gone this
     /// way, refuses it (a mark a level refuses; a fold of no two leaves).
     fatal: Option<String>,
 }
 
 impl<'a> Parser<'a> {
+    /// The node made last at the innermost open node's level: its last child; none where a
+    /// reread's node went and nothing was made after (`dissolved`).
+    fn last_made(&self) -> Option<usize> {
+        let o = *self.open.last()?;
+        if self.dissolved == Some((o, self.out.len())) {
+            return None;
+        }
+        let mut c = None;
+        let mut j = o + 1;
+        while j < self.out.len() {
+            c = Some(j);
+            j += self.out[j].size.max(1);
+        }
+        c
+    }
+
     fn look_bit(&self, kind: &str) -> u64 {
         self.looks.iter().position(|m| m == kind).map_or(0, |k| 1 << k)
     }
@@ -391,16 +410,14 @@ impl<'a> Parser<'a> {
             }
             Gram::Reread { reading, body } => {
                 // The node just made at this level, as a wrap finds it; read, then `body`.
-                let o = *self.open.last()?;
-                let mut c = None;
-                let mut j = o + 1;
-                while j < self.out.len() {
-                    c = Some(j);
-                    j += self.out[j].size.max(1);
-                }
-                let c = c?;
+                let c = self.last_made()?;
                 let r = &self.decl.readings.iter().find(|r| r.0 == *reading)?.1;
                 let saved: Vec<Node> = self.out[c..].to_vec();
+                let was = self.dissolved;
+                let goes = match &r.root {
+                    Some(w) => matches!(w, crate::syntax::ReadKind::Gone),
+                    None => r.kinds.iter().any(|k| k.0 == self.out[c].kind && matches!(k.1, crate::syntax::ReadKind::Gone)),
+                };
                 if let Err(why) = reread(&mut self.out, c, r) {
                     self.out.truncate(c);
                     self.out.extend(saved);
@@ -411,25 +428,24 @@ impl<'a> Parser<'a> {
                     }
                     return None;
                 }
+                // The node read went, its children in its place: none made last here.
+                if goes {
+                    let o = *self.open.last()?;
+                    self.dissolved = Some((o, self.out.len()));
+                }
                 match self.matches(body, at, follow) {
                     Some(next) => Some(next),
                     None => {
                         self.out.truncate(c);
                         self.out.extend(saved);
+                        self.dissolved = was;
                         None
                     }
                 }
             }
             Gram::Relabel { field, moved, inner, body } => {
                 // The node just made at this level, as a wrap finds it; relabelled, then `body`.
-                let o = *self.open.last()?;
-                let mut c = None;
-                let mut j = o + 1;
-                while j < self.out.len() {
-                    c = Some(j);
-                    j += self.out[j].size.max(1);
-                }
-                let c = c?;
+                let c = self.last_made()?;
                 let was = (self.out[c].field.clone(), self.out[c].kind.clone());
                 // `inner`: the node a wrap holds first, right after it; only a wrap has one.
                 let held = match inner {
@@ -465,14 +481,7 @@ impl<'a> Parser<'a> {
             }
             Gram::Wrap { kind, field, moved, body } => {
                 // The node just made at this level: the innermost open node's last child.
-                let o = *self.open.last()?;
-                let mut c = None;
-                let mut j = o + 1;
-                while j < self.out.len() {
-                    c = Some(j);
-                    j += self.out[j].size.max(1);
-                }
-                let c = c?;
+                let c = self.last_made()?;
                 let was = (self.out[c].field.clone(), self.out[c].kind.clone());
                 let node = Node { kind: kind.clone(), field: was.0.clone(), supertypes: vec![], extra: false, start: self.out[c].start, end: 0, size: 0 };
                 self.out.insert(c, node);
@@ -598,7 +607,10 @@ fn reread(out: &mut Vec<Node>, root: usize, r: &crate::syntax::Reading) -> Resul
     let mut gone = Vec::new();
     let mut i = root;
     while i < end {
-        let what = r.kinds.iter().find(|k| k.0 == out[i].kind).map(|k| k.1.clone());
+        let what = match &r.root {
+            Some(w) if i == root => Some(w.clone()),
+            _ => r.kinds.iter().find(|k| k.0 == out[i].kind).map(|k| k.1.clone()),
+        };
         let Some(what) = what else { return Err(format!("a {} the reading does not name", out[i].kind)) };
         if i != root {
             let to = out[i].field.as_ref().and_then(|f| r.fields.iter().find(|x| x.0 == *f)).map(|x| x.1.clone());
@@ -611,7 +623,6 @@ fn reread(out: &mut Vec<Node>, root: usize, r: &crate::syntax::Reading) -> Resul
                 i += out[i].size.max(1);
                 continue;
             }
-            ReadKind::Gone if i == root => return Err(format!("the {} read goes", out[i].kind)),
             ReadKind::Gone => gone.push(i),
             ReadKind::As(m) => out[i].kind = m,
         }
@@ -658,7 +669,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         return Err("more than 64 marks and soft keywords".into());
     }
     let extra_at = extras.iter().map(|e| e.1.start).collect();
-    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, fatal: None };
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, dissolved: None, fatal: None };
     first_of(&mut p);
     // A whole root is opened at byte 0 and matched by its content, which may be empty. Marks
     // before the first token are kept where the root can start with them.

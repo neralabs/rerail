@@ -41,6 +41,9 @@ pub(in crate::code_rule_dsl) const GONE: u16 = u16::MAX - 1;
 pub(in crate::code_rule_dsl) struct Reading {
     pub(super) kinds: Vec<(u16, u16)>,
     pub(super) fields: Vec<(u16, u16)>,
+    /// What the node read itself takes, whatever its kind (`root gone`, `root as M`): `GONE` or
+    /// a kind; `None`, its kind's way.
+    pub(super) root: Option<u16>,
 }
 
 /// A program's readings, and its provisional fields: a node holding one at `ACCEPT` refuses.
@@ -398,13 +401,16 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 let reading = &program.readings.maps[usize::from(operand)];
                 let end = nodes.len() - pending;
                 let mut i = base;
+                let mut went = false;
                 while i < end {
                     if wraps.contains(&i) {
                         i += 1;
                         continue;
                     }
+                    // At the root's base, its chain from the root: the wraps around it (one open
+                    // around it, say) are not read.
                     let mut chain = Vec::new();
-                    let mut c = head.get(&i).copied();
+                    let mut c = if i == base && r != base { Some(r) } else { head.get(&i).copied() };
                     while let Some(w) = c {
                         chain.push(w);
                         c = link.get(&w).copied();
@@ -412,7 +418,11 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                     chain.push(i);
                     let mut next = i + 1;
                     for n in chain {
-                        let Some(&(_, to)) = reading.kinds.iter().find(|x| x.0 == nodes[n].kind) else { return refuse(pc - 1, "a node the reading does not name") };
+                        let way = match reading.root {
+                            Some(w) if n == r => Some(w),
+                            _ => reading.kinds.iter().find(|x| x.0 == nodes[n].kind).map(|x| x.1),
+                        };
+                        let Some(to) = way else { return refuse(pc - 1, "a node the reading does not name") };
                         if n != r
                             && let Some(&(_, g)) = reading.fields.iter().find(|x| x.0 == nodes[n].field)
                         {
@@ -424,8 +434,8 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                                 next = i + nodes[n].size as usize;
                                 break;
                             }
-                            GONE if n == r => return refuse(pc - 1, "the node read goes"),
                             GONE => {
+                                went |= n == r;
                                 nodes[n].kind = DEAD;
                                 dead = true;
                             }
@@ -433,6 +443,11 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                         }
                     }
                     i = next;
+                }
+                // The node read went, its children in its place: none is made last at this
+                // level until the next.
+                if went && let Some(l) = lasts_made.last_mut() {
+                    *l = None;
                 }
             }
             NODE_FIELD if mode == 3 => {

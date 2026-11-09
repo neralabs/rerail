@@ -1100,7 +1100,11 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     f.append_block_param(chain, types::I64);
                     heads.push((scan, Step::Node));
                     heads.push((chain, Step::Node));
-                    f.ins().jump(scan, &[BlockArg::from(base)]);
+                    // The root's base first, its chain from the root (`chain(root + 1, base)`; a
+                    // plain root is its base): the wraps around the root are not read.
+                    let wrapped = f.ins().icmp(IntCC::NotEqual, root, base);
+                    let c0 = f.ins().select(wrapped, last, zero);
+                    f.ins().jump(chain, &[BlockArg::from(c0), BlockArg::from(base)]);
                     // scan(i): record i, a wrap's skipped (its chain's base reads it).
                     f.switch_to_block(scan);
                     let i = f.block_params(scan)[0];
@@ -1148,10 +1152,15 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                         let a = slot(&mut f, wc(link_c), at);
                         f.ins().uload32(flags, a, 0)
                     };
-                    // Its kind's way: a compare each, the last refusing.
-                    for &(kk, way) in &r.kinds {
+                    // Its way: the root's, for the node read, when the reading gives one; else
+                    // its kind's, a compare each, the last refusing.
+                    let ways: Vec<(Option<u16>, u16)> = r.root.map(|w| (None, w)).into_iter().chain(r.kinds.iter().map(|&(kk, w)| (Some(kk), w))).collect();
+                    for (kk, way) in ways {
                         let (hit, miss) = (f.create_block(), f.create_block());
-                        let is = f.ins().icmp_imm(IntCC::Equal, k, i64::from(kk));
+                        let is = match kk {
+                            Some(kk) => f.ins().icmp_imm(IntCC::Equal, k, i64::from(kk)),
+                            None => is_root,
+                        };
                         f.ins().brif(is, hit, &[], miss, &[]);
                         f.switch_to_block(hit);
                         match way {
@@ -1164,7 +1173,10 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                                 f.ins().jump(scan, &[BlockArg::from(past)]);
                             }
                             GONE => {
-                                guard(&mut f, is_root, pc);
+                                // The node read going: none made last at this level until the next.
+                                let kept = f.ins().select(is_root, zero, last);
+                                let a = slot(&mut f, wc(flast_c), open);
+                                f.ins().istore32(flags, kept, a, 0);
                                 let d = f.ins().iconst(types::I64, i64::from(DEAD));
                                 put(&mut f, kind_c, n, d);
                                 let dead = f.use_var(v.dead);

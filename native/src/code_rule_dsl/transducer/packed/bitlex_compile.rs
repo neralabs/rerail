@@ -268,6 +268,12 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                     for (f, g) in &reading.fields {
                         r.fields.push((field_id(f)?, field_id(g)?));
                     }
+                    r.root = match &reading.root {
+                        None => None,
+                        Some(::bitlex::syntax::ReadKind::Gone) => Some(super::stream::GONE),
+                        Some(::bitlex::syntax::ReadKind::As(m)) => Some(id(m)?),
+                        Some(::bitlex::syntax::ReadKind::Keep) => return Err(format!("reading {name}: a root kept")),
+                    };
                     readings.maps.push(r);
                 }
                 Stmt::Provisional(fields) => {
