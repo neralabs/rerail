@@ -92,6 +92,13 @@ The converted programs beside this directory (`../<rule-id>.rr`) are the merge, 
 conversion and fails on a file that does not merge, a `violation` at a clause the policy has not, or a committed
 `../*.rr` or `../coverage.txt` other than a fresh run gives: after editing a file here, regenerate and commit both.
 
+A change here is checked against the oracle's recorded findings, as
+`native/src/code_rule_dsl/logic/convert/replay_baseline.txt` records the replay's result. With the library's tests,
+`a_sample_of_the_replay_gives_the_recorded_findings` replays two events per check (one that finds something, one
+that finds nothing), and each must give the recorded findings. `converted_rules_give_the_recorded_findings`
+(ignored; about 17 minutes in the `profiling` profile) replays every event and fails where its result differs
+from the baseline, worse or better: `RERAIL_REPLAY_BLESS=1` records it once it is right.
+
 ## Base relations beyond the converter's
 
 The corpus runner binds these too (core.rr's, `facts::vtab::syntax::Extra`), each only for a program that reads it;
