@@ -1,6 +1,6 @@
 # 0096: Accelerating relational work: forms first, then four lanes (CPU, SME, GPU, Neural Engine)
 
-Status: draft (2026-11-09). A plan for review. It extends 0095 and builds nothing yet.
+Status: draft (2026-11-09). It extends 0095. The executor, the four lanes and the first engine forms are built ("Built", below).
 
 ## Intro
 
@@ -192,6 +192,59 @@ The spikes built Core ML models with coremltools, a Python tool. The product nev
 - the GPU's matrix units are used only for products of more than about 80–200 int8 operations per byte. Boolean work
   stays on the threads, which read 8× fewer bytes.
 
+### 6. The executor: launches batched per lane, lanes run together
+
+A **launch** is one kernel over plain columns: a bit product, a count table (counts or pairs), a histogram, a
+closure (`rerail-accel`'s `Kernel`). Each has one meaning, the CPU reference's, and every lane's output must equal
+it. A **batch** is a wave of launches that do not read each other's outputs. The executor (`rerail_accel::exec`) runs
+a batch in three parts:
+
+1. **Placement.** Launches, largest first, each go to the lane `price::choose` picks, counting what the batch has
+   already queued on each lane. A lane with nothing queued pays its submission's fixed cost. Among the lanes that
+   finish within the parity band of the first, the least energy wins. A launch may be pinned to a lane.
+2. **One submission per lane.** Each lane gets its share at once:
+   - the cores: one parallel pass on the rayon pool;
+   - SME: the batch cut into tiles, taken by one streaming worker per cluster;
+   - the GPU: one command buffer, with barriers only between stages that read what an earlier one wrote;
+   - the Neural Engine: one batched prediction per model.
+
+   Batching is what makes the fixed costs pay: a lane's submission is paid once a wave, not once a launch.
+3. **Concurrency.** The lanes' submissions run at the same time, each on its own thread. The batch ends when every
+   lane is done.
+
+Two more rules:
+
+- **No fallback.** A launch no present lane can run is an error that names it, and so is a lane's failure.
+- **A report per batch**, for the profile: each lane's launches, wall time and estimated joules; the CPU time the
+  other lanes freed; the time lost against the fastest lane; and the process's CPU over the batch.
+
+**How the engine feeds it.** A stratum whose form the planner recognized submits its launches through the
+executor of its run's binding (`logic::lanes`):
+
+- **CPU binding:** the cores and SME. SME is part of the CPU.
+- **Metal binding:** every lane.
+
+Today a batch is one stratum's launches. Device waves (0095 §5) make a batch of a dependency level's launches
+across strata. The executor already takes them, so no interface changes.
+
+## Answered (the user, 2026-11-09)
+
+1. **"Design a proper executor, which will be able to batch launches"**: §6.
+2. **Power: "don't measure power, you can estimate it from information on the internet."** Busy power per lane,
+   from published figures (`price.rs`):
+   - P-core: 6 W (Notebookcheck);
+   - SME: 12 W (taken as two P-cores; no published figure);
+   - GPU: 45 W (Notebookcheck's listed figure);
+   - Neural Engine: 3 W (community `powermetrics` readings of 2–3 W sustained).
+3. **The parity band: "sure, we can adjust later."** `Prices::band`, 3 to start.
+4. **Compiled models: "facts if JIT compiled and part of the executable if AOT compiled."**
+   - **JIT:** a model compiled at run time is kept in the content store's `accel_models` table, under the digest of
+     its template and its fixed relation, and read back by later runs.
+   - **AOT:** a model listed in `accel/models/aot.list` is compiled by the build (`xcrun coremlcompiler`) and
+     embedded in the executable.
+   - **Lookup order:** the executable, then the store, then a compile.
+5. **Count only: "infer it if we can."** Inferred (`simplify::project_unread_columns`; see "Built").
+
 ## Order of work
 
 0. **Done.**
@@ -217,6 +270,52 @@ Each step reports:
 - device time per lane;
 - the CPU and GPU time each lane freed.
 
+## Built (2026-11-09)
+
+All of it was checked exactly against the CPU reference. Times are from debug builds at load 35–140.
+
+- **`rerail-accel`**, a crate of the workspace:
+  - the kernels and their CPU reference;
+  - lane detection: SME2 through `sysctl`, one SME unit per cluster;
+  - prices per form and lane, from the lanes' own measurements, and power per lane;
+  - the executor.
+
+  33 tests pass. One of them runs a single wave on all four lanes at once; placed by price, its small launches go to
+  SME and the cores.
+- **The SME lane:** the bit product on BMOPA, in C with ACLE, about 8·10⁻¹⁴ s a bit-operation and 3 µs a submission.
+- **The GPU lane:** all four forms, a batch as one command buffer. Each submission costs 0.3–0.7 ms of wall time, of
+  which a few µs are on the device.
+- **The Neural Engine lane:**
+  - **The model writer:** ML Programs written from Rust, byte for byte what coremltools writes for the same graph,
+    with the fixed relation as a 1-bit constant.
+  - **Compiling and running:** compiled through the Objective-C runtime, every model's placement checked with
+    `MLComputePlan`. A model not wholly on the engine is refused, with its operation names.
+  - **Counts above 2,048:** the shared dimension is split into pieces of at most 16,384 bits and 2,048 ones per
+    constant row, so every partial count is exact.
+  - **Speed:** about 1.4–5·10⁻¹³ s a bit-operation. Host conversion costs a few ms a submission in a debug build.
+- **In the engine:**
+  - **`count only`, inferred.** A derived relation's column that no reader reads, positive or negated or in a count
+    compared with 0 (the converter's "no such row"), is dropped: the relation's rows are their projection.
+    - On a 59-program slice of the Python pack it projected 62 relations (83 columns), with identical outputs.
+    - That run predates the count case. The large relations it reaches are the `rr_agg*` helpers read only by
+      `count {…} = 0`.
+    - `RERAIL_PROJECT_COLUMNS=off` turns it off.
+  - **`closure`.** A component whose one recursive probe walks one column along an edge relation (`seed ∘ E⁺`) runs
+    the edge's join once per distinct node. Its reach comes by chains when every node has one successor (tree
+    climbs), and by the executor's `Closure` kernel otherwise, up to 16,384 nodes. Larger graphs run semi-naive from
+    the seeds. `RERAIL_CLOSURE_FORM=off` turns it off.
+  - **Model facts:** the content store's `accel_models`.
+  - **The lanes per binding:** `logic::lanes`.
+
+**Not built yet:**
+
+- **`count table` and `histogram` in the engine's strata.** They need a document's 16-bit local codes, from 0095 §6's
+  layout.
+- **`bit product` in the prefilter.**
+- **Device waves across strata** (0095 §5).
+- **The Neural Engine's IOSurface inputs**, which cut host CPU about 4× in the spikes.
+- **Release-build prices.**
+
 ## Gates
 
 - **Row for row** on the relational lab's captures, for every form on every lane.
@@ -226,11 +325,6 @@ Each step reports:
 
 ## Open questions
 
-1. **The parity band.** `B = 3` is a starting value: is the ANE worth up to 3× its best competitor's time? The band
-   could be set per binding (on battery, or on a server).
-2. **Measuring energy.** `powermetrics` reports per-unit power but needs root. Without it the profile reports time
-   freed, not energy.
-3. **Where compiled models live.** The plan here is the content store, keyed by digest. Their size is about 1/16 of
-   the fp16 constant.
-4. **Whether `count only` is the planner's choice or the language's.** It can be inferred from the reader, or a rule
-   could say it (`count { … }` already does).
+1. **The band per binding:** on battery, or on a server, the band could differ.
+2. **What is not materialized:** decision 0097 (draft) takes the user's question of relations that expand and then
+   narrow.

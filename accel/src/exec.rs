@@ -218,10 +218,17 @@ impl Backend for CpuBackend {
     }
 }
 
-/// The process's user + system CPU seconds.
+/// The process's user + system CPU seconds (0 where there is no `getrusage`).
 pub fn process_cpu() -> f64 {
-    let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-    let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
-    s(u.ru_utime) + s(u.ru_stime)
+    #[cfg(unix)]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
+        s(u.ru_utime) + s(u.ru_stime)
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
+    }
 }

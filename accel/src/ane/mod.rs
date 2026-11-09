@@ -83,14 +83,43 @@ fn hex(k: &[u8; 32]) -> String {
     k.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// This lane's backend, when it can run here: with an in-memory model store and a working directory for compiled
+/// The process's model store, when its host has one (the engine's content store: compiled models are facts there,
+/// decision 0096 §3); `None` keeps them in memory.
+static STORE: std::sync::RwLock<Option<Arc<dyn ModelStore>>> = std::sync::RwLock::new(None);
+
+/// Makes `store` where this process's Neural Engine models are kept from now on: JIT-compiled models are written
+/// there and read back by later runs. AOT models are part of the executable and never stored.
+pub fn set_store(store: Arc<dyn ModelStore>) {
+    *STORE.write().unwrap() = Some(store);
+}
+
+/// The host's store when set, else memory.
+#[derive(Default)]
+struct HostStore(MemoryStore);
+
+impl ModelStore for HostStore {
+    fn get(&self, key: &[u8; 32]) -> Option<Arc<[u8]>> {
+        match STORE.read().unwrap().as_ref() {
+            Some(s) => s.get(key),
+            None => self.0.get(key),
+        }
+    }
+    fn put(&self, key: [u8; 32], archive: Arc<[u8]>) {
+        match STORE.read().unwrap().as_ref() {
+            Some(s) => s.put(key, archive),
+            None => self.0.put(key, archive),
+        }
+    }
+}
+
+/// This lane's backend, when it can run here: with the host's model store (`set_store`, else memory) and a working directory for compiled
 /// models under `RERAIL_ANE_DIR` or the system's temporary directory.
 pub fn backend() -> Option<Arc<dyn Backend>> {
     // Apple silicon, with Core ML's compute plans (macOS 14.4 and later), which placement checking needs.
     if !cfg!(target_arch = "aarch64") || objc::runtime::Class::get("MLComputePlan").is_none() {
         return None;
     }
-    Some(Arc::new(Ane::new(Arc::new(MemoryStore::default()))))
+    Some(Arc::new(Ane::new(Arc::new(HostStore::default()))))
 }
 
 /// Where a model came from, and what getting it cost: for the profile and the timing tests.

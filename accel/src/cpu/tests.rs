@@ -154,23 +154,26 @@ fn the_executor_batches_and_places_on_the_cpu() {
 
 #[test]
 fn the_parity_band_prefers_the_least_energy() {
-    use crate::price::Prices;
-    let p = Prices::default();
+    use crate::kernel::Form;
+    use crate::price::{Fixed, Prices};
+    // The policy, at prices set for the test: the GPU 10x SME, the Neural Engine 2x slower than SME.
+    let mut p = Prices::default();
+    p.fixed = [Fixed { submission: 0.0, launch: 0.0 }; 4];
+    p.set(Form::BitProduct, Lane::Cpu, Some(1e-11));
+    p.set(Form::BitProduct, Lane::Sme, Some(1e-13));
+    p.set(Form::BitProduct, Lane::Gpu, Some(1e-14));
+    p.set(Form::BitProduct, Lane::Ane, Some(2e-13));
     let mut rng = Rng(1);
-    let k = Kernel::BitProduct { a: bits(&mut rng, 1024, 8192, 4), b: bits(&mut rng, 1024, 8192, 4), min: None };
+    let k = Kernel::BitProduct { a: bits(&mut rng, 256, 1024, 4), b: bits(&mut rng, 256, 1024, 4), min: None };
     let all = [Lane::Cpu, Lane::Sme, Lane::Gpu, Lane::Ane];
-    // An idle GPU finishes about 10x before the Neural Engine: outside the band, so the GPU.
+    // An idle GPU finishes 20x before the Neural Engine: outside the band, so the GPU.
     assert_eq!(p.choose(&k, &all, &[0.0; 4]).unwrap().0, Lane::Gpu);
-    // Without the GPU, the Neural Engine is within the band of SME and draws the least power.
+    // Without the GPU, the Neural Engine is within the band of SME (2x) and draws the least power.
     assert_eq!(p.choose(&k, &[Lane::Cpu, Lane::Sme, Lane::Ane], &[0.0; 4]).unwrap().0, Lane::Ane);
     // With the GPU busy (a wave queued on it), the Neural Engine takes the work.
-    assert_eq!(p.choose(&k, &all, &[0.0, 0.0, 5e-3, 0.0]).unwrap().0, Lane::Ane);
+    let busy = 10.0 * p.wall(&k, Lane::Ane).unwrap();
+    assert_eq!(p.choose(&k, &all, &[0.0, 0.0, busy, 0.0]).unwrap().0, Lane::Ane);
     // With a band of 1, the first to finish wins.
-    let mut tight = Prices::default();
-    tight.band = 1.0;
-    let first = all.iter().min_by(|a, b| {
-        let f = |l: Lane| tight.fixed[l.index()].submission + tight.wall(&k, l).unwrap();
-        f(**a).total_cmp(&f(**b))
-    });
-    assert_eq!(tight.choose(&k, &all, &[0.0; 4]).unwrap().0, *first.unwrap());
+    p.band = 1.0;
+    assert_eq!(p.choose(&k, &[Lane::Cpu, Lane::Sme, Lane::Ane], &[0.0; 4]).unwrap().0, Lane::Sme);
 }

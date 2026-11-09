@@ -90,7 +90,8 @@ impl Kernel {
     pub fn form(&self) -> Form {
         match self {
             Kernel::BitProduct { .. } => Form::BitProduct,
-            Kernel::CountTable { .. } => Form::CountTable,
+            Kernel::CountTable { emit: false, .. } => Form::CountTable,
+            Kernel::CountTable { emit: true, .. } => Form::CountPairs,
             Kernel::Histogram { .. } => Form::Histogram,
             Kernel::Closure { .. } => Form::Closure,
         }
@@ -126,18 +127,22 @@ impl Kernel {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Form {
     BitProduct,
+    /// A count table's counts per row.
     CountTable,
+    /// A count table's pairs.
+    CountPairs,
     Histogram,
     Closure,
 }
 
 impl Form {
-    pub const ALL: [Form; 4] = [Form::BitProduct, Form::CountTable, Form::Histogram, Form::Closure];
+    pub const ALL: [Form; 5] = [Form::BitProduct, Form::CountTable, Form::CountPairs, Form::Histogram, Form::Closure];
 
     pub fn name(self) -> &'static str {
         match self {
             Form::BitProduct => "bit product",
             Form::CountTable => "count table",
+            Form::CountPairs => "count table (pairs)",
             Form::Histogram => "histogram",
             Form::Closure => "closure",
         }

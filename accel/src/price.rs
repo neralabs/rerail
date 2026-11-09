@@ -1,17 +1,22 @@
 //! What a launch costs on each lane: time, from the spikes' measurements, and energy, from published power figures.
 //!
 //! **Time.** Each (form, lane) has a cost per unit of the kernel's size ([`crate::Kernel::units`]), and each lane a
-//! fixed cost per submission and per launch within one. The first values are the matrix-offload spikes' (M5 Max,
-//! 2026-11-09, `tools/matrix-offload/RESULTS.md`): each is a workload's best time for that form over its size in
-//! units. The relational lab replaces them with prices measured on captured strata ([`Prices::set`]).
+//! fixed cost per submission and per launch within one. They are the lanes' own measurements (M5 Max, 2026-11-09,
+//! debug builds, load 35–140), each a workload's best time over its size in units; the CPU's are the matrix-offload
+//! spikes' (`tools/matrix-offload/RESULTS.md`). The relational lab replaces them with prices measured on captured
+//! strata ([`Prices::set`]).
 //!
-//! | Form | Workload | CPU (core-s) | SME | GPU | ANE |
+//! | Form | Workload | CPU (core-s) | SME | GPU (device) | ANE |
 //! |---|---|---|---|---|---|
-//! | bit product | W5, 5.5·10^10 bit-ops | 57 ms (NEON) | 1.8 ms | 0.38 ms | 4.0 ms |
-//! | count table, counts | W2, 5.8·10^6 rows | 2.3 ms | — | 0.082 ms | — |
-//! | count table, pairs | W2, 83·10^6 pairs | (est.) | — | 6.4 ms | — |
-//! | histogram | W4, 22.3·10^6 codes | 5.5 ms | — | 0.23 ms | — |
-//! | closure | W3, 2.2·10^7 edge-words | 0.4 ms | — | 1.05 ms | — |
+//! | bit product | W5, 5.5·10^10 bit-ops | 57 ms (NEON) | 4.4 ms (8e-14/unit) | 0.38–0.49 ms (W1: 8.9e-14/unit) | 7.5 ms (W5 1.4e-13, W1 5.0e-13) |
+//! | count table, counts | W2, 5.8·10^6 rows | 2.3 ms | — | 0.57 ms | — |
+//! | count table, pairs | W2, 6.2·10^8 units | (est. 3e-9/unit) | — | 5.85 ms | — |
+//! | histogram | W4, 22.3·10^6 codes | 5.5 ms | — | 0.38 ms | — |
+//! | closure | W3, 1.1–2.2·10^7 edge-words | 0.4 ms | — | 1.98 ms | — |
+//!
+//! Fixed costs: SME 3 µs a submission; the GPU 0.3–0.7 ms of wall a command buffer (0.2 ms of it host CPU, a few
+//! µs on the device); the Neural Engine 0.13 ms a tile of 2,048 rows within one batched prediction, and a few ms of
+//! host conversion a submission in a debug build.
 //!
 //! **Energy** is estimated, not measured (the user, 2026-11-09): power per busy lane times its busy time. The
 //! figures are published ones for the M4 generation, the nearest to this machine that is reported:
@@ -44,7 +49,7 @@ pub struct Fixed {
 #[derive(Clone, Debug)]
 pub struct Prices {
     /// Seconds per unit, by form then lane; `None` where the lane has no kernel for the form.
-    per_unit: [[Option<f64>; 4]; 4],
+    per_unit: [[Option<f64>; 4]; 5],
     /// Per lane; for the CPU lane, wall seconds (the cores' time is `per_unit` divided by `cores`).
     pub fixed: [Fixed; 4],
     /// The cores the CPU lane spreads a launch over.
@@ -59,34 +64,31 @@ fn form_index(f: Form) -> usize {
 
 impl Default for Prices {
     fn default() -> Self {
-        let mut per_unit = [[None; 4]; 4];
+        let mut per_unit = [[None; 4]; 5];
         let mut set = |f: Form, l: Lane, s: f64| per_unit[form_index(f)][l.index()] = Some(s);
-        // Bit product: W5 (5.5e10 bit-ops); W1 agrees within 2x.
+        // Bit product: the lanes' own measurements (see the module's comment).
         set(Form::BitProduct, Lane::Cpu, 57e-3 / 5.5e10);
-        set(Form::BitProduct, Lane::Sme, 1.8e-3 / 5.5e10);
-        set(Form::BitProduct, Lane::Gpu, 0.38e-3 / 5.5e10);
-        set(Form::BitProduct, Lane::Ane, 4.0e-3 / 5.5e10);
-        // Count table: W2's counts (5.8e6 rows read). Pairs written are priced as units too: W2's 83e6 pairs took
-        // 6.4 ms on the GPU (7.7e-11 a pair, against 1.4e-11 a row read); the CPU's 4e-10 a row covers its writes
-        // within 2x, from the spikes' CPU write bandwidth.
+        set(Form::BitProduct, Lane::Sme, 8e-14);
+        set(Form::BitProduct, Lane::Gpu, 9e-14);
+        set(Form::BitProduct, Lane::Ane, 2.5e-13);
         set(Form::CountTable, Lane::Cpu, 2.3e-3 / 5.8e6);
-        set(Form::CountTable, Lane::Gpu, 6.4e-3 / 83e6);
-        // Histogram: W4 (22.3e6 codes).
+        set(Form::CountTable, Lane::Gpu, 0.57e-3 / 5.8e6);
+        set(Form::CountPairs, Lane::Cpu, 3e-9);
+        set(Form::CountPairs, Lane::Gpu, 9.4e-12);
         set(Form::Histogram, Lane::Cpu, 5.5e-3 / 22.3e6);
-        set(Form::Histogram, Lane::Gpu, 0.23e-3 / 22.3e6);
-        // Closure: W3 (2.17e7 edge-words).
+        set(Form::Histogram, Lane::Gpu, 1.7e-11);
         set(Form::Closure, Lane::Cpu, 0.4e-3 / 2.17e7);
-        set(Form::Closure, Lane::Gpu, 1.05e-3 / 2.17e7);
+        set(Form::Closure, Lane::Gpu, 1.8e-10);
         Prices {
             per_unit,
             fixed: [
                 Fixed { submission: 0.0, launch: 5e-6 },
                 // Entering streaming mode, and a worker's handoff.
-                Fixed { submission: 10e-6, launch: 2e-6 },
-                // A command buffer's submit and wait (0.13 ms at best), and an encoder's dispatch.
-                Fixed { submission: 130e-6, launch: 5e-6 },
-                // A prediction's round trip (about 100 us); launches against one model share it.
-                Fixed { submission: 0.0, launch: 100e-6 },
+                Fixed { submission: 3e-6, launch: 1e-6 },
+                // A command buffer's submit and wait, and an encoder's dispatch.
+                Fixed { submission: 0.5e-3, launch: 5e-6 },
+                // The batched prediction's host conversions, and a tile of 2,048 rows.
+                Fixed { submission: 2e-3, launch: 0.13e-3 },
             ],
             cores: std::thread::available_parallelism().map_or(8, |n| n.get()) as f64,
             band: 3.0,
