@@ -421,6 +421,14 @@ What it shows:
 - **The larger prize is the strata.** The placement planner (0095) finds 553 strata whose work would be cheaper
   on the GPU: 84 s of CPU against an estimated 0.4 s on the device. That needs the Metal binding (`--metal`), and
   their forms on the device.
+- **Under the Metal binding** (`--metal`, the same pack, load 94 to 124), findings are identical and nothing goes
+  to the GPU:
+  - The forms' launches are too small for the GPU's fixed cost, so the prices keep them on the CPU (kernels 64 ms).
+  - None of the 553 strata can run there either: each lacks a GPU join (78.9 s CPU). Many also lack negation
+    (46.0 s) or comparison (49.0 s).
+  - Local CPU was 197.4 + 7.6 s against the CPU binding's 206.7 + 10.3 s, which is noise at this load.
+
+  So the expected gain waits on 0095's device join (sort and probe), negation and comparison, not on these forms.
 - **Fixed on the way:**
   - The closure searches its edges in one join context for every node, not one per node: its encode fell from
     1,055 to 467 ms CPU on the 8-program slice.
