@@ -19,7 +19,7 @@ The questions, and who answers them:
 | Where may a fact over every document be read? | 0093: only by findings (reports) | accepted, not built |
 | How is a library held? | 0089: a module, held once per run; equal requests share one cone | stages 1–2 built |
 | What does a policy's scope limit? | 0091: its own rules and findings, never which facts exist | built |
-| How is a changed fact maintained? | deferred: exact maintenance (counting or another), or 0077's DRed | DRed built; 0090 step 1 |
+| How is a changed fact maintained? | deferred: exact maintenance (counting or another), or 0077's DRed | DRed built; 0090 steps 1 and 3 |
 | When is a fact a search? | 0083 §4: `.search`, memoised, after maintenance | not built |
 | How is a node named? | §2 below | flag only |
 | What does a run load, and what changed? | §6 below (phase 0) | being designed |
@@ -99,6 +99,92 @@ The id scheme is part of the per-file memo's plan key, so a change of scheme mis
   maintenance proper (over-delete, insert, rederive) is 5% of cold already; the rest is overhead linear in the
   stored fixpoint (deltas as anti-joins of whole relations, survivor copies, binding, re-planning), plus input
   deltas inflated by preorder ids (§2).
+- **Where DRed stands (2026-11-08)**, on `session_costs` (3,000 files, one edit, a 9,000,000-row closure): 14.2 s
+  CPU before, 2.2 s after, cold about 2 s. Three changes: a maintained relation's net delta from its own
+  del, redo and ins rows (0090 step 1); relations kept as the engine held them, with their indexes, and read
+  in place next run (step 3); and an insert that stops at rows that survived. Without that stop, one new edge
+  inserted the whole closure again: a bug, not DRed's cost. What is left is the survivors' copy (`h :- h__old,
+  !h__del`, 1.8 s here), which costs what deriving `h` cold does. Reading the survivors in place needs a relation
+  with deleted rows in the engine's core: any mechanism needs it, counting included.
+- **Survivors in place (spike, same day)**: a maintained relation starts from the kept one, its deleted rows
+  marked dead in a bitset every reader skips. `session_costs` edit: 1.67 s with the copy, 0.82 s in place (cold
+  1.8 s); 0.47 s of it is still copying the kept relation's memory.
+- **DRed against counting (same day)**. Counting is built as support relations (`RERAIL_MAINTAIN=count`): each
+  rule of a non-recursive stratum keeps one row per derivation, so its deletes are exact and nothing is
+  rederived; a recursive stratum is derived again (counting over cycles needs a level witness). Both give a full
+  run's answers at all 20 steps of O125's replay (`calls.rr`, 84 files, real commits).
+
+  | | synthetic closure, one edit | O125 replay, session per step | full run |
+  | --- | --- | --- | --- |
+  | DRed | 0.9–1.4 s | 3.3–10.2 s (cross 2.5–8.4 s) | 1.1–2.0 s (cross 0.6–1.1 s) |
+  | counting | 5.4–7.4 s | 3.0–5.9 s (cross 2.1–4.4 s) | same |
+
+  On the closure DRed wins: counting derives `reach` again (1.6 s) and then diffs 9,000,000 rows old against new
+  (3.0 s). On the replay counting is about 1.5x cheaper. Neither result is about the mechanism yet: on a replay
+  step DRed spends 3.3 of 6.4 s planning its 14,800 rewritten rules and 0.7 s joining, and counting 1.2 s
+  planning and 0.5 s joining. A one-file edit changes about 230 inputs and 450,000 input rows, because preorder
+  ids move (§2). DRed's over-deletion there is 1.23–1.27x the rows truly deleted. A fair verdict needs memoised
+  rewrites and plans (0090 step 5) and per-definition input deltas (§2) first; then the mechanisms differ only in
+  their joins and stored rows.
+- **Plans kept and inputs by definition (same day)**. A session's plans and derived join values now carry across
+  its runs, keyed by the session. Definition ids (`RERAIL_NODE_IDS=definition`) were built only in `core.rr`'s
+  shape. The replay reads T's shape and kept preorder ids. With them in T's shape too, the session still equals
+  a full run. Changed rows, preorder against definition ids:
+
+  | step | input delta rows | truly changed derived rows |
+  | --- | --- | --- |
+  | 13 | 735,517 → 136,980 | 290,520 → 51,322 |
+  | 14 | 79,349 → 17,092 | 28,649 → 5,598 |
+
+  Session CPU over steps 13–15 (load 40–170):
+
+  | | DRed | counting |
+  | --- | --- | --- |
+  | session | 4.0–6.2 s | 3.1–4.2 s |
+  | cross part | 3.2–5.3 s | 2.4–3.3 s |
+
+  A full run's cross part is about 1.0 s. On step 14, DRed's joins take 0.58 s and counting's 0.32 s. The rest
+  is work per run whose size follows the number of rules, not the delta: join specs (0.65 s DRed, 0.22 s
+  counting), planning (0.57 s, 0.16 s), statistics, key analysis, opening the engine and binding (about 0.2 s
+  each). The input delta that remains comes from `node`'s `start` and `end_` columns. They are positions, so
+  every node after an edit changes its row even when its id holds (§1: positions are facts of their own, read
+  only by findings).
+- **The fair comparison (same day, later)**. The overhead around both mechanisms was taken out:
+  - the cross part holds no positions: `start` was held only for an old decoder;
+  - a kept plan's price is kept with the sizes it read, and reused while none moved over 2x;
+  - a stratum's replans between waves are kept the same way;
+  - a kept relation measures its statistics once;
+  - four passes that were quadratic in rules or strata are now linear (key analysis, first and last reads, input
+    loading, native releases).
+
+  Both mechanisms give a full run's answers at all 20 steps. CPU, load 13–50:
+
+  | | O125 replay, session per step | its cross part | synthetic closure, one edit |
+  | --- | --- | --- | --- |
+  | DRed | 2.1–4.2 s | 1.2–3.4 s | 0.94 s |
+  | counting | 1.6–2.3 s | 0.9–1.4 s | 4.7 s |
+  | full run (cold) | 1.2–2.1 s | 0.5–0.8 s | 2.2 s |
+
+  Step 15's cross part, split:
+
+  | | DRed | counting |
+  | --- | --- | --- |
+  | joins | 0.41 s | 0.29 s |
+  | planning and specs | 0.35 s | 0.14 s |
+  | opening the engine | 0.15 s | 0.17 s |
+  | binding kept relations | 0.16 s | 0.17 s |
+
+  What is left differs by the mechanisms themselves:
+  - DRed writes 14,800 rules, and their delta relations' sizes move from step to step, so some plans are searched
+    again.
+  - Counting runs 830 strata against DRed's 215, and derives its 21 recursive strata again.
+  - On the closure, counting derives the 9,000,000-row `reach` again and diffs it, so DRed wins 5x.
+  - On real commits, counting wins about 1.5x: it maintains the non-recursive majority with fewer rules and no
+    rederivation.
+
+  Neither beats a cold run's cross part here (0.5–0.8 s). A one-file edit still runs 202–210 of DRed's 215 strata,
+  because the tree relations every stratum reads change. The cutoff of 0090 §3 (a stratum whose net delta is empty
+  stops) is what bounds that, not the mechanism.
 - **Statistics are maintained like data**: stored counts updated by deltas, not measured again on a warm run.
 - **Every keyed read from SQLite has a test of its plan** (`SEARCH … USING PRIMARY KEY`). SQLite falls back to a
   scan without saying so; one such read took 33 s.

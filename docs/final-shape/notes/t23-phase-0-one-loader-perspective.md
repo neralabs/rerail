@@ -190,6 +190,8 @@ As already decided: SQLite is the durable copy, and the in-memory state may be a
 
 ## Order of work
 
+Built and measured: t24 (steps 1, 3 and 4, and half of step 2).
+
 Each step is measured on the 84 files with typeshed, and the git step also on the data layer's 9,010 files.
 
 1. **Store the loader's answers and the read set, with the stat provider.** This is the first win: the warm run's

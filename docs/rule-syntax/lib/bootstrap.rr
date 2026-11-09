@@ -1,0 +1,80 @@
+// bootstrap: phase 0, the loading of rule files (t23, t25). The engine starts from its builtin facts, runs this
+// program over `.rr` documents, and ends at a fixed point where every module a program includes is loaded.
+//
+// A rule file is loaded like any document: by `load(path, name, "rr")`, answered by the engine's loader, so its
+// source and tape are stored and memoised as a source's are, and it is checked by `stat` on the next run. Each loaded
+// file's `#include`s are facts of its tree (`include` nodes), which ask for further loads, until none is new.
+//
+// The builtin facts, from the engine:
+//   env("rerail.lib", dir)   the library directory (a root the loader may read)
+//   p0_text(t)               a program text t ("text:<k>"), which is not a file
+//   p0_t_shape(t)            text t is in T's shape (it declares `doc`): it gets no `core.rr`
+//   p0_ask(t, at, name)      text t includes `name` at offset `at`
+//   env("rerail.program_dir", dir)   a program file's directory (a root the loader may read)
+//   p0_file(path)            a program file the engine was given: it is loaded, and named `core.rr` first unless it
+//                            is in T's shape (`p0_file_t_shape`, known once it is loaded)
+//
+// The outputs, which the engine reads to assemble each program from its stored modules:
+//   p0_include(from, at, name, path)   `from` (a text, or a module's path) includes `name` at `at`: the file `path`
+//   p0_missing(from, at, name)          no file is `name` for `from`
+//   p0_absent(path)                     a candidate that is not there: a file appearing there changes the graph
+#include "core.rr"
+.language rr
+
+.decl p0_lib(dir: symbol)
+.decl p0_text(t: symbol)
+.decl p0_t_shape(t: symbol)
+.decl p0_ask(t: symbol, at: number, name: symbol)
+.decl p0_file(path: symbol)
+p0_lib(l) :- env("rerail.lib", l).
+load(f, f, "rr") :- p0_file(f).
+// What each document says, made per document (the request cone reads no base relation): its includes, and whether
+// it declares `doc` (T's shape).
+// (Each is located by its node: a loaded document's rows reach the requests by their nodes' document.)
+.decl p0_names(i: node, f: symbol, at: number, name: symbol)
+p0_names(i, f, at, n) :- kind(i, "include"), field(i, "path", p), str(p, n), docof(i, d), doc(d, f, _), node(d, i, _, at, _).
+.decl p0_declares_doc(i: node, f: symbol)
+p0_declares_doc(i, f) :- kind(i, "declaration"), field(i, "name", n), text(n, "doc"), docof(i, d), doc(d, f, _).
+.decl p0_file_t_shape(path: symbol)
+p0_file_t_shape(f) :- p0_file(f), p0_declares_doc(_, f).
+
+// What each text and each loaded module names. A text names `core.rr` first unless it is in T's shape; the engine's
+// own library programs (the import components of decision 0076) are named by the engine itself.
+.decl p0_from(from: symbol, at: number, name: symbol)
+p0_from(t, at, n) :- p0_ask(t, at, n).
+p0_from(t, -1, "core.rr") :- p0_text(t), !p0_t_shape(t).
+p0_from(f, -1, "core.rr") :- p0_file(f), loaded(f, _, _), !p0_file_t_shape(f).
+p0_from("engine", 0, "components.rr").
+p0_from(f, at, n) :- p0_names(_, f, at, n).
+
+// The candidates, in order: the library, then (for a module) the file's own directory.
+.decl p0_cand(from: symbol, at: number, name: symbol, rank: number, path: symbol)
+p0_cand(f, at, n, 1, c) :- p0_from(f, at, n), p0_lib(l), c = cat(l, "/", n).
+p0_cand(f, at, n, 2, c) :- p0_from(f, at, n), !p0_text(f), f != "engine", match("(?<dir>.*)/[^/]*", f), c = cat(dir, "/", n).
+
+// Each candidate's directory is listed, asked by the directory alone (`rr::lower`'s world demand).
+.decl p0_split(c: symbol, dir: symbol, base: symbol)
+p0_split(c, dir, base) :- p0_cand(_, _, _, _, c), match("(?<dir>.*)/(?<base>[^/]*)", c).
+.decl p0_listed(dir: symbol)
+p0_listed(dir) :- p0_split(_, dir, _), dir_entry(dir, _, _).
+.decl p0_exists(c: symbol)
+p0_exists(c) :- p0_split(c, dir, base), dir_entry(dir, base, 0).
+
+// The first candidate that exists.
+.decl p0_before(from: symbol, at: number, name: symbol, rank: number)
+p0_before(f, at, n, r) :- p0_cand(f, at, n, q, c), p0_exists(c), p0_cand(f, at, n, r, _), q < r.
+.decl p0_resolved(from: symbol, at: number, name: symbol, path: symbol)
+p0_resolved(f, at, n, c) :- p0_cand(f, at, n, r, c), p0_exists(c), !p0_before(f, at, n, r).
+.decl p0_found(from: symbol, at: number, name: symbol)
+p0_found(f, at, n) :- p0_resolved(f, at, n, _).
+load(c, n, "rr") :- p0_resolved(_, _, n, c).
+
+// The outputs, once the loads are done.
+.decl p0_include(from: symbol, at: number, name: symbol, path: symbol)
+p0_include(f, at, n, c) :- p0_resolved(f, at, n, c).
+.decl p0_missing(from: symbol, at: number, name: symbol)
+p0_missing(f, at, n) :- p0_from(f, at, n), !p0_found(f, at, n).
+.decl p0_absent(path: symbol)
+p0_absent(c) :- p0_split(c, _, _), !p0_exists(c).
+
+.output p0_include, p0_missing, p0_absent

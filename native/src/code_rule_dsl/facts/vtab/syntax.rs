@@ -716,6 +716,9 @@ impl Projected {
             let matched = spans.len() as u32;
             let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
             p.extra = Some(Box::new(Extra { lines, spans, tokens, matched, host }));
+        } else if definition_ids() && guest.is_none() {
+            // T's shape has no token spans: its nodes alone are numbered per definition.
+            p.defs = DefIds::new(&p, dialect, &[]);
         }
         p
     }
@@ -1665,6 +1668,11 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
     if let Some(known) = source.statistics() {
         return known;
     }
+    measured(source)
+}
+
+/// `statistics`, measured from the rows (a source that keeps its own calls this once).
+pub(crate) fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
     let rows = source.len();
     // Each row's document (the first column's high half), read once for every column.
     let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();
