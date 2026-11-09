@@ -117,3 +117,49 @@ fn row_programs_are_verified_and_digested() {
         assert!(refused, "refused:\n{bad}");
     }
 }
+
+/// On Metal, over the 16-bit layout (`metal_rows`): node columns in a few documents (each a chunk
+/// or more), a number column, comparisons of two node columns of a row's chunk, a node column
+/// against parameters in and out of its chunk, and documents: the interpreter's rows.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_row_program_scans_rows_on_metal_in_the_16_bit_layout() {
+    use super::metal_rows::{Form, Input, Resident, scan};
+    let text = "  block 0 rows 4 3 0
+  block 0 %0 = cmp lt c0 c1 64
+  block 0 %1 = cmp le c0 p0 64
+  block 0 %2 = cmp eq c3 p1 64
+  block 0 %3 = not %2
+  block 0 %4 = and %0, %1
+  block 0 %5 = or %4, %3
+  block 0 %6 = cmp ne c2 p2 64
+  block 0 %7 = and %5, %6
+  block 0 output %7
+  block 0 extract %7
+";
+    let p = program(text);
+    let block = &p.block_programs()[0];
+    let node = |d: i64, i: i64| (d << 32) | i;
+    let len = 5000;
+    let x = column(7, len);
+    let a: Vec<i64> = (0..len as i64).map(|r| node(1 + r % 3, (r * 37) % 70_000)).collect();
+    // Column 1: the same chunk as column 0's mostly, so it is `Low16` only when every row is.
+    let b: Vec<i64> = a.iter().zip(&x).map(|(&v, &y)| (v & !0xffff) | (y & 0xffff)).collect();
+    let n: Vec<i64> = x.iter().map(|v| v % 9).collect();
+    for params in [[node(2, 30_000), node(2, 0) >> 32, 4], [node(3, 69_999), 1, 0], [-5, 3, 8]] {
+        // Program column 3 is column 0's document.
+        let cols: Vec<&[i64]> = vec![&a, &b, &n];
+        let docs: Vec<i64> = a.iter().map(|v| v >> 32).collect();
+        let all: Vec<&[i64]> = vec![&a, &b, &n, &docs];
+        let batch = RowBatch { columns: &all, params: &params, sets: &[], len };
+        let mut values = Vec::new();
+        let mut want = Vec::new();
+        block.extract_rows(&batch, 0, &mut values, &mut want);
+        let resident = Resident::new(&cols, len).expect("resident");
+        assert_eq!(resident.forms, vec![Form::Low16, Form::Low16, Form::I32]);
+        let inputs = [Input::Col(0), Input::Col(1), Input::Col(2), Input::Doc(0)];
+        let mut got = scan(block, &inputs, &resident, &params).expect("runs").rows;
+        got.sort_unstable();
+        assert_eq!(got, want, "params {params:?}");
+    }
+}

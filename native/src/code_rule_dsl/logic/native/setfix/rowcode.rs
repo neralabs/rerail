@@ -25,7 +25,7 @@ pub(super) const CHUNK: usize = 1024;
 
 /// A value of the chunk's rows: an atom column, or a value computed from one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Word {
+pub(in crate::code_rule_dsl) enum Word {
     /// The atom's column.
     Col(usize),
     /// The atom's column's document: `@doc(x)`, `x >> 32`.
