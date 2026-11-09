@@ -9,6 +9,9 @@ impl Step {
             Step::Atom { keys, .. } => keys.iter().any(|(_, k)| key(k)),
             Step::Scalar {
                 keys, out, bind, ..
+            }
+            | Step::StrJoin {
+                keys, out, bind, ..
             } => keys.iter().any(|(_, k)| key(k)) || !*bind && *out == slot,
             Step::Cat { a, b, out, bind } => key(a) || key(b) || !*bind && *out == slot,
             Step::Split {
@@ -84,6 +87,9 @@ pub(super) fn sums(steps: &mut [Step], head: &[Term]) {
                 }
             }
             Step::Scalar {
+                keys, out, bind, ..
+            }
+            | Step::StrJoin {
                 keys, out, bind, ..
             } => {
                 for (_, k) in keys {

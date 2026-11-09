@@ -459,7 +459,8 @@ impl Stats {
 
 /// The planner's model of the data: statistics, distinct counts, and what the views are.
 pub(in crate::code_rule_dsl) struct Model {
-    pub(in crate::code_rule_dsl) analysis: super::analysis::ProgramAnalysis,
+    /// The program's logical key and scalar analysis, made once per plan and shared (not made again per stratum).
+    pub(in crate::code_rule_dsl) analysis: std::sync::Arc<super::analysis::ProgramAnalysis>,
     pub(in crate::code_rule_dsl) stats: Stats,
     pub(in crate::code_rule_dsl) ndv: HashMap<(String, usize), f64>,
     /// rel → (node column, document column) for projections of `node(d, n)`: documents are id intervals.
@@ -722,7 +723,12 @@ impl Model {
             }
         }
         let atom_rows_ = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
-            if let Some(seen) = stats.obs.get(&atom_sig(a, bound))
+            // An atom that shares no bound variable, read after bindings exist, is a cross product: its fanout
+            // observed in one wave or chunk is the relation's size then (none before a guest round makes the rows),
+            // not a property of the join, so it is priced from the relation's own estimate (below).
+            let crossed = !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v)));
+            if !crossed
+                && let Some(seen) = stats.obs.get(&atom_sig(a, bound))
                 && seen[0] >= OBS_MIN
             {
                 return (seen[1] as f64 / seen[0] as f64).max(0.01);
@@ -801,6 +807,13 @@ impl Model {
         };
         let atom_rows = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
             let mut rows = atom_rows_(a, bound);
+            // A cross product never filters a binding: each one reads every matching row, and a relation empty
+            // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
+            // atom of fanout one is never ordered after it.
+            let delta_atom = first.is_some_and(|f| matches!(&body[f], Literal::Atom(d) if std::ptr::eq(d, a)));
+            if !delta_atom && !a.neg && !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
+                rows = rows.max(1.0);
+            }
             // No variable bound on a relation of the component being solved: a scan of it per binding, priced as a
             // pass over the corpus (shared among its constants' values) at least.
             // The delta atom of a probe is not such a scan: it reads the last wave's rows, priced by the relation's
@@ -1320,7 +1333,7 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
         let analysis = super::analysis::ProgramAnalysis::analyze(prog);
         analysis.explain();
-        analysis
+        std::sync::Arc::new(analysis)
     };
     let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut stats = Stats::new(db, prog, &mut inputs)?;
@@ -1399,7 +1412,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
-        "tree_digest" => &[&["n"], &["s", "n"]],
+        "tree_digest" | "def_digest" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
         "ast_match" => &[&["n"], &["c"]],
         "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],
@@ -2760,12 +2773,16 @@ impl Run<'_, '_> {
             match t {
                 Term::Int(_) => Some("int".to_owned()),
                 Term::Str(_) => Some("sym".to_owned()),
+                // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's
+                // value is a number.
                 Term::Var(n) => order.iter().find_map(|s| match &s.lit {
                     Literal::Atom(l) if !l.neg => l
                         .args
                         .iter()
                         .position(|x| matches!(x, Term::Var(v) if v == n))
                         .and_then(|c| Some(prog.decls.get(&l.rel)?.get(c)?.1.clone())),
+                    Literal::Agg { var, op: AggOp::Count | AggOp::Sum, .. } if var == n => Some("int".to_owned()),
+                    Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } if v == n && numeric_call(r) => Some("int".to_owned()),
                     _ => None,
                 }),
                 _ => None,
@@ -2782,29 +2799,37 @@ impl Run<'_, '_> {
                 _ => None,
             }
         }
-        // `@concat(a, b)` (nested on either side) as `str_concat` functions of bound arguments, each into a slot of
-        // its own (`rr_concat<step>_<k>`); the term of the outermost one's slot.
-        fn concat(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<String>) -> Option<Term> {
+        // A computed term (`@concat`, the text and number functions `strings::functions::native_call` names) of
+        // bound arguments, nested on either side, as `func` steps, inner ones first, each into a slot of its own
+        // (`rr_fn<step>_<k>`): the term of its value. A bound variable or a constant is itself; anything else (an
+        // unbound variable, a call with no native function) has none.
+        fn expr(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<String>) -> Option<Term> {
             match t {
-                Term::Call(f, args) if f == "concat" && args.len() == 2 => {
-                    let a = concat(&args[0], idx, slots, lines)?;
-                    let b = concat(&args[1], idx, slots, lines)?;
-                    let bound = |t: &Term, slots: &HashMap<String, usize>| match t {
-                        Term::Var(v) => slots.contains_key(v),
-                        Term::Int(_) | Term::Str(_) => true,
-                        _ => false,
-                    };
-                    if !bound(&a, slots) || !bound(&b, slots) {
-                        return None;
-                    }
-                    let out = Term::Var(format!("rr_concat{idx}_{}", lines.len()));
-                    let (ta, tb) = (tok(&a, slots)?, tok(&b, slots)?);
-                    lines.push(format!("func str_concat {} {ta} {tb}", tok(&out, slots)?));
+                Term::Var(v) => slots.contains_key(v).then(|| t.clone()),
+                Term::Int(_) | Term::Str(_) => Some(t.clone()),
+                Term::Call(f, args) => {
+                    let name = call_name(f, args.len())?;
+                    let made: Vec<Term> = args.iter().map(|a| expr(a, idx, slots, lines)).collect::<Option<_>>()?;
+                    let toks: Vec<String> = made.iter().map(|a| tok(a, slots)).collect::<Option<_>>()?;
+                    let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()));
+                    lines.push(format!("func {name} {} {}", tok(&out, slots)?, toks.join(" ")));
                     Some(out)
                 }
-                Term::Call(..) => None,
-                t => Some(t.clone()),
+                _ => None,
             }
+        }
+        // The native function of call `f` with `n` arguments (`@concat` is `str_concat`).
+        fn call_name(f: &str, n: usize) -> Option<&'static str> {
+            if f == "concat" {
+                return (n == 2).then_some("str_concat");
+            }
+            let (name, kinds, _) = crate::code_rule_dsl::logic::strings::functions::native_call(f)?;
+            (kinds.len() == n).then_some(name)
+        }
+        // Whether a computed term's value is a number (a function's result kind), not a symbol.
+        fn numeric_call(t: &Term) -> bool {
+            matches!(t, Term::Call(f, _) if f != "concat"
+                && crate::code_rule_dsl::logic::strings::functions::native_call(f).is_some_and(|(_, _, k)| k == crate::code_rule_dsl::logic::strings::functions::Kind::Number))
         }
         // The atom's source and tokens. An input relation is loaded with its constant columns as a filter and
         // projected away (`field($n, "path", $p)` loads the `path` edges only), so it is read in the size it is used.
@@ -2907,74 +2932,69 @@ impl Run<'_, '_> {
                     let pattern = match crate::code_rule_dsl::logic::strings::patterns(&args[1]) {
                         Some(ps) => Term::Str(ps.join(&crate::code_rule_dsl::logic::strings::SET_SEP.to_string())),
                         // A computed pattern (`@suffix($s, @concat(".", $x))`): made first, into its own slot.
-                        None if matches!(&args[1], Term::Call(f, _) if f == "concat") => concat(&args[1], idx, &mut slots, &mut lines)?,
+                        None if matches!(&args[1], Term::Call(..)) => expr(&args[1], idx, &mut slots, &mut lines)?,
                         None => args[1].clone(),
                     };
-                    // A constant string is a symbol (`Int`) once lowered.
+                    // A constant string is a symbol (`Int`) once lowered; a computed string (`@lower($s)`) is made first.
+                    let tested = expr(&args[0], idx, &mut slots, &mut lines)?;
                     let bound = |t: &Term| match t {
                         Term::Var(v) => slots.contains_key(v),
                         Term::Str(_) | Term::Int(_) => true,
                         _ => false,
                     };
-                    if !bound(&args[0]) || !bound(&pattern) {
+                    if !bound(&tested) || !bound(&pattern) {
                         return None;
                     }
-                    let (ts, tp) = (tok(&args[0], &mut slots)?, tok(&pattern, &mut slots)?);
+                    let (ts, tp) = (tok(&tested, &mut slots)?, tok(&pattern, &mut slots)?);
                     lines.push(format!("test {f} {ts} {tp} {want}"));
                 }
-                Literal::Cmp { l: l @ Term::Var(_), op: "=", r: r @ Term::Call(f, _) } if f == "concat" => {
-                    // `$s = @concat(@concat($m, "."), $r)`: each concatenation a native function, inner ones first.
-                    let made = concat(r, idx, &mut slots, &mut lines)?;
-                    let (ta, tb) = (tok(l, &mut slots)?, tok(&made, &mut slots)?);
-                    lines.push(format!("eq {ta} {tb}"));
-                }
-                Literal::Cmp { l, op, r } if *op == "=" || *op == "!=" => {
-                    if let Term::Call(f, args) = r
-                        && f != "cat"
+                Literal::Cmp { l, op, r } if (*op == "=" || *op == "!=") && !matches!(r, Term::Call(f, _) if f == "cat") => {
+                    // `$v = @f(…)` (a text or number function, `@concat`, nested calls): the call's value straight into
+                    // `$v`, bound or tested; any other `=` or `!=`, of variables, constants or computed terms, as a test
+                    // (or `$v = <bound term>`, binding `$v`). Calls on either side are made first, inner ones first.
+                    let unbound = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Var(v) if !slots.contains_key(v));
+                    let (l, r) = if matches!(r, Term::Var(_)) && matches!(l, Term::Call(..)) { (r, l) } else { (l, r) };
+                    if *op == "="
+                        && let (Term::Var(_), Term::Call(f, args)) = (l, r)
                     {
-                        // A text function (`strings::functions`) of bound arguments, its value bound or tested.
-                        let (Some((name, kinds, _)), Term::Var(_)) = (crate::code_rule_dsl::logic::strings::functions::signature(f), l) else {
-                            return None;
-                        };
-                        let bound = |t: &Term| match t {
-                            Term::Var(v) => slots.contains_key(v),
-                            Term::Int(_) | Term::Str(_) => true,
-                            _ => false,
-                        };
-                        if *op != "=" || args.len() != kinds.len() || !args.iter().all(bound) {
-                            return None;
-                        }
-                        let toks: Vec<String> = args.iter().map(|a| tok(a, &mut slots)).collect::<Option<_>>()?;
+                        let name = call_name(f, args.len())?;
+                        let made: Vec<Term> = args.iter().map(|a| expr(a, idx, &mut slots, &mut lines)).collect::<Option<_>>()?;
+                        let toks: Vec<String> = made.iter().map(|a| tok(a, &mut slots)).collect::<Option<_>>()?;
                         lines.push(format!("func {name} {} {}", tok(l, &mut slots)?, toks.join(" ")));
-                    } else if let Term::Call(f, args) = r {
-                        if *op != "=" || f != "cat" || !matches!(l, Term::Var(_)) {
-                            return None;
-                        }
-                        let (a, b) = (&args[0], &args[1]);
-                        let (tl, ta) = (tok(l, &mut slots)?, tok(a, &mut slots)?);
-                        lines.push(format!("cat {tl} {ta} {}", tok(b, &mut slots)?));
                     } else {
-                        let unbound = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Var(v) if !slots.contains_key(v));
                         // The bound side goes right.
                         let (a, b) = if unbound(r, &slots) { (r, l) } else { (l, r) };
-                        if unbound(b, &slots) {
+                        if unbound(b, &slots) || (*op == "!=" && unbound(a, &slots)) {
                             return None;
                         }
-                        let ta = tok(a, &mut slots)?;
-                        lines.push(format!("{} {ta} {}", if *op == "=" { "eq" } else { "ne" }, tok(b, &mut slots)?));
+                        let b = expr(b, idx, &mut slots, &mut lines)?;
+                        let a = if unbound(a, &slots) { a.clone() } else { expr(a, idx, &mut slots, &mut lines)? };
+                        let (ta, tb) = (tok(&a, &mut slots)?, tok(&b, &mut slots)?);
+                        lines.push(format!("{} {ta} {tb}", if *op == "=" { "eq" } else { "ne" }));
                     }
                 }
+                Literal::Cmp { l, op: "=", r: Term::Call(f, args) } if f == "cat" => {
+                    if !matches!(l, Term::Var(_)) {
+                        return None;
+                    }
+                    let (a, b) = (&args[0], &args[1]);
+                    let (tl, ta) = (tok(l, &mut slots)?, tok(a, &mut slots)?);
+                    lines.push(format!("cat {tl} {ta} {}", tok(b, &mut slots)?));
+                }
                 Literal::Cmp { l, op, r } if matches!(*op, "<" | "<=" | ">" | ">=") => {
-                    // Integers (and nodes) only: symbols are numbered in the order they are met.
+                    // Integers (and nodes) only: symbols are numbered in the order they are met. A number function's
+                    // value (`@strlen($s) > 1`, `@add($i, $j) <= 2`) is made first.
                     let bad = |t: &Term| {
-                        matches!(t, Term::Call(..))
-                            || matches!(t, Term::Var(v) if !slots.contains_key(v))
-                            || matches!(typ(t).as_deref(), None | Some("sym"))
+                        if matches!(t, Term::Call(..)) {
+                            return !numeric_call(t);
+                        }
+                        matches!(t, Term::Var(v) if !slots.contains_key(v)) || matches!(typ(t).as_deref(), None | Some("sym"))
                     };
                     if bad(l) || bad(r) {
                         return None;
                     }
-                    let (a, b) = if matches!(*op, "<" | "<=") { (l, r) } else { (r, l) };
+                    let (l, r) = (expr(l, idx, &mut slots, &mut lines)?, expr(r, idx, &mut slots, &mut lines)?);
+                    let (a, b) = if matches!(*op, "<" | "<=") { (&l, &r) } else { (&r, &l) };
                     let ta = tok(a, &mut slots)?;
                     lines.push(format!("{} {ta} {}", if matches!(*op, "<" | ">") { "lt" } else { "le" }, tok(b, &mut slots)?));
                 }
@@ -3009,6 +3029,36 @@ impl Run<'_, '_> {
                     let value=if *op==AggOp::Count {String::new()} else {format!(" {}",value_col?)};
                     lines.push(format!("{name} {sc} {}{value} {}",toks.join(" "),tok(&Term::Var(var.clone()),&mut slots)?));
                 }
+                Literal::Agg { var, op: AggOp::Join { by, sep }, over: Some(o), atom: a } => {
+                    // `$s = join $x by ($k…) sep "…" : { atom }`: x and the unbound k are the atom's own columns, one
+                    // each; every other variable is bound. A bound k is the same for every row, so it orders nothing.
+                    // Symbols order by their names natively, as SQL orders their text.
+                    let column = |v: &str| a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v));
+                    let uses = |v: &str| a.args.iter().filter(|t| matches!(t, Term::Var(x) if x == v)).count();
+                    let local: Vec<&String> = std::iter::once(o).chain(by.iter().filter(|b| !slots.contains_key(*b))).collect();
+                    if slots.contains_key(o) || local.iter().any(|v| uses(v) != 1) {
+                        return None;
+                    }
+                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v) && !local.contains(&v))) {
+                        return None;
+                    }
+                    let sym = |c: usize| u8::from(prog_types(prog, &a.rel).get(c).copied() == Some("sym"));
+                    let xc = column(o)?;
+                    let mut bycols = Vec::new();
+                    for b in by.iter().filter(|b| !slots.contains_key(*b)) {
+                        let c = column(b)?;
+                        bycols.push(format!("{c}:{}", sym(c)));
+                    }
+                    let mut a = a.clone();
+                    for v in &local {
+                        let c = column(v)?;
+                        a.args[c] = Term::Wild;
+                    }
+                    let (sc, toks) = atom(&a, None, &mut slots)?;
+                    let sep = const_tok(&Term::Str(sep.clone()))?;
+                    let bylist = if bycols.is_empty() { "-".to_owned() } else { bycols.join(",") };
+                    lines.push(format!("strjoin {sc} {} {xc}:{} {bylist} {sep} {}", toks.join(" "), sym(xc), tok(&Term::Var(var.clone()), &mut slots)?));
+                }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;
                     lines.push(format!("near {tn} {} {}", tok(&Term::Var(a.clone()), &mut slots)?, kinds(kindset)));
@@ -3027,9 +3077,10 @@ impl Run<'_, '_> {
                     let t0 = tok(&args[0], &mut slots)?;
                     head.push(format!("cat:{t0}:{}", tok(&args[1], &mut slots)?));
                 }
-                // `q(…, cat(m, ".", a))`: the concatenation made into a slot before the head reads it.
-                Term::Call(f, _) if f == "concat" => {
-                    let made = concat(t, order.len(), &mut slots, &mut lines)?;
+                // `q(…, @concat(m, ".", a))`, `q(…, @add($i, 1))`: the computed term made into a slot before the head
+                // reads it.
+                Term::Call(..) => {
+                    let made = expr(t, order.len(), &mut slots, &mut lines)?;
                     head.push(tok(&made, &mut slots)?);
                 }
                 _ => head.push(tok(t, &mut slots)?),
@@ -3989,7 +4040,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     }
     drop(setup);
     let planning = super::profile::span(|| "statistics and plan".into());
-    let model = {
+    let mut model = {
         let _span = super::profile::span(|| "statistics".into());
         make_plan(prog, db, inputs)?
     };
@@ -4008,6 +4059,9 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
             });
             split = p;
+            // The program run is the split one: its analysis is that program's.
+            let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
+            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&split));
             &split
         }
         None => prog,

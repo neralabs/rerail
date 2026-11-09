@@ -300,8 +300,23 @@ struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usi
 
 /// The connection a component or a derived relation belongs to (its handle): two runs in one process (two corpora,
 /// or tests in parallel) name their components and relations alike, and must not see each other's.
+///
+/// A handle is an address, and a closed connection's address is given to the next one opened: what a connection
+/// left here is dropped when it closes (`sqlite3_set_clientdata`'s destructor runs in `sqlite3_close`), so a new
+/// connection at the same address starts with none of it. Without this a second run over the same store read the
+/// first run's fixpoint as its own (a cone's loaded documents counted as the workspace's).
 pub(crate) fn scope(conn: &Connection) -> usize {
-    unsafe { conn.handle() as usize }
+    crate::code_rule_dsl::facts::vtab::connection_scope(conn)
+}
+
+/// Drops what the connection at `at` left: its components and derived relations (`scope`).
+pub(crate) fn forget_scope(at: usize) {
+    if let Ok(mut c) = COMPONENTS.lock() {
+        c.retain(|((s, _), _)| *s != at);
+    }
+    if let Ok(mut d) = DERIVED.lock() {
+        d.retain(|(s, _), _| *s != at);
+    }
 }
 static COMPONENTS: Mutex<Vec<((usize, String), Arc<Mutex<Component>>)>> = Mutex::new(Vec::new());
 fn component(conn: &Connection, name: &str) -> Result<Arc<Mutex<Component>>> {
@@ -1561,6 +1576,10 @@ enum Step {
     Test { op: &'static str, s: Key, p: Key, matcher: Option<Arc<crate::code_rule_dsl::logic::strings::Matcher>>, want: bool },
     /// `a` is (`want`) or is not one of the constants `set` (`@equals(x, {…})`, `@in(x, {…})` once lowered).
     In { a: Key, set: Vec<i64>, want: bool },
+    /// `out = join x by (k…) sep s : { atom }`: the matching rows' distinct (k…, x), ordered by k… then x (numbers by
+    /// value, symbols by their names' bytes), their x joined by `sep`'s name, as SQL's `rr_join` makes it; "" for none.
+    /// `x` and each `k` are columns, each with whether it holds symbols.
+    StrJoin { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, x: (usize, bool), by: Vec<(usize, bool)>, sep: i64, out: usize, bind: bool },
 }
 /// `multi`: the composite indexes (relation, key columns) its steps read, which the component maintains. `counts`:
 /// per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read them: the
@@ -1581,10 +1600,13 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
         let toks: Vec<&str> = line.split_whitespace().collect();
         let is_bound = |b: &Vec<bool>, k: Key| match k { Key::Slot(s) => b.get(s).copied().unwrap_or(false), Key::Const(_) => true };
         match toks[0] {
-            "pos" | "neg" | "count" | "sum" | "min" | "max" => {
-                let (neg, count, extreme) = (toks[0] == "neg", toks[0] == "count", matches!(toks[0], "sum" | "min" | "max"));
-                // `min <src> <atom tokens> <column> <out>`: the aggregated column's token is `_`.
-                let atoks = if count { &toks[2..toks.len() - 1] } else if extreme { &toks[2..toks.len() - 2] } else { &toks[2..] };
+            "pos" | "neg" | "count" | "sum" | "min" | "max" | "strjoin" => {
+                let (neg, count, extreme, sjoin) = (toks[0] == "neg", toks[0] == "count", matches!(toks[0], "sum" | "min" | "max"), toks[0] == "strjoin");
+                // Scalar value columns use `_` tokens. A strjoin additionally carries value,
+                // ordering, separator, and output tokens after the atom columns.
+                if sjoin && toks.len() < 7 { return Err(err("bad strjoin")); }
+                let atoks = if count { &toks[2..toks.len() - 1] } else if extreme { &toks[2..toks.len() - 2] } else if sjoin { &toks[2..toks.len() - 4] } else { &toks[2..] };
+                let count = count || sjoin;
                 let (mut keys, mut binds, mut tests) = (Vec::new(), Vec::new(), Vec::new());
                 let mut locals=HashMap::default();
                 for (col, t) in atoks.iter().enumerate() {
@@ -1626,7 +1648,20 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
                     }
                     t => return Err(err(format!("bad source {t}"))),
                 };
-                if extreme {
+                if sjoin {
+                    let n = toks.len();
+                    let column = |t: &str| -> Result<(usize, bool)> {
+                        let (c, sym) = t.split_once(':').ok_or_else(|| err("bad strjoin column"))?;
+                        Ok((num(c)?, sym == "1"))
+                    };
+                    let x = column(toks[n - 4])?;
+                    let by = if toks[n - 3] == "-" { Vec::new() } else { toks[n - 3].split(',').map(column).collect::<Result<_>>()? };
+                    let Some(Key::Const(sep)) = tok(toks[n - 2], syms)? else { return Err(err("a strjoin's separator is a constant")) };
+                    let Some(Key::Slot(o)) = tok(toks[n - 1], syms)? else { return Err(err("bad strjoin")) };
+                    let bind = !is_bound(&bound, Key::Slot(o));
+                    grow(&mut bound, o); bound[o] = true;
+                    steps.push(Step::StrJoin { src, keys, tests, x, by, sep, out: o, bind });
+                } else if extreme {
                     let col = num(toks[toks.len() - 2])?;
                     if col >= atoks.len() { return Err(err("native scalar value column is out of range")); }
                     let Some(Key::Slot(o)) = tok(toks[toks.len() - 1], syms)? else { return Err(err("bad min or max")) };
@@ -1883,6 +1918,32 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i+1, slots);
+            }
+            Step::StrJoin { src, keys, tests, x, by, sep, out, bind } => {
+                // Numbers before symbols, as SQL's `rr_join` sorts them (a column holds one or the other).
+                #[derive(PartialEq, Eq, PartialOrd, Ord)]
+                enum Sortable { Number(i64), Text(String) }
+                cx.key.clear();
+                cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
+                let (rows, cands) = candidates(src, store, &cx.key, keys);
+                let mut got: Vec<(Vec<Sortable>, String)> = Vec::new();
+                let syms = &cx.syms;
+                let sortable = |v: i64, sym: bool| if sym { Sortable::Text(syms.name(v).to_string()) } else { Sortable::Number(v) };
+                cands.any(|id| {
+                    let row = rows.row(id);
+                    if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) {
+                        let value = if x.1 { syms.name(row.at(x.0)).to_string() } else { row.at(x.0).to_string() };
+                        got.push((by.iter().map(|&(c, sym)| sortable(row.at(c), sym)).collect(), value));
+                    }
+                    false
+                });
+                got.sort();
+                got.dedup();
+                let sep = cx.syms.name(*sep).to_string();
+                let joined = got.into_iter().map(|(_, v)| v).collect::<Vec<_>>().join(&sep);
+                let v = cx.syms.id(&joined);
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
             }
             Step::Lt { a, b, or_eq } => {
                 let (x, y) = (val(slots, *a), val(slots, *b));

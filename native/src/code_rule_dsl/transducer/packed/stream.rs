@@ -35,7 +35,6 @@ pub(super) fn is_stream(opcode: u8) -> bool {
 pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, operand: u16) -> Result<(), Error> {
     let words = program.words.len();
     let block = program.block_programs.first();
-    let checks = block.map_or(0, |b| b.checks.len());
     let extracts = block.map_or(0, |b| b.extracts.len());
     let totals = block.map_or(0, |b| b.totals.len());
     let ok = match opcode {
@@ -45,7 +44,6 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
         SWITCH => mode == 0 && usize::from(operand) < program.switches.len(),
         // `m=1`: a test, which skips the next word where the token is not the string.
         WORD_IS => mode <= 1 && program.strings.get(usize::from(operand)).is_some_and(|s| !s.is_empty() && s.len() <= 8),
-        CHECK => mode == 0 && usize::from(operand) < checks,
         OPEN | LEAF | NODE_SUPER => mode == 0,
         NODE_FIELD => mode == 0 && operand != 0,
         CLOSE => mode <= 1 && operand == 0,
@@ -235,12 +233,6 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                     // A test: the next word is the keyword's way; a token that is not the word skips it.
                     (1, false) => pc += 1,
                     _ => return refuse(pc - 1, "not the keyword"),
-                }
-            }
-            CHECK => {
-                let check = &program.block_programs[0].checks[usize::from(operand)].program;
-                if check.interpret(&bytes[start as usize..end as usize])[0].iter().any(|&w| w != 0) {
-                    return refuse(pc - 1, "the token fails its check");
                 }
             }
             OPEN => {

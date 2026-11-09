@@ -243,6 +243,9 @@
 // Cost: earlier is a comparison of visit_index values, not a stored pair relation; `max i : { …, earlier(m, n),
 // visit_index(m, i) }` is set-based. Only relations declared `ordered by earlier` run sequentially per document.
 .decl earlier(m: node, n: node)
+// A definition unit's own code, hashed without positions (decision 0083 §0): the document's root, and each class and
+// function, with each nested unit standing for its kind and name. An edit to a method's body changes only the method's.
+.decl def_digest(n: node, s: symbol)
 .decl visit_index(n: node, i: number)                    // the same order as a number, from 0 per document
 .decl ast_depth(n: node, k: number)                      // depth in the language's AST, for breadth-first "first"
 // ---- ordered first match (data-layer/DESIGN.md, addition 7) ----
@@ -271,7 +274,7 @@
 // Cost: linear in the edges (one Tarjan pass; keys bottom up).
 .decl components(d: number, c: number, k: symbol, edge: relation, own: relation)
 .input within, inside, has, within_stop, nearest, precedes, next_sibling, precedes_stop, parsed, spread, split_dot
-.input earlier, visit_index, ast_depth, dfs_first, dfs_first_memo
+.input earlier, visit_index, ast_depth, dfs_first, dfs_first_memo, def_digest
 
 // ---- matcher atoms ---------------------------------------------------------------------------------------------
 // Body forms that hand a node to the pattern matcher. Not Soufflé: addition 1.

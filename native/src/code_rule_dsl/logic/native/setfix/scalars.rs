@@ -181,7 +181,10 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
     let mut inputs = Vec::new();
     for (step, s) in steps.iter().enumerate() {
         match s {
-            Step::Func { out, .. } | Step::Cat { out, .. } | Step::DocOf { out, .. } => {
+            Step::Func { out, .. }
+            | Step::Cat { out, .. }
+            | Step::DocOf { out, .. }
+            | Step::StrJoin { out, .. } => {
                 previous.insert(*out);
             }
             Step::Split { a, b, .. } => {

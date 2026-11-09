@@ -31,7 +31,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::syntax::{Code, Head, Item, Lit, Statement, Suppress, Term as STerm};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, SCOPE_NOT, Atom, Error, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
 mod findings;
@@ -722,6 +722,17 @@ impl Lowerer {
         }
         for g in &out {
             self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+        }
+        // rr_scope_not(d): a document out of the scope, which a combined run's guards negate (decision 0091): in a
+        // pack that reads more documents than this policy's scope, the policy's rules see only the others' rows.
+        if !within.is_empty() || !out.is_empty() {
+            self.prog.decls.insert(SCOPE_NOT.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+            if !within.is_empty() {
+                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: vec![doc.clone(), atom("rr_scope_in", vec![v("d")], true)] });
+            }
+            for g in &out {
+                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+            }
         }
         // `.scope report dirs`: a finding in a document under none of them is dropped too.
         if !report.is_empty() {
@@ -1437,9 +1448,13 @@ impl Lowerer {
         let s = self.fresh("stop");
         let none = Literal::Atom(Atom { rel: format!("{AXIS}{set}"), args: vec![n.clone(), Term::Wild], neg: true, gated: false });
         let nearest = Literal::Nearest { n: nv.clone(), a: s.clone(), kindset: set };
+        // The nearest stop is a, or a is below it: by the tree, not by comparing ids (ids need not follow preorder,
+        // decision 0083 §3).
+        let above = Literal::Atom(Atom { rel: within.to_owned(), args: vec![a.clone(), Term::Var(s.clone())], neg: false, gated: false });
         Ok(vec![
             below.iter().cloned().chain([none]).collect(),
-            below.into_iter().chain([nearest, cmp(&Term::Var(s), "<=", &a)]).collect(),
+            below.iter().cloned().chain([nearest.clone(), cmp(&Term::Var(s.clone()), "=", &a)]).collect(),
+            below.into_iter().chain([nearest, above]).collect(),
         ])
     }
 
@@ -2054,6 +2069,10 @@ impl Lowerer {
         } else {
             Self::bound_context(context(true)).0
         };
+        // Only the literals tied to `vars` through shared variables: one tied to none tests that some row exists
+        // anywhere (`ann_root(_)` once `(s = a ; within(s, a))` is left out), which makes every row of the context
+        // depend on every document. Leaving it out widens the context, which the rule joins with its own literals.
+        let context = Self::connected(context, vars);
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
@@ -2063,6 +2082,27 @@ impl Lowerer {
             self.prog.rules.push(Rule { head: head.clone(), body: b });
         }
         Ok(head)
+    }
+
+    /// The literals of `context` reachable from `vars` through shared variables, in their order.
+    fn connected(context: Vec<Lit>, vars: &[String]) -> Vec<Lit> {
+        let mut reach: BTreeSet<String> = vars.iter().cloned().collect();
+        let of: Vec<BTreeSet<String>> = context.iter().map(|l| body_vars(std::slice::from_ref(l))).collect();
+        let mut keep = vec![false; context.len()];
+        loop {
+            let mut grew = false;
+            for (k, vs) in of.iter().enumerate() {
+                if !keep[k] && !vs.is_disjoint(&reach) {
+                    keep[k] = true;
+                    reach.extend(vs.iter().cloned());
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
     }
 
     /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.

@@ -58,9 +58,30 @@
 use super::super::front::{Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
+thread_local! {
+    /// Set while a session evaluates its cross-file part (decision 0077): the rows it keeps are each relation's whole
+    /// rows, which delete-and-rederive maintains, so no relation is computed only for the keys its readers reach. A
+    /// relation kept for some keys would miss a key demanded later whose derivation no delta touches (spike O125).
+    static WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// While the guard lives, `split_negations` splits nothing (`WHOLE`).
+pub(in crate::code_rule_dsl) fn whole_relations() -> impl Drop {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WHOLE.with(|w| w.set(self.0));
+        }
+    }
+    Reset(WHOLE.with(|w| w.replace(true)))
+}
+
 /// `prog` with each demandable relation computed for the keys its readers reach (the module's split), and what was
 /// demanded; `None` where nothing is, or where the split would not stratify or type.
 pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(Program, Vec<String>)> {
+    if WHOLE.with(|w| w.get()) {
+        return None;
+    }
     let kept = |rel: &str| {
         prog.outputs.iter().any(|o| o == rel)
             || prog.inputs.iter().any(|i| i == rel)
@@ -154,6 +175,24 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
 /// Whether the positive atoms `cut` leaves fall apart: two of them share no variable through the others (or
 /// through an equality).
 fn disconnected(rule: &Rule, cut: impl Fn(usize) -> bool) -> bool {
+    // A document variable does not connect: a document has a row for each of its nodes, so atoms joined only by
+    // their documents (`docof($s, $e9), rr_cx_reach($d9, $e9)` and a row of `$d9`'s) are a product per pair of
+    // documents. 4,719 `anc` rows times the annotations of every document they reach made 24M rows (O136).
+    let documents: BTreeSet<String> = rule
+        .body
+        .iter()
+        .filter_map(Literal::atom)
+        .filter(|a| !a.neg)
+        .flat_map(|a| match a.rel.as_str() {
+            "docof" => a.args.get(1).into_iter().collect::<Vec<_>>(),
+            r if r.starts_with("rr_cx_") => a.args.iter().collect(),
+            _ => Vec::new(),
+        })
+        .filter_map(|t| match t {
+            Term::Var(v) => Some(v.clone()),
+            _ => None,
+        })
+        .collect();
     let mut groups: Vec<BTreeSet<String>> = Vec::new();
     for (j, l) in rule.body.iter().enumerate() {
         let joins = match l {
@@ -161,7 +200,7 @@ fn disconnected(rule: &Rule, cut: impl Fn(usize) -> bool) -> bool {
             Literal::Cmp { op: "=", .. } => true,
             _ => false,
         };
-        let vars = l.vars();
+        let vars: BTreeSet<String> = l.vars().into_iter().filter(|v| !documents.contains(v)).collect();
         if !joins || vars.is_empty() {
             continue;
         }
@@ -445,5 +484,29 @@ mod tests {
             let cut = |j: usize| matches!(&r.body[j], super::Literal::Atom(a) if a.rel == "d");
             assert_eq!(super::disconnected(r, cut), apart, "{r}");
         }
+    }
+
+    /// Atoms joined only through their documents are apart (O136): cutting `uinst` would leave every annotation of
+    /// every reached document against every `anc` row.
+    #[test]
+    fn atoms_joined_only_by_their_documents_are_disconnected() {
+        let p = super::super::super::front::parse(
+            r#"
+            .decl ann(f: node, x: number, t: node)
+            .decl uinst(t: node, c: node)
+            .decl anc(s: node, c: node)
+            .decl docof(n: node, d: number)
+            .decl rr_cx_reach(d: number, e: number)
+            .decl bv(f: node, x: number, s: node)
+            .input ann, uinst, anc, docof, rr_cx_reach
+            .output bv
+            bv($f, $x, $s) :- ann($f, $x, $t), uinst($t, $c), anc($s, $c), docof($f, $d9), docof($s, $e9), rr_cx_reach($d9, $e9).
+            "#,
+        )
+        .unwrap();
+        let r = &p.rules[0];
+        let at = |rel: &'static str| move |j: usize| matches!(&r.body[j], super::Literal::Atom(a) if a.rel == rel);
+        assert!(super::disconnected(r, at("uinst")), "cutting uinst leaves a product by documents");
+        assert!(!super::disconnected(r, at("rr_cx_reach")), "the rest still joins by t and c");
     }
 }

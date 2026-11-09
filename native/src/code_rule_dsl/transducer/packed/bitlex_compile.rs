@@ -54,7 +54,7 @@
 //!   a constant, or a carried operation whose state runs on. `next` cleans its operand with
 //!   `within` when it is dirty.
 
-use super::block::{BlockOp, BlockProgram, CheckRow, ClassTable};
+use super::block::{BlockOp, BlockProgram, ClassTable};
 use super::{bitlex_tier2, grammar};
 use ::bitlex::syntax::{Arg, Expr, Stmt};
 use std::collections::HashMap;
@@ -199,7 +199,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     // The tree section: its state machine, its checks and tier 2's words (decision 0087), before
     // the outputs, since the words' guards join the fallback.
     let has_tree = !low.tree.is_empty();
-    let mut tier2: Option<(String, Vec<CheckRow>, String, Vec<bool>)> = None;
+    let mut tier2: Option<(String, String, Vec<bool>)> = None;
     if has_tree {
         let symbols = symbols.ok_or("a tree section needs the grammar's ids")?;
         let id = |name: &str| (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"));
@@ -214,17 +214,19 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
             let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token };
             grammar::build(&low.tree, &ids)?
         };
-        // Each check, a state machine over its tokens' bytes (doc 18 §4), and the bytes a token
-        // passing it begins with.
-        let mut checks = Vec::new();
-        let mut check_of: HashMap<usize, (u16, ByteSet)> = HashMap::new();
-        for (kind, g) in &low.checks {
-            let token = token_rows.iter().position(|t| &t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))?;
-            let (accept, arms) = grammar::byte_check(g, &low.classes).map_err(|e| format!("check {kind}: {e}"))?;
+        // Each check, a byte machine over its tokens' bytes (doc 18 §4), compiled into masks
+        // over the whole file with the rest of the block program: a token it refuses joins the
+        // fallback. Tier 2 keeps only the bytes a token passing it begins with.
+        let mut check_of: HashMap<usize, ByteSet> = HashMap::new();
+        for (kind, g) in low.checks.clone() {
+            let token = token_rows.iter().position(|t| t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))?;
+            let (accept, arms) = grammar::byte_check(&g, &low.classes).map_err(|e| format!("check {kind}: {e}"))?;
             let first = arms.iter().filter(|a| a.0 == 0).fold([0u64; 4], |s, a| [s[0] | a.1[0], s[1] | a.1[1], s[2] | a.1[2], s[3] | a.1[3]]);
-            let program = grammar::check_program(&accept, &arms).map_err(|e| format!("check {kind}: {e}"))?;
-            check_of.insert(token, (checks.len() as u16, first));
-            checks.push(CheckRow { program });
+            let words: Vec<Vec<u8>> = low.keywords.iter().filter(|k| k.0 == kind).flat_map(|k| k.1.iter().map(|w| w.0.clone())).collect();
+            let (_, start, last) = token_rows[token].clone();
+            let refused = low.check(start, last, &accept, &arms, &words).map_err(|e| format!("check {kind}: {e}"))?;
+            low.fallbacks.push(refused);
+            check_of.insert(token, first);
         }
         let mut rows = Vec::new();
         for (r, (kind, start, last)) in token_rows.iter().enumerate() {
@@ -276,7 +278,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         let empties = low.fallback()?.len() as u16;
         let lowered = bitlex_tier2::lower(&states, &arms, &rows, empties)?;
         let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
-        tier2 = Some((grammar::text(&states, &arms), checks, lowered.text, takes_last));
+        tier2 = Some((grammar::text(&states, &arms), lowered.text, takes_last));
     }
     let mut vals: Vec<(String, Val)> = Vec::new();
     // The words read the fallback's totals (`EMPTY`), so a tree's program always has them.
@@ -298,7 +300,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     // The stream tier 2 reads, two extracts, as simdjson's structural indexes: every token's
     // first byte, and the last byte of each token whose end is not its row's to know (`SPAN`).
     let mut stream = None;
-    if let Some((_, _, _, takes_last)) = &tier2 {
+    if let Some((_, _, takes_last)) = &tier2 {
         let mut starts = token_rows[0].1;
         for (_, s, _) in &token_rows[1..] {
             starts = low.or(starts, *s)?;
@@ -345,8 +347,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     }
     let mut words = "  0000 STOP 0\n".to_owned();
     let mut machine = String::new();
-    if let Some((text, checks, lowered, _)) = tier2 {
-        low.program.checks = checks;
+    if let Some((text, lowered, _)) = tier2 {
         let (s, l) = stream.expect("a tree section's stream");
         low.program.extracts = vec![at[s], at[l]];
         // The fallback's totals, in `fallback()`'s order: `EMPTY t` reads total `t`.
@@ -516,6 +517,10 @@ impl Lowering {
     }
 
     fn and(&mut self, a: Val, b: Val) -> Result<Val, String> {
+        // Zero is zero at any delay.
+        if self.is_zero(a) || self.is_zero(b) {
+            return Ok(if self.is_zero(a) { a } else { b });
+        }
         if let Some(c) = self.sets(a, b, |x, y| x & y) {
             return Ok(c);
         }
@@ -523,6 +528,9 @@ impl Lowering {
     }
 
     fn or(&mut self, a: Val, b: Val) -> Result<Val, String> {
+        if self.is_zero(a) || self.is_zero(b) {
+            return Ok(if self.is_zero(a) { b } else { a });
+        }
         if let Some(c) = self.sets(a, b, |x, y| x | y) {
             return Ok(c);
         }
@@ -538,6 +546,9 @@ impl Lowering {
 
     /// `a & ~b`: no bits outside the stream that `a` has none of.
     fn andnot(&mut self, a: Val, b: Val) -> Result<Val, String> {
+        if self.is_zero(a) || self.is_zero(b) {
+            return Ok(a);
+        }
         if let Some(c) = self.sets(a, b, |x, y| x & !y) {
             return Ok(c);
         }
@@ -971,6 +982,114 @@ impl Lowering {
         Ok(out)
     }
 
+    /// A check's byte machine over the tokens from `start` to `last`, as masks over every byte
+    /// at once (doc 18 §4), computed with the rest of the block program: the last bytes of the
+    /// tokens it refuses. Bit `i` of state `q`'s mask is set where the machine is in `q` after a
+    /// token's bytes up to byte `i`:
+    ///
+    /// - it enters `q` on bytes `B` from states `P` at `B & prev(P's masks, 1)`, not at a token's
+    ///   first byte; from the start, at `B & start`. The arms into `q` on the same bytes share
+    ///   one `prev` of their sources' masks ORed.
+    /// - a self-loop on bytes `L` keeps it there over a run: `fill(entered, ~L | start)`.
+    ///
+    /// The machine cannot be re-entered inside a token once it has no state, so a checked token is
+    /// refused where its last byte is outside every accepting state. The states are taken in the order of
+    /// their arms: a cycle through two or more states is refused.
+    ///
+    /// A token beginning with a byte the machine does not take is tier 2's: its switch refuses
+    /// the byte, or takes a keyword by its bytes (`first`, the row's check bytes). A keyword in
+    /// `words` beginning with a byte the machine takes is accepted at its own last byte.
+    fn check(&mut self, start: Val, last: Val, accept: &[bool], arms: &[(u16, ByteSet, u16)], words: &[Vec<u8>]) -> Result<Val, String> {
+        let n = accept.len();
+        let mut order: Vec<usize> = Vec::new();
+        let mut ins: Vec<usize> = (0..n).map(|q| arms.iter().filter(|a| usize::from(a.2) == q && a.0 != a.2).count()).collect();
+        if ins[0] != 0 {
+            return Err("an arm back to the start: not compiled yet".into());
+        }
+        let mut ready = vec![0usize];
+        while let Some(p) = ready.pop() {
+            order.push(p);
+            for a in arms.iter().filter(|a| usize::from(a.0) == p && a.0 != a.2) {
+                let q = usize::from(a.2);
+                ins[q] -= 1;
+                if ins[q] == 0 {
+                    ready.push(q);
+                }
+            }
+        }
+        if order.len() != n {
+            return Err("a cycle through two or more states: not compiled yet".into());
+        }
+        let zero = self.leaf(BlockOp::Const(0), false);
+        // The tokens the machine checks: those beginning with a byte it takes. Every mask below
+        // is made from these starts, so a block with none (and no state carried in) has every
+        // mask zero: the lowering may skip them (`native_cpu_lanes`, gates).
+        let takes = arms.iter().filter(|a| a.0 == 0).fold([0u64; 4], |s, a| std::array::from_fn(|i| s[i] | a.1[i]));
+        let taken = self.class_set(takes);
+        let checked = self.and(start, taken)?;
+        let mut masks: Vec<Option<Val>> = vec![None; n];
+        for &q in &order {
+            // The arms into `q`, by their bytes: the sources of each.
+            let mut groups: Vec<(ByteSet, Vec<usize>)> = Vec::new();
+            for a in arms.iter().filter(|a| usize::from(a.2) == q && (a.0 != a.2 || q == 0)) {
+                match groups.iter_mut().find(|g| g.0 == a.1) {
+                    Some(g) => g.1.push(usize::from(a.0)),
+                    None => groups.push((a.1, vec![usize::from(a.0)])),
+                }
+            }
+            let (mut first, mut later) = (zero, zero);
+            for (bytes, from) in groups {
+                let bytes = self.class_set(bytes);
+                // From the start (a self-loop on the start is entered at the first byte only).
+                if from.contains(&0) {
+                    let here = self.and(checked, bytes)?;
+                    first = self.or(first, here)?;
+                }
+                let mut sources = zero;
+                for &p in from.iter().filter(|&&p| p != q) {
+                    let m = masks[p].expect("a source before its target");
+                    if !self.is_zero(m) {
+                        sources = self.or(sources, m)?;
+                    }
+                }
+                if !self.is_zero(sources) {
+                    let back = self.prev(sources, 1)?;
+                    let here = self.and(back, bytes)?;
+                    later = self.or(later, here)?;
+                }
+            }
+            let mut mask = if self.is_zero(later) {
+                first
+            } else {
+                let inside = self.andnot(later, start)?;
+                self.or(first, inside)?
+            };
+            if let Some(a) = arms.iter().find(|a| usize::from(a.0) == q && a.2 == a.0) {
+                let stays = self.class_set(a.1);
+                let leaves = self.not(stays)?;
+                let stop = self.or(leaves, start)?;
+                mask = self.fill(mask, stop)?;
+            }
+            masks[q] = Some(mask);
+        }
+        let mut good = zero;
+        for q in (0..n).filter(|&q| accept[q]) {
+            good = self.or(good, masks[q].expect("every state"))?;
+        }
+        // The checked tokens' bytes, up to the next start: a token beginning with a byte the
+        // machine does not take is tier 2's (its switch takes a keyword or refuses the byte).
+        let span = self.fill(checked, start)?;
+        let ends = self.andnot(last, good)?;
+        let mut refused = self.and(span, ends)?;
+        for w in words.iter().filter(|w| takes[usize::from(w[0] / 64)] >> (w[0] % 64) & 1 == 1) {
+            let here = self.keyword(start, last, w)?;
+            let back = self.prev(here, w.len() as u64 - 1)?;
+            let word_last = self.and(last, back)?;
+            refused = self.andnot(refused, word_last)?;
+        }
+        Ok(refused)
+    }
+
     /// `within` as a value at delay `d`.
     fn within_val(&mut self, d: u8) -> Result<Val, String> {
         Ok(Val { v: self.within(d)?, d, dirty: false, set: None })
@@ -1079,7 +1198,6 @@ fn live(program: &BlockProgram) -> BlockProgram {
     let n = |v: u16| number[usize::from(v)];
     out.outputs = program.outputs.iter().map(|&v| n(v)).collect();
     out.output_delays = program.output_delays.clone();
-    out.checks = program.checks.clone();
     out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
     out.totals = program.totals.iter().map(|&v| n(v)).collect();
     out
