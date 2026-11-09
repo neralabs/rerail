@@ -31,6 +31,8 @@ use objc::{msg_send, sel, sel_impl};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+pub mod shared;
+
 const SOURCE: &str = concat!(include_str!("common.metal"), include_str!("bits.metal"), include_str!("table.metal"), include_str!("closure.metal"));
 
 /// Threads per threadgroup of every kernel (the bit product's as 16 × 16).
@@ -71,7 +73,9 @@ struct Gpu {
 impl Gpu {
     fn new() -> Result<Gpu, String> {
         objc::rc::autoreleasepool(|| {
-            let device = Device::system_default().ok_or("no Metal device")?;
+            // The device and queue every relational submission shares (decision 0100 §2).
+            let shared = shared::get().ok_or("no Metal device")?;
+            let device = shared.device.clone();
             let library = device.new_library_with_source(SOURCE, &CompileOptions::new()).map_err(|e| format!("gpu lane: compiling the kernels: {e}"))?;
             let mut pipes = Vec::with_capacity(PIPES.len());
             for name in PIPES {
@@ -82,10 +86,7 @@ impl Gpu {
                 }
                 pipes.push(p);
             }
-            let queue = device.new_command_queue();
-            let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
-            let max_buffer = device.max_buffer_length();
-            Ok(Gpu { device, queue, pipes, page, max_buffer })
+            Ok(Gpu { device, queue: shared.queue.clone(), pipes, page: shared.page, max_buffer: shared.max_buffer })
         })
     }
 }
@@ -166,7 +167,7 @@ impl GpuBackend {
     /// Runs `ks` as one submission, with what it took on the device.
     pub fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Stats), String> {
         objc::rc::autoreleasepool(|| {
-            let mut plan = Planner { gpu: self.gpu, inputs: HashMap::new() };
+            let mut plan = Planner { gpu: self.gpu, inputs: HashMap::new(), leases: Default::default() };
             let jobs: Vec<Job> = ks.iter().map(|k| plan.job(k)).collect::<Result<_, _>>()?;
             let mut stats = Stats::default();
             self.execute(jobs.iter().map(|j| j.stages.as_slice()), &mut stats)?;
@@ -346,6 +347,9 @@ impl Job {
 struct Planner {
     gpu: &'static Gpu,
     inputs: HashMap<(usize, usize), Buffer>,
+    /// The pooled buffers the submission's jobs use, returned once its command buffers have completed and its
+    /// outputs are read (when the planner drops).
+    leases: std::cell::RefCell<Vec<shared::Pooled>>,
 }
 
 fn u(x: usize) -> u32 {
@@ -353,8 +357,12 @@ fn u(x: usize) -> u32 {
 }
 
 impl Planner {
+    /// A zeroed buffer of the pool (the kernels count into some, and read a new buffer as zero).
     fn alloc(&self, bytes: u64) -> Buffer {
-        self.gpu.device.new_buffer(bytes.max(16), MTLResourceOptions::StorageModeShared)
+        let lease = shared::lease_zeroed(bytes.max(16) as usize).unwrap_or_else(|e| panic!("gpu lane: {e}"));
+        let b = lease.buffer().clone();
+        self.leases.borrow_mut().push(lease);
+        b
     }
 
     /// A kernel's input column: wrapped without a copy when page-aligned, else copied. The kernel outlives the
@@ -380,7 +388,12 @@ impl Planner {
         if bytes == 0 {
             return self.alloc(16);
         }
-        self.gpu.device.new_buffer_with_data(data.as_ptr().cast(), bytes as u64, MTLResourceOptions::StorageModeShared)
+        let lease = shared::lease(bytes).unwrap_or_else(|e| panic!("gpu lane: {e}"));
+        // SAFETY: the lease is the planner's alone and at least `bytes` long; no command uses it yet.
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), lease.host(), bytes) };
+        let b = lease.buffer().clone();
+        self.leases.borrow_mut().push(lease);
+        b
     }
 
     /// The device-wide exclusive scan of `n` u32 (their popcounts when `pop`): stages appended to `st`. Returns the

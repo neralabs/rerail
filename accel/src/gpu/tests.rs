@@ -211,7 +211,7 @@ fn page_aligned_inputs_are_not_copied() {
     assert_ne!(p, libc::MAP_FAILED);
     let col = unsafe { std::slice::from_raw_parts_mut(p as *mut u32, n) };
     col.iter_mut().enumerate().for_each(|(i, x)| *x = i as u32 * 7);
-    let mut plan = Planner { gpu: g.gpu, inputs: HashMap::new() };
+    let mut plan = Planner { gpu: g.gpu, inputs: HashMap::new(), leases: Default::default() };
     let wrapped = plan.input(&col[..]);
     assert_eq!(wrapped.contents(), p, "wrapped in place");
     let copied = plan.input(&col[1..]);
