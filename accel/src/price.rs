@@ -1,22 +1,40 @@
 //! What a launch costs on each lane: time, from the spikes' measurements, and energy, from published power figures.
 //!
 //! **Time.** Each (form, lane) has a cost per unit of the kernel's size ([`crate::Kernel::units`]), and each lane a
-//! fixed cost per submission and per launch within one. They are the lanes' own measurements (M5 Max, 2026-11-09,
-//! debug builds, load 35–140), each a workload's best time over its size in units; the CPU's are the matrix-offload
-//! spikes' (`tools/matrix-offload/RESULTS.md`). The relational lab replaces them with prices measured on captured
-//! strata ([`Prices::set`]).
+//! fixed cost per submission and per launch within one. They are the lanes' own measurements in a **release** build
+//! of this crate (M5 Max, 18 cores, macOS 26.4.1, 2026-11-09, load 48–123 on a shared machine; the measurements are
+//! `price::bench`, each the best of several runs). Each price is per unit at the largest workload a form has, where the
+//! fixed costs are small next to the work. The relational lab replaces them with prices measured on captured strata
+//! ([`Prices::set`]).
 //!
-//! | Form | Workload | CPU (core-s) | SME | GPU (device) | ANE |
+//! What a lane's time is: the cores, CPU seconds (user + sys) of the reference kernel on one thread, so
+//! core-seconds; SME, a submission's wall time; the GPU, device time; the Neural Engine, a submission's wall time,
+//! the host's expansion of the inputs and summing of the outputs included (they run on the lane's thread).
+//!
+//! | Form | Workload | CPU (core-s) | SME (wall) | GPU (device) | ANE (wall) |
 //! |---|---|---|---|---|---|
-//! | bit product | W5, 5.5·10^10 bit-ops | 57 ms (NEON) | 4.4 ms (8e-14/unit) | 0.38–0.49 ms (W1: 8.9e-14/unit) | 7.5 ms (W5 1.4e-13, W1 5.0e-13) |
-//! | count table, counts | W2, 5.8·10^6 rows | 2.3 ms | — | 0.57 ms | — |
-//! | count table, pairs | W2, 6.2·10^8 units | (est. 3e-9/unit) | — | 5.85 ms | — |
-//! | histogram | W4, 22.3·10^6 codes | 5.5 ms | — | 0.38 ms | — |
-//! | closure | W3, 1.1–2.2·10^7 edge-words | 0.4 ms | — | 1.98 ms | — |
+//! | bit product | W5, 5.5·10^10 | 228 ms (4.1e-12/unit) | 2.0 ms (3.7e-14) | 3.0 ms (5.4e-14) | 13.4 ms (2.4e-13) |
+//! | bit product | W1, 4.5·10^9 | 27 ms (6.0e-12) | 1.6 ms (3.7e-13) | 0.40 ms (8.9e-14) | 4.9 ms (1.1e-12) |
+//! | count table, counts | W2, 5.8·10^6 rows | 3.05 ms (5.3e-10) | — | 0.58 ms (9.9e-11) | — |
+//! | count table, pairs | W2, 6.2·10^8 units | 77.6 ms (1.25e-10) | — | 5.87 ms (9.4e-12) | — |
+//! | histogram | W4, 2.2·10^7 codes | 11.3 ms (5.1e-10) | — | 0.38 ms (1.7e-11) | — |
+//! | closure | W3, 1.1·10^7 edge-words | 8.5 ms (7.5e-10) | — | 1.97 ms (1.7e-10) | — |
 //!
-//! Fixed costs: SME 3 µs a submission; the GPU 0.3–0.7 ms of wall a command buffer (0.2 ms of it host CPU, a few
-//! µs on the device); the Neural Engine 0.13 ms a tile of 2,048 rows within one batched prediction, and a few ms of
-//! host conversion a submission in a debug build.
+//! W1 (13,088 rows against 444) costs more per unit than W5 (2,048 against 2,048) on every lane but the GPU: SME
+//! packs 13,088 rows for a small product, and the Neural Engine expands and sums per row, so its host work grows with
+//! the rows and not with the product. The prices take W5's.
+//!
+//! The debug-build prices these replace (load 35–140) were, per unit: bit product CPU 1.0e-12 (the spike's NEON form,
+//! not this crate's reference), SME 8e-14, GPU 9e-14, ANE 2.5e-13 (prediction calls only); count table CPU 4.0e-10,
+//! GPU 9.8e-11; pairs CPU 3e-9 (an estimate), GPU 9.4e-12; histogram CPU 2.5e-10, GPU 1.7e-11; closure CPU 1.8e-11
+//! (the spike's bit-row DP), GPU 1.8e-10. The GPU's device prices are the same in both builds: its kernels are Metal.
+//!
+//! Fixed costs, measured with the smallest launch of each form:
+//!
+//! - the cores: about 2 µs a launch within a submission (one parallel pass on the rayon pool);
+//! - SME: 1 µs a submission, 3 µs a launch;
+//! - the GPU: 0.2 ms of wall a command buffer (80–100 µs of it host CPU, 8 µs on the device), 22 µs a launch;
+//! - the Neural Engine: 0.1 ms a submission, and 0.25 ms a launch (a tile of 2,048 rows' prediction call).
 //!
 //! **Energy** is estimated, not measured (the user, 2026-11-09): power per busy lane times its busy time. The
 //! figures are published ones for the M4 generation, the nearest to this machine that is reported:
@@ -66,29 +84,30 @@ impl Default for Prices {
     fn default() -> Self {
         let mut per_unit = [[None; 4]; 5];
         let mut set = |f: Form, l: Lane, s: f64| per_unit[form_index(f)][l.index()] = Some(s);
-        // Bit product: the lanes' own measurements (see the module's comment).
-        set(Form::BitProduct, Lane::Cpu, 57e-3 / 5.5e10);
-        set(Form::BitProduct, Lane::Sme, 8e-14);
-        set(Form::BitProduct, Lane::Gpu, 9e-14);
-        set(Form::BitProduct, Lane::Ane, 2.5e-13);
-        set(Form::CountTable, Lane::Cpu, 2.3e-3 / 5.8e6);
-        set(Form::CountTable, Lane::Gpu, 0.57e-3 / 5.8e6);
-        set(Form::CountPairs, Lane::Cpu, 3e-9);
+        // Release builds, per unit at the largest workload of each form (see the module's comment).
+        set(Form::BitProduct, Lane::Cpu, 4.1e-12);
+        set(Form::BitProduct, Lane::Sme, 3.7e-14);
+        set(Form::BitProduct, Lane::Gpu, 5.4e-14);
+        set(Form::BitProduct, Lane::Ane, 2.4e-13);
+        set(Form::CountTable, Lane::Cpu, 5.3e-10);
+        set(Form::CountTable, Lane::Gpu, 9.9e-11);
+        set(Form::CountPairs, Lane::Cpu, 1.25e-10);
         set(Form::CountPairs, Lane::Gpu, 9.4e-12);
-        set(Form::Histogram, Lane::Cpu, 5.5e-3 / 22.3e6);
+        set(Form::Histogram, Lane::Cpu, 5.1e-10);
         set(Form::Histogram, Lane::Gpu, 1.7e-11);
-        set(Form::Closure, Lane::Cpu, 0.4e-3 / 2.17e7);
-        set(Form::Closure, Lane::Gpu, 1.8e-10);
+        set(Form::Closure, Lane::Cpu, 7.5e-10);
+        set(Form::Closure, Lane::Gpu, 1.7e-10);
         Prices {
             per_unit,
             fixed: [
-                Fixed { submission: 0.0, launch: 5e-6 },
+                // A launch's task on the rayon pool.
+                Fixed { submission: 0.0, launch: 2e-6 },
                 // Entering streaming mode, and a worker's handoff.
-                Fixed { submission: 3e-6, launch: 1e-6 },
-                // A command buffer's submit and wait, and an encoder's dispatch.
-                Fixed { submission: 0.5e-3, launch: 5e-6 },
-                // The batched prediction's host conversions, and a tile of 2,048 rows.
-                Fixed { submission: 2e-3, launch: 0.13e-3 },
+                Fixed { submission: 1e-6, launch: 3e-6 },
+                // A command buffer's submit and wait, and a launch's encoding.
+                Fixed { submission: 0.2e-3, launch: 22e-6 },
+                // The surfaces and the grouping, and a tile's prediction call.
+                Fixed { submission: 0.1e-3, launch: 0.25e-3 },
             ],
             cores: std::thread::available_parallelism().map_or(8, |n| n.get()) as f64,
             band: 3.0,
@@ -138,3 +157,7 @@ impl Prices {
             .map(|(l, _, w)| (l, w))
     }
 }
+
+#[cfg(test)]
+#[path = "price_bench.rs"]
+mod bench;
