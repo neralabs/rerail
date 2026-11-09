@@ -2136,7 +2136,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "90f409c2ab7ddb192a8e980a9d34593b334eef62597e26695e9f350df82edc48",
+      "sha256": "de78b0a29ce34196565a9828465973866894e2a4cc74368bdbcd09763dc99407",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2224,6 +2224,11 @@
           "before": "d061302a5c3a2fd0145be9b0ed8e75d9622003d25015f0e04fa6acd36ac6c695",
           "after": "90f409c2ab7ddb192a8e980a9d34593b334eef62597e26695e9f350df82edc48",
           "reason": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status"
+        },
+        {
+          "before": "90f409c2ab7ddb192a8e980a9d34593b334eef62597e26695e9f350df82edc48",
+          "after": "de78b0a29ce34196565a9828465973866894e2a4cc74368bdbcd09763dc99407",
+          "reason": "Share native step settings and ordered producer rows across exact API, production selection and signed reporting contracts"
         }
       ]
     },
@@ -2251,8 +2256,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/step-callables.rr",
-      "sha256": "9ce7e169fadae4f2dcb24ce8d11d914b74890a678b1e08d2417d369903cfcaeb",
-      "origin": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status"
+      "sha256": "acd0b694432789d1ef8f55cba623e8781cc5b21cadc9e349c5a24513ea20d3c3",
+      "origin": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status",
+      "repairs": [
+        {
+          "before": "9ce7e169fadae4f2dcb24ce8d11d914b74890a678b1e08d2417d369903cfcaeb",
+          "after": "acd0b694432789d1ef8f55cba623e8781cc5b21cadc9e349c5a24513ea20d3c3",
+          "reason": "Share native step settings and ordered producer rows across exact API, production selection and signed reporting contracts"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-legacy.rr",
@@ -2268,6 +2280,21 @@
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-report.rr",
       "sha256": "a5d9db82242e4361569273db628c88220d54f737c7042fe61748e6151ad4cc70",
       "origin": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/step-settings.rr",
+      "sha256": "6f086ed7381622652738447e7edee8150cd47e60950f4dd6c682f541786e84a3",
+      "origin": "Share native step settings and ordered producer rows across exact API, production selection and signed reporting contracts"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/step-production.rr",
+      "sha256": "8b5d170fa4cffae68dbfa9b118e22f6b6e63f677ab8b2720a735ab2566566910",
+      "origin": "Share native step settings and ordered producer rows across exact API, production selection and signed reporting contracts"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-settings.rr",
+      "sha256": "b1817dc6501c20032898897131416bc02dee84bb90f70139741ec68636f2a693",
+      "origin": "Share native step settings and ordered producer rows across exact API, production selection and signed reporting contracts"
     }
   ],
   "rules": [
@@ -2737,7 +2764,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "90f409c2ab7ddb192a8e980a9d34593b334eef62597e26695e9f350df82edc48"
+      "ruleSha256": "de78b0a29ce34196565a9828465973866894e2a4cc74368bdbcd09763dc99407"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3447,7 +3474,31 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038"
+    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038",
+    "cliArtifact": {
+      "engineCommit": "997fcb4ab416e9d7e1d36df7998acaea2de91648",
+      "upstreamCommit": "735bc44226006a2e475f9470d30c0b6400be1250",
+      "sourceTrees": {
+        "native": "5a13bcf693b80b0bde4c18d1a6d321758364e482",
+        "tools/bitlex": "4abd73b7e2f3bcb7f7f90d9cf3183abbd8edbec1",
+        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
+        "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-d038c065e6605e4c",
+      "sha256": "d038c065e6605e4cd145544a89a0cfdb4cf2bfa3bd47f40ba66d1300166247f1",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "rerail-engine",
+        "--features",
+        "headless",
+        "--bin",
+        "rerail-engine",
+        "--release"
+      ],
+      "seconds": 1425.738
+    }
   },
   "engineSourceSnapshots": [
     {

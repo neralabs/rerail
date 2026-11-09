@@ -101,13 +101,32 @@ class EngineAlignmentTests(unittest.TestCase):
             receipt=dict(source['cliArtifact'],path=binary.relative_to(root).as_posix())
             record=root/'build.json';migration.write_json(record,receipt)
             manifest=root/migration.MANIFEST;migration.write_json(manifest,dict(engineSource=dict(upstreamCommit='modern')))
-            with patch.object(migration,'git',self.artifact_git),patch.object(migration,'verify_engine_alignment'):
+            with patch.object(migration,'git',self.artifact_git),patch.object(migration,'verify_engine_alignment'),patch.object(migration,'verify_engine_snapshot'):
                 migration.register_artifact(root,record)
                 self.assertEqual(migration.read_json(manifest)['engineSource']['cliArtifact'],receipt)
                 before=manifest.read_bytes();binary.write_bytes(b'unrecorded engine')
                 with self.assertRaisesRegex(ValueError,'binary.*recorded'):
                     migration.register_artifact(root,record)
                 self.assertEqual(manifest.read_bytes(),before)
+
+    def test_same_source_cohort_can_register_its_release_build_after_peer_advances(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary,source=self.artifact(root)
+            source['cliArtifact']['path']=binary.relative_to(root).as_posix()
+            receipt=dict(source['cliArtifact'],command=['release'])
+            record=root/'build.json';migration.write_json(record,receipt)
+            manifest=root/migration.MANIFEST;migration.write_json(manifest,dict(engineSource=source))
+            with patch.object(migration,'git',self.artifact_git), \
+                 patch.object(migration,'verify_engine_snapshot') as snapshot, \
+                 patch.object(migration,'verify_engine_alignment',side_effect=ValueError('peer advanced')) as live:
+                migration.register_artifact(root,record)
+                self.assertEqual(receipt,migration.read_json(manifest)['engineSource']['cliArtifact'])
+                snapshot.assert_called_once();live.assert_not_called()
+                # A different engine is a new cohort and must pass live adoption.
+                before=manifest.read_bytes();receipt['sourceTrees']=dict(receipt['sourceTrees'],native='changed')
+                migration.write_json(record,receipt)
+                with self.assertRaisesRegex(ValueError,'peer advanced'):migration.register_artifact(root,record)
+                self.assertEqual(before,manifest.read_bytes())
 
     def test_engine_audit_rejects_a_retired_checkout(self):
         with self.assertRaisesRegex(ValueError, 'repository root'):

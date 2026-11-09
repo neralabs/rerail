@@ -31,15 +31,16 @@ class Contract:
         self.selected=[]
         self.fallbacks, self.depth, self.item, self.observed = [], 0, None, {}
         self.host_protocol_calls = []
-        self.baseline = read_json(args.baseline) if args.command == 'native' else None
+        self.baseline = None
         self.backend = None
         names = ['serverplan_steps_port.py', 'ast_sources.py', 'ast_transport.py', 'suite.py', 'replay.py', 'dto.py', 'migration.py', 'policy_routes.py']
         paths = [Path(__file__), *[Path(__file__).with_name(n) for n in names], ROOT/'scripts/dsl/data_layer_audit/native_guard.py']
         self.harness = {p.relative_to(ROOT).as_posix(): sha(p.read_bytes()) for p in paths if p.is_file()}
-        if self.baseline:
+        if args.command == 'native':
             from suite import Suite
             self.backend = Suite(args.source, args.engine, ['serverplan_steps'], args.part,
                                  args.parts, args.baseline, args.rule_root)
+            self.baseline = self.backend.baseline
 
     def value(self, value):
         root=self.item.funcargs.get('tmp_path') if self.item else None
@@ -71,6 +72,13 @@ class Contract:
         from native_guard import codes
         module = importlib.import_module('scripts.lint_serverplan_steps')
         self.module=module
+        if self.backend:
+            from serverplan_steps_port import install_settings
+            install_settings(self.backend,module)
+        from serverplan_steps_port import SETTINGS
+        self.module_settings={name:self.value(getattr(module,name)) for name in SETTINGS}
+        if self.baseline:
+            compare(self.baseline['moduleSettings'],self.module_settings)
         originals = codes({'serverplan_steps': module})
         targets = [(module,n,None) for n in FUNCTIONS]
         targets += [(getattr(module,c),n,None) for c in CLASSES for n,f in vars(getattr(module,c)).items() if inspect.isfunction(f) and f.__code__.co_filename == str(self.args.source / "scripts/lint_serverplan_steps.py")]
@@ -149,7 +157,9 @@ class Contract:
         if self.args.entries:
             if not self.baseline:raise ValueError('Record the full source suite before selecting native helper slices')
             wanted=set(self.args.entries.split(','))
-            selected=[item for item in selected if (calls:=[r for r in self.baseline['calls'] if r['test']==item.nodeid]) and all(r['entry'] in wanted for r in calls)]
+            selected=[item for item in selected if
+                ((calls:=[r for r in self.baseline['calls'] if r['test']==item.nodeid]) or self.args.include_module_assertions)
+                and all(r['entry'] in wanted for r in calls)]
         self.selected=[item.nodeid for item in selected]
         items[:]=selected
 
@@ -186,6 +196,7 @@ class Contract:
         result = dict(format='rerail.serverplan-steps-original-contracts/v1', sourcePin=PIN, commit=PIN,
             pytest_exit_code=int(code), exitCode=int(code), oracle=self.backend is None, source_mismatches=[],
             fullMigrationAcceptance=False, part=self.args.part, parts=self.args.parts, collected=self.collected, selectedCases=self.selected, selectedEntries=self.args.entries,
+            moduleAssertions=self.args.include_module_assertions,moduleSettings=self.module_settings,
             cases=self.cases, calls=self.calls, events=[], missingResults=missing,
             semanticFallbacks=self.fallbacks, hostProtocolCalls=self.host_protocol_calls, harnessFiles=self.harness,
             sourceFiles={n: sha((self.args.source/n).read_bytes()) for n in
@@ -203,6 +214,7 @@ def main():
     for name in ['source', 'out', 'baseline', 'engine', 'rule-root']:
         parser.add_argument('--'+name, type=Path, required=name in ['source', 'out'])
     parser.add_argument('--entries',help='Explicit native helper slice; does not certify the complete original suite')
+    parser.add_argument('--include-module-assertions',action='store_true',help='Also run original assertions without API calls, over native module settings')
     parser.add_argument('--part', type=int, default=0)
     parser.add_argument('--parts', type=int, default=1)
     args = parser.parse_args()

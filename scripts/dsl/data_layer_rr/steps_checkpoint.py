@@ -19,7 +19,7 @@ def assemble(source, reports):
     for call in source['calls']:
         calls.setdefault(call['test'], []).append(call)
     seen, parts, selected, observations, native_calls = set(), None, [], [], []
-    entries = engine = harness = None
+    entries = engine = harness = module_assertions = None
     programs, policy_inputs = {}, {}
     for report in reports:
         if report['sourcePin'] != PIN or report['exitCode'] not in (0, 5):
@@ -33,18 +33,25 @@ def assemble(source, reports):
         seen.add(identity)
         if parts is None:
             parts, entries, engine, harness = report['parts'], report['selectedEntries'], report['engineSha256'], report['harnessFiles']
+            module_assertions=report.get('moduleAssertions',False)
         compare((parts, entries, engine, harness),
                 (report['parts'], report['selectedEntries'], report['engineSha256'], report['harnessFiles']))
+        compare(module_assertions,report.get('moduleAssertions',False))
+        if module_assertions:
+            compare(source['moduleSettings'],report['moduleSettings'])
+            settings=[c for c in report['nativeCalls'] if c['entry']=='_module_settings' and c['status']=='passed']
+            if len(settings)!=1:raise ValueError('Module assertions require one native settings batch')
         if not entries:
             raise ValueError('A partial checkpoint must state its selected entry points')
         allowed = set(entries.split(','))
         expected_cases = [test for test in source['collected'][identity::parts]
-                          if calls.get(test) and all(c['entry'] in allowed for c in calls[test])]
+                          if (calls.get(test) or module_assertions)
+                          and all(c['entry'] in allowed for c in calls.get(test,[]))]
         if report['exitCode'] == 5 and expected_cases:
             raise ValueError('Pytest collected no tests for a nonempty assertion shard')
         compare(expected_cases, report['selectedCases'])
         if not report['nativeCalls'] and any(c['entry'] != 'Violation.__init__'
-                                             for test in expected_cases for c in calls[test]):
+                                             for test in expected_cases for c in calls.get(test,[])):
             raise ValueError('A semantic checkpoint shard has no native execution')
         if set(report['cases']) != set(expected_cases):
             raise ValueError('A selected original assertion is absent')
@@ -53,7 +60,7 @@ def assemble(source, reports):
             if [p['phase'] for p in phases] != ['setup', 'call', 'teardown'] or any(p['outcome'] != 'passed' for p in phases):
                 raise ValueError('A selected original assertion did not pass')
             actual = [c for c in report['calls'] if c['test'] == test]
-            compare(calls[test], actual)
+            compare(calls.get(test,[]), actual)
             for ordinal, call in enumerate(actual):
                 thin = dict(call)
                 thin['argumentSha256'] = digest(thin.pop('arguments'))
@@ -83,5 +90,6 @@ def assemble(source, reports):
                 selectedEntries=entries.split(','), selectedAssertions=len(selected), selectedCases=selected,
                 untestedCases=[t for t in source['collected'] if t not in selected],
                 observations=observations, nativeCalls=native_calls,
+                moduleAssertions=module_assertions,moduleSettings=source.get('moduleSettings') if module_assertions else None,
                 programInputs=[programs[p] for p in sorted(programs)],
                 engineSha256=engine, harnessFiles=harness)

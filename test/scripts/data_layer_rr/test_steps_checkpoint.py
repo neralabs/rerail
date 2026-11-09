@@ -31,6 +31,27 @@ class StepsCheckpointTests(unittest.TestCase):
         self.assertEqual(2, result['selectedAssertions'])
         self.assertEqual('full positive', result['observations'][1]['actual']['return'][0]['message'])
 
+    def test_call_free_original_assertions_need_native_settings_and_equal_values(self):
+        name='module_constant'
+        self.source['collected'].append(name)
+        self.report['collected']=self.source['collected']
+        self.report['selectedCases'].append(name)
+        self.report['cases'][name]=[dict(phase=p,outcome='passed') for p in ['setup','call','teardown']]
+        self.source['moduleSettings']={'LINTER_NAME':'original'}
+        self.report.update(moduleAssertions=True,moduleSettings={'LINTER_NAME':'original'})
+        config=dict(status='passed',entry='_module_settings',programInputs=[
+            dict(path='rules/serverplan-steps-settings.rr',sha256='settings'),dict(path='lib/core.rr',sha256='core')])
+        self.report['nativeCalls'].append(config)
+        result=assemble(self.source,[self.report])
+        self.assertEqual(3,result['selectedAssertions'])
+        self.assertTrue(result['moduleAssertions'])
+        self.assertEqual(self.source['moduleSettings'],result['moduleSettings'])
+        self.report['moduleSettings']['LINTER_NAME']='changed'
+        with self.assertRaises(AssertionError):assemble(self.source,[self.report])
+        self.report['moduleSettings']['LINTER_NAME']='original'
+        self.report['nativeCalls'].pop()
+        with self.assertRaisesRegex(ValueError,'native settings batch'):assemble(self.source,[self.report])
+
     def test_lost_positive_or_its_observation_is_rejected(self):
         for change in ['selected', 'phase', 'observation', 'shard']:
             report = copy.deepcopy(self.report)

@@ -7,6 +7,36 @@ import sys
 
 from serverplan_steps_contract import FUNCTIONS
 
+SETTINGS = ('LINTER_NAME','ROOT','STEP_DIRS','OBJECT_MANIPULATION_METHODS',
+    'POSTOP_MANIPULATION_METHODS','CAN_BATCH_FALSE_ALLOWLIST','LIFECYCLE_RUNTIME_STATE_ALLOWLIST',
+    'ALLOWLIST_SIGNATURE','RUNTIME_STATE_ATTRS','CALLBACK_RUNTIME_AUTHORITY_ATTRS',
+    'CALLBACK_RUNTIME_AUTHORITY_HELPERS','AUTHORITY_TYPE_NAMES','LEGACY_SIDE_EFFECT_TAG_ALLOWLIST')
+
+
+def install_settings(suite,module):
+    """Replace imported configuration values with one typed native result batch."""
+    rows=suite.native('serverplan_steps','_module_settings',[],dict(settingsRoot=str(suite.source)))
+    kinds={};values={}
+    for row in rows:
+        p=row['parameters'];name=p['name']
+        if name not in SETTINGS:raise ValueError('Unknown native module setting: '+name)
+        if row['code']=='SSP_SETTING_TYPE':
+            if name in kinds:raise ValueError('Duplicate native setting type')
+            kinds[name]=p['kind']
+        elif row['code']=='SSP_SETTING':values.setdefault(name,[]).append((p['ordinal'],p['value']))
+        else:raise ValueError('Unexpected native module setting row')
+    if set(kinds)!=set(SETTINGS):raise ValueError('Incomplete native module settings')
+    for name,kind in kinds.items():
+        pairs=sorted(values.get(name,[]));items=[value for _,value in pairs]
+        if [i for i,_ in pairs]!=list(range(len(pairs))):raise ValueError('Invalid native setting order')
+        if kind=='frozenset':value=frozenset(items)
+        elif kind=='paths':value=tuple(Path(item) for item in items)
+        elif kind in {'str','path'}:
+            if len(items)!=1:raise ValueError('One scalar setting required')
+            value=Path(items[0]) if kind=='path' else items[0]
+        else:raise ValueError('Unknown native setting type')
+        suite.replace(module,name,value)
+
 
 def legacy_rows(rows):
     if any(row['code'] != 'SSP_LEGACY' for row in rows):
@@ -52,7 +82,7 @@ def install(suite, module):
     batches = {}
 
     def options():
-        return dict(rootPath=str(module.ROOT), canBatchAllowlist=list(module.CAN_BATCH_FALSE_ALLOWLIST),
+        return dict(rootPath=str(module.ROOT),env=['ssp.api=true'], canBatchAllowlist=list(module.CAN_BATCH_FALSE_ALLOWLIST),
                     runtimeStateAllowlist=list(module.LIFECYCLE_RUNTIME_STATE_ALLOWLIST),
                     sideEffectAllowlist=list(module.LEGACY_SIDE_EFFECT_TAG_ALLOWLIST),
                     signature=module.ALLOWLIST_SIGNATURE,

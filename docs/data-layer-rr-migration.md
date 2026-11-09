@@ -2362,3 +2362,23 @@ It records the original positive scanner test, seven original CLI tests, twenty 
 The tests compare complete findings and streams, including duplicates and order.
 CLI discovery is native; scanner bytes travel in one batch; reporting and exit decisions are native.
 The signing action remains explicitly unimplemented. This receipt does not replace the 140-test combined checkpoint above.
+
+### 2026-11-09 — ServerPlan steps: all original assertions accepted on Final 735
+
+The [Final 735 checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-final735-checkpoint.json.gz) supersedes the earlier 140-test checkpoint.
+All 164 original tests pass, with 212 complete observations and 205 native calls.
+There are no excluded original cases. All 58 positive detector observations remain present.
+The harness installs native module settings and compares all thirteen values with the source recording.
+
+The same optimized artifact passes 199 supplemental cases, five production mutation controls, and twelve update steps.
+Production acceptance checks exact file membership, producer facts, structured diagnostics, signature errors, and ordering.
+The fact-engine exclusions differ from its generic discovery helper; the native production consumer follows the fact engine.
+CLI selection retains its separate source contract.
+All reporting consumers share typed detector rows.
+The receipt retains source and native recordings, program bytes, harness bytes, failures, builds, and command timings.
+
+Root merge `d28f39870` adopts Final `735bc4422`.
+The accepted binary comes from `997fcb4ab`, which repairs two local test calls for the merged dependency API.
+Final `ce80f6873` arrives during compilation and remains for the next engine cohort.
+Native `--sign-allowlist` and source-update acceptance are still unimplemented.
+The rule remains a draft. Seven absent translations and the earlier migration gaps remain open.

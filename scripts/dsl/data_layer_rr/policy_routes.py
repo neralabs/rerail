@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check == 'serverplan_steps' and entry == '_module_settings':
+        return 'serverplan-steps-settings.rr'
     if check == 'serverplan_steps' and entry == '_cli_paths':
         return 'serverplan-steps-paths.rr'
     if check == 'serverplan_steps' and entry in {

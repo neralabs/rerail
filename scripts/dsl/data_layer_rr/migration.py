@@ -327,7 +327,7 @@ def verify_source_cohort(root, source):
 
     Another worktree can advance while an immutable acceptance cohort runs.
     Every execution still checks the actual source trees and binary artifact.
-    Adoption and artifact registration audit live tips. Shards share that cohort.
+    Adoption and new artifact cohorts audit live tips. Shards share that cohort.
     """
     key = (str(root), sha(json.dumps(source, sort_keys=True).encode()))
     if key not in _SOURCE_COHORTS:
@@ -340,7 +340,17 @@ def register_artifact(root, receipt_path):
     manifest = read_json(root / MANIFEST)
     receipt = read_json(receipt_path)
     source = dict(manifest['engineSource'], cliArtifact=receipt)
-    verify_engine_alignment(root, source)
+    previous=manifest['engineSource'].get('cliArtifact',{})
+    identity=('engineCommit','upstreamCommit','sourceTrees')
+    same_cohort=all(previous.get(key) and previous.get(key)==receipt.get(key) for key in identity)
+    if same_cohort:
+        # A debug/release build of already adopted, identical sources may finish
+        # after a peer advances. Validate both artifacts and the live root tree;
+        # changing any source identity still requires a new live adoption.
+        verify_engine_snapshot(root,source)
+        verify_engine_artifact(root,manifest['engineSource'],root/previous['path'])
+    else:
+        verify_engine_alignment(root, source)
     verify_engine_artifact(root, source, root / receipt['path'])
     manifest['engineSource'] = source
     write_json(root / MANIFEST, manifest)

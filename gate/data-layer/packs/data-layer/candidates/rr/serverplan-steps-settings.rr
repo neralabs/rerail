@@ -1,0 +1,10 @@
+.policy "data-layer-serverplan-steps-settings" revision 1
+.description "Typed module settings from the shared detector vocabulary"
+.language python
+.mode block
+.scope include "**/*.py"
+#include "data-layer/step-settings.rr"
+.violation SSPSettingType(at: span, name: symbol, kind: symbol) code "SSP_SETTING_TYPE" "{name}"
+SSPSettingType(@place("",0),name,kind) :- ssp_setting_type(name,kind).
+.violation SSPSetting(at: span, name: symbol, ordinal: number, value: symbol) code "SSP_SETTING" "{name}"
+SSPSetting(@place("",0),name,i,value) :- ssp_setting_value(name,i,value).

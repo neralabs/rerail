@@ -9676,3 +9676,59 @@ These are focused API results, not a new combined checkpoint.
 The signing action still raises an explicit unimplemented error.
 Configuration assertions, production acceptance, controls, updates, seven absent translations, and earlier migration gaps remain open.
 A new fetch finds Final `735bc4422`; the next commit merges it before further acceptance.
+
+### 2026-11-09 — Final 735 engine and complete original step-suite replay
+
+Commit `c55ecc3bc` preserves the legacy scan and CLI port before the engine merge.
+Commit `d28f39870` merges Final `735bc4422` into the root engine.
+The merge retains upstream phase maintenance, row statistics, scalar execution, and aggregate semantics.
+Its conflict resolutions preserve the generic native contracts required by existing ports.
+Two local JSON-input tests require the new dependency-tracking argument; `997fcb4ab` repairs those call sites.
+
+The [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-final735-checkpoint.json.gz) audits all 164 original tests.
+All 212 complete API observations match through 205 native calls.
+All 58 positive detector observations remain present. No original cases are excluded.
+Sixteen tests without API observations run after native settings replace the imported Python configuration.
+All thirteen configuration values also match the source recording in full.
+The detectors consume the same native vocabulary tables.
+The auditor streams shard recordings, and both harness layers share one parsed source baseline.
+
+All sixteen original-suite commands pass within 115 seconds; the slowest takes 71.310 seconds.
+All 199 supplemental cases pass on the registered optimized engine.
+These include 45 detector, thirteen scanner, 72 signature, fifteen blocker, twenty legacy, twenty CLI, and fourteen production cases.
+Five production mutation controls produce complete mismatches through successful native execution.
+Twelve updates pass in one persistent workspace and store.
+They cover edits, removals, changes between scan roots, signature changes, restoration, and an unchanged repeat.
+
+Production testing exposes a real membership defect before repair.
+The first candidate includes test and temporary trees and the CLI-only extra file, while omitting hidden source files.
+Native directory requests now implement the fact engine's actual membership.
+A wider corpus catches another difference: the fact engine includes `conform`, `node_modules`, `.pytest_cache`, and `browser_build`.
+Its generic discovery helper excludes those directories; the plugin does not use that helper's exclusions.
+The final comparison checks every selected file, full producer facts, structured findings, stderr, order, and duplicates.
+
+API transport and production reporting now consume one typed producer relation.
+Production diagnostics use their real `STEP-*` codes and preserve signature failures, including an empty repository.
+The API protocol retains its existing DTO shape.
+Native rules invoke no Python interpreter.
+
+All 99 rule-engine tests pass; two existing helpers remain ignored.
+All seven filesystem, nineteen JSON-input, fourteen string-function, and 182 tooling tests pass.
+The first rule-engine attempts encounter a shared content-store writer and hit the command limit.
+An isolated cache gives a passing 76.590-second run. The failed attempts remain recorded.
+All six step policies pass the native reader.
+
+Compilation is recorded separately from execution.
+The final unit build takes 233.888 seconds and the debug CLI build takes 127.373 seconds.
+The registered optimized build takes 1,425.738 seconds, including its wait for another build.
+An earlier 947.586-second release build precedes the two test-call repairs and is excluded from acceptance.
+Final advances to `ce80f6873` during compilation.
+A TDD repair permits an optimized artifact from the already registered, identical source cohort to finish registration.
+Both binaries, the current source tree, and the reviewed extensions are checked.
+A different source identity still requires live upstream alignment.
+
+This closes the original ServerPlan steps test-suite gap, not its full migration definition of done.
+The native signing action and source-update acceptance remain open.
+Seven translations, earlier port gaps, and global 100-rule acceptance also remain open.
+The next engine cohort must merge and validate Final's newer row-program change.
+No full-repository cold run occurs in this increment.

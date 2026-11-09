@@ -1,4 +1,5 @@
 // Shared exact callable-shape and carrier vocabulary. No name resolution is inferred.
+#include "data-layer/step-settings.rr"
 .decl ssp_compiled(c: node)
 ssp_compiled(c) :- ssp_func(c,f), ssp_name(f,"CompiledStep").
 .decl ssp_arg(c: node, value: node)
@@ -9,8 +10,7 @@ ssp_arg(c,v) :- kind(c,"call"), field(c,"arguments",al), child(al,k,_), kind(k,"
 ssp_annotation_name(ann,name) :- ssp_name(n,name), within(n,ann).
 ssp_annotation_name(ann,name) :- ssp_attr(n,_,name), within(n,ann).
 .decl ssp_carrier_attr(name: symbol)
-ssp_carrier_attr("txn"). ssp_carrier_attr("_txn"). ssp_carrier_attr("conn"). ssp_carrier_attr("_conn").
-ssp_carrier_attr("sql_conn"). ssp_carrier_attr("_serverplan_runtime_txn"). ssp_carrier_attr("_serverplan_sql_conn").
+ssp_carrier_attr(name) :- ssp_setting_value("CALLBACK_RUNTIME_AUTHORITY_ATTRS",_,name).
 .decl ssp_user_token(s: symbol)
 ssp_user_token("callback"). ssp_user_token("callable"). ssp_user_token("decoder"). ssp_user_token("fn").
 ssp_user_token("function"). ssp_user_token("hook"). ssp_user_token("mapper"). ssp_user_token("picker").

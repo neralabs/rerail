@@ -1,0 +1,50 @@
+// Pinned ServerPlan step configuration. Detector and module contracts share this table.
+.decl ssp_setting_type(name: symbol, kind: symbol)
+.decl ssp_setting_value(name: symbol, ordinal: number, value: symbol)
+ssp_setting_type("LINTER_NAME","str").
+ssp_setting_value("LINTER_NAME",0,"serverplan_steps").
+ssp_setting_type("OBJECT_MANIPULATION_METHODS","frozenset").
+ssp_setting_value("OBJECT_MANIPULATION_METHODS",0,"copy").
+ssp_setting_value("OBJECT_MANIPULATION_METHODS",1,"deepcopy").
+ssp_setting_value("OBJECT_MANIPULATION_METHODS",2,"dict").
+ssp_setting_value("OBJECT_MANIPULATION_METHODS",3,"model_copy").
+ssp_setting_value("OBJECT_MANIPULATION_METHODS",4,"model_dump").
+ssp_setting_value("OBJECT_MANIPULATION_METHODS",5,"model_dump_json").
+ssp_setting_type("POSTOP_MANIPULATION_METHODS","frozenset").
+ssp_setting_value("POSTOP_MANIPULATION_METHODS",0,"__setattr__").
+ssp_setting_value("POSTOP_MANIPULATION_METHODS",1,"model_copy").
+ssp_setting_value("POSTOP_MANIPULATION_METHODS",2,"model_dump").
+ssp_setting_value("POSTOP_MANIPULATION_METHODS",3,"model_dump_json").
+ssp_setting_type("CAN_BATCH_FALSE_ALLOWLIST","frozenset").
+ssp_setting_type("LIFECYCLE_RUNTIME_STATE_ALLOWLIST","frozenset").
+ssp_setting_type("ALLOWLIST_SIGNATURE","str").
+ssp_setting_value("ALLOWLIST_SIGNATURE",0,"klUd99Rknl/e0obdXycMIGLpIfk9yfmPOMMPMPy6R3frRqvAIXmup7BorsbxqtZ1Ged9GzQnY4Hq0U8MCPASBQ==").
+ssp_setting_type("RUNTIME_STATE_ATTRS","frozenset").
+ssp_setting_value("RUNTIME_STATE_ATTRS",0,"_conn").
+ssp_setting_value("RUNTIME_STATE_ATTRS",1,"_txn").
+ssp_setting_value("RUNTIME_STATE_ATTRS",2,"conn").
+ssp_setting_value("RUNTIME_STATE_ATTRS",3,"txn").
+ssp_setting_type("CALLBACK_RUNTIME_AUTHORITY_ATTRS","frozenset").
+ssp_setting_value("CALLBACK_RUNTIME_AUTHORITY_ATTRS",0,"_conn").
+ssp_setting_value("CALLBACK_RUNTIME_AUTHORITY_ATTRS",1,"_serverplan_runtime_txn").
+ssp_setting_value("CALLBACK_RUNTIME_AUTHORITY_ATTRS",2,"_serverplan_sql_conn").
+ssp_setting_value("CALLBACK_RUNTIME_AUTHORITY_ATTRS",3,"_txn").
+ssp_setting_value("CALLBACK_RUNTIME_AUTHORITY_ATTRS",4,"conn").
+ssp_setting_value("CALLBACK_RUNTIME_AUTHORITY_ATTRS",5,"sql_conn").
+ssp_setting_value("CALLBACK_RUNTIME_AUTHORITY_ATTRS",6,"txn").
+ssp_setting_type("CALLBACK_RUNTIME_AUTHORITY_HELPERS","frozenset").
+ssp_setting_value("CALLBACK_RUNTIME_AUTHORITY_HELPERS",0,"active_pipeline_txn_for_callbacks").
+ssp_setting_type("AUTHORITY_TYPE_NAMES","frozenset").
+ssp_setting_value("AUTHORITY_TYPE_NAMES",0,"DatabaseConnection").
+ssp_setting_value("AUTHORITY_TYPE_NAMES",1,"ReadTransaction").
+ssp_setting_value("AUTHORITY_TYPE_NAMES",2,"SqlConnection").
+ssp_setting_value("AUTHORITY_TYPE_NAMES",3,"SyncDatabaseConnection").
+ssp_setting_value("AUTHORITY_TYPE_NAMES",4,"SyncSqlConnection").
+ssp_setting_value("AUTHORITY_TYPE_NAMES",5,"WriteTransaction").
+ssp_setting_type("LEGACY_SIDE_EFFECT_TAG_ALLOWLIST","frozenset").
+ssp_setting_type("ROOT","path").
+ssp_setting_value("ROOT",0,root) :- option("settingsRoot",root).
+ssp_setting_type("STEP_DIRS","paths").
+ssp_setting_value("STEP_DIRS",0,cat(root,"/impl/common/l2070_server_plan/steps")) :- option("settingsRoot",root).
+ssp_setting_value("STEP_DIRS",1,cat(root,"/impl/common/l7300_sql_versioned_transactions/steps")) :- option("settingsRoot",root).
+ssp_setting_value("STEP_DIRS",2,cat(root,"/impl/common/l9700_sql_graph_query/steps")) :- option("settingsRoot",root).

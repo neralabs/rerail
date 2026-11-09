@@ -1,0 +1,21 @@
+// The plugin's production membership is distinct from its CLI and collector APIs.
+// Discover hidden children through native requests; the corpus walk omits them.
+#include "project.rr"
+.decl ssp_prod_root(path: symbol)
+ssp_prod_root(root) :- option("rootPath",root).
+ssp_prod_root(root) :- !option("rootPath",_), workspace_root(root).
+.decl ssp_prod_walk(path: symbol)
+ssp_prod_walk("impl/common/l2070_server_plan/steps") :- !env("ssp.api","true").
+ssp_prod_walk("impl/common/l7300_sql_versioned_transactions/steps") :- !env("ssp.api","true").
+ssp_prod_walk("impl/common/l9700_sql_graph_query/steps") :- !env("ssp.api","true").
+.decl ssp_prod_skip(name: symbol)
+ssp_prod_skip("tests"). ssp_prod_skip("test").
+ssp_prod_skip("__pycache__").
+ssp_prod_skip(".git"). ssp_prod_skip(".venv"). ssp_prod_skip("venv"). ssp_prod_skip("tmp").
+ssp_prod_walk(cat(parent,"/",name)) :- ssp_prod_walk(parent), dir_entry(parent,name,1), !ssp_prod_skip(name), dir_metadata(parent,name,_,0,_).
+.decl ssp_prod_file(path: symbol)
+ssp_prod_file(cat(parent,"/",name)) :- ssp_prod_walk(parent), dir_entry(parent,name,0), suffix(".py",name).
+load(path,cat("ssp:production:",path),"python") :- ssp_prod_file(path).
+.decl ssp_prod_document(d: number, path: symbol)
+ssp_prod_document(d,path) :- ssp_prod_file(path), loaded(physical,cat("ssp:production:",path),"python"), doc(d,physical,_), doc_role(d,"primary").
+ssp_prod_document(d,path) :- ssp_prod_file(path), doc(d,path,_), doc_role(d,"primary").
