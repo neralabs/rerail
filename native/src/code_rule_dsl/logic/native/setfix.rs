@@ -38,6 +38,7 @@
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
 mod scalars;
 mod liveness;
+mod rowcode;
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
@@ -1950,7 +1951,9 @@ enum Step {
 /// `multi`: the composite indexes (relation, key columns) its steps read, which the component maintains. `counts`:
 /// per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read them: the
 /// observed fanout of each step, which replanning uses in place of the estimate.
-pub struct JoinRule { steps: Vec<Step>, out: Vec<Term>, nslots: usize, multi: Vec<(usize, Vec<usize>)>, counts: Vec<[std::cell::Cell<u64>; 2]> }
+/// `fused`: by step, an atom fused with the filters after it into a row program (`rowcode`).
+pub struct JoinRule { steps: Vec<Step>, out: Vec<Term>, nslots: usize, multi: Vec<(usize, Vec<usize>)>, counts: Vec<[std::cell::Cell<u64>; 2]>,
+                      fused: Vec<Option<Box<rowcode::Fused>>> }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
     let mut bound: Vec<bool> = Vec::new();
@@ -2154,13 +2157,14 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
     liveness::sums(&mut steps,&out);
     scalars::plan(&mut steps);
     let counts = steps.iter().map(|_| Default::default()).collect();
-    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts })
+    let fused = if std::env::var_os("RERAIL_NO_ROW_PROGRAMS").is_some() { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
+    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
 fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> Result<u64> {
     struct Ctx<'a> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
-                     key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)> }
+                     key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch> }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -2236,6 +2240,49 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let (rows, cands) = candidates(src, store, &cx.key, keys);
+                if let Some(f) = j.fused[i].as_deref() {
+                    // Fused with the filters after it: the candidates a chunk at a time, the filters one row program
+                    // over each chunk, and only its rows go on (`rowcode`).
+                    let mut s = std::mem::take(&mut cx.scratch[i]);
+                    s.columns.resize_with(f.columns.len(), Vec::new);
+                    s.params.clear();
+                    s.params.extend(f.params.iter().map(|p| { let v = val(slots, p.key); if p.doc { v >> 32 } else { v } }));
+                    fn flush(cx: &mut Ctx<'_>, i: usize, f: &rowcode::Fused, s: &mut rowcode::Scratch, slots: &mut [i64]) {
+                        let counts = &cx.j.counts;
+                        // Each fused step's entries and its passes, as `go` counts them step by step.
+                        let bump = |m: usize, n: u64| {
+                            let c = &counts[i + m][1]; c.set(c.get() + n);
+                            let c = &counts[i + 1 + m][0]; c.set(c.get() + n);
+                        };
+                        bump(0, s.rows as u64);
+                        let words = f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n) }).to_vec();
+                        for (w, &word) in words.iter().enumerate() {
+                            let mut m = word;
+                            while m != 0 {
+                                let r = 64 * w + m.trailing_zeros() as usize;
+                                m &= m - 1;
+                                for &(slot, b) in &f.binds {
+                                    slots[slot] = match b { rowcode::Bind::Column(k) => s.columns[k][r], rowcode::Bind::Param(k) => s.params[k] };
+                                }
+                                go(cx, i + 1 + f.steps, slots);
+                            }
+                        }
+                        s.rows = 0;
+                        s.columns.iter_mut().for_each(Vec::clear);
+                    }
+                    cands.any(|id| {
+                        if rows.dead(id) { return false; }
+                        let row = rows.row(id);
+                        if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
+                        for &(k, c) in &f.gather { s.columns[k].push(row.at(c)); }
+                        s.rows += 1;
+                        if s.rows == rowcode::CHUNK { flush(cx, i, f, &mut s, slots); }
+                        false
+                    });
+                    if s.rows > 0 { flush(cx, i, f, &mut s, slots); }
+                    cx.scratch[i] = s;
+                    return;
+                }
                 // An atom that binds nothing (`ann_root(_)`, a key all bound) is a test: every row it matches leads to
                 // the same bindings, so the rest of the body runs once if one does (a semi-join), not once per row.
                 let exists = *neg || binds.is_empty();
@@ -2389,7 +2436,8 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             Step::In { a, set, want } => if set.contains(&val(slots, *a)) == *want { go(cx, i + 1, slots) },
         }
     }
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new() };
+    let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch };
     let mut slots = vec![0i64; j.nslots];
     go(&mut cx, 0, &mut slots);
     scalars::explain(&j.steps,store);

@@ -302,7 +302,7 @@ fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<R
             }
             // A fixed point's carry: free, as a position's pattern is (sound: it may be anything).
             // A `back_fill` too: it reads bytes after, which the window does not hold.
-            BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Carry(_) | BlockOp::BackFill(..) => {
+            BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Carry(_) | BlockOp::BackFill(..) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => {
                 cone.insert((at, lag));
             }
         }
