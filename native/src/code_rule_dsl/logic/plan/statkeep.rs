@@ -79,9 +79,32 @@ impl RelStats {
     /// Whole documents' rows in (`sign` 1) or out (−1): `flat` row-major, `width` values a row (columns past it, in
     /// a row narrower than the relation, are not counted). Every row of each document they name must be in `flat`.
     pub(in crate::code_rule_dsl) fn documents(&mut self, flat: &[i64], width: usize, sign: i64) {
+        self.rows_of(flat, width, sign, None)
+    }
+
+    /// Rows in or out, as `documents`, where a row's document is the one its column `at` names (a node,
+    /// `key << 32 | index`), or one document for all when `at` is `None`: as the chunks' totals read an export's
+    /// rows (its first node column), whose first column may hold a value many documents share.
+    pub(in crate::code_rule_dsl) fn rows_by(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<usize>) {
+        self.rows_of(flat, width, sign, Some(at))
+    }
+
+    fn rows_of(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>) {
         if width == 0 || flat.is_empty() {
             return;
         }
+        // A row's document (as `doc32` and `document_of` read its first column, else by `at`), and whether `v` names it.
+        let of = |row: &[i64]| match at {
+            None => (doc32(row[0]), document_of(row[0])),
+            Some(at) => {
+                let d = at.map_or(-1, |c| row[c] >> 32);
+                (d, d)
+            }
+        };
+        let names = |v: i64, row: &[i64]| match at {
+            None => names_doc(v, row[0]),
+            Some(at) => at.is_some_and(|c| v >> 32 == row[c] >> 32),
+        };
         let n = flat.len() / width;
         self.rows += sign * n as i64;
         let mut counts: FxHashMap<(i64, i64), i64> = FxHashMap::default();
@@ -92,17 +115,16 @@ impl RelStats {
             values.clear();
             crossing.clear();
             for row in flat.chunks_exact(width) {
-                let (first, v) = (row[0], row[c]);
-                *counts.entry((doc32(first), v)).or_default() += 1;
+                let (v, (d32, dof)) = (row[c], of(row));
+                *counts.entry((d32, v)).or_default() += 1;
                 *values.entry(v).or_default() += 1;
-                let named = names_doc(v, first);
-                *crossing.entry(document_of(first)).or_default() |= !named;
+                *crossing.entry(dof).or_default() |= !names(v, row);
             }
             col.sqd += sign * counts.values().map(|k| k * k).sum::<i64>();
             // Distinct values per document: (document, value) pairs, by the document a row names.
             let mut per_doc: FxHashMap<(i64, i64), ()> = FxHashMap::default();
             for row in flat.chunks_exact(width) {
-                per_doc.insert((document_of(row[0]), row[c]), ());
+                per_doc.insert((of(row).1, row[c]), ());
             }
             col.local_ndv += sign * per_doc.len() as i64;
             col.crossing += sign * crossing.values().filter(|x| **x).count() as i64;
@@ -173,6 +195,11 @@ impl RelStats {
                 (name.clone(), n, ndv, sq, sqd.clamp(n, sq))
             })
             .collect()
+    }
+
+    /// Column `c`'s count of each value, while it has few enough to keep them exactly (`EXACT`).
+    pub(in crate::code_rule_dsl) fn exact(&self, c: usize) -> Option<impl Iterator<Item = (i64, i64)> + '_> {
+        self.cols.get(c)?.exact.as_ref().map(|e| e.iter().map(|(v, n)| (*v, *n)))
     }
 
     /// Bytes `encode` takes, near enough (the exact maps and sketches dominate).

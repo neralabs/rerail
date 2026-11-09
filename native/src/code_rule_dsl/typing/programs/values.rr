@@ -48,22 +48,21 @@ v_asg(@dot(sq, x), v) :- kind(a, "assignment"), field(a, "left", l), kind(l, "id
 len_want(v) :- v_asg(_, v).
 
 // ---- names in a value -------------------------------------------------------------------------------------------
-// The symbols a name may make: struct's definitions, and each name a module or class binds.
-.decl v_dom(q: symbol)
-v_dom(q) :- struct__def(q, _).
-v_dom(@dot(m, x)) :- struct__binds(m, x, _, _).
-v_dom(@dot(c, x)) :- struct__member(c, x, _).
 // v_nq(e): a name whose symbol is asked for: a wanted name, and the object of a wanted attribute.
 .decl v_nq(e: node)
 v_nq(e) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")).
 v_nq(o) :- v_nq(e), attr_of(e, o, _).
 // v_name(e, q): name e reads symbol q, as its module binds it (before any re-export is followed).
 .decl v_name(e: node, q: symbol)
-v_name(e, t) :- v_nq(e), kind(e, "identifier"), text(e, x), nearest(e, m0, "module"), v_modq(m0, mq),
-    struct__binds(mq, x, how, t), how != "assign".
-v_name(e, @dot(mq, x)) :- v_nq(e), kind(e, "identifier"), text(e, x), nearest(e, m0, "module"), v_modq(m0, mq),
-    struct__binds(mq, x, "assign", _).
-v_name(e, q) :- v_nq(e), attr_of(e, o, a), v_name(o, q0), v_res(q0, r0), q = @dot(r0, a), v_dom(q).
+// The name and its module first, from the document alone, then struct's bindings probed on both: struct's rows are
+// the whole workspace's, so a join that starts from them is that size in every chunk.
+.decl v_idn(e: node, mq: symbol, x: symbol)
+v_idn(e, mq, x) :- v_nq(e), kind(e, "identifier"), text(e, x), nearest(e, m0, "module"), v_modq(m0, mq).
+v_name(e, t) :- v_idn(e, mq, x), struct__binds(mq, x, how, t), how != "assign".
+v_name(e, @dot(mq, x)) :- v_idn(e, mq, x), struct__binds(mq, x, "assign", _).
+// An attribute: a symbol struct knows (a definition, or a name its module or class binds).
+v_name(e, q) :- v_nq(e), attr_of(e, o, a), v_name(o, q0), v_res(q0, r0), q = @dot(r0, a),
+    (struct__def(q, _) ; struct__binds(r0, a, _, _) ; struct__member(r0, a, _)).
 // v_res(q, r): q, then each name an import chain makes it (`from m import x` in module p: p.x is m.x).
 .decl v_ref(q: symbol)
 v_ref(q) :- v_name(_, q).

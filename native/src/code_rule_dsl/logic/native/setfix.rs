@@ -443,6 +443,14 @@ fn read_sql(conn: &Connection, sql: &str, types: &[u8], syms: &mut Interner) -> 
 fn slot(t: &str) -> Result<usize> { t.strip_prefix('v').and_then(|s| s.parse().ok()).ok_or_else(|| err(format!("bad slot {t}"))) }
 fn num<T: std::str::FromStr>(t: &str) -> Result<T> { t.parse().map_err(|_| err(format!("bad number {t}"))) }
 
+/// Whether an environment setting is on, read once per process (these are asked per index and per join).
+macro_rules! env_set {
+    ($name:literal) => {{
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os($name).is_some())
+    }};
+}
+
 pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let symbols = symbols(conn)?;
     let mut syms = Interner::for_loading(&symbols);
@@ -1650,6 +1658,25 @@ impl InRel {
     }
     /// For a key of several columns over a view, the most selective column the source indexes (sorted, or by its
     /// lookup) with at most `LEAD_MATCHES` rows a value: its position in `cols`, and whether sorted.
+    /// For a key of several columns of a derived relation (no view), the chain (`chains`) of one of them whose
+    /// postings are short, as `lead` takes a source's own index: (the chain, the key column it is on). `None` when
+    /// no column's chain holds every row or each is long.
+    fn chain_lead(&self, cols: &[usize]) -> Option<(usize, usize)> {
+        const LEAD_MATCHES: usize = 8;
+        if self.view.is_some() || cols.len() < 2 || self.n == 0 {
+            return None;
+        }
+        cols.iter()
+            .enumerate()
+            .filter_map(|(j, &c)| {
+                let i = self.chains.iter().position(|ix| ix.cols == [c])?;
+                let ix = &self.chains[i];
+                (ix.next.len() >= self.n && !ix.table.is_empty()).then(|| (self.n.div_ceil(ix.table.len()), i, j))
+            })
+            .filter(|&(m, _, _)| m <= LEAD_MATCHES)
+            .min()
+            .map(|(_, i, j)| (i, j))
+    }
     fn lead(&self, cols: &[usize]) -> Option<(usize, bool)> {
         const LEAD_MATCHES: usize = 8;
         let v = self.view.as_ref().filter(|_| cols.len() > 1)?;
@@ -1751,16 +1778,20 @@ impl InRel {
                 // `inside_<set>`, `node`, `name`): its candidates, checked against the other keys by the step, not a
                 // hash table of every row.
                 Csr { lead, ..empty(!sorted, sorted) }
+            } else if let Some((chain, lead)) = self.chain_lead(cols) {
+                // The same for a derived relation: one of its key columns' own chains, kept from the waves that made
+                // it, is selective, so no composite index is built.
+                Csr { chain: Some(chain), lead, ..empty(false, false) }
             } else {
                 charge(Unit::IndexEntry, self.len() as u64);
                 Csr::build(self, cols)
             };
-            if std::env::var_os("RERAIL_SPIKE_INDEX").is_some() {
+            if env_set!("RERAIL_SPIKE_INDEX") {
                 eprintln!("O125 index base={} took {:.3} ms rows={} cols={cols:?} chain={} source={} sorted={} lead={} view={}", self.base, (thread_cpu() - c0) * 1e3, self.len(), m.chain.is_some(), m.source, m.sorted, m.lead, self.view.is_some());
             }
             let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
             l.0 += thread_cpu() - c0;
-            if std::env::var_os("RDL_PROFILE").is_some() {
+            if env_set!("RDL_PROFILE") {
                 eprintln!("      index on {cols:?} of {} rows in {:.1} ms", self.len(), t0.elapsed().as_secs_f64() * 1e3);
             }
             Arc::new(m)
@@ -1827,7 +1858,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
             let n = view.ids.as_ref().map_or(0, Vec::len);
             let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default() });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
-            if std::env::var_os("RDL_PROFILE").is_some() {
+            if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
             }
             INPUTS.lock().unwrap().insert(key, rel.clone());
@@ -1847,7 +1878,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
         l.0 += thread_cpu() - c0;
         l.1 += rel.len() as u64;
     }
-    if std::env::var_os("RDL_PROFILE").is_some() {
+    if env_set!("RDL_PROFILE") {
         eprintln!("      input {} rows in {:.1} ms: SELECT {cols} FROM {table}", rel.len(), t0.elapsed().as_secs_f64() * 1e3);
     }
     INPUTS.lock().unwrap().insert(key, rel.clone());
@@ -2416,7 +2447,7 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
     liveness::sums(&mut steps,&out);
     scalars::plan(&mut steps);
     let counts = steps.iter().map(|_| Default::default()).collect();
-    let fused = if std::env::var_os("RERAIL_NO_ROW_PROGRAMS").is_some() { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
+    let fused = if env_set!("RERAIL_NO_ROW_PROGRAMS") { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
     let forms = (0..steps.len()).map(|_| table::StepForm::default()).collect();
     Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms })
 }
@@ -2485,6 +2516,8 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
                     if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
                     else if let Some(i) = ix.chain {
                         let index = &rel.chains[i];
+                        // A chain on the key's columns, or on its lead column alone (`chain_lead`: every key is checked).
+                        let key = if index.cols.len() == ix.cols.len() { key } else { &key[ix.lead..=ix.lead] };
                         (Rows::In(rel), index.get(&rel.rows, rel.k, key).map_or(Cands::Slice(&[]), |p| Cands::Chain { head: p.head, next: &index.next, stop: 0 }))
                     }
                     else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[ix.lead]], key[ix.lead]).unwrap_or(&[]))) }

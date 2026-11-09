@@ -115,7 +115,7 @@ pub(super) fn component(
         queries.push(Some(q));
     }
     if recursive {
-        run.model.stats.solving = scc.clone();
+        run.model.stats.solve(scc.clone());
         for rule in rules {
             for (i, l) in rule.body.iter().enumerate() {
                 if let Literal::Atom(a) = l
@@ -139,7 +139,7 @@ pub(super) fn component(
                 }
             }
         }
-        run.model.stats.solving.clear();
+        run.model.stats.solve(BTreeSet::new());
     }
     let tops = run
         .prog

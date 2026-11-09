@@ -75,6 +75,11 @@ impl Exports {
         added
     }
 
+    /// How many rows export `rel` holds.
+    pub(super) fn len(&self, rel: &str) -> usize {
+        self.rels.get(rel).map_or(0, |h| h.source.as_ref().map_or_else(|| h.len(), |s| s.len()))
+    }
+
     /// Export `rel`'s rows so far, copied, as a source of columns `c0…`: for a reader that starts while chunks may
     /// still add (the cone of requests, decision 0065 §2a, whose loads go through the chunk path).
     pub(super) fn snapshot(&self, rel: &str, width: usize) -> Arc<dyn Source> {
