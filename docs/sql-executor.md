@@ -596,9 +596,16 @@ node scripts/profiling/sql-report.mjs --sql-session /tmp/sql-profile/raw /tmp/sq
 The report contains SQL text, EXPLAIN plans, bytecode, CPU time, VM instructions, and native table counters.
 Contexts identify the API operation, preparation stage, recursive component, frame, relation, and rule step.
 Native version differences have separate operator records. Failed operations and rollback remain in the trace.
-Retained support initialization records its native CPU separately from child SQL.
+Retained support initialization records exclusive native CPU, excluding child SQL and child operators.
+
 Native table counters include compound-key prefix probes and candidate inspections, including candidates that SQLite rejects.
 The benchmark probe reuses this profiler when capture is active, preserving SQLite's single callback.
+
+Fused phase preparation has its own CPU span and report category.
+Its context records SQL bytes, CTE definitions, result branches, and logical reads.
+`explain()` describes result sharing and its evaluation boundary.
+A phase can distribute one materialized result to several destinations.
+Each destination retains its own key width and constraint checks.
 
 The standalone report is diagnostic. It does not supply an output oracle or grant performance acceptance.
 The existing complete-job execution allowance and missing-parity checks remain visible in the report.

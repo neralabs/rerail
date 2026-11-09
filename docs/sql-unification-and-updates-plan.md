@@ -1858,3 +1858,75 @@ They cover nullable values, restricted indexes, identical rows, deletions, repla
 An additional test requires identical patches to retain every root and rejects invalid or duplicate incoming rows.
 The SQL executor suite passes 138 tests, with one ignored test. All 38 profiling and reporting tests pass.
 The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.
+
+### Final Shape merge and SQL preparation (2026-11-08)
+
+Merge `5ef8c86e2` incorporates `origin/jeremybarnes/final-rerail-shape` at `49035cc90`.
+The resolution retains incoming native string joins and the existing shared scalar summaries.
+A regression test preserves deferred sum checks when a string join observes the sum as a lookup key.
+
+#### Preparation and result transport
+
+The fused phase emitted one result branch per destination, plus separate branches for computed patch keys.
+Several destinations read the same materialized CTE projection. SQLite prepared repeated branches and transferred the same rows repeatedly.
+
+The phase now reads each matching materialized projection once. Its native result decoder distributes those rows to the destinations.
+The proof requires the same phase CTE and the same projection width. Nonmaterialized expressions retain separate reads.
+Each destination retains its key width, row count, schema checks, and publication preparation.
+The phase still prepares every replacement before it publishes any replacement.
+
+The result builder caches column projections by width and stores the first destination inline.
+These changes remove allocations from each wave. The first implementation added allocation costs that slowed some small warmed edits.
+
+`SQL phase preparation` records cache lookup and compilation CPU separately from SQL execution.
+Its inputs record SQL bytes, CTE definitions, emitted result branches, and logical reads.
+The report assigns preparation its own cost category and action. Standalone explain describes the sharing contract and evaluation boundary.
+Runtime contexts expose actual result-branch and logical-read counts.
+
+The profiler also subtracts child operator CPU from its parent operator.
+This prevents nested preparation from appearing twice in the cost report. Receipts retain inclusive time and the excluded child time.
+Older receipts retain their previous accounting, which excluded child SQL but did not exclude child operators.
+
+#### Measurements and limits
+
+Both optimized binaries include the same preparation probe. The baseline contains the completed Final Shape merge.
+Four alternating profile pairs measure six successful edits at 10,000 regions.
+Median preparation CPU decreases from 11.42 ms to 10.20 ms, or 11%. Three pairs improve, and one pair is slower.
+
+| Six successful edits | Baseline | Final |
+| --- | ---: | ---: |
+| Preparation calls | 34 | 34 |
+| Generated result branches across those calls | 460 | 360 |
+| SQL result rows transferred | 686 | 450 |
+| SQL VM instructions | 39,040 | 36,500 |
+| SQL scan steps | 810 | 668 |
+| SQL executions | 60 | 60 |
+
+Separate CPU trials disable profiling and use fresh processes and stores. Eight pairs alternate execution order at each size.
+Each process executes 600 edits. Every pair compares its final query results, and guards reject publication to unrelated regions.
+
+| Median CPU | 1,000 regions: baseline / final | 10,000 regions: baseline / final |
+| --- | ---: | ---: |
+| First three edits | 14.69 / 12.62 ms | 17.01 / 17.07 ms |
+| First six edits | 18.58 / 17.48 ms | 20.65 / 20.99 ms |
+| Remaining 594 edits | 668.59 / 637.75 ms | 707.84 / 716.06 ms |
+| Initial execution | 143.44 / 142.07 ms | 1.484 / 1.482 s |
+| Peak RSS | 65.85 / 65.08 MiB | 483.68 / 481.00 MiB |
+
+The smaller workload improves by 14% for its first three edits and 5% for its warmed edits.
+The larger workload has overlapping edit timings. These measurements do not establish an end-to-end CPU improvement for that size.
+The work counters establish fewer result branches, transferred rows, VM instructions, and scan steps.
+Other jobs ran on the shared macOS arm64 host. These measurements do not establish isolated hardware limits.
+Further preparation work can target remaining statement shapes and CTE complexity.
+
+#### Validation
+
+The final selected suite passes 296 Rust tests, with four ignored tests. All 39 profiling and reporting tests pass.
+New tests cover shared keys and rows, different key widths, independent nullable checks, atomic failure, and volatile expressions.
+A nested profiling test requires exclusive CPU to exclude both child SQL and child operators.
+
+Complete recursive sessions pass at 1,000 and 10,000 regions against independent cold execution.
+Each session compares all nine checkpoints, every relation, output deltas, widening counters, failures, recovery, and queries.
+Both reports pass the framework's complete-job execution allowance at 100 SQL executions.
+Their connections close normally, with no unknown SQL origins or running statements.
+The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.

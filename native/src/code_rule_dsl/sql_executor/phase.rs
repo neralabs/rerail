@@ -3,6 +3,13 @@
 use super::scratch::Work;
 use super::*;
 
+mod reads;
+
+struct Definition {
+    sql: String,
+    materialized: bool,
+}
+
 enum Keys {
     Native(versions::Version),
     Query(String),
@@ -25,7 +32,7 @@ pub(super) struct Counts {
 #[derive(Default)]
 pub(super) struct Phase {
     pub analyses: Vec<Value>,
-    definitions: Vec<String>,
+    definitions: Vec<Definition>,
     outputs: Vec<Output>,
 }
 impl Phase {
@@ -43,8 +50,10 @@ impl Phase {
             .map(|i| format!("c{i}"))
             .collect::<Vec<_>>()
             .join(",");
-        self.definitions
-            .push(format!("{name}({columns}) AS {hint} ({query})"));
+        self.definitions.push(Definition {
+            sql: format!("{name}({columns}) AS {hint} ({query})"),
+            materialized: hint == "MATERIALIZED",
+        });
         name
     }
     pub fn patch(
@@ -113,71 +122,46 @@ impl Phase {
             .versions
             .ok_or_else(|| error("SQL phase requires native storage"))?;
         let width = self.outputs.iter().map(|o| o.width).max().unwrap();
-        let mut arms = vec![];
-        for (id, o) in self.outputs.iter().enumerate() {
-            let columns = |n| {
-                (0..width)
-                    .map(|c| {
-                        if c < n {
-                            format!("c{c}")
-                        } else {
-                            "NULL".into()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(",")
-            };
-            arms.push(format!(
-                "SELECT {},{} FROM {}",
-                id * 2,
-                columns(o.width),
-                o.source
-            ));
-            if let Keys::Query(keys) = &o.keys {
-                arms.push(format!(
-                    "SELECT {},{} FROM {keys}",
-                    id * 2 + 1,
-                    columns(o.key_width)
-                ));
-            }
-        }
+        let reads = reads::Plan::new(&self, width);
         let sql = format!(
             "WITH {} {}",
-            self.definitions.join(","),
-            arms.join(" UNION ALL ")
+            self.definitions
+                .iter()
+                .map(|d| d.sql.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            reads.arms.join(" UNION ALL ")
         );
-        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>(),"publication":self.outputs.iter().map(|o|json!({"table":o.table,"previous_rows":o.old.len(),"strategy":if o.old.len()==0{"bulk empty root"}else if matches!(o.keys,Keys::Replace){"bulk replacement"}else{"validated persistent patch; dense preparation can bulk rebuild"}})).collect::<Vec<_>>(),"logicalAnalyses":self.analyses}));
+        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>(),"publication":self.outputs.iter().map(|o|json!({"table":o.table,"previous_rows":o.old.len(),"strategy":if o.old.len()==0{"bulk empty root"}else if matches!(o.keys,Keys::Replace){"bulk replacement"}else{"validated persistent patch; dense preparation can bulk rebuild"}})).collect::<Vec<_>>(),"logicalAnalyses":self.analyses,"outputProtocol":{"sqlArms":reads.arms.len(),"logicalReads":reads.logical_reads}}));
         // Delta-first CROSS JOINs and primary-key probes fix the sparse access
         // paths. Reuse preparation across wave scopes while xFilter reads their
         // current immutable roots; rows and expressions are never cached here.
-        let mut statement = w.db.prepare_cached(&sql).map_err(error)?;
+        let mut statement = {
+            let _cpu = super::super::logic::profile::span(|| "SQL phase preparation".into());
+            let operation = w.profiler.map(|p| {
+                p.operation(
+                    "SQL phase preparation",
+                    ("sql-extension", 0),
+                    0,
+                    vec![
+                        ("sql_bytes".into(), sql.len() as i64),
+                        ("definitions".into(), self.definitions.len() as i64),
+                        ("output_arms".into(), reads.arms.len() as i64),
+                        ("logical_reads".into(), reads.logical_reads as i64),
+                    ],
+                )
+            });
+            let prepared = w.db.prepare_cached(&sql).map_err(error);
+            if let Some(operation) = operation {
+                operation.finish_unobserved();
+            }
+            prepared?
+        };
         let mut cursor = statement.query([]).map_err(error)?;
         let mut rows = vec![Vec::new(); self.outputs.len()];
         let mut key_rows = vec![Vec::new(); self.outputs.len()];
         while let Some(row) = cursor.next().map_err(error)? {
-            let tag = row.get::<_, i64>(0).map_err(error)? as usize;
-            let id = tag / 2;
-            let output = self
-                .outputs
-                .get(id)
-                .ok_or_else(|| error("invalid SQL phase output tag"))?;
-            if tag % 2 == 1 && !matches!(output.keys, Keys::Query(_)) {
-                return Err(error("unexpected SQL phase key tag"));
-            }
-            let size = if tag % 2 == 0 {
-                output.width
-            } else {
-                output.key_width
-            };
-            let cells = (1..=size)
-                .map(|c| row.get(c))
-                .collect::<rusqlite::Result<Vec<Option<i64>>>>()
-                .map_err(error)?;
-            if tag % 2 == 0 {
-                rows[id].push(cells);
-            } else {
-                key_rows[id].push(cells);
-            }
+            reads.collect(row, &mut rows, &mut key_rows)?;
         }
         drop(cursor);
         drop(statement);

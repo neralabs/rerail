@@ -288,3 +288,14 @@ test("execution inventory retains event attribution when identical SQL crosses p
     assert.deepEqual(JSON.parse(readFileSync(join(directory, "execution-inventory.json"))), report.executionInventory);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+test("preparation has its own cost bucket and action using exclusive CPU", () => {
+  const summary = actionableSummary({ workload: {}, queries: [
+    query({ id: 1, kind: "operator", sql: "SQL phase preparation", cpuNs: 90_000_000, selfCpuNs: 30_000_000 }),
+    query({ id: 2, kind: "operator", sql: "parent operation", cpuNs: 100_000_000, selfCpuNs: 10_000_000 }),
+    query({ id: 3, sql: "SELECT 1", cpuNs: 60_000_000, selfCpuNs: 60_000_000 }),
+  ] });
+  assert.equal(summary.budget.measuredCpuMs, 100);
+  assert.equal(summary.costBreakdown.find(c => c.label === "SQL statement preparation").cpuMs, 30);
+  assert.deepEqual(summary.actions.find(a => a.key === "sql-phase-preparation").queryIds, [1]);
+});
