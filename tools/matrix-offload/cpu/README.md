@@ -44,6 +44,28 @@ bin/c7_bandwidth single   # C7 read bandwidth L1/L2/DRAM, one thread (512 MB arr
 bin/c7_bandwidth mt       # C7 all-thread bandwidth, DRAM and L2 (~20 s wall)
 ```
 
+Real workloads (data-layer corpus extracts; `DATA_DIR` = the `mo-data/` directory, or set
+`$MO_DATA`):
+
+```sh
+bin/w1_prefilter DATA_DIR # W1 prefilter overlap: postings, dense, NEON AND-any, SME BMOPA nonzero count
+bin/w2_eqjoin DATA_DIR    # W2 per-document equality join: direct, brute force, NEON tile, SME BMOPA threshold
+bin/w3_closure DATA_DIR   # W3 import closure: DP, row-OR squaring, NEON triangle, SME BMOPA squaring
+bin/w4_hist DATA_DIR      # W4 kind histogram: direct, 2/4/8 sub-histograms
+bin/w5_cooc DATA_DIR      # W5 name co-occurrence: bitmap, NEON 4x4, SME BMOPA, postings merge / NEON 8x8
+```
+
+To re-measure the Rust baselines in the same window, run this with the rustup 1.97.1 toolchain
+(Homebrew rustc is currently broken by an LLVM upgrade):
+
+```sh
+cargo build --release --bin baseline   # in tools/matrix-offload/extract, CARGO_TARGET_DIR outside the repo
+baseline DATA_COPY docs/rule-syntax w5 3 2048
+```
+
+`DATA_COPY` must be a directory of symlinks to `mo-data/*.bin` and `mo-data/*.txt`, so the
+baseline's exports do not overwrite the shared files. W1-W4 run the same way, without the 2048.
+
 Memory stays under 1 GB. The peaks are C4 at n=8192, k=64 Kbit (~512 MB) and C6 (~530 MB).
 
 ## Files
@@ -57,6 +79,7 @@ Memory stays under 1 GB. The peaks are C4 at n=8192, k=64 Kbit (~512 MB) and C6 
 | `c4_bitmatmul.c` | scalar / NEON 4x4 / SME BMOPA 2x2 bit-matrix product, panel packing, ADDVA/ADDHA corrections, three readouts |
 | `c5_intersect.c` | branch-free merge, NEON 8x8 all-pairs (rotations, broadcasts, two pairs interleaved), galloping, NEON block skip |
 | `c6_bitmap.c` | pair and one-vs-many AND-count: scalar, NEON, streaming SVE, BMOPA diagonal, BMOPA over a 16-bitmap interleaved layout |
+| `mo.h`, `w1_prefilter.c` … `w5_cooc.c` | real-workload probes: data loading, panel packing, popcount seeds; one file per workload |
 | `c7_bandwidth.c` | scalar / NEON / streaming-SVE / streaming-load→BMOPA read-and-reduce, single thread and all threads |
 
 ## Topology notes (M5 Max)

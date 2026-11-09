@@ -6,10 +6,11 @@ CC ?= clang
 CFLAGS ?= -O2 -mcpu=apple-m4+cssc -Wall -Wno-unused-function
 OUT ?= bin
 PROBES = c1_streaming c2_bmopa c3_mopa c4_bitmatmul c5_intersect c6_bitmap c7_bandwidth
+WORKLOADS = w1_prefilter w2_eqjoin w3_closure w4_hist w5_cooc
 
-all: $(addprefix $(OUT)/,$(PROBES))
+all: $(addprefix $(OUT)/,$(PROBES)) $(addprefix $(OUT)/,$(WORKLOADS))
 
-$(OUT)/%: %.c bench.h
+$(OUT)/%: %.c bench.h mo.h
 	@mkdir -p $(OUT)
 	$(CC) $(CFLAGS) $< -o $@ -lpthread
 

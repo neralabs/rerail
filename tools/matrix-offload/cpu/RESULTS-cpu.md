@@ -471,3 +471,115 @@ Where everything is bandwidth-bound:
   L2. A 2x2 BMOPA block does 16 bit-ops per operand byte, so at 20 Tbit-op/s it needs ~150 GB/s.
   That is the cluster's whole SME load path, and more than its DRAM share. Hence the B-panel
   grouping in C4: it has to be blocked for L2.
+
+## Real workloads (data-layer corpus, 13,088 Python documents)
+
+The same kernels, run on the workloads extracted to `mo-data/`.
+
+How these were measured:
+
+- **Baselines re-measured in the same window.** The Rust generator
+  (`tools/matrix-offload/extract/src/bin/baseline.rs`) was rebuilt with the rustup 1.97.1
+  toolchain into the scratchpad. It ran on a symlinked copy of the data dir, right after each C
+  probe. Its re-exported inputs are byte-identical to `mo-data/`.
+- **C ports of the baseline forms** run inside each probe, so ratios against the new kernels share
+  one process and one clock.
+- **Verification:** every result matched the expected value exactly. W2 is also checked per
+  document and W4 per cell.
+- **Conditions:** load average 10-24 during this window (P clock estimate 2.9-4.1 GHz). Times are
+  minimum CPU seconds, with the median within 1-3 %.
+- Sources are `w1_prefilter.c` … `w5_cooc.c` and `mo.h`. Raw outputs are `cpu-runs/w*.txt` and
+  `cpu-runs/rs-w*.txt`.
+
+| workload | form | CPU time | bytes read | GB/CPU-s | vs Rust baseline (same window) | load |
+|---|---|---|---|---|---|---|
+| W5 co-occurrence AᵀA, 2048 × 13,088 bits, 2.1 M pairs | Rust sorted-list merge | 2.269 s | 1.25 MB postings | - | 1.0 (merge) | 13 |
+| | Rust bitmap AND+popcount (autovectorised) | 77 ms | 3.36 MB | 0.04 | 1.0 (bitmap) | 13 |
+| | C port, bitmap AND+popcount | 95 ms | 3.36 MB | 0.04 | 0.8x | 15 |
+| | NEON 4x4 register block | 57 ms | 3.36 MB | 0.06 | 1.35x | 15 |
+| | **SME BMOPA 2x2** (block-upper, counts written, reduced) | **1.8 ms** (+1.8 ms pack) | 218 MB of operand loads through L1/L2 | 121 (operands) | **43x** bitmap, 1,260x merge | 15 |
+| | C port, branch-free merge on u16 postings | 2.50 s | 1.25 MB | - | 0.9x merge | 15 |
+| | NEON 8x8 all-pairs on postings | 0.79 s | 1.25 MB | - | 2.9x merge | 15 |
+| | NEON 8x8, two pairs interleaved | 0.55 s | 1.25 MB | - | 4.1x merge | 15 |
+| W1 prefilter overlap, 13,088 docs × 444 rules, k = 767 bits | Rust postings per rule (HashMap column lookups) | 6.9 ms | 0.83 MB postings | - | 1.0 (postings) | 12 |
+| | Rust dense AND-popcount != 0 | 15.6 ms | 1.30 MB | 0.08 | 1.0 (dense) | 12 |
+| | C port, postings per rule (direct-indexed columns) | 1.52 ms | 0.83 MB | 0.5 | 4.5x postings | 12 |
+| | C port, dense AND-popcount != 0 | 8.4 ms | 1.30 MB | 0.15 | 1.9x dense | 12 |
+| | NEON AND-any 4x4 (OR-accumulate, no popcount) | 4.9 ms | 1.30 MB | 0.27 | 3.2x dense | 12 |
+| | **SME BMOPA 2x2, nonzero-count readout** | **0.69 ms** (+0.22 ms pack) | 1.30 MB | 1.9 | **23x** dense, **10x** postings | 12 |
+| W2 equality join per document, 4.26 M reads × 1.53 M bindings (4.14 G brute-force pairs) | Rust hash join | 59.1 ms | 11.8 MB | 0.2 | 1.0 (hash) | 10 |
+| | Rust direct-indexed counts | 2.4 ms | 11.8 MB | 4.9 | 1.0 (direct) | 10 |
+| | Rust brute force (autovectorised) | 664 ms | 11.8 MB | - | 1.0 (brute) | 10 |
+| | C port, direct-indexed counts | 2.3 ms | 11.8 MB | 5.1 | 1.0x direct | 10 |
+| | C port, brute force autovectorised | 322 ms (12.9 G cmp/s) | 11.8 MB | - | 2.1x brute | 10 |
+| | NEON brute-force tile (4 reads × 16 bindings) | 94.6 ms (43.7 G cmp/s) | 11.8 MB | - | 7.0x brute; **41x slower than direct** | 10 |
+| | SME BMOPA brute force (u32 0xFFFF0000\|id, xnor == 32, threshold readout) | 497 ms (8.3 G cmp/s) | 11.8 MB | - | 1.3x brute; 210x slower than direct | 10 |
+| W3 import closure, 10,824-component DAG | Rust bit-row DP | 2.7 ms | 14.7 MB | 5.4 | 1.0 (DP) | 19 |
+| | Rust row-OR boolean squaring (5 squarings) | 1.073 s | - | - | 1.0 (squaring) | 19 |
+| | C port, bit-row DP | 0.9 ms | 14.7 MB | 16 | 3.0x DP | 19 |
+| | **bit-row DP, triangle-restricted ORs (NEON)** | **0.4 ms** | 14.7 MB | 37 | **6.8x DP** | 19 |
+| | C port, row-OR squaring | 596 ms | - | - | 1.8x squaring | 19 |
+| | NEON row-OR squaring, triangle-restricted | 87 ms | - | - | 12x squaring | 19 |
+| | SME BMOPA squaring, per-row OR-reduction readout | 312 ms | - | - | 3.4x squaring | 19 |
+| | SME BMOPA squaring, triangular blocks + k range, vertical readout | 236 ms (+10.5 ms setup) | 26.2 M BMOPA (1.7 GB operand loads) per squaring | - | 4.5x squaring; 2.7x slower than the NEON triangle | 19 |
+| W4 kind histogram, 22.3 M u16 codes → 13,088 × 115 | Rust direct increments | 15.4 ms | 44.6 MB | 2.9 | 1.0 (direct) | 14 |
+| | Rust hash group-by | 234 ms | 44.6 MB | 0.19 | 1.0 (hash) | 14 |
+| | C port, direct increments | 17.1 ms | 44.6 MB | 2.6 | 0.9x direct | 14 |
+| | 2 sub-histograms + NEON fold | 9.0 ms | 44.6 MB | 5.0 | 1.7x direct | 14 |
+| | 4 sub-histograms + NEON fold | 6.5 ms | 44.6 MB | 6.9 | 2.4x direct | 14 |
+| | **8 sub-histograms + NEON fold** | **5.5 ms** | 44.6 MB | 8.2 | **2.8x** direct, 43x hash | 14 |
+
+Notes per workload:
+
+- **W5 sits squarely in SME's range:** k = 13,088 bits, and the 3.4 MB input fits in L2.
+  - BMOPA computes all 2,080 upper 32 × 32 blocks in 1.8 ms. That is 15 Tbit-op/s of issued work,
+    including the wasted halves of diagonal blocks.
+  - Packing costs as much again (1.8 ms), but it is paid once per matrix.
+  - On sorted postings, the NEON 8x8 kernel with two interleaved pairs is 4.1x the MLDB-style
+    merge. Even so, it is 300x slower than SME on bitmaps, because the postings are dense enough
+    (p50 104 documents of 13,088, max 12,558) that bit rows win outright.
+- **W1 is small-k (24 u32 words):**
+  - SME still wins 10x over the best postings form (the C port; the Rust one pays for HashMap
+    lookups) and 23x over the Rust dense form.
+  - It does so even though readout (a nonzero count per 32 × 32 block) costs about as much as the
+    96 BMOPAs per block.
+  - NEON's AND-any trick (OR-accumulate and test, no popcount) is 1.7x the popcount form.
+- **W2: brute force is the wrong shape for equality.** The best brute-force kernel, the NEON tile at
+  44 G compares/s, is still 41x slower than direct indexing (2.3 ms), and SME is worse.
+  - Equality is not linear in any outer product. The BMOPA encoding (high halves equal, so
+    xnor-popcount == 32 iff the ids are equal) needs a tile readout and compare after every 4
+    BMOPAs. The streaming-mode readout then dominates, at 8 G compares/s.
+  - The linear restatement, Σ_v cntR[v]·cntB[v], *is* the direct form, and there is nothing for a
+    matrix unit to do there. The right offload for this join is the counting array.
+- **W3: dense squaring loses to sparsity.**
+  - With the triangle exploited twice (lower-triangular blocks only, and each block's k range cut
+    to words jb..ib), SME does 214.7 Gbit-op per squaring instead of 1,280. Its BMOPAs alone take
+    11.3 ms per squaring.
+  - But reading 57,630 small blocks out to bits costs another ~28 ms per round, in streaming-mode
+    vector ops. The vertical column readout (OR `1<<c` into the rows of each nonzero column) beats
+    per-row OR-reductions by 1.35x.
+  - The NEON row-OR restricted to the triangle (OR only rows k that are set, only words ≤ k/64)
+    is 2.7x faster than SME.
+  - The DP in topological order is another 200x faster than either: 0.4 ms with
+    triangle-restricted NEON ORs, 6.8x the Rust baseline.
+  - Closure over a DAG wants the DP. Squaring only makes sense for cyclic graphs without a
+    condensation, and even then a sparse row-OR competes with SME until the matrix is dense.
+- **W4: the histogram is dependency-bound, not bandwidth-bound.** Direct increments run at 0.77
+  ns/node because repeated kinds serialise on store-to-load forwarding.
+  - Spreading consecutive nodes over 8 sub-histograms, folded with NEON adds once per document,
+    reaches 0.25 ns/node (8.2 GB/s of codes): 2.8x direct, 43x the hash group-by.
+  - That is still about 1/8 of a core's DRAM read rate. It is not bandwidth-bound.
+  - An outer-product histogram (one-hot × ones) would spend 115x the work, so it is not worth
+    trying.
+
+What the real workloads add to the microprobe conclusions:
+
+- **SME pays exactly where the shape is a dense bit product with real k**: W5 at 43x the best
+  baseline, and W1 at 10-23x even at k = 767.
+- **NEON's wins are about breaking dependencies**, not width: interleaved intersections (W5
+  postings), sub-histograms (W4), and triangle-restricted ORs (W3).
+- **The engine's direct forms remain the right answer where they exist**: counting arrays (W2) and
+  the topological DP (W3). Brute-force dense restatements of those are 40-600x slower even on
+  SME/NEON.
+- **None of these workloads is DRAM-bound at one thread.** The inputs are 1-45 MB, and the best
+  kernels run at 1-37 GB/s of unique input against 60-100 GB/s available.
