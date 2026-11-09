@@ -69,6 +69,16 @@ gives structurally (point 4 of the 2026-11-08 discussion).
 
 ## What exists, and how this would generalize it
 
+`logic/magic.rs` has three forms of demand:
+- `.demand r, …` (`magic_sets`) restricts a relation to the keys (its first column) its readers ask for. The magic
+  rules pass as many body literals sideways as stay stratifiable.
+- `.demand *` (`magic_adorn`) is Soufflé's transformation on every derived relation, with Typing-support's
+  differences: one relation per predicate, key adornments, computed keys, and negation kept.
+- Gated negations (`gate_negations`): a negation inside its relation's own component waits for that relation's
+  `done_` gate.
+
+Then there are the decisions:
+
 - **0048, demand for negated relations.** A non-recursive relation that rules only negate, and that starts from
   every node, is computed for `demand_R(args)`. The reader's positive prefix is split into `pre_<i>`. This is
   magic sets for one adornment, with the stratification problem avoided by putting the demand in a lower
@@ -117,6 +127,76 @@ To measure what pruning can save, without guessing:
 The result is an upper bound on what any pruning can save, relation by relation. It also names the relations
 where key-level demand would pay (a small live fraction and a selective binding), and those where only
 document-level demand is worth it.
+
+## The first experiment's results
+
+Built as `logic/liveness.rs`, run by `oracle_tests::spike_liveness_of_the_calls_program`. The liveness rules are
+generated from the program and added to it, and the engine runs both to one fixed point.
+- An output row is live.
+- A body row is live when its rule's head row is live (the rest of the body must hold).
+- A negated read makes live the rows that block a derivation.
+- A read inside an aggregate makes its whole group live.
+- The relations are named `liveof_R`: `calls_cx` already has a `live_def` of its own.
+
+On `calls_cx` with typeshed, over the 84 files (267 documents with the stubs they load), in the dev build:
+
+| | rows | live | live share |
+|---|---|---|---|
+| every relation (304 with rows) | 5,940,582 | 2,974,486 | 50.1% |
+| base relations (`node`, `kind`, `child`, `docof`, `field`, `text`, …) | 2,646,460 | 1,081,029 | 40.8% |
+| rows about a loaded document (typeshed's stubs) | 3,003,946 | 1,229,776 | 40.9% |
+| keys (distinct first columns) | 3,614,819 | 1,677,237 | 46.4% |
+
+41 relations have no live row, but they hold only about 37,000 rows. The dead rows are spread through relations
+that are mostly dead, not concentrated in whole dead relations:
+
+| relation | rows | live | keys | live keys |
+|---|---|---|---|---|
+| `docof` | 455,576 | 56,279 (12%) | 455,576 | 56,279 |
+| `child` | 454,828 | 123,361 (27%) | 241,795 | 98,377 |
+| `pv` | 397,775 | 146,656 (37%) | 108,840 | 62,295 |
+| `bv` | 198,892 | 33,579 (17%) | 11,017 | 2,048 |
+| `name` | 156,680 | 1,143 (0.7%) | 156,680 | 1,143 |
+| `gname` | 149,942 | 370 (0.2%) | 149,942 | 370 |
+| `ownq` | 140,859 | 158 (0.1%) | 140,859 | 158 |
+| `found` | 62,264 | 2,309 (3.7%) | 11,848 | 463 |
+| `stmt` | 33,119 | 90 (0.3%) | 33,119 | 90 |
+
+What this says:
+- **Half of what the run derives and stores is never read by an answer.** That is the upper bound on what any
+  pruning saves here, in rows. Joins are saved in proportion only where the dead rows are the ones probed.
+- **Relation-level pruning saves nothing more.** The lowering's `prune` already removes relations no output
+  reaches. What is left is dead row by row.
+- **Key-level demand is where it pays.** Demand by first column (`.demand r`) would keep 46% of the keys. Several
+  large relations are almost entirely dead at the key level: `name`, `gname` and `ownq` keep under 1% of their
+  keys, `bv` 19% (2,048 of 11,017), `found` 4%. These are the selective cases where magic sets win.
+- **Typeshed is not mostly dead.** 41% of the stubs' rows are live, about the overall share. The stubs are read
+  because the workspace's names resolve through them. Typeshed as its own phase (0083 P1) helps by being kept
+  across runs, not by being pruned.
+- **Liveness costs more than the run.** 232 s of main-thread CPU against about 87 s for the forward run alone (at
+  load 106–200). Each liveness rule recomputes its forward rule's body. As a learned measurement, run once and
+  stored, that is acceptable. It would not be acceptable on every run.
+
+The figures are an upper bound on what is live, for three reasons:
+- a blocking row is live without its blocked head being asked for;
+- an aggregate's whole group is live;
+- a fact with two derivations makes both derivations' rows live.
+
+## The on-demand path
+
+Next to come is an on-demand path for negations and for relations that cannot be derived eagerly because they are
+unbounded (typevar instantiation). The liveness rules are built to become it:
+- **The same rules, cut to a prefix.** `Mode::Before` is the liveness rules with each body cut to the literals
+  before the read, in the sideways order `magic` passes. `need_R(k) :- need_H(h), B1, …, Bi-1` is asked before R is
+  derived. That is `magic_sets` again, but chosen per read rather than per declared relation.
+- **Negation's demand keys are the blocking rows' keys.** A negated read `!R(k)` asks R for k only. That is
+  decision 0048's `demand_R` and the gated negations' `done_` gates, and the counts show what it computes.
+- **Unbounded relations are searches** (0083 §4). An instantiation `inst(t, args, r)` cannot be enumerated, so it
+  exists only for the keys some reader asks for. Its demand relation is its `need_inst`, the same rule shape, and a
+  search answers each key once, memoised by key.
+- **The choice per read is the planner's.** The counts say where demand is selective: under about 10% of keys
+  live (`name`, `ownq`, `bv`, `found`) means demand; nearly all live means eager. Liveness stored from a previous
+  run is the statistic the choice reads, and a wrong guess costs time, never answers.
 
 ## Open questions
 
