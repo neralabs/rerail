@@ -706,6 +706,16 @@ pub(in crate::code_rule_dsl) fn one_run() -> std::sync::MutexGuard<'static, ()> 
     ONE_RUN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// Holds the profile for one run if no run holds it: a run nested in another (phase 0's, inside a run's preparing)
+/// is then the outer run's, and neither resets nor writes the profile.
+pub(in crate::code_rule_dsl) fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
+    match ONE_RUN.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
 /// Forgets everything recorded (a run's start).
 pub(in crate::code_rule_dsl) fn reset() {
     *STATE.lock().unwrap() = State::default();

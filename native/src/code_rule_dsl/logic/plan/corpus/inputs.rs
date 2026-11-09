@@ -176,9 +176,8 @@ pub(in crate::code_rule_dsl) fn require_facts() {
     REQUIRE_FACTS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The revision `git_rev("base", …)` names, which `at="base"` inputs are read at: `logic --base REV`, a commit id
-/// or a reference name (`origin/main`). The merge base of a change is the caller's to compute until the git
-/// provider gives `git_rev` (decision 0094, order of work).
+/// The reference a change is compared against: `logic --base REV`, any revision spec (`origin/main`, an id).
+/// `git_rev("base", …)`, which `at="base"` inputs are read at, is the merge base of HEAD and it.
 static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 pub(in crate::code_rule_dsl) fn set_base(rev: String) -> std::result::Result<(), String> {
@@ -190,11 +189,11 @@ fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unre
 /// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
 fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
     let repo = gix::discover(root).map_err(|e| unreadable(format!("no repository holds {}: {e}", root.display())))?;
+    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rr defines it.
+    let (revs, _) = crate::code_rule_dsl::logic::strings::git::revisions(root, Some(rev)).map_err(unreadable)?;
+    let base = revs.iter().find(|(n, _)| n == "base").map(|(_, id)| id.clone()).unwrap_or_default();
     let resolve = || -> std::result::Result<gix::ObjectId, Box<dyn std::error::Error + Send + Sync>> {
-        let commit = match gix::ObjectId::from_hex(rev.as_bytes()) {
-            Ok(id) => id,
-            Err(_) => repo.find_reference(rev)?.peel_to_id()?.detach(),
-        };
+        let commit = gix::ObjectId::from_hex(base.as_bytes())?;
         Ok(repo.find_object(commit)?.peel_to_tree()?.id)
     };
     let tree = resolve().map_err(|e| unreadable(format!("base revision {rev}: {e}")))?;
@@ -397,30 +396,143 @@ pub(in crate::code_rule_dsl) fn stamp(raw: &Path, out: &Path, root: &Path, decla
     Ok(report)
 }
 
+/// What the readers of the last `populate` read, as the whole-run cutoff records it (`Report::consulted`, `reuse`):
+/// `("input", path, digest)` for a repository file, `("input_dir", dir, listing)`, `("artifact", name, digest of
+/// the stamped file and of its inputs)` and `("base", "REV\tpath", digest)`. `still` checks each again.
+static CONSULTED: std::sync::Mutex<Vec<(String, String, String)>> = std::sync::Mutex::new(Vec::new());
+
+pub(super) fn take_consulted() -> Vec<(String, String, String)> {
+    std::mem::take(&mut *CONSULTED.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn of_result(result: &ReadResult<String>) -> String {
+    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => format!("{}", f.kind) }
+}
+
+fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
+    std::fs::read_to_string(root.join(name)).map_err(|e| Failure {
+        kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string(),
+    })
+}
+
+/// An artifact's reading: the stamped file's text, and the digest of its declared inputs now.
+fn read_artifact(root: &Path, declared: &BTreeMap<String, Vec<String>>, name: &str) -> (ReadResult<String>, ReadResult<String>) {
+    let text = std::fs::read_to_string(facts_dir(root).join(format!("{name}.json"))).map_err(|e| Failure {
+        kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "malformed" },
+        detail: format!("{}: {e}", facts_dir(root).join(format!("{name}.json")).display()),
+    });
+    let digest = declared.get(name).ok_or_else(|| Failure { kind: "malformed", detail: format!("no .artifact {name:?} declares its inputs") })
+        .and_then(|globs| inputs_digest(root, globs).map_err(|detail| Failure { kind: "malformed", detail }));
+    (text, digest)
+}
+
+fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> String {
+    format!("{}:{}", of_result(text), digest.as_ref().map_or_else(|f| f.kind.to_owned(), Clone::clone))
+}
+
 pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> {
     let declared = artifacts(&program.settings)?;
-    let dir = facts_dir(root);
+    let base = BASE.get().map(String::as_str);
+    let mut consulted = Vec::new();
+    let mut base_read = base_reader(root, base);
+    let seen = std::cell::RefCell::new(Vec::new());
     populate_with(
         program,
         root,
-        &mut |name| std::fs::read_to_string(root.join(name)).map_err(|e| Failure {
-            kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string(),
-        }),
         &mut |name| {
-            let globs = declared.get(name).ok_or_else(|| Failure { kind: "malformed", detail: format!("no .artifact {name:?} declares its inputs") })?;
-            let path = dir.join(format!("{name}.json"));
-            let text = std::fs::read_to_string(&path).map_err(|e| Failure {
-                kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "malformed" }, detail: format!("{}: {e}", path.display()),
-            })?;
-            let digest = inputs_digest(root, globs).map_err(|detail| Failure { kind: "malformed", detail })?;
-            artifact_data(name, &text, &digest)
+            let result = read_repository_file(root, name);
+            seen.borrow_mut().push(("input".to_owned(), name.to_owned(), of_result(&result)));
+            result
         },
-        &mut base_reader(root, BASE.get().map(String::as_str)),
+        &mut |name| {
+            let (text, digest) = read_artifact(root, &declared, name);
+            seen.borrow_mut().push(("artifact".to_owned(), name.to_owned(), artifact_entry(&text, &digest)));
+            artifact_data(name, &text?, &digest?)
+        },
+        &mut |path| {
+            let result = base_read(path);
+            seen.borrow_mut().push(("base".to_owned(), format!("{}\t{path}", base.unwrap_or("")), of_result(&result)));
+            result
+        },
+        &mut consulted,
     )?;
+    consulted.extend(seen.into_inner());
+    git_revisions(program, root, base, &mut consulted);
+    CONSULTED.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
     if REQUIRE_FACTS.load(std::sync::atomic::Ordering::Relaxed) {
         required(program)?;
     }
     Ok(())
+}
+
+/// `git_rev`'s rows, for a program with a rule that reads it: HEAD, and the merge base with `--base`. Without a
+/// repository, or a base that does not resolve, an `input_error("git_rev", …)` row, and the readers under `!` are
+/// withheld.
+fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, consulted: &mut Vec<(String, String, String)>) {
+    let reads = program.rules.iter().any(|r| r.body.iter().any(|l| match l {
+        front::Literal::Atom(a) => a.rel == "git_rev",
+        front::Literal::Agg { atom, .. } => atom.rel == "git_rev",
+        _ => false,
+    }));
+    if !reads {
+        return;
+    }
+    program.inputs.retain(|n| n != "git_rev");
+    let key = format!("{}\t{}", root.display(), base.unwrap_or(""));
+    match crate::code_rule_dsl::logic::strings::git::revisions(root, base) {
+        Ok((rows, _)) => {
+            consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
+            program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| vec![Value::Str(n), Value::Str(id)]));
+            if base.is_none() {
+                return;
+            }
+        }
+        Err(detail) => {
+            consulted.push(("git_rev".to_owned(), key, String::new()));
+            program.inputs.retain(|n| n != "input_error");
+            program.facts.entry("input_error".to_owned()).or_default().push(vec![Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone())]);
+            let withheld = withhold(program, &BTreeMap::from([("git_rev".to_owned(), "git_rev unreadable".to_owned())]));
+            for (output, why) in withheld.unknown {
+                eprintln!("unknown: {} ({why}): rows may be missing", output.strip_prefix("rr_place_").unwrap_or(&output));
+            }
+        }
+    }
+}
+
+/// Whether the reads `populate` recorded (`take_consulted`) would read the same now, for `program`'s artifact
+/// declarations. A base read names its revision as it was given (a reference may move), and is read again.
+pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String, String, String)]) -> bool {
+    let Ok(declared) = artifacts(&program.settings) else { return false };
+    consulted.iter().all(|(what, path, digest)| {
+        let now = match what.as_str() {
+            "input" => of_result(&read_repository_file(root, path)),
+            "input_dir" => listing(root, path),
+            "artifact" => {
+                let (text, inputs) = read_artifact(root, &declared, path);
+                artifact_entry(&text, &inputs)
+            }
+            "git_rev" | "git_index" => return crate::code_rule_dsl::logic::strings::git::still(what, path, digest),
+            "base" => {
+                let Some((rev, file)) = path.split_once('\t') else { return false };
+                of_result(&base_reader(root, (!rev.is_empty()).then_some(rev))(file))
+            }
+            _ => return false,
+        };
+        now == *digest
+    })
+}
+
+/// The file names of a `dir=` input's directory, as its reader lists them.
+fn listing(root: &Path, dir: &str) -> String {
+    let mut names: Vec<String> = std::fs::read_dir(root.join(dir)).into_iter().flatten().flatten()
+        .filter(|e| e.path().is_file()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    sha256_hex(names.join("\n").as_bytes())
 }
 
 /// `--require-facts`: the artifact errors that fail a CI run. A `failed` artifact is the policy's to report when one
@@ -443,6 +555,7 @@ fn populate_with(
     read: &mut impl FnMut(&str) -> ReadResult<String>,
     artifact: &mut impl FnMut(&str) -> ReadResult<Json>,
     base: &mut impl FnMut(&str) -> ReadResult<String>,
+    consulted: &mut Vec<(String, String, String)>,
 ) -> Result<()> {
     let settings: Vec<_> = program.settings.iter().filter(|(k, _)| k == "input").map(|(_, s)| s.clone()).collect();
     let mut readers = Readers::default();
@@ -511,6 +624,7 @@ fn populate_with(
         }
         let result = if directory.is_some() {
             if io != "lines" { return Err(Error::Plan(format!("{rel}: dir is supported only by IO=lines"))); }
+            consulted.push(("input_dir".to_owned(), path.clone(), listing(root, path)));
             match std::fs::read_dir(root.join(path)) {
                 Err(e) => Err(Failure { kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string() }),
                 Ok(entries) => {
@@ -739,7 +853,7 @@ grew(e) :- now_entry(e), !was(_, e).
 
     fn burn_down(base: &mut impl FnMut(&str) -> ReadResult<String>) -> front::Program {
         let mut program = crate::code_rule_dsl::logic::rr::parse(BURN_DOWN).unwrap();
-        populate_with(&mut program, Path::new("."), &mut |_| Ok("a\nb\nc\n".to_owned()), &mut none, base).unwrap();
+        populate_with(&mut program, Path::new("."), &mut |_| Ok("a\nb\nc\n".to_owned()), &mut none, base, &mut Vec::new()).unwrap();
         program
     }
 
@@ -766,7 +880,7 @@ grew(e) :- now_entry(e), !was(_, e).
     fn only_the_base_revision_is_read_and_only_from_a_file() {
         for input in [r#"at="head", filename="a.json""#, r#"at="base", dir="allow/""#, r#"at="base", artifact="x""#] {
             let mut program = crate::code_rule_dsl::logic::rr::parse(&format!(".decl a(n: number)\n.input a(IO=json, {input})\n")).unwrap();
-            assert!(populate_with(&mut program, Path::new("."), &mut |_| panic!("not read"), &mut none, &mut no_base).is_err(), "{input}");
+            assert!(populate_with(&mut program, Path::new("."), &mut |_| panic!("not read"), &mut none, &mut no_base, &mut Vec::new()).is_err(), "{input}");
         }
     }
 
@@ -873,7 +987,7 @@ quiet() :- ceiling(_), !over(_).
                 None => Err(Failure { kind: "missing", detail: "collection.json".into() }),
                 Some(t) => artifact_data(name, t, "sha256:now"),
             }
-        }, &mut no_base)
+        }, &mut no_base, &mut Vec::new())
         .unwrap();
         program
     }
@@ -922,7 +1036,7 @@ quiet() :- ceiling(_), !over(_).
 .input b(IO=json, filename="shared.json", path="/b")
 "#).unwrap();
         let mut reads = 0;
-        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(r#"{"a":7,"b":"kept"}"#.to_owned()) }, &mut none, &mut no_base).unwrap();
+        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(r#"{"a":7,"b":"kept"}"#.to_owned()) }, &mut none, &mut no_base, &mut Vec::new()).unwrap();
         assert_eq!(reads, 1);
         assert_eq!(program.facts["a"], vec![vec![Value::Int(7)]]);
         assert_eq!(program.facts["b"], vec![vec![Value::Str("kept".into())]]);
@@ -934,7 +1048,7 @@ quiet() :- ceiling(_), !over(_).
         let first = ".decl base_sig(s: symbol)\n.input base_sig(IO=json, filename=\"noqa.json\", path=\"/signature\")\n.decl result(s: symbol)\nresult(s) :- base_sig(s).\n.output result\n";
         let second = first.replace("noqa.json", "budget.json");
         let mut program = super::super::combine(&[first, &second], "").unwrap();
-        populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none, &mut no_base).unwrap();
+        populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none, &mut no_base, &mut Vec::new()).unwrap();
         assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![vec![Value::Str("noqa.json".into())]]));
         assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![vec![Value::Str("budget.json".into())]]));
         assert!(!program.facts.contains_key("base_sig"));

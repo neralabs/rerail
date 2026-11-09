@@ -595,16 +595,17 @@ thread_local! {
     /// component solved), its order and its work per node when planned. `None` outside a corpus run: every plan is
     /// searched.
     /// When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it with its own work and rows.
-    static PLANS: std::cell::RefCell<Option<HashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
+    static PLANS: std::cell::RefCell<Option<rustc_hash::FxHashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
     /// The last priced body's cheapest start: the least work of any one join literal read first, from no binding.
     /// Every order costs at least this, so a kept order's work over it measures how far the order is from the best
     /// any start allows.
     static SEED: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
 }
 
-/// A kept plan's key: the rule as text, the delta and the component solved. Not the rule's address: each chunk's
-/// program is a new value (the demand split makes one per chunk), so no address is kept between chunks.
-type PlanKey = String;
+/// A kept plan's key: a digest of the rule, the delta and the component solved (`derived::digest`). Not the rule's
+/// address: each chunk's program is a new value (the demand split makes one per chunk), so no address is kept between
+/// chunks. Not the rule's text either: formatting every rule was a tenth of a session run's planning.
+type PlanKey = u128;
 
 /// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, its work over its body's
 /// cheapest start (`SEED`) when searched, and its last price with the sizes it was priced at (`Priced`).
@@ -636,7 +637,7 @@ pub(in crate::code_rule_dsl) struct KeepPlans(Option<u64>);
 
 thread_local! {
     /// A session's plans between its runs, with the session's generation: another session's are not taken.
-    static SESSION_PLANS: std::cell::RefCell<Option<(u64, HashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
+    static SESSION_PLANS: std::cell::RefCell<Option<(u64, rustc_hash::FxHashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
 }
 
 impl KeepPlans {
@@ -771,7 +772,15 @@ impl Model {
     /// A kept plan's key: the rule as text, the delta (`first`) and the component solved, after `kind`.
     fn plan_key(&self, kind: &str, head: &Atom, body: &[Literal], first: Option<usize>) -> PlanKey {
         let _span = super::profile::span(|| "key".into());
-        format!("{kind}{head} :- {} @{first:?} /{}", body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), self.stats.solving.iter().cloned().collect::<Vec<_>>().join(","))
+        super::derived::digest(|d| {
+            d.str(kind);
+            digest_atom(d, head);
+            d.u64(body.len() as u64);
+            body.iter().for_each(|l| digest_literal(d, l));
+            d.u64(first.map_or(u64::MAX, |f| f as u64));
+            d.u64(self.stats.solving.len() as u64);
+            self.stats.solving.iter().for_each(|r| d.str(r));
+        })
     }
 
     /// The sizes a price reads (`Priced`): the corpus's nodes and the rows of each relation the body reads.
@@ -799,11 +808,46 @@ impl Model {
             return self.plan_inner(prog, head, body, first, None, true);
         }
         let key = self.plan_key("live ", head, body, first);
-        let sizes = self.read_sizes(body);
-        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| k.4.clone()));
-        if let Some(priced) = kept.filter(|k| near(&k.sizes, &sizes)) {
-            super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
-            return Ok(priced.got.clone());
+        // The delta atom is read first and priced by its live size; every later step's rows are per binding of it,
+        // so its size scales every order alike and does not change which is cheapest. It is left out (one row)
+        // unless the body reads its relation again: a wave that only grew the delta keeps the plan. Callers read
+        // the order only, so the kept price is not scaled.
+        let delta_rel = first.and_then(|f| body[f].atom()).map(|a| a.rel.as_str());
+        let once = delta_rel.is_some_and(|d| body.iter().filter(|l| l.atom().is_some_and(|a| a.rel == d)).count() == 1);
+        let sizes: Vec<f64> = std::iter::once(self.stats.nodes.max(1.0))
+            .chain(body.iter().enumerate().filter_map(|(i, l)| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(if once && Some(i) == first { 1.0 } else { self.card(&a.rel) }),
+                _ => None,
+            }))
+            .collect();
+        // The last price, and the work of the order when it was searched.
+        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| Some((k.4.clone()?, k.1))));
+        if let Some((priced, searched)) = &kept {
+            if near(&priced.sizes, &sizes) {
+                super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
+                return Ok(priced.got.clone());
+            }
+            // A size moved: the kept order is priced again (no search), and kept while its work grew less than
+            // `REPLAN` times or by fewer than `REPLAN_ROWS` rows over its work when searched, as a kept plan is
+            // across chunks. Most moves are small relations growing between waves (1 row, then 50), where any
+            // order costs less than a search.
+            let then = *searched;
+            let repriced = {
+                let _span = super::profile::span(|| "re-price".into());
+                self.plan_inner(prog, head, body, first, Some(&priced.got.0.0), false)
+            };
+            if let Ok((plan, _)) = repriced
+                && (plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS)
+            {
+                super::profile::decision("plan cache (decision 0038)", || "a live replan kept, re-priced: its work grew little".into());
+                let got = (plan, priced.got.1.clone());
+                PLANS.with(|p| {
+                    if let Some(k) = p.borrow_mut().as_mut().and_then(|p| p.get_mut(&key)) {
+                        k.4 = Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }));
+                    }
+                });
+                return Ok(got);
+            }
         }
         let got = {
             let _span = super::profile::span(|| "search".into());
@@ -811,7 +855,8 @@ impl Model {
         };
         PLANS.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
-                p.insert(key, (got.0.0.clone().into(), 0.0, None, 0.0, Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }))));
+                // Its work as searched (for live replans, the second field), against which a re-pricing is judged.
+                p.insert(key, (got.0.0.clone().into(), got.0.1, None, 0.0, Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }))));
             }
         });
         Ok(got)
@@ -1918,7 +1963,13 @@ impl Model {
                     if let AggOp::Join { by, .. } = op {
                         local.extend(by.iter().map(String::as_str).filter(|b| !env.contains_key(*b)));
                     }
-                    let conds = neg_conds(atom, &al, &env, &local)?;
+                    let mut conds = neg_conds(atom, &al, &env, &local)?;
+                    // Repeated local value fields are equal within the bag, even when
+                    // the outer rule binds a variable with that name.
+                    if let Some(over)=over {
+                        let columns=atom.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if v==over).then_some(c)).collect::<Vec<_>>();
+                        for pair in columns.windows(2) {conds.push(eq(col(&al,&self.col(&atom.rel,pair[0])),col(&al,&self.col(&atom.rel,pair[1]))));}
+                    }
                     let column = |v: &str| {
                         let c = atom.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("the aggregated column");
                         let symbol = prog.decls.get(&atom.rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
@@ -1928,7 +1979,9 @@ impl Model {
                         (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
                         (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o).0]),
                         // Soufflé's sum is 0 over no rows.
-                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(o).0]), integer(0)]),
+                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("rr_exact_sum", vec![column(o).0]), integer(0)]),
+                        // 1 over no rows (`strings::functions::Product`).
+                        (AggOp::Product, Some(o)) => call("coalesce", vec![call("rr_product", vec![column(o).0]), integer(1)]),
                         // `rr_join(sep, value, key, …)` (`strings::functions`) orders and joins text; symbols in as text.
                         (AggOp::Join { by, sep }, Some(o)) => {
                             let text = |(e, symbol): (Expr, bool)| if symbol { self.inputs.text_of(&e) } else { e };
@@ -2725,6 +2778,7 @@ fn decline_class(lit: &Literal, prog: &Program, native: &BTreeSet<String>) -> St
             super::front::AggOp::Min => "min",
             super::front::AggOp::Max => "max",
             super::front::AggOp::Sum => "sum",
+            super::front::AggOp::Product => "product",
             super::front::AggOp::Join { .. } => "join (string concatenation)",
         }),
         Literal::Atom(a) if prog.inputs.iter().any(|i| *i == a.rel) => format!("{}read of input {}", if a.neg { "negated " } else { "" }, a.rel),
@@ -2832,7 +2886,12 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
                     by.iter().for_each(|b| d.str(b));
                     d.str(sep);
                 }
-                other => d.u64(match other { AggOp::Count => 0, AggOp::Min => 1, AggOp::Max => 2, _ => 3 }),
+                // Each aggregate its own tag: `sum` and `product` over one atom are different values.
+                AggOp::Count => d.u64(0),
+                AggOp::Min => d.u64(1),
+                AggOp::Max => d.u64(2),
+                AggOp::Sum => d.u64(3),
+                AggOp::Product => d.u64(5),
             }
             d.str(over.as_deref().unwrap_or("\u{0}"));
             digest_atom(d, atom);
@@ -3011,7 +3070,7 @@ impl Run<'_, '_> {
                         .iter()
                         .position(|x| matches!(x, Term::Var(v) if v == n))
                         .and_then(|c| Some(prog.decls.get(&l.rel)?.get(c)?.1.clone())),
-                    Literal::Agg { var, op: AggOp::Count | AggOp::Sum, .. } if var == n => Some("int".to_owned()),
+                    Literal::Agg { var, op: AggOp::Count | AggOp::Sum | AggOp::Product, .. } if var == n => Some("int".to_owned()),
                     Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } if v == n && numeric_call(r) => Some("int".to_owned()),
                     _ => None,
                 }),
@@ -3228,32 +3287,34 @@ impl Run<'_, '_> {
                     let ta = tok(a, &mut slots)?;
                     lines.push(format!("{} {ta} {}", if matches!(*op, "<" | ">") { "lt" } else { "le" }, tok(b, &mut slots)?));
                 }
-                Literal::Agg { var, op: AggOp::Count, atom: a, .. } => {
-                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) {
-                        return None;
-                    }
-                    let (sc, toks, _) = atom(a, None, &mut slots)?;
-                    lines.push(format!("count {sc} {} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
-                }
-                Literal::Agg { var, op: op @ (AggOp::Min | AggOp::Max), over: Some(o), atom: a } => {
-                    // The aggregated variable is the atom's one free variable, in one column; the rest are bound.
-                    let col = a.args.iter().position(|t| matches!(t, Term::Var(v) if v == o))?;
-                    let free = |t: &Term| matches!(t, Term::Var(v) if !slots.contains_key(v));
-                    if slots.contains_key(o) || a.args.iter().enumerate().any(|(c, t)| c != col && (free(t) || matches!(t, Term::Var(v) if v == o))) {
-                        return None;
-                    }
-                    // Symbols order by text in SQL; as atoms (a corpus run) by atom on both sides, else not native.
-                    if self.model.inputs.atoms.is_none() && prog_types(prog, &a.rel).get(col).copied() == Some("sym") {
-                        return None;
-                    }
+                Literal::Agg { var, op: op @ (AggOp::Count | AggOp::Sum | AggOp::Min | AggOp::Max), over, atom: a } => {
+                    // The over-variable belongs to the bag even if an outer step bound the same name.
+                    let local=a.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if Some(v)==over.as_ref()).then_some(c)).collect::<Vec<_>>();
                     let mut a = a.clone();
-                    a.args[col] = Term::Wild;
-                    let (sc, toks, columns) = atom(&a, None, &mut slots)?;
-                    // Constant-filtered input columns are not present in the native row.
-                    // The aggregate must address the same projection as its atom tokens.
-                    let col = columns.iter().position(|&original| original == col)?;
-                    let name = if *op == AggOp::Min { "min" } else { "max" };
-                    lines.push(format!("{name} {sc} {} {col} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
+                    let col = over.as_ref().and_then(|o| a.args.iter().position(|t| matches!(t, Term::Var(v) if v==o)));
+                    if *op != AggOp::Count && col.is_none() { return None; }
+                    if let Some(c) = col {
+                        let typ = prog_types(prog, &a.rel).get(c).copied();
+                        if *op == AggOp::Sum && typ == Some("sym") { return None; }
+                        // Text extrema compare text unless this program holds symbols as atoms on both paths.
+                        if *op != AggOp::Count && self.model.inputs.atoms.is_none() && typ == Some("sym") { return None; }
+                    }
+                    for term in &mut a.args {
+                        if matches!(term, Term::Var(v) if Some(&*v)==over.as_ref()) { *term=Term::Wild; }
+                    }
+                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) { return None; }
+                    // Use atom's retained column map for every projected aggregate.
+                    let (sc, mut toks, columns) = atom(&a, None, &mut slots)?;
+                    let value_col = col.and_then(|c| columns.iter().position(|&original| original == c));
+                    if local.len()>1 {
+                        for c in local {
+                            let c=columns.iter().position(|&original| original == c)?;
+                            toks[c]="a0".into();
+                        }
+                    }
+                    let name=match op {AggOp::Count=>"count",AggOp::Sum=>"sum",AggOp::Min=>"min",_=>"max"};
+                    let value=if *op==AggOp::Count {String::new()} else {format!(" {}",value_col?)};
+                    lines.push(format!("{name} {sc} {}{value} {}",toks.join(" "),tok(&Term::Var(var.clone()),&mut slots)?));
                 }
                 Literal::Agg { var, op: AggOp::Join { by, sep }, over: Some(o), atom: a } => {
                     // `$s = join $x by ($k…) sep "…" : { atom }`: x and the unbound k are the atom's own columns, one
@@ -4286,6 +4347,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let lowered=adjusted.as_ref();
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
+    super::native::aggregation::register_sum(db)?;
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
     // positions table (`rdl_int`) is the same for every run.
     let temp: Vec<(String, String, String)> = db

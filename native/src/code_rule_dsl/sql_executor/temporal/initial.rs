@@ -114,7 +114,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         prefix: format!("__it{namespace}_global"),
         emitted: e,
         relations,
-        steps,
+        steps: Arc::new(steps),
         after,
         frames: vec![],
         limit: run.max_waves,

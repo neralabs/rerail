@@ -107,6 +107,7 @@ fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
                 AggOp::Min => format!("min {}", var(over.as_deref().unwrap_or("_"))),
                 AggOp::Max => format!("max {}", var(over.as_deref().unwrap_or("_"))),
                 AggOp::Sum => format!("sum {}", var(over.as_deref().unwrap_or("_"))),
+                AggOp::Product => format!("product {}", var(over.as_deref().unwrap_or("_"))),
                 AggOp::Join { by, sep } => {
                     let by: Vec<String> = by.iter().map(|b| var(b)).collect();
                     format!("join {} by ({}) sep {}", var(over.as_deref().unwrap_or("_")), by.join(", "), quote(sep))

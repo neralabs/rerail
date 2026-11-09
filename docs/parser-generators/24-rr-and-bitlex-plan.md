@@ -311,6 +311,7 @@ reference on the corpus.
 | rr-16 | a column in braces that is no single name, `code {at.code}`, `tag { }`: one `raw_text` leaf through the matching `}`; `{c}` the name, told by a hidden mark where a name and a `}` follow the `{` | A8, A21 |
 | rr-17 | a `` `` `` with none after it in the file's bytes (a comment's and a string's too): the empty literal, the bytes after it read on; known by a `back_fill` with no end, before the fixed point over the regions | A2, A21 |
 | rr-18 | `min (a + b) : { … }`: after an aggregate's word a `(` makes a call; at a `:` after its `)`, an aggregate is wrapped around it and the call read again into it (`root gone`), its arguments the value in parentheses; two terms, none (a mark at `()`) or a named argument refuse, as the engine | A20 |
+| rr-19 | an aggregate as another's value (`sum min x : {…} : {…}`), its word read as in any term; `min (x) : {…}` at a literal's start, the atom read again into the aggregate; `min()` and a `:`, which the engine refuses, refused anywhere by a mark the grammar takes nowhere | A20 |
 
 At rr-11:
 - every corpus file is parsed by both parsers;
