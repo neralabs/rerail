@@ -8,7 +8,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { LABELS_SUFFIX, LICENSES_FILE, sampleLabelsSchema } from "./format.js";
-import { checkLicenceTexts, licenceCache, PUBLISH_REUSE, publishedSamples } from "./publish.js";
+import { checkLicenceTexts, licenceCache, PUBLISH_REPLACE, PUBLISH_REUSE, publishedSamples } from "./publish.js";
 import { byText, type ToolPack } from "./samples.js";
 
 /** A tool-pack's staged samples, relative to the checkout. */
@@ -36,12 +36,19 @@ export function samplesReuseToml(entries: readonly Entry[]): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** What the `replace` marker says to whoever reads the pull request. */
+const REPLACE_TEXT =
+  "This tool-pack's publish/samples/ holds its whole sample set (writeSampleSet with replace, scripts/samples/pack.ts): the publish replaces the locked samples archive with exactly these files and drops any it lacks. Without this marker the publish lays publish/samples/ over the locked archive.\n";
+
 /**
  * Replaces the tool-pack's `publish/samples/` in the checkout at `root` with `entries` and their REUSE.toml: the
- * samples to add or replace in the published set (all of it for a `replace` publish). Checked as prep checks them first,
- * each against its repository's licence files at its commit (read from GitHub into the checkout's licenceCache).
+ * samples to add or replace in the published set. With `replace`, `entries` are the whole set, and the `replace`
+ * marker (PUBLISH_REPLACE) goes beside them: the publish then replaces the locked archive with exactly the staged set
+ * and drops every locked sample it lacks; without it, the staged samples are laid over the locked set. Checked as prep
+ * checks them first, each against its repository's licence files at its commit (read from GitHub into the checkout's
+ * licenceCache).
  */
-export function writeSampleSet(root: string, toolPack: ToolPack, entries: readonly Entry[]): void {
+export function writeSampleSet(root: string, toolPack: ToolPack, entries: readonly Entry[], { replace = false }: { replace?: boolean } = {}): void {
   publishedSamples(entries);
   checkLicenceTexts(entries, licenceCache(root));
   const directory = join(root, publishSamplesDirectory(toolPack));
@@ -52,4 +59,5 @@ export function writeSampleSet(root: string, toolPack: ToolPack, entries: readon
   }
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, PUBLISH_REUSE), samplesReuseToml(entries));
+  if (replace) writeFileSync(join(directory, PUBLISH_REPLACE), REPLACE_TEXT);
 }

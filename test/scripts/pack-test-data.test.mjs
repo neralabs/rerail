@@ -38,6 +38,7 @@ import {
   readLock,
   readSamplesLock,
   readUpstreamSources,
+  REPLACE_MARKER,
   reportArchives,
   requireAws,
   SAMPLES_LOCK,
@@ -1111,8 +1112,12 @@ function branch(root, name, edits) {
 const lockedPaths = (context, toolPack) =>
   Object.keys(context.data).filter((path) => path.startsWith(`${toolPack.directory}/`)).map((path) => path.slice(toolPack.directory.length + 1));
 
-/** A branch's `edits` with `toolPack`'s publish/provenance.json and LICENSES.md restaged (restaged) over its locked archive, or alone with `replace`. */
-const restage = (context, toolPack, edits, { replace = false, dropped = [] } = {}) => restaged(toolPack.directory, replace ? [] : lockedPaths(context, toolPack), edits, dropped);
+/** `toolPack`'s replace marker in publish/, as a branch's edit. */
+const marked = (toolPack) => ({ [`${toolPack.directory}/publish/${REPLACE_MARKER}`]: "the whole set\n" });
+
+/** A branch's `edits` with `toolPack`'s publish/provenance.json and LICENSES.md restaged (restaged) over its locked archive, or alone and with the replace marker (`replace`). */
+const restage = (context, toolPack, edits, { replace = false, dropped = [] } = {}) =>
+  restaged(toolPack.directory, replace ? [] : lockedPaths(context, toolPack), replace ? { ...edits, ...marked(toolPack) } : edits, dropped);
 
 /**
  * published, with this repository's pack-fixtures scripts committed on main, and a pull request branch `feature`
@@ -1199,10 +1204,11 @@ describe("pack --from (the publish workflow's prep)", () => {
     expect(existsSync(join(root, "packs/p/upstream/t/publish"))).toBe(false);
 
     const manifest = JSON.parse(readFileSync(join(out, "publish.json"), "utf8"));
-    expect(manifest).toMatchObject({ format: "rerail.pack-data-publish/v1", commit: git(pr, "rev-parse", "HEAD").trim(), replace: false, remove: Object.keys(publishRequest).sort() });
-    expect(manifest.objects.map(({ kind, pack: id, tool, added, changed, dropped }) => [kind, id, tool, added, changed, dropped])).toEqual([
-      ["test-data", "p", "t", ["fixtures/rerail/new.py"], ["fixtures/rerail/a.py", "provenance.json"], []],
-      ["test-data", "q", "u", ["authored/corpus/d.py"], ["provenance.json"], []],
+    expect(manifest).toMatchObject({ format: "rerail.pack-data-publish/v1", commit: git(pr, "rev-parse", "HEAD").trim(), remove: Object.keys(publishRequest).sort() });
+    expect(manifest).not.toHaveProperty("replace");
+    expect(manifest.objects.map(({ kind, pack: id, tool, replace, added, changed, dropped }) => [kind, id, tool, replace, added, changed, dropped])).toEqual([
+      ["test-data", "p", "t", false, ["fixtures/rerail/new.py"], ["fixtures/rerail/a.py", "provenance.json"], []],
+      ["test-data", "q", "u", false, ["authored/corpus/d.py"], ["provenance.json"], []],
     ]);
     for (const [object, toolPack] of [[manifest.objects[0], T], [manifest.objects[1], U]]) {
       const file = join(out, object.key.slice("rerail/archives/".length));
@@ -1212,7 +1218,7 @@ describe("pack --from (the publish workflow's prep)", () => {
       expect(object.lockText).toBe(lockText({ sha256: object.sha256, files: object.files, bytes: object.bytes }));
       expect(object.licences).toEqual({ "Apache-2.0": object.files });
     }
-    expect(run.stdout).toContain("| test-data | `p/t` |");
+    expect(run.stdout).toContain("| test-data | `p/t` | overlay |");
     expect(existsSync(marker)).toBe(false);
   });
 
@@ -1226,14 +1232,65 @@ describe("pack --from (the publish workflow's prep)", () => {
     expect(archivedObject(out, object)).toEqual({ ...kept, ...provenanceFiles(Object.keys(kept)) });
   });
 
-  it("with replace, archives publish/ alone and lists every file of the locked archive it drops", async () => {
+  it("with the replace marker, archives publish/ alone and lists every file of the locked archive it drops", async () => {
     const context = published();
     branch(context.root, "replace", restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" }, { replace: true }));
-    const { manifest, out } = await packed(context, "replace", { replace: true });
+    const { manifest, out, printed } = await packed(context, "replace");
     const [object] = manifest.objects;
-    expect(manifest.replace).toBe(true);
+    expect(object.replace).toBe(true);
     expect(object.dropped).toEqual(["fixtures/upstream/b.py", "x y.expected.json"]);
     expect(archivedObject(out, object)).toEqual({ "fixtures/rerail/a.py": "changed\n", ...provenanceFiles(["fixtures/rerail/a.py"]) });
+    // The marker goes with publish/ once published, and is no archive entry.
+    expect(manifest.remove).toContain(`packs/p/upstream/t/publish/${REPLACE_MARKER}`);
+    expect(printed).toContain("| test-data | `p/t` | replace |");
+  });
+
+  it("refuses a replace marker whose kind publish/ holds nothing of, and writes nothing", async () => {
+    const context = published();
+    branch(context.root, "marker-alone", { "packs/p/upstream/t/UPSTREAM.md": record([]), ...marked(T), "packs/q/upstream/u/publish/samples/replace": "the whole set\n" });
+    const message = await packFailure(context, "marker-alone");
+    expect(message).toContain("publish/ holds 2 path(s) no archive takes, so nothing was packed");
+    expect(message).toContain(`packs/p/upstream/t/publish/${REPLACE_MARKER} (marks a whole test data set, but publish/ holds no test data)`);
+    expect(message).toContain(`packs/q/upstream/u/publish/samples/${REPLACE_MARKER} (marks a whole sample set, but publish/samples/ holds no samples)`);
+    expect(existsSync(join(dirname(context.root), "out-marker-alone"))).toBe(false);
+  });
+
+  it("takes each kind's mode from its own marker: a whole test data set beside samples laid over the locked ones, or the reverse", async () => {
+    const context = published();
+    const { root } = context;
+    cacheLicence(root);
+    /** A labelled fastify/fastify sample `name`, as archive entries by path. */
+    const sampleOf = (name) => {
+      const text = `export const ${name} = 1;\n`;
+      const digest = sha256(Buffer.from(text));
+      const id = `demo-src-${name}-js-${digest.slice(0, 12)}`;
+      const labels = { source: { repo: "fastify/fastify", commit: "0".repeat(40), path: `src/${name}.js`, license: "MIT", sha256: digest }, labelledBy: { tool: "examplelint", version: "1.0.0", how: "hand-labelled" }, expected: {} };
+      return { [`${id}/src/${name}.js`]: text, [`${id}/src/${name}.js.expected.json`]: `${JSON.stringify(labels, null, 2)}\n` };
+    };
+    const licences = { "LICENSES.md": "# Licences\n\nfastify/fastify: MIT\n" };
+    const lockedSamples = sampleOf("a");
+    const locked = lockSamples(context.write, T, { ...licences, ...lockedSamples });
+    putFile(context.object(locked.key), locked.bytes);
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "samples lock");
+    const staged = sampleOf("b");
+    const samplesStaged = Object.fromEntries(Object.entries({ ...licences, ...staged }).map(([path, text]) => [`packs/p/upstream/t/publish/samples/${path}`, text]));
+    const modes = ({ objects }) => objects.map(({ kind, replace, dropped }) => [kind, replace, dropped]);
+
+    branch(root, "test-data-whole", { ...restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" }, { replace: true }), ...samplesStaged });
+    expect(modes((await packed(context, "test-data-whole")).manifest)).toEqual([
+      ["test-data", true, ["fixtures/upstream/b.py", "x y.expected.json"]],
+      ["samples", false, []],
+    ]);
+
+    branch(root, "samples-whole", { ...restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" }), ...samplesStaged, "packs/p/upstream/t/publish/samples/replace": "the whole set\n" });
+    const { manifest, out } = await packed(context, "samples-whole");
+    expect(modes(manifest)).toEqual([
+      ["test-data", false, []],
+      ["samples", true, Object.keys(lockedSamples)],
+    ]);
+    expect(Object.keys(archivedObject(out, manifest.objects[1])).sort()).toEqual(["LICENSES.md", ...Object.keys(staged)]);
+    expect(manifest.remove).toContain("packs/p/upstream/t/publish/samples/replace");
   });
 
   it("refuses a publish/ path no archive takes, listing each, and writes nothing", async () => {
@@ -1271,8 +1328,9 @@ describe("pack --from (the publish workflow's prep)", () => {
     // The row's file drops out of the archive, so the locked provenance.json no longer describes it.
     branch(context.root, "unlist-only", { "packs/p/upstream/t/UPSTREAM.md": record([]) });
     expect(await packFailure(context, "unlist-only")).toContain("packs/p/upstream/t/provenance.json at unlist-only");
-    // replace archives publish/ alone, so a removal alone gives it nothing.
-    expect(await packFailure(context, "unlist-only", { replace: true })).toContain("nothing to publish");
+    // A replace archives publish/ alone, so a removal with the marker alone is refused as a marker with nothing marked.
+    branch(context.root, "unlist-marked", { "packs/p/upstream/t/UPSTREAM.md": record([]), ...marked(T) });
+    expect(await packFailure(context, "unlist-marked")).toContain(`packs/p/upstream/t/publish/${REPLACE_MARKER} (marks a whole test data set, but publish/ holds no test data)`);
 
     const edits = restage(context, T, { "packs/p/upstream/t/UPSTREAM.md": record([]) }, { dropped: ["fixtures/rerail/a.py"] });
     branch(context.root, "unlist-restaged", edits);
@@ -1285,13 +1343,13 @@ describe("pack --from (the publish workflow's prep)", () => {
 
   it("refuses a test data archive without provenance.json or LICENSES.md, naming what it lacks, and writes nothing", async () => {
     const context = published();
-    branch(context.root, "no-provenance", { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" });
-    expect(await packFailure(context, "no-provenance", { replace: true })).toMatch(
+    branch(context.root, "no-provenance", { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n", ...marked(T) });
+    expect(await packFailure(context, "no-provenance")).toMatch(
       /^packs\/p\/upstream\/t's archive from no-provenance \([0-9a-f]{12}\) would hold no provenance\.json or LICENSES\.md, which every test data archive carries: derive the tool-pack again [^]*npm run fixtures:stage -- --pack p --tool t/u,
     );
     const { "packs/p/upstream/t/publish/LICENSES.md": _licences, ...withoutLicences } = restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" }, { replace: true });
     branch(context.root, "no-licences", withoutLicences);
-    expect(await packFailure(context, "no-licences", { replace: true })).toContain("would hold no LICENSES.md, which every test data archive carries");
+    expect(await packFailure(context, "no-licences")).toContain("would hold no LICENSES.md, which every test data archive carries");
     expect(existsSync(join(dirname(context.root), "out-no-licences"))).toBe(false);
   });
 
@@ -1315,15 +1373,34 @@ describe("pack --from (the publish workflow's prep)", () => {
     const context = published();
     // The overlay adds cases.json, but publish/ carries the locked provenance.json, which does not record it.
     branch(context.root, "missing-key", { "packs/p/upstream/t/publish/cases.json": "[]\n", "packs/p/upstream/t/publish/provenance.json": context.data["packs/p/upstream/t/provenance.json"] });
-    expect(await packFailure(context, "missing-key")).toContain("does not describe the archive: it does not record 1 path(s) the archive would hold (cases.json): derive the tool-pack again");
+    expect(await packFailure(context, "missing-key")).toContain(
+      `does not describe the archive: it does not record 1 path(s) the archive would hold (cases.json): if publish/ holds the whole set, stage it with --all, which writes publish/${REPLACE_MARKER} so the publish archives it alone; otherwise derive the tool-pack again`,
+    );
 
     const many = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`fixtures/gone/${index}.py`, { source: "rerail", how: "authored" }]));
     const edits = restage(context, T, { "packs/p/upstream/t/publish/cases.json": "[]\n" });
     const recorded = JSON.parse(edits["packs/p/upstream/t/publish/provenance.json"]);
     branch(context.root, "extra-key", { ...edits, "packs/p/upstream/t/publish/provenance.json": `${JSON.stringify({ ...recorded, files: { ...recorded.files, ...many, "provenance.json": {} } })}\n` });
     expect(await packFailure(context, "extra-key")).toContain(
-      "it records 8 path(s) the archive would not hold (fixtures/gone/0.py, fixtures/gone/1.py, fixtures/gone/2.py, fixtures/gone/3.py, fixtures/gone/4.py and 3 more)",
+      "it records 8 path(s) the archive would not hold (fixtures/gone/0.py, fixtures/gone/1.py, fixtures/gone/2.py, fixtures/gone/3.py, fixtures/gone/4.py and 3 more): derive the tool-pack again",
     );
+  });
+
+  it("names the staging that gives the other mode when provenance.json shows publish/ carries the wrong one", async () => {
+    const context = published();
+    // publish/ holds one changed file with the provenance of the whole locked set, and the marker: an overlay staged with --all.
+    branch(context.root, "overlay-marked", { ...restage(context, T, { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n" }), ...marked(T) });
+    expect(await packFailure(context, "overlay-marked")).toContain(
+      `it records 2 path(s) the archive would not hold (fixtures/upstream/b.py, x y.expected.json): if publish/ holds only what is new or changed, stage it without --all, which removes publish/${REPLACE_MARKER} so the publish lays it over the locked archive; otherwise derive the tool-pack again`,
+    );
+    // The whole set, regenerated without b.py, staged without --all: the overlay keeps b.py, which the provenance no longer records.
+    const regenerated = restaged(T.directory, [], { "packs/p/upstream/t/publish/fixtures/rerail/a.py": "changed\n", "packs/p/upstream/t/publish/x y.expected.json": "{}\n" });
+    branch(context.root, "regenerated-unmarked", regenerated);
+    expect(await packFailure(context, "regenerated-unmarked")).toContain(
+      `it does not record 1 path(s) the archive would hold (fixtures/upstream/b.py): if publish/ holds the whole set, stage it with --all, which writes publish/${REPLACE_MARKER} so the publish archives it alone; otherwise derive the tool-pack again`,
+    );
+    branch(context.root, "regenerated-marked", { ...regenerated, ...marked(T) });
+    expect((await packed(context, "regenerated-marked")).manifest.objects[0].dropped).toEqual(["fixtures/upstream/b.py"]);
   });
 
   /** Commits to the branch `name` of `context` a samples-only publish/ of one fastify/fastify sample. */
@@ -1575,10 +1652,13 @@ describe("the approver's publish summary", () => {
     expect(licenceAllowed("MIT OR <!--", new Set(["MIT"]))).toBe(false);
   });
 
-  it("lists each samples archive's repositories with their licences, as inert text", () => {
-    const object = (kind, sources) => ({ kind, pack: "p", tool: "t", sha256: "0".repeat(64), files: 2, bytes: 4, licences: { "Apache-2.0": 1, MIT: 1 }, ...(sources === undefined ? {} : { sources }), base: null, added: [], changed: [], dropped: [] });
-    const text = publishSummary({ commit: "1".repeat(40), replace: false, remove: [], objects: [object("test-data"), object("samples", { "example/demo": "MIT", "x/y|<b>": "MIT" })] });
-    expect(text).toContain("| Licences | Sources |");
+  it("lists each archive's mode, and each samples archive's repositories with their licences, as inert text", () => {
+    const object = (kind, replace, sources) => ({ kind, pack: "p", tool: "t", replace, sha256: "0".repeat(64), files: 2, bytes: 4, licences: { "Apache-2.0": 1, MIT: 1 }, ...(sources === undefined ? {} : { sources }), base: null, added: [], changed: [], dropped: [] });
+    const text = publishSummary({ commit: "1".repeat(40), remove: [], objects: [object("test-data", false), object("samples", true, { "example/demo": "MIT", "x/y|<b>": "MIT" })] });
+    expect(text.split("\n")[0]).toBe(`### Pack data to publish from ${"1".repeat(40)}`);
+    expect(text).toContain("| Kind | Tool-pack | Mode | sha256 |");
+    expect(text).toContain("| test-data | `p/t` | overlay |");
+    expect(text).toContain("| samples | `p/t` | replace |");
     expect(text).toContain("| Apache-2.0 1, MIT 1 | `licenses/*/UPSTREAM.md` |");
     expect(text).toContain("| Apache-2.0 1, MIT 1 | example/demo MIT, x/y&#124;&#60;b&#62; MIT |");
   });
@@ -1654,16 +1734,33 @@ describe("stage", () => {
     expect(result.toolPacks).toEqual([{ ...T, staged: ["fixtures/rerail/a.py", "fixtures/rerail/new.py"], removed: [], missing: ["x y.expected.json"] }]);
     const publishDirectory = join(root, "packs/p/upstream/t/publish");
     expect(files(publishDirectory)).toEqual(result.toolPacks[0].staged);
-    expect(printed.join("\n")).toContain("an overlay cannot delete a file: to publish exactly the data on disk, stage with --all and publish with replace");
+    expect(printed.join("\n")).toContain("an overlay cannot delete a file: to publish exactly the data on disk, stage with --all");
+    expect(printed.join("\n")).not.toContain("publish with replace");
     expect(printed.join("\n")).toContain("git add -- packs/p/upstream/t/publish");
 
-    // Reverting a file unstages it; --all stages the whole set.
+    // Reverting a file unstages it; --all stages the whole set and writes the replace marker beside it.
     write("packs/p/upstream/t/fixtures/rerail/a.py", data["packs/p/upstream/t/fixtures/rerail/a.py"]);
     expect(stage({ root, aws, pack: "p", tool: "t", log: () => {} }).toolPacks[0]).toMatchObject({ staged: ["fixtures/rerail/new.py"], removed: ["fixtures/rerail/a.py"] });
-    expect(stage({ root, aws, pack: "p", tool: "t", all: true, log: () => {} }).toolPacks[0].staged).toEqual(["LICENSES.md", "fixtures/rerail/a.py", "fixtures/rerail/new.py", "fixtures/upstream/b.py", "provenance.json"]);
+    const whole = [];
+    expect(stage({ root, aws, pack: "p", tool: "t", all: true, log: (line) => whole.push(line) }).toolPacks[0].staged).toEqual(["LICENSES.md", "fixtures/rerail/a.py", "fixtures/rerail/new.py", "fixtures/upstream/b.py", "provenance.json"]);
+    expect(files(publishDirectory)).toEqual(["LICENSES.md", "fixtures/rerail/a.py", "fixtures/rerail/new.py", "fixtures/upstream/b.py", "provenance.json", REPLACE_MARKER]);
+    expect(readFileSync(join(publishDirectory, REPLACE_MARKER), "utf8")).toContain("npm run fixtures:stage --all");
+    expect(whole.join("\n")).toContain(`with publish/${REPLACE_MARKER}: the publish replaces the archive with it`);
+    expect(whole.join("\n")).toContain("the publish drops them");
 
-    pull({ root, aws, log: () => {} });
+    // Staging without --all removes the marker, and counts it neither as staged nor as a file no longer to publish.
+    const partial = [];
+    expect(stage({ root, aws, pack: "p", tool: "t", log: (line) => partial.push(line) }).toolPacks[0]).toMatchObject({ staged: ["fixtures/rerail/new.py"], removed: ["LICENSES.md", "fixtures/rerail/a.py", "fixtures/upstream/b.py", "provenance.json"] });
+    expect(files(publishDirectory)).toEqual(["fixtures/rerail/new.py"]);
+    expect(partial.join("\n")).toContain(`removed publish/${REPLACE_MARKER}: the publish lays it over the archive`);
+
+    // pull lays publish/ over the archive and leaves the marker out, which is no foreign file.
+    stage({ root, aws, pack: "p", tool: "t", all: true, log: () => {} });
+    const pulled = [];
+    pull({ root, aws, log: (line) => pulled.push(line) });
     expect(readFileSync(join(root, "packs/p/upstream/t/fixtures/rerail/new.py"), "utf8")).toBe("new\n");
+    expect(existsSync(join(root, "packs/p/upstream/t", REPLACE_MARKER))).toBe(false);
+    expect(pulled.join("\n")).not.toContain("left out");
     expect(stage({ root, aws, pack: "p", tool: "t", all: true, dryRun: true, log: () => {} }).toolPacks[0].staged).toHaveLength(6);
   });
 });

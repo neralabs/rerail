@@ -1,8 +1,10 @@
 /**
  * Samples staged for publishing: a tool-pack's `publish/samples/` (scripts/samples/pack.ts writes it) holds the files of
  * the samples archive entries it adds or replaces, laid out as in the archive (scripts/samples/format.ts), plus a
- * `REUSE.toml` that licenses the tracked copy and is never archived. The publish workflow's prep
- * (`packFrom`, scripts/s3/pack-fixtures.mjs) packs them through `publishedSamples`, then `checkLicenceTexts`.
+ * `REUSE.toml` that licenses the tracked copy and is never archived, and, when the staged set is the whole set, a
+ * `replace` marker that has the publish replace the locked archive with it and is never archived either. The publish
+ * workflow's prep (`packFrom`, scripts/s3/pack-fixtures.mjs) packs them through `publishedSamples`, then
+ * `checkLicenceTexts`.
  */
 import { join } from "node:path";
 
@@ -12,6 +14,11 @@ import { byText, sha256 } from "./samples.js";
 
 /** The staged copy's licensing file, beside the samples in `publish/samples/`; prep drops it from the archive. */
 export const PUBLISH_REUSE = "REUSE.toml";
+/**
+ * The marker beside the samples in `publish/samples/` saying the staged set is the whole set: prep (scripts/s3/pack-fixtures.mjs,
+ * REPLACE_MARKER, the same name) then replaces the locked archive with it instead of laying it over, and drops the marker from the archive.
+ */
+export const PUBLISH_REPLACE = "replace";
 
 /**
  * Where checkLicenceTexts keeps the licence files it read from GitHub, for the checkout at `root`: licenceTexts's
@@ -26,7 +33,7 @@ interface Entry {
 
 /**
  * The samples archive entries of the files staged under a tool-pack's `publish/samples/` (`files`, paths relative to
- * it): every file but `REUSE.toml`, once each is checked. A path is `LICENSES.md` or `<sample-id>/<path>` with a
+ * it): every file but `REUSE.toml` and the `replace` marker, once each is checked. A path is `LICENSES.md` or `<sample-id>/<path>` with a
  * SAMPLE_ID; each staged sample is staged whole, its labels (`<source.path>.expected.json`, sampleLabelsSchema) beside
  * its file, whose sha256 is the labels' `source.sha256`; and no sample is taken from a copyleft source
  * (COPYLEFT_SOURCES). A sample's `source.repo` must have a recorded licence (SOURCE_LICENCES) and its declared
@@ -35,7 +42,7 @@ interface Entry {
  */
 export function publishedSamples(files: readonly Entry[]): Entry[] {
   const problems: string[] = [];
-  const entries = files.filter(file => file.path !== PUBLISH_REUSE);
+  const entries = files.filter(file => file.path !== PUBLISH_REUSE && file.path !== PUBLISH_REPLACE);
   const byPath = new Map(entries.map(entry => [entry.path, entry]));
   const labelled = new Set<string>();
   for (const { path, bytes } of entries) {

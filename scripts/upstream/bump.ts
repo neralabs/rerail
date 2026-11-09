@@ -900,7 +900,7 @@ export function renderBump(bump: Bump): string {
     }),
     "```",
     "",
-    "then commit each tool-pack's `publish/` and run the publish workflow (pack-data-publish.yml) for the pull request with replace.",
+    "then commit each tool-pack's `publish/` and run the publish workflow (pack-data-publish.yml) for the pull request.",
     ...(bump.derive.includes("rust/clippy") ? ["", "Derive `rust/clippy` on Linux: Clippy's answers on macOS differ from the ones CI checks."] : []),
     "",
     `### Still naming ${bump.from.version}`,

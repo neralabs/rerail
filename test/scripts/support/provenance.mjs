@@ -6,6 +6,8 @@ const PROVENANCE = "provenance.json";
 const LICENSES = "LICENSES.md";
 const PUBLISH = "publish/";
 const SAMPLES = "publish/samples/";
+/** The replace marker in publish/, which is no archive entry. */
+const REPLACE = "publish/replace";
 
 const byBytes = (a, b) => Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
 
@@ -26,12 +28,12 @@ export function provenanceFiles(paths) {
 /**
  * A branch's `edits` (repository path → text) with `directory`'s publish/provenance.json and publish/LICENSES.md
  * restaged for the archive publishing them makes: the locked archive's `base` paths (relative to the tool directory;
- * [] for a replace) less `dropped`, plus the test data `edits` puts under `<directory>/publish/`.
+ * [] for a replace) less `dropped`, plus the test data `edits` puts under `<directory>/publish/` (the replace marker is none).
  */
 export function restaged(directory, base, edits, dropped = []) {
   const prefix = `${directory}/${PUBLISH}`;
   const published = Object.keys(edits)
-    .filter((path) => path.startsWith(prefix) && !path.startsWith(`${directory}/${SAMPLES}`))
+    .filter((path) => path.startsWith(prefix) && !path.startsWith(`${directory}/${SAMPLES}`) && path !== `${directory}/${REPLACE}`)
     .map((path) => path.slice(prefix.length));
   const gone = new Set(dropped);
   const paths = [...base.filter((path) => !gone.has(path)), ...published];

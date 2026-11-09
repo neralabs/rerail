@@ -22,12 +22,6 @@ on:
         description: The pull request whose publish/ directories to publish.
         type: number
         required: true
-      replace:
-        description: >-
-          Make each tool-pack's archive exactly what its publish/ holds (for deletions or a full regeneration), rather
-          than lay publish/ over the locked archive.
-        type: boolean
-        default: false
 
 permissions: {}
 
@@ -37,7 +31,8 @@ concurrency:
 
 jobs:
   # Packs every publish/ of the pull request's head from its blobs with main's code, over the locked archives (read
-  # through the read role) unless replace, checks every file's licence against scripts/check/licence-allowlist.json,
+  # through the read role), or alone where a publish/ carries the replace marker the stager writes (publish/replace,
+  # publish/samples/replace), checks every file's licence against scripts/check/licence-allowlist.json,
   # and writes the summary the approver reads. A failure here means no approval is ever asked.
   prep:
     name: prep
@@ -140,7 +135,6 @@ jobs:
         name: Pack publish/ and check its licences
         env:
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
-          REPLACE: ${{ inputs.replace }}
           GH_TOKEN: ${{ github.token }}
           AWS_ACCESS_KEY_ID: ${{ steps.credentials.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.credentials.outputs.aws-secret-access-key }}
@@ -148,10 +142,8 @@ jobs:
           AWS_REGION: us-east-2
         run: |
           set -euo pipefail
-          args=()
-          if [ "$REPLACE" = "true" ]; then args+=(--replace); fi
           out="$RUNNER_TEMP/publish"
-          node --import tsx scripts/s3/pack-fixtures.mjs pack --from "$HEAD_SHA" "${args[@]}" \
+          node --import tsx scripts/s3/pack-fixtures.mjs pack --from "$HEAD_SHA" \
             --out "$out/archives" --manifest "$out/publish.json" --summary "$out/summary.md"
           cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY"
           echo "objects=$(jq -c '[.objects[] | {kind, pack, tool, key, sha256, files, bytes, compressedBytes}]' "$out/publish.json")" >> "$GITHUB_OUTPUT"

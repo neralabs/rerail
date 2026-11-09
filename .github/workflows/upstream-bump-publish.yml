@@ -3,7 +3,7 @@ name: Upstream bump (publish)
 # Publishes what an upstream-bump.yml run produced (docs/upstream.md, "Bump pull requests"): each of its legs'
 # patches is checked on its own, the verified ones are composed into one commit per tool-pack on main's head, and the
 # commits are proposed as one pull request, which carries each stale tool-pack's derived data in its publish/ directory.
-# A maintainer then runs pack-data-publish.yml for that pull request with replace, the one path pack data reaches S3
+# A maintainer then runs pack-data-publish.yml for that pull request, the one path pack data reaches S3
 # by, as for any pull request with data to publish: its prep packs and summarises the data, a code owner approves the
 # upload, and its finish commits the locks and removes publish/. A maintainer reviews and merges the pull request like
 # any other; nothing merges itself. Then the run's work branch auto/bump-run/upstream is deleted. A run whose legs all
@@ -805,7 +805,7 @@ jobs:
                   echo "- \`packs/$pack/upstream/$tool/publish/\`: $files file(s) changed, of the whole derived set"
                 done
                 echo
-                echo "Each \`publish/\` holds the tool-pack's whole derived set, so the publish (with replace) makes its archive exactly this data. The bump run derived it by running upstream's code at a release nobody has reviewed: read it in this diff and in the publish run's prep summary."
+                echo "Each \`publish/\` holds the tool-pack's whole derived set, with the \`replace\` marker \`fixtures:stage --all\` writes, so the publish makes its archive exactly this data. The bump run derived it by running upstream's code at a release nobody has reviewed: read it in this diff and in the publish run's prep summary."
               fi
               echo
             } > "$section/test-data.md"
@@ -855,7 +855,7 @@ jobs:
               done
               echo '```'
               echo
-              echo "then commit each tool-pack's \`publish/\` and run the [publish workflow]($PUBLISH_URL) for this pull request with replace."
+              echo "then commit each tool-pack's \`publish/\` and run the [publish workflow]($PUBLISH_URL) for this pull request."
               if printf '%s\n' "${tool_packs[@]}" | grep -q -x 'rust clippy'; then
                 echo
                 echo "Derive \`rust/clippy\` on Linux: Clippy's answers on macOS differ from the ones CI checks."
@@ -870,7 +870,7 @@ jobs:
           {
             echo "## Publishing, and what checks the test data"
             echo
-            echo "Publish this pull request's data by hand: run the [publish workflow]($PUBLISH_URL) on \`main\` for this pull request with **replace** on (\`gh workflow run pack-data-publish.yml -f pr=<this pull request's number> -f replace=true\`; the sticky comment below gives it with the number). Its prep packs each \`publish/\` from this branch's blobs with main's code, checks every file's licence and summarises what changed against the locked archive; a code owner reads that summary and approves the \`test-data-upload\` deployment; its finish then commits the new \`test-data.lock\` files and removes \`publish/\`. Until then this pull request cannot merge. Run it again after any push that changes \`publish/\`."
+            echo "Publish this pull request's data by hand: run the [publish workflow]($PUBLISH_URL) on \`main\` for this pull request (\`gh workflow run pack-data-publish.yml -f pr=<this pull request's number>\`; the sticky comment below gives it with the number). Each \`publish/\` carries the \`replace\` marker \`fixtures:stage --all\` writes, so its archive becomes exactly the derived set. Its prep packs each \`publish/\` from this branch's blobs with main's code, checks every file's licence and summarises what changed against the locked archive; a code owner reads that summary and approves the \`test-data-upload\` deployment; its finish then commits the new \`test-data.lock\` files and removes \`publish/\`. Until then this pull request cannot merge. Run it again after any push that changes \`publish/\`."
             echo
             echo "This pull request's own CI judges the data, not the bump run's reports below: the conformance check scores every rule on the derived test data."
             echo
@@ -945,7 +945,7 @@ jobs:
   # Commits the composed bumps on their branch (auto/bump-upstream, or auto/resnapshot-upstream for a re-snapshot), one
   # commit per tool-pack from the commit of main the run job checked, and opens or updates the pull request with the
   # neralabs-ci app's token (a pull request opened with GITHUB_TOKEN would run no CI) and the body the compose job built.
-  # It publishes nothing: a maintainer runs pack-data-publish.yml for the pull request with replace, the one path its
+  # It publishes nothing: a maintainer runs pack-data-publish.yml for the pull request, the one path its
   # publish/ data reaches S3 by, as the pull request's body and its sticky comment (pack-data-publish-request.yml) say,
   # so the app needs no Actions permission. It runs on a fresh runner, takes only the trees the compose job named,
   # confined to the packs and the runtimes, and never merges: a maintainer reviews the pin diffs, the data, the upstream
@@ -1084,8 +1084,8 @@ jobs:
           git "${git_auth[@]}" push --force-with-lease="refs/heads/$branch:$lease" origin "$head:refs/heads/$branch"
 
       # The body the compose job built and checked before anything was pushed. The job summary says how to publish the
-      # pull request's data: by hand, as for any pull request (pack-data-publish.yml, with replace: each tool-pack's
-      # archive becomes exactly its derived set).
+      # pull request's data: by hand, as for any pull request (pack-data-publish.yml; each publish/ carries the replace
+      # marker, so each tool-pack's archive becomes exactly its derived set).
       - name: Open or update the pull request
         if: steps.commit.outputs.skip != 'true'
         env:
@@ -1111,10 +1111,10 @@ jobs:
           fi
           [[ "$number" =~ ^[0-9]+$ ]] || { echo "::error::no open pull request of the app's on $BRANCH"; exit 1; }
           {
-            echo "Opened or updated #$number from \`$BRANCH\`. Publish its data with replace, after reading its diff:"
+            echo "Opened or updated #$number from \`$BRANCH\`. Publish its data after reading its diff:"
             echo
             echo '```sh'
-            echo "gh workflow run pack-data-publish.yml --repo $GITHUB_REPOSITORY --ref main -f pr=$number -f replace=true"
+            echo "gh workflow run pack-data-publish.yml --repo $GITHUB_REPOSITORY --ref main -f pr=$number"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

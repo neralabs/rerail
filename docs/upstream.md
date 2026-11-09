@@ -43,7 +43,9 @@ A sample is a real file from an open-source repository, labelled per rule with t
 To add, relabel or drop samples, or rename or drop a label's rule key, write a one-off script using the sample builders:
 
 1. Load the set and change it.
-2. Write the samples to add or replace into `publish/samples/` with `writeSampleSet` (`scripts/samples/pack.ts`).
+2. Write the samples to add or replace into `publish/samples/` with `writeSampleSet` (`scripts/samples/pack.ts`);
+   pass `{ replace: true }` when they are the whole set, so the publish replaces the locked set instead of laying
+   them over it.
 3. Update `SAMPLES.md` in the same pull request, then publish as any pack data.
 
 <details>
@@ -56,7 +58,8 @@ To add, relabel or drop samples, or rename or drop a label's rule key, write a o
 - `node scripts/s3/pack-fixtures.mjs samples` fetches samples alone. Samples never extract into the tool directory.
 - Samples staged in `publish/samples/` are laid over the locked set, so a pull request's CI judges them before
   publishing.
-- `writeSampleSet` checks the samples as the publish does, and writes a `REUSE.toml` licensing the staged copy.
+- `writeSampleSet` checks the samples as the publish does, and writes a `REUSE.toml` licensing the staged copy; with
+  `replace`, also the `replace` marker prep reads.
 - A label naming no rule of the tool-pack fails the whole pack's conformance check, which catches typos.
 - The builders are a library API with no command of their own.
 - No rule says how far to trim a set; `SAMPLES.md` says how it was trimmed, if it was.
@@ -125,7 +128,7 @@ Derived test data changes only on purpose, through a pull request that carries t
 - **A re-snapshot** derives again at the pinned release: the bump start's `resnapshot` input.
 - **A local derive** runs in a maintainer's sandbox ([Derive in a sandbox](#derive-in-a-sandbox)):
   `npm run fixtures:derive -- --pack <id> --tool <tool> [--update]`, then
-  `npm run fixtures:stage -- --pack <id> --tool <tool> --all`, then publish with `replace`.
+  `npm run fixtures:stage -- --pack <id> --tool <tool> --all`, then publish.
 
 <details>
 <summary>When to use each</summary>
@@ -267,7 +270,7 @@ cp <path to>/<samples sha256>.tar.zst .rerail/pack-data/archives/samples/<id>/<t
 npm ci
 npm run fixtures:pull -- --pack <id> --tool <tool>               # extracts the copied archive; reads no S3
 npm run fixtures:derive -- --pack <id> --tool <tool> --update    # the derived data, from the pins
-npm run fixtures:stage -- --pack <id> --tool <tool> --all        # the whole set, for a replace publish
+npm run fixtures:stage -- --pack <id> --tool <tool> --all        # the whole set, marked for a replace publish
 git add -- packs/<id>/upstream/<tool>/publish packs/<id>/licenses
 git commit -m "Derive <id>/<tool>"
 git bundle create pr-<n>-derived.bundle HEAD
@@ -277,8 +280,8 @@ git fetch <path to>/pr-<n>-derived.bundle HEAD:pr-<n>-derived
 git merge --ff-only pr-<n>-derived
 git push
 
-# 4. Publish it with replace:
-gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n> -f replace=true
+# 4. Publish it:
+gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n>
 ```
 
 To check a pull request's derived data, run steps 1 and 2 at its head with its `publish/`. Then
@@ -334,7 +337,8 @@ To make a request:
 
 1. Make the data in the pulled layout: by hand, with the sample builders, or with `fixtures:derive`.
 2. Run `npm run fixtures:stage -- --pack <id> --tool <tool>` to copy changed files into `publish/`. Use `--all` to
-   stage the whole set for a `replace` publish.
+   stage the whole set: it also writes `publish/replace`, and the publish then replaces the locked archive with
+   `publish/` instead of laying it over.
 3. Commit `publish/` and open the pull request.
 
 <details>
@@ -345,11 +349,12 @@ To make a request:
 | `publish/<path>` | test data archive entry `<path>` (`publish/fixtures/AL04/x.sql` → `fixtures/AL04/x.sql`) |
 | `publish/samples/<sample-id>/<path>`, `publish/samples/LICENSES.md` | samples archive entry `<sample-id>/<path>`, `LICENSES.md` |
 | `publish/samples/REUSE.toml` | nothing: licensing for the tracked copy only |
+| `publish/replace`, `publish/samples/replace` | nothing: the marker that the kind's publish replaces the locked archive (`fixtures:stage --all`, `writeSampleSet` with `replace`) |
 
 Anything else under `publish/` fails the publish.
 
 `fixtures:stage` copies every file the locked archive lacks or holds differently. An overlay cannot delete a file,
-hence `--all` for a `replace` publish.
+hence `--all`, whose marker makes the publish a replace.
 
 Review sees the bytes in the diff, with `*.expected.json` collapsed. CI lays `publish/` over the pulled data and judges
 it. Structure metric #3 blocks the merge while any `publish/` is tracked.
@@ -365,7 +370,7 @@ Two workflows carry a request, the request comment and **Publish pack data**; ne
    (`pack-data-publish.yml`) on main with the pull request number, from **Run workflow** or `gh`:
 
    ```sh
-   gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n> [-f replace=true]
+   gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=<n>
    ```
 
 3. **prep** packs each `publish/`, checks licences and writes the approver's summary.
@@ -378,18 +383,20 @@ Two workflows carry a request, the request comment and **Publish pack data**; ne
 **The request comment** runs on `pull_request_target` with the base branch's workflow, so on forks too. It checks out
 nothing; its token can only write pull request comments.
 
-- While anything is left to publish, it keeps one comment. Its rows: one per tool-pack with its `publish/` files and
-  removed `UPSTREAM.md` authored rows, plus publish steps by hand and with `gh`.
+- While anything is left to publish, it keeps one comment. Its rows: one per tool-pack with its `publish/` files,
+  removed `UPSTREAM.md` authored rows and mode (replace where `publish/` carries the marker, overlay otherwise), plus
+  publish steps by hand and with `gh`.
 - On a fork's pull request, a proposal ([Forks](#forks)), the comment is "Pack data in a proposal from a fork": the
   same rows, no publish steps, and a note that the pull request porting the change publishes it.
 - It deletes a waiting comment once nothing is left to publish. The comment blocks nothing; structure metric #3 does.
 
-**The dispatch.** The run is titled `Publish pack data for #<n>`.
+**The dispatch.** The run is titled `Publish pack data for #<n>`. It takes the pull request number alone: each
+archive's mode is the pull request's, read from its `publish/`.
 
-- **`replace` off** (default): the locked archive, less files of removed authored rows, with `publish/` laid over it.
-- **`replace` on**: exactly what `publish/` holds. Use it with whole staged sets (`fixtures:stage --all`) to remove
-  files or regenerate a set. Bump and re-snapshot pull requests always use it
-  ([Bump pull requests](#bump-pull-requests)).
+- **Overlay** (no marker): the locked archive, less files of removed authored rows, with `publish/` laid over it.
+- **Replace** (`publish/replace`, or `publish/samples/replace` for samples, which `fixtures:stage --all` and
+  `writeSampleSet` with `replace` write): exactly what `publish/` holds. Stage a whole set this way to remove files or
+  regenerate it. Bump and re-snapshot pull requests stage with `--all` ([Bump pull requests](#bump-pull-requests)).
 
 **prep** runs only on main, with main's code and the read role.
 
@@ -401,8 +408,9 @@ nothing; its token can only write pull request comments.
   second reading their licence files from GitHub with the workflow's token. Every file bound for S3 must pass the
   licence rules ([pack-format.md, "Licensing"](pack-format.md#licensing)), samples by their recorded licence.
 - A refusal fails prep without asking for approval. The log says why: fix the pull request and dispatch again.
-- The approver's summary, per archive: kind, tool-pack, sha256, files, bytes, licences with file counts, and Sources (a
-  samples archive's repositories and licences; for test data, the `licenses/*/UPSTREAM.md` records).
+- The approver's summary, per archive: kind, tool-pack, mode (replace or overlay), sha256, files, bytes, licences with
+  file counts, and Sources (a samples archive's repositories and licences; for test data, the `licenses/*/UPSTREAM.md`
+  records).
 - Then each archive's added, changed and dropped paths (up to 50 per list; a replace publish's dropped files appear
   nowhere else), and how many `publish/` files the commit will delete.
 
@@ -482,7 +490,7 @@ An overlay cannot delete an archived file, so removing one needs a fresh derive 
 - **An authored file listed in the tool's `UPSTREAM.md`:** delete its row before deriving; an overlay publish drops the
   file.
 - **Any other file**, including under `authored/`: delete it after a pull, derive, and stage the whole set
-  (`fixtures:stage --all`) for a `replace` publish.
+  (`fixtures:stage --all`), whose marker makes the publish a replace.
 
 <details>
 <summary>Why, and how a removed row publishes</summary>
@@ -738,11 +746,11 @@ tool-packs are still proposed.
 
 </details>
 
-**Publishing.** Publish as for any pull request ([Merging](#merging-maintainers)), with `replace` on, since each
-`publish/` holds the whole derived set:
+**Publishing.** Publish as for any pull request ([Merging](#merging-maintainers)). Each `publish/` holds the whole
+derived set with the `replace` marker `fixtures:stage --all` writes, so the publish replaces each archive:
 
 ```sh
-gh workflow run pack-data-publish.yml --ref main -f pr=<n> -f replace=true
+gh workflow run pack-data-publish.yml --ref main -f pr=<n>
 ```
 
 **Nothing merges itself.** Closing a bump pull request declines it; nothing proposes it again until a maintainer starts
@@ -752,7 +760,7 @@ it.
 <summary>Publishing details</summary>
 
 The pull request body, the bump publish run's job summary and the sticky comment (`pack-data-publish-request.yml`,
-which recommends `replace` on a bump pull request) say the same. Its prep summarises the data, a code owner approves
+whose Mode column reads `replace: test data` for each tool-pack) say the same. Its prep summarises the data, a code owner approves
 the upload, and its finish commits the locks and removes `publish/`. Until then the pull request cannot merge.
 
 </details>

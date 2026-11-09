@@ -44,6 +44,8 @@ export interface PublishedObject {
   tool: string;
   /** The lock's repository path. */
   lock: string;
+  /** Whether the archive is publish/ alone (the commit carries the kind's REPLACE_MARKER) or publish/ laid over the locked archive. */
+  replace: boolean;
   key: string;
   sha256: string;
   files: number;
@@ -63,7 +65,6 @@ export interface PublishedObject {
 export interface PublishManifest {
   format: "rerail.pack-data-publish/v1";
   commit: string;
-  replace: boolean;
   objects: PublishedObject[];
   /** Every publish/ path of the commit, which the commit writing the locks deletes. */
   remove: string[];
@@ -80,6 +81,8 @@ export const PACK_FIXTURE_PATTERNS: readonly string[];
 export const PROVENANCE_FORMAT: "rerail.pack-provenance/v1";
 export const PULL_INSTRUCTION: string;
 export const PUBLISH_DIRECTORY: "publish";
+/** The file in publish/ (or publish/samples/) that marks a whole staged set, which the publish replaces the locked archive with. */
+export const REPLACE_MARKER: "replace";
 export const PUBLISH_WORKFLOW: string;
 export const PUBLISH_MANIFEST_FORMAT: "rerail.pack-data-publish/v1";
 export function publishPath(path: string): (ToolPack & { path: string }) | undefined;
@@ -154,7 +157,6 @@ export function packFrom(options: {
   root?: string;
   /** A git revision naming the pull request's commit, whose publish/ is archived from its blobs. */
   from: string;
-  replace?: boolean;
   /** Where the compressed archives are written, under their key less ARCHIVE_PREFIX. */
   out: string;
   manifest?: string;

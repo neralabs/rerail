@@ -213,6 +213,23 @@ describe("writeSampleSet", () => {
     expect(() => writeSampleSet(root, TOOL_PACK, [{ path: "stray.txt", bytes: Buffer.from("") }])).toThrow(/stray\.txt/u);
     expect(existsSync(join(root, publishSamplesDirectory(TOOL_PACK)))).toBe(false);
   });
+
+  it("with replace, writes the marker beside the set, which publishedSamples and samplesTree leave out, and a plain restage removes", () => {
+    const root = tempRoot();
+    const entries = sampleEntries([ONE]);
+    cacheLicence(root);
+    writeSampleSet(root, TOOL_PACK, entries, { replace: true });
+    const directory = join(root, publishSamplesDirectory(TOOL_PACK));
+    const staged = filesIn(directory);
+    expect(Object.keys(staged).sort()).toEqual([...entries.map(entry => entry.path), "REUSE.toml", "replace"].sort());
+    expect(staged.replace).toContain("writeSampleSet with replace");
+    const asStaged = Object.entries(staged).map(([path, text]) => ({ path, bytes: Buffer.from(text) }));
+    expect(publishedSamples(asStaged).map(entry => entry.path).sort()).toEqual(entries.map(entry => entry.path).sort());
+    const tree = samplesTree({ root, pack: "p", tool: "t", aws: () => { throw new Error("aws called"); } })!;
+    expect(Object.keys(filesIn(tree))).not.toContain("replace");
+    writeSampleSet(root, TOOL_PACK, entries);
+    expect(existsSync(join(directory, "replace"))).toBe(false);
+  });
 });
 
 describe("writeSampleSet on the licence at each sample's commit", () => {

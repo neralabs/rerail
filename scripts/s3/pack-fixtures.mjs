@@ -24,12 +24,13 @@
 //                                                                          a tool-pack's publish/ is laid over them
 //   npm run fixtures:stage -- --pack <id> [--tool <tool>] [--all] [--dry-run]
 //       copy the pack test data on disk that the locked archive lacks or holds differently into publish/ (--all: all
-//       of it, for a `replace` publish)
+//       of it, with publish/replace, the marker that has the publish replace the archive with it)
 //   npm run fixtures:push [-- --pack <id> [--tool <tool>]] [--dry-run]   maintainer with write credentials (optional):
 //       archive the data on disk, upload the archive unless S3 holds it (tagged), rewrite the lock
-//   node scripts/s3/pack-fixtures.mjs pack --from <commit> [--replace] --out <dir> --manifest <file>
+//   node scripts/s3/pack-fixtures.mjs pack --from <commit> --out <dir> --manifest <file>
 //       the publish workflow's prep: archive each tool-pack's publish/ from the commit's blobs alone (never checking it
-//       out or running its code), over the locked archive (overlay) or alone (--replace), check every file's licence,
+//       out or running its code), over the locked archive (overlay) or alone (replace: publish/ carries the marker
+//       the stager writes, REPLACE_MARKER), check every file's licence,
 //       and write the archives and their manifest; no AWS write
 //   node scripts/s3/pack-fixtures.mjs upload --objects <file> --archives <dir> [--uploaded <file>] <tags>
 //       the publish workflow's upload: verify each archive against the objects prep named, then put it create-only, tagged
@@ -129,6 +130,16 @@ export const PULL_INSTRUCTION =
 export const PUBLISH_DIRECTORY = "publish";
 /** Under publish/, the samples archive's entries (scripts/samples/pack.ts writes them there). */
 const SAMPLES_IN_PUBLISH = "samples";
+/**
+ * The file the stager writes into publish/ (`fixtures:stage --all`) or publish/samples/ (writeSampleSet with
+ * `replace`, scripts/samples/pack.ts) when the directory holds the tool-pack's whole set: the publish then replaces the
+ * locked archive with exactly the staged files instead of laying them over it (packFrom). Its text is for the reader;
+ * prep reads its presence alone, and it goes with publish/ once published. A plain `fixtures:stage` removes it.
+ * scripts/samples/publish.ts's PUBLISH_REPLACE is the same name.
+ */
+export const REPLACE_MARKER = "replace";
+/** What the test data marker says to whoever reads the pull request. */
+const REPLACE_MARKER_TEXT = `This tool-pack's ${PUBLISH_DIRECTORY}/ holds its whole test data set (npm run fixtures:stage --all): the publish replaces the locked archive with exactly these files and drops any it lacks. Staging without --all removes this marker, and the publish lays ${PUBLISH_DIRECTORY}/ over the locked archive instead.\n`;
 /** A tracked publish/ file's repository path: its pack, tool, and path under publish/. */
 const PUBLISH_PATH = /^packs\/([^/]+)\/upstream\/([^/]+)\/publish\/(.+)$/u;
 /** The workflow that publishes a pull request's publish/ (CONTRIBUTING.md, "Pack test data"). */
@@ -952,7 +963,7 @@ export const PUBLISH_SAMPLES = "publish/samples";
 /** The licensing file of the staged copy only; it is never part of a samples archive. */
 const PUBLISH_SAMPLES_REUSE = "REUSE.toml";
 
-/** The files staged under the tool-pack's `publish/samples/`, as archive entries (REUSE.toml left out); [] when none. */
+/** The files staged under the tool-pack's `publish/samples/`, as archive entries (REUSE.toml and the replace marker left out); [] when none. */
 function stagedSamples(root, toolPack) {
   const directory = join(root, toolPack.directory, PUBLISH_SAMPLES);
   if (!existsSync(directory)) return [];
@@ -962,7 +973,7 @@ function stagedSamples(root, toolPack) {
     const absolute = join(entry.parentPath, entry.name);
     const path = relative(directory, absolute).split(sep).join("/");
     if (!entry.isFile()) throw new Error(`${toolPack.directory}/${PUBLISH_SAMPLES}/${path} is not a regular file`);
-    if (path !== PUBLISH_SAMPLES_REUSE) entries.push({ path, bytes: readFileSync(absolute) });
+    if (path !== PUBLISH_SAMPLES_REUSE && path !== REPLACE_MARKER) entries.push({ path, bytes: readFileSync(absolute) });
   }
   return entries;
 }
@@ -1027,12 +1038,12 @@ export function samples({ root = ROOT, pack: packId, tool, dryRun = false, aws =
 }
 
 /**
- * The test data entries of the tool directory's publish/ on disk (publishFiles less `samples/`), as `{ path, bytes }` by
- * their archive path, and the publish/ files that are neither test data nor samples (the publish workflow refuses
- * them), as paths relative to publish/.
+ * The test data entries of the tool directory's publish/ on disk (publishFiles less `samples/` and the replace marker),
+ * as `{ path, bytes }` by their archive path, and the publish/ files that are neither test data nor samples (the
+ * publish workflow refuses them), as paths relative to publish/.
  */
 function publishedTestData(root, toolPack) {
-  const files = publishFiles(root, toolPack.directory).filter((path) => !isPublishedSample(path));
+  const files = publishFiles(root, toolPack.directory).filter((path) => !isPublishedSample(path) && path !== REPLACE_MARKER);
   const foreign = files.filter((path) => !isPackFixture(`${toolPack.directory}/${path}`));
   const entries = files
     .filter((path) => isPackFixture(`${toolPack.directory}/${path}`))
@@ -1357,11 +1368,18 @@ const TOOL_ID = /^[a-z0-9][a-z0-9._-]*$/u;
 /** Git's modes for a regular file. */
 const REGULAR_FILE_MODES = new Set(["100644", "100755"]);
 
+/** The samples archive's replace marker, relative to publish/. */
+const SAMPLES_REPLACE_MARKER = `${SAMPLES_IN_PUBLISH}/${REPLACE_MARKER}`;
+/** A request's modes before any marker: both kinds laid over the locked archive. */
+const overlays = () => ({ "test-data": false, samples: false });
+
 /**
  * The publish requests in a commit's tree (`tree`, treeEntries's; `at` describes the commit): per tool directory with a
- * tracked publish/, `{ toolPack, testData, samples, paths }`, where `testData` and `samples` are `{ path, oid }` by
- * archive path and `paths` every publish/ path. Throws, listing each, on a publish/ path no archive takes: neither pack
- * test data of its tool directory nor under publish/samples/, no regular file, or in a pack or tool that is no id.
+ * tracked publish/, `{ toolPack, testData, samples, replace, paths }`, where `testData` and `samples` are `{ path, oid }`
+ * by archive path, `replace` says per kind whether publish/ carries that kind's REPLACE_MARKER (publish/replace,
+ * publish/samples/replace), and `paths` every publish/ path, the markers included. Throws, listing each, on a publish/
+ * path no archive takes: neither pack test data of its tool directory, a marker, nor under publish/samples/, no regular
+ * file, or in a pack or tool that is no id; and on a marker whose kind publish/ holds nothing of.
  */
 function publishRequests(tree, at) {
   const requests = new Map();
@@ -1373,17 +1391,23 @@ function publishRequests(tree, at) {
     else if (found.path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) refused.push(`${path} (an empty, "." or ".." segment)`);
     else if (!REGULAR_FILE_MODES.has(mode)) refused.push(`${path} (mode ${mode}: not a regular file)`);
     else {
+      const marker = found.path === REPLACE_MARKER ? "test-data" : found.path === SAMPLES_REPLACE_MARKER ? "samples" : undefined;
       const sample = isPublishedSample(found.path);
-      if (!sample && !isPackFixture(`${found.directory}/${found.path}`)) {
+      if (marker === undefined && !sample && !isPackFixture(`${found.directory}/${found.path}`)) {
         refused.push(`${path} (neither pack test data of ${found.directory} nor under ${PUBLISH_DIRECTORY}/${SAMPLES_IN_PUBLISH}/)`);
         continue;
       }
-      if (!requests.has(found.directory)) requests.set(found.directory, { toolPack: namedToolPack(found.pack, found.tool), testData: [], samples: [], paths: [] });
+      if (!requests.has(found.directory)) requests.set(found.directory, { toolPack: namedToolPack(found.pack, found.tool), testData: [], samples: [], replace: overlays(), paths: [] });
       const request = requests.get(found.directory);
       request.paths.push(path);
-      if (sample) request.samples.push({ path: found.path.slice(SAMPLES_IN_PUBLISH.length + 1), oid });
+      if (marker !== undefined) request.replace[marker] = true;
+      else if (sample) request.samples.push({ path: found.path.slice(SAMPLES_IN_PUBLISH.length + 1), oid });
       else request.testData.push({ path: found.path, oid });
     }
+  }
+  for (const { toolPack, testData, samples, replace } of requests.values()) {
+    if (replace["test-data"] && testData.length === 0) refused.push(`${toolPack.directory}/${PUBLISH_DIRECTORY}/${REPLACE_MARKER} (marks a whole test data set, but ${PUBLISH_DIRECTORY}/ holds no test data)`);
+    if (replace.samples && samples.length === 0) refused.push(`${toolPack.directory}/${PUBLISH_DIRECTORY}/${SAMPLES_REPLACE_MARKER} (marks a whole sample set, but ${PUBLISH_DIRECTORY}/${SAMPLES_IN_PUBLISH}/ holds no samples)`);
   }
   if (refused.length > 0) {
     throw new Error(`${at}: ${PUBLISH_DIRECTORY}/ holds ${refused.length} path(s) no archive takes, so nothing was packed (CONTRIBUTING.md, "Pack test data"):\n${refused.sort(byBytes).map((path) => `  ${path}`).join("\n")}`);
@@ -1512,10 +1536,13 @@ const someOf = (paths) => `${paths.slice(0, PROVENANCE_PATHS_SHOWN).join(", ")}$
 /**
  * Throws unless the test data archive `entries` (of `toolPack`, from the commit `at` describes) holds provenance.json
  * and LICENSES.md, and provenance.json is a PROVENANCE_FORMAT record whose `files` keys are exactly the archive's other
- * paths: an overlay that adds or drops files without its provenance restaged, or a replace without one, is refused.
- * Only the key set is read; licences are decided by the tracked records alone (sourcesAt).
+ * paths: an overlay that adds or drops files without its provenance restaged, or a replace without one, is refused. So
+ * is the wrong mode (`replace`, whether publish/ carries the marker): a replace of a publish/ that holds only what
+ * changed records the locked files it drops, and an overlay of a regenerated set leaves the files the regeneration
+ * deleted unrecorded; each refusal names the staging that gives the other mode. Only the key set is read; licences are
+ * decided by the tracked records alone (sourcesAt).
  */
-function checkProvenance(toolPack, entries, at) {
+function checkProvenance(toolPack, entries, at, replace) {
   const label = `${toolPack.directory}/${PROVENANCE_FILE} at ${at}`;
   const remedy = `derive the tool-pack again so its ${PROVENANCE_FILE} and ${PROVENANCE_LICENSES} describe its files, then ${publishInstruction(toolPack)}`;
   const byPath = new Map(entries.map(({ path, bytes }) => [path, bytes]));
@@ -1541,7 +1568,12 @@ function checkProvenance(toolPack, entries, at) {
     ...(extra.length > 0 ? [`it records ${extra.length} path(s) the archive would not hold (${someOf(extra)})`] : []),
     ...(absent.length > 0 ? [`it does not record ${absent.length} path(s) the archive would hold (${someOf(absent)})`] : []),
   ];
-  throw new Error(`${label} does not describe the archive: ${problems.join("; ")}: ${remedy}`);
+  const mode = replace && extra.length > 0
+    ? `if ${PUBLISH_DIRECTORY}/ holds only what is new or changed, stage it without --all, which removes ${PUBLISH_DIRECTORY}/${REPLACE_MARKER} so the publish lays it over the locked archive; otherwise `
+    : !replace && absent.length > 0
+      ? `if ${PUBLISH_DIRECTORY}/ holds the whole set, stage it with --all, which writes ${PUBLISH_DIRECTORY}/${REPLACE_MARKER} so the publish archives it alone; otherwise `
+      : "";
+  throw new Error(`${label} does not describe the archive: ${problems.join("; ")}: ${mode}${remedy}`);
 }
 
 /** The format of `pack --from`'s manifest. */
@@ -1572,7 +1604,7 @@ function publishCommit({ root, from, aws, log }) {
       try {
         base = runGit(root, ["merge-base", "HEAD", commit]).trim();
       } catch (error) {
-        throw new Error(`which UPSTREAM.md rows ${at} removes is unknown without its merge base with HEAD (${error instanceof Error ? error.message : String(error)}), so its archive cannot drop their files; publish with replace to archive exactly its publish/`);
+        throw new Error(`which UPSTREAM.md rows ${at} removes is unknown without its merge base with HEAD (${error instanceof Error ? error.message : String(error)}), so its archive cannot drop their files; stage it with --all, whose ${PUBLISH_DIRECTORY}/${REPLACE_MARKER} has the publish archive exactly its ${PUBLISH_DIRECTORY}/`);
       }
       mergeBase = treeEntries(root, base);
     }
@@ -1619,15 +1651,15 @@ function addRowRemovalRequests({ tree, baseTree, unlisted }, requests) {
     const toolPack = toolPackOfRecord(path);
     if (toolPack === undefined) continue;
     if (requests.has(toolPack.directory) || !tree.has(`${toolPack.directory}/${TEST_DATA_LOCK}`) || unlisted(toolPack).size === 0) continue;
-    requests.set(toolPack.directory, { toolPack, testData: [], samples: [], paths: [] });
+    requests.set(toolPack.directory, { toolPack, testData: [], samples: [], replace: overlays(), paths: [] });
   }
 }
 
-/** The archives one tool-pack's request makes: test data, then samples. */
-function publishedKinds({ unlisted }, { toolPack, testData, samples }, replace) {
+/** The archives one tool-pack's request makes, each with its mode (`replace`: publish/ alone; else over the locked archive): test data, then samples. */
+function publishedKinds({ unlisted }, { toolPack, testData, samples, replace }) {
   return [
-    ...(testData.length > 0 || (!replace && unlisted(toolPack).size > 0) ? [{ kind: "test-data", name: TEST_DATA_LOCK, files: testData }] : []),
-    ...(samples.length > 0 ? [{ kind: "samples", name: SAMPLES_LOCK, files: samples }] : []),
+    ...(testData.length > 0 || (!replace["test-data"] && unlisted(toolPack).size > 0) ? [{ kind: "test-data", name: TEST_DATA_LOCK, files: testData, replace: replace["test-data"] }] : []),
+    ...(samples.length > 0 ? [{ kind: "samples", name: SAMPLES_LOCK, files: samples, replace: replace.samples }] : []),
   ];
 }
 
@@ -1671,7 +1703,7 @@ function publishLicences(toolPack, kind, entries, { licensed, allowed, refused }
 }
 
 /** One archive of one tool-pack, built and checked but not yet written. */
-async function buildPublishArchive(source, toolPack, { kind, name, files }, { replace, ...checks }) {
+async function buildPublishArchive(source, toolPack, { kind, name, files, replace }, checks) {
   const label = `${toolPack.directory}/${name}`;
   const lock = source.lockAt(label);
   const base = new Map(lock === undefined ? [] : source.baseEntries(toolPack, lock, kind, replace).map((entry) => [entry.path, entry.bytes]));
@@ -1679,19 +1711,19 @@ async function buildPublishArchive(source, toolPack, { kind, name, files }, { re
   const next = new Map(replace ? [] : overlaidBase(source, toolPack, kind, base));
   for (const { path, bytes } of published) next.set(path, bytes);
   const entries = [...next].map(([path, bytes]) => ({ path, bytes }));
-  if (kind === "test-data") checkProvenance(toolPack, entries, source.at);
+  if (kind === "test-data") checkProvenance(toolPack, entries, source.at, replace);
   const archive = buildArchive(entries);
   const { key, compressed } = verifiedPublishArchive(toolPack, kind, label, archive);
   const { licences, sources } = publishLicences(toolPack, kind, entries, checks);
-  return { kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes: archiveChanges(base, next) };
+  return { kind, toolPack, label, lock, replace, key, archive, compressed, licences, sources, changes: archiveChanges(base, next) };
 }
 
 /** Every request's archives; a file under a licence the allowlist does not take fails them all, listing every such file. */
-async function buildPublishArchives(source, requests, { licensed, replace }) {
-  const checks = { licensed, replace, allowed: licenceAllowlist(), refused: [] };
+async function buildPublishArchives(source, requests, { licensed }) {
+  const checks = { licensed, allowed: licenceAllowlist(), refused: [] };
   const builds = [];
   for (const request of [...requests.values()].sort((a, b) => byBytes(a.toolPack.directory, b.toolPack.directory))) {
-    for (const kind of publishedKinds(source, request, replace)) builds.push(await buildPublishArchive(source, request.toolPack, kind, checks));
+    for (const kind of publishedKinds(source, request)) builds.push(await buildPublishArchive(source, request.toolPack, kind, checks));
   }
   const { refused } = checks;
   if (refused.length > 0) {
@@ -1701,7 +1733,7 @@ async function buildPublishArchives(source, requests, { licensed, replace }) {
 }
 
 /** Writes one archive under `out` (its key less ARCHIVE_PREFIX) and returns its row of the manifest. */
-function writePublishObject(out, { kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes }) {
+function writePublishObject(out, { kind, toolPack, label, lock, replace, key, archive, compressed, licences, sources, changes }) {
   const file = join(out, key.slice(ARCHIVE_PREFIX.length));
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, compressed);
@@ -1710,6 +1742,7 @@ function writePublishObject(out, { kind, toolPack, label, lock, key, archive, co
     pack: toolPack.pack,
     tool: toolPack.tool,
     lock: label,
+    replace,
     key,
     sha256: archive.sha256,
     files: archive.files,
@@ -1726,16 +1759,18 @@ function writePublishObject(out, { kind, toolPack, label, lock, key, archive, co
 /**
  * The publish workflow's prep (`pack --from <commit>`): archives every tool-pack's publish/ in the commit `from` names,
  * reading nothing of it but blobs (git plumbing in the trusted checkout at `root`, main's; the commit is never checked
- * out and none of its code runs). Per tool-pack and kind present in its publish/, and, for an overlay, per tool-pack
- * with a test-data.lock whose UPSTREAM.md lists files as Rerail's at the merge base that the commit no longer lists
- * (.github/workflows/pack-data-publish-request.yml mirrors this trigger):
+ * out and none of its code runs). Per tool-pack and kind present in its publish/, and per tool-pack with a
+ * test-data.lock whose UPSTREAM.md lists files as Rerail's at the merge base that the commit no longer lists
+ * (.github/workflows/pack-data-publish-request.yml mirrors this trigger). Each kind's mode is the pull request's: a
+ * replace where publish/ carries the kind's REPLACE_MARKER (the stager writes it for a whole set), else an overlay.
  *
- * - test data (`publish/<path>`): overlay (default): the archive the commit's test-data.lock names, less the files the
- *   merge base's UPSTREAM.md listed as Rerail's and the commit's no longer lists, overlaid with publish/; `replace`:
- *   publish/ alone;
+ * - test data (`publish/<path>`): overlay: the archive the commit's test-data.lock names, less the files the merge
+ *   base's UPSTREAM.md listed as Rerail's and the commit's no longer lists, overlaid with publish/; replace
+ *   (publish/replace): publish/ alone;
  * - samples (`publish/samples/<path>`): validated by scripts/samples/publish.ts's publishedSamples, each checked against
  *   its repository's licence files at its commit (checkLicenceTexts, reading GitHub through `gh` into the checkout's
- *   `.rerail/pack-data/licences/`), then laid over the archive the commit's samples.lock names, or alone with `replace`.
+ *   `.rerail/pack-data/licences/`), then laid over the archive the commit's samples.lock names, or alone with
+ *   publish/samples/replace.
  *
  * Base archives come from ARCHIVE_CACHE or S3 (a read). A test data archive must carry a provenance.json whose `files`
  * keys are its other paths, and a LICENSES.md (checkProvenance). Every file going to S3 must be under a licence the allowlist
@@ -1744,18 +1779,17 @@ function writePublishObject(out, { kind, toolPack, label, lock, key, archive, co
  * ARCHIVE_PREFIX), the manifest (PUBLISH_MANIFEST_FORMAT) to `manifest` and the approver's summary (publishSummary) to
  * `summary`, when given. A commit with neither a publish/ nor a removed UPSTREAM.md row fails: nothing to publish.
  */
-export async function packFrom({ root = ROOT, from, replace = false, out, manifest, summary, aws = runAws, log = console.log } = {}) {
+export async function packFrom({ root = ROOT, from, out, manifest, summary, aws = runAws, log = console.log } = {}) {
   if (out === undefined) throw new Error("pack --from needs --out <dir>, where the archives are written");
   const source = publishCommit({ root, from, aws, log });
   const requests = publishRequests(source.tree, source.at);
   const licensed = sourcesAt(source.tree, source.blob);
-  if (!replace) addRowRemovalRequests(source, requests);
+  addRowRemovalRequests(source, requests);
   if (requests.size === 0) throw new Error(`${source.at} has no ${PUBLISH_DIRECTORY}/ in any packs/<pack>/upstream/<tool>/ and removes no UPSTREAM.md row: nothing to publish`);
-  const builds = await buildPublishArchives(source, requests, { licensed, replace });
+  const builds = await buildPublishArchives(source, requests, { licensed });
   const result = {
     format: PUBLISH_MANIFEST_FORMAT,
     commit: source.commit,
-    replace,
     objects: builds.map((build) => writePublishObject(out, build)),
     remove: [...requests.values()].flatMap(({ paths }) => paths).sort(byBytes),
   };
@@ -1780,7 +1814,8 @@ const SUMMARY_PATHS = 50;
 const markdownText = (text) => text.replace(/[&<>|`\\*_[\]()!#~]/gu, (character) => `&#${character.codePointAt(0)};`);
 
 /**
- * The approver's view of a manifest (packFrom's), as markdown: one row per archive, with its licences and, for a samples
+ * The approver's view of a manifest (packFrom's), as markdown: one row per archive with its mode (replace: publish/
+ * alone, the marker in the pull request; overlay: publish/ over the locked archive), its licences and, for a samples
  * archive, each repository its labels name with the licence they record; then what each archive changes.
  */
 export function publishSummary(manifest) {
@@ -1788,13 +1823,13 @@ export function publishSummary(manifest) {
   const sources = (object) =>
     object.sources === undefined ? "`licenses/*/UPSTREAM.md`" : Object.entries(object.sources).map(([repository, licence]) => `${markdownText(repository)} ${markdownText(licence)}`).join(", ") || "none";
   return [
-    `### Pack data to publish from ${manifest.commit} (${manifest.replace ? "replace" : "overlay"})`,
+    `### Pack data to publish from ${manifest.commit}`,
     "",
-    "| Kind | Tool-pack | sha256 | Files | Bytes | Licences | Sources |",
-    "|---|---|---|---|---|---|---|",
+    "| Kind | Tool-pack | Mode | sha256 | Files | Bytes | Licences | Sources |",
+    "|---|---|---|---|---|---|---|---|",
     ...manifest.objects.map(
       (object) =>
-        `| ${object.kind} | \`${object.pack}/${object.tool}\` | \`${object.sha256}\` | ${object.files} | ${object.bytes} | ${Object.entries(object.licences).map(([licence, count]) => `${markdownText(licence)} ${count}`).join(", ")} | ${sources(object)} |`,
+        `| ${object.kind} | \`${object.pack}/${object.tool}\` | ${object.replace ? "replace" : "overlay"} | \`${object.sha256}\` | ${object.files} | ${object.bytes} | ${Object.entries(object.licences).map(([licence, count]) => `${markdownText(licence)} ${count}`).join(", ")} | ${sources(object)} |`,
     ),
     "",
     ...manifest.objects.flatMap((object) => [
@@ -1811,10 +1846,11 @@ export function publishSummary(manifest) {
 
 /**
  * Copies the selected tool-packs' pack test data on disk that their locked archive lacks or holds differently into
- * their publish/ (with `all`, every file, for a `replace` publish), and deletes the test data files publish/ holds that
- * are no longer to be staged; publish/samples/ is left alone. The locked archive comes from ARCHIVE_CACHE or S3. A file
- * the archive holds and the disk lacks cannot be expressed as an overlay: it is reported, with the remedy. A dry run
- * writes and deletes nothing in publish/.
+ * their publish/, and deletes the test data files publish/ holds that are no longer to be staged; publish/samples/ is
+ * left alone. With `all`, every file, and publish/replace (REPLACE_MARKER), which has the publish replace the locked
+ * archive with exactly publish/; without it, the marker is removed, and the publish lays publish/ over the archive.
+ * The locked archive comes from ARCHIVE_CACHE or S3. A file the archive holds and the disk lacks cannot be expressed as
+ * an overlay: it is reported, with the remedy. A dry run writes and deletes nothing in publish/.
  */
 export function stage({ root = ROOT, pack: packId, tool, all = false, dryRun = false, aws = runAws, log = console.log } = {}) {
   if (packId === undefined) throw new Error("stage needs --pack (and --tool)");
@@ -1839,7 +1875,9 @@ export function stage({ root = ROOT, pack: packId, tool, all = false, dryRun = f
     }
     const staged = [...onDisk].filter(([path, bytes]) => all || !base.get(path)?.equals(bytes)).map(([path]) => path);
     const wanted = new Set(staged);
-    const removed = publishFiles(root, toolPack.directory).filter((path) => !isPublishedSample(path) && !wanted.has(path));
+    const inPublish = publishFiles(root, toolPack.directory);
+    const removed = inPublish.filter((path) => !isPublishedSample(path) && path !== REPLACE_MARKER && !wanted.has(path));
+    const marked = inPublish.includes(REPLACE_MARKER);
     const missing = [...base.keys()].filter((path) => !onDisk.has(path)).sort(byBytes);
     const publish = `${toolPack.directory}/${PUBLISH_DIRECTORY}`;
     if (!dryRun) {
@@ -1849,16 +1887,19 @@ export function stage({ root = ROOT, pack: packId, tool, all = false, dryRun = f
         mkdirSync(dirname(join(root, publish, path)), { recursive: true });
         writeFileSync(join(root, publish, path), onDisk.get(path));
       }
+      if (all) writeFileSync(join(root, publish, REPLACE_MARKER), REPLACE_MARKER_TEXT);
+      else if (marked) rmSync(join(root, publish, REPLACE_MARKER));
     }
-    log(`${toolPack.directory}: ${dryRun ? "would stage" : "staged"} ${staged.length} file(s) in ${publish}/${all ? " (all of the data on disk)" : ""}${removed.length > 0 ? `; ${dryRun ? "would delete" : "deleted"} ${removed.length} staged file(s) no longer to publish` : ""}`);
+    const mode = all ? ` (all of the data on disk, with ${PUBLISH_DIRECTORY}/${REPLACE_MARKER}: the publish replaces the archive with it)` : marked ? ` (${dryRun ? "removing" : "removed"} ${PUBLISH_DIRECTORY}/${REPLACE_MARKER}: the publish lays it over the archive)` : "";
+    log(`${toolPack.directory}: ${dryRun ? "would stage" : "staged"} ${staged.length} file(s) in ${publish}/${mode}${removed.length > 0 ? `; ${dryRun ? "would delete" : "deleted"} ${removed.length} staged file(s) no longer to publish` : ""}`);
     if (missing.length > 0) {
-      log(`${toolPack.directory}: ${missing.length} file(s) of the locked archive are not on disk, e.g. ${missing.slice(0, 5).join(", ")}; ${all ? "a publish with replace drops them" : "an overlay cannot delete a file: to publish exactly the data on disk, stage with --all and publish with replace"}`);
+      log(`${toolPack.directory}: ${missing.length} file(s) of the locked archive are not on disk, e.g. ${missing.slice(0, 5).join(", ")}; ${all ? "the publish drops them" : "an overlay cannot delete a file: to publish exactly the data on disk, stage with --all"}`);
     }
     results.push({ ...toolPack, staged, removed, missing });
   }
   const directories = results.filter(({ staged }) => staged.length > 0).map(({ directory }) => `${directory}/${PUBLISH_DIRECTORY}`);
   if (!dryRun && directories.length > 0) {
-    log(`Commit it and run the publish workflow (${PUBLISH_WORKFLOW}) for your pull request${all ? " with replace" : ""} (CONTRIBUTING.md, "Pack test data"):\n  git add -- ${directories.map(shellQuoted).join(" ")}`);
+    log(`Commit it and run the publish workflow (${PUBLISH_WORKFLOW}) for your pull request (CONTRIBUTING.md, "Pack test data"):\n  git add -- ${directories.map(shellQuoted).join(" ")}`);
   }
   return { toolPacks: results };
 }
@@ -2037,12 +2078,13 @@ const USAGE = `usage: node scripts/s3/pack-fixtures.mjs <command> [--pack <id> [
               samples (as samples does), into ${ARCHIVE_CACHE}, verified, and lay each tool-pack's ${PUBLISH_DIRECTORY}/ over them;
               in GitHub Actions, list each archive used (pack tool kind sha256) as the step's archives output and summary
   stage       --pack <id> [--tool <tool>] [--all]: copy the pack test data on disk that the locked archive lacks or
-              holds differently into the tool-pack's ${PUBLISH_DIRECTORY}/ (--all: all of it, for a replace publish)
+              holds differently into the tool-pack's ${PUBLISH_DIRECTORY}/ (--all: all of it, with ${PUBLISH_DIRECTORY}/${REPLACE_MARKER}, so
+              the publish replaces the archive with it)
   push        maintainer with write credentials: pack, then upload (tagged)
   pack        archive the selected tool-packs' data on disk into ${ARCHIVE_CACHE} and rewrite their locks (no network)
-              pack --from <commit> [--replace] --out <dir> [--manifest <file>] [--summary <file>]: the publish
-              workflow's prep: archive every tool-pack's ${PUBLISH_DIRECTORY}/ from the commit's blobs (never checked out or
-              run), over the locked archive (--replace: alone), check every file's licence, and write the archives
+              pack --from <commit> --out <dir> [--manifest <file>] [--summary <file>]: the publish workflow's prep:
+              archive every tool-pack's ${PUBLISH_DIRECTORY}/ from the commit's blobs (never checked out or run), over the
+              locked archive, or alone where ${PUBLISH_DIRECTORY}/ carries ${REPLACE_MARKER}, check every file's licence, and write the archives
   upload      put the locked archives from ${ARCHIVE_CACHE} into S3 (tagged) unless it holds them, and read them back
               upload --objects <file> --archives <dir> [--uploaded <file>]: the publish workflow's upload: verify
               prep's archives against the objects it named, put them create-only (tagged), and write the keys put
@@ -2087,10 +2129,10 @@ const COMMANDS = {
   stage: { options: [...SELECT, "all"], run: (values) => stage(values) },
   push: { options: [...SELECT, ...TAGS], run: (values) => push({ ...values, tags: values.dryRun ? undefined : commandTags(values) }) },
   pack: {
-    options: [...SELECT, "from", "replace", "out", "manifest", "summary"],
+    options: [...SELECT, "from", "out", "manifest", "summary"],
     run: (values) => {
       if (values.from === undefined) {
-        if (values.replace || [values.out, values.manifest, values.summary].some((value) => value !== undefined)) throw new Error("--replace, --out, --manifest and --summary need --from");
+        if ([values.out, values.manifest, values.summary].some((value) => value !== undefined)) throw new Error("--out, --manifest and --summary need --from");
         return pack(values);
       }
       if (values.pack !== undefined || values.tool !== undefined || values.dryRun) throw new Error("pack --from packs every tool-pack's publish/ and has no --pack, --tool or --dry-run");
@@ -2143,7 +2185,7 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(p
       strict: true,
       options: {
         pack: string, tool: string, "dry-run": flag, all: flag,
-        from: string, replace: flag, out: string, manifest: string, summary: string,
+        from: string, out: string, manifest: string, summary: string,
         objects: string, archives: string, uploaded: string, report: string,
         commit: string, pr: string, "run-id": string, uploader: string,
       },
@@ -2162,9 +2204,9 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(p
     console.error(`${name} takes no ${foreign.map((option) => `--${option}`).join(", ")}\n${USAGE}`);
     process.exitCode = 2;
   } else if (parsed !== undefined) {
-    const { "dry-run": dryRun = false, all = false, replace = false, ...rest } = parsed.values;
+    const { "dry-run": dryRun = false, all = false, ...rest } = parsed.values;
     try {
-      await command.run({ ...rest, dryRun, all, replace });
+      await command.run({ ...rest, dryRun, all });
     } catch (error) {
       console.error(`fixtures:${name}: ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 1;

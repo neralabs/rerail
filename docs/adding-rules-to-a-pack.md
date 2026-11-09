@@ -186,7 +186,7 @@ See [language-packs.md, "A ported pack"](language-packs.md#a-ported-pack). Model
 
 ```sh
 npm run fixtures:derive -- --pack <id> --tool <tool>          # in a sandbox, on the pinned runtime
-npm run fixtures:stage -- --pack <id> --tool <tool> --all    # the whole set: a first publish is a `replace`
+npm run fixtures:stage -- --pack <id> --tool <tool> --all    # the whole set, marked for a replace publish
 git add packs/<id>/upstream/<tool>/publish
 ```
 
@@ -386,7 +386,7 @@ Grep for stale counts, table rows included, and moved rule details still saying 
 ## For maintainers
 
 Steps the publishing docs leave out: [upstream.md, "Publishing pack data"](upstream.md#publishing-pack-data) and
-[REVIEW.md](../REVIEW.md#approving-a-pack-data-upload) cover the workflow, `replace`, a finish failing after upload,
+[REVIEW.md](../REVIEW.md#approving-a-pack-data-upload) cover the workflow, replace and overlay, a finish failing after upload,
 and approval.
 
 - **One-rule pull requests**: derive the data yourself, in a sandbox on its branch, then stage without `--all`.
@@ -401,7 +401,8 @@ and approval.
   `npm run fixtures:derive -- --pack <id> --tool <tool>`, then `fixtures:stage` without `--all`; commit `publish/`
   and publish.
 - **New tool-packs** stage their whole set themselves.
-- **Dispatch**: prep packs the head at run time (`gh pr view <n> --json headRefOid`). Choose `replace` by what
+- **Dispatch**: prep packs the head at run time (`gh pr view <n> --json headRefOid`). The mode is the pull request's:
+  `publish/replace`, which `fixtures:stage --all` writes, makes the publish a replace. Stage with `--all` by what
   `publish/` holds (the whole set, or files that must leave the archive), not by what changed. Check prep's drop list
   against intent before approving.
 - **After a samples publish**, finish writes `samples.lock`, not `SAMPLES.md`. Copy its archive name, file count and

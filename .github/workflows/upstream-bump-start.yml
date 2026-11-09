@@ -14,7 +14,7 @@ name: Upstream bump (start)
 # the pins and, holding no credential, derives on Linux the test data of every tool-pack the bump made stale;
 # upstream-bump-publish.yml, on main, then checks each leg's result, composes the verified ones into a commit per
 # tool-pack carrying its pins and its derived data in publish/, and opens one pull request. A maintainer then runs
-# Publish pack data (pack-data-publish.yml) for it with replace, whose upload a code owner approves. Upstream code at a
+# Publish pack data (pack-data-publish.yml) for it, whose upload a code owner approves. Upstream code at a
 # release nobody has reviewed never runs here, in main's cache scope, or next to a credential.
 
 run-name: ${{ inputs.resnapshot && 'Start a re-snapshot of' || 'Start a bump of' }} ${{ inputs.tool-packs }}

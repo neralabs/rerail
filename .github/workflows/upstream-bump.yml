@@ -8,7 +8,7 @@ name: Upstream bump
 # is one artifact, `bump-<pack>--<tool>`: the patch (the pins and the staged data) and the bump's summary and JSON.
 # upstream-bump-publish.yml then checks each artifact on main, running the pin edits again with main's code and
 # admitting only the files deriving and staging write beside them, composes the verified patches into one commit per
-# tool-pack and opens one pull request; a maintainer then runs pack-data-publish.yml for it with replace, whose upload
+# tool-pack and opens one pull request; a maintainer then runs pack-data-publish.yml for it, whose upload
 # a code owner approves after reading its summary; nothing merges itself.
 #
 # With `resnapshot`, the listed tool-packs are derived again at the release they already pin (each `version` must be
