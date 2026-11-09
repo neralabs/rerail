@@ -314,6 +314,19 @@ describe("validatePack", () => {
       { proof: ["pass-statement: no examples and no port entry in conformance.json"] },
     ],
     [
+      "an own rule conformance.json lists that pack.json does not ship",
+      directory => editJson(join(directory, "conformance.json"), conformance => ({ ...conformance, own: ["gone-rule"] })),
+      { proof: ["conformance.json lists own rule gone-rule, which pack.json does not ship"] },
+    ],
+    [
+      "an own rule that also has a port entry",
+      directory => editJson(join(directory, "conformance.json"), conformance => ({ ...conformance, own: ["assert-used"] })),
+      {
+        ports: ["conformance.json: conformance.json: ✖ assert-used is listed as an own rule and also has a port entry"],
+        proof: ["assert-used: no examples and no port entry in conformance.json"],
+      },
+    ],
+    [
       "a caught example that does not fire",
       directory => editPassStatement(directory, rule => ({ ...rule, examples: { caught: { path: "src/a.py", text: "x = 1\n" }, passes: { path: "src/a.py", text: "x = 2\n" } } })),
       { examples: ["pass-statement: the caught example (src/a.py) produces no PASS violation"] },

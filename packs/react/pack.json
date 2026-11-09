@@ -3,7 +3,7 @@
   "id": "react",
   "name": "React",
   "category": "framework",
-  "covers": "eslint-plugin-react and react-hooks rules for well-built components and hooks.",
+  "covers": "eslint-plugin-react and react-hooks rules for well-built components and hooks, and Rerail's own React architecture rules.",
   "reason": "matches React",
   "match": {
     "any": [
@@ -681,6 +681,182 @@
         "passes": {
           "path": "src/Avatar.jsx",
           "text": "export function Avatar({ url }) {\n  return <img src={url} alt=\"avatar\" />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-callback-for-dom-only",
+      "document": "rules/react-architecture-callback-for-dom-only.json",
+      "title": "React architecture: useCallback whose result only built-in elements or direct calls use",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/components/SaveButton.tsx",
+          "text": "import { useCallback } from 'react';\n\nexport const SaveButton = ({ onSave }: { onSave: () => void }) => {\n  const handleClick = useCallback(() => {\n    onSave();\n  }, [onSave]);\n\n  return <button type=\"button\" onClick={handleClick}>Save</button>;\n};\n"
+        },
+        "passes": {
+          "path": "src/components/SaveButton.tsx",
+          "text": "export const SaveButton = ({ onSave }: { onSave: () => void }) => {\n  const handleClick = () => {\n    onSave();\n  };\n\n  return <button type=\"button\" onClick={handleClick}>Save</button>;\n};\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-fresh-dependency",
+      "document": "rules/react-architecture-fresh-dependency.json",
+      "title": "React architecture: Hook dependency rebuilt on every render",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/components/TodoList.tsx",
+          "text": "import { useEffect, useState } from 'react';\n\ntype Todo = { id: string; done: boolean };\n\nexport function TodoList({ todos, onCount }: { todos: Todo[]; onCount: (n: number) => void }) {\n  const [shown, setShown] = useState(0);\n  const open = todos.filter((todo) => !todo.done);\n  useEffect(() => {\n    onCount(open.length);\n  }, [open, onCount]);\n  return <p onClick={() => setShown(shown + 1)}>{open.length}</p>;\n}\n"
+        },
+        "passes": {
+          "path": "src/components/TodoList.tsx",
+          "text": "import { useEffect, useMemo } from 'react';\n\ntype Todo = { id: string; done: boolean };\n\nexport function TodoList({ todos, onCount }: { todos: Todo[]; onCount: (n: number) => void }) {\n  const open = useMemo(() => todos.filter((todo) => !todo.done), [todos]);\n  useEffect(() => {\n    onCount(open.length);\n  }, [open, onCount]);\n  return <p>{open.length}</p>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-side-effect-in-render",
+      "document": "rules/react-architecture-side-effect-in-render.json",
+      "title": "React architecture: Navigation, analytics or dispatch called during render",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "app/settings/billing/page-view.tsx",
+          "text": "'use client';\nimport { useRouter } from 'next/navigation';\nimport { useSession } from '@/lib/session';\n\nexport default function BillingView() {\n  const router = useRouter();\n  const { status } = useSession();\n  if (status === 'signed-out') {\n    router.replace(`/login?next=${encodeURIComponent('/settings/billing')}`);\n  }\n  return <BillingForm />;\n}\n"
+        },
+        "passes": {
+          "path": "app/settings/billing/page-view.tsx",
+          "text": "'use client';\nimport { useEffect } from 'react';\nimport { useRouter } from 'next/navigation';\nimport { useSession } from '@/lib/session';\n\nexport default function BillingView() {\n  const router = useRouter();\n  const { status } = useSession();\n  useEffect(() => {\n    if (status === 'signed-out') router.replace('/login');\n  }, [status, router]);\n  return <BillingForm />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-then-without-stale-guard",
+      "document": "rules/react-architecture-then-without-stale-guard.json",
+      "title": "React architecture: Effect writes a .then result to state without a stale-result guard",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/features/profile/ProfileCard.tsx",
+          "text": "import { useEffect, useState } from 'react';\nimport { loadProfile } from '../../api/profiles';\n\nexport function ProfileCard({ userId }: { userId: string }) {\n  const [profile, setProfile] = useState<Profile | null>(null);\n\n  useEffect(() => {\n    loadProfile(userId).then(setProfile);\n  }, [userId]);\n\n  return <h2>{profile?.name}</h2>;\n}\n"
+        },
+        "passes": {
+          "path": "src/features/profile/ProfileCard.tsx",
+          "text": "import { useEffect, useState } from 'react';\nimport { loadProfile } from '../../api/profiles';\n\nexport function ProfileCard({ userId }: { userId: string }) {\n  const [profile, setProfile] = useState<Profile | null>(null);\n\n  useEffect(() => {\n    let ignore = false;\n    loadProfile(userId).then((next) => {\n      if (!ignore) setProfile(next);\n    });\n    return () => {\n      ignore = true;\n    };\n  }, [userId]);\n\n  return <h2>{profile?.name}</h2>;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-cache-update-in-mutate-call",
+      "document": "rules/react-architecture-cache-update-in-mutate-call.json",
+      "title": "React architecture: Query cache update in a mutate call's own callbacks",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/settings/ProfileForm.tsx",
+          "text": "import { useMutation, useQueryClient } from \"@tanstack/react-query\";\nimport { saveProfile } from \"../api/profile\";\nimport { toast } from \"../ui/toast\";\n\nexport const ProfileForm = ({ profile }: { profile: { id: string; name: string } }) => {\n  const queryClient = useQueryClient();\n  const save = useMutation({ mutationFn: saveProfile });\n\n  const onSubmit = (name: string) => {\n    save.mutate(\n      { id: profile.id, name },\n      {\n        onSuccess: () => {\n          toast(\"Saved\");\n          queryClient.invalidateQueries({ queryKey: [\"profile\", profile.id] });\n        },\n      },\n    );\n  };\n\n  return <button onClick={() => onSubmit(\"Ada\")}>Save</button>;\n};\n"
+        },
+        "passes": {
+          "path": "src/settings/ProfileForm.tsx",
+          "text": "import { useMutation, useQueryClient } from \"@tanstack/react-query\";\nimport { saveProfile } from \"../api/profile\";\nimport { toast } from \"../ui/toast\";\n\nexport const ProfileForm = ({ profile, onClose }: { profile: { id: string }; onClose: () => void }) => {\n  const queryClient = useQueryClient();\n  const save = useMutation({\n    mutationFn: saveProfile,\n    onSuccess: () => queryClient.invalidateQueries({ queryKey: [\"profile\", profile.id] }),\n  });\n\n  const onSubmit = (name: string) => {\n    save.mutate(\n      { id: profile.id, name },\n      {\n        onSuccess: () => {\n          toast(\"Saved\");\n          onClose();\n        },\n      },\n    );\n  };\n\n  return <button onClick={() => onSubmit(\"Ada\")}>Save</button>;\n};\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-mounted-ref-never-reset",
+      "document": "rules/react-architecture-mounted-ref-never-reset.json",
+      "title": "React architecture: Mount ref set false in cleanup and never set back to true",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/components/OrderPanel.tsx",
+          "text": "import { useEffect, useRef, useState } from 'react';\n\nexport const OrderPanel = ({ id }: { id: string }) => {\n  const [order, setOrder] = useState(null);\n  const isMounted = useRef(true);\n  useEffect(() => {\n    return () => {\n      isMounted.current = false;\n    };\n  }, []);\n  const reload = async () => {\n    const next = await fetchOrder(id);\n    if (isMounted.current) setOrder(next);\n  };\n  return <button onClick={reload}>{order?.name}</button>;\n};\n"
+        },
+        "passes": {
+          "path": "src/components/OrderPanel.tsx",
+          "text": "import { useEffect, useRef, useState } from 'react';\n\nexport const OrderPanel = ({ id }: { id: string }) => {\n  const [order, setOrder] = useState(null);\n  const isMounted = useRef(true);\n  useEffect(() => {\n    isMounted.current = true;\n    return () => {\n      isMounted.current = false;\n    };\n  }, []);\n  const reload = async () => {\n    const next = await fetchOrder(id);\n    if (isMounted.current) setOrder(next);\n  };\n  return <button onClick={reload}>{order?.name}</button>;\n};\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-memo-trivial-expression",
+      "document": "rules/react-architecture-memo-trivial-expression.json",
+      "title": "React architecture: useMemo around a value or a cheap expression",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/presentation/ParamsProvider.tsx",
+          "text": "import { useMemo } from 'react';\n\nexport function ParamsProvider({ params, children }) {\n  const value = useMemo(() => params, [params]);\n  return <ParamsContext.Provider value={value}>{children}</ParamsContext.Provider>;\n}\n"
+        },
+        "passes": {
+          "path": "src/components/TabButton.jsx",
+          "text": "export const TabButton = ({ id, activeId, label }) => {\n  const isActive = id === activeId;\n  return <button aria-pressed={isActive}>{label}</button>;\n};\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-selector-returns-new-collection",
+      "document": "rules/react-architecture-selector-returns-new-collection.json",
+      "title": "React architecture: Store selector returns a new object or array",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/calendar/NowLine.tsx",
+          "text": "import { useCalendarStore } from \"../state/calendar\";\n\nexport function NowLine() {\n  const { firstHour, lastHour } = useCalendarStore((state) => ({\n    firstHour: state.firstHour,\n    lastHour: state.lastHour,\n  }));\n  return <div data-range={`${firstHour}-${lastHour}`} />;\n}\n"
+        },
+        "passes": {
+          "path": "src/calendar/NowLine.tsx",
+          "text": "import { useCalendarStore } from \"../state/calendar\";\n\nexport function NowLine() {\n  const firstHour = useCalendarStore((state) => state.firstHour);\n  const lastHour = useCalendarStore((state) => state.lastHour);\n  return <div data-range={`${firstHour}-${lastHour}`} />;\n}\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-request-beside-data-library",
+      "document": "rules/react-architecture-request-beside-data-library.json",
+      "title": "React architecture: Request in an effect in a file that uses a data library",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/teams/TeamPicker.tsx",
+          "text": "import { useEffect, useState } from 'react';\nimport { useQuery } from '@tanstack/react-query';\nimport { listTeams, getOwner } from '../api/teams';\n\nexport const TeamPicker = ({ ownerId }: { ownerId: string }) => {\n  const teams = useQuery({ queryKey: ['teams'], queryFn: listTeams });\n  const [owner, setOwner] = useState<string | null>(null);\n  useEffect(() => {\n    getOwner(ownerId).then((res) => {\n      setOwner(res.name);\n    });\n  }, [ownerId]);\n  return <p>{owner} {teams.data?.length}</p>;\n};\n"
+        },
+        "passes": {
+          "path": "src/teams/TeamPicker.tsx",
+          "text": "import { useQuery } from '@tanstack/react-query';\nimport { getOwner } from '../api/teams';\n\nexport const TeamPicker = ({ ownerId }: { ownerId: string }) => {\n  const owner = useQuery({ queryKey: ['owner', ownerId], queryFn: () => getOwner(ownerId) });\n  return <p>{owner.data?.name}</p>;\n};\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-hoist-static-value",
+      "document": "rules/react-architecture-hoist-static-value.json",
+      "title": "React architecture: Value that reads nothing from the component, built every render",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/settings/ShortcutTable.tsx",
+          "text": "import { Table } from './Table';\n\nexport const ShortcutTable = () => {\n  const columns = [\n    { title: 'Action', key: 'action' },\n    { title: 'Keys', key: 'keys' },\n  ];\n  return <Table columns={columns} />;\n};\n"
+        },
+        "passes": {
+          "path": "src/settings/ShortcutTable.tsx",
+          "text": "import { Table } from './Table';\n\nconst columns = [\n  { title: 'Action', key: 'action' },\n  { title: 'Keys', key: 'keys' },\n];\n\nexport const ShortcutTable = () => <Table columns={columns} />;\n"
+        }
+      }
+    },
+    {
+      "id": "react-architecture-lifecycle-hook",
+      "document": "rules/react-architecture-lifecycle-hook.json",
+      "title": "React architecture: Run-once lifecycle hook reading component values",
+      "group": "React architecture",
+      "examples": {
+        "caught": {
+          "path": "src/components/InvoiceHeader.tsx",
+          "text": "import { useState } from 'react';\nimport { useMount } from 'react-use';\n\nexport const InvoiceHeader = ({ invoiceId }: { invoiceId: string }) => {\n  const [title, setTitle] = useState('');\n  useMount(() => {\n    setTitle(`Invoice ${invoiceId}`);\n  });\n  return <h1>{title}</h1>;\n};\n"
+        },
+        "passes": {
+          "path": "src/components/InvoiceHeader.tsx",
+          "text": "import { useEffect, useState } from 'react';\n\nexport const InvoiceHeader = ({ invoiceId }: { invoiceId: string }) => {\n  const [title, setTitle] = useState('');\n  useEffect(() => {\n    setTitle(`Invoice ${invoiceId}`);\n  }, [invoiceId]);\n  return <h1>{title}</h1>;\n};\n"
         }
       }
     }

@@ -107,12 +107,16 @@ export interface DocumentGates {
   rules: Record<string, { loads: Check[]; compact: Check[] }>;
 }
 
-/** The pack's documents of `tool`, by repository-relative path, with the conformance.json entries mapping them. */
+/**
+ * The pack's documents of `tool`, by repository-relative path, with the conformance.json entries mapping them, and the
+ * pack's own rules (`own`): they have no upstream, so they are neither the tool's nor unmapped.
+ */
 function toolDocuments(root: string, loaded: LoadedPack, tool: string) {
   const pack = loaded.pack.pack;
   const entries = new Map(loaded.pack.rules.map((rule) => [`packs/${pack}/${documentPath(rule.policy)}`, rule]));
+  const own = new Set(loaded.pack.own.map((id) => `packs/${pack}/rules/${id}.json`));
   const documents = packDocuments(root, pack);
-  return { entries, documents, mine: documents.filter((document) => entries.get(document.path)?.upstream.tool === tool) };
+  return { entries, documents, own, mine: documents.filter((document) => entries.get(document.path)?.upstream.tool === tool) };
 }
 
 export function judgeDocuments(root: string, engine: Engine, loaded: LoadedPack, tool: string): DocumentGates {
@@ -161,7 +165,7 @@ export function judgeToolPack(
   const pack = loaded.pack.pack;
   const manifest = readGatesManifest(root, pack, tool);
   const conformance = conformanceOf(loaded, report);
-  const { entries, documents, mine } = toolDocuments(root, loaded, tool);
+  const { entries, documents, own, mine } = toolDocuments(root, loaded, tool);
   const on = packOn(root, pack);
   const checks: Check[] = [documentGates.bundledLoad];
   const pinned = loaded.pack.tools.find((entry) => entry.name === tool)?.version;
@@ -214,6 +218,6 @@ export function judgeToolPack(
       gates,
     };
   });
-  const unmapped = documents.filter((document) => !entries.has(document.path)).map(({ path, location }) => ({ file: path, location }));
+  const unmapped = documents.filter((document) => !entries.has(document.path) && !own.has(document.path)).map(({ path, location }) => ({ file: path, location }));
   return { pack, tool, toolPack: `${pack}/${tool}`, checks, unmapped, rules };
 }

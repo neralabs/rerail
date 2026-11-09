@@ -1,0 +1,625 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-architecture-mounted-ref-never-reset",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Set a mount ref back to true in the effect's setup when its cleanup sets it false; a Strict Mode re-run or an Activity re-show otherwise leaves it false for good.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.cy.*",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/*.stories.*",
+      "**/*.story.*",
+      "**/__stories__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "mrn-fn": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "mrn-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?i:react|react-dom)$"
+            }
+          },
+          "mrn-react-object": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^React$",
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "mrn-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "mrn-effect-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useEffect|useLayoutEffect)$",
+                "resolves": {
+                  "global": [
+                    "useEffect",
+                    "useLayoutEffect"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useEffect|useLayoutEffect)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "mrn-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:useEffect|useLayoutEffect)$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "matches": "mrn-react-object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern",
+                            "has": {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:useEffect|useLayoutEffect)$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$MRN_EFFECT_ALIAS",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "matches": "mrn-react-object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern",
+                            "has": {
+                              "kind": "pair_pattern",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "key",
+                                    "regex": "^(?:useEffect|useLayoutEffect)$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "value",
+                                    "kind": "identifier",
+                                    "pattern": "$MRN_EFFECT_ALIAS"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "mrn-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useEffect|useLayoutEffect)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "mrn-ref-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useRef)$",
+                "resolves": {
+                  "global": [
+                    "useRef"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useRef)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "mrn-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:useRef)$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "matches": "mrn-react-object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern",
+                            "has": {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^(?:useRef)$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$MRN_REF_ALIAS",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "matches": "mrn-react-object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern",
+                            "has": {
+                              "kind": "pair_pattern",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "key",
+                                    "regex": "^(?:useRef)$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "value",
+                                    "kind": "identifier",
+                                    "pattern": "$MRN_REF_ALIAS"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "mrn-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useRef)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "mrn-ref-true": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "mrn-ref-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "regex": "^\\(\\s*true\\s*,?\\s*\\)$"
+                }
+              }
+            ]
+          },
+          "mrn-ref-true-value": {
+            "any": [
+              {
+                "matches": "mrn-ref-true"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "mrn-ref-true-value"
+                }
+              }
+            ]
+          },
+          "mrn-effect-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "matches": "mrn-effect-callee"
+            }
+          },
+          "mrn-effect-arg": {
+            "any": [
+              {
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "matches": "mrn-effect-call"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "mrn-effect-arg"
+                }
+              }
+            ]
+          },
+          "mrn-effect-cb": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "matches": "mrn-effect-arg"
+          },
+          "mrn-returned": {
+            "any": [
+              {
+                "inside": {
+                  "kind": "return_statement",
+                  "inside": {
+                    "stopBy": {
+                      "matches": "mrn-fn"
+                    },
+                    "matches": "mrn-effect-cb"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "field": "body",
+                  "kind": "arrow_function",
+                  "matches": "mrn-effect-cb"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "mrn-returned"
+                }
+              },
+              {
+                "inside": {
+                  "field": "consequence",
+                  "kind": "ternary_expression",
+                  "matches": "mrn-returned"
+                }
+              },
+              {
+                "inside": {
+                  "field": "alternative",
+                  "kind": "ternary_expression",
+                  "matches": "mrn-returned"
+                }
+              }
+            ]
+          },
+          "mrn-cleanup": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "matches": "mrn-returned"
+          }
+        }
+      }
+    },
+    {
+      "id": "cleanup-only-reset",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "assignment_expression",
+            "pattern": "$X.current = false",
+            "all": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "mrn-fn"
+                  },
+                  "matches": "mrn-cleanup"
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "mrn-fn",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "name",
+                            "pattern": "$X"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "assignment_expression",
+                              "pattern": "$X.current = $V",
+                              "not": {
+                                "pattern": "$X.current = false"
+                              }
+                            }
+                          },
+                          {
+                            "has": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "arguments",
+                                  "has": {
+                                    "kind": "identifier",
+                                    "pattern": "$X"
+                                  }
+                                },
+                                {
+                                  "kind": "jsx_expression",
+                                  "has": {
+                                    "kind": "identifier",
+                                    "pattern": "$X"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "X": {
+              "kind": "identifier",
+              "regex": "(?i)(?:^|[^a])mount",
+              "not": {
+                "regex": "(?i)first|initial"
+              },
+              "resolves": {
+                "binding": {
+                  "value": {
+                    "matches": "mrn-ref-true-value"
+                  }
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "MOUNTED_REF_NEVER_RESET",
+        "message": "This cleanup sets $X false and nothing in this component sets it true, so a Strict Mode re-run or Activity re-show leaves it false. Set it true in the effect's setup, or drop the ref and its checks."
+      }
+    }
+  ]
+}

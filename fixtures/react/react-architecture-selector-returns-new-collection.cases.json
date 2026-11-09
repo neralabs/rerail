@@ -1,0 +1,130 @@
+{
+  "caught": [
+    {
+      "path": "src/calendar/NowLine.tsx",
+      "content": "import { useCalendarStore } from \"../state/calendar\";\n\nexport function NowLine() {\n  const { firstHour, lastHour } = useCalendarStore((state) => ({\n    firstHour: state.firstHour,\n    lastHour: state.lastHour,\n  }));\n  return <div data-range={`${firstHour}-${lastHour}`} />;\n}\n"
+    },
+    {
+      "path": "src/features/inbox/Unread.jsx",
+      "content": "import { useAppSelector } from '../../store';\n\nexport default function Unread() {\n  const [count, muted] = useAppSelector(s => [s.inbox.unread, s.inbox.muted]);\n  return muted ? null : <span>{count}</span>;\n}\n"
+    },
+    {
+      "path": "src/booking/SlotList.tsx",
+      "content": "import * as React from \"react\";\nimport { useBookerStoreContext } from \"./BookerStoreProvider\";\n\nexport const SlotList = () => {\n  const [view] = useBookerStoreContext((s) => [s.view] as const);\n  return <ul className={view} />;\n};\n"
+    },
+    {
+      "path": "src/hooks/usePager.ts",
+      "content": "import { usePagerStore } from \"./pagerStore\";\n\nexport function usePager() {\n  return usePagerStore((state) => {\n    const next = state.page + 1;\n    return { page: state.page, next, goTo: state.goTo };\n  });\n}\n"
+    },
+    {
+      "path": "src/settings/Theme.js",
+      "content": "import { useSelector } from '#redux';\n\nexport function Theme() {\n  const theme = useSelector(function (state) {\n    return { mode: state.prefs.mode, accent: state.prefs.accent };\n  });\n  return <div className={theme.mode} />;\n}\n"
+    },
+    {
+      "path": "src/panel/Header.tsx",
+      "content": "import { stores } from \"./stores\";\n\nexport function Header() {\n  const { title, subtitle } = stores.usePanelStore((s) => ({ title: s.title, subtitle: s.subtitle }));\n  return <h1 title={subtitle}>{title}</h1>;\n}\n"
+    },
+    {
+      "path": "src/i18n/LocaleSwitch.tsx",
+      "content": "import { useLocaleStore } from \"./localeStore\";\n\nexport function LocaleSwitch() {\n  const { locale, setLocale } = useLocaleStore((s) => ({ locale: s.locale, setLocale: s.setLocale }));\n  return <button onClick={() => setLocale(\"fr\")}>{locale}</button>;\n}\n"
+    },
+    {
+      "path": "src/header/Header.tsx",
+      "content": "import { useAppSelector } from \"../store\";\n\nconst selectHeader = (state: RootState) => ({ title: state.page.title, user: state.session.user });\n\nexport function Header() {\n  const { title, user } = useAppSelector(selectHeader);\n  return <h1 title={user?.name}>{title}</h1>;\n}\n"
+    },
+    {
+      "path": "src/header/Crumbs.jsx",
+      "content": "import { useNavStore } from './nav';\n\nfunction selectCrumbs(state) {\n  return [state.section, state.page];\n}\n\nexport function Crumbs() {\n  const [section, page] = useNavStore(selectCrumbs);\n  return <nav>{section} / {page}</nav>;\n}\n"
+    },
+    {
+      "path": "src/inbox/Thread.tsx",
+      "content": "import { useCallback } from \"react\";\nimport { useInboxStore } from \"./inboxStore\";\n\nexport function Thread({ id }: { id: string }) {\n  const select = useCallback((s: InboxState) => ({ thread: s.threads[id], draft: s.drafts[id] }), [id]);\n  const { thread, draft } = useInboxStore(select);\n  return <article data-draft={draft}>{thread.subject}</article>;\n}\n"
+    },
+    {
+      "path": "src/inbox/Row.tsx",
+      "content": "import * as R from \"react\";\nimport { useInboxStore } from \"./inboxStore\";\n\nexport function Row({ id }: { id: string }) {\n  const select = R.useCallback((s: InboxState) => [s.threads[id], s.unread[id]], [id]);\n  const [thread, unread] = useInboxStore(select);\n  return <li data-unread={unread}>{thread.subject}</li>;\n}\n"
+    },
+    {
+      "path": "src/inbox/Pill.jsx",
+      "content": "import React from 'react';\nimport { useInboxStore } from './inboxStore';\n\nconst { useCallback } = React;\n\nexport function Pill({ id }) {\n  const select = useCallback((s) => ({ count: s.unread[id], muted: s.muted[id] }), [id]);\n  const { count, muted } = useInboxStore(select);\n  return muted ? null : <span>{count}</span>;\n}\n"
+    },
+    {
+      "path": "src/profile/Card.tsx",
+      "content": "import * as RR from \"react-redux\";\n\nexport function Card() {\n  const { name, avatar } = RR.useSelector((state: RootState) => ({ name: state.me.name, avatar: state.me.avatar }));\n  return <img alt={name} src={avatar} />;\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/calendar/NowLine.tsx",
+      "content": "import { useCalendarStore } from \"../state/calendar\";\n\nexport function NowLine() {\n  const firstHour = useCalendarStore((state) => state.firstHour);\n  const lastHour = useCalendarStore((state) => state.lastHour);\n  return <div data-range={`${firstHour}-${lastHour}`} />;\n}\n"
+    },
+    {
+      "path": "src/booking/SlotList.tsx",
+      "content": "import { shallow } from \"zustand/shallow\";\nimport { useBookerStoreContext } from \"./BookerStoreProvider\";\n\nexport const SlotList = () => {\n  const [view, month] = useBookerStoreContext((s) => [s.view, s.month], shallow);\n  return <ul className={view} data-month={month} />;\n};\n"
+    },
+    {
+      "path": "src/cart/Summary.tsx",
+      "content": "import { useShallow } from \"zustand/react/shallow\";\nimport { useCartStore } from \"./cartStore\";\n\nexport function Summary() {\n  const { total, count } = useCartStore(useShallow((s) => ({ total: s.total, count: s.items.length })));\n  return <p>{count}: {total}</p>;\n}\n"
+    },
+    {
+      "path": "src/todo/Draft.jsx",
+      "content": "import { useLocalStore } from 'mobx-react';\n\nexport function Draft() {\n  const draft = useLocalStore(() => ({ text: '', setText(t) { this.text = t; } }));\n  return <input value={draft.text} onChange={e => draft.setText(e.target.value)} />;\n}\n"
+    },
+    {
+      "path": "src/widgets/Board.tsx",
+      "content": "import { useCreateStore } from \"./boardStore\";\n\nexport function Board() {\n  const store = useCreateStore(() => ({ cards: [], lanes: [] }));\n  return <div data-count={store.cards.length} />;\n}\n"
+    },
+    {
+      "path": "src/users/List.tsx",
+      "content": "import { useAppSelector } from \"../store\";\nimport { selectVisibleUsers } from \"./selectors\";\n\nexport function List() {\n  const users = useAppSelector(selectVisibleUsers);\n  return <ul>{users.map((u) => <li key={u.id}>{u.name}</li>)}</ul>;\n}\n"
+    },
+    {
+      "path": "src/mock/Responses.jsx",
+      "content": "import { useAppSelector } from '../store';\n\nexport function Responses({ id }) {\n  const rows = useAppSelector((state) => state.mock.responses[id] || []);\n  return <ul>{rows.map((r) => <li key={r.id}>{r.status}</li>)}</ul>;\n}\n"
+    },
+    {
+      "path": "src/profile/Card.tsx",
+      "content": "import { useSelector } from \"react-redux\";\n\nexport function Card() {\n  const { name, avatar } = useSelector((state: RootState) => ({ name: state.me.name, avatar: state.me.avatar }));\n  return <img alt={name} src={avatar} />;\n}\n"
+    },
+    {
+      "path": "src/counter/Counter.tsx",
+      "content": "import { create } from \"zustand\";\n\nconst useCounterStore = create<{ n: number; inc: () => void }>()((set) => ({\n  n: 0,\n  inc: () => set((s) => ({ n: s.n + 1 })),\n}));\n\nexport function Counter() {\n  const { n, inc } = useCounterStore((s) => ({ n: s.n, inc: s.inc }));\n  return <button onClick={inc}>{n}</button>;\n}\n"
+    },
+    {
+      "path": "src/hooks/usePager.ts",
+      "content": "import { usePagerStore } from \"./pagerStore\";\n\nexport function usePager() {\n  return usePagerStore((state) => {\n    if (!state.ready) return { page: 0 };\n    return state.current;\n  });\n}\n"
+    },
+    {
+      "path": "src/calendar/Meta.tsx",
+      "content": "import { useCalendarStore } from \"../state/calendar\";\n\nexport function Meta() {\n  const range = useCalendarStore((state) => state.range ?? { from: 0, to: 0 });\n  const label = useCalendarStore((state) => [state.from, state.to].join(\"-\"));\n  return <span title={label}>{range.from}</span>;\n}\n"
+    },
+    {
+      "path": "src/forms/Wizard.tsx",
+      "content": "import { useWizardStore } from \"./wizard\";\n\nexport function Wizard() {\n  const wizard = useWizardStore(() => ({ step: 0, values: {} }));\n  return <form data-step={wizard.step} />;\n}\n"
+    },
+    {
+      "path": "src/profile/Badge.tsx",
+      "content": "import { useShallowEqualSelector } from \"../hooks/useShallowEqualSelector\";\n\nexport function Badge() {\n  const { name, avatar } = useShallowEqualSelector((state: RootState) => ({ name: state.me.name, avatar: state.me.avatar }));\n  return <img alt={name} src={avatar} />;\n}\n"
+    },
+    {
+      "path": "src/profile/Badge.story.tsx",
+      "content": "import { useProfileStore } from \"./profileStore\";\n\nexport const Default = () => {\n  const { name } = useProfileStore((s) => ({ name: s.name }));\n  return <span>{name}</span>;\n};\n"
+    },
+    {
+      "path": "src/profile/Badge.cy.tsx",
+      "content": "import { useProfileStore } from \"./profileStore\";\n\nfunction Harness() {\n  const { name } = useProfileStore((s) => ({ name: s.name }));\n  return <span>{name}</span>;\n}\nit(\"mounts\", () => cy.mount(<Harness />));\n"
+    },
+    {
+      "path": "src/header/Title.tsx",
+      "content": "import { useAppSelector } from \"../store\";\n\nconst selectTitle = (state: RootState) => state.page.title;\n\nexport function Title() {\n  const title = useAppSelector(selectTitle);\n  return <h1>{title}</h1>;\n}\n"
+    },
+    {
+      "path": "src/inbox/Thread.tsx",
+      "content": "import { useCallback } from \"./callbacks\";\nimport { useInboxStore } from \"./inboxStore\";\n\nexport function Thread({ id }: { id: string }) {\n  const select = useCallback((s: InboxState) => ({ thread: s.threads[id] }), [id]);\n  const { thread } = useInboxStore(select);\n  return <article>{thread.subject}</article>;\n}\n"
+    },
+    {
+      "path": "src/store/hooks.tsx",
+      "content": "import { useSelector, type TypedUseSelectorHook } from \"react-redux\";\n\nexport const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;\nconst useTypedSelector = useAppSelector;\n\nexport function Card() {\n  const { name, avatar } = useTypedSelector((state) => ({ name: state.me.name, avatar: state.me.avatar }));\n  return <img alt={name} src={avatar} />;\n}\n"
+    }
+  ]
+}

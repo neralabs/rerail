@@ -1858,4 +1858,23 @@ export const HAND_WRITTEN = [
     match: "line+column",
   },
 ];
+
+/**
+ * The pack's own rules: written for Rerail, with no upstream plugin, by hand in packs/react/rules/ and proven by their
+ * pack.json examples and their cases in fixtures/react/. Listed as conformance.json's `own`, so no gate
+ * treats them as unmapped ports.
+ */
+export const OWN = [
+  "react-architecture-callback-for-dom-only",
+  "react-architecture-fresh-dependency",
+  "react-architecture-side-effect-in-render",
+  "react-architecture-then-without-stale-guard",
+  "react-architecture-cache-update-in-mutate-call",
+  "react-architecture-mounted-ref-never-reset",
+  "react-architecture-memo-trivial-expression",
+  "react-architecture-selector-returns-new-collection",
+  "react-architecture-request-beside-data-library",
+  "react-architecture-hoist-static-value",
+  "react-architecture-lifecycle-hook",
+];
 void H;

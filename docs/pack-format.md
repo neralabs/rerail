@@ -275,7 +275,10 @@ It records:
 - per ported rule: the upstream tool and rule it reproduces, how findings compare (`line` or `line+column`), and the
   capabilities it exercises;
 - `suppressionExemptions`: ports, by `id`, whose documents need not carry their tool's suppression comment yet, each
-  with a `reason` (check 4).
+  with a `reason` (check 4);
+- `own`: the ids of the pack's own rules, written for Rerail with no upstream tool. No gate judges them: the tool-pack
+  run does not report them as unmapped and the not-gated check does not ask for them on the frozen list. Each must
+  ship in `pack.json` with examples, which are their proof (check 2), and must have no port entry.
 
 A port whose document is under `candidates/` is scored on the fixtures, whose expected findings must cover it, and
 reported; its scores never fail a check. A port may also set:

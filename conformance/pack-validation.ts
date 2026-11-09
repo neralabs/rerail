@@ -824,6 +824,11 @@ export async function validatePack(directory: string, options: ValidatePackOptio
       if (result?.kind !== "compiled") continue;
       for (const failure of exampleFailures(rule.id, result, rule.examples)) fail("examples", failure, rule.id);
     }
+    // An own rule (conformance.json `own`) has no port entry, so the check above already asks it for examples.
+    const shippedIds = new Set(pack.rules.map(rule => rule.id));
+    for (const id of loaded?.pack.own ?? []) {
+      if (!shippedIds.has(id)) fail("proof", `${CONFORMANCE_FILE} lists own rule ${id}, which pack.json does not ship`);
+    }
   }
   for (const port of loaded?.pack.rules ?? []) {
     if (port.examples === undefined) continue;

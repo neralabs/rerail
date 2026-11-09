@@ -1,0 +1,162 @@
+{
+  "caught": [
+    {
+      "path": "src/features/profile/ProfileCard.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadProfile } from '../../api/profiles';\n\nexport function ProfileCard({ userId }: { userId: string }) {\n  const [profile, setProfile] = useState<Profile | null>(null);\n\n  useEffect(() => {\n    loadProfile(userId).then(setProfile);\n  }, [userId]);\n\n  return <h2>{profile?.name}</h2>;\n}\n"
+    },
+    {
+      "path": "src/search/SearchResults.jsx",
+      "content": "import React from 'react';\nimport { searchItems } from './searchClient';\n\nexport const SearchResults = ({ query, page }) => {\n  const [results, setResults] = React.useState([]);\n\n  React.useEffect(() => {\n    searchItems(query, page).then((items) => {\n      setResults(items);\n    });\n  }, [query, page, setResults]);\n\n  return <ul>{results.map((r) => <li key={r.id}>{r.title}</li>)}</ul>;\n};\n"
+    },
+    {
+      "path": "src/orders/OrderView.tsx",
+      "content": "import { useEffect as useAfterRender, useReducer as useMachine } from 'react';\nimport { getOrder } from '@/services/orders';\n\nfunction reducer(state: State, action: Action): State {\n  return action.type === 'loaded' ? { ...state, order: action.order } : state;\n}\n\nexport default function OrderView({ route }: Props) {\n  const [state, send] = useMachine(reducer, { order: null });\n\n  useAfterRender(() => {\n    getOrder(route.orderId)\n      .then((order) => send({ type: 'loaded', order }))\n      .catch(() => send({ type: 'failed' }));\n  }, [route.orderId]);\n\n  return <OrderDetails order={state.order} />;\n}\n"
+    },
+    {
+      "path": "src/hooks/useReportRows.ts",
+      "content": "import { useLayoutEffect, useState } from 'react';\nimport { reportsClient } from '../clients/reports';\n\nexport function useReportRows(range: Range) {\n  const [rows, setRows] = useState<Row[]>([]);\n\n  useLayoutEffect(function loadRows() {\n    reportsClient.rows.list({ range }).then(function (page) {\n      if (page.items.length > 0) {\n        setRows(page.items);\n      }\n    });\n  }, [range]);\n\n  return rows;\n}\n"
+    },
+    {
+      "path": "src/workspaces/WorkspaceKey.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { revealKey } from '../ipc/keys';\n\nexport function WorkspaceKey({ workspace }: { workspace: Workspace | null }) {\n  const [key, setKey] = useState<string | null>(null);\n\n  useEffect(() => {\n    if (workspace == null) {\n      return;\n    }\n    void revealKey(workspace.id).then((value) => {\n      if (value) setKey(value);\n    });\n  }, [workspace]);\n\n  return <code>{key}</code>;\n}\n"
+    },
+    {
+      "path": "src/channels/ChannelStats.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { rawRequest } from '../transport';\n\nexport function ChannelStats({ channel, rangeSeconds }: { channel: string; rangeSeconds: number }) {\n  const [stats, setStats] = useState<Stats | null>(null);\n  const [enabled, setEnabled] = useState(false);\n  const update = setStats;\n\n  useEffect(() => {\n    const now = Math.floor(Date.now() / 1000);\n    rawRequest('channel_stats', { body: JSON.stringify({ channel, from: now - rangeSeconds }) })\n      .then((response) => {\n        setEnabled(true);\n        return response.json();\n      })\n      .then((payload) => update(payload.result));\n  }, [channel, rangeSeconds]);\n\n  return enabled ? <StatsTable stats={stats} /> : null;\n}\n"
+    },
+    {
+      "path": "src/invoices/InvoiceTotals.tsx",
+      "content": "import * as R from 'react';\nimport { getTotals } from './invoicesApi';\n\nexport function InvoiceTotals({ invoiceId }: { invoiceId: string }) {\n  const [totals, setTotals] = R.useState<Totals | null>(null);\n\n  R.useEffect(() => {\n    getTotals(invoiceId).then((t) => setTotals(t));\n  }, [invoiceId]);\n\n  return <TotalsTable totals={totals} />;\n}\n"
+    },
+    {
+      "path": "src/teams/TeamName.jsx",
+      "content": "import Lib from 'react';\nimport { loadTeam } from './teamsApi';\n\nconst { useEffect: runAfterRender, useState } = Lib;\n\nexport function TeamName({ teamId }) {\n  const [team, setTeam] = useState(null);\n\n  runAfterRender(() => {\n    loadTeam(teamId).then(setTeam);\n  }, [teamId]);\n\n  return <span>{team?.name}</span>;\n}\n"
+    },
+    {
+      "path": "src/presence/Presence.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadMembers, subscribe } from './presence';\n\nexport function Presence({ roomId }: { roomId: string }) {\n  const [members, setMembers] = useState<Member[]>([]);\n\n  useEffect(() => {\n    const subscription = subscribe(roomId);\n    loadMembers(roomId).then(setMembers);\n    return () => subscription.close();\n  }, [roomId]);\n\n  return <MemberList members={members} />;\n}\n"
+    },
+    {
+      "path": "src/users/UserBadge.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadUser } from './usersApi';\n\nexport function UserBadge({ userId }: { userId: string }) {\n  const [user, setUser] = useState<User | null>(null);\n\n  useEffect(() => {\n    let ignore = false;\n    loadUser(userId).then(setUser);\n    return () => {\n      ignore = true;\n    };\n  }, [userId]);\n\n  return <Badge user={user} />;\n}\n"
+    },
+    {
+      "path": "src/users/UserName.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadUser } from './usersApi';\n\nexport function UserName({ userId }: { userId: string }) {\n  const [name, setName] = useState('');\n\n  useEffect(() => {\n    let ignore = false;\n    loadUser(userId).then((user) => {\n      if (!ignore) setName(user.name);\n    });\n  }, [userId]);\n\n  return <span>{name}</span>;\n}\n"
+    },
+    {
+      "path": "src/users/UserCard.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadUser } from './usersApi';\n\nexport function UserCard({ userId }: { userId: string }) {\n  const [user, setUser] = useState<User | null>(null);\n\n  useEffect(() => {\n    const controller = new AbortController();\n    loadUser(userId, { signal: controller.signal }).then(setUser);\n  }, [userId]);\n\n  return <Card user={user} />;\n}\n"
+    },
+    {
+      "path": "src/search/ArchiveSearch.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { search } from './search';\n\nexport function ArchiveSearch({ q }: { q: string }) {\n  const [hits, setHits] = useState<Hit[]>([]);\n\n  useEffect(() => {\n    const includeArchived = false;\n    search(q, { includeArchived }).then(setHits);\n  }, [q]);\n\n  return <HitList hits={hits} />;\n}\n"
+    },
+    {
+      "path": "src/search/DebouncedSearch.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { search } from './search';\n\nexport function DebouncedSearch({ q }: { q: string }) {\n  const [hits, setHits] = useState<Hit[]>([]);\n\n  useEffect(() => {\n    const timer = setTimeout(() => {\n      search(q).then(setHits);\n    }, 250);\n    return () => clearTimeout(timer);\n  }, [q]);\n\n  return <HitList hits={hits} />;\n}\n"
+    },
+    {
+      "path": "src/dashboard/Overview.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadStats, loadAlerts } from './dashboardApi';\n\nexport function Overview({ teamId }: { teamId: string }) {\n  const [data, setData] = useState<[Stats, Alert[]] | null>(null);\n\n  useEffect(() => {\n    Promise.all([loadStats(teamId), loadAlerts(teamId)]).then((both) => setData(both));\n  }, [teamId]);\n\n  return <OverviewGrid data={data} />;\n}\n"
+    },
+    {
+      "path": "src/folders/FolderTitle.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { get } from '../http';\n\nexport function FolderTitle({ uid }: { uid: string }) {\n  const [folder, setFolder] = useState<Folder | null>(null);\n\n  useEffect(() => {\n    const url = `/api/folders/${uid}`;\n    get(url).then(setFolder);\n  }, [uid]);\n\n  return <h1>{folder?.title}</h1>;\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/features/profile/ProfileCard.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadProfile } from '../../api/profiles';\n\nexport function ProfileCard({ userId }: { userId: string }) {\n  const [profile, setProfile] = useState<Profile | null>(null);\n\n  useEffect(() => {\n    let ignore = false;\n    loadProfile(userId).then((next) => {\n      if (!ignore) setProfile(next);\n    });\n    return () => {\n      ignore = true;\n    };\n  }, [userId]);\n\n  return <h2>{profile?.name}</h2>;\n}\n"
+    },
+    {
+      "path": "src/search/SearchResults.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { searchItems } from './searchClient';\n\nexport function SearchResults({ query }: { query: string }) {\n  const [results, setResults] = useState<Item[]>([]);\n\n  useEffect(() => {\n    const controller = new AbortController();\n    searchItems(query, { signal: controller.signal }).then(setResults, () => {});\n    return () => controller.abort();\n  }, [query]);\n\n  return <List items={results} />;\n}\n"
+    },
+    {
+      "path": "src/search/Suggestions.tsx",
+      "content": "import { useEffect, useRef, useState } from 'react';\nimport { suggest } from './suggest';\n\nexport function Suggestions({ text }: { text: string }) {\n  const [items, setItems] = useState<string[]>([]);\n  const latest = useRef(0);\n\n  useEffect(() => {\n    const requestId = latest.current + 1;\n    latest.current = requestId;\n    suggest(text).then((next) => {\n      if (requestId === latest.current) setItems(next);\n    });\n  }, [text]);\n\n  return <Menu items={items} />;\n}\n"
+    },
+    {
+      "path": "src/settings/Plans.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { listPlans } from '../billing';\n\nexport function Plans() {\n  const [plans, setPlans] = useState<Plan[]>([]);\n\n  useEffect(() => {\n    listPlans().then(setPlans);\n  }, []);\n\n  return <PlanGrid plans={plans} />;\n}\n"
+    },
+    {
+      "path": "src/live/ChannelInfo.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { getManagedChannels } from '../live';\n\nexport function ChannelInfo({ scope }: { scope: string }) {\n  const [channels, setChannels] = useState<Channel[]>([]);\n\n  useEffect(() => {\n    getManagedChannels().then(setChannels);\n  }, [scope]);\n\n  return <ChannelList channels={channels} scope={scope} />;\n}\n"
+    },
+    {
+      "path": "src/admin/AuthFeatures.tsx",
+      "content": "import { useEffect, useState } from 'react';\n\nexport function AuthFeatures({ storage }: { storage: Storage }) {\n  const [features, setFeatures] = useState<string[]>([]);\n\n  useEffect(() => {\n    storage.load('auth-features').then(setFeatures);\n  }, [storage]);\n\n  return <FeatureList features={features} />;\n}\n"
+    },
+    {
+      "path": "src/billing/useStripe.ts",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadStripe } from '@stripe/stripe-js';\n\nexport function useStripe(publishableKey: string) {\n  const [stripe, setStripe] = useState<Stripe | null>(null);\n\n  useEffect(() => {\n    if (!stripe) {\n      loadStripe(publishableKey).then(setStripe);\n    }\n  }, [stripe, publishableKey]);\n\n  return stripe;\n}\n"
+    },
+    {
+      "path": "src/orders/OrderLoader.tsx",
+      "content": "import { useEffect } from 'react';\nimport { getOrder } from '@/services/orders';\n\nexport function OrderLoader({ orderId, onLoaded }: Props) {\n  useEffect(() => {\n    getOrder(orderId).then(onLoaded);\n  }, [orderId, onLoaded]);\n\n  return null;\n}\n"
+    },
+    {
+      "path": "src/posts/Post.tsx",
+      "content": "import { useEffect, useState } from 'react';\n\nexport function Post({ slug }: { slug: string }) {\n  const [post, setPost] = useState<PostData | null>(null);\n\n  useEffect(() => {\n    fetch(`/api/posts/${slug}`)\n      .then((res) => res.json())\n      .then(setPost);\n  }, [slug]);\n\n  return <Article post={post} />;\n}\n"
+    },
+    {
+      "path": "src/posts/Comments.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadComments } from '../api';\n\nexport function Comments({ postId }: { postId: string }) {\n  const [comments, setComments] = useState<Comment[]>([]);\n\n  useEffect(() => {\n    const run = async () => {\n      const next = await loadComments(postId);\n      setComments(next);\n    };\n    run();\n  }, [postId]);\n\n  return <CommentList comments={comments} />;\n}\n"
+    },
+    {
+      "path": "src/releases/useCanEdit.ts",
+      "content": "import { useEffect, useRef, useState } from 'react';\nimport { checkPermission } from './permissions';\n\nexport function useCanEdit(release: Release) {\n  const [canEdit, setCanEdit] = useState(false);\n  const active = useRef(true);\n\n  useEffect(() => {\n    checkPermission('edit', release.id).then((ok) => {\n      if (active.current) setCanEdit(ok);\n    });\n  }, [release.id]);\n\n  return canEdit;\n}\n"
+    },
+    {
+      "path": "src/export/ExportVideo.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadRenderer } from './renderer';\n\nexport function ExportVideo({ format }: { format: string }) {\n  const [renderer, setRenderer] = useState<Renderer | null>(null);\n\n  useEffect(() => {\n    if (!renderer) {\n      loadRenderer(format).then((next) => setRenderer(next));\n    }\n    // eslint-disable-next-line react-hooks/exhaustive-deps\n  }, [format]);\n\n  return <Preview renderer={renderer} />;\n}\n"
+    },
+    {
+      "path": "src/auth/OAuthCallback.tsx",
+      "content": "import { useEffect, useRef, useState } from 'react';\nimport { completeAuthorization } from './oauth';\n\nexport function OAuthCallback({ code }: { code: string }) {\n  const started = useRef(false);\n  const [error, setError] = useState<string | null>(null);\n\n  useEffect(() => {\n    if (started.current) {\n      return;\n    }\n    started.current = true;\n    completeAuthorization(code).then((result) => setError(result.error));\n  }, [code]);\n\n  return error ? <Alert>{error}</Alert> : null;\n}\n"
+    },
+    {
+      "path": "src/generate/Generator.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { generateBatch } from './generate';\n\nexport function Generator({ plugin }: { plugin: string }) {\n  const [batch, setBatch] = useState<Item[]>([]);\n\n  useEffect(() => {\n    const abortController = new AbortController();\n    generateBatch(plugin, abortController).then((items) => setBatch(items));\n    return () => abortController.abort();\n  }, [plugin]);\n\n  return <BatchList items={batch} />;\n}\n"
+    },
+    {
+      "path": "src/assets/Thumbnail.tsx",
+      "content": "import { memo, useEffect, useState } from 'react';\nimport { getThumbnail } from './assetsApi';\n\nexport const Thumbnail = memo(function Thumbnail({ assetId }: { assetId: string }) {\n  const [urls, setUrls] = useState<Record<string, string>>({});\n\n  useEffect(() => {\n    getThumbnail(assetId).then((url) => setUrls((prev) => ({ ...prev, [assetId]: url })));\n  }, [assetId]);\n\n  return <img src={urls[assetId]} />;\n});\n"
+    },
+    {
+      "path": "src/format/Preview.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { formatText } from './format';\n\nexport function Preview({ text }: { text: string }) {\n  const [html, setHtml] = useState('');\n\n  useEffect(() => {\n    Promise.resolve(formatText(text)).then(setHtml);\n  }, [text]);\n\n  return <div dangerouslySetInnerHTML={{ __html: html }} />;\n}\n"
+    },
+    {
+      "path": "src/users/UserPanel.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { loadUser } from './usersApi';\n\nexport function UserPanel({ userId }: { userId: string }) {\n  const [user, setUser] = useState<User | null>(null);\n\n  useEffect(() => {\n    let cancelled = false;\n    function run() {\n      loadUser(userId).then((next) => {\n        if (cancelled) return;\n        setUser(next);\n      });\n    }\n    run();\n    const cleanup = () => {\n      cancelled = true;\n    };\n    return cleanup;\n  }, [userId]);\n\n  return <Panel user={user} />;\n}\n"
+    },
+    {
+      "path": "src/files/useFileContents.ts",
+      "content": "import { useEffect, useState } from 'react';\nimport { readFile } from '../ipc/files';\n\nexport function useFileContents(path: string) {\n  const [contents, setContents] = useState<Map<string, string>>(new Map());\n\n  useEffect(() => {\n    if (contents.has(path)) return;\n    readFile(path).then((text) => setContents((prev) => new Map(prev).set(path, text)));\n  }, [contents, path]);\n\n  return contents.get(path);\n}\n"
+    },
+    {
+      "path": "src/members/useDismissBanner.ts",
+      "content": "import { useEffect, useState } from 'react';\nimport { saveDismissal } from '../api/preferences';\n\nexport function useDismissBanner(count: number) {\n  const [saving, setSaving] = useState(false);\n  const [saves, setSaves] = useState(0);\n\n  useEffect(() => {\n    setSaving(true);\n    saveDismissal(count).then(() => {\n      setSaving(false);\n      setSaves((n) => n + 1);\n    });\n  }, [count]);\n\n  return { saving, saves };\n}\n"
+    },
+    {
+      "path": "src/search/QuickSearch.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { search } from './search';\n\nlet latestQuery = '';\n\nexport function QuickSearch({ query }: { query: string }) {\n  const [hits, setHits] = useState<Hit[]>([]);\n\n  useEffect(() => {\n    const requested = query;\n    latestQuery = requested;\n    search(query).then((next) => {\n      if (requested !== latestQuery) return;\n      setHits(next);\n    });\n  }, [query]);\n\n  return <HitList hits={hits} />;\n}\n"
+    },
+    {
+      "path": "src/settings/AccountClose.tsx",
+      "content": "import { useEffect, useState } from 'react';\nimport { fetchOwnedOrganizations } from '../orgs';\n\nexport function AccountClose({ api }: { api: ApiClient }) {\n  const [orgs, setOrgs] = useState<Org[]>([]);\n\n  useEffect(() => {\n    fetchOwnedOrganizations(api, { owner: true }).then((list) => setOrgs(list));\n  }, [api]);\n\n  return <OrgList orgs={orgs} />;\n}\n"
+    },
+    {
+      "path": "src/profile/SaveButton.tsx",
+      "content": "import { useState } from 'react';\nimport { saveProfile } from '../api';\n\nexport function SaveButton({ profile }: { profile: Profile }) {\n  const [status, setStatus] = useState('idle');\n  const onClick = () => saveProfile(profile).then(() => setStatus('saved'));\n  return <button onClick={onClick}>{status}</button>;\n}\n"
+    },
+    {
+      "path": "src/widgets/Counter.tsx",
+      "content": "/** @jsxImportSource preact */\nimport { useEffect, useState } from 'preact/hooks';\nimport { loadCount } from './count';\n\nexport function Counter({ id }: { id: string }) {\n  const [count, setCount] = useState(0);\n  useEffect(() => {\n    loadCount(id).then(setCount);\n  }, [id]);\n  return <span>{count}</span>;\n}\n"
+    }
+  ]
+}

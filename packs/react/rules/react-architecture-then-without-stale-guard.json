@@ -1,0 +1,1233 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-architecture-then-without-stale-guard",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Ignore stale results when an effect with dependencies writes a .then result to state; an earlier, slower response can overwrite the state of the latest run.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.cy.*",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/*.stories.*",
+      "**/*.story.*",
+      "**/__stories__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "tws-fn": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "tws-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?i:react|react-dom)$"
+            }
+          },
+          "tws-react-object": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^React$",
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "tws-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "tws-effect-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useEffect|useLayoutEffect)$",
+                "resolves": {
+                  "global": [
+                    "useEffect",
+                    "useLayoutEffect"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useEffect|useLayoutEffect)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "tws-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "any": [
+                        {
+                          "kind": "shorthand_property_identifier_pattern",
+                          "regex": "^(?:useEffect|useLayoutEffect)$"
+                        },
+                        {
+                          "inside": {
+                            "kind": "pair_pattern",
+                            "has": {
+                              "field": "key",
+                              "regex": "^(?:useEffect|useLayoutEffect)$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "matches": "tws-react-object"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "tws-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useEffect|useLayoutEffect)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "tws-state-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useState|useReducer)$",
+                "resolves": {
+                  "global": [
+                    "useState",
+                    "useReducer"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useState|useReducer)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "tws-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "any": [
+                        {
+                          "kind": "shorthand_property_identifier_pattern",
+                          "regex": "^(?:useState|useReducer)$"
+                        },
+                        {
+                          "inside": {
+                            "kind": "pair_pattern",
+                            "has": {
+                              "field": "key",
+                              "regex": "^(?:useState|useReducer)$"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "matches": "tws-react-object"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "tws-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useState|useReducer)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "tws-state-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "tws-state-callee"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "tws-state-call"
+                }
+              }
+            ]
+          },
+          "tws-setter-name": {
+            "kind": "identifier",
+            "inside": {
+              "kind": "array_pattern",
+              "inside": {
+                "field": "name",
+                "kind": "variable_declarator",
+                "has": {
+                  "field": "value",
+                  "matches": "tws-state-call"
+                }
+              }
+            },
+            "follows": {
+              "stopBy": "neighbor",
+              "regex": "^,$",
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^,$"
+                }
+              }
+            }
+          },
+          "tws-setter-ref": {
+            "params": [
+              "X"
+            ],
+            "rule": {
+              "kind": "identifier",
+              "pattern": "$X",
+              "any": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "occurrence": {
+                        "matches": "tws-setter-name"
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "kind": "identifier",
+                        "pattern": "$V",
+                        "matches": {
+                          "tws-setter-ref": {
+                            "X": "$V"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "tws-then-cb": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "property",
+                    "regex": "^then$"
+                  }
+                }
+              }
+            }
+          },
+          "tws-result-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier"
+              }
+            ],
+            "resolves": {
+              "binding": {
+                "site": {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "tws-fn"
+                    },
+                    "matches": "tws-then-cb"
+                  }
+                }
+              }
+            }
+          },
+          "tws-state-writer": {
+            "params": [
+              "S"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$S",
+                  "matches": {
+                    "tws-setter-ref": {
+                      "X": "$S"
+                    }
+                  }
+                },
+                {
+                  "matches": "tws-then-cb",
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "call_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "function",
+                          "kind": "identifier",
+                          "pattern": "$S",
+                          "matches": {
+                            "tws-setter-ref": {
+                              "X": "$S"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "tws-result-ref"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "tws-then-writes-state": {
+            "params": [
+              "S"
+            ],
+            "rule": {
+              "kind": "call_expression",
+              "has": {
+                "field": "function",
+                "kind": "member_expression",
+                "has": {
+                  "field": "property",
+                  "regex": "^then$"
+                }
+              },
+              "all": [
+                {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "matches": {
+                        "tws-state-writer": {
+                          "S": "$S"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "tws-effect-args": {
+            "kind": "arguments",
+            "inside": {
+              "kind": "call_expression",
+              "has": {
+                "field": "function",
+                "matches": "tws-effect-callee"
+              }
+            }
+          },
+          "tws-effect-cb": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "matches": "tws-effect-args"
+            }
+          },
+          "tws-dep-ref": {
+            "params": [
+              "D"
+            ],
+            "rule": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "member_expression"
+                },
+                {
+                  "kind": "shorthand_property_identifier"
+                }
+              ],
+              "pattern": "$D",
+              "inside": {
+                "stopBy": "end",
+                "matches": "tws-effect-args",
+                "has": {
+                  "kind": "array",
+                  "nthChild": {
+                    "position": 2,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "has": {
+                    "pattern": "$D",
+                    "not": {
+                      "regex": "^(?:set[A-Z][\\w$]*|dispatch)$|Ref$|\\.current$|^(?:api|client|storage|supabase|sdk|db|http)$|(?:Api|Client|Manager|Service|Storage|Sdk)$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "tws-dep-arg": {
+            "params": [
+              "D"
+            ],
+            "rule": {
+              "not": {
+                "inside": {
+                  "field": "function",
+                  "kind": "call_expression"
+                }
+              },
+              "any": [
+                {
+                  "matches": {
+                    "tws-dep-ref": {
+                      "D": "$D"
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "variable_declarator",
+                        "inside": {
+                          "stopBy": {
+                            "matches": "tws-fn"
+                          },
+                          "matches": "tws-effect-cb"
+                        },
+                        "has": {
+                          "field": "value",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": {
+                              "tws-dep-ref": {
+                                "D": "$D"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "tws-cleanup-assigns": {
+            "params": [
+              "G"
+            ],
+            "rule": {
+              "kind": "return_statement",
+              "has": {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      }
+                    ],
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "assignment_expression",
+                      "has": {
+                        "field": "left",
+                        "pattern": "$G"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "identifier",
+                    "resolves": {
+                      "binding": {
+                        "value": {
+                          "any": [
+                            {
+                              "kind": "arrow_function"
+                            },
+                            {
+                              "kind": "function_expression"
+                            }
+                          ],
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "assignment_expression",
+                            "has": {
+                              "field": "left",
+                              "pattern": "$G"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "tws-cleanup-aborts": {
+            "kind": "return_statement",
+            "has": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "arrow_function"
+                    },
+                    {
+                      "kind": "function_expression"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "has": {
+                        "field": "property",
+                        "regex": "^abort$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "any": [
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "function_expression"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "call_expression",
+                          "has": {
+                            "field": "function",
+                            "kind": "member_expression",
+                            "has": {
+                              "field": "property",
+                              "regex": "^abort$"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "then-sets-state",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": {
+              "tws-then-writes-state": {
+                "S": "$SET"
+              }
+            },
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "matches": "tws-effect-cb"
+                }
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "has": {
+                    "field": "object",
+                    "has": {
+                      "stopBy": {
+                        "matches": "tws-fn"
+                      },
+                      "kind": "arguments",
+                      "has": {
+                        "stopBy": {
+                          "matches": "tws-fn"
+                        },
+                        "matches": {
+                          "tws-dep-arg": {
+                            "D": "$DEP"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "function",
+                    "has": {
+                      "field": "object",
+                      "regex": "^(?:(?:window\\.|globalThis\\.)?fetch|ky|got|wretch|ofetch)\\s*\\(|^(?:axios|ky|got|ofetch|wretch|request)\\s*\\.|^Promise\\s*\\.\\s*(?:resolve|reject)\\b|^new\\s+Promise\\b"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "function",
+                    "has": {
+                      "field": "object",
+                      "has": {
+                        "stopBy": "end",
+                        "matches": {
+                          "tws-then-writes-state": {
+                            "S": "$INNER"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "end",
+                    "kind": "identifier",
+                    "pattern": "$FLAG",
+                    "not": {
+                      "inside": {
+                        "field": "left",
+                        "kind": "assignment_expression"
+                      }
+                    },
+                    "resolves": {
+                      "binding": {
+                        "site": {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "value",
+                            "any": [
+                              {
+                                "kind": "true"
+                              },
+                              {
+                                "kind": "false"
+                              }
+                            ]
+                          },
+                          "all": [
+                            {
+                              "inside": {
+                                "kind": "lexical_declaration",
+                                "regex": "^let\\b"
+                              }
+                            },
+                            {
+                              "inside": {
+                                "stopBy": {
+                                  "matches": "tws-fn"
+                                },
+                                "matches": "tws-effect-cb",
+                                "has": {
+                                  "stopBy": {
+                                    "matches": "tws-fn"
+                                  },
+                                  "matches": {
+                                    "tws-cleanup-assigns": {
+                                      "G": "$FLAG"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "has": {
+                        "field": "function",
+                        "has": {
+                          "field": "object",
+                          "has": {
+                            "stopBy": {
+                              "matches": "tws-fn"
+                            },
+                            "any": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "kind": "property_identifier"
+                                  },
+                                  {
+                                    "kind": "shorthand_property_identifier"
+                                  }
+                                ],
+                                "regex": "^signal$"
+                              },
+                              {
+                                "kind": "identifier",
+                                "resolves": {
+                                  "binding": {
+                                    "value": {
+                                      "kind": "new_expression",
+                                      "regex": "^new\\s+AbortController\\b"
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "matches": "tws-effect-cb",
+                        "has": {
+                          "stopBy": {
+                            "matches": "tws-fn"
+                          },
+                          "matches": "tws-cleanup-aborts"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "tws-effect-cb",
+                    "all": [
+                      {
+                        "has": {
+                          "stopBy": {
+                            "matches": "tws-fn"
+                          },
+                          "kind": "if_statement",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "condition",
+                                "has": {
+                                  "stopBy": "end",
+                                  "kind": "member_expression",
+                                  "has": {
+                                    "field": "property",
+                                    "regex": "^current$"
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "consequence",
+                                "any": [
+                                  {
+                                    "kind": "return_statement"
+                                  },
+                                  {
+                                    "has": {
+                                      "kind": "return_statement"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": {
+                            "matches": "tws-fn"
+                          },
+                          "kind": "assignment_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "left",
+                                "kind": "member_expression",
+                                "has": {
+                                  "field": "property",
+                                  "regex": "^current$"
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "right",
+                                "kind": "true"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "matches": "tws-then-cb",
+                      "has": {
+                        "stopBy": {
+                          "matches": "tws-fn"
+                        },
+                        "kind": "if_statement",
+                        "has": {
+                          "field": "condition",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "resolves": {
+                              "binding": {
+                                "site": {
+                                  "inside": {
+                                    "stopBy": {
+                                      "matches": "tws-fn"
+                                    },
+                                    "matches": "tws-effect-cb"
+                                  },
+                                  "not": {
+                                    "kind": "variable_declarator",
+                                    "has": {
+                                      "field": "value",
+                                      "any": [
+                                        {
+                                          "kind": "true"
+                                        },
+                                        {
+                                          "kind": "false"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "member_expression",
+                      "has": {
+                        "field": "property",
+                        "regex": "^current$"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "tws-effect-cb"
+                    },
+                    "kind": "if_statement",
+                    "has": {
+                      "field": "condition",
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "identifier",
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "array_pattern",
+                                "has": {
+                                  "pattern": "$SET"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "tws-effect-args",
+                    "has": {
+                      "kind": "array",
+                      "nthChild": {
+                        "position": 2,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      },
+                      "has": {
+                        "kind": "identifier",
+                        "not": {
+                          "pattern": "$SET"
+                        },
+                        "resolves": {
+                          "binding": {
+                            "site": {
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "array_pattern",
+                                "has": {
+                                  "pattern": "$SET"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "kind": "identifier",
+                        "pattern": "$SET"
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "field": "arguments",
+                            "has": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "computed_property_name",
+                                  "has": {
+                                    "stopBy": "end",
+                                    "matches": {
+                                      "tws-dep-ref": {
+                                        "D": "$KEY"
+                                      }
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "call_expression",
+                                  "has": {
+                                    "field": "function",
+                                    "kind": "member_expression",
+                                    "has": {
+                                      "field": "property",
+                                      "regex": "^set$"
+                                    }
+                                  },
+                                  "all": [
+                                    {
+                                      "has": {
+                                        "field": "arguments",
+                                        "has": {
+                                          "nthChild": {
+                                            "position": 1,
+                                            "ofRule": {
+                                              "not": {
+                                                "kind": "comment"
+                                              }
+                                            }
+                                          },
+                                          "matches": {
+                                            "tws-dep-ref": {
+                                              "D": "$KEY2"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "THEN_WITHOUT_STALE_GUARD",
+        "message": "Ignore stale results: add let ignore = false to this effect, return () => { ignore = true }, and in this .then call $SET and other setters only if !ignore."
+      }
+    }
+  ]
+}

@@ -90,6 +90,15 @@ describe("a gated tool-pack's rules", () => {
     ]);
   });
 
+  it("leave a pack's own rule (conformance.json own) out of the unmapped documents, and still load it with the rest", async () => {
+    const path = join(pack, "conformance.json");
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), own: ["pass-statement"] }));
+    const { verdict, summary } = await judge();
+    expect(verdict.unmapped).toEqual([]);
+    expect(summary.blocking.filter(row => row.stoppedAt === "Mapping")).toEqual([]);
+    expect(verdict.checks[0]).toMatchObject({ id: "bundled-load", ok: true, detail: expect.stringContaining("all 2 shipped document(s)") });
+  });
+
   it("take on or off from gates.yaml's declared facts, and list a shipped rule whose pack.json on disagrees", async () => {
     setUnits({ "clean.py": { rules: ["EX101"] } });
     writeFileSync(join(pack, "upstream", "examplelint", "gates.yaml"), GATES("null"));

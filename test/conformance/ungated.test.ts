@@ -119,6 +119,16 @@ describe("not-gated", () => {
     const { check } = await byId();
     expect(check("not-gated:own")).toMatchObject({ ok: false, detail: expect.stringMatching(/^1 new shipped rule\(s\) \(own-a\)/u) });
   });
+
+  it("leaves out a pack's own rules (conformance.json own), beside a port of an ungated tool", async () => {
+    pack("mixed", ["otherlint"], { loose: "otherlint" });
+    write("packs/mixed/pack.json", { rules: [{ id: "loose" }, { id: "mine" }] });
+    write("packs/mixed/conformance.json", { tools: [{ name: "otherlint" }], rules: [{ id: "loose", upstream: { tool: "otherlint" } }], own: ["mine"] });
+    lists({ mixed: ["loose"] });
+    const { result, check } = await byId();
+    expect(check("not-gated:mixed")).toMatchObject({ ok: true });
+    expect(result.notGated).toEqual([{ pack: "mixed", rules: 1 }]);
+  });
 });
 
 describe("frozen-list", () => {

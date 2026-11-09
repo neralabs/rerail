@@ -584,5 +584,18 @@
       ],
       "match": "line+column"
     }
+  ],
+  "own": [
+    "react-architecture-callback-for-dom-only",
+    "react-architecture-fresh-dependency",
+    "react-architecture-side-effect-in-render",
+    "react-architecture-then-without-stale-guard",
+    "react-architecture-cache-update-in-mutate-call",
+    "react-architecture-mounted-ref-never-reset",
+    "react-architecture-memo-trivial-expression",
+    "react-architecture-selector-returns-new-collection",
+    "react-architecture-request-beside-data-library",
+    "react-architecture-hoist-static-value",
+    "react-architecture-lifecycle-hook"
   ]
 }

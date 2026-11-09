@@ -103,6 +103,11 @@ export const packSchema = z
     suppressionExemptions: z.array(suppressionExemptionSchema).default([]),
     tools: z.array(toolSchema),
     rules: z.array(ruleSchema),
+    /**
+     * The pack's own rules: written for Rerail, with no upstream tool, so no gate judges them. Each must ship in
+     * pack.json with examples, which are their proof (pack validation, check 2).
+     */
+    own: z.array(z.string().regex(RULE_PACK_RULE_ID, "rule ids are lowercase kebab-case")).default([]),
     /** Expected-findings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
     oracles: nonEmpty.optional(),
   })
@@ -127,6 +132,8 @@ export const packSchema = z
     for (const rule of duplicates(pack.suppressionExemptions.map(exemption => exemption.rule))) issue(`duplicate suppression exemption for ${rule}`);
     const rules = new Set(pack.rules.map(rule => rule.id));
     for (const { rule } of pack.suppressionExemptions) if (!rules.has(rule)) issue(`suppression exemption for ${rule}, which is not a rule of the pack`);
+    for (const id of duplicates(pack.own)) issue(`duplicate own rule ${id}`);
+    for (const id of pack.own) if (rules.has(id)) issue(`${id} is listed as an own rule and also has a port entry`);
   });
 export type Pack = z.infer<typeof packSchema>;
 

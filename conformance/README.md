@@ -232,3 +232,8 @@ A private pack (`"private": true` in its `package.json`, as `packs/rerail`) is l
 published, so its rules never reach a user through the gates, and they are written for this repository, not ported, so
 they have no upstream tool to gate them. Its `pack.json` examples (the pack validation's checks 2 and 3) and its own
 tests prove them instead. The frozen list must not name a private pack's rules: a listed one is reported stale.
+
+A published pack's own rules (`own` in its `conformance.json`, as the React pack's architecture rules) are left out the
+same way: written for Rerail with no upstream tool, they are neither reported as unmapped by the tool-pack run nor asked
+for on the frozen list. Their `pack.json` examples and their cases prove them; an `own` id the pack does not ship fails
+the pack validation's check 2.

@@ -1,0 +1,178 @@
+{
+  "caught": [
+    {
+      "path": "app/settings/billing/page-view.tsx",
+      "content": "'use client';\nimport { useRouter } from 'next/navigation';\nimport { useSession } from '@/lib/session';\n\nexport default function BillingView() {\n  const router = useRouter();\n  const { status } = useSession();\n  if (status === 'signed-out') {\n    router.replace(`/login?next=${encodeURIComponent('/settings/billing')}`);\n  }\n  return <BillingForm />;\n}\n"
+    },
+    {
+      "path": "src/pages/Welcome.jsx",
+      "content": "import Router, { useRouter } from 'next/router';\n\nconst Welcome = ({ user }) => {\n  const router = useRouter();\n  if (!user) void router.push('/signup');\n  return <h1>Hello {user?.name}</h1>;\n};\nexport default Welcome;\n"
+    },
+    {
+      "path": "src/components/TeamGate.tsx",
+      "content": "import React from 'react';\nimport { useHistory as useRouteHistory } from 'react-router-dom';\n\nexport function TeamGate({ mfaRequired, children }: Props) {\n  const history = useRouteHistory();\n  if (mfaRequired) {\n    history.push('/mfa/setup');\n    return null;\n  }\n  return <>{children}</>;\n}\n"
+    },
+    {
+      "path": "src/hooks/useRequireAccount.ts",
+      "content": "import { useNavigation } from '@react-navigation/native';\nimport type { NativeStackNavigationProp } from '@react-navigation/native-stack';\nimport { useAccount } from './useAccount';\n\nexport function useRequireAccount() {\n  const navigation = useNavigation<NativeStackNavigationProp<RootStack>>();\n  const account = useAccount();\n  if (!account) navigation.navigate('SignIn');\n  return account;\n}\n"
+    },
+    {
+      "path": "app/(tabs)/profile.tsx",
+      "content": "import { useRouter } from 'expo-router';\nimport { Text } from 'react-native';\n\nexport default function Profile({ signedIn }: { signedIn: boolean }) {\n  const { replace } = useRouter();\n  if (!signedIn) replace('/sign-in');\n  return <Text>Profile</Text>;\n}\n"
+    },
+    {
+      "path": "src/routes/Checkout.tsx",
+      "content": "import { useNavigate } from 'react-router-dom';\n\nexport const Checkout = () => {\n  const navigate = useNavigate();\n  const cart = useCart();\n  if (cart.items.length === 0) {\n    navigate('/cart', { replace: true });\n  }\n  return <CheckoutForm cart={cart} />;\n};\n"
+    },
+    {
+      "path": "src/views/members/InviteBanner.tsx",
+      "content": "import { trackAnalytics } from 'app/utils/analytics';\n\nexport function InviteBanner({ organization, missing }: Props) {\n  if (missing.length > 0) {\n    trackAnalytics('invite_banner.viewed', { organization, count: missing.length });\n  }\n  return <Banner count={missing.length} />;\n}\n"
+    },
+    {
+      "path": "src/components/SaleHeader.tsx",
+      "content": "import React, { forwardRef } from 'react';\nimport { analytics } from '@/analytics';\n\nexport const SaleHeader = forwardRef<HTMLDivElement, Props>((props, ref) => {\n  props.sale.isLive && analytics.trackEvent({ name: 'Auction pageview', slug: props.sale.slug });\n  return <div ref={ref}>{props.sale.name}</div>;\n});\n"
+    },
+    {
+      "path": "src/hooks/useFeatureFlag.js",
+      "content": "import { useState } from 'react';\nimport { useTracking } from 'react-tracking';\n\nexport function useFeatureFlag(name, value) {\n  const [seen, setSeen] = useState(value);\n  const { trackEvent } = useTracking();\n  if (seen !== value) {\n    trackEvent({ flag: name, value });\n    setSeen(value);\n  }\n  return value;\n}\n"
+    },
+    {
+      "path": "src/components/TransactionRow.tsx",
+      "content": "import React from 'react';\nimport { useDispatch } from 'react-redux';\nimport { addNotification } from '@/notifications';\n\nexport const TransactionRow = React.memo(function TransactionRow({ txn }: Props) {\n  const dispatch = useDispatch();\n  if (!txn.account) {\n    dispatch(addNotification({ type: 'error', message: 'Account is required' }));\n  }\n  return <tr><td>{txn.payee}</td></tr>;\n});\n"
+    },
+    {
+      "path": "src/features/cart/CartPage.jsx",
+      "content": "import { useDispatch as useReduxDispatch } from 'react-redux';\nimport { cartOpened } from './cartSlice';\n\nfunction CartPage() {\n  const dispatch = useReduxDispatch();\n  dispatch(cartOpened());\n  return <Cart />;\n}\nexport default CartPage;\n"
+    },
+    {
+      "path": "src/app/[locale]/account/AccountPage.tsx",
+      "content": "'use client';\nimport { useRouter } from '@/i18n/navigation';\nimport { useAppDispatch } from '@/store/hooks';\nimport { accountViewed } from '@/store/accountSlice';\n\nexport function AccountPage({ user }: Props) {\n  const router = useRouter();\n  const dispatch = useAppDispatch();\n  user ? dispatch(accountViewed(user.id)) : router.push('/login');\n  return <Account user={user} />;\n}\n"
+    },
+    {
+      "path": "src/components/OrderRow.tsx",
+      "content": "import * as R from 'react';\nimport { trackRowShown } from '@/analytics';\n\nexport const OrderRow = R.forwardRef<HTMLTableRowElement, Props>((props, ref) => {\n  trackRowShown(props.id);\n  return <tr ref={ref} />;\n});\n"
+    },
+    {
+      "path": "src/components/OrderCell.jsx",
+      "content": "import { memo as pure } from 'react';\nimport { trackCellShown } from '../analytics';\n\nexport const OrderCell = pure(({ id }) => {\n  trackCellShown(id);\n  return <td>{id}</td>;\n});\n"
+    },
+    {
+      "path": "src/components/OrderTotal.tsx",
+      "content": "import React from 'react';\nimport { useDispatch } from 'react-redux';\n\nconst { memo } = React;\n\nexport const OrderTotal = memo(({ total }: { total: number }) => {\n  const dispatch = useDispatch();\n  dispatch({ type: 'total/shown', total });\n  return <td>{total}</td>;\n});\n"
+    },
+    {
+      "path": "src/features/search/SearchResults.tsx",
+      "content": "import { useMemo } from 'react';\nimport { useDispatch } from 'react-redux';\n\nexport function SearchResults({ items, query }: Props) {\n  const dispatch = useDispatch();\n  const results = useMemo(() => {\n    const found = items.filter((i) => i.name.includes(query));\n    dispatch(searchRan({ query, count: found.length }));\n    return found;\n  }, [items, query, dispatch]);\n  return <List items={results} />;\n}\n"
+    },
+    {
+      "path": "src/features/survey/SurveyPrompt.jsx",
+      "content": "import React from 'react';\nimport { trackSurveyShown } from '../analytics';\n\nexport function SurveyPrompt({ survey }) {\n  const [shownAt] = React.useState(() => {\n    trackSurveyShown(survey.id);\n    return Date.now();\n  });\n  return <Prompt survey={survey} since={shownAt} />;\n}\n"
+    },
+    {
+      "path": "src/stores/ProfileView.tsx",
+      "content": "import { observer } from 'mobx-react-lite';\nimport { useRouter } from 'next/navigation';\n\nexport const ProfileView = observer(({ store }: Props) => {\n  const router = useRouter();\n  if (!store.user) router.replace('/login');\n  return <Profile user={store.user} />;\n});\n"
+    },
+    {
+      "path": "src/stores/Cart.jsx",
+      "content": "import { observer } from 'mobx-react';\nimport { trackCartView } from '../analytics';\n\nexport default observer(function cart({ cart }) {\n  trackCartView(cart.id);\n  return <CartList items={cart.items} />;\n});\n"
+    },
+    {
+      "path": "src/screens/HomeScreen.tsx",
+      "content": "import { useAuth } from '../auth';\n\nexport function HomeScreen({ navigation }: Props) {\n  const user = useAuth();\n  if (!user) navigation.navigate('SignIn');\n  return <Feed user={user} />;\n}\n"
+    },
+    {
+      "path": "src/components/Gate.jsx",
+      "content": "import { withRouter } from 'react-router-dom';\n\nfunction Gate(props) {\n  if (!props.allowed) {\n    props.history.push('/denied');\n    return null;\n  }\n  return <div>{props.children}</div>;\n}\nexport default withRouter(Gate);\n"
+    },
+    {
+      "path": "src/routes/Private.tsx",
+      "content": "import { useNavigate } from 'react-router-dom';\n\nexport function Private({ ok, children }: Props) {\n  const navigate = useNavigate();\n  return <>{!ok && navigate('/login')}{children}</>;\n}\n"
+    },
+    {
+      "path": "src/pages/Legacy.tsx",
+      "content": "import { useRouter } from 'next/router';\n\nexport function Legacy({ ok }: Props) {\n  const { replace: redirectTo } = useRouter();\n  if (!ok) redirectTo('/home');\n  return <p>Legacy</p>;\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "app/settings/billing/page-view.tsx",
+      "content": "'use client';\nimport { useEffect } from 'react';\nimport { useRouter } from 'next/navigation';\nimport { useSession } from '@/lib/session';\n\nexport default function BillingView() {\n  const router = useRouter();\n  const { status } = useSession();\n  useEffect(() => {\n    if (status === 'signed-out') router.replace('/login');\n  }, [status, router]);\n  return <BillingForm />;\n}\n"
+    },
+    {
+      "path": "src/routes/Checkout.tsx",
+      "content": "import { Navigate, useNavigate } from 'react-router-dom';\n\nexport const Checkout = () => {\n  const navigate = useNavigate();\n  const cart = useCart();\n  if (cart.items.length === 0) return <Navigate to=\"/cart\" replace />;\n  const onDone = () => navigate('/thanks');\n  return <CheckoutForm cart={cart} onDone={onDone} onCancel={() => navigate(-1)} />;\n};\n"
+    },
+    {
+      "path": "src/views/members/InviteBanner.tsx",
+      "content": "import { useEffect, useCallback } from 'react';\nimport { useDispatch } from 'react-redux';\nimport { trackAnalytics } from 'app/utils/analytics';\n\nexport function InviteBanner({ organization, missing }: Props) {\n  const dispatch = useDispatch();\n  useEffect(() => {\n    if (missing.length > 0) trackAnalytics('invite_banner.viewed', { organization });\n  }, [organization, missing.length]);\n  const dismiss = useCallback(() => {\n    dispatch({ type: 'banner/dismissed' });\n    trackAnalytics('invite_banner.dismissed', { organization });\n  }, [dispatch, organization]);\n  return <Banner onDismiss={dismiss} />;\n}\n"
+    },
+    {
+      "path": "src/components/IssueSelection.tsx",
+      "content": "import { useReducer } from 'react';\n\nexport function IssueSelection({ ids }: { ids: string[] }) {\n  const [state, dispatch] = useReducer(reducer, ids, init);\n  if (state.ids !== ids) {\n    dispatch({ type: 'reset', ids });\n  }\n  return <List state={state} />;\n}\n"
+    },
+    {
+      "path": "src/plugins/graphite/context.tsx",
+      "content": "import { useMemo, useState } from 'react';\nimport { createStore } from './store';\n\nexport const GraphiteProvider = ({ children, query }: Props) => {\n  const [state, setState] = useState<State>();\n  const dispatch = useMemo(() => createStore(setState), []);\n  if (!state) {\n    dispatch(init({ query }));\n  }\n  return <Context.Provider value={state}>{children}</Context.Provider>;\n};\n"
+    },
+    {
+      "path": "app/orgs/[slug]/page.tsx",
+      "content": "import { notFound, redirect } from 'next/navigation';\n\nexport default async function OrgPage({ params }: Props) {\n  const session = await getSession();\n  if (!session) redirect('/login');\n  const org = await getOrg(params.slug);\n  if (!org) notFound();\n  return <OrgView org={org} />;\n}\n"
+    },
+    {
+      "path": "app/actions/checkout.tsx",
+      "content": "'use server';\nimport { trackPurchase } from '@/server/analytics';\n\nfunction Receipt({ order }: { order: Order }) {\n  trackPurchase(order.id);\n  return <p>Order {order.id} placed</p>;\n}\n\nexport async function completeCheckout(cartId: string) {\n  const order = await placeOrder(cartId);\n  return <Receipt order={order} />;\n}\n"
+    },
+    {
+      "path": "app/dashboard/page.tsx",
+      "content": "import { trackServerPageView } from '@/server/analytics';\n\nexport default async function DashboardPage() {\n  const user = await getUser();\n  trackServerPageView('dashboard', user.id);\n  return <Dashboard user={user} />;\n}\n"
+    },
+    {
+      "path": "public/app/features/alerting/AlertBanner.story.tsx",
+      "content": "import { trackBannerShown } from '../analytics';\n\nexport const Basic = () => {\n  trackBannerShown('story');\n  return <AlertBanner />;\n};\n"
+    },
+    {
+      "path": "src/components/LoginRedirect.cy.tsx",
+      "content": "import { useHistory } from 'react-router-dom';\n\nfunction Harness() {\n  const history = useHistory();\n  history.push('/login');\n  return <LoginRedirect />;\n}\nit('redirects', () => cy.mount(<Harness />));\n"
+    },
+    {
+      "path": "src/components/ShortcutsSettings.stories.tsx",
+      "content": "import { useDispatch } from 'react-redux';\n\nconst Template = () => {\n  const dispatch = useDispatch();\n  dispatch({ type: 'shortcuts/reset' });\n  return <ShortcutsSettings />;\n};\nexport default { title: 'Settings/Shortcuts' };\n"
+    },
+    {
+      "path": "src/components/Toolbar.tsx",
+      "content": "import { useRouter } from 'next/router';\nimport { trackClick } from '@/analytics';\n\nexport function Toolbar({ items }: Props) {\n  const router = useRouter();\n  function open(href: string) {\n    trackClick(href);\n    router.push(href);\n  }\n  return <nav>{items.map((item) => <a key={item.href} onClick={() => open(item.href)}>{item.label}</a>)}</nav>;\n}\n"
+    },
+    {
+      "path": "src/components/UndoBar.tsx",
+      "content": "import { useHistory } from 'react-router-dom';\n\nexport function UndoBar({ past, current }: Props) {\n  const location = useHistory().location;\n  const history = [...past];\n  history.push(current);\n  return <Steps items={history} at={location.pathname} />;\n}\n"
+    },
+    {
+      "path": "public/editor/worker.js",
+      "content": "function Hn(e,t,n){if(!n.tracker.canTrackSymbol)return;let r=dp(e);r&&n.tracker.trackSymbol(r,t,111551)}\nfunction En(e,t,n){return t.tracker.trackSymbol(e,t.enclosingDeclaration,n)}\n"
+    },
+    {
+      "path": "src/analytics/pageViews.ts",
+      "content": "import { track } from '@/analytics';\n\nexport function reportPageView(path: string) {\n  track('page_view', { path });\n}\n\nexport class Tracker {\n  view(path: string) {\n    track('page_view', { path });\n  }\n}\n"
+    },
+    {
+      "path": "src/components/Search.tsx",
+      "content": "import { useRouter } from 'next/router';\n\nexport function Search({ query }: Props) {\n  const router = useRouter();\n  const href = router.asPath;\n  const pending = query ? router.prefetch(`/search?q=${query}`) : null;\n  return <Results href={href} pending={pending} />;\n}\n"
+    },
+    {
+      "path": "src/features/filters/FilterBar.tsx",
+      "content": "import { useCallback } from 'react';\nimport { useDispatch } from 'react-redux';\n\nexport function FilterBar({ filters }: Props) {\n  const dispatch = useDispatch();\n  const apply = useCallback(() => {\n    dispatch(filtersChanged(filters));\n  }, [dispatch, filters]);\n  return <button onClick={apply}>Apply</button>;\n}\n"
+    },
+    {
+      "path": "src/editor/Canvas.tsx",
+      "content": "import { useUndoStack } from './useUndoStack';\n\nexport function Canvas({ doc }: Props) {\n  const editor = useUndoStack(doc);\n  if (editor.current !== doc) editor.history.push(doc);\n  return <Surface doc={doc} />;\n}\n"
+    },
+    {
+      "path": "src/components/NextLink.tsx",
+      "content": "import { useRouter } from 'next/router';\n\nexport function NextLink({ href, children }: Props) {\n  const { prefetch: warm } = useRouter();\n  warm(href);\n  return <a href={href}>{children}</a>;\n}\n"
+    },
+    {
+      "path": "src/composables/useAuthGuard.ts",
+      "content": "import { useRouter } from 'vue-router';\nimport { useSession } from './useSession';\n\nexport function useAuthGuard() {\n  const router = useRouter();\n  const session = useSession();\n  if (!session.value) router.push('/login');\n  return session;\n}\n"
+    }
+  ]
+}

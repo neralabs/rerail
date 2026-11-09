@@ -1,0 +1,984 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-architecture-side-effect-in-render",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't navigate, send analytics events or dispatch store actions in the body of a component or hook; do it in an event handler or an effect, since render can run many times.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.cy.*",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/*.stories.*",
+      "**/*.story.*",
+      "**/__stories__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "ser-fn": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "ser-hook-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^use[A-Z0-9]"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^use[A-Z0-9]"
+                  }
+                }
+              }
+            ]
+          },
+          "ser-component-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^[A-Z]"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^[A-Z]"
+                  }
+                }
+              }
+            ]
+          },
+          "ser-memo-callback": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "function_expression"
+                  }
+                ],
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "matches": "ser-memo-callee"
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "function_expression"
+                  }
+                ],
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "kind": "call_expression",
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "call_expression"
+                            },
+                            {
+                              "kind": "arguments"
+                            }
+                          ]
+                        }
+                      },
+                      "any": [
+                        {
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "name",
+                            "regex": "^[A-Z]"
+                          }
+                        },
+                        {
+                          "kind": "export_statement",
+                          "regex": "^export\\s+default\\b"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "ser-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?i:react|react-dom)$"
+            }
+          },
+          "ser-react-object": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^React$",
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "ser-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "ser-memo-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:memo|forwardRef)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "ser-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "ser-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:memo|forwardRef)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:memo|forwardRef)$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "matches": "ser-react-object"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "ser-render-fn": {
+            "not": {
+              "regex": "^async\\b"
+            },
+            "any": [
+              {
+                "matches": "ser-hook-fn"
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "matches": "ser-component-fn"
+                      },
+                      {
+                        "matches": "ser-memo-callback"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "kind": "jsx_element"
+                        },
+                        {
+                          "kind": "jsx_self_closing_element"
+                        },
+                        {
+                          "kind": "call_expression",
+                          "has": {
+                            "field": "function",
+                            "regex": "^(?:[\\w$]+\\.)?use[A-Z0-9]"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "ser-discarded": {
+            "any": [
+              {
+                "inside": {
+                  "kind": "expression_statement"
+                }
+              },
+              {
+                "inside": {
+                  "field": "right",
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                  },
+                  "matches": "ser-discarded-expr"
+                }
+              },
+              {
+                "inside": {
+                  "field": "consequence",
+                  "kind": "ternary_expression",
+                  "matches": "ser-discarded-expr"
+                }
+              },
+              {
+                "inside": {
+                  "field": "alternative",
+                  "kind": "ternary_expression",
+                  "matches": "ser-discarded-expr"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "unary_expression",
+                  "regex": "^void\\b",
+                  "matches": "ser-discarded-expr"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "ser-discarded-expr"
+                }
+              }
+            ]
+          },
+          "ser-discarded-expr": {
+            "any": [
+              {
+                "inside": {
+                  "kind": "expression_statement"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "jsx_expression"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "binary_expression",
+                  "matches": "ser-discarded-expr"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "ternary_expression",
+                  "matches": "ser-discarded-expr"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "ser-discarded-expr"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "unary_expression",
+                  "regex": "^void\\b",
+                  "matches": "ser-discarded-expr"
+                }
+              }
+            ]
+          },
+          "ser-init-fn": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "regex": "^(?:[\\w$]+\\.)?(?:useMemo|useState|useReducer)$"
+                },
+                "inside": {
+                  "stopBy": {
+                    "matches": "ser-fn"
+                  },
+                  "matches": "ser-render-fn"
+                }
+              }
+            }
+          },
+          "ser-in-render": {
+            "all": [
+              {
+                "matches": "ser-discarded"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "ser-fn"
+                  },
+                  "any": [
+                    {
+                      "matches": "ser-render-fn"
+                    },
+                    {
+                      "matches": "ser-init-fn"
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "program",
+                    "has": {
+                      "kind": "expression_statement",
+                      "regex": "^[\"']use server[\"']"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "ser-param": {
+            "resolves": {
+              "binding": {
+                "site": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "formal_parameters"
+                  }
+                }
+              }
+            }
+          },
+          "ser-router-hook": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "import_specifier",
+                  "has": {
+                    "field": "name",
+                    "regex": "^(?:useRouter|useHistory|useNavigation)$"
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement",
+                    "not": {
+                      "has": {
+                        "field": "source",
+                        "kind": "string",
+                        "has": {
+                          "kind": "string_fragment",
+                          "regex": "^(?:vue-router|@solidjs/router|solid-app-router|@angular/router|preact-router|preact-iso|wouter-preact|@tanstack/(?:vue|solid|svelte|angular)-router|vuex|pinia|@reduxjs/vue-redux|vue-redux|solid-redux|@reduxjs/angular-redux)(?:/.*)?$"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "ser-router-hook-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "ser-router-hook"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": 1,
+                  "matches": "ser-router-hook-call"
+                }
+              }
+            ]
+          },
+          "ser-navigate-hook": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "import_specifier",
+                  "has": {
+                    "field": "name",
+                    "regex": "^useNavigate$"
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement",
+                    "not": {
+                      "has": {
+                        "field": "source",
+                        "kind": "string",
+                        "has": {
+                          "kind": "string_fragment",
+                          "regex": "^(?:vue-router|@solidjs/router|solid-app-router|@angular/router|preact-router|preact-iso|wouter-preact|@tanstack/(?:vue|solid|svelte|angular)-router|vuex|pinia|@reduxjs/vue-redux|vue-redux|solid-redux|@reduxjs/angular-redux)(?:/.*)?$"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "ser-navigate-hook-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "ser-navigate-hook"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": 1,
+                  "matches": "ser-navigate-hook-call"
+                }
+              }
+            ]
+          },
+          "ser-dispatch-hook": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "import_specifier",
+                  "has": {
+                    "field": "name",
+                    "regex": "^use(?:App)?Dispatch$"
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "import_statement",
+                    "not": {
+                      "has": {
+                        "field": "source",
+                        "kind": "string",
+                        "has": {
+                          "kind": "string_fragment",
+                          "regex": "^(?:vue-router|@solidjs/router|solid-app-router|@angular/router|preact-router|preact-iso|wouter-preact|@tanstack/(?:vue|solid|svelte|angular)-router|vuex|pinia|@reduxjs/vue-redux|vue-redux|solid-redux|@reduxjs/angular-redux)(?:/.*)?$"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "ser-dispatch-hook-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "ser-dispatch-hook"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": 1,
+                  "matches": "ser-dispatch-hook-call"
+                }
+              }
+            ]
+          },
+          "ser-nav-callee": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:push|replace|back|forward|go|goBack|goForward|navigate|reset|pop|popToTop|dispatch)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "any": [
+                        {
+                          "kind": "identifier",
+                          "resolves": {
+                            "binding": {
+                              "site": {
+                                "kind": "variable_declarator",
+                                "has": {
+                                  "field": "value",
+                                  "matches": "ser-router-hook-call"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "matches": "ser-router-hook-call"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:push|replace|back|forward|go|goBack|goForward|navigate|reset|pop|popToTop|dispatch)$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "name",
+                        "kind": "object_pattern"
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "matches": "ser-router-hook-call"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "matches": "ser-router-hook-call"
+                      }
+                    },
+                    "occurrence": {
+                      "inside": {
+                        "field": "value",
+                        "kind": "pair_pattern",
+                        "has": {
+                          "field": "key",
+                          "regex": "^(?:push|replace|back|forward|go|goBack|goForward|navigate|reset|pop|popToTop|dispatch)$"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:push|replace|back|forward|go|goBack|goForward|navigate|reset|pop|popToTop|dispatch)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "object",
+                      "any": [
+                        {
+                          "kind": "identifier",
+                          "regex": "^(?:navigation|history)$",
+                          "matches": "ser-param"
+                        },
+                        {
+                          "kind": "member_expression",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "property",
+                                "regex": "^(?:navigation|history)$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "object",
+                                "kind": "identifier",
+                                "matches": "ser-param"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "matches": "ser-navigate-hook-call"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "ser-track-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^track(?:[A-Z0-9_][\\w$]*)?$"
+              },
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "property",
+                  "regex": "^track(?:[A-Z0-9_][\\w$]*)?$"
+                }
+              }
+            ]
+          },
+          "ser-dispatch-callee": {
+            "kind": "identifier",
+            "resolves": {
+              "binding": {
+                "site": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "value",
+                    "matches": "ser-dispatch-hook-call"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "navigation",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "ser-nav-callee",
+                  "pattern": "$CALLEE"
+                }
+              },
+              {
+                "matches": "ser-in-render"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "NAVIGATION_IN_RENDER",
+        "anchor": "witness.span",
+        "message": "Move `$CALLEE(…)` out of render into the event handler that causes it or a useEffect on its condition; render can run more often than React commits, so it can navigate early or twice."
+      }
+    },
+    {
+      "id": "analytics",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "ser-track-callee",
+                  "pattern": "$CALLEE"
+                }
+              },
+              {
+                "matches": "ser-in-render"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "ANALYTICS_IN_RENDER",
+        "anchor": "witness.span",
+        "message": "Send `$CALLEE(…)` from a useEffect keyed on what it reports, or from the event handler that causes it; render can run more often than React commits, so it can fire repeatedly."
+      }
+    },
+    {
+      "id": "dispatch",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "ser-dispatch-callee",
+                  "pattern": "$CALLEE"
+                }
+              },
+              {
+                "matches": "ser-in-render"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "DISPATCH_IN_RENDER",
+        "anchor": "witness.span",
+        "message": "Call `$CALLEE(…)` from the event handler that causes it or a useEffect on its condition; dispatching during render updates other components mid-render and can repeat."
+      }
+    }
+  ]
+}
