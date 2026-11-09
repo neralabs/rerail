@@ -31,6 +31,7 @@ ssp_entry("check_zero_io_l0_execution_role_enum_semantics").
 .decl ssp_run(name: symbol)
 ssp_run(name) :- ssp_entry(name), option("entryPoint",name).
 ssp_run(name) :- ssp_entry(name), option("entryPoint","_scan_source").
+ssp_run(name) :- ssp_entry(name), option("entryPoint","_all_checks").
 ssp_run(name) :- ssp_entry(name), !option("entryPoint",_).
 .decl ssp_base(n: node, name: symbol)
 ssp_base(n,@nfkc(name)) :- kind(n,"identifier"), text(n,name).
@@ -143,9 +144,9 @@ ssp_hit("check_zero_io_l0_execution_role_guardrail",c,c,c,0,"STEP-023",cat(name,
 ssp_hit("check_zero_io_l0_execution_role_enum_semantics",c,f,f,0,"STEP-024",cat(name,".execution_role() is annotated as str — annotate it as StepExecutionRole.")) :- ssp_step(c,name), ssp_zero_io(c), ssp_first(c,f,"execution_role"), field(f,"return_type",raw), unparen(raw,ann), (ssp_name(ann,"str") ; str_const(ann,"str") ; kind(ann,"type"), child(ann,inner,0), ssp_name(inner,"str")).
 ssp_hit("check_zero_io_l0_execution_role_enum_semantics",c,f,f,1,"STEP-025",cat(name,".execution_role() returns a raw string literal — return a StepExecutionRole enum member.")) :- ssp_step(c,name), ssp_zero_io(c), ssp_first(c,f,"execution_role"), ssp_walk(f,r), ssp_ret(r,v), str_const(v,value), (value = "sql" ; value = "virtual" ; value = "apply" ; value = "control").
 
-.violation SSPRow(at: span, violation_code: symbol, detail: symbol, class_order: number, method_order: number, callback_order: number, node_order: number, suborder: number) code "SSP_ROW" "{detail}"
-SSPRow(@place(path,l),code,message,ci,fi,0,ni,sub) :- ssp_run(entry), ssp_hit(entry,c,f,n,sub,code,message), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(n,ni).
-SSPRow(@place(path,l),"STEP-019",message,ci,fi,pi,ni,sub) :- ssp_run("check_postop_no_resolved_data_manipulation"), ssp_post_hit(c,f,p,n,sub,message), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(p,pi), visit_index(n,ni).
+.violation SSPRow(at: span, violation_code: symbol, detail: symbol, class_order: number, method_order: number, callback_order: number, node_order: number, suborder: number, entry: symbol) code "SSP_ROW" "{detail}"
+SSPRow(@place(path,l),code,message,ci,fi,0,ni,sub,entry) :- ssp_run(entry), ssp_hit(entry,c,f,n,sub,code,message), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(n,ni).
+SSPRow(@place(path,l),"STEP-019",message,ci,fi,pi,ni,sub,"check_postop_no_resolved_data_manipulation") :- ssp_run("check_postop_no_resolved_data_manipulation"), ssp_post_hit(c,f,p,n,sub,message), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(p,pi), visit_index(n,ni).
 
 // Global checks retain the source module's traversal order, independently of
 // the class/compile ordering used by the step-specific checks.
@@ -154,7 +155,7 @@ ssp_module(d,root) :- ssp_doc(d,_), docof(root,d), kind(root,"module").
 .decl ssp_dotted(n: node, name: symbol)
 ssp_dotted(n,name) :- ssp_name(n,name).
 ssp_dotted(n,cat(parent,".",name)) :- ssp_attr(n,v,name), ssp_dotted(v,parent).
-ssp_dotted(n,name) :- ssp_attr(n,v,name), !ssp_dotted(v,_).
+ssp_dotted(n,name) :- ssp_attr(n,v,name), !ssp_name(v,_), !ssp_attr(v,_,_).
 .decl ssp_named_call(n: node, name: symbol)
 ssp_named_call(n,name) :- ssp_func(n,f), ssp_dotted(f,name).
 .decl ssp_compiled(c: node)
@@ -170,13 +171,13 @@ ssp_closed(v) :- ssp_func(v,f), ssp_attr(f,_,name), (name = "materialize" ; name
 .decl ssp_strict(d: number)
 ssp_strict(d) :- ssp_module(d,m), body_stmt(m,s,_), child(s,a,0), kind(s,"expression_statement"), kind(a,"assignment"), !field(a,"type",_), assign_target(a,t), ssp_name(t,"CLOSED_POST_OP_STRICT"), assign_value(a,v), ssp_true(v).
 .decl ssp_explain(problem: symbol, message: symbol)
-ssp_explain(problem,cat(problem,". Do not add an allowlist entry, skip the file, or replace this with a RuntimeError/TypeError guard. Redesign the calling code using a closed post-op spec, explicit hydration step, executor-owned effect, or API redesign as appropriate. See docs/design/LEGACY_POSTOP_GUARDRAILS.rst.")) :- ssp_problem(problem).
+ssp_explain(problem,cat(problem,". This is an architectural problem: legacy post-op callbacks may only materialize final results or raise approved exceptions. Redesign the calling code using a closed post-op spec, explicit hydration step, executor-owned effect, or API redesign as appropriate. See docs/design/LEGACY_POSTOP_GUARDRAILS.rst.")) :- ssp_problem(problem).
 .decl ssp_problem(problem: symbol)
 .decl ssp_extra(entry: symbol, c: node, f: node, event: node, at: node, sub: number, code: symbol, message: symbol)
 .decl ssp_problem_hit(entry: symbol, c: node, f: node, event: node, at: node, sub: number, code: symbol, problem: symbol)
 ssp_problem(problem) :- ssp_problem_hit(_,_,_,_,_,_,_,problem).
 ssp_extra(entry,c,f,event,at,sub,code,message) :- ssp_problem_hit(entry,c,f,event,at,sub,code,problem), ssp_explain(problem,message).
-SSPRow(@place(path,l),code,message,ci,fi,0,ni,sub) :- ssp_run(entry), ssp_extra(entry,c,f,event,at,sub,code,message), docof(c,d), ssp_doc(d,path), line(at,l), visit_index(c,ci), visit_index(f,fi), visit_index(event,ni).
+SSPRow(@place(path,l),code,message,ci,fi,0,ni,sub,entry) :- ssp_run(entry), ssp_extra(entry,c,f,event,at,sub,code,message), docof(c,d), ssp_doc(d,path), line(at,l), visit_index(c,ci), visit_index(f,fi), visit_index(event,ni).
 
 ssp_entry("check_misc_runtime_is_deleted").
 ssp_entry("check_runtime_builder_names_are_enum_members").
@@ -255,3 +256,41 @@ ssp_forbidden(c,name) :- ssp_named_call(c,callee), (callee = "ResultMaterializat
 ssp_forbidden(c,"source_refs") :- ssp_named_call(c,callee), (callee = "runtime_refs_post_op" ; suffix(".runtime_refs_post_op",callee)), ssp_kw(c,"source_refs",_).
 ssp_forbidden(c,"raw_payload_ref_id") :- ssp_named_call(c,callee), (callee = "CompiledStep" ; suffix(".CompiledStep",callee) ; callee = "BatchChildResultSpec" ; suffix(".BatchChildResultSpec",callee)), ssp_kw(c,"raw_payload_ref_id",_).
 ssp_problem_hit("check_result_materialization_spec_no_source_ref_escape_hatch",m,m,c,c,0,"STEP-042",cat("post-op materialization must consume raw payload rows only; forbidden runtime-ref data ingress: ",names)) :- ssp_module(d,m), docof(c,d), ssp_forbidden(c,_), names = join name by name sep ", " : { ssp_forbidden(c,name) }.
+
+ssp_entry("check_compile_callbacks_no_runtime_authority").
+.decl ssp_authority_type(name: symbol)
+ssp_authority_type("ReadTransaction"). ssp_authority_type("WriteTransaction").
+ssp_authority_type("SqlConnection"). ssp_authority_type("DatabaseConnection").
+ssp_authority_type("SyncSqlConnection"). ssp_authority_type("SyncDatabaseConnection").
+.decl ssp_annotation_name(ann: node, name: symbol)
+ssp_annotation_name(ann,name) :- ssp_name(n,name), within(n,ann).
+ssp_annotation_name(ann,name) :- ssp_attr(n,_,name), within(n,ann).
+.decl ssp_authority_annotation(ann: node)
+ssp_authority_annotation(ann) :- ssp_annotation_name(ann,name), ssp_authority_type(name).
+.decl ssp_authority_return(d: number, name: symbol)
+ssp_authority_return(d,name) :- ssp_function(d,f,name), field(f,"return_type",ann), ssp_authority_annotation(ann).
+.decl ssp_nested_def(f: node, name: symbol, p: node)
+.decl ssp_nested_candidate(f: node, name: symbol, p: node)
+ssp_nested_candidate(f,@nfkc(raw),p) :- kind(f,"function_definition"), ssp_under(p,f), p != f, kind(p,"function_definition"), def_name(p,raw).
+ssp_nested_def(f,name,p) :- ssp_nested_candidate(f,name,p), visit_index(p,i), i = max j : { ssp_nested_candidate(f,name,q), visit_index(q,j) }.
+.decl ssp_callback(f: node, call: node, kw: node, name: symbol, cb: node)
+ssp_callback(f,call,v,name,cb) :- ssp_method(_,f,"compile"), ssp_walk(f,call), ssp_compiled(call), ssp_kw(call,name,v), (name = "post_op" ; name = "post_op_with_refs" ; name = "on_commit" ; name = "on_rollback"), ssp_name(v,cbname), ssp_nested_def(f,cbname,cb).
+.decl ssp_cb_carrier(cb: node, kind: symbol, name: symbol)
+ssp_cb_carrier(cb,kind,name) :- ssp_callback(_,_,_,kind,cb), sig_param(cb,_,nm,_,pk,ann,_), (pk = "posonly" ; pk = "pos"), text(nm,raw), name = @nfkc(raw), ssp_annotation_name(ann,"Hydrator").
+ssp_cb_carrier(cb,kind,name) :- ssp_callback(_,_,_,kind,cb), (kind = "post_op" ; kind = "post_op_with_refs"), sig_param(cb,_,nm,1,pk,_,_), (pk = "posonly" ; pk = "pos"), text(nm,raw), name = @nfkc(raw).
+.decl ssp_cb_authority(cb: node, name: symbol)
+ssp_cb_authority(cb,name) :- ssp_callback(_,_,_,_,cb), sig_param(cb,_,nm,_,pk,ann,_), (pk = "posonly" ; pk = "pos" ; pk = "kwonly"), text(nm,raw), name = @nfkc(raw), ssp_authority_annotation(ann).
+.decl ssp_carrier_attr(name: symbol)
+ssp_carrier_attr("txn"). ssp_carrier_attr("_txn"). ssp_carrier_attr("conn"). ssp_carrier_attr("_conn").
+ssp_carrier_attr("sql_conn"). ssp_carrier_attr("_serverplan_runtime_txn"). ssp_carrier_attr("_serverplan_sql_conn").
+.decl ssp_recover(cb: node, kind: symbol, n: node)
+ssp_recover(cb,kind,n) :- ssp_walk(cb,n), ssp_attr(n,v,attr), ssp_name(v,name), ssp_cb_carrier(cb,kind,name), ssp_carrier_attr(attr).
+ssp_recover(cb,kind,n) :- ssp_walk(cb,n), ssp_func(n,func), ssp_name(func,"getattr"), ssp_pos(n,0,v), ssp_name(v,name), ssp_cb_carrier(cb,kind,name), ssp_pos(n,1,a), str_const(a,attr), ssp_carrier_attr(attr).
+.decl ssp_cb_problem(cb: node, kind: symbol, n: node, priority: number, tail: symbol)
+ssp_cb_problem(cb,kind,n,0,"recovers runtime txn/conn authority from a runtime carrier — callbacks must stay authority-free.") :- ssp_recover(cb,kind,n).
+ssp_cb_problem(cb,kind,n,1,"calls a runtime authority helper — callbacks must not recover live txn/conn objects.") :- ssp_callback(_,_,_,kind,cb), ssp_walk(cb,n), ssp_func(n,func), ssp_name(func,"active_pipeline_txn_for_callbacks").
+ssp_cb_problem(cb,kind,n,2,"calls an authority-returning helper — callbacks must not recover live txn/conn objects.") :- ssp_callback(_,_,_,kind,cb), ssp_walk(cb,n), ssp_func(n,func), ssp_name(func,name), docof(cb,d), ssp_authority_return(d,name).
+ssp_cb_problem(cb,kind,n,3,"uses runtime txn/conn authority — callbacks must stay authority-free.") :- ssp_callback(_,_,_,kind,cb), ssp_walk(cb,n), kind(n,"call"), ssp_pos(n,_,arg), ssp_name(arg,name), ssp_cb_authority(cb,name).
+.decl ssp_cb_first(cb: node, kind: symbol, n: node, priority: number, tail: symbol)
+ssp_cb_first(cb,kind,n,priority,tail) :- ssp_cb_problem(cb,kind,n,priority,tail), visit_index(n,i), i = min j : { ssp_cb_problem(cb,kind,m,_,_), visit_index(m,j) }, priority = min p : { ssp_cb_problem(cb,kind,n,p,_) }.
+SSPRow(@place(path,l),"STEP-026",cat(cls,".compile() callback '",@nfkc(name),"' ",tail),ci,fi,calli,kwi,0,"check_compile_callbacks_no_runtime_authority") :- ssp_run("check_compile_callbacks_no_runtime_authority"), ssp_step(c,cls), ssp_method(c,f,"compile"), ssp_callback(f,call,kw,kind,cb), ssp_cb_first(cb,kind,n,_,tail), def_name(cb,name), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(call,calli), visit_index(kw,kwi).

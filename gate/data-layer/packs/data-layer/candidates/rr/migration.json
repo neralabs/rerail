@@ -667,8 +667,21 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/signing.rr",
-      "sha256": "07d42ecda753194a32566b35c088913f8a6774b8535cc3d84203450b6cf6a94d",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "importedSha256": "07d42ecda753194a32566b35c088913f8a6774b8535cc3d84203450b6cf6a94d",
+      "repairs": [
+        {
+          "before": "07d42ecda753194a32566b35c088913f8a6774b8535cc3d84203450b6cf6a94d",
+          "after": "67062265d479985e3449cd177aa4f2e8f5d68e4f3286a0e393f3dd48ef226dd7",
+          "reason": "Remove negative recursive name fallback; retain exact pinned remediation text and explicit empty signed keys"
+        },
+        {
+          "before": "67062265d479985e3449cd177aa4f2e8f5d68e4f3286a0e393f3dd48ef226dd7",
+          "after": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553",
+          "reason": "Batch step observations by source and configuration; port callback authority checks"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/php/arrays.rr",
@@ -2106,7 +2119,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "66fd456d362bbc4db28758585286ab14211365f33698966a406fedd7731633d6",
+      "sha256": "9f8764aee8339041a748419a13bf203e93fba98d0f02707ed49227b950193a94",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2114,6 +2127,21 @@
           "before": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
           "after": "66fd456d362bbc4db28758585286ab14211365f33698966a406fedd7731633d6",
           "reason": "Translate the next eleven step checks from the original red suite"
+        },
+        {
+          "before": "66fd456d362bbc4db28758585286ab14211365f33698966a406fedd7731633d6",
+          "after": "e228f27e4d303b1a21f58e0a1ce9590b36de973dfa716596726b8331d3582aaa",
+          "reason": "Remove negative recursive name fallback; retain exact pinned remediation text and explicit empty signed keys"
+        },
+        {
+          "before": "e228f27e4d303b1a21f58e0a1ce9590b36de973dfa716596726b8331d3582aaa",
+          "after": "acdaf6b297c9c71bfbe5043c3a6563c1a4abd0def7905d66ae9e6514001d47d9",
+          "reason": "Batch step observations by source and configuration; port callback authority checks"
+        },
+        {
+          "before": "acdaf6b297c9c71bfbe5043c3a6563c1a4abd0def7905d66ae9e6514001d47d9",
+          "after": "9f8764aee8339041a748419a13bf203e93fba98d0f02707ed49227b950193a94",
+          "reason": "Name callback candidates before the correlated last-definition aggregate"
         }
       ]
     }
@@ -2585,7 +2613,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "66fd456d362bbc4db28758585286ab14211365f33698966a406fedd7731633d6"
+      "ruleSha256": "9f8764aee8339041a748419a13bf203e93fba98d0f02707ed49227b950193a94"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3219,7 +3247,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "f4b94383f79e56dbe6a4355552c70754fec9e0953ae0315f47565cb3194c9d83"
+        "sha256": "8278045afeb1d8b7292d9b70ba4517eb7d8f32bb09d92d1cb482a2af65d08d44"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
@@ -3283,30 +3311,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b",
-    "cliArtifact": {
-      "engineCommit": "f2f23fc5d41f226c21b488ebc6efb40b9793c2aa",
-      "upstreamCommit": "01c58b38ac75c8ed2e79effb1f74a61d50202a43",
-      "sourceTrees": {
-        "native": "e3bd7bf38796756f1398e1ade43b88f0c0e512b0",
-        "tools/bitlex": "4abd73b7e2f3bcb7f7f90d9cf3183abbd8edbec1",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "36d03ae745ce0a93a9c95b7f57d15c49f1635bff"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-4cbcd8733a3d1e28",
-      "sha256": "4cbcd8733a3d1e28263aa03eddc5f0149db586270b2c1622ce9c344863856c22",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine"
-      ],
-      "seconds": 17.14
-    }
+    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b"
   },
   "engineSourceSnapshots": [
     {

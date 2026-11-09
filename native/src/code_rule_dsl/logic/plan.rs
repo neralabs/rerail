@@ -1746,7 +1746,8 @@ impl Model {
         delta_at: Option<usize>,
         tables: Option<&HashMap<String, (String, String)>>,
     ) -> Result<Query> {
-        let query = self.sql_query(prog, head, order, delta_at, tables)?;
+        let query = self.sql_query(prog, head, order, delta_at, tables)
+            .map_err(|e| Error::Plan(format!("building SQL for {head}: {e}")))?;
         query.check(&|relation| self.declared(prog, relation)).map_err(|e| Error::Plan(format!("the SQL for {head}: {e}")))?;
         Ok(query)
     }

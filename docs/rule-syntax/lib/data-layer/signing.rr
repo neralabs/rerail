@@ -44,20 +44,27 @@ allow_status(l, v) :- allow_sig(l, _, s), !unsigned_sig(s), allow_message(l, m),
 
 // Several named lists under one signature (compute_multi_allowlist_message):
 // {"allowlists":{"name":[…],…},"linter":"…","version":1}, names sorted, each list sorted.
-// A named list with no entries is absent from the message, as it is from the scripts' dict.
+// multi_name retains an explicitly named empty list. Entry-bearing lists also
+// define their names, so existing callers keep the same signed message.
+.decl multi_name(list: symbol, part: symbol)
 .decl multi_entry(list: symbol, part: symbol, e: symbol)
 .decl multi_sig(list: symbol, linter: symbol, sig: symbol)
+.decl multi_key(list: symbol, part: symbol)
+multi_key(l,p) :- multi_name(l,p).
+multi_key(l,p) :- multi_entry(l,p,_).
 
 .decl multi_part(list: symbol, part: symbol, json: symbol)
-multi_part(l, p, j) :- multi_entry(l, p, _),
+multi_part(l, p, j) :- multi_key(l, p),
     body = join q by e sep "," : { multi_entry(l, p, e), q = @json_str(e) },
     j = cat(@json_str(p), ":[", body, "]").
 
 .decl multi_status(list: symbol, status: symbol)
 multi_status(l, "unsigned") :- multi_sig(l, _, s), unsigned_sig(s).
-multi_status(l, v) :- multi_sig(l, linter, s), !unsigned_sig(s),
+.decl multi_message(list: symbol, message: symbol)
+multi_message(l, m) :- multi_sig(l, linter, _),
     body = join j by p sep "," : { multi_part(l, p, j) },
-    m = cat("{\"allowlists\":{", body, "},\"linter\":", @json_str(linter), ",\"version\":1}"),
+    m = cat("{\"allowlists\":{", body, "},\"linter\":", @json_str(linter), ",\"version\":1}").
+multi_status(l, v) :- multi_sig(l, _, s), !unsigned_sig(s), multi_message(l,m),
     ok = count : { nera_key(k), @ed25519_ok(k, m, s) = 1 },
     ( ok > 0, v = "valid" ; ok = 0, v = "invalid" ).
 
