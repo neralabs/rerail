@@ -119,7 +119,14 @@ const CASES: &[(&str, &str)] = &[
     ("r(n) :- n = sum count : { s(_) } : { t(_) }.", "08"),
     ("r(n) :- n = sum f(k: v) : { s(_) }.", "never"),
     // `min (…) : { … }`, an aggregate the engine tells from a call after its `)`: to the engine.
-    ("r(n) :- n = min (a + b) : { s(a, b) }.", "never"),
+    // `min (…) : {…}`: the call read again as the aggregate's value in parentheses.
+    ("r(n) :- n = min (a + b) : { s(a, b) }.", "18"),
+    ("r(n) :- n = max(a) : { s(a) }, m = sum(1, 2), k = join (f(a)) : { s(a) } + min(b).", "18"),
+    ("r(n) :- n = sum (a) : { s(a) ; t(a) }, min(n).", "18"),
+    // Two terms, none, a named argument: the engine refuses them.
+    ("r(n) :- n = min (a, b) : { s(a, b) }.", "never"),
+    ("r(n) :- n = min() : { s(a) }.", "never"),
+    ("r(n) :- n = min(x: 1) : { s(a) }.", "never"),
     ("r(-1).", "06"),
     // Arithmetic: precedence, left to right; `-` and a number one leaf, across an extra too;
     // unary minus over a primary; parentheses; functor calls.
