@@ -761,7 +761,7 @@ fn positional_match_all_binds_outputs_only_after_its_subject_is_bound() {
     let positive = statements(&format!("{declarations}hit(i,a,b,part) :- source(s), match_all(\"(?<part>[^/]+)\",s,i,a,b).\n"));
     assert!(check::grounded(&positive, &BTreeSet::new()).is_empty());
     let missing_subject = statements(&format!("{declarations}hit(i,a,b,part) :- match_all(\"(?<part>[^/]+)\",s,i,a,b).\n"));
-    assert_eq!(check::grounded(&missing_subject, &BTreeSet::new()), vec![(3, vec!["s".to_owned()])]);
+    assert_eq!(check::grounded(&missing_subject, &BTreeSet::new()), vec![(3, vec!["a".to_owned(), "b".to_owned(), "i".to_owned(), "part".to_owned(), "s".to_owned()])]);
     let negated = statements(&format!("{declarations}hit(i,a,b,part) :- source(s), !match_all(\"(?<part>[^/]+)\",s,i,a,b).\n"));
     assert_eq!(check::grounded(&negated, &BTreeSet::new()), vec![(3, vec!["a".to_owned(), "b".to_owned(), "i".to_owned(), "part".to_owned()])]);
 }
