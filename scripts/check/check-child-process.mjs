@@ -9,10 +9,12 @@
 // Windows also looks for a program named without a folder in the current folder before PATH, and Rerail runs inside
 // repositories it does not trust, so on Windows the helper refuses a program that is not named by absolute path.
 //
-// Rules, over every tracked .ts, .mts, .js and .mjs file under src/:
+// Rules, over every tracked .ts, .mts, .cts, .js, .mjs and .cjs file under src/:
 //   bypass   Only the helper loads `node:child_process` (or `child_process`) as a value: an `import` or `export`
-//            declaration that is not type-only, `import x = require(...)`, `require(...)` or `import(...)`.
-//   hidden   The helper sets `windowsHide: true` in the options it passes on.
+//            declaration that is not type-only, `import x = require(...)`, or the name as an argument of any call,
+//            which covers `require(...)`, `import(...)`, `createRequire(...)(...)`, `module.require(...)` and
+//            `process.getBuiltinModule(...)`. A type-only use (`import type`, `typeof import(...)`) is allowed.
+//   hidden   The helper's code, not its comments, sets `windowsHide: true` in an object it passes on.
 //   path     The helper refuses a program not named by absolute path (`assertProgramPath`), and no call to one of its
 //            starters names a program by a literal that is not an absolute path.
 //
@@ -42,35 +44,49 @@ function loadsValues(node) {
   return bindings.elements.length === 0 || bindings.elements.some(element => !element.isTypeOnly);
 }
 
-/** The module a node loads as a value, as a string literal, or undefined. */
-function loadedModule(node) {
-  if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined) {
-    return loadsValues(node) ? node.moduleSpecifier : undefined;
-  }
-  if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
-    return node.isTypeOnly ? undefined : node.moduleReference.expression;
-  }
-  if (ts.isCallExpression(node)) {
-    const callee = node.expression;
-    const loads = callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require");
-    return loads ? node.arguments[0] : undefined;
-  }
-  return undefined;
+/**
+ * Whether the string `literal`, the module's name, loads the module as a value: the specifier of an import or export
+ * that is not type-only or of `import x = require(...)` that is not, or an argument of any call. A call is whatever
+ * loads it: `require`, `import()`, a `createRequire` result under any name, `module.require` or
+ * `process.getBuiltinModule`. The name in a list of module names (a denylist) loads nothing.
+ */
+function namesModuleAsValue(literal) {
+  const parent = literal.parent;
+  if ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) && parent.moduleSpecifier === literal) return loadsValues(parent);
+  if (ts.isExternalModuleReference(parent)) return !parent.parent.isTypeOnly;
+  return ts.isCallExpression(parent) && parent.arguments.includes(literal);
 }
 
-/** The lines of `text` that load node:child_process as a value. */
+function parse(path, text) {
+  return ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, /\.[cm]?js$/u.test(path) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+}
+
+/** The lines of `text` that name node:child_process as a value. */
 function childProcessLoads(path, text) {
-  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, false, /\.[cm]?js$/u.test(path) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+  const source = parse(path, text);
   const lines = [];
   const visit = (node) => {
-    const loaded = loadedModule(node);
-    if (loaded !== undefined && ts.isStringLiteralLike(loaded) && MODULES.has(loaded.text)) {
-      lines.push(source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1);
+    if (ts.isStringLiteralLike(node) && MODULES.has(node.text) && namesModuleAsValue(node)) {
+      const statement = ts.findAncestor(node, ancestor => ts.isStatement(ancestor)) ?? node;
+      lines.push(source.getLineAndCharacterOfPosition(statement.getStart(source)).line + 1);
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return lines;
+  return [...new Set(lines)];
+}
+
+/** Whether `text`'s code, comments aside, sets `windowsHide: true` in an object literal. */
+function setsWindowsHide(path, text) {
+  const source = parse(path, text);
+  let found = false;
+  const visit = (node) => {
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === "windowsHide"
+      && node.initializer.kind === ts.SyntaxKind.TrueKeyword) found = true;
+    if (!found) ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }
 
 /** The lines of `text` that start a program named by a literal that is not an absolute path. */
@@ -96,7 +112,7 @@ export function childProcessProblems(files) {
   for (const { path, text } of files) {
     if (!path.startsWith("src/") || !CODE.test(path)) continue;
     if (path === HELPER) {
-      if (!/\bwindowsHide: true\b/u.test(text)) {
+      if (!setsWindowsHide(path, text)) {
         problems.push({ path, line: 1, rule: "hidden", message: "the child-process helper must set windowsHide: true" });
       }
       if (!/\bassertProgramPath\(args\)/u.test(text)) {
