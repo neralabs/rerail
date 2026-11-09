@@ -1690,7 +1690,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-assembly.rr",
-      "sha256": "e4848cc9a1a9d147baf462c29313cc7fa4852f1c365f56fe72ac484d74f8deeb",
+      "sha256": "0fa83e95d1f8ad77414a65e0b020c70e97f28c50001182e8cfa138dc885dfea3",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1701,6 +1701,11 @@
           "before": "0fa83e95d1f8ad77414a65e0b020c70e97f28c50001182e8cfa138dc885dfea3",
           "after": "e4848cc9a1a9d147baf462c29313cc7fa4852f1c365f56fe72ac484d74f8deeb",
           "reason": "An explicit discovery producer owns the complete source inventory, including empty CLI directory batches; prevent implicit primary buffers bypassing it"
+        },
+        {
+          "before": "e4848cc9a1a9d147baf462c29313cc7fa4852f1c365f56fe72ac484d74f8deeb",
+          "after": "0fa83e95d1f8ad77414a65e0b020c70e97f28c50001182e8cfa138dc885dfea3",
+          "reason": "Correct the diagnosed CLI failure: an empty directory list falls back to public; remove the unneeded explicit-inventory marker"
         }
       ]
     },
@@ -1770,7 +1775,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-source.rr",
-      "sha256": "f65b2de537df253ff0234934c12f580228c1c84f394a5a86c5d500efe0d71bfe",
+      "sha256": "3973b0d8f146d6219d351cfc13ca05d837aa44cc8d49e8346a0de81984454a26",
       "origin": "authored",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -1791,6 +1796,11 @@
           "before": "3973b0d8f146d6219d351cfc13ca05d837aa44cc8d49e8346a0de81984454a26",
           "after": "f65b2de537df253ff0234934c12f580228c1c84f394a5a86c5d500efe0d71bfe",
           "reason": "An explicit discovery producer owns the complete source inventory, including empty CLI directory batches; prevent implicit primary buffers bypassing it"
+        },
+        {
+          "before": "f65b2de537df253ff0234934c12f580228c1c84f394a5a86c5d500efe0d71bfe",
+          "after": "3973b0d8f146d6219d351cfc13ca05d837aa44cc8d49e8346a0de81984454a26",
+          "reason": "Correct the diagnosed CLI failure: an empty directory list falls back to public; remove the unneeded explicit-inventory marker"
         }
       ]
     },
@@ -1804,7 +1814,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/survey-produced-graph.rr",
-      "sha256": "8ebeebdb4df9c7c7d33a6ae640aea664d1a02a9e6c7a3274419d0237d1b4a2d9",
+      "sha256": "8c941ff60d6f784fe0b23c78ef12e8e0639033c93243b8aacafeb82aee4ca02c",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_lib/symbol_graph.py",
@@ -1825,6 +1835,11 @@
           "before": "8c941ff60d6f784fe0b23c78ef12e8e0639033c93243b8aacafeb82aee4ca02c",
           "after": "8ebeebdb4df9c7c7d33a6ae640aea664d1a02a9e6c7a3274419d0237d1b4a2d9",
           "reason": "An explicit discovery producer owns the complete source inventory, including empty CLI directory batches; prevent implicit primary buffers bypassing it"
+        },
+        {
+          "before": "8ebeebdb4df9c7c7d33a6ae640aea664d1a02a9e6c7a3274419d0237d1b4a2d9",
+          "after": "8c941ff60d6f784fe0b23c78ef12e8e0639033c93243b8aacafeb82aee4ca02c",
+          "reason": "Correct the diagnosed CLI failure: an empty directory list falls back to public; remove the unneeded explicit-inventory marker"
         }
       ]
     },
@@ -1961,7 +1976,7 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
       "origin": "authored",
-      "sha256": "3266fc409b207911ddc6db699c8eda0ccb4b19610cf0cf57a0aa0189236bf12b",
+      "sha256": "a521c0f0797fc19de941bc25feca6f90a0ec118a98982a19844cbb637a885f85",
       "importedSha256": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730",
       "repairs": [
         {
@@ -1993,6 +2008,11 @@
           "before": "55dae37109fe4b0a5ef5082077f8cfaea09cd6847a10569efea82630039bcf4d",
           "after": "3266fc409b207911ddc6db699c8eda0ccb4b19610cf0cf57a0aa0189236bf12b",
           "reason": "Wire the real-source CLI to the shared native graph and reports, with explicit batched directory demands and source public expansion"
+        },
+        {
+          "before": "3266fc409b207911ddc6db699c8eda0ccb4b19610cf0cf57a0aa0189236bf12b",
+          "after": "a521c0f0797fc19de941bc25feca6f90a0ec118a98982a19844cbb637a885f85",
+          "reason": "Assign vertex ranks with the existing whole-batch SQL window instead of per-vertex preceding-row counts"
         }
       ]
     },
@@ -2005,7 +2025,7 @@
     {
       "destination": "docs/rule-syntax/lib/data-layer/imperative-source.rr",
       "origin": "authored",
-      "sha256": "e5b85cb385f27249ec2457d47ee288c3aa3ee6b69445bf44bd400f7f7fb6198a",
+      "sha256": "c7e82baac7a0bcacfd1d9a2aa2863736ded047e389df19e3f64d53e552f26a8f",
       "importedSha256": "4baa259b0161fc34dd76c4627b46e63d4214cdad41448fc0587d86521ac3efbd",
       "repairs": [
         {
@@ -2027,13 +2047,18 @@
           "before": "b83643157e41b386f45de5ad0cd92448dfcbe52cfe952327fc9c9290e7ac7ebd",
           "after": "e5b85cb385f27249ec2457d47ee288c3aa3ee6b69445bf44bd400f7f7fb6198a",
           "reason": "An explicit discovery producer owns the complete source inventory, including empty CLI directory batches; prevent implicit primary buffers bypassing it"
+        },
+        {
+          "before": "e5b85cb385f27249ec2457d47ee288c3aa3ee6b69445bf44bd400f7f7fb6198a",
+          "after": "c7e82baac7a0bcacfd1d9a2aa2863736ded047e389df19e3f64d53e552f26a8f",
+          "reason": "Correct the diagnosed CLI failure: an empty directory list falls back to public; remove the unneeded explicit-inventory marker"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-bypass.rr",
       "origin": "authored",
-      "sha256": "55f310990a8b198784cb6e422b7853636e08c9a622d70925ffe3bfe92493efe2",
+      "sha256": "2c7940e420ba629af3e46a789a5b5477f125e95e9a4af05b8656cd19d84f5bd0",
       "importedSha256": "2916ccab6aa6849480c8e93dcc1fc2e83be4dec2d1bc3915f93a002844fde2cd",
       "repairs": [
         {
@@ -2050,6 +2075,21 @@
           "before": "7f86400aba75a2648566568911d7f83699ba6038bd8e55e0f4f226b86d1fc0f9",
           "after": "55f310990a8b198784cb6e422b7853636e08c9a622d70925ffe3bfe92493efe2",
           "reason": "Restore production workspace bootstrap and source explicit test-file filtering, after real-file positive failures"
+        },
+        {
+          "before": "55f310990a8b198784cb6e422b7853636e08c9a622d70925ffe3bfe92493efe2",
+          "after": "0bfad3718bb3505bc7e4224bbf021afb488aed897de3be231c0329047716eb50",
+          "reason": "Preserve scan_source buffer gate and authoritative on-disk AST as distinct input contracts"
+        },
+        {
+          "before": "0bfad3718bb3505bc7e4224bbf021afb488aed897de3be231c0329047716eb50",
+          "after": "2bf1a8e70bca37eb58afa628b0f893e7cd797f0ec81081cd60ed5e0e591bc1e1",
+          "reason": "Consume Final shared primary documents as well as loaded aliases, filtered by the actual plugin discovery inventory"
+        },
+        {
+          "before": "2bf1a8e70bca37eb58afa628b0f893e7cd797f0ec81081cd60ed5e0e591bc1e1",
+          "after": "2c7940e420ba629af3e46a789a5b5477f125e95e9a4af05b8656cd19d84f5bd0",
+          "reason": "Correlate the scan API with its explicit input document; a world-loaded neighbour must not be relabeled as the requested file"
         }
       ]
     }
@@ -2503,7 +2543,7 @@
       "legacySha256": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
-      "ruleSha256": "3266fc409b207911ddc6db699c8eda0ccb4b19610cf0cf57a0aa0189236bf12b"
+      "ruleSha256": "a521c0f0797fc19de941bc25feca6f90a0ec118a98982a19844cbb637a885f85"
     },
     {
       "check": "serverplan_bypass",
@@ -2512,7 +2552,7 @@
       "legacySha256": "1dc17f26cd4f28f2405ecf0b51067aa45864416fb1933385dcf1e57f54e12cdb",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-bypass.rr",
-      "ruleSha256": "55f310990a8b198784cb6e422b7853636e08c9a622d70925ffe3bfe92493efe2"
+      "ruleSha256": "2c7940e420ba629af3e46a789a5b5477f125e95e9a4af05b8656cd19d84f5bd0"
     },
     {
       "check": "serverplan_steps",
@@ -3054,7 +3094,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "d8fad367bc743e40b78e9b8b7ddcaa9e163a25df",
-    "status": "Final d8fad367b with complete constant-domain inference; native acceptance pending",
+    "status": "Root Final through d8fad367b with source-backed generic compatibility repairs; current imperative and bypass kernel acceptance recorded separately from global migration completion",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3214,7 +3254,30 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "50a4b75ece5dc142555177a1aca4c4a05e2f7096"
+    "upstreamMerge": "50a4b75ece5dc142555177a1aca4c4a05e2f7096",
+    "cliArtifact": {
+      "engineCommit": "c3a50416c71ca1b190ca758cc30d39608b8e2651",
+      "upstreamCommit": "d8fad367bc743e40b78e9b8b7ddcaa9e163a25df",
+      "sourceTrees": {
+        "native": "4348a6e538c4ee32c8f42a0d1b808c149bbf712b",
+        "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
+        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
+        "Cargo.lock": "da7438cb5a1700a6c0b730b245f453a344ae8b9c"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-a92caf913c514ca8",
+      "sha256": "a92caf913c514ca8ea697f8a8c26dd4a0d76d16edcb8d21a88301bc65a76b91f",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "rerail-engine",
+        "--features",
+        "headless",
+        "--bin",
+        "rerail-engine"
+      ],
+      "seconds": 17.142
+    }
   },
   "engineSourceSnapshots": [
     {

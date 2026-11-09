@@ -4,7 +4,7 @@
 #include "data-layer/survey-body.rr"
 
 .decl sgc_file(d: number, ordinal: number)
-sgc_file(d, i) :- !sgs_explicit_inventory(), option_item("inputFiles", i, path), sgs_module(d, path, _).
+sgc_file(d, i) :- option_item("inputFiles", i, path), sgs_module(d, path, _).
 .decl sgc_occurrence(n: node, d: number, file: number, local: number, sid: symbol)
 sgc_occurrence(n, d, file, local, sid) :- sgc_file(d, file), sgs_symbol(n, d, local, sid, _, _, _, _, _, _, _).
 .decl sgc_first(sid: symbol, file: number, local: number)

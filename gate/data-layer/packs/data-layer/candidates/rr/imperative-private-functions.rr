@@ -79,7 +79,11 @@ ipf_seed(sid,"eager_signature","private execution-scope function has no lazy ret
 // Numeric storage IDs leave -1 available for the shared queue head. All seed
 // vertices are queued before traversal, in the source dictionary's order.
 .decl ipf_vertex(sid: symbol, vertex: number)
-ipf_vertex(sid,i) :- sg_order(sid,file,local), i = count : { sg_order(_,a,b), (a < file ; (a = file,b < local)) }.
+// Source positions are unique. Rank the complete position batch once; do not
+// count the preceding graph symbols again for every vertex.
+.decl ipf_position(file: number, local: number)
+ipf_position(file,local) :- sg_order(_,file,local).
+ipf_vertex(sid,i) :- ordered_rows(file,local,i,ipf_position), sg_order(sid,file,local).
 .decl ipf_unknown(sid: symbol, position: number)
 ipf_unknown(sid,2*i) :- option_item("callerCallees",i,sid), !sg_symbol(_,sid,_,_,_,_,_,_,_,_).
 ipf_unknown(sid,2*i+1) :- option_item("callerSymbols",i,sid), !sg_symbol(_,sid,_,_,_,_,_,_,_,_).

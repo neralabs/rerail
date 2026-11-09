@@ -2,13 +2,12 @@
 #include "data-layer/survey-produced-graph.rr"
 #include "data-layer/survey-discovery.rr"
 sgd_enabled().
-sgs_explicit_inventory().
 sgd_configured().
 .decl ipfs_root(path: symbol)
 ipfs_root("api").
 ipfs_root(path) :- sgd_top(path), (path = "impl" ; path = "data_layer" ; path = "_internal" ; match_all("\\Al\\d{4}_[^\\n](?s:.*)\\z",path)).
-// Explicit CLI directories arrive as one environment demand batch. Empty
-// explicit directories intentionally select nothing.
+// Explicit CLI directories arrive as one environment demand batch. The source
+// graph builder treats an empty list as the public discovery token.
 .decl ipfs_cli_directories()
 ipfs_cli_directories() :- env("ipf.cli.directories","true").
 sgd_membership(path) :- ipfs_root(path), !ipfs_cli_directories().
@@ -31,3 +30,8 @@ ipf_queue_edge(callee,caller,i) :- python_set_rows(a,b,i,ipfs_insert), ipf_verte
 ipf_predecessor(sid,parent,i) :- sgp_active(), sge_caller(parent,sid), ipf_visit(parent,i).
 
 sgd_layer(name) :- sgd_top(name), match_all("\\Al\\d{4}_[^\\n](?s:.*)\\z",name).
+
+.decl ipfs_cli_path()
+ipfs_cli_path() :- env(key,_), match_all("\\Adata-layer\\.scan\\.[0-9]+\\z",key).
+sgd_membership("public") :- ipfs_cli_directories(), !ipfs_cli_path().
+sgd_argument(0,"public") :- ipfs_cli_directories(), !ipfs_cli_path().

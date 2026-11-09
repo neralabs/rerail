@@ -24,3 +24,10 @@ def install(suite,module):
         return [module.BypassViolation(**{k:v for k,v in row['parameters'].items() if k!='ordinal'})
                 for row in sorted(rows,key=lambda r:r['parameters']['ordinal']) if row['code']=='SB_ROW']
     suite.replace(module,'scan_file',scan)
+
+    def scan_source(path,source):
+        rows=[r['parameters']['value'] for r in native('_source_gate',options=dict(callSource=source)) if r['code']=='SB_BOOL']
+        if len(rows)!=1:raise ValueError('One native source gate required')
+        if not rows[0] or not Path(path).is_file():return []
+        return scan(path)
+    suite.replace(module,'scan_source',scan_source)

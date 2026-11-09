@@ -2229,5 +2229,47 @@ The bypass detector now passes all seven original tests, including the four prev
 Its 33-case real-file cohort exposes missing production bootstrap, explicit test-path filtering, and a Unicode trigger failure.
 The Unicode probe proves that inferred constant domains omit literal facts when the same relation also has rules.
 The engine adds an unsound text prefilter and rejects a file whose literal fetch trigger is present. A generic regression and repair are next.
-The imperative CLI has a complete 26-case source recording. Its first native shard exposes implicit primary files bypassing explicit empty directory selection.
-The source graph producer needs an explicit inventory ownership contract. Neither cohort is complete.
+The imperative CLI has a complete 26-case source recording. Its first native shard fails for empty directory selection. The initial inventory-leak diagnosis is later rejected.
+The next investigation must identify the source fallback precisely. Neither cohort is complete.
+
+### 2026-11-08 — Final d8 imperative and bypass parity checkpoint
+
+The branch includes Final `d8fad367b`, including stored combined programs and prepared execution splits.
+The registered root CLI uses engine source `c3a50416c`. Compilation takes 17.142 seconds for the CLI and 35.871 seconds for unit tests.
+
+Imperative acceptance passes all 144 original tests and 129 complete API observations.
+All 39 real-file cases pass, with 25 producer positives and 23 plugin positives.
+All 27 real-source CLI cases pass, including 24 nonzero check results.
+All twelve persistent-workspace steps pass across 24 runs sharing one store.
+The source oracle relocates only the bound repository path for its physical CLI fixtures.
+Native execution invokes no Python detector or graph implementation.
+
+Bypass acceptance passes all seven original tests and eight complete API observations.
+All 37 real-file cases pass, including 25 scanner positives and 27 reporter positives.
+These cases include Unicode names, decorators, nested scopes, source gates, signatures, duplicate calls, and discovery exclusions.
+All thirteen persistent-workspace steps pass across 26 runs sharing one store.
+Six imperative producer controls, eight CLI controls, and six bypass controls detect disabled native rules through complete result mismatches.
+
+The text-domain regression fails before the repair and passes afterward.
+The old inference returns only rule-produced constants and drops literal facts from mixed relations.
+The repair includes both producers and rejects bounded inference for external inputs.
+The native set-order producer preserves the source's caller-set iteration without a Python runtime.
+A single SQL window now assigns vertex ranks instead of repeated preceding-row counts. No performance improvement is claimed from these fixtures.
+
+The first CLI inventory diagnosis was wrong. SymbolGraph treats an empty directory list as `public`.
+The unnecessary inventory marker is removed. Both legacy and modern-layout fallback cases now pass.
+Final shares existing physical documents without adding loaded aliases.
+The bypass rule accepts those documents and keeps discovery membership authoritative.
+The update ladder then exposes a separate single-file scope leak.
+The API now joins its explicit input path, so a loaded neighbour cannot inherit the requested filename.
+
+All 143 focused native tests pass, with two existing annotated helpers ignored.
+All 163 tooling tests and 127 tooling subtests pass. All 103 policy/table readers pass.
+Commands remain bounded at 115 seconds. No full repository cold run occurs.
+The previously authorized external fixture-suite exclusion remains unchanged.
+
+The [checkpoint receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-bypass-finald8-acceptance.json.gz) binds recordings, complete results, consumed programs, harnesses, builds, controls, and update ladders.
+Its validator checks assertion coverage, complete result equality, engine identity, and consumed program hashes.
+The inventory contains 92 drafts and eight absent translations. Draft count is not completion coverage.
+The bypass standalone CLI and legacy callback adapters remain open, along with shared registry integration and earlier recorded gaps.
+The next absent translation is serverplan-steps. The 100-rule migration is not complete.

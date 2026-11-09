@@ -30,13 +30,24 @@ sb_top(name) :- sb_workspace(path), dir_entry(path,name,1).
 pfd_root(path) :- sb_top(path), (path = "impl" ; path = "data_layer" ; path = "_internal" ; match_all("\\Al\\d{4}_[^\\n](?s:.*)\\z",path)).
 load(path,cat("serverplan-bypass:",path),"python") :- pfd_file(path).
 .decl sb_document(d: number, path: symbol)
-sb_document(d,path) :- option("entryPoint",entry), (entry = "scan_file" ; entry = "scan_source"), doc(d,_,_), doc_role(d,"primary"), option("argumentPath",path), !match_all("(?:\\A|/)(?:tests|test)(?:/|\\z)",path).
+sb_document(d,path) :- option("entryPoint",entry), (entry = "scan_file" ; entry = "scan_source"), option_item("inputFiles",_,input), doc(d,input,_), doc_role(d,"primary"), option("argumentPath",path), !match_all("(?:\\A|/)(?:tests|test)(?:/|\\z)",path).
+// Final reuses an already selected physical document without a loaded alias.
+// Keep discovery membership authoritative for that shared primary document.
+sb_document(d,path) :- !option("entryPoint",_), doc(d,path,_), doc_role(d,"primary"), pfd_file(path).
 sb_document(d,@slice(label,18,strlen(label))) :- !option("entryPoint",_), doc(d,physical,label), prefix("serverplan-bypass:",label), loaded(physical,label,"python").
 .decl sb_trigger(value: symbol)
 sb_trigger(value) :- sb_method(value).
 sb_trigger("_fetchone"). sb_trigger("_fetchall"). sb_trigger("_fetchone_async"). sb_trigger("_fetchall_async").
+// scan_source's argument is a text gate; its AST comes from the on-disk file.
+.decl sb_buffer_gate()
+sb_buffer_gate() :- !option("entryPoint","scan_source").
+sb_buffer_gate() :- option("callSource",text), sb_trigger(trigger), contains(trigger,text).
+.decl sb_source_gate()
+sb_source_gate() :- option("callSource",text), sb_trigger(trigger), contains(trigger,text).
+SBBool(@place("",0),1) :- option("entryPoint","_source_gate"), sb_source_gate().
+SBBool(@place("",0),0) :- option("entryPoint","_source_gate"), !sb_source_gate().
 .decl sb_selected(d: number, path: symbol)
-sb_selected(d,path) :- sb_document(d,path), !syntax_error(d,_,_), source(d,span), text(span,text), sb_trigger(trigger), contains(trigger,text).
+sb_selected(d,path) :- sb_document(d,path), sb_buffer_gate(), !syntax_error(d,_,_), source(d,span), text(span,text), sb_trigger(trigger), contains(trigger,text).
 .decl sb_event(call: node, d: number, method: symbol)
 sb_event(call,d,@nfkc(name)) :- sb_selected(d,_), docof(call,d), kind(call,"call"), field(call,"function",raw), unparen(raw,func), kind(func,"identifier"), text(func,name), sb_method(@nfkc(name)).
 sb_event(call,d,@nfkc(name)) :- sb_selected(d,_), docof(call,d), kind(call,"call"), field(call,"function",raw), unparen(raw,func), kind(func,"attribute"), field(func,"attribute",attr), text(attr,name), sb_method(@nfkc(name)).

@@ -12,14 +12,20 @@ from unittest.mock import patch
 from migration import ROOT,PIN,git,sha,read_json,write_json
 from replay import write_fixture,execute_native,execute_workspace
 
+RULE=ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-bypass.rr'
 
-def case(name,text,path='impl/a.py',allowlist=(),signature=None,extra=None):
+
+def case(name,text,path='impl/a.py',allowlist=(),signature=None,extra=None,buffer=None):
     files={path:text,**(extra or {})}
-    return dict(id=name,files=[dict(path=p,source=s) for p,s in files.items()],scanPath=path,allowlist=list(allowlist),signature=signature)
+    return dict(id=name,files=[dict(path=p,source=s) for p,s in files.items()],scanPath=path,allowlist=list(allowlist),signature=signature,buffer=buffer)
 
 
 CASES=[
     case('empty',''),
+    case('buffer-no-trigger','def public(c): c._execute_raw_sql(1)\n',buffer='pass'),
+    case('buffer-disk-clean','def public(c): c.execute_grammar_sql(1)\n',buffer='_execute_raw_sql(1)'),
+    case('buffer-fetch-gate','def public(c): c._execute_raw_sql(1)\n',buffer='_fetchone()'),
+    case('buffer-disk-invalid','def broken(:\n',buffer='_execute_raw_sql(1)'),
     *[case('method-'+name,'class Connection:\n def run(self): return self.'+name+'("sql")\n') for name in ['_execute_raw_sql','_execute_raw_sql_async','_query_raw_sql_async']],
     case('grammar','def public(c): return c.execute_grammar_sql(stmt)\n'),
     case('syntax-error','def broken(:\n'),
@@ -65,7 +71,8 @@ def source_case(source,item):
                     path=Path(data[key]);data[key]=str(path.relative_to(root)) if path.is_relative_to(root) else str(path).replace(str(source),'$SOURCE')
             return data
         with patch.object(module,'ALLOWLISTED_CALLSITES',{'TEST':item['allowlist']}),patch.object(module,'ALLOWLIST_SIGNATURE',item['signature'] or module.ALLOWLIST_SIGNATURE):
-            api=[row(v) for v in module.scan_file(root/item['scanPath'])]
+            values=module.scan_file(root/item['scanPath']) if item['buffer'] is None else module.scan_source(root/item['scanPath'],item['buffer'])
+            api=[row(v) for v in values]
             plugin=module.serverplan_bypass_plugin(root)
             engine=module.FactEngine(root=root,fact_store=module.JsonFactStore(root/'.fact-store'),extractors=module.serverplan_bypass_fact_extractors(root),enable_fact_cache=False)
             view=engine.materialize([plugin],max_workers=1)
@@ -73,14 +80,16 @@ def source_case(source,item):
             return dict(api=api,violations=violations,plugin=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description))
 
 
-def native_case(engine,item):
+def native_case(engine,item,rule=RULE):
     options=dict(allowlistEntries=item['allowlist'])
     if item['signature'] is not None:options['signature']=item['signature']
     document=next(f for f in item['files'] if f['path']==item['scanPath'])
-    native=execute_native(engine,ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-bypass.rr',[document],dict(options,entryPoint='scan_file',argumentPath=item['scanPath']))
+    api_options=dict(options,entryPoint='scan_file',argumentPath=item['scanPath'])
+    if item['buffer'] is not None:api_options.update(entryPoint='scan_source',callSource=item['buffer'])
+    native=execute_native(engine,rule,[document],api_options)
     if any(r['code']!='SB_ROW' for r in native['diagnostics']):raise ValueError('Unexpected native scanner diagnostic')
     api=[{k:v for k,v in r['parameters'].items() if k!='ordinal'} for r in sorted(native['diagnostics'],key=lambda r:r['parameters']['ordinal'])]
-    production=execute_workspace(engine,ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-bypass.rr',item['files'],options)
+    production=execute_workspace(engine,rule,item['files'],options)
     settings=production['metadata']['settings'];policies=production['metadata']['policies']
     modes=[v for k,v in settings if k=='mode'];descriptions=[json.loads(v) for k,v in settings if k=='description']
     if len(policies)!=1 or modes!=['block'] or len(descriptions)!=1:raise ValueError('Complete production metadata required')
@@ -96,6 +105,7 @@ def native_case(engine,item):
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('command',choices=['source','native'])
     for name in ['source','engine','baseline','output']:parser.add_argument('--'+name,type=Path,required=name=='output')
+    parser.add_argument('--rule',type=Path,default=RULE)
     parser.add_argument('--part',type=int,default=0);parser.add_argument('--parts',type=int,default=1);args=parser.parse_args()
     if not 0<=args.part<args.parts:parser.error('Invalid partition')
     if args.source is not None:args.source=args.source.absolute()
@@ -114,7 +124,7 @@ def main():
         if [{k:c[k] for k in CASES[0]} for c in baseline['cases']]!=CASES:parser.error('Unchanged complete corpus required')
         result.update(engineSha256=sha(args.engine.read_bytes()),baselineSha256=sha(args.baseline.read_bytes()),selection=dict(part=args.part,parts=args.parts,total=len(CASES)));write_json(args.output,result)
         for item in baseline['cases'][args.part::args.parts]:
-            actual,inputs=native_case(args.engine,item);expected=item['expected']
+            actual,inputs=native_case(args.engine,item,args.rule);expected=item['expected']
             result['cases'].append(dict(id=item['id'],expected=expected,actual=actual,passed=actual==expected,programInputs=inputs));write_json(args.output,result)
     result.update(complete=True,passed=all(c.get('passed',True) for c in result['cases']));write_json(args.output,result)
     print(json.dumps(dict(cases=len(result['cases']),passed=result['passed'],failures=[c['id'] for c in result['cases'] if not c.get('passed',True)])))
