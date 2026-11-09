@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { missingClaudeHookScripts } from "../../src/setup/registered-hooks.js";
+import { missingClaudeHookScripts, runRegisteredClaudeHook } from "../../src/setup/registered-hooks.js";
 
 const homes: string[] = [];
 afterEach(async () => {
@@ -43,5 +43,51 @@ describe("Claude Code hook scripts that are gone", () => {
     mkdirSync(join(home, ".claude"));
     writeFileSync(join(home, ".claude", "settings.json"), "{not json");
     expect(missingClaudeHookScripts(home)).toEqual([]);
+  });
+});
+
+describe("running the registered Claude hook as Claude Code will", () => {
+  /**
+   * A home whose Claude settings run `script` (written to dist/hosts/claude/claude-hook.js) with `command`, in exec form
+   * as Rerail registers it.
+   */
+  async function homeRunning(script: string | undefined, command: string = process.execPath): Promise<string> {
+    const home = await mkdtemp(join(tmpdir(), "rerail-registered-run-"));
+    homes.push(home);
+    const hookScript = join(home, "install", "dist", "hosts", "claude", "claude-hook.js");
+    if (script !== undefined) {
+      mkdirSync(join(home, "install", "dist", "hosts", "claude"), { recursive: true });
+      writeFileSync(hookScript, script);
+    }
+    mkdirSync(join(home, ".claude"));
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [{ type: "command", command, args: [hookScript] }] }] },
+    }));
+    return home;
+  }
+
+  it("passes a hook that reads the session start and answers a JSON object", async () => {
+    const home = await homeRunning("let t='';process.stdin.on('data',c=>t+=c).on('end',()=>{JSON.parse(t);process.stdout.write('{}');});");
+    expect(await runRegisteredClaudeHook(home)).toBeUndefined();
+  });
+
+  it("finds a bare node on PATH, as the exec form Rerail registers on Windows names it, and never in the current folder", async () => {
+    const home = await homeRunning("let t='';process.stdin.on('data',c=>t+=c).on('end',()=>{JSON.parse(t);process.stdout.write('{}');});", "node");
+    expect(await runRegisteredClaudeHook(home)).toBeUndefined();
+  });
+
+  it("names a registration whose hook script is gone, the failure that leaves every session unrecorded", async () => {
+    expect(await runRegisteredClaudeHook(await homeRunning(undefined))).toMatch(/^Claude Code's Rerail hook exited 1: .*Cannot find module/su);
+  });
+
+  it("names a hook that answers but reports a failure, as one rejecting Claude Code's payload does", async () => {
+    const home = await homeRunning("process.stdin.resume().on('end',()=>{process.stderr.write('rerail hook: Claude hook omitted index');process.stdout.write('{}');});");
+    expect(await runRegisteredClaudeHook(home)).toBe("Claude Code's Rerail hook failed: rerail hook: Claude hook omitted index");
+  });
+
+  it("checks nothing where no Rerail hook is registered", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-registered-run-"));
+    homes.push(home);
+    expect(await runRegisteredClaudeHook(home)).toBeUndefined();
   });
 });

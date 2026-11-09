@@ -63,6 +63,7 @@ import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_ST
 import { requireLfsContent } from "../setup/lfs-pointers.js";
 import { SCRUB_HINT_FILE, scrubHintOnce } from "./scrub-cli.js";
 import { HOOK_FAILURES_FILE } from "../harness/hook-failures.js";
+import { runRegisteredClaudeHook } from "../setup/registered-hooks.js";
 
 export interface SetupContext {
   /** Rerail's own state directory (`~/.rerail` unless `RERAIL_HOME`); versions, launcher, daemon live here. */
@@ -741,6 +742,12 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
       const home = codingAgentHome();
       // Claude Code's project status line lives in the repository: only one the person said yes to.
       const result = await connectCodingAgents(registrationRoot(context), home, agents, repoRoot);
+      // A registration Claude Code cannot run records nothing and says nothing: set-up runs the hook as Claude Code
+      // will, and one that fails is a failed connection.
+      if (agents.includes("claude-code") && !result.failures.some(({ agent }) => agent === "claude-code")) {
+        const problem = await runRegisteredClaudeHook(home);
+        if (problem !== undefined) result.failures.push({ agent: "claude-code", message: problem });
+      }
       // One that could not be connected stays unseen, even if `rerail install` recorded it before, so set-up run again
       // connects it once its config is fixed.
       const failed = result.failures.map(({ agent }) => agent);
