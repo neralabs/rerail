@@ -38,8 +38,7 @@ pub(super) fn register(db: &rusqlite::Connection) -> Result<()> {
     db.create_aggregate_function(c"rr_sum_high", 3, flags, Part(true))
         .map_err(error)?;
     db.create_scalar_function(c"rr_sum_value", 2, flags, |ctx| {
-        i64::try_from(wide(ctx.get(0)?, ctx.get(1)?))
-            .map_err(|_| rusqlite::Error::UserFunctionError("integer overflow".into()))
+        crate::code_rule_dsl::logic::native::aggregation::sum_value(wide(ctx.get(0)?, ctx.get(1)?))
     })
     .map_err(error)
 }

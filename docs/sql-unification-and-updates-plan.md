@@ -1697,3 +1697,164 @@ The refreshed structure comparison retains 10 passing metrics and 15 existing fa
 Evidence is archived at `/Users/jeremy/orca/artifacts/rerail-cross-rule-storage-20261108.tar.gz`.
 It includes refreshed control and final captures, raw receipts, parity bundles, CPU trials, earlier candidates, source patches, and validation logs.
 Task build, control worktree, and temporary directories are removed after archival.
+
+### Native summaries and remaining CPU costs (2026-11-08)
+
+This follow-up uses `3cf3561ec` as its baseline. It addresses native summary execution, recursive CPU costs, and the scalar edit regression.
+
+#### Native execution
+
+The native join engine previously scanned each scalar bag independently. Sum also forced a SQL fallback.
+The physical adapter now uses the common bag analysis to select compatible count, sum, min, and max consumers.
+One native fold computes their exact state for each demanded group. Consumers in separate rules share that state.
+Each consumer keeps its own lookup slots. Repeated local value fields retain their equality filters in both executors. Count-only rules can adopt a registered value family before either rule executes.
+Count cannot connect families with different values. The common compatibility contract controls this decision.
+
+Immutable input objects own their caches. Rebound inputs own new objects, even when their row counts match.
+Component caches include the row count and visible delta range. New waves invalidate incompatible cached groups.
+Dependent consumers retain separate evaluation. Unsupported expressions and ordered strings retain their SQL fallback.
+Shared immutable bag descriptors avoid allocations for each cached lookup.
+
+Native sums retain wide values through alias copies. A filter can remove a row before a later operation observes the sum.
+Unused sum bindings retain no range check. Live predicates, lookup keys, functions, and emitted heads retain their checks.
+
+Native and SQL execution use the same final sum range check. The generated `rr_exact_sum` aggregate preserves cancellation before that check.
+This fixes an older fallback difference: SQLite's built-in sum can overflow before later input values cancel the intermediate total.
+Ordinary SQL queries still use SQLite's built-in `sum` unless they explicitly select the new intrinsic.
+
+Native explain records the logical families, rejected combinations, cache boundary, and sum contract.
+The native summary fold also records inspected values in the existing profiler.
+Runtime explain identifies cache instances, selected value projections, input versions, cached groups, folds, lookups, and unused bindings.
+
+#### Scalar edits
+
+The previous support phase used set operations for empty operands and unique output differences.
+SQLite selected merge plans for those operations. The representative scalar edit performed eight unnecessary sorts.
+
+The support phase now omits empty operands. Unique output differences use anti-joins.
+The phase retains materialization fences around checked evaluation.
+A shared witness proof also permits direct differences between unique old and new head sets.
+Those differences replace supports of one and supply publication deltas. They avoid support grouping and a second comparison with public outputs.
+Multiple producers and lattice paths retain their existing reconciliation. Explain and SQL receipts record the selected proof and strategy.
+Generated helper statements also reuse prepared statements across edits.
+
+The representative scalar edit decreases from 12 sorts to three, and VM work decreases from 1,820 instructions to 1,418.
+Cross-rule edits decrease from 16 sorts to four.
+
+#### Recursive storage
+
+Initial phase outputs sometimes contain the same ordered rows. Their previous publication built separate native trees.
+The phase now shares validated roots after checks for schemas, key strength, row IDs, and patch containment.
+Each output retains its required secondary indexes. All replacements remain prepared before publication.
+The SQL profiler reports the number of shared initial roots.
+
+Empty-to-full and identical versions share their delta roots directly.
+Other version comparisons use borrowed tree ranges. They no longer copy and hash tree paths merely to inspect differences.
+Delta construction retains existing immutable row cells and row IDs. It avoids repeated decoding, allocation, and hashing of complete rows.
+Explain describes both publication reuse and version differences.
+
+#### Final measurements and checks
+
+The final optimized binaries use the same Rust toolchain, features, and build profile as baseline `3cf3561ec`.
+CPU trials disable profiling and use fresh processes and stores. Alternating execution order reduces ordering bias.
+The scalar comparison uses 20 pairs. The recursive comparison uses five pairs. Both workloads contain 10,000 groups or regions.
+Each pair compares its query results. Other worktrees also ran jobs on the shared host.
+
+| Measurement | Baseline median | Final median |
+| --- | ---: | ---: |
+| Scalar first edit CPU | 1.542 ms | 1.312 ms |
+| Scalar second edit CPU | 1.043 ms | 0.911 ms |
+| Recursive initial CPU | 1.644 s | 1.498 s |
+| Recursive six-edit CPU total | 22.32 ms | 23.53 ms |
+| Recursive peak RSS | 525.30 MiB | 482.47 MiB |
+
+Both scalar edits improve, by 15% and 13%. Recursive initialization improves by 9% and uses about 43 MiB less memory.
+Every final recursive initialization pair improves. Sparse recursive edits remain variable across batches.
+Earlier five-pair and three-pair batches improved their edit totals. The final batch increases its median by 5%.
+These measurements establish an initialization improvement, but do not establish a sparse recursive edit speedup.
+Further edit tuning should measure tree comparison, delta publication, and secondary index maintenance separately.
+
+The final scalar edit retains 12 statements. Its three sorts and 1,418 VM instructions confirm the earlier work reduction.
+Six complete SQL sessions pass at 1,000 and 10,000 groups or regions.
+They compare every relation, output deltas, queries, failure rollback, and subsequent recovery against independent cold execution.
+Complete SQL counts remain 81 for scalar, 92 for cross-rule, and 100 for recursive sessions.
+Their capture connections close normally, and every SQL receipt has a known engine origin.
+
+The relevant Rust suite passes 283 tests, with three ignored tests. All 38 profiling and reporting tests pass.
+The library also compiles with `code-rule-profile` enabled.
+Native coverage includes 80,000 scalar uses sharing 1,000 folds, input rebinding, wave invalidation, and frozen input versions.
+Additional tests cover aliases, filtered overflow, exact cancellation, repeated local fields, and SQL/native output parity.
+The unique-support test forbids public writes when a changed scalar leaves its head unchanged.
+The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.
+
+Native sharing currently covers supported integer scalar bags. Dependent expressions and unsupported ordering retain their established evaluation paths.
+Multiple producers and lattice supports still need general reconciliation. Sharing across independent wave gates still requires matching versions and maintenance cursors.
+
+### Sparse recursive edit CPU (2026-11-08)
+
+This follow-up compares the changes with `18db644e2`. The objective is lower CPU for sparse recursive edits without weaker correctness or execution limits.
+
+#### Causes and changes
+
+Transactional edits cloned prepared rule descriptors in every retained wave. Those copies included query trees, reducer descriptions, and logical decisions.
+The successful transaction then destroyed the previous copies. A process sample showed both costs during repeated edits.
+Prepared rule descriptors and wave queries now use shared ownership. Planning changes use copy-on-write, while mutable execution state keeps independent snapshots.
+
+Sparse publication also built temporary incoming indexes before it inserted those same rows into retained indexes.
+An identical incoming row still caused deletion and insertion along persistent index paths.
+Publication now validates incoming rows without those temporary indexes. It keeps identical rows and their roots.
+A replacement retains its row ID and updates each unchanged index key once. Changed secondary values retain their distinct counts.
+New rows receive IDs in incoming order. Complete and empty replacements retain their existing bulk construction paths.
+Every output still finishes preparation before the phase publishes any output.
+
+Logical explain describes the sparse publication strategy. SQL profiling adds `retained_nonempty_roots` beside the existing initial-root reuse count.
+Both measured complete recursive sessions report 20 nonempty outputs with retained row roots during successful edits.
+The first storage-only timing batch showed no reliable overall gain. The final change also removes repeated descriptor copies.
+
+#### Measurements
+
+The optimized baseline and final binaries use Rust 1.95.0, identical features, and the same profiling build configuration.
+Timing trials disable profiling. Each trial uses a fresh process and store. Five pairs alternate the baseline and final execution order.
+Each process executes 600 edits across disconnected shortest-path regions, including edge deletion, root deletion, and combined restoration.
+Publication guards reject writes to unrelated regions. Every pair compares its query results.
+
+| Measurement | 1,000 regions: baseline / final | 10,000 regions: baseline / final |
+| --- | ---: | ---: |
+| First six edits, median CPU | 17.92 / 17.10 ms | 20.82 / 20.45 ms |
+| Remaining 594 edits, median CPU | 716.51 / 610.55 ms | 811.87 / 753.65 ms |
+| All 600 edits, median CPU | 735.64 / 627.94 ms | 836.23 / 776.11 ms |
+| Initial execution, median CPU | 141.31 / 136.84 ms | 1.461 / 1.453 s |
+| Peak RSS, median | 65.89 / 65.70 MiB | 483.55 / 483.47 MiB |
+
+Warmed edit CPU improves by 15% and 7%. Every pair improves at both sizes.
+The first six edits improve only slightly, with overlapping trial results. These changes do not establish a first-edit speedup.
+First edits still pay statement preparation costs. Further work can target preparation and generated query size.
+Other worktrees ran jobs on the shared macOS arm64 host. These timings do not establish isolated hardware limits.
+
+A separate set-closure control uses disconnected chains, bridge changes, and isolated insertions and deletions.
+Three alternating pairs at each size show overlapping timing results and no consistent improvement.
+Its remaining 594-edit medians are 99.89 / 103.60 ms and 106.81 / 107.91 ms.
+The measured improvement applies to retained lattice recursion. The control does not establish a set-closure speedup.
+
+#### Reproduction and correctness
+
+Generate the repeated edit request:
+
+```sh
+python3 benchmark/sql-executor.py --recursive-edit-request 10000 --cycles 100 /tmp/recursive-edits.json
+```
+
+Run each optimized benchmark binary with a fresh store and `RERAIL_SQL_BENCH_UNPROFILED=1`.
+The benchmark reports CPU per edit. Sum the first six edits separately from the remaining edits.
+The existing `--session-request` command generates complete relation observations with execution failures and recovery.
+
+Complete recursive sessions pass at both sizes against the independent cold executor.
+Each session compares all nine checkpoints, every relation, output deltas, widening counters, and queries.
+Both execution-limit and wave-limit failures preserve state, and the later successful edit recovers.
+Complete SQL counts remain 100. All capture connections close, and SQL receipts retain known engine origins.
+
+New storage tests compare 128 sparse patches with complete rebuilds, including row IDs and all index entries.
+They cover nullable values, restricted indexes, identical rows, deletions, replacements, and new rows.
+An additional test requires identical patches to retain every root and rejects invalid or duplicate incoming rows.
+The SQL executor suite passes 138 tests, with one ignored test. All 38 profiling and reporting tests pass.
+The structure comparison retains 10 passing metrics and 15 existing failures, with no new findings.

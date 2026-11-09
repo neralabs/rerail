@@ -160,7 +160,7 @@ CPU of the main thread is the run's report. The process figure is `/usr/bin/time
 
 ## Open items
 
-- O147 (O143 on investigate-bend-vs-datalog): a relation the request cone derives is written empty as an output. `bootstrap.rr` outputs copies.
+- O143: a relation the request cone derives is written empty as an output. `bootstrap.rr` outputs copies.
 - O144: a per-file relation with no node column is lost for documents that `load` brings in. `p0_names` carries
   its node.
 - O145: tests against the shared default tape cache wait on its atoms lease.

@@ -164,7 +164,7 @@ fn nullable(e: &E, block: &Select, names: &BTreeMap<String, (String, Layout)>) -
                     if matches!(
                         e,
                         E::Call {
-                            name: "count" | "sum" | "min" | "max" | "rr_join",
+                            name: "count" | "sum" | "rr_exact_sum" | "min" | "max" | "rr_join",
                             ..
                         }
                     ) {

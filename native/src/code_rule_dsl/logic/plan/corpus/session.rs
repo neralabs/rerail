@@ -29,8 +29,9 @@ pub(in crate::code_rule_dsl) struct Session {
     #[cfg(test)]
     thread: std::thread::ThreadId,
     pub(super) memo: memo::Held,
-    /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed.
-    pub(super) cross: Mutex<Option<super::retain::Retained>>,
+    /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
+    /// per cross program (`retain::key`): a run's passes are different programs, and one would take the other's place.
+    pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
     /// Which session this is: its runs' kept plans and derived values are taken back only by its own runs.
     generation: u64,
 }
@@ -57,7 +58,7 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         path,
         store,
         memo: Default::default(),
-        cross: Mutex::new(None),
+        cross: Default::default(),
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         #[cfg(test)]
         thread: std::thread::current().id(),

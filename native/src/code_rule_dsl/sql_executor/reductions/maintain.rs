@@ -9,7 +9,7 @@ pub(super) fn apply(
     let _context = w.profile_scope(|| json!({"logicalAnalysis":state.explain()}));
     let mut weights: Option<String> = None;
     let (mut contexts, mut groups) = (0u64, 0u64);
-    for rule in &state.rules {
+    for rule in state.rules.iter() {
         let dirty = w.table(rule.width)?;
         let removed = w.table(rule.width)?;
         for atom in &rule.atoms {

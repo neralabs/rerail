@@ -207,23 +207,77 @@ impl Phase {
         let _cpu = super::super::logic::profile::span(|| "SQL phase publication".into());
         // Prepare every replacement before changing any root. A failing later output
         // cannot leave an earlier output partially published, even without a savepoint.
+        let mut reusable = BTreeMap::<(usize, usize), Vec<versions::Version>>::new();
+        let mut shared_roots = 0;
+        let mut retained_roots = 0;
         let prepared = self
             .outputs
             .into_iter()
             .zip(rows)
             .zip(key_rows)
             .map(|((o, rows), keys)| {
-                let next = match o.keys {
-                    Keys::Native(keys) => o.old.patched(&keys, rows, w.preparing)?,
-                    Keys::Query(_) => o.old.patched_rows(keys, rows, w.preparing)?,
-                    Keys::Incoming => {
-                        if o.old.len() != 0 {
-                            return Err(error("SQL phase load requires an empty native table"));
-                        }
-                        o.old.loaded(rows, false, false)?
-                    }
-                    Keys::Replace => o.old.loaded(rows, false, true)?,
+                let candidates = if o.old.len() == 0 && rows.len() >= 512 {
+                    reusable
+                        .get(&(o.width, rows.len()))
+                        .map_or(&[][..], Vec::as_slice)
+                } else {
+                    &[][..]
                 };
+                let reused = if matches!(o.keys, Keys::Incoming | Keys::Replace)
+                    && o.old.len() == 0
+                    && rows.len() >= 512
+                {
+                    candidates
+                        .iter()
+                        .find_map(|v| o.old.reuse_empty_rows(&rows, v))
+                } else {
+                    None
+                };
+                let next = if let Some(next) = reused {
+                    shared_roots += 1;
+                    next
+                } else {
+                    match o.keys {
+                        Keys::Native(keys) => {
+                            if keys.columns().len() != o.key_width {
+                                return Err(error(
+                                    "SQL phase patch requires the complete primary key",
+                                ));
+                            }
+                            let (next, shared) = o.old.patched_rows_reusing(
+                                keys.rows(),
+                                rows,
+                                w.preparing,
+                                candidates,
+                            )?;
+                            shared_roots += usize::from(shared);
+                            next
+                        }
+                        Keys::Query(_) => {
+                            let (next, shared) =
+                                o.old
+                                    .patched_rows_reusing(keys, rows, w.preparing, candidates)?;
+                            shared_roots += usize::from(shared);
+                            next
+                        }
+                        Keys::Incoming => {
+                            if o.old.len() != 0 {
+                                return Err(error("SQL phase load requires an empty native table"));
+                            }
+                            o.old.loaded(rows, false, false)?
+                        }
+                        Keys::Replace => o.old.loaded(rows, false, true)?,
+                    }
+                };
+                if o.old.len() > 0 && o.old.shares_rows(&next) {
+                    retained_roots += 1;
+                }
+                if o.old.len() == 0 && next.len() >= 512 {
+                    reusable
+                        .entry((o.width, next.len()))
+                        .or_default()
+                        .push(next.clone());
+                }
                 Ok((o.table, next))
             })
             .collect::<Result<Vec<_>>>();
@@ -236,6 +290,24 @@ impl Phase {
                 return Err(error);
             }
         };
+        super::super::logic::profile::decision("SQL phase root reuse", || {
+            format!(
+                "{shared_roots} equal ordered initial outputs shared validated roots; {retained_roots} nonempty outputs retained their row roots within this phase"
+            )
+        });
+        if let Some(profiler) = w.profiler {
+            profiler
+                .operation(
+                    "SQL phase shared initial roots",
+                    ("sql-extension", 0),
+                    0,
+                    vec![
+                        ("shared_roots".into(), shared_roots as i64),
+                        ("retained_nonempty_roots".into(), retained_roots as i64),
+                    ],
+                )
+                .finish(shared_roots);
+        }
         for (table, version) in prepared {
             store.replace_available(&table, version)?;
         }

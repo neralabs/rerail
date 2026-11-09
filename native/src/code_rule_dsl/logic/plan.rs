@@ -1817,7 +1817,13 @@ impl Model {
                     if let AggOp::Join { by, .. } = op {
                         local.extend(by.iter().map(String::as_str).filter(|b| !env.contains_key(*b)));
                     }
-                    let conds = neg_conds(atom, &al, &env, &local)?;
+                    let mut conds = neg_conds(atom, &al, &env, &local)?;
+                    // Repeated local value fields are equal within the bag, even when
+                    // the outer rule binds a variable with that name.
+                    if let Some(over)=over {
+                        let columns=atom.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if v==over).then_some(c)).collect::<Vec<_>>();
+                        for pair in columns.windows(2) {conds.push(eq(col(&al,&self.col(&atom.rel,pair[0])),col(&al,&self.col(&atom.rel,pair[1]))));}
+                    }
                     let column = |v: &str| {
                         let c = atom.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("the aggregated column");
                         let symbol = prog.decls.get(&atom.rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
@@ -1827,7 +1833,7 @@ impl Model {
                         (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
                         (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o).0]),
                         // Soufflé's sum is 0 over no rows.
-                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(o).0]), integer(0)]),
+                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("rr_exact_sum", vec![column(o).0]), integer(0)]),
                         // `rr_join(sep, value, key, …)` (`strings::functions`) orders and joins text; symbols in as text.
                         (AggOp::Join { by, sep }, Some(o)) => {
                             let text = |(e, symbol): (Expr, bool)| if symbol { self.inputs.text_of(&e) } else { e };
@@ -3016,29 +3022,36 @@ impl Run<'_, '_> {
                     let ta = tok(a, &mut slots)?;
                     lines.push(format!("{} {ta} {}", if matches!(*op, "<" | ">") { "lt" } else { "le" }, tok(b, &mut slots)?));
                 }
-                Literal::Agg { var, op: AggOp::Count, atom: a, .. } => {
-                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) {
-                        return None;
-                    }
-                    let (sc, toks) = atom(a, None, &mut slots)?;
-                    lines.push(format!("count {sc} {} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
-                }
-                Literal::Agg { var, op: op @ (AggOp::Min | AggOp::Max), over: Some(o), atom: a } => {
-                    // The aggregated variable is the atom's one free variable, in one column; the rest are bound.
-                    let col = a.args.iter().position(|t| matches!(t, Term::Var(v) if v == o))?;
-                    let free = |t: &Term| matches!(t, Term::Var(v) if !slots.contains_key(v));
-                    if slots.contains_key(o) || a.args.iter().enumerate().any(|(c, t)| c != col && (free(t) || matches!(t, Term::Var(v) if v == o))) {
-                        return None;
-                    }
-                    // Symbols order by text in SQL; as atoms (a corpus run) by atom on both sides, else not native.
-                    if self.model.inputs.atoms.is_none() && prog_types(prog, &a.rel).get(col).copied() == Some("sym") {
-                        return None;
-                    }
+                Literal::Agg { var, op: op @ (AggOp::Count | AggOp::Sum | AggOp::Min | AggOp::Max), over, atom: a } => {
+                    // The over-variable belongs to the bag even if an outer step bound the same name.
+                    let local=a.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if Some(v)==over.as_ref()).then_some(c)).collect::<Vec<_>>();
                     let mut a = a.clone();
-                    a.args[col] = Term::Wild;
-                    let (sc, toks) = atom(&a, None, &mut slots)?;
-                    let name = if *op == AggOp::Min { "min" } else { "max" };
-                    lines.push(format!("{name} {sc} {} {col} {}", toks.join(" "), tok(&Term::Var(var.clone()), &mut slots)?));
+                    let col = over.as_ref().and_then(|o| a.args.iter().position(|t| matches!(t, Term::Var(v) if v==o)));
+                    if *op != AggOp::Count && col.is_none() { return None; }
+                    if let Some(c) = col {
+                        let typ = prog_types(prog, &a.rel).get(c).copied();
+                        if *op == AggOp::Sum && typ == Some("sym") { return None; }
+                        // Text extrema compare text unless this program holds symbols as atoms on both paths.
+                        if *op != AggOp::Count && self.model.inputs.atoms.is_none() && typ == Some("sym") { return None; }
+                    }
+                    for term in &mut a.args {
+                        if matches!(term, Term::Var(v) if Some(&*v)==over.as_ref()) { *term=Term::Wild; }
+                    }
+                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v))) { return None; }
+                    // Input constant filters are projected out by `atom`; its value column uses that projection too.
+                    let value_col = col.map(|c| if scc.contains(&a.rel) || native_rels.contains(&a.rel) {c} else {
+                        a.args[..c].iter().filter(|t| !matches!(t, Term::Int(_) | Term::Str(_))).count()
+                    });
+                    let (sc, mut toks) = atom(&a, None, &mut slots)?;
+                    if local.len()>1 {
+                        for c in local {
+                            let c=if scc.contains(&a.rel)||native_rels.contains(&a.rel) {c} else {a.args[..c].iter().filter(|t|!matches!(t,Term::Int(_)|Term::Str(_))).count()};
+                            toks[c]="a0".into();
+                        }
+                    }
+                    let name=match op {AggOp::Count=>"count",AggOp::Sum=>"sum",AggOp::Min=>"min",_=>"max"};
+                    let value=if *op==AggOp::Count {String::new()} else {format!(" {}",value_col?)};
+                    lines.push(format!("{name} {sc} {}{value} {}",toks.join(" "),tok(&Term::Var(var.clone()),&mut slots)?));
                 }
                 Literal::Agg { var, op: AggOp::Join { by, sep }, over: Some(o), atom: a } => {
                     // `$s = join $x by ($k…) sep "…" : { atom }`: x and the unbound k are the atom's own columns, one
@@ -4042,6 +4055,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let lowered=adjusted.as_ref();
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
+    super::native::aggregation::register_sum(db)?;
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
     // positions table (`rdl_int`) is the same for every run.
     let temp: Vec<(String, String, String)> = db

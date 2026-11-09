@@ -87,6 +87,22 @@ impl Exports {
         crate::code_rule_dsl::logic::native::component::columns_source(names, values)
     }
 
+    /// Export `rel`'s rows so far whose column `at` is a node of one of the documents `docs` (`memo::document_of`):
+    /// the rows a `load` brought in, for the cone of requests (decision 0065 §2a). Read where they are, not copied.
+    pub(super) fn rows_of_docs(&self, rel: &str, width: usize, at: usize, docs: &std::collections::HashSet<i64>) -> Vec<Vec<i64>> {
+        let row = |get: &dyn Fn(usize) -> i64| (0..width).map(get).collect::<Vec<i64>>();
+        match self.rels.get(rel) {
+            Some(Held { source: Some(s), .. }) => {
+                (0..s.len()).filter(|&r| docs.contains(&super::memo::document_of(s.value(r, at)))).map(|r| row(&|c| s.value(r, c))).collect()
+            }
+            Some(held) if !held.columns.is_empty() => (0..held.len())
+                .filter(|&r| docs.contains(&super::memo::document_of(held.columns[at][r])))
+                .map(|r| row(&|c| held.columns[c][r]))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Export `rel` as a source of columns `c0…`: its rows, or none when no chunk added any. Made once. The rows
     /// move into it, and the set that kept them distinct is dropped.
     pub(super) fn source(&mut self, rel: &str, width: usize) -> Arc<dyn Source> {
