@@ -319,15 +319,41 @@ All of it was checked exactly against the CPU reference. Times are from release 
     climbs), and by the executor's `Closure` kernel otherwise, up to 16,384 nodes. Larger graphs run semi-naive from
     the seeds. `RERAIL_CLOSURE_FORM=off` turns it off. On the same slice, outputs are identical with it on and off
     (local CPU 14.2 s on, 13.9 s off: noise).
+  - **`count table`** (`setfix::table`). A count step over an input walks the matching rows at every binding that
+    reaches it. Once its walks have read as many rows as building a table would, the step reads a table instead.
+    So it never costs more than about twice the walks alone.
+    - **Counts per row:** when the key comes whole from the join's first step, a scan, every scan row gets its count
+      from one `CountTable` launch (counts only, no pairs). The step then reads its row's count by position.
+    - **Histogram:** otherwise the relation's counts by key, from one `Histogram` launch. The table is the
+      relation's, like its indexes, so every step in any stratum that counts it by the same columns reads it.
+    - **Codes:** keys get 16-bit local codes within partitions (0095 §6). A partition here is a hash of the key, not
+      a document, so each holds at most 2^16 distinct keys whatever the document's size.
+    - **On the slice:** `up_once`'s count of `binding` and its annotation copy take counts per row, and `rr_agg67`
+      a histogram.
+    - **Gate:** outputs are identical with it on and off. Local CPU was 18.6 s both ways (load 106–110): these counts
+      are small at the pack's size.
+    - `RERAIL_COUNT_TABLE=off` turns it off.
+  - **Device waves of count tables** (0095 §5). A stratum's level is one more than the deepest level it reads. When
+    a level's first stratum runs, the level's count tables are built as one batch: those an earlier chunk built and
+    whose relations the run holds. So each lane gets one submission per level. On the slice's second chunk, a level
+    of 15 strata built its one table that way.
+  - **`bit product` in the prefilter** (`prefilter::gates`). Each plan's gate, an `And` and `Or` of terms, goes to
+    disjunctive form, up to 256 conjunctions. Then one launch serves every plan of the batch:
+    - the batch's files are rows of bits over the terms, and the conjunctions are rows of bits marked as a fixed
+      relation, which the Neural Engine holds as a constant;
+    - a pair is kept when the file has all of the conjunction's terms (`min`).
+
+    A gate's files are then the uncovered files plus the files of its conjunctions, exactly the set form's. A test
+    checks that on 200 random gates. A larger gate keeps the set form. `RERAIL_PREFILTER_BITS=off` turns it off.
+  - **The profile** names every form a stratum took: closures by chains or bit rows, count tables by relation and
+    columns, and each level's device wave.
   - **Model facts:** the content store's `accel_models`.
   - **The lanes per binding:** `logic::lanes`.
 
 **Not built yet:**
 
-- **`count table` and `histogram` in the engine's strata.** They need a document's 16-bit local codes, from 0095 §6's
-  layout.
-- **`bit product` in the prefilter.**
-- **Device waves across strata** (0095 §5).
+- **Device waves for every kernel.** Count tables are built ahead. A closure's launch is known only once its walk
+  has searched its nodes, so it is still submitted alone.
 - **Overlapping the Neural Engine's host work with its predictions**: the next tile's expansion while a tile runs.
 
 ## Gates
