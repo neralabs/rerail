@@ -13,3 +13,5 @@ pub(crate) mod rounds;
 pub(crate) mod terms;
 #[cfg(test)]
 mod oracle_tests;
+#[cfg(test)]
+mod phase_tests;

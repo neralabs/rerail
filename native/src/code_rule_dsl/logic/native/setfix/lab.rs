@@ -322,6 +322,8 @@ mod tests {
         let mut captures: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "sqlite") && p.file_name().is_some_and(|n| n != "atoms.sqlite")).collect();
         captures.sort();
         let (mut same, mut all) = (0, 0);
+        #[cfg(target_os = "macos")]
+        let mut device = Device::default();
         println!("{:>9} {:>9} {:>10}  {:<5} capture", "cpu ms", "solve ms", "rows", "rows");
         for path in captures {
             let store = crate::code_rule_dsl::prefilter::tests::temp();
@@ -348,8 +350,12 @@ mod tests {
                 db.execute_batch(&format!("CREATE TEMP TABLE {t} ({}); INSERT INTO temp.{t} SELECT * FROM cap.{t};", cols.join(", "))).unwrap();
             }
             let outs: Vec<&String> = tables.iter().filter(|t| t.starts_with("out")).collect();
-            let c0 = thread_cpu();
             super::super::open(&db, &spec).unwrap();
+            #[cfg(target_os = "macos")]
+            device.add(&super::super::scans(&db, &name).unwrap());
+            #[cfg(target_os = "macos")]
+            device.tiles(&super::super::tiles(&db, &name).unwrap());
+            let c0 = thread_cpu();
             let result = super::super::run(&db, &name, 0).unwrap();
             let cpu = (thread_cpu() - c0) * 1e3;
             super::super::close(&db, &name).unwrap();
@@ -372,6 +378,95 @@ mod tests {
             let _ = std::fs::remove_file(&store);
         }
         println!("{same} of {all} captures give the run's rows");
+        #[cfg(target_os = "macos")]
+        device.report();
         assert_eq!(same, all);
+    }
+
+    /// The captures' fused filters over input relations (`setfix::scans`), each run on Metal over its rows in the
+    /// 16-bit layout (`metal_rows`) and checked against the CPU's rows.
+    #[cfg(target_os = "macos")]
+    #[derive(Default)]
+    struct Device { joins: usize, joins_same: usize, joins_off: usize, pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
+
+    #[cfg(target_os = "macos")]
+    impl Device {
+        fn add(&mut self, cases: &[super::super::ScanCase]) {
+            use crate::code_rule_dsl::logic::native::setfix::rowcode::Word;
+            use crate::code_rule_dsl::transducer::packed::metal_rows::{Form, Input, Resident, scan};
+            for case in cases {
+                let n = case.gathered.first().map_or(0, |g| g.1.len());
+                let at = |c: usize| case.gathered.iter().position(|g| g.0 == c).expect("gathered");
+                let inputs: Vec<Input> = case.inputs.iter().map(|w| match *w { Word::Col(c) => Input::Col(at(c)), Word::Doc(c) => Input::Doc(at(c)) }).collect();
+                let cols: Vec<&[i64]> = case.gathered.iter().map(|g| g.1.as_slice()).collect();
+                let resident = Resident::new(&cols, n).expect("resident");
+                let got = match scan(&case.program, &inputs, &resident, &case.params) {
+                    Ok(s) => s,
+                    Err(_) => { self.unsupported += 1; continue; }
+                };
+                let mut rows = got.rows.clone();
+                rows.sort_unstable();
+                self.cases += 1;
+                if rows == case.passed { self.same += 1 } else { println!("    device DIFF {}: {} rows, the CPU {}", case.rule, rows.len(), case.passed.len()) }
+                self.rows += n;
+                self.passed += case.passed.len();
+                self.cpu += case.cpu_seconds;
+                self.gpu += got.gpu_seconds;
+                self.bytes += resident.bytes;
+                self.wide += 8 * n * cols.len();
+                for f in &resident.forms { self.forms[match f { Form::Low16 => 0, Form::I32 => 1, Form::I64 => 2 }] += 1; }
+            }
+        }
+
+        fn tiles(&mut self, cases: &[super::super::TileCase]) {
+            use crate::code_rule_dsl::transducer::packed::metal_rows::{Form, Resident, tile_join};
+            for case in cases {
+                let (nl, nr) = (case.left[0].len(), case.right[0].len());
+                // Key 0 a node column of one chunk on both sides: the first key that is.
+                let order = (0..case.left.len()).find_map(|k0| {
+                    let mut keys: Vec<usize> = vec![k0];
+                    keys.extend((0..case.left.len()).filter(|&k| k != k0));
+                    let l: Vec<&[i64]> = keys.iter().map(|&k| case.left[k].as_slice()).collect();
+                    let r: Vec<&[i64]> = keys.iter().map(|&k| case.right[k].as_slice()).collect();
+                    let (l, r) = (Resident::new(&l, nl).ok()?, Resident::new(&r, nr).ok()?);
+                    // Node ids: `d << 32 | i`, so a key 0 under 2^32 is not one (a number of a chunk of its own).
+                    let nodes = case.left[k0].iter().chain(&case.right[k0]).all(|&v| v >> 32 > 0);
+                    (l.forms[0] == Form::Low16 && r.forms[0] == Form::Low16 && nodes && keys.len() <= 3).then_some((l, r, keys.len()))
+                });
+                let Some((l, r, k)) = order else {
+                    if self.joins_off < 8 {
+                        let peek = |c: &[i64]| c.iter().take(3).map(|v| format!("{v:#x}")).collect::<Vec<_>>().join(",");
+                        println!("    tile off {}: {} keys, {} x {} rows, left {} right {}", case.rule, case.left.len(), nl, nr, peek(&case.left[0]), peek(&case.right[0]));
+                    }
+                    self.joins_off += 1;
+                    continue
+                };
+                let keys: Vec<usize> = (0..k).collect();
+                let Ok(got) = tile_join(&l, &keys, &r, &keys) else { self.joins_off += 1; continue };
+                let mut pairs = got.pairs.clone();
+                pairs.sort_unstable();
+                let mut want = case.pairs.clone();
+                want.sort_unstable();
+                self.joins += 1;
+                if pairs == want { self.joins_same += 1 } else { println!("    tile DIFF {}: {} pairs, the CPU {}", case.rule, pairs.len(), want.len()) }
+                self.pairs += want.len();
+                self.compared += got.compared;
+                self.join_cpu += case.cpu_seconds;
+                self.join_gpu += got.gpu_seconds;
+            }
+        }
+
+        fn report(&self) {
+            println!(
+                "device tile joins: {} of {} give the CPU's pairs ({} not on the device); {} pairs from {} compared; CPU hash join {:.1} ms, GPU {:.1} ms",
+                self.joins_same, self.joins, self.joins_off, self.pairs, self.compared, self.join_cpu * 1e3, self.join_gpu * 1e3
+            );
+            assert_eq!(self.joins_same, self.joins, "every tile join gives the CPU's pairs");
+            println!(
+                "device scans: {} of {} give the CPU's rows ({} not on the device); {} rows in, {} passed; CPU {:.1} ms, GPU {:.1} ms; columns {} kB as 16-bit layout, {} kB as i64 (low16 {}, i32 {}, i64 {})",
+                self.same, self.cases, self.unsupported, self.rows, self.passed, self.cpu * 1e3, self.gpu * 1e3, self.bytes >> 10, self.wide >> 10, self.forms[0], self.forms[1], self.forms[2]
+            );
+            assert_eq!(self.same, self.cases, "every device scan gives the CPU's rows");
+        }
     }
 }

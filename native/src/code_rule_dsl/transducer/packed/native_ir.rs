@@ -563,6 +563,11 @@ pub(super) enum BlockInst {
     /// A fixed point's carry (`block::BlockOp::Carry`): its initial value's word in a block's
     /// first round, its next's after.
     Carry(u16),
+    /// A row program's comparison (`block::BlockOp::Cmp`): 64 rows' lanes compared, one bit
+    /// each.
+    Cmp { col: u16, op: super::block::CmpOp, rhs: super::block::Rhs, width: u8 },
+    /// A row program's set test (`block::BlockOp::Bit`): 64 rows' values looked up in a set.
+    Bit { set: u16, col: u16 },
 }
 
 impl BlockInst {
@@ -608,6 +613,8 @@ impl BlockNative {
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
                 BlockOp::Position(j) => BlockInst::Position(j),
                 BlockOp::Carry(a) => BlockInst::Carry(a),
+                BlockOp::Cmp { col, op, rhs, width } => BlockInst::Cmp { col, op, rhs, width },
+                BlockOp::Bit { set, col } => BlockInst::Bit { set, col },
             })
             .collect();
         Self {
@@ -692,7 +699,13 @@ impl BlockNative {
             groups: self
                 .groups
                 .iter()
-                .map(|g| super::block::Group { members: g.members.iter().map(|&x| place(x)).collect(), carries: g.carries.iter().map(|&(c, x)| (place(c), place(x))).collect() })
+                .map(|g| {
+                    // Two members alike are one value now: listed once.
+                    let mut members: Vec<usize> = g.members.iter().map(|&x| place(x)).collect();
+                    members.sort_unstable();
+                    members.dedup();
+                    super::block::Group { members, carries: g.carries.iter().map(|&(c, x)| (place(c), place(x))).collect() }
+                })
                 .collect(),
         }
     }
@@ -878,7 +891,8 @@ struct PlaneFormulas {
 impl PlaneFormulas {
     /// An instruction's index, shared with an earlier identical one.
     fn push(&mut self, inst: BlockInst) -> u16 {
-        let pure = !matches!(inst, BlockInst::Class { .. } | BlockInst::Pair { .. });
+        // A carry is its group's own value, never another's, however alike their starts.
+        let pure = !matches!(inst, BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Carry(_));
         if pure {
             if let Some(&i) = self.shared.get(&inst) {
                 return i;

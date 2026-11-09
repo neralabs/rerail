@@ -39,6 +39,7 @@ impl Frame {
         active: &BTreeSet<usize>,
         preparing: bool,
         templates: &BTreeMap<usize, frame::Prepared>,
+        limit: u32,
     ) -> Result<()> {
         let mut phase = super::super::phase::Phase::default();
         let mut touched = relations
@@ -82,7 +83,9 @@ impl Frame {
             let enabled = active.contains(&id);
             let r = &steps[id].0.output;
             let spec = &relations[r];
-            if enabled && !op.ready && !preparing {
+            let previous_result=store.version(&op.result);
+            let adopted=enabled && !op.ready && !preparing;
+            if adopted {
                 let template = templates
                     .get(&id)
                     .ok_or_else(|| error("missing initial cache for an earlier wave gate"))?;
@@ -148,7 +151,14 @@ impl Frame {
             }
             let mut queries = vec![];
             let mut result = None;
-            if enabled && (initial || !changed.is_empty()) {
+            if adopted && op.phase_eligible {
+                changes(w,&mut queries,&previous_result,&store.version(&op.result),spec.keys)?;
+            }
+            if !op.phase_eligible {
+                // This boundary consumes its own journals. Compatible neighbors remain in this phase.
+                op.update(w,store,&BTreeMap::new(),enabled,preparing,limit)?;
+                changes(w,&mut queries,&previous_result,&store.version(&op.result),spec.keys)?;
+            } else if enabled && (initial || !changed.is_empty()) {
                 if initial {
                     if !preparing {
                         return Err(error(
@@ -316,8 +326,13 @@ impl Frame {
                 true,
             )?;
         }
-        phase.execute(w)?;
+        let counts = phase.execute(w)?;
         for op in &mut self.operators {
+            if op.phase_eligible && op.active {
+                if let Some(states) = &op.run.reductions {
+                    w.context_rows += states.values().map(|s|s.phase_context_rows(&counts)).sum::<u64>();
+                }
+            }
             if op.active {
                 op.run
                     .counts
