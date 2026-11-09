@@ -9894,3 +9894,22 @@ Repeated and overlapping directory demands now share parsed documents and retain
 Their red, intermediate, and green receipts retain complete observations.
 The rule remains a draft: nine original CLI cases, signing and ratchet workflows, and the full migration gate remain open.
 The inventory has one accepted rule, 94 drafts, and five absent translations.
+
+### 2026-11-10 — Complete original direct-execution suite and signing
+
+The [full original-suite checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-final49full-checkpoint.json.gz) covers all 174 original tests through snapshot and workspace APIs.
+No original case is excluded. Both APIs retain 35 positive scanner observations, and the CLI tests retain their complete streams and return values.
+The checkpoint validates 445 native executions, 63 additional API cases, 20 production cases, eight mutation controls, and fifteen persistent update steps.
+All 199 tooling tests pass.
+
+The [signing checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-signing-green.json.gz) adds 38 cases and 112 native executions.
+It checks exact rewritten bytes, Unicode entries, malformed keys, missing files, repeated signing, and action precedence.
+Only public synthetic seeds enter fixture environments. No ambient signing key is read or copied by the harness.
+An initial unsharded run reached the 115-second limit. All four final bounded shards pass.
+
+This rule remains a draft. Two original tests mock ratchet check or update I/O; their success does not certify actual ratchet workflows.
+The native adapter explicitly rejects those unfinished actions instead of calling the source implementation.
+The global migration gate and five absent translations remain open.
+
+Final advanced again to `04e3b5b83` during the frozen acceptance run. These receipts certify the Final 49 cohort, not that newer engine.
+The next integration checkpoint will merge it before more rule development.
