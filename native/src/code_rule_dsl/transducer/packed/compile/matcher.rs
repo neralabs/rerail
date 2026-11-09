@@ -1296,6 +1296,41 @@ fn metal<'a>(
                 }
                 Pass::Fact { target, rows }
             }
+            // On named-only documents the device's pattern kernel would compare stored children, which
+            // hold no recognized token: the host matches the pattern (`execute_ast_pattern` recognizes
+            // them) and the device tests its rows as a fact's. A label domain is the root's own row
+            // target; a constraint, its capture's (as the CPU pass: an unbound or multi-node capture
+            // is not checked).
+            Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) if tapes.iter().any(TapeDoc::is_named_only_in_memory) => {
+                let constraints: &[(String, u16)] = match clause.labels.def(id) {
+                    Label::Constrained(_, _, constraints) => constraints,
+                    _ => &[],
+                };
+                let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
+                let (bounded, within) = match starts {
+                    Domain::Label(label) => (clause.labels.bound(starts, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())), Some(index(*label))),
+                    other => (other.clone(), None),
+                };
+                let mut rows = Vec::new();
+                for (file, (tape, base)) in tapes.iter().zip(&bases).enumerate() {
+                    if !active.is_none_or(|active| active[at][file]) {
+                        continue;
+                    }
+                    for node in domain(&bounded, tape, &[]) {
+                        let Some(captures) = pattern.execute_ast_pattern(tape, node)? else {
+                            continue;
+                        };
+                        let mut targets: Vec<(u32, u32)> = within.map(|label| (base + node, label)).into_iter().collect();
+                        for (name, label) in constraints {
+                            if let Some(capture) = captures.iter().find(|capture| capture.label == *name).filter(|capture| !capture.multi) {
+                                targets.push((base + capture.node, index(*label)));
+                            }
+                        }
+                        rows.push((base + node, targets));
+                    }
+                }
+                Pass::Fact { target, rows }
+            }
             Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
                 let constraints = match clause.labels.def(id) {
                     Label::Constrained(_, _, constraints) => {
