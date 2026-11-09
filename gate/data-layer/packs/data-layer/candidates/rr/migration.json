@@ -3399,7 +3399,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "49f791af10b888b722784a713c911fa1f68c2e6e",
-    "status": "Final 49f791af1 merged; root rebuild and regression acceptance pending. Earlier receipts remain bound to Final 004.",
+    "status": "Final 49f791af1 with generic facts-only corpus output and positional-regex validator repairs; 151 focused engine checks pass, two existing helpers ignored. Optimized build and rule revalidation pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3600,16 +3600,16 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "5414eb35849f575a626a7661eb23b90406c67cc4",
+      "engineCommit": "8692d349a4f2172c812e975f0270a64d1e21267a",
       "upstreamCommit": "49f791af10b888b722784a713c911fa1f68c2e6e",
       "sourceTrees": {
-        "native": "79f1f7c647b3d1c6cdecfe95e96076cbe2e3644e",
+        "native": "248ec60c5c1ee2cd8cb66ef18952b9ffbd1af60a",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-d38faf118bfb0a66",
-      "sha256": "d38faf118bfb0a66317ee2879a8d8f73fbfafdb660c9b42a15664e0b8befa179",
+      "path": ".rerail/modern-engine-alignment/cli-aa5e81ef07a4e5f2",
+      "sha256": "aa5e81ef07a4e5f25f72e6f763bbaeb43c70f3856f98ec7cfca055baab61f3bd",
       "command": [
         "cargo",
         "build",
@@ -3620,7 +3620,7 @@
         "--bin",
         "rerail-engine"
       ],
-      "seconds": 47.112
+      "seconds": 17.856
     },
     "previousUpstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a"
   },
