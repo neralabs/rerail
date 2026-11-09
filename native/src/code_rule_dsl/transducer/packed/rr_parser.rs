@@ -30,6 +30,10 @@ pub(super) struct Compiled {
     pub(super) costs: Vec<bitlex_compile::Cost>,
     /// Each tier 1 operation's statement (`bitlex_compile::Compiled::origin`), for the profile.
     pub(super) origin: Vec<String>,
+    /// Tier 1's named values (`bitlex_compile::Compiled::values`), for the analyses (`token_local`).
+    pub(super) values: Vec<bitlex_compile::Named>,
+    /// Tier 1's block program, as assembled.
+    pub(super) block: super::block::BlockProgram,
     /// Tier 1's program as lowered, for its other executors (Metal).
     pub(super) native: super::native_ir::BlockNative,
     /// Tier 1's block program as text, for the profile's operation mix.
@@ -71,7 +75,7 @@ fn compile() -> Result<Compiled, String> {
     let program = rir::assemble(&compiled.text())?;
     let native = native_ir::lower(&program).map_err(|e| format!("lowers: {e:?}"))?;
     let parser = native_cpu_stream::Parser::new(&native).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs()[0].clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone() })
 }
 
 /// `src`'s node table, as tier 2 writes it: from the compiled grammar, or, for a file the grammar
@@ -162,7 +166,7 @@ pub(super) fn compile_error() -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
     /// documents it parses; the ones it leaves to the engine come back from there.
     #[test]
@@ -394,7 +398,7 @@ mod tests {
     }
 
     /// The repository's `.rr` files.
-    fn corpus() -> Vec<String> {
+    pub(in crate::code_rule_dsl::transducer::packed) fn corpus() -> Vec<String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("the repository").to_path_buf();
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {

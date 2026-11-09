@@ -645,6 +645,25 @@ impl BlockProgram {
     /// carried operation starts each file with a zero carry, as a stream of its own; `within`
     /// and the byte before a block are the block's file's.
     pub(super) fn interpret_files(&self, files: &[&[u8]]) -> Vec<Vec<Vec<u64>>> {
+        let (values, spans) = self.all_values(files);
+        spans
+            .into_iter()
+            .zip(files)
+            .map(|(span, bytes)| {
+                self.outputs
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &v)| undelay(&values[usize::from(v)][span.clone()], self.output_delay(k), bytes.len()))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Every operation's words over a batch of files end to end (each file's blocks, `delay`
+    /// bytes past it included), as they are made: not cut at the file's end, not undelayed.
+    /// With each file's span of blocks. For checks of what is claimed about a value
+    /// (`token_local`).
+    pub(super) fn all_values(&self, files: &[&[u8]]) -> (Vec<Vec<u64>>, Vec<std::ops::Range<usize>>) {
         let extra = usize::from(self.delay);
         // Each block's file (its length, and its block number within it), and whether it is
         // the file's first.
@@ -768,17 +787,7 @@ impl BlockProgram {
             };
             values[x] = words;
         }
-        spans
-            .into_iter()
-            .zip(files)
-            .map(|(span, bytes)| {
-                self.outputs
-                    .iter()
-                    .enumerate()
-                    .map(|(k, &v)| undelay(&values[usize::from(v)][span.clone()], self.output_delay(k), bytes.len()))
-                    .collect()
-            })
-            .collect()
+        (values, spans)
     }
 }
 

@@ -100,6 +100,19 @@ pub(in crate::code_rule_dsl) struct Compiled {
     /// Each operation of `rows`' block program: the statement (as in `costs`) that made it,
     /// empty for none. The profile names what is live where by it (`native_cpu_pressure`).
     pub(super) origin: Vec<String>,
+    /// The program's named values, at their places in `rows`' block program: each `mask` and
+    /// class by its name, each mark as `mark KIND`, each token row's first and last bytes as
+    /// `token KIND start` and `token KIND last`. A value no output reads is left out.
+    pub(super) values: Vec<Named>,
+}
+
+/// A named value of the block program (`Compiled::values`): its operation, and its delay (bit
+/// `p + delay` of the operation's word is the value at byte `p`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct Named {
+    pub(super) name: String,
+    pub(super) op: u16,
+    pub(super) delay: u8,
 }
 
 /// A statement's share of tier 1 (`Compiled::costs`).
@@ -581,8 +594,20 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
             }
         }
     }
+    let mut named: Vec<(String, Val)> = low.names.iter().map(|(n, &x)| (n.clone(), x)).collect();
+    named.sort_by(|a, b| a.0.cmp(&b.0));
+    named.extend(low.marks.iter().map(|(kind, x, _)| (format!("mark {kind}"), *x)));
+    for (kind, start, last) in &token_rows {
+        named.push((format!("token {kind} start"), *start));
+        named.push((format!("token {kind} last"), *last));
+    }
+    let values = named
+        .into_iter()
+        .filter(|(_, x)| keep[usize::from(x.v)])
+        .map(|(name, x)| Named { name, op: place[usize::from(x.v)] as u16, delay: x.d })
+        .collect();
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
-    Ok(Compiled { rows: rows(&program), words, machine, labels, fallbacks, costs, origin })
+    Ok(Compiled { rows: rows(&program), words, machine, labels, fallbacks, costs, origin, values })
 }
 
 impl Lowering {

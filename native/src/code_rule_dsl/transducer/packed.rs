@@ -281,6 +281,9 @@ mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
+mod token_local;
+#[cfg(test)]
+mod token_local_tests;
 #[cfg(test)]
 mod bitlex_corpus_tests;
 #[cfg(test)]
