@@ -309,6 +309,14 @@ input's delta only when a maintained stratum reads it, and the answer is taken i
 Step 2 is the one in the edit's size; step 3 covers the relations it leaves (`doc`, `exists_0`, a text test's
 strings).
 
+**Outside the cross-file part, after 0096's keeper and its exports (2026-11-09, load 90–120).** Merging
+Typing-support-final-shape brought the keeper of the base relations' statistics by file; it now keeps the exports'
+too (keyed by entry key, an export's rows by their first node column, as the chunks' totals read them). At step 07:
+measuring the held base rows 1.11 → 0.13 s, the memo replay 1.55 → 0.6 s (0.99 s of it was measuring every
+unchanged file's exports again). All 278 exports' statistics come from the keeper; against measuring them, every
+row count is equal, and 40 of 702 columns differ, by at most 1.5× in distinct values (sketched columns of a few
+hundred values). Every step equals a full run.
+
 **What is left, at step 07** (6 files, load about 10: session 14.3 s, cross-file part 9.2 s):
 - the joins, 2.6 s. Most of this is DRed's over-estimate: `pv` over-deletes 3,660 rows and 70 are truly gone.
   Counting against DRed is the open maintenance decision.
