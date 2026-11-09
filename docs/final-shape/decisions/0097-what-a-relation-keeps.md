@@ -1,7 +1,7 @@
 # 0097: What a relation keeps: recompute in the reader, restrict by demand, or store, decided per relation
 
-Status: built (2026-11-09): items 1 to 3, with the constants from the relational lab below. Item 4 (the planner
-fix) and the factorized store are open.
+Status: built (2026-11-09): items 1 to 4, with the constants from the relational lab below; item 1 prices from
+observed step counts where an earlier chunk has them. The factorized store is analysed and designed, not built.
 
 ## Intro
 
@@ -164,9 +164,82 @@ Demand then took 34 relations in the largest part, against 28 with the counts ke
 14.6 + 0.4 s on against 16.5 + 0.3 s off, at load 125 to 145. On the 12 it was 22.3 + 0.5 s against
 22.9 + 0.4 s, at load 50 to 100.
 
+**The planner fix (item 4).** An equality of a bound variable (or a constant) with an unbound one, `$s = $a` with
+`$s` bound, could only test: only an unbound *left* side was assigned. The typing-context library's string
+annotation, `typing_root(s) :- ann_root(a), (s = a ; within(s, a)), parsed(s, "annotation", _)`, lowers to a rule
+with `$s = $a`. Its file-local piece (`fl4317_typing_root` in the pack; `fl860_p0_typing_root` with PYI055 and UP035
+alone) was ordered `parsed($s, …), ann_root($a), $s = $a`: a cross product narrowed after. Now the equality assigns
+its right side (`binds_right`, read by the planner's `ready` and the SQL emitter; the native spec already put the
+bound side right), so it runs between the joins and `ann_root($a)` is a lookup:
+
+| `fl860_p0_typing_root`, first chunk | Steps (rows out) | Work |
+|---|---|---:|
+| before | 12,256 → 12,256 → 12,256 → **2,463,456** → 603 | 2,505,544 |
+| after | 12,256 → 12,256 → 12,256 → 12,256 → 603 | 49,028 |
+
+`RERAIL_EQUALITY_BINDS=off` restores the old reading. The test is
+`plan::tests::an_equality_binds_its_right_side_before_the_next_join`.
+
+**Observed step counts (item 1, "the estimates are the plan's on the first run").** The native strata now record,
+per rule (its head and body), the rows into and out of every step of every probe of it, and per relation its rows
+when its stratum ends (`keeps::observe`); the record is kept on the thread for the corpus run, beside its plans.
+The next chunk or part prices from it, per node of the corpus: a relation's rows and its build when all its rules
+ran; each reader term (the reader as it is, each copy) when that rule ran. A term not observed is its estimate
+scaled by observed over estimated for that reader's observed terms: unscaled, a stored reader's observed work (all
+its waves) set against its copies' first estimates read as savings that were not there. A copy's variables are now
+named apart by the unfolding pass, so a first-level copy has the text priced and its observation is found.
+`RERAIL_OBSERVED_STEPS=off` prices from estimates alone. The integration's statistics kept by delta (0096) are not
+read yet: they keep rows and distinct values, not step counts.
+
+**The factorized store: the analysis, and the design.** Not built. The profile names, under "factorized store
+(decision 0097)", each relation that crosses the chunk boundary (an output of the local part: an export or a
+finding) whose every rule splits at a variable its head projects away into parts that each name a head variable,
+where its flat rows (observed where an earlier chunk measured them) are over twice its parts' estimated rows. On
+the 8 programs: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p), bound_in(p, x)` (the record's `fl858_p4_outer`),
+404 k rows a chunk flat against about 19 k as its two parts by `$p`; and `class_path(n, s)` by `$c`, 425 k against
+60 k (estimated). The design:
+
+- **Where:** `push_local_joins` (`typing/file_local.rs`), which makes the `fl*` pieces. A component that splits so
+  is pushed as one piece per part, each with the key in its interface (`fl_a(f, p)`, `fl_b(p, x)`), and the
+  cross-file rule reads `fl_a(f, p), fl_b(p, x)` where it read the product. Each part keeps the comparisons and
+  negations over its own variables; one that reads two parts keeps the component whole. The key is a node, so each
+  part is located (0052) as the product was.
+- **When:** the split is fixed before the first chunk runs, and the exports are part of the per-file memo's key, so
+  the choice must be stable across runs: from the estimates (parts' rows against the product's), or from the kept
+  statistics (0096) of the run before. The gate is the analysis's: the product over twice the parts, and every
+  cross-file reader binding a column of each part or demanded (`demand_p4_outer` binds `(f, x)`), so the reader's
+  join is per key and not the whole product again.
+- **The reader:** expansion is the cross part's ordinary join; nothing new runs. For a reader that binds neither
+  part the join costs the product's work, in the cross part's CPU, not its memory.
+
+**Measured.** 8 programs that read `bound_in`, and PYI055 + UP035 (which include the typing context), on the 486
+fixture files in 2 chunks. Each pair's findings are byte-identical in all four settings. CPU is the profile's
+user + sys of the run; native work is `native.tsv`'s summed work. Load (1-minute) was 30 to 115 throughout, so
+differences under about 15% are noise.
+
+| Slice | Setting | CPU s | Native work | Load |
+|---|---|---:|---:|---:|
+| 8 programs | both off | 19.5 | 7.10 M | 48 |
+| | equality only | 21.3 | 7.09 M | 30 |
+| | observed only | 19.8 | 7.26 M | 38 |
+| | both on | 18.1 | 7.25 M | 63 |
+| PYI055 + UP035 | both off | 66.1 | 38.4 M | 77 |
+| | equality only | 70.3 | 33.9 M | 62 |
+| | observed only | 76.4 | 41.8 M | 84 |
+| | both on | 78.7 | 37.4 M | 86 |
+
+- The equality fix takes 4.4 M of work (11%) off the typing slice and changes nothing else that is measurable.
+- Observed counts **add** work on the typing slice (+3.4 to +3.5 M). The cause is one relation: `p0_rr_ctx57`,
+  estimated under 1,024 rows (stored without pricing), observed at 1,433 a chunk, is then priced, and its copies'
+  estimates say inlining saves work; inlined, its reader `p0_rr_agg56` did 3.3 M where it did 0.2 M. The copies are
+  unobserved until they run, so with 2 chunks the misestimate is never corrected. Fixing that is the next step.
+
 **Next.**
 
-- Take the observed step counts (`native.tsv`) in place of the first run's estimates.
-- Store a relation that crosses the chunk boundary factorized.
-- The planner fix of item 4.
+- Correct the inline side's optimism before the copies run: carry the observed fanouts (`Stats::obs`) across chunks
+  so the copies' atoms are priced by the binding patterns they read, or keep the observed choice unless the
+  alternative is estimated to win by a margin. With more than 2 chunks the record already corrects it (the third
+  chunk sees both sides).
+- Build the factorized store as designed above.
+- Read the observations across runs, from the kept statistics (0096), not only across a run's chunks.
 - Have the converter write `inline` on the helpers it makes.
