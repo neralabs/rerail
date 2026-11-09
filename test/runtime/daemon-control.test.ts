@@ -53,6 +53,7 @@ import {
   readDaemonState,
   startDaemon,
   startDaemonForPackage,
+  stillRunningMessage,
   stopDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
@@ -448,6 +449,14 @@ describe("openDashboard", () => {
     expect(await dashboardAccessLink("http://127.0.0.1:1/#rules", home)).toBe("http://127.0.0.1:1/#rules");
     await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4737/" })));
     expect(await dashboardAccessLink(url, home)).toBe(url);
+  });
+});
+
+describe("stopping the daemon", () => {
+  it("names a check that runs where the person is when the daemon outlives the kill", () => {
+    expect(stillRunningMessage(123, "win32")).toContain(`tasklist /FI "PID eq 123"`);
+    expect(stillRunningMessage(123, "win32")).not.toContain("ps -p");
+    expect(stillRunningMessage(123, "linux")).toContain("ps -p 123");
   });
 });
 

@@ -40,6 +40,20 @@ describe("daemon transport arguments", () => {
     expect(() => parseDaemonTransport(transport(["--tls-key", "key.pem"]), "127.0.0.1", [])).toThrow(/--tls-cert/u);
     expect(() => parseDaemonTransport(transport(["--tls-cert", "c", "--tls-key", "k", "--insecure-http"]), "0.0.0.0", [])).toThrow();
   });
+
+  it("tells a Windows user to lock the new key down with icacls, which Windows has, and never chmod", () => {
+    const refusal = (platform: NodeJS.Platform): string => {
+      try {
+        parseDaemonTransport(transport([]), "0.0.0.0", [], platform);
+      } catch (error) {
+        return (error as Error).message;
+      }
+      throw new Error("expected a refusal");
+    };
+    expect(refusal("win32")).not.toContain("chmod");
+    expect(refusal("win32")).toContain("icacls key.pem /inheritance:r /grant:r");
+    expect(refusal("linux")).toContain("chmod 600 key.pem");
+  });
 });
 
 describe("TLS daemon", () => {

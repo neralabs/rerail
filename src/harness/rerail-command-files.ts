@@ -23,7 +23,18 @@ export interface CommandFileContext {
    * it, or with `rerail setup` until it exists.
    */
   setupLauncher: string;
+  /**
+   * The launcher as PowerShell runs it, `& '<node>' '<root>/dist/cli/cli.js'`; set on Windows, where Codex and Cursor run
+   * commands in PowerShell, which refuses a line that starts with a quoted path. Claude Code runs them in Git Bash there.
+   */
+  powershellCli?: string;
 }
+
+/** The shell an agent runs a command file's commands in. */
+type CommandShell = "posix" | "powershell";
+
+/** What a command's body is built from: the context, with the launcher written for the agent's shell. */
+type AgentCommandContext = CommandFileContext & { shell: CommandShell };
 
 /** Marks a Codex skill as installed by Rerail, so registration only ever replaces or removes its own. */
 export const MANAGED_SKILL_MARKER = "<!-- Managed by @neralabs/rerail -->";
@@ -52,8 +63,8 @@ function runOne(command: string, lead: string): string {
  * answer's command. `--relay` keeps set-up in the agent lane even where the coding agent runs commands in a terminal, and
  * every answer command set-up prints carries it.
  */
-function startBody(cli: string, setupLauncher: string): CommandBody {
-  const start = `${cli} start ${SETUP_FLAGS.relay}`;
+function startBody(cli: string, setupLauncher: string, shell: CommandShell): CommandBody {
+  const start = `${cli} start ${SETUP_FLAGS.relay}${shell === "powershell" ? ` ${SETUP_FLAGS.powershell}` : ""}`;
   return {
     text: [
       "Start Rerail in this checkout and the worktrees inside it, setting the repo up the first time.",
@@ -139,7 +150,7 @@ function dashboardBody(agent: CommandFileAgent, cli: string): CommandBody {
   };
 }
 
-type BodyBuilder = (agent: CommandFileAgent, context: CommandFileContext) => CommandBody;
+type BodyBuilder = (agent: CommandFileAgent, context: AgentCommandContext) => CommandBody;
 
 /** How a command's instructions name the words typed after it: Claude Code substitutes them, the others read them. */
 const typedWords = (agent: CommandFileAgent, name: RerailCommandName): string => agent === "claude-code" ? "\"$ARGUMENTS\""
@@ -161,7 +172,7 @@ const COMMAND_BODIES: Record<RerailCommandName, BodyBuilder> = {
   "rerail-help": (agent, { cli }) => overviewBody(agent, cli),
   "rerail-manage": (agent, { cli }) => dashboardBody(agent, cli),
   "rerail-create": createBody,
-  "rerail-start": (_agent, { cli, setupLauncher }) => startBody(cli, setupLauncher),
+  "rerail-start": (_agent, { cli, setupLauncher, shell }) => startBody(cli, setupLauncher, shell),
   "rerail-stop": (agent, { cli }) => stopBody(agent, cli),
   "rerail-update": (_agent, { cli }) => ({
     text: runOne(`${cli} update`, "Update Rerail to the newest version.") + "\n\nAfterwards, tell the person that new sessions use the new version.",
@@ -173,8 +184,8 @@ const COMMAND_BODIES: Record<RerailCommandName, BodyBuilder> = {
     allowed: [`${cli} install --remove --dry-run`, `${cli} stop`],
   }),
   // The demo file's write and fix still go through the coding agent's own edit permission.
-  "rerail-show-me": (agent, { cli }) => ({
-    text: showMeInstructions({ cli, sigil: ADAPTER_CAPABILITIES[agent].commandSigil, write: ADAPTER_CAPABILITIES[agent].observedFileWrite }),
+  "rerail-show-me": (agent, { cli, shell }) => ({
+    text: showMeInstructions({ cli, sigil: ADAPTER_CAPABILITIES[agent].commandSigil, write: ADAPTER_CAPABILITIES[agent].observedFileWrite, shell }),
     allowed: [`${cli} show-me --json`, `${cli} show-me --cleanup`],
   }),
   // `--output` writes any path and `rules add` changes a rule, so both are left out; reading and editing the bundle, and
@@ -197,7 +208,8 @@ function command(name: RerailCommandName): RerailCommand {
  */
 export function commandFileText(agent: CommandFileAgent, name: RerailCommandName, context: CommandFileContext): string {
   const { description } = command(name);
-  const body = COMMAND_BODIES[name](agent, context);
+  const powershellCli = agent === "claude-code" ? undefined : context.powershellCli;
+  const body = COMMAND_BODIES[name](agent, powershellCli === undefined ? { ...context, shell: "posix" } : { ...context, cli: powershellCli, shell: "powershell" });
   if (agent === "cursor") return `${description}.\n\n${body.text}\n`;
   if (agent === "codex") {
     const text = `${body.text}\n\n${CODEX_APPROVAL}`;

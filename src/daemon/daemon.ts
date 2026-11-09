@@ -5,7 +5,7 @@ import { createServer, type RequestListener, type Server as HttpServer } from "n
 import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo, Server as NetServer } from "node:net";
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
@@ -690,6 +690,7 @@ export function parseDaemonTransport(
   arguments_: ParsedArguments,
   host: string,
   publicHosts: readonly string[],
+  platform: NodeJS.Platform = process.platform,
 ): Pick<DaemonLaunchOptions, "tls" | "insecureHttp"> {
   const certFile = arguments_.options.get("--tls-cert");
   const keyFile = arguments_.options.get("--tls-key");
@@ -709,9 +710,24 @@ export function parseDaemonTransport(
     + "and over plain http its access capability, sent with every request, would cross the network in clear. "
     + "Pass --tls-cert <cert.pem> --tls-key <key.pem> to serve https; a self-signed certificate works "
     + "(openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 -subj /CN=rerail "
-    + "-keyout key.pem -out cert.pem, then chmod 600 key.pem). Pass --insecure-http instead only when the network in "
+    + `-keyout key.pem -out cert.pem, then ${privateKeyHint(platform)}). Pass --insecure-http instead only when the network in `
     + "between is already trusted, such as a container port published on the host's loopback.",
   );
+}
+
+/**
+ * How to keep a new private key its owner's alone: mode bits elsewhere, and on Windows, which has none and no `chmod`,
+ * an ACL that grants only the person's account, named as it is so the command runs in cmd and PowerShell alike.
+ */
+function privateKeyHint(platform: NodeJS.Platform): string {
+  if (platform !== "win32") return "chmod 600 key.pem";
+  let account = "<your account>";
+  try {
+    account = userInfo().username;
+  } catch {
+    // No user database entry: the placeholder stays.
+  }
+  return `icacls key.pem /inheritance:r /grant:r "${account}:R"`;
 }
 
 /**

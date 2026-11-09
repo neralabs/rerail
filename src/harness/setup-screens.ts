@@ -67,8 +67,9 @@ export const SETUP_COMMAND = "rerail setup";
 /**
  * The flags the agent lane's answer commands use; set-up's argument parser reads the same ones. `relay` picks the
  * agent lane even when a coding agent runs commands in a terminal: `/rerail-start` and every answer pass it.
+ * `powershell` says the coding agent runs them in PowerShell (Codex and Cursor on Windows), so they are written for it.
  */
-export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agents", packs: "--packs", relay: "--relay" } as const;
+export const SETUP_FLAGS = { answer: "--answer", repo: "--repo", agents: "--agents", packs: "--packs", relay: "--relay", powershell: "--powershell" } as const;
 
 /** Answer keys in the order each question numbers its answers (answer 1 is index 0). */
 export const READ_REPO_ANSWERS = ["yes", "other-folder", "pick-myself"] as const;
@@ -147,6 +148,25 @@ const SHELL_SAFE = /^[\w@%+=:,./~-]+$/;
 export function shellQuote(value: string, platform: NodeJS.Platform = process.platform): string {
   if (SHELL_SAFE.test(value)) return value;
   return platform === "win32" ? `"${value}"` : `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * A PowerShell single-quoted literal: `$`, backticks, `%` and spaces stay as they are; a quote inside is doubled, and
+ * PowerShell reads ‘ ’ ‚ ‛ as single quotes too.
+ */
+export function powershellLiteral(value: string): string {
+  return `'${value.replace(/['‘-‛]/gu, "$&$&")}'`;
+}
+
+/** What PowerShell reads as one plain word: no `@`, `,`, `$`, quote or other character it gives a meaning to. */
+const POWERSHELL_SAFE = /^[\w./:\\-]+$/u;
+
+/**
+ * A command line PowerShell runs as written: the call operator `&` first, since PowerShell takes a line that starts with
+ * a quoted path for a string and refuses the words after it, then each word quoted where PowerShell would read it.
+ */
+export function powershellCommand(words: readonly string[]): string {
+  return ["&", ...words.map(word => (POWERSHELL_SAFE.test(word) ? word : powershellLiteral(word)))].join(" ");
 }
 
 // ── Questions ───────────────────────────────────────────────────────────────

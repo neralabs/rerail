@@ -211,7 +211,7 @@ Rerail sends notes nowhere. To share them with Nera, attach `rerail feedback lis
 <details>
 <summary>What is recorded and printed</summary>
 
-A steer asks the coding agent to fix the problem, or tell the user in one line why not and record it: `rerail feedback <rule-id> '<that line>'`. A line containing `'` goes on stdin: `rerail feedback <rule-id> - <<'LINE'`. The id appears in the command only if a shell reads it as one word.
+A steer asks the coding agent to fix the problem, or tell the user in one line why not and record it: `rerail feedback <rule-id> '<that line>'`. A line containing `'` goes on stdin: `rerail feedback <rule-id> - <<'LINE'`. The id appears in the command only if a shell reads it as one word. On Windows the line always goes on stdin, `echo '<that line>' | rerail feedback <rule-id> -`, because `rerail.cmd` passes its arguments through cmd.exe, which would split the command at a `&` or `|` in the line; Codex and Cursor, which run PowerShell there, are told to pipe a line containing `'` from a here-string (`@'` … `'@`).
 
 Notes go to `steer_feedback` with the rule's pack and version, repository, coding agent, last-steered session and Rerail version, for tuning rules that get pushback. Ids or reasons with control or invisible characters (bidi override, zero-width space) are refused.
 

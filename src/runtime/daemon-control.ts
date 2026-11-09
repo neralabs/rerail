@@ -779,6 +779,15 @@ export function autostartDaemon(): void {
 
 export type StopDaemonResult = "stopped" | "not-running";
 
+/**
+ * What to tell the person when the daemon outlives the kill, with a check that runs where they are: Windows has no
+ * `ps` in cmd, and PowerShell's `ps` refuses `-p`; `tasklist` works in both.
+ */
+export function stillRunningMessage(pid: number, platform: NodeJS.Platform = process.platform): string {
+  const check = platform === "win32" ? `tasklist /FI "PID eq ${pid}"` : `ps -p ${pid}`;
+  return `Rerail daemon pid ${pid} is still running ${KILL_TIMEOUT_MS / 1_000}s after SIGKILL; check it with ${check}, then run rerail daemon stop again.`;
+}
+
 export async function stopDaemon(home: string): Promise<StopDaemonResult> {
   const lookup = await lookupDaemon(home);
   if (lookup.status === "absent") return "not-running";
@@ -791,9 +800,7 @@ export async function stopDaemon(home: string): Promise<StopDaemonResult> {
     const killDeadline = Date.now() + KILL_TIMEOUT_MS;
     while (processAlive(pid) && Date.now() < killDeadline) await sleep(POLL_INTERVAL_MS);
     // The state file stays, so a later stop can find the process again.
-    if (processAlive(pid)) {
-      throw new Error(`Rerail daemon pid ${pid} is still running ${KILL_TIMEOUT_MS / 1_000}s after SIGKILL; check it with ps -p ${pid}, then run rerail daemon stop again.`);
-    }
+    if (processAlive(pid)) throw new Error(stillRunningMessage(pid));
   }
   // The daemon removes its own state file on a clean shutdown; a killed one leaves it behind.
   await rm(join(home, DAEMON_STATE_FILE), { force: true });

@@ -972,6 +972,39 @@ describe("Claude Code commands", () => {
     const command = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true }, "win32")!;
     expect(command).toBe(`"${join(rerailHome, "bin", "rerail.cmd")}" setup --relay`);
     expect(allowed).toContain(`${command} *`);
+    // Codex and Cursor run the answers in PowerShell, which refuses a line that starts with a quoted path.
+    expect(setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true, powershell: true }, "win32"))
+      .toBe(`& '${join(rerailHome, "bin", "rerail.cmd")}' setup --relay --powershell`);
+  });
+
+  it("writes Codex's and Cursor's commands on Windows for PowerShell, and Claude Code's for Git Bash", async () => {
+    const { home, root } = await fixture();
+    const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code", "cursor", "codex"] });
+    const cli = join(root, "dist", "cli", "cli.js");
+    const powershell = `& '${nodePath}' '${cli}'`;
+    const codexManage = await readFile(join(home, ".codex", "skills", "rerail-manage", "SKILL.md"), "utf8");
+    const cursorStart = await readFile(join(home, ".cursor", "commands", "rerail-start.md"), "utf8");
+    const claudeStart = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
+    expect(codexManage).toContain(`${powershell} manage`);
+    expect(cursorStart).toContain(`${powershell} start --relay --powershell`);
+    expect(claudeStart).toContain(`"${nodePath}" "${cli}" start --relay\n`);
+    expect(claudeStart).not.toContain("--powershell");
+    const codexShowMe = await readFile(join(home, ".codex", "skills", "rerail-show-me", "SKILL.md"), "utf8");
+    expect(codexShowMe).not.toContain("<<'EOF'");
+    expect(codexShowMe).toContain("Set-Content -NoNewline -LiteralPath '<file>' -Value @'");
+  });
+
+  it("writes Claude Code's Windows status line for Git Bash, with its node fallback and `%` as it is", async () => {
+    const { home, root } = await fixture();
+    const nodePath = String.raw`C:\Users\a%b\node.exe`;
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    const command = readClaudeStatusRegistration(home, join(home, ".claude", "settings.json"))?.installedCommand;
+    expect(command?.startsWith(`sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `)).toBe(true);
+    expect(command).toContain(String.raw`"C:\\Users\\a%b\\node.exe"`);
+    expect(command).not.toContain("%%");
+    expect(change((await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] })).changes, "claude-code", "settings.json").action)
+      .toBe("unchanged");
   });
 
   it("has every coding agent's /rerail-start select the agent lane, even from a terminal", async () => {

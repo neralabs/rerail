@@ -28,7 +28,7 @@ import {
 import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettingsEntries } from "./settings-entries-store.js";
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
-import { andList, shellQuote } from "../harness/setup-screens.js";
+import { andList, powershellLiteral, shellQuote } from "../harness/setup-screens.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -191,8 +191,12 @@ function assertInside(path: string, container: string, label: string): void {
   }
 }
 
+/**
+ * One shell word. Windows gets double quotes, as cmd.exe and Git Bash both read a quoted path; `%` stays single, since
+ * only a batch file turns `%%` back into `%`, and none of the shells these words reach is one.
+ */
 function shellArgument(value: string, platform: NodeJS.Platform): string {
-  if (platform === "win32") return `"${value.replaceAll("%", "%%")}"`;
+  if (platform === "win32") return `"${value}"`;
   return /^[\w./:@+=-]+$/.test(value) ? value : `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
@@ -269,7 +273,7 @@ async function isGoneInstallRoot(root: string): Promise<boolean> {
 
 function unquoteShellWord(word: string, windows = false): string {
   const value = word.replace(/^"|"$/gu, "");
-  return windows ? value.replaceAll("%%", "%") : value.replace(/\\(["\\$`])/gu, "$1");
+  return windows ? value : value.replace(/\\(["\\$`])/gu, "$1");
 }
 
 /** The words of `text` as `shellArgument` writes them, still quoted: double-quoted or bare, and always quoted on Windows. */
@@ -361,9 +365,8 @@ function hookCommand(context: Context, executable: string): string {
  * at 1 so the hook still fails when neither node runs, and `exit` passes on the hook's own exit code.
  */
 function powershellHookCommand(context: Context, executable: string): string {
-  const quote = (value: string) => `'${value.replace(/['\u2018-\u201B]/gu, "$&$&")}'`;
-  const node = quote(context.nodePath);
-  const hook = quote(join(context.root, executable));
+  const node = powershellLiteral(context.nodePath);
+  const hook = powershellLiteral(join(context.root, executable));
   return `$LASTEXITCODE = 1; if (Test-Path -LiteralPath ${node}) { & ${node} ${hook} } else { node ${hook} }; exit $LASTEXITCODE`;
 }
 
@@ -391,8 +394,20 @@ const RENAMED_COMMANDS: readonly string[] = ["rerail-ui", "rerail-rage-quit"];
 const RETIRED_PROMPT_COMMANDS: readonly string[] = ["rerail-session", "rerail-disable", "rerail-enable", ...RENAMED_COMMANDS];
 const RETIRED_CODEX_SKILLS: readonly string[] = RENAMED_COMMANDS;
 
+/**
+ * The launcher for command files. On Windows Codex and Cursor run commands in PowerShell, which takes a line that starts
+ * with a quoted path for a string, so they get the call operator form (`powershellCli`); Claude Code runs them in Git
+ * Bash, where `&` would put the command in the background.
+ */
 function commandContext(context: Context): CommandFileContext {
-  return { cli: directCommand(context, ENTRY_POINTS.cli), packageRoot: context.root, setupLauncher: setupLauncher(context) };
+  return {
+    cli: directCommand(context, ENTRY_POINTS.cli),
+    packageRoot: context.root,
+    setupLauncher: setupLauncher(context),
+    ...(context.platform === "win32"
+      ? { powershellCli: `& ${powershellLiteral(context.nodePath)} ${powershellLiteral(join(context.root, ENTRY_POINTS.cli))}` }
+      : {}),
+  };
 }
 
 /** The Rerail home set-up uses: `RERAIL_HOME`, else `.rerail` in the registered home (`defaultRerailHome`). */
@@ -603,10 +618,18 @@ function planGroupedHooks(
 /**
  * The hooks' recorded-first, PATH-fallback order for the status line: without it, once the recorded node is gone the
  * status line shows the shell's "No such file or directory" in its place. `"$@"` carries the script and, for a
- * project's settings, the settings path after it. Windows keeps the direct command, quoted for `cmd`: Claude Code
- * runs it through Git Bash there, and the `sh` form would need the path quoted for that shell instead.
+ * project's settings, the settings path after it. Claude Code runs the status line through Git Bash on Windows too, so
+ * every word after it is quoted for a POSIX shell there as well (`claudeStatusCommand`).
  */
 const CLAUDE_STATUS_FALLBACK = `sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `;
+
+/** The status line command for the settings at `path`: the fallback, then node, the script and a project's settings path. */
+function claudeStatusCommand(context: Context, path: string): string {
+  // A POSIX word on every platform: Git Bash reads it on Windows, and keeps each backslash it escapes.
+  const word = (value: string): string => shellArgument(value, "linux");
+  const settings = path === join(context.home, ".claude", "settings.json") ? "" : ` ${word(path)}`;
+  return `${CLAUDE_STATUS_FALLBACK}${word(context.nodePath)} ${word(join(context.root, ENTRY_POINTS.claudeStatus))}${settings}`;
+}
 
 function composedClaudeStatus(previous: ClaudeStatusLine | null | undefined, command: string): ClaudeStatusLine {
   return { ...previous, type: "command", command, refreshInterval: previous?.refreshInterval ?? 5 };
@@ -621,9 +644,7 @@ function registerClaudeStatus(
   context: Context, path: string, next: JsonObject, statusLine: ClaudeStatusLine | undefined,
   inherited: ClaudeStatusLine | undefined, registration: ClaudeStatusRegistration | undefined, replaceable: boolean,
 ): ClaudeStatusRegistration {
-  const command = (context.platform === "win32" ? "" : CLAUDE_STATUS_FALLBACK)
-    + directCommand(context, ENTRY_POINTS.claudeStatus)
-    + (path === join(context.home, ".claude", "settings.json") ? "" : ` ${shellArgument(path, context.platform)}`);
+  const command = claudeStatusCommand(context, path);
   const ownsStatus = registration !== undefined && statusLine?.command === registration.installedCommand;
   const previous = statusLine ?? inherited;
   const wrapper = previous !== undefined
@@ -918,10 +939,12 @@ async function planCursorCli(context: Context): Promise<Plan[]> {
  * Windows and earlier versions write it, or behind the POSIX fallback.
  */
 function claudeStatusScript(command: string, platform: NodeJS.Platform): string | undefined {
-  const direct = command.startsWith(CLAUDE_STATUS_FALLBACK) ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command;
+  const fallback = command.startsWith(CLAUDE_STATUS_FALLBACK);
+  const direct = fallback ? command.slice(CLAUDE_STATUS_FALLBACK.length) : command;
   const words = direct.match(/"(?:\\.|[^"\\])*"|[\w./:@+=-]+/gu);
   if (words === null || (words.length !== 2 && words.length !== 3) || words.join(" ") !== direct) return undefined;
-  const windows = platform === "win32";
+  // Words behind the fallback are POSIX-quoted on every platform; only the direct form earlier Windows set-ups wrote is not.
+  const windows = platform === "win32" && !fallback;
   const script = unquoteShellWord(words[1]!, windows);
   return isNodeExecutable(unquoteShellWord(words[0]!, windows))
     && script.split(/[\\/]/u).at(-1) === basename(ENTRY_POINTS.claudeStatus) ? script : undefined;

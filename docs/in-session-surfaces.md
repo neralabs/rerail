@@ -143,7 +143,7 @@ Repository text (paths, captured code, fixes) is cleaned: control and invisible 
 
 </details>
 
-The latitude closes it: ``Fix it, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.`` `rerail feedback` keeps the reason on this computer ([Steer feedback](reference.md#steer-feedback)).
+The latitude closes it: ``Fix it, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.`` On Windows the command pipes the line in instead, ``echo '<that line>' | rerail feedback <rule-id> -``, which cmd.exe never parses. `rerail feedback` keeps the reason on this computer ([Steer feedback](reference.md#steer-feedback)).
 
 <details>
 <summary>Latitude variants and modes</summary>

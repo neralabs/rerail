@@ -54,7 +54,7 @@ import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
-import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
+import { powershellCommand, renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
@@ -786,11 +786,14 @@ export interface SetupCarry {
   readonly agents?: readonly Harness[];
   /** `--relay`: the agent lane's answers say so, so a coding agent that runs them in a terminal still gets the agent lane. */
   readonly relay?: boolean;
+  /** `--powershell`: the coding agent runs the answers in PowerShell, so they are written for it. */
+  readonly powershell?: boolean;
 }
 
 function carriedArgs(carry: SetupCarry): string[] {
   return [
     ...(carry.relay === true ? [SETUP_FLAGS.relay] : []),
+    ...(carry.powershell === true ? [SETUP_FLAGS.powershell] : []),
     ...(carry.port === undefined ? [] : ["--port", String(carry.port)]),
     ...(carry.databasePath === undefined ? [] : ["--database", carry.databasePath]),
     ...(carry.repository === true ? ["--repository"] : []),
@@ -801,13 +804,16 @@ function carriedArgs(carry: SetupCarry): string[] {
 
 /**
  * What the coding agent runs to answer a set-up question: the launcher setup wrote, which stays put
- * between answers (an `npx` copy may not), with what this run carries, quoted for `platform`'s shell.
- * `rerail setup` until the launcher exists.
+ * between answers (an `npx` copy may not), with what this run carries, quoted for `platform`'s shell,
+ * or for PowerShell when the run carries `--powershell`. `rerail setup` until the launcher exists.
  */
 export function setupAnswerCommand(context: SetupContext, carry: SetupCarry = {}, platform: NodeJS.Platform = process.platform): string | undefined {
-  const carried = carriedArgs(carry).map(arg => shellQuote(arg, platform));
-  if (!existsSync(context.updater.launcherPath)) return carried.length === 0 ? undefined : ["rerail", "setup", ...carried].join(" ");
-  return [shellQuote(context.updater.launcherPath, platform), "setup", ...carried].join(" ");
+  const args = carriedArgs(carry);
+  const launcher = existsSync(context.updater.launcherPath) ? context.updater.launcherPath : undefined;
+  if (launcher === undefined && args.length === 0) return undefined;
+  if (carry.powershell === true) return powershellCommand([launcher ?? "rerail", "setup", ...args]);
+  const carried = args.map(arg => shellQuote(arg, platform));
+  return [launcher === undefined ? "rerail" : shellQuote(launcher, platform), "setup", ...carried].join(" ");
 }
 
 /** `--json` on `rerail setup` and `rerail start`: one `SetupStep` on stdout instead of text. */
@@ -870,7 +876,7 @@ interface SetupArguments extends SetupCarry {
 function setupArguments(args: readonly string[]): SetupArguments {
   const { flags, options } = parseArguments(
     args,
-    { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--answer", "--repo", "--agents", SETUP_FLAGS.packs, "--port", "--database"] },
+    { flags: [JSON_FLAG, SETUP_FLAGS.relay, SETUP_FLAGS.powershell, "--repository"], options: ["--answer", "--repo", "--agents", SETUP_FLAGS.packs, "--port", "--database"] },
     argument => `Unknown setup option: ${argument}`,
   );
   const port = options.get("--port");
@@ -882,6 +888,7 @@ function setupArguments(args: readonly string[]): SetupArguments {
     ...(port === undefined ? {} : { port: parsePort(port) }),
     ...(database === undefined ? {} : { databasePath: resolve(database) }),
     ...(flags.has("--repository") ? { repository: true } : {}),
+    ...(flags.has(SETUP_FLAGS.powershell) ? { powershell: true } : {}),
     ...(answer === undefined ? {} : { answer }),
     ...(repo === undefined ? {} : { repo }),
     ...setupAgents(agents, answer),
@@ -922,6 +929,7 @@ function carryOf(parsed: SetupArguments, place: SetupPlace): SetupCarry {
     ...(databasePath === undefined ? {} : { databasePath }),
     ...(parsed.repository === true ? { repository: true } : {}),
     ...(parsed.agents === undefined ? {} : { agents: parsed.agents }),
+    ...(parsed.powershell === true ? { powershell: true } : {}),
   };
 }
 
@@ -1008,7 +1016,7 @@ export async function startStep(args: readonly string[], context: SetupContext, 
   try {
     const { flags, options } = parseArguments(
       args,
-      { flags: [JSON_FLAG, SETUP_FLAGS.relay, "--repository"], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
+      { flags: [JSON_FLAG, SETUP_FLAGS.relay, SETUP_FLAGS.powershell, "--repository"], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
       argument => `Unknown start option: ${argument}`,
     );
     const agents = options.get("--agents");
@@ -1025,6 +1033,7 @@ export async function startStep(args: readonly string[], context: SetupContext, 
         ...(options.has(SETUP_FLAGS.packs) ? [SETUP_FLAGS.packs, options.get(SETUP_FLAGS.packs)!] : []),
         ...(databasePath === undefined ? [] : ["--database", databasePath]),
         ...(repository ? ["--repository"] : []),
+        ...(flags.has(SETUP_FLAGS.powershell) ? [SETUP_FLAGS.powershell] : []),
       ];
       return await jsonSetupStep([JSON_FLAG, ...passed], context, { ...place, cwd: workspace }, process.versions.node, "start");
     }
@@ -1032,6 +1041,7 @@ export async function startStep(args: readonly string[], context: SetupContext, 
     const carry: SetupCarry = {
       ...(databasePath === undefined ? {} : { databasePath }),
       ...(repository ? { repository } : {}),
+      ...(flags.has(SETUP_FLAGS.powershell) ? { powershell: true } : {}),
       ...chosen,
     };
     const setupCommand = setupAnswerCommand(context, carry);

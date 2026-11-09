@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RERAIL_COMMANDS, rerailCommandList } from "../../src/harness/rerail-commands.js";
+import { RERAIL_COMMANDS, rerailCommandList, showMeInstructions } from "../../src/harness/rerail-commands.js";
 
 const TERMINAL_LINE = "In a terminal: rerail status · rerail version · rerail update · rerail daemon stop";
 
@@ -20,5 +20,14 @@ describe("the command catalog", () => {
   it.each(RERAIL_COMMANDS.map(command => [command.name, command.description]))("keeps %s's description valid in front matter", (_name, description) => {
     expect(description).not.toContain(": ");
     expect(description).not.toContain(" #");
+  });
+});
+
+describe("/rerail-show-me's write", () => {
+  it("gives PowerShell, which has no heredoc, a here-string to write the demo file with", () => {
+    const powershell = showMeInstructions({ cli: "& 'node' 'cli.js'", sigil: "$", write: "shell", shell: "powershell" });
+    expect(powershell).not.toContain("<<'EOF'");
+    expect(powershell).toContain("`Set-Content -NoNewline -LiteralPath '<file>' -Value @'` … `'@`");
+    expect(showMeInstructions({ cli: "rerail", sigil: "$", write: "shell" })).toContain("`cat > '<file>' <<'EOF'` … `EOF`");
   });
 });

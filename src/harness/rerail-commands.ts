@@ -169,6 +169,8 @@ export interface ShowMeInstructionsInput {
   sigil: CommandSigil;
   /** How the agent writes the demo file so the hooks see it: its capability profile's `observedFileWrite`. */
   write: ObservedFileWrite;
+  /** The shell the agent runs commands in: PowerShell for Codex on Windows, which has no heredoc. */
+  shell?: "posix" | "powershell";
 }
 
 /**
@@ -176,9 +178,12 @@ export interface ShowMeInstructionsInput {
  * the file straight after so the steer reaches it (Claude Code and Cursor deliver it with the next tool call), fixes
  * it, and always runs `rerail show-me --cleanup`. The steer is recognised by the rule id, never faked.
  */
-export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInput): string {
+export function showMeInstructions({ cli, sigil, write, shell = "posix" }: ShowMeInstructionsInput): string {
+  const example = shell === "powershell"
+    ? "`Set-Content -NoNewline -LiteralPath '<file>' -Value @'` … `'@`"
+    : "`cat > '<file>' <<'EOF'` … `EOF`";
   const how = write === "shell"
-    ? "with one shell command, not a file-change, edit, write or apply_patch tool (for example `cat > '<file>' <<'EOF'` … `EOF`)"
+    ? `with one shell command, not a file-change, edit, write or apply_patch tool (for example ${example})`
     : "with your file edit or write tool";
   return [
     "Show the person how Rerail works, on this repo, in under a minute: add a demo rule, break it on purpose, let Rerail",

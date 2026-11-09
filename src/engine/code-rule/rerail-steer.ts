@@ -106,17 +106,38 @@ export const FEEDBACK_COMMAND_HINT = "rerail feedback <rule-id> '<that line>'";
 export const FEEDBACK_STDIN_HINT = "rerail feedback <rule-id> - <<'LINE'";
 
 /**
+ * The command on Windows, where `rerail` is `rerail.cmd` and cmd.exe parses its arguments again: a `&`, `|`, `<` or `>`
+ * in the agent's sentence would split the command there. The line goes through a pipe instead, which cmd never parses;
+ * `echo` with single quotes reads the same in Git Bash and PowerShell.
+ */
+export const WINDOWS_FEEDBACK_COMMAND_HINT = "echo '<that line>' | rerail feedback <rule-id> -";
+
+/**
+ * How the session-start note tells the agent to record a declined steer's line, in its shell: the command, and the stdin
+ * form for a line with a `'` in it. Codex and Cursor run PowerShell on Windows, which has no heredoc; it takes a
+ * here-string, a line `@'` and a line starting `'@`, whose text it never reads.
+ */
+function feedbackHowTo(host: RerailHost, platform: NodeJS.Platform): string {
+  if (platform !== "win32") return `\`${FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
+  if (host === "codex" || host === "cursor") {
+    return `\`${WINDOWS_FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: a line \`@'\`, the line, then \`'@ | rerail feedback <rule-id> -\`)`;
+  }
+  return `\`${WINDOWS_FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
+}
+
+/**
  * What the agent may do about it: fix it (follow it, for a tool call's guidance) or say why not, and record that line
  * with `rerail feedback` under the rule (named, when the steer has one and the id is a plain word); a Log is recorded only.
  */
-function steerLatitude(trigger: SteerTrigger, findings: readonly SteerFinding[]): string {
+function steerLatitude(trigger: SteerTrigger, findings: readonly SteerFinding[], platform: NodeJS.Platform): string {
   if (findings.every(finding => finding.mode === "log")) return "Recorded only.";
   // Blocking is not built yet, so a Block-mode rule steers.
   const one = findings.length === 1;
   const verb = trigger.kind === "tool" ? "Follow" : "Fix";
   const ids = new Set(findings.map(finding => finding.ruleId));
   const rule = ids.size === 1 && SHELL_SAFE_RULE_ID.test(findings[0]!.ruleId) ? findings[0]!.ruleId : "<rule-id>";
-  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and run \`${FEEDBACK_COMMAND_HINT.replace("<rule-id>", rule)}\`.`;
+  const command = platform === "win32" ? WINDOWS_FEEDBACK_COMMAND_HINT : FEEDBACK_COMMAND_HINT;
+  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and run \`${command.replace("<rule-id>", rule)}\`.`;
 }
 
 /**
@@ -137,9 +158,12 @@ function findingLines({ ruleId, message, location, fix }: SteerFinding): string 
   return lines.join("\n");
 }
 
-/** The steer block for `findings`, in the order given: the trigger's lead, one line per finding, then the latitude. */
-export function steerBlock(trigger: SteerTrigger, findings: readonly SteerFinding[]): string {
-  return [steerLead(trigger, findings.length), ...findings.map(findingLines), steerLatitude(trigger, findings)].join("\n");
+/**
+ * The steer block for `findings`, in the order given: the trigger's lead, one line per finding, then the latitude. The
+ * daemon renders it on the agent's own machine, so `platform` is the agent's.
+ */
+export function steerBlock(trigger: SteerTrigger, findings: readonly SteerFinding[], platform: NodeJS.Platform = process.platform): string {
+  return [steerLead(trigger, findings.length), ...findings.map(findingLines), steerLatitude(trigger, findings, platform)].join("\n");
 }
 
 /**
@@ -285,7 +309,9 @@ const rulesOn = (count: number): string => `${count} ${count === 1 ? "rule is" :
  * turning a rule off (N7); or, where the repository is not set up yet, that no rules run until the person sets it
  * up. The person sees nothing.
  */
-export function sessionStartNote(origin: string | undefined, host: RerailHost, sessionId: string, rules: SessionNoteRules): string {
+export function sessionStartNote(
+  origin: string | undefined, host: RerailHost, sessionId: string, rules: SessionNoteRules, platform: NodeJS.Platform = process.platform,
+): string {
   const sigil = ADAPTER_CAPABILITIES[host].commandSigil;
   const sessionLink = origin === undefined ? [] : [`This session in the Rerail dashboard: ${sessionPageUrl(origin, host, sessionId)}`];
   if (!rules.setUp) {
@@ -298,7 +324,7 @@ export function sessionStartNote(origin: string | undefined, host: RerailHost, s
   return [
     `Rerail is on in this repo${rules.ruleCount === null ? "" : `: ${rulesOn(rules.ruleCount)}`}. It checks your work against this repo's rules and stays silent until one is broken.`,
     `When one is, you get a message starting "Rerail found" that lists each problem with its location, what to do, and the rule id in brackets.`,
-    `A steer is advice. Fix it and carry on, or, if you decide not to follow it, tell the user in one line why, record that line with \`${FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`), and carry on.`,
+    `A steer is advice. Fix it and carry on, or, if you decide not to follow it, tell the user in one line why, record that line with ${feedbackHowTo(host, platform)}, and carry on.`,
     "If the user asks why Rerail flagged something, answer from that message: the rule id and what it matched. The user can open the rule from the why? link on their own line.",
     "Before you turn a Rerail rule off or change its mode, name the rule and ask the user: Off, Log (kept on record, you are not told), or leave it.",
     `Never turn a rule off or stop Rerail on your own to get past a rule. ${sigil}rerail-stop is the user's own command: run it without asking.`,

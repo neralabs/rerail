@@ -564,7 +564,7 @@ function runStopCommand(args: readonly string[], positionals: readonly string[],
 async function runStartCommand(args: readonly string[], context: SetupContext, io: ReturnType<typeof setupIo>): Promise<number> {
   const { flags, options } = parseArguments(
     args,
-    { flags: ["--repository", SETUP_FLAGS.relay], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
+    { flags: ["--repository", SETUP_FLAGS.relay, SETUP_FLAGS.powershell], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
     argument => `Unknown start option: ${argument}\n\n${usage()}`,
   );
   const workspace = resolve(options.get("--repo") ?? process.cwd());
@@ -573,7 +573,7 @@ async function runStartCommand(args: readonly string[], context: SetupContext, i
     startForPreSetupHealthCheck(workspace, io);
     return 0;
   }
-  const report = await startRerail(workspace, io, startOptions(args, flags.has("--repository"), options, context, { lane: io.lane, workspace }));
+  const report = await startRerail(workspace, io, startOptions(args, { repository: flags.has("--repository"), powershell: flags.has(SETUP_FLAGS.powershell) }, options, context, { lane: io.lane, workspace }));
   // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
   if (report.setUpRan) return report.cancelled ? 1 : 0;
   const page = await readRulesDashboard({ cwd: workspace });
@@ -583,14 +583,16 @@ async function runStartCommand(args: readonly string[], context: SetupContext, i
 
 /** What `rerail start` passes to `startRerail`: the answers given so far, and how the set-up may ask for the rest. */
 function startOptions(
-  args: readonly string[], repository: boolean, options: ReadonlyMap<string, string>, context: SetupContext,
+  args: readonly string[], { repository, powershell }: { repository: boolean; powershell: boolean }, options: ReadonlyMap<string, string>, context: SetupContext,
   { lane, workspace }: { lane: ReturnType<typeof setupIo>["lane"]; workspace: string },
 ): Parameters<typeof startRerail>[2] {
   const answer = checkSetupAnswer(options.get("--answer"));
   const { agents, agentsError } = setupAgents(options.get("--agents"), answer);
   const packs = setupPacks(options.get(SETUP_FLAGS.packs), answer);
   const database = databasePathOption(options);
-  const setupCommand = setupAnswerCommand(context, { ...database, repository, ...(lane === "agent" ? { relay: true } : {}), ...definedOnly({ agents }) });
+  const setupCommand = setupAnswerCommand(context, {
+    ...database, repository, ...(lane === "agent" ? { relay: true } : {}), ...(powershell ? { powershell } : {}), ...definedOnly({ agents }),
+  });
   const environment = setupEnvironment(context);
   // An update's health check (`skipsSessionsApproval`) reads no one's sessions, so it is not asked to allow it, and
   // its "I'll pick rule packs myself" starts with none, as `--packs none` does: no pack fits its empty folder, the

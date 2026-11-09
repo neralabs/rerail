@@ -45,7 +45,7 @@ describe("Rerail steer text", () => {
   });
 
   it("ends with the agent's latitude: fix (or follow) it or these, or say why not and record it under the rule; a Log is recorded only", () => {
-    const latitude = (trigger: Parameters<typeof steerBlock>[0], findings: SteerFinding[]) => steerBlock(trigger, findings).split("\n").at(-1);
+    const latitude = (trigger: Parameters<typeof steerBlock>[0], findings: SteerFinding[]) => steerBlock(trigger, findings, "linux").split("\n").at(-1);
     const feedback = "or tell the user in one line why you won't and run `rerail feedback ts:no-any '<that line>'`.";
     expect(latitude({ kind: "edit" }, [finding()])).toBe(`Fix it, ${feedback}`);
     // Several findings of one rule still name it; findings of several rules leave the agent to name the one it declines.
@@ -60,6 +60,11 @@ describe("Rerail steer text", () => {
     expect(latitude({ kind: "tool" }, [finding()])).toBe(`Follow it, ${feedback}`);
     expect(latitude({ kind: "tool" }, [finding(), finding()])).toBe(`Follow these, ${feedback}`);
     expect(latitude({ kind: "edit" }, [finding({ mode: "log" })])).toBe("Recorded only.");
+  });
+
+  it("on Windows has the declined line recorded through a pipe, which rerail.cmd's cmd.exe never parses", () => {
+    const latitude = steerBlock({ kind: "edit" }, [finding()], "win32").split("\n").at(-1);
+    expect(latitude).toBe("Fix it, or tell the user in one line why you won't and run `echo '<that line>' | rerail feedback ts:no-any -`.");
   });
 
   it("writes a tool call's guidance as one finding with no place, its later lines under it", () => {
@@ -180,7 +185,7 @@ describe("Rerail steer text", () => {
   });
 
   it("tells the coding agent how to treat a steer, how to answer why, and to ask before turning a rule off", () => {
-    const note = sessionStartNote(DASHBOARD, "codex", "thread 1", { setUp: true, ruleCount: 26 });
+    const note = sessionStartNote(DASHBOARD, "codex", "thread 1", { setUp: true, ruleCount: 26 }, "linux");
     expect(note).toContain("Rerail is on in this repo: 26 rules are on.");
     expect(note).toContain("message starting \"Rerail found\" that lists each problem with its location, what to do, and the rule id in brackets.");
     expect(note).toContain("if you decide not to follow it, tell the user in one line why, record that line with `rerail feedback <rule-id> '<that line>'` (a line with a ' in it: `rerail feedback <rule-id> - <<'LINE'`, the line, then `LINE`), and carry on.");
@@ -193,6 +198,17 @@ describe("Rerail steer text", () => {
     expect(sessionStartNote(undefined, "cursor", "s", { setUp: true, ruleCount: null })).toContain("Cursor shows the user nothing from Rerail.");
     expect(sessionStartNote(undefined, "claude-code", "s", { setUp: true, ruleCount: null })).not.toContain("dashboard:");
     expect(sessionStartNote(undefined, "claude-code", "s", { setUp: true, ruleCount: null })).toContain("Rerail is on in this repo. It checks");
+  });
+
+  it("on Windows names a feedback form each agent's shell runs: a here-string in PowerShell, a heredoc in Git Bash", () => {
+    const rules = { setUp: true as const, ruleCount: 1 };
+    for (const host of ["codex", "cursor"] as const) {
+      const note = sessionStartNote(undefined, host, "s", rules, "win32");
+      expect(note).not.toContain("<<");
+      expect(note).toContain("record that line with `echo '<that line>' | rerail feedback <rule-id> -` (a line with a ' in it: a line `@'`, the line, then `'@ | rerail feedback <rule-id> -`)");
+    }
+    expect(sessionStartNote(undefined, "claude-code", "s", rules, "win32"))
+      .toContain("record that line with `echo '<that line>' | rerail feedback <rule-id> -` (a line with a ' in it: `rerail feedback <rule-id> - <<'LINE'`, the line, then `LINE`)");
   });
 
   it("tells the coding agent that a repository that is not set up checks no rules, and how the user sets it up", () => {
