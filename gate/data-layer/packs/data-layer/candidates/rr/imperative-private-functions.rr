@@ -17,7 +17,29 @@ IPFDirectory(@place("",0),1,"impl") :- option("entryPoint","_default_dirs"), env
 IPFDirectory(@place("",0),2,"data_layer") :- option("entryPoint","_default_dirs"), env("ipf.root",root), dir_entry(root,"data_layer",1).
 IPFDirectory(@place("",0),3,"_internal") :- option("entryPoint","_default_dirs"), env("ipf.root",root), dir_entry(root,"_internal",1).
 IPFDirectory(@place("",0),i+4,name) :- option("entryPoint","_default_dirs"), ordered_rows(_,name,i,ipf_layer).
-IPFDirectory(@place("",0),i,name) :- option("entryPoint","_cli_directories"), option_item("cliDirectories",i,name).
+// Discovery's public token expands against the argument root, then removes
+// duplicates in first-occurrence order. Without public, duplicates survive.
+.decl ipf_top(name: symbol)
+ipf_top(name) :- env("ipf.root",root), dir_entry(root,name,1).
+.decl ipf_modern()
+ipf_modern() :- ipf_top("data_layer").
+ipf_modern() :- ipf_top("_internal").
+ipf_modern() :- ipf_layer(_,_).
+.decl ipf_public(i: number, path: symbol)
+ipf_public(0,"impl") :- ipf_modern(), ipf_top("impl").
+ipf_public(1,"data_layer") :- ipf_modern(), ipf_top("data_layer").
+ipf_public(2,"_internal") :- ipf_modern(), ipf_top("_internal").
+ipf_public(i+3,path) :- ipf_layer(_,path), i = count : { ipf_layer(_,other), @str_cmp(other,path) < 0 }.
+ipf_public(0,"api") :- !ipf_modern(), ipf_top("api").
+ipf_public(1,"impl") :- !ipf_modern(), ipf_top("impl").
+.decl ipf_expanded(i: number, j: number, path: symbol)
+ipf_expanded(i,0,path) :- option_item("cliDirectories",i,path), path != "public".
+ipf_expanded(i,j,path) :- option_item("cliDirectories",i,"public"), ipf_public(j,path).
+.decl ipf_cli_earlier(i: number, j: number, path: symbol)
+ipf_cli_earlier(i,j,path) :- ipf_expanded(i,j,path), ipf_expanded(a,b,path), (a < i ; (a = i,b < j)).
+.decl ipf_cli_chosen(i: number, j: number, path: symbol)
+ipf_cli_chosen(i,j,path) :- ipf_expanded(i,j,path), (!option_item("cliDirectories",_,"public") ; !ipf_cli_earlier(i,j,path)).
+IPFDirectory(@place("",0),rank,path) :- option("entryPoint","_cli_directories"), ipf_cli_chosen(i,j,path), rank = count : { ipf_cli_chosen(a,b,_), (a < i ; (a = i,b < j)) }.
 .violation IPFBool(at: span, value: number) code "IPF_BOOL" "boolean"
 .decl ipf_private(sid: symbol)
 ipf_private(sid) :- sg_symbol(_,sid,name,_,_,_,_,owner,_,_), !(prefix("__",name),suffix("__",name)), (prefix("_",name) ; prefix("_",owner)).
@@ -138,3 +160,10 @@ ipf_hint("name",16,"transaction").
 ipf_hint("name",17,"update").
 ipf_hint("name",18,"versioned").
 ipf_hint("name",19,"write").
+
+// CLI consumes the same graph findings and reports as the API and plugin.
+ipfr_mode("json") :- option("entryPoint","cli_main"), option("cliJson","true").
+ipfr_mode("text") :- option("entryPoint","cli_main"), !option("cliJson","true").
+ipfr_finding(sid,i,reason,detail) :- option("entryPoint","cli_main"), ipf_finding(sid,i,reason,detail).
+IPFExit(@place("",0),1) :- option("entryPoint","cli_main"), option("cliCheck","true"), ipf_finding(_,_,_,_).
+IPFExit(@place("",0),0) :- option("entryPoint","cli_main"), (!option("cliCheck","true") ; !ipf_finding(_,_,_,_)).

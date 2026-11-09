@@ -2,7 +2,7 @@
 .description "SQL execution bypassing ServerPlan"
 .language python
 .mode block
-.scope given
+.scope include "**/impl/**/*.py", "**/data_layer/**/*.py", "**/_internal/**/*.py", "**/l*/**/*.py"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_bypass.py
 #include "python/ast.rr"
 .decl sb_method(value: symbol)
@@ -17,8 +17,85 @@ SBValue(@place("",0),value) :- option("entryPoint","_get_all_allowlisted"), sb_a
 sb_message(cat("{\"allowlist\": [",entries,"], \"purpose\": \"serverplan_bypass\", \"version\": 1}")) :- entries = join quoted by value sep ", " : { sb_allowlist(value), quoted = @json_str(value) }.
 .violation SBBool(at: span, value: number) code "SB_BOOL" "boolean"
 .decl sb_verified()
-sb_verified() :- option("publicKey",key), option("signature",signature), signature != "NEEDS_SIGNING", sb_message(message), @ed25519_ok(@replace_all(key,"[\\t-\\r ]",""),message,signature) = 1.
+sb_verified() :- sb_key(key), sb_signature(signature), signature != "NEEDS_SIGNING", sb_message(message), @ed25519_ok(@replace_all(key,"[\\t-\\r ]",""),message,signature) = 1.
 SBBool(@place("",0),1) :- option("entryPoint","_verify_allowlist_integrity"), sb_verified().
 SBBool(@place("",0),0) :- option("entryPoint","_verify_allowlist_integrity"), !sb_verified().
 .violation SBRow(at: span, ordinal: number, file_path: symbol, line_number: number, method_name: symbol, context: symbol, reason: symbol) code "SB_ROW" "{reason}"
-SBRow(@place("",0),0,"",0,"","","") :- option("entryPoint",entry), (entry = "scan_file" ; entry = "scan_source"), 1 = 0.
+
+#include "data-layer/plugin-discovery.rr"
+.decl sb_workspace(path: symbol)
+sb_workspace(".").
+.decl sb_top(name: symbol)
+sb_top(name) :- sb_workspace(path), dir_entry(path,name,1).
+pfd_root(path) :- sb_top(path), (path = "impl" ; path = "data_layer" ; path = "_internal" ; match_all("\\Al\\d{4}_[^\\n](?s:.*)\\z",path)).
+load(path,cat("serverplan-bypass:",path),"python") :- pfd_file(path).
+.decl sb_document(d: number, path: symbol)
+sb_document(d,path) :- option("entryPoint",entry), (entry = "scan_file" ; entry = "scan_source"), doc(d,_,_), doc_role(d,"primary"), option("argumentPath",path), !match_all("(?:\\A|/)(?:tests|test)(?:/|\\z)",path).
+sb_document(d,@slice(label,18,strlen(label))) :- !option("entryPoint",_), doc(d,physical,label), prefix("serverplan-bypass:",label), loaded(physical,label,"python").
+.decl sb_trigger(value: symbol)
+sb_trigger(value) :- sb_method(value).
+sb_trigger("_fetchone"). sb_trigger("_fetchall"). sb_trigger("_fetchone_async"). sb_trigger("_fetchall_async").
+.decl sb_selected(d: number, path: symbol)
+sb_selected(d,path) :- sb_document(d,path), !syntax_error(d,_,_), source(d,span), text(span,text), sb_trigger(trigger), contains(trigger,text).
+.decl sb_event(call: node, d: number, method: symbol)
+sb_event(call,d,@nfkc(name)) :- sb_selected(d,_), docof(call,d), kind(call,"call"), field(call,"function",raw), unparen(raw,func), kind(func,"identifier"), text(func,name), sb_method(@nfkc(name)).
+sb_event(call,d,@nfkc(name)) :- sb_selected(d,_), docof(call,d), kind(call,"call"), field(call,"function",raw), unparen(raw,func), kind(func,"attribute"), field(func,"attribute",attr), text(attr,name), sb_method(@nfkc(name)).
+.decl sb_ancestor(call: node, parent: node)
+sb_ancestor(call,parent) :- sb_event(call,_,_), ast_parent(call,parent).
+sb_ancestor(call,parent) :- sb_ancestor(call,n), ast_parent(n,parent).
+.decl sb_function(call: node, function: node)
+sb_function(call,f) :- sb_ancestor(call,f), kind(f,"function_definition"), ast_depth(f,i), i = max j : { sb_ancestor(call,other), kind(other,"function_definition"), ast_depth(other,j) }.
+.decl sb_class(call: node, class: node)
+sb_class(call,c) :- sb_ancestor(call,c), kind(c,"class_definition"), ast_depth(c,i), i = max j : { sb_ancestor(call,other), kind(other,"class_definition"), ast_depth(other,j) }.
+.decl sb_context(call: node, context: symbol)
+sb_context(call,cat(@nfkc(cls),".",@nfkc(func))) :- sb_function(call,f), def_name(f,func), sb_class(call,c), def_name(c,cls).
+sb_context(call,@nfkc(func)) :- sb_function(call,f), def_name(f,func), !sb_class(call,_).
+sb_context(call,"<module>") :- sb_event(call,_,_), !sb_function(call,_).
+.decl sb_origin(path: symbol)
+sb_origin(path) :- sb_document(_,path).
+sb_origin(path) :- option("entryPoint","BypassCollector._path_to_module"), option("argumentPath",path).
+.decl sb_normal(path: symbol, value: symbol)
+sb_normal(path,@replace_all(@replace_all(@replace_all(@replace_all(path,"\\.py\\z",""),"[/\\\\]","."),"\\.+","."),"\\A\\.|\\.\\z","")) :- sb_origin(path).
+.decl sb_has_impl(path: symbol)
+sb_has_impl(path) :- sb_normal(path,value), match_all("(?:\\A|\\.)impl(?:\\.|\\z)",value).
+.decl sb_has_api(path: symbol)
+sb_has_api(path) :- sb_normal(path,value), match_all("(?:\\A|\\.)api(?:\\.|\\z)",value).
+.decl sb_layer_pattern(value: symbol)
+.decl sb_has_layer(path: symbol)
+sb_has_layer(path) :- sb_normal(path,value), match_all("\\A(?:[^.]+\\.)*?(l(?:[0-9²-³¹٠-٩۰-۹߀-߉०-९০-৯੦-੯૦-૯୦-୯௦-௯౦-౯೦-೯൦-൯෦-෯๐-๙໐-໙༠-༩၀-၉႐-႙፩-፱០-៩᠐-᠙᥆-᥏᧐-᧚᪀-᪉᪐-᪙᭐-᭙᮰-᮹᱀-᱉᱐-᱙⁰⁴-⁹₀-₉①-⑨⑴-⑼⒈-⒐⓪⓵-⓽⓿❶-❾➀-➈➊-➒꘠-꘩꣐-꣙꤀-꤉꧐-꧙꧰-꧹꩐-꩙꯰-꯹０-９𐒠-𐒩𐩀-𐩃𐴰-𐴹𐹠-𐹨𑁒-𑁚𑁦-𑁯𑃰-𑃹𑄶-𑄿𑇐-𑇙𑋰-𑋹𑑐-𑑙𑓐-𑓙𑙐-𑙙𑛀-𑛉𑜰-𑜹𑣠-𑣩𑥐-𑥙𑱐-𑱙𑵐-𑵙𑶠-𑶩𑽐-𑽙𖩠-𖩩𖫀-𖫉𖭐-𖭙𝟎-𝟿𞅀-𞅉𞋰-𞋹𞓰-𞓹𞥐-𞥙🄀-🄊🯰-🯹]{4}[^.]*|[0-9²-³¹٠-٩۰-۹߀-߉०-९০-৯੦-੯૦-૯୦-୯௦-௯౦-౯೦-೯൦-൯෦-෯๐-๙໐-໙༠-༩၀-၉႐-႙፩-፱០-៩᠐-᠙᥆-᥏᧐-᧚᪀-᪉᪐-᪙᭐-᭙᮰-᮹᱀-᱉᱐-᱙⁰⁴-⁹₀-₉①-⑨⑴-⑼⒈-⒐⓪⓵-⓽⓿❶-❾➀-➈➊-➒꘠-꘩꣐-꣙꤀-꤉꧐-꧙꧰-꧹꩐-꩙꯰-꯹０-９𐒠-𐒩𐩀-𐩃𐴰-𐴹𐹠-𐹨𑁒-𑁚𑁦-𑁯𑃰-𑃹𑄶-𑄿𑇐-𑇙𑋰-𑋹𑑐-𑑙𑓐-𑓙𑙐-𑙙𑛀-𑛉𑜰-𑜹𑣠-𑣩𑥐-𑥙𑱐-𑱙𑵐-𑵙𑶠-𑶩𑽐-𑽙𖩠-𖩩𖫀-𖫉𖭐-𖭙𝟎-𝟿𞅀-𞅉𞋰-𞋹𞓰-𞓹𞥐-𞥙🄀-🄊🯰-🯹]{1,3})(?:\\..*)?)\\z",value).
+.decl sb_module(path: symbol, module: symbol)
+sb_module(path,@replace_all(value,"\\A(?:[^.]+\\.)*?(impl(?:\\..*)?)\\z","$1")) :- sb_normal(path,value), sb_has_impl(path).
+sb_module(path,@replace_all(value,"\\A(?:[^.]+\\.)*?(api(?:\\..*)?)\\z","$1")) :- sb_normal(path,value), !sb_has_impl(path), sb_has_api(path).
+sb_module(path,@replace_all(value,pattern,"$1")) :- sb_normal(path,value), !sb_has_impl(path), !sb_has_api(path), sb_has_layer(path), sb_layer_pattern(pattern).
+sb_module(path,value) :- sb_normal(path,value), !sb_has_impl(path), !sb_has_api(path), !sb_has_layer(path).
+SBValue(@place("",0),module) :- option("entryPoint","BypassCollector._path_to_module"), option("argumentPath",path), sb_module(path,module).
+.decl sb_allowed(call: node)
+sb_allowed(call) :- sb_event(call,d,_), sb_document(d,path), sb_module(path,module), sb_context(call,context), sb_allowlist(cat(module,"::",context)).
+sb_allowed(call) :- sb_event(call,d,_), sb_document(d,path), sb_module(path,module), sb_allowlist(cat(module,"::*")).
+sb_allowed(call) :- sb_event(call,d,_), sb_document(d,path), sb_module(path,module), sb_class(call,c), def_name(c,name), sb_allowlist(cat(module,"::",@nfkc(name),".*")).
+.decl sb_candidate(call: node, path: symbol, line: number, method: symbol, context: symbol, visit: number)
+sb_candidate(call,path,line,method,context,visit) :- sb_event(call,d,method), sb_document(d,path), !sb_allowed(call), line(call,line), sb_context(call,context), visit_index(call,visit).
+.decl sb_finding(path: symbol, line: number, method: symbol, context: symbol, visit: number, reason: symbol)
+sb_finding(path,line,method,context,visit,cat("Direct ",method,"() call bypasses ServerPlan. Use execute_grammar_*() instead.")) :- sb_candidate(_,path,line,method,context,visit), visit = min i : { sb_candidate(_,path,line,method,_,i) }.
+SBRow(@place("",0),visit,path,line,method,context,reason) :- option("entryPoint",entry), (entry = "scan_file" ; entry = "scan_source"), sb_finding(path,line,method,context,visit,reason).
+.decl sb_key(value: symbol)
+sb_key(value) :- option("publicKey",value).
+sb_key("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6") :- !option("publicKey",_).
+.decl sb_signature(value: symbol)
+sb_signature(value) :- option("signature",value).
+sb_signature("HBdgB/FeLzmzgWn8z3ZMgL3hle/3naU4ow7PZmZ2doOClBAiJYNDGAqqpTCsC46n3h/UDm39AfkUdUn61vdyBg==") :- !option("signature",_).
+.violation SBInvalid(at: span) code "invalid_allowlist_signature" "ServerPlan bypass allowlist signature verification failed"
+.severity SBInvalid error
+SBInvalid(@place("scripts/lint_serverplan_bypass.py",1)) :- !option("entryPoint",_), !sb_verified().
+.violation SBExecute(at: span, ordinal: number, context: symbol, reason: symbol) code "_execute_raw_sql" "_execute_raw_sql() in {context}: {reason}"
+.violation SBExecuteAsync(at: span, ordinal: number, context: symbol, reason: symbol) code "_execute_raw_sql_async" "_execute_raw_sql_async() in {context}: {reason}"
+.violation SBQueryAsync(at: span, ordinal: number, context: symbol, reason: symbol) code "_query_raw_sql_async" "_query_raw_sql_async() in {context}: {reason}"
+.severity SBExecute error
+.severity SBExecuteAsync error
+.severity SBQueryAsync error
+SBExecute(@place(path,line),i,context,reason) :- !option("entryPoint",_), sb_verified(), sb_finding(path,line,"_execute_raw_sql",context,i,reason).
+SBExecuteAsync(@place(path,line),i,context,reason) :- !option("entryPoint",_), sb_verified(), sb_finding(path,line,"_execute_raw_sql_async",context,i,reason).
+SBQueryAsync(@place(path,line),i,context,reason) :- !option("entryPoint",_), sb_verified(), sb_finding(path,line,"_query_raw_sql_async",context,i,reason).
+
+// CPython 3.13 str.isdigit ranges; module selection uses the first matching path part.
+sb_layer_pattern("\\A(?:[^.]+\\.)*?(l(?:[0-9²-³¹٠-٩۰-۹߀-߉०-९০-৯੦-੯૦-૯୦-୯௦-௯౦-౯೦-೯൦-൯෦-෯๐-๙໐-໙༠-༩၀-၉႐-႙፩-፱០-៩᠐-᠙᥆-᥏᧐-᧚᪀-᪉᪐-᪙᭐-᭙᮰-᮹᱀-᱉᱐-᱙⁰⁴-⁹₀-₉①-⑨⑴-⑼⒈-⒐⓪⓵-⓽⓿❶-❾➀-➈➊-➒꘠-꘩꣐-꣙꤀-꤉꧐-꧙꧰-꧹꩐-꩙꯰-꯹０-９𐒠-𐒩𐩀-𐩃𐴰-𐴹𐹠-𐹨𑁒-𑁚𑁦-𑁯𑃰-𑃹𑄶-𑄿𑇐-𑇙𑋰-𑋹𑑐-𑑙𑓐-𑓙𑙐-𑙙𑛀-𑛉𑜰-𑜹𑣠-𑣩𑥐-𑥙𑱐-𑱙𑵐-𑵙𑶠-𑶩𑽐-𑽙𖩠-𖩩𖫀-𖫉𖭐-𖭙𝟎-𝟿𞅀-𞅉𞋰-𞋹𞓰-𞓹𞥐-𞥙🄀-🄊🯰-🯹]{4}[^.]*|[0-9²-³¹٠-٩۰-۹߀-߉०-९০-৯੦-੯૦-૯୦-୯௦-௯౦-౯೦-೯൦-൯෦-෯๐-๙໐-໙༠-༩၀-၉႐-႙፩-፱០-៩᠐-᠙᥆-᥏᧐-᧚᪀-᪉᪐-᪙᭐-᭙᮰-᮹᱀-᱉᱐-᱙⁰⁴-⁹₀-₉①-⑨⑴-⑼⒈-⒐⓪⓵-⓽⓿❶-❾➀-➈➊-➒꘠-꘩꣐-꣙꤀-꤉꧐-꧙꧰-꧹꩐-꩙꯰-꯹０-９𐒠-𐒩𐩀-𐩃𐴰-𐴹𐹠-𐹨𑁒-𑁚𑁦-𑁯𑃰-𑃹𑄶-𑄿𑇐-𑇙𑋰-𑋹𑑐-𑑙𑓐-𑓙𑙐-𑙙𑛀-𑛉𑜰-𑜹𑣠-𑣩𑥐-𑥙𑱐-𑱙𑵐-𑵙𑶠-𑶩𑽐-𑽙𖩠-𖩩𖫀-𖫉𖭐-𖭙𝟎-𝟿𞅀-𞅉𞋰-𞋹𞓰-𞓹𞥐-𞥙🄀-🄊🯰-🯹]{1,3})(?:\\..*)?)\\z").

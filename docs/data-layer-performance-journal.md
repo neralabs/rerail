@@ -9396,3 +9396,12 @@ Real-source CLI and mutation-control acceptance remain open. Full migration acce
 The next draft, serverplan-bypass, has seven recorded source tests. Its native scaffold passes three controls and fails four actual positive assertions.
 The [red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-bypass-scaffold-red.json.gz) retains those failures.
 The inventory now contains 92 drafts and eight absent translations. Draft count is not completion coverage.
+
+### 2026-11-08 — CLI and bypass source gaps, still under repair
+
+The bypass detector now passes all seven original tests, including the four previously failing positives.
+Its 33-case real-file cohort exposes missing production bootstrap, explicit test-path filtering, and a Unicode trigger failure.
+The Unicode probe proves that inferred constant domains omit literal facts when the same relation also has rules.
+The engine adds an unsound text prefilter and rejects a file whose literal fetch trigger is present. A generic regression and repair are next.
+The imperative CLI has a complete 26-case source recording. Its first native shard exposes implicit primary files bypassing explicit empty directory selection.
+The source graph producer needs an explicit inventory ownership contract. Neither cohort is complete.

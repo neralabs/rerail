@@ -1943,7 +1943,7 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
       "origin": "authored",
-      "sha256": "55dae37109fe4b0a5ef5082077f8cfaea09cd6847a10569efea82630039bcf4d",
+      "sha256": "3266fc409b207911ddc6db699c8eda0ccb4b19610cf0cf57a0aa0189236bf12b",
       "importedSha256": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730",
       "repairs": [
         {
@@ -1970,6 +1970,11 @@
           "before": "95cd068327a0cf2f61df5cf7f191587caa8cf71d4002697d87098a980e6c6168",
           "after": "55dae37109fe4b0a5ef5082077f8cfaea09cd6847a10569efea82630039bcf4d",
           "reason": "Expose native source reporter ordinals across native diagnostic clause groups"
+        },
+        {
+          "before": "55dae37109fe4b0a5ef5082077f8cfaea09cd6847a10569efea82630039bcf4d",
+          "after": "3266fc409b207911ddc6db699c8eda0ccb4b19610cf0cf57a0aa0189236bf12b",
+          "reason": "Wire the real-source CLI to the shared native graph and reports, with explicit batched directory demands and source public expansion"
         }
       ]
     },
@@ -1982,7 +1987,7 @@
     {
       "destination": "docs/rule-syntax/lib/data-layer/imperative-source.rr",
       "origin": "authored",
-      "sha256": "6873cf30ade4dd7ecb0fd7b0ed30ed2b69c6cfe47efdd448a6a40c6116acc49a",
+      "sha256": "b83643157e41b386f45de5ad0cd92448dfcbe52cfe952327fc9c9290e7ac7ebd",
       "importedSha256": "4baa259b0161fc34dd76c4627b46e63d4214cdad41448fc0587d86521ac3efbd",
       "repairs": [
         {
@@ -1994,13 +1999,36 @@
           "before": "4349427bef94ae4eeef68c1420d1c9e12be87e0727de8762699ec4bd40e5bea7",
           "after": "6873cf30ade4dd7ecb0fd7b0ed30ed2b69c6cfe47efdd448a6a40c6116acc49a",
           "reason": "Preserve actual normal/decorator insertion history and CPython caller-set order through one native batch"
+        },
+        {
+          "before": "6873cf30ade4dd7ecb0fd7b0ed30ed2b69c6cfe47efdd448a6a40c6116acc49a",
+          "after": "b83643157e41b386f45de5ad0cd92448dfcbe52cfe952327fc9c9290e7ac7ebd",
+          "reason": "Wire the real-source CLI to the shared native graph and reports, with explicit batched directory demands and source public expansion"
         }
       ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-bypass.rr",
       "origin": "authored",
-      "sha256": "2916ccab6aa6849480c8e93dcc1fc2e83be4dec2d1bc3915f93a002844fde2cd"
+      "sha256": "55f310990a8b198784cb6e422b7853636e08c9a622d70925ffe3bfe92493efe2",
+      "importedSha256": "2916ccab6aa6849480c8e93dcc1fc2e83be4dec2d1bc3915f93a002844fde2cd",
+      "repairs": [
+        {
+          "before": "2916ccab6aa6849480c8e93dcc1fc2e83be4dec2d1bc3915f93a002844fde2cd",
+          "after": "c0decf8790d794b8346579419ef8ae1fa66fd15e36221ffbb75b38db57cb1798",
+          "reason": "Replace the red bypass detector scaffold with native AST scope, signature verification, source deduplication, and plugin discovery"
+        },
+        {
+          "before": "c0decf8790d794b8346579419ef8ae1fa66fd15e36221ffbb75b38db57cb1798",
+          "after": "7f86400aba75a2648566568911d7f83699ba6038bd8e55e0f4f226b86d1fc0f9",
+          "reason": "Bind literal Unicode digit matcher at plan time for the existing batched match_all operator"
+        },
+        {
+          "before": "7f86400aba75a2648566568911d7f83699ba6038bd8e55e0f4f226b86d1fc0f9",
+          "after": "55f310990a8b198784cb6e422b7853636e08c9a622d70925ffe3bfe92493efe2",
+          "reason": "Restore production workspace bootstrap and source explicit test-file filtering, after real-file positive failures"
+        }
+      ]
     }
   ],
   "rules": [
@@ -2452,7 +2480,7 @@
       "legacySha256": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
-      "ruleSha256": "55dae37109fe4b0a5ef5082077f8cfaea09cd6847a10569efea82630039bcf4d"
+      "ruleSha256": "3266fc409b207911ddc6db699c8eda0ccb4b19610cf0cf57a0aa0189236bf12b"
     },
     {
       "check": "serverplan_bypass",
@@ -2461,7 +2489,7 @@
       "legacySha256": "1dc17f26cd4f28f2405ecf0b51067aa45864416fb1933385dcf1e57f54e12cdb",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-bypass.rr",
-      "ruleSha256": "2916ccab6aa6849480c8e93dcc1fc2e83be4dec2d1bc3915f93a002844fde2cd"
+      "ruleSha256": "55f310990a8b198784cb6e422b7853636e08c9a622d70925ffe3bfe92493efe2"
     },
     {
       "check": "serverplan_steps",

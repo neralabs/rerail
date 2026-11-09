@@ -6,12 +6,16 @@ sgd_configured().
 .decl ipfs_root(path: symbol)
 ipfs_root("api").
 ipfs_root(path) :- sgd_top(path), (path = "impl" ; path = "data_layer" ; path = "_internal" ; match_all("\\Al\\d{4}_[^\\n](?s:.*)\\z",path)).
-sgd_membership(path) :- ipfs_root(path).
-sgd_argument(0,"api").
-sgd_argument(1,"impl") :- ipfs_root("impl").
-sgd_argument(2,"data_layer") :- ipfs_root("data_layer").
-sgd_argument(3,"_internal") :- ipfs_root("_internal").
-sgd_argument(i+4,path) :- ipfs_root(path), path != "api", path != "impl", path != "data_layer", path != "_internal", i = count : { ipfs_root(other), other != "api", other != "impl", other != "data_layer", other != "_internal", @str_cmp(other,path) < 0 }.
+// Explicit CLI directories arrive as one environment demand batch. Empty
+// explicit directories intentionally select nothing.
+.decl ipfs_cli_directories()
+ipfs_cli_directories() :- env("ipf.cli.directories","true").
+sgd_membership(path) :- ipfs_root(path), !ipfs_cli_directories().
+sgd_argument(0,"api") :- !ipfs_cli_directories().
+sgd_argument(1,"impl") :- !ipfs_cli_directories(), ipfs_root("impl").
+sgd_argument(2,"data_layer") :- !ipfs_cli_directories(), ipfs_root("data_layer").
+sgd_argument(3,"_internal") :- !ipfs_cli_directories(), ipfs_root("_internal").
+sgd_argument(i+4,path) :- !ipfs_cli_directories(), ipfs_root(path), path != "api", path != "impl", path != "data_layer", path != "_internal", i = count : { ipfs_root(other), other != "api", other != "impl", other != "data_layer", other != "_internal", @str_cmp(other,path) < 0 }.
 ipf_hit(sid,name) :- sgp_active(), sgc_symbol(n,_,_,sid), sgb_execution(n,name).
 ipf_lazy(sid) :- sgp_active(), sgc_symbol(n,_,_,sid), sgs_return(n,1,text), ipf_lazy_marker(marker), contains(marker,text).
 ipf_lazy(sid) :- sgp_active(), sgc_symbol(n,_,_,sid), sgs_parameter(n,_,_,1,text), ipf_lazy_marker(marker), contains(marker,text).
@@ -24,3 +28,5 @@ ipfs_insert(callee,caller,i) :- ipfs_normal(callee,caller), ipf_vertex(caller,i)
 ipfs_insert(callee,caller,n+i) :- sgp_active(), sge_legacy_name(caller,name), sgr_owner(caller,c), cm_lookup(c,name,callee), !ipfs_normal(callee,caller), ipf_vertex(caller,i), n = count : { ipf_vertex(_,_) }.
 ipf_queue_edge(callee,caller,i) :- python_set_rows(a,b,i,ipfs_insert), ipf_vertex(a,callee), ipf_vertex(b,caller).
 ipf_predecessor(sid,parent,i) :- sgp_active(), sge_caller(parent,sid), ipf_visit(parent,i).
+
+sgd_layer(name) :- sgd_top(name), match_all("\\Al\\d{4}_[^\\n](?s:.*)\\z",name).
