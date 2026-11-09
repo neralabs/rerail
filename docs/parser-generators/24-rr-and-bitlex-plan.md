@@ -66,7 +66,7 @@ Python needs too.
 | A5 | no wrap: a node cannot start before the token that decides it | `a - b * c`, comparisons, `x ~ \`…\``, `;` | every binary, call and attribute chain | **wrap**: open a node around the last node made at this level (§2.1). **Done** (`wrap K F [as M]`, word `WRAP`) |
 | A6 | no retag: a node's kind is fixed when it opens | `.decl` and `.mode` both open at `.`; an atom and a call look alike until the token after | — | **retag** a node by the next token (§2.1). **Done** for the open node (`retag K A`, word `RETAG`), and for the node made last at the level (`relabel F as M [inner G]`, words `RETAG m=2`, `NODE_FIELD m=2`, `NODE_FIELD m=3`: a modal before `(` is the relation; an atom an operator follows is a call). A parenthesized term at a literal's start, which the engine tells from a group only by going back after its `)`, goes to the engine |
 | A7 | no merge: two tokens cannot make one leaf | `.` and `decl` are one `.decl` leaf; `- 1` is one `number` leaf | — | **merge**: the previous leaf and this token become one leaf (§2.1). **Done** (`merge 'K' A`, word `MERGE`): the extras between are the leaf's text |
-| A8 | no opaque nodes | a `{…}` JSON object, a `raw_text`, are one leaf each | — | **opaque** nested nodes: their tokens make one leaf |
+| A8 | no opaque nodes | a `{…}` JSON object, a `raw_text`, are one leaf each | — | **opaque** nested nodes: their tokens make one leaf. **Done** for balanced pairs (`balanced K O C`) |
 | A9 | newlines are never tokens | a setting ends at its line's end; a declaration's tail is on one line | `NEWLINE` | **hidden tokens**: a token the grammar may name; in a state that does not name it, it is skipped and makes no node |
 | A10 | keywords are reserved everywhere they have rows | `decl` after a statement's `.` only; `count`, `min`, `code`, `fix` are words elsewhere | soft keywords | **soft keywords**: the keyword's kind only in a state with an arm for it, the word's kind elsewhere. **Done** (`keywords K { } soft { … }`) |
 | A11 | a nested level cannot start with another nested call, nor end optionally | `((a + b))`, an aggregate's body | suites, calls | lift both limits in the automaton. **Done** for ending optionally (§2.5), and for a call at a level's first token inside another: an arm makes every call it enters, outermost first (`PUSH` each), so the innermost returns first |
@@ -299,10 +299,11 @@ reference on the corpus.
 | rr-06 | arithmetic with precedence, unary `-`, `- 1` as one leaf, `( )`, `@f(…)` | A5, A7, A11 |
 | rr-07 | `;` alternatives, groups, atom or call | A5, A6 |
 | rr-08 | aggregates: `count`, `min`, `max`, `sum`, `mean`, `join … by … sep`; their words soft, a value with no named argument; `min (…) : {…}` (told from a call after its `)`) goes to the engine | A10 |
-| rr-09 | `.violation` (code, tag, fix, suppress, options), `=>` edits, JSON objects, `.policy {…}` | A8, A10 |
-| rr-10 | `.input`/`.output`, `.type`, `.lattice`, `.pragma`, `.functor`, `.edit`: all of `.rr` | A8 |
+| rr-09 | `.violation` (code, tag, fix, suppress, options), `=>` edits, JSON objects; a `fix` clause right after a `.violation` goes to the engine | A8, A10 |
+| rr-10 | `.policy {…}`, its JSON checked as the engine checks it | A8 |
+| rr-11 | `.input`/`.output`, `.type`, `.lattice`, `.pragma`, `.functor`, `.edit`: all of `.rr` | A8 |
 
-At rr-10:
+At rr-11:
 - every corpus file is parsed by both parsers;
 - the trees are compared node by node;
 - each refusal is counted by its reason.

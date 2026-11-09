@@ -235,7 +235,18 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
                     || low.marks.iter().any(|m| m.0 == name)
             };
             let kind = |name: &str| id(name);
-            let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token };
+            // Every token kind: a token row's that is not all keywords, and each keyword's.
+            let mut tokens: Vec<String> = token_rows.iter().filter(|t| !required.contains(&t.0)).map(|t| t.0.clone()).collect();
+            for (_, words, _) in &low.keywords {
+                for (w, alias) in words {
+                    let k = alias.clone().unwrap_or_else(|| String::from_utf8_lossy(w).into_owned());
+                    if !tokens.contains(&k) {
+                        tokens.push(k);
+                    }
+                }
+            }
+            tokens.retain(|t| !low.marks.iter().any(|m| &m.0 == t) && !low.extra.contains(t));
+            let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token, tokens: &tokens };
             grammar::build(&low.tree, &ids)?
         };
         grammar::without_mark_leaves(&mut arms, &mark_kinds)?;

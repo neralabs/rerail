@@ -1175,7 +1175,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Balanced { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
     })
 }
 

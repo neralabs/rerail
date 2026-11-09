@@ -141,6 +141,7 @@ impl Lang {
             Gram::Opt(_) | Gram::Star(_) => 0,
             Gram::Plus(g) | Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.cost(g),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } => self.cost(body),
+            Gram::Balanced { .. } => 2,
         }
     }
 
@@ -172,6 +173,19 @@ impl Lang {
             }
             Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.derive(rng, g, depth, out),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } => self.derive(rng, body, depth, out),
+            // The opener, maybe a few tokens and a nested pair, the closer.
+            Gram::Balanced { open, close, .. } => {
+                out.push(self.keyword(rng, open));
+                if !deep {
+                    for _ in 0..rng.below(3) {
+                        out.push(self.token(rng, "identifier"));
+                    }
+                    if rng.below(3) == 0 {
+                        self.derive(rng, rep, depth.saturating_sub(1), out);
+                    }
+                }
+                out.push(self.keyword(rng, close));
+            }
         }
     }
 
@@ -240,6 +254,7 @@ impl Lang {
             }
             Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.bytes(rng, g, long, out),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } => self.bytes(rng, body, long, out),
+            Gram::Balanced { .. } => {}
         }
     }
 }

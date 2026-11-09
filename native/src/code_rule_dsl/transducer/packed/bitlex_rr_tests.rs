@@ -136,6 +136,19 @@ const CASES: &[(&str, &str)] = &[
     // A parenthesized term at a literal's start: the engine tells it from a group by going
     // back after its `)`. The file goes to the engine.
     ("r(x) :- (x + 1) > 1.", "never"),
+    // `.violation`: parts in any order, continuation lines, the words as names elsewhere.
+    (".violation v(at: loc, c: symbol) code {c} in \"E[0-9]+\" tag {at} \"m {c}\"\nfix safe v_fix \"a fix\"\nsuppress ruff \"E501\", \"W291\" over {at}\noptions { \"a\": [1, {\"b\": 2}] }\nr(x) :- s(x).", "09"),
+    (".violation v(at: loc) code \"X1\" \"m\"\n.violation w(at: loc) \"n\" fix safe \"d\" fix f \"e\"\n.decl code(fix: number, tag: t)", "09"),
+    ("r(code, tag, fix, safe, suppress, over, options, in, violation) :- code(x), fix = 1.", "09"),
+    (".violation\nv(at: loc) tag { t } code { c } \"m\" // c\n/* d */ suppress t \"r\"", "09"),
+    // `fix` starting a clause right after a `.violation`: the engine's clause; to it.
+    (".violation v(at: loc) \"m\"\nfix(x) :- s(x).", "never"),
+    // JSON objects: terms, setting arguments; edits.
+    ("r({\"a\": {\"b\": [1, 2]}}) :- s(x, {}), {\"c\": 1} = x => e(x, \"y\"), f({}).", "09"),
+    (".budget * by code { \"A\": 3, \"B\": 4 }\n.budget * {\n  \"total\": 0\n}\nr(x).", "09"),
+    ("r(n) :- n = sum {\"a\": 1} : { s(_) }, !{} ~ `x`.", "09"),
+    // A JSON object over lines ends its setting's line: the engine reads lines from its `{`.
+    (".s {\n} x\nr(x).", "never"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.
@@ -227,12 +240,21 @@ fn rr_cases_parse_from_their_steps() {
 #[ignore = "a look by hand: run by name with RERAIL_RR_STEP and RERAIL_RR_DOC"]
 fn rr_look() {
     let (Ok(step), Ok(doc)) = (std::env::var("RERAIL_RR_STEP"), std::env::var("RERAIL_RR_DOC")) else { return };
-    let doc = doc.replace("\\n", "\n");
+    // `@path`: the document is that file.
+    let doc = match doc.strip_prefix('@') {
+        Some(path) => std::fs::read_to_string(path).expect("reads the file"),
+        None => doc.replace("\\n", "\n"),
+    };
     for (name, source) in steps_in(DIR).into_iter().filter(|s| s.0.contains(&step)) {
         let c = super::bitlex_ladder_tests::compile_step(&name, &source);
         let out = ::bitlex::eval::Ev::run(&c.stmts, doc.as_bytes(), &std::collections::HashMap::new()).expect("runs");
         eprintln!("{name}: errors {:?}", out.errors);
-        for t in &out.tokens {
+        if let Some(Err(e)) = out.tree.as_ref().map(|t| ::bitlex::tree::nodes(t, &out.tokens, doc.len())) {
+            let at: usize = e.split(" at byte ").nth(1).and_then(|r| r.split(|ch: char| !ch.is_ascii_digit()).next()).and_then(|n| n.parse().ok()).unwrap_or(0);
+            eprintln!("  tree: {e}: {:?}", &doc[at..(at + 200).min(doc.len())]);
+        }
+        let long = doc.len() > 2000;
+        for t in out.tokens.iter().filter(|_| !long) {
             eprintln!("  {:>4}..{:<4} {}{} {:?}", t.start, t.end, if t.mark { "mark " } else { "" }, t.kind, &doc[t.start..t.end]);
         }
         eprintln!("  reference: {:?}", super::bitlex_ladder_tests::refusal(&c, doc.as_bytes()));

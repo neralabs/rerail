@@ -80,6 +80,9 @@ pub enum Gram {
     /// child of the innermost open node) and what `REST` matches. `K` takes the moved node's
     /// field; the moved node takes field `F` (`_`: none) and, with `as M`, kind `M`.
     Wrap { kind: String, field: Option<String>, moved: Option<String>, body: Box<Gram> },
+    /// `balanced K OPEN CLOSE`: one leaf of kind `K` from an `OPEN` token through its matching
+    /// `CLOSE` (pairs inside counted), every token between part of its text.
+    Balanced { kind: String, open: String, close: String },
     /// `relabel F [as M] [inner G] REST`: the node just made at this level takes field `F`
     /// (`_`: keeps its own) and kind `M`, and the node its wrap holds first takes field `G`;
     /// `REST` follows; no node around it.
@@ -460,6 +463,12 @@ impl P {
             "merge" => {
                 let kind = self.kind()?;
                 Ok(Gram::Merge(kind, Box::new(self.gram_atom()?)))
+            }
+            "balanced" => {
+                let kind = self.kind()?;
+                let open = self.kind()?;
+                let close = self.kind()?;
+                Ok(Gram::Balanced { kind, open, close })
             }
             _ => Ok(Gram::Sym(name)),
         }

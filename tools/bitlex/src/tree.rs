@@ -75,6 +75,7 @@ impl<'a> Parser<'a> {
             Gram::Opt(a) | Gram::Star(a) => (self.first(a).0, true),
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } => self.first(body),
+            Gram::Balanced { open, .. } => (self.look_bit(open), false),
         }
     }
 
@@ -160,6 +161,11 @@ impl<'a> Parser<'a> {
                 if soft != 0 && self.first(a).0 & soft == 0 && follow & soft != 0 {
                     return Some(at);
                 }
+                // One that starts it is its keyword: taken, as the machine takes it (no going back
+                // to the word).
+                if soft != 0 && self.first(a).0 & soft != 0 {
+                    return self.matches(a, at, follow);
+                }
                 match self.matches(a, at, follow) {
                     Some(p) => Some(p),
                     None => {
@@ -176,6 +182,11 @@ impl<'a> Parser<'a> {
                     let soft = self.soft_bit(p);
                     if soft != 0 && self.first(a).0 & soft == 0 && follow & soft != 0 {
                         return Some(p);
+                    }
+                    // One that starts another: its keyword, taken.
+                    if soft != 0 && self.first(a).0 & soft != 0 {
+                        p = self.matches(a, p, again)?;
+                        continue;
                     }
                     let mark = self.out.len();
                     match self.matches(a, p, again) {
@@ -209,6 +220,30 @@ impl<'a> Parser<'a> {
                 }
                 self.out[me].kind = kind.clone();
                 Some(next)
+            }
+            Gram::Balanced { kind, open, close } => {
+                // The opener's leaf, then every token to its matching closer, marks skipped:
+                // one leaf of `kind`.
+                let me = self.out.len();
+                let mut p = self.token(open, at, 0)?;
+                let mut depth = 1usize;
+                loop {
+                    let t = self.tokens.get(p)?;
+                    if !t.mark {
+                        if &t.kind == open {
+                            depth += 1;
+                        } else if &t.kind == close {
+                            depth -= 1;
+                        }
+                    }
+                    p += 1;
+                    if depth == 0 {
+                        let end = t.end;
+                        self.out[me].kind = kind.clone();
+                        self.out[me].end = end;
+                        return self.past_marks(p, follow);
+                    }
+                }
             }
             Gram::Relabel { field, moved, inner, body } => {
                 // The node just made at this level, as a wrap finds it; relabelled, then `body`.

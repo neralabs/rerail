@@ -183,6 +183,40 @@ pub(super) struct Ids<'a> {
     pub(super) field: &'a dyn Fn(&str) -> Result<u16, String>,
     /// Whether a name is a token kind the lexer makes (a token's, or a keyword's).
     pub(super) is_token: &'a dyn Fn(&str) -> bool,
+    /// Every token kind the grammar may see (marks aside): what a `balanced` leaf takes.
+    pub(super) tokens: &'a [String],
+}
+
+/// The level a `balanced` leaf's name: its kind, then a byte no name holds.
+const BALANCED: char = '\0';
+
+/// `g` with each `balanced K O C` as its opener (a leaf of kind `K`) and a call of a nested level
+/// that merges every token into that leaf through the matching closer; each such level's `(K, O,
+/// C)` goes to `levels` once.
+fn desugar(g: &Gram, levels: &mut Vec<(String, String, String)>) -> Gram {
+    let mut d = |g: &Gram| desugar(g, levels);
+    match g {
+        Gram::Lit(_) | Gram::Sym(_) => g.clone(),
+        Gram::Seq(gs) => Gram::Seq(gs.iter().map(&mut d).collect()),
+        Gram::Alt(gs) => Gram::Alt(gs.iter().map(&mut d).collect()),
+        Gram::Opt(a) => Gram::Opt(Box::new(d(a))),
+        Gram::Star(a) => Gram::Star(Box::new(d(a))),
+        Gram::Plus(a) => Gram::Plus(Box::new(d(a))),
+        Gram::Field(f, a) => Gram::Field(f.clone(), Box::new(d(a))),
+        Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a))),
+        Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a))),
+        Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a))),
+        Gram::Wrap { kind, field, moved, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), body: Box::new(d(body)) },
+        Gram::Relabel { field, moved, inner, body } => Gram::Relabel { field: field.clone(), moved: moved.clone(), inner: inner.clone(), body: Box::new(d(body)) },
+        Gram::Balanced { kind, open, close } => {
+            let key = (kind.clone(), open.clone(), close.clone());
+            let n = levels.iter().position(|l| *l == key).unwrap_or_else(|| {
+                levels.push(key);
+                levels.len() - 1
+            });
+            Gram::Seq(vec![Gram::As(kind.clone(), Box::new(Gram::Lit(open.clone()))), Gram::Sym(format!("{kind}{BALANCED}{n}"))])
+        }
+    }
 }
 
 /// An edge: from a position (or the level's start), the wrappers it leaves (innermost first) and
@@ -279,6 +313,7 @@ impl Builder<'_> {
                 self.positions[p].1 = Pos::Tok(token, (self.ids.kind)(k)?);
                 E::Tok(p)
             }
+            Gram::Balanced { kind, .. } => return Err(format!("balanced {kind}: not desugared")),
             Gram::Merge(k, a) => {
                 let name = match &**a {
                     Gram::Lit(n) | Gram::Sym(n) if (self.ids.is_token)(n) => n,
@@ -446,13 +481,24 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
     let mut rules = Vec::new();
     let mut choices = Vec::new();
     let mut nested_choices = Vec::new();
+    let mut balanced = Vec::new();
     for s in stmts {
         match s {
-            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: body.clone(), own: true, supertype: None }),
-            Stmt::Choice { name, supertype, nested: true, body } => nested_choices.push(Rule { kind: name.clone(), nested: true, whole: false, body: body.clone(), own: false, supertype: supertype.clone() }),
-            Stmt::Choice { name, supertype, body, .. } => choices.push((name.clone(), supertype.clone(), body.clone())),
+            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced), own: true, supertype: None }),
+            Stmt::Choice { name, supertype, nested: true, body } => nested_choices.push(Rule { kind: name.clone(), nested: true, whole: false, body: desugar(body, &mut balanced), own: false, supertype: supertype.clone() }),
+            Stmt::Choice { name, supertype, body, .. } => choices.push((name.clone(), supertype.clone(), desugar(body, &mut balanced))),
             _ => {}
         }
+    }
+    // Each `balanced K O C`'s level: any token but `O` or `C` merged into the leaf, an inner `O`
+    // merged and its own pair taken by the level again, then the closer merged; no node of its own.
+    for (n, (kind, open, close)) in balanced.iter().enumerate() {
+        let name = format!("{kind}{BALANCED}{n}");
+        let merge = |t: &str| Gram::Merge(kind.clone(), Box::new(Gram::Sym(t.to_string())));
+        let mut alts: Vec<Gram> = ids.tokens.iter().filter(|t| *t != open && *t != close).map(|t| merge(t)).collect();
+        alts.push(Gram::Seq(vec![merge(open), Gram::Sym(name.clone())]));
+        let body = Gram::Seq(vec![Gram::Star(Box::new(Gram::Alt(alts))), merge(close)]);
+        nested_choices.push(Rule { kind: name, nested: true, whole: false, body, own: false, supertype: None });
     }
     if rules.is_empty() {
         return Err("the tree section has no rule".into());
@@ -488,7 +534,9 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
             root_empty = nullable(&e);
         }
         let supertype = b.rules[r].supertype.as_deref().map(ids.kind).transpose()?;
-        levels.push(Level { kind: (ids.kind)(&b.rules[r].kind)?, own: b.rules[r].own, supertype, edges });
+        // A `balanced` level's kind is its leaf's.
+        let kind = b.rules[r].kind.split(BALANCED).next().unwrap_or_default();
+        levels.push(Level { kind: (ids.kind)(kind)?, own: b.rules[r].own, supertype, edges });
     }
     let level_of_rule: HashMap<usize, usize> = level_rules.iter().enumerate().map(|(l, &r)| (r, l)).collect();
     let positions = b.positions;
@@ -838,7 +886,7 @@ pub(super) fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -
             Gram::Opt(a) => E::Opt(Box::new(expand(a, classes, sets)?)),
             Gram::Star(a) => E::Star(Box::new(expand(a, classes, sets)?)),
             Gram::Plus(a) => E::Seq(vec![expand(a, classes, sets)?, E::Star(Box::new(expand(a, classes, sets)?))]),
-            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
+            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Balanced { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
         })
     }
     let mut sets = Vec::new();
