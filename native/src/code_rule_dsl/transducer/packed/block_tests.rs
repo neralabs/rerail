@@ -860,10 +860,11 @@ fn back_fill_reference(s: &[bool], e: &[bool]) -> Vec<bool> {
     out
 }
 
-/// A program with `back_fill`s at two levels, run by the interpreter and by Cranelift (which
-/// runs it in passes): each output equals its reference, over every input and in one batch.
+/// A program with `back_fill`s at two levels, run by the interpreter, by Cranelift and by
+/// Metal's forward carry (both in passes): each output equals its reference, over every input
+/// and in one batch.
 #[test]
-fn back_fill_equals_reference_on_the_cpu_executors() {
+fn back_fill_equals_reference_on_the_cpu_and_the_forward_carry() {
     // Level 1: back from quotes to backslashes; from quotes, each its own end; with no end.
     // Then level 2: from a back fill's bytes that are `a`, back to quotes; a `prev` and a
     // `toggle` of it (carried values of a later pass); and an output of level 0.
@@ -920,9 +921,24 @@ fn back_fill_equals_reference_on_the_cpu_executors() {
     }
     let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
     assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
+    // On Metal, the forward carry in passes: the batch, with a file of many segments whose
+    // fills cross them, at segments of three blocks.
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        let long: Vec<u8> = (0..9000u32).map(|i| match i % 701 { 0 => b'"', k if k % 97 == 0 => b'\\', k if k % 5 == 0 => b'a', _ => b'b' }).collect();
+        let mut refs = refs;
+        refs.push(&long);
+        let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+        let got = run_serial_split(&[&native], &batch, Segments { blocks: 3, warm: 1 }).expect("Metal runs the passes");
+        for (k, (got, want)) in got.run.files.iter().zip(block.run_files(&refs)).enumerate() {
+            assert_eq!(got.outputs, want.outputs, "Metal: file {k}, {} bytes", refs[k].len());
+        }
+    }
 }
 
-/// `back_fill` prints and reassembles; one in a fixed point is refused; Metal refuses one.
+/// `back_fill` prints and reassembles; one in a fixed point is refused; Metal's look-back
+/// kernel refuses one (the forward carry runs it in passes).
 #[test]
 fn back_fill_round_trips_and_refusals() {
     let p = program("  block 0 %0 = eq 0x22

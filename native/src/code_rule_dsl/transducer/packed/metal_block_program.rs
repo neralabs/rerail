@@ -86,6 +86,9 @@ struct FileRow {
     slab: u32,
     /// Where the file's counts start (one per counted output: `native_cpu_block::counted`).
     tot_base: u32,
+    /// A program in passes (`native_ir::Passes`, the forward carry only): where the file's slot
+    /// words start in the output buffer, block `b`'s slot `k` at `slot_base + b * slots + k`.
+    slot_base: u32,
 }
 
 /// A program of a batch, as the interpreter reads it (`ProgramRow` in the interpreter).
@@ -252,6 +255,7 @@ pub(in crate::code_rule_dsl) fn run_batch(
             pos_base: fit(pos_base)?,
             slab: slab_of[i],
             tot_base: fit(tot_base)?,
+            slot_base: 0,
         });
         group_file.extend(std::iter::repeat_n(fit(i)?, groups));
         group0 += groups;
@@ -636,8 +640,8 @@ const FILE_ROW: &str = "// A file of the batch (decision 0066). Lane words are i
 // out_base + k * groups * 32 + gl; carry j of group g at state_base + j * groups + g (a halo's
 // three words from halo_base + (j * groups + g) * 3); counted output c's state of group g at
 // ext_base + c * groups + g, and its total at tot_base + c; extract e's positions from
-// pos_base + e * max(len, 1).
-struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, tot_base; };
+// pos_base + e * max(len, 1); in passes, block b's slot k at slot_base + b * SLOTS + k.
+struct FileRow { uint src16, len, program, group0, groups, out_base, state_base, halo_base, ext_base, pos_base, slab, tot_base, slot_base; };
 static inline uint4 load16(device const uint4* bytes, FileRow f, uint c) {
   const uint chunks = max((f.len + 15u) / 16u, 1u);
   const uint4 v = bytes[f.src16 + min(c, chunks - 1u)];
@@ -1320,7 +1324,10 @@ fn emit(
             }
             BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
             BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
-            BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
+            // A slot word of a pass before (`native_ir::Passes`): the forward carry's, a block a
+            // word, in the output buffer `out`.
+            BlockInst::Load(k) => format!("out[f.slot_base + ({offset}) / 64u * SLOTS{p} + {k}u]"),
+            BlockInst::BackFill(..) => unreachable!("a backward pass's (`metal_block_serial::back_kernels`)"),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
     };
