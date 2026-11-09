@@ -128,6 +128,28 @@ class EngineAlignmentTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'peer advanced'):migration.register_artifact(root,record)
                 self.assertEqual(before,manifest.read_bytes())
 
+    def test_adoption_audits_live_tips_before_build_and_registration_keeps_that_cohort(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);binary,source=self.artifact(root)
+            receipt=dict(source.pop('cliArtifact'),path=binary.relative_to(root).as_posix())
+            source.update(checkout='.',nativeExtensions=[])
+            record=root/'build.json';migration.write_json(record,receipt)
+            manifest=root/migration.MANIFEST;migration.write_json(manifest,dict(engineSource=source))
+            def git(root,*args):
+                return 'build' if args==('rev-parse','HEAD') else self.artifact_git(root,*args)
+            with patch.object(migration,'git',git),patch.object(migration,'verify_engine_alignment') as live, \
+                 patch.object(migration,'verify_engine_snapshot'):
+                migration.adopt_engine_cohort(root)
+                live.assert_called_once()
+                live.side_effect=ValueError('peer advanced during build')
+                migration.register_artifact(root,record)
+                self.assertEqual(1,live.call_count)
+                before=manifest.read_bytes();receipt['sourceTrees']=dict(receipt['sourceTrees'],native='changed')
+                migration.write_json(record,receipt)
+                with self.assertRaisesRegex(ValueError,'adopted engine cohort'):
+                    migration.register_artifact(root,record)
+                self.assertEqual(before,manifest.read_bytes())
+
     def test_engine_audit_rejects_a_retired_checkout(self):
         with self.assertRaisesRegex(ValueError, 'repository root'):
             migration.verify_engine_alignment(Path('/unused'), dict(checkout='.rerail/engine'))

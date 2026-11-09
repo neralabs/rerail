@@ -338,6 +338,19 @@ def verify_source_cohort(root, source):
         _SOURCE_COHORTS.add(key)
 
 
+def adopt_engine_cohort(root):
+    """Audit live upstream tips before compiling one immutable source cohort."""
+    manifest=read_json(root/MANIFEST);source=manifest['engineSource']
+    verify_engine_alignment(root,source)
+    if git(root,'diff','--name-only','HEAD','--',*ENGINE_SOURCE_TREES) or git(root,'ls-files','--others','--exclude-standard','--','native'):
+        raise ValueError('Commit engine sources before adopting an engine cohort')
+    source['adoptionAudit']=dict(format='rerail.engine-cohort-adoption/v1',
+        upstreamCommit=source['upstreamCommit'],engineCommit=git(root,'rev-parse','HEAD'),
+        sourceTrees={name:git(root,'rev-parse','HEAD:'+name) for name in ENGINE_SOURCE_TREES})
+    write_json(root/MANIFEST,manifest)
+    return manifest
+
+
 def register_artifact(root, receipt_path):
     """Register a successful root build only after its provenance and bytes pass."""
     manifest = read_json(root / MANIFEST)
@@ -346,7 +359,15 @@ def register_artifact(root, receipt_path):
     previous=manifest['engineSource'].get('cliArtifact',{})
     identity=('engineCommit','upstreamCommit','sourceTrees')
     same_cohort=all(previous.get(key) and previous.get(key)==receipt.get(key) for key in identity)
-    if same_cohort:
+    if audit:=manifest['engineSource'].get('adoptionAudit'):
+        if audit.get('upstreamCommit')!=receipt.get('upstreamCommit') or audit.get('sourceTrees')!=receipt.get('sourceTrees'):
+            raise ValueError('Build does not match the adopted engine cohort')
+        verify_engine_snapshot(root,source)
+        try:
+            git(root,'merge-base','--is-ancestor',audit['engineCommit'],receipt['engineCommit'])
+        except subprocess.CalledProcessError as error:
+            raise ValueError('Build is outside the adopted engine cohort') from error
+    elif same_cohort:
         # A debug/release build of already adopted, identical sources may finish
         # after a peer advances. Validate both artifacts and the live root tree;
         # changing any source identity still requires a new live adoption.
@@ -428,12 +449,14 @@ def main():
     commands.add_parser('adopt').add_argument('source', type=Path)
     commands.add_parser('sync').add_argument('source', type=Path)
     commands.add_parser('inventory')
+    commands.add_parser('adopt-engine')
     commands.add_parser('check')
     commands.add_parser('register-artifact').add_argument('receipt', type=Path)
     args = parser.parse_args()
     manifest = (adopt(ROOT, args.source.resolve()) if args.command == 'adopt'
                 else sync(ROOT, args.source.resolve()) if args.command == 'sync'
-                else register_artifact(ROOT, args.receipt) if args.command == 'register-artifact' else verify(ROOT))
+                else register_artifact(ROOT, args.receipt) if args.command == 'register-artifact'
+                else adopt_engine_cohort(ROOT) if args.command=='adopt-engine' else verify(ROOT))
     if args.command == 'check':
         require_complete(manifest['rules'])
     counts = {}
