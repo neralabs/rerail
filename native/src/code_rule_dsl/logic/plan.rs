@@ -269,7 +269,7 @@ impl Stats {
         let mut card: Vec<String> = self.card.iter().filter(|(t, _)| t.contains(rel)).map(|(t, n)| format!("{t}={n}")).collect();
         card.sort();
         let kinds = if rel == "kind" { format!("; {} kinds, {} nodes", self.kfreq.len(), self.kfreq.values().sum::<i64>()) } else { String::new() };
-        let consts: Vec<i64> = self.memo.iter().filter(|((t, _, _), _)| t == rel).map(|(_, n)| *n).collect();
+        let consts: Vec<i64> = self.memo.get(rel).into_iter().flat_map(|m| m.values().copied()).collect();
         format!("{rel}: card {}; {}; {}{kinds}; {} constants counted, {} rows", card.join(" "), cols.join(" "), few.join(" "), consts.len(), consts.iter().sum::<i64>())
     }
     /// The caller's statistics, taken (a corpus's measured values run to hundreds of MB), else T's.
