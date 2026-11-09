@@ -1494,7 +1494,13 @@ fn run_observed(
         let held = session::current();
         held.as_ref().and_then(|s| s.phased.lock().ok().map(|m| m.iter().map(|(rel, (v, _))| (rel.clone(), *v)).collect())).unwrap_or_default()
     };
-    let (phased, phase_runs, phase_versions) = phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options, &|rel| held_versions.get(rel).copied())?;
+    // The constants' own run runs no phase: a constant reads no input (`constants::foldable`), and a phase export is
+    // one. Run here, a phase took the constants' option for its own, and wrote none of its exports.
+    let (phased, phase_runs, phase_versions) = if options.get(constants::OWN).is_some() {
+        (Default::default(), Vec::new(), Default::default())
+    } else {
+        phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options, &|rel| held_versions.get(rel).copied())?
+    };
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
     // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
     // The split takes them as constants of the run (`file_local::run_constant`).
