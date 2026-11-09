@@ -132,7 +132,11 @@ fn thread_cpu() -> f64 {
 /// The facts `prog` reads from earlier phases, by relation, and each phase's run. `scratch` holds the phases' runs
 /// (`<scratch>/phase-<name>`).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>, Deltas)> {
+///
+/// `held` is the version of a reader's relation the reader holds already (a session's, bound): when that is this
+/// version, or the one its delta is from, no row of it is read or handed on, only its version and delta.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, held: &dyn Fn(&str) -> Option<u64>) -> Result<(Facts, Vec<PhaseRun>, Deltas)> {
     let (mut facts, mut runs, mut handed) = (Facts::new(), Vec::new(), Deltas::new());
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
     for (name, reads) in wanted(prog, dir.as_deref())? {
@@ -173,21 +177,18 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let key = run_key(&text, root, options);
         // Unchanged since its last run (everything it consulted as it was): its exports are the last run's, kept.
         let checking = super::thread_usage();
-        if let Some(rows) = reuse(&name, &key, &text, root, typing, options, &declared.exports)? {
+        if let Some(documents) = reuse(&name, &key, &text, root, typing, options)? {
+            let versions = current_versions(&name, &declared.exports)?;
+            let rows = stored_rows(&name, &wanted_rows(&reads, &versions, held))?;
+            hand_on(&name, &program, &reads, &rows, &mut facts)?;
+            hand_versions(&reads, &versions, &mut handed);
             let now = super::thread_usage();
             let mut report = Report::default();
             report.phases.push(("unchanged: consulted inputs checked, exports kept", now.0 - checking.0, now.1 - checking.1, super::usage().2, 0));
-            report.files = rows.1;
-            let rows = rows.0;
-            let granules: BTreeSet<&str> = rows.iter().filter(|(rel, _)| rel.as_str() != UNITS && !declared.positions.contains(rel)).flat_map(|(_, rs)| rs.iter().map(|r| r[0].as_str())).collect();
-            let (exports, units, granules) = (
-                rows.iter().map(|(rel, rs)| (rel.clone(), rs.len(), 0, 0)).collect(),
-                (rows.get(UNITS).map_or(0, Vec::len), 0, 0),
-                (granules.len(), 0, 0, 0),
-            );
-            hand_on(&name, &program, &reads, &rows, &mut facts)?;
-            let versions = current_versions(&name, &declared.exports)?;
-            hand_versions(&reads, &versions, &mut handed);
+            report.files = documents;
+            // The counts the store keeps: no row is read for them. Granules are the definitions (`unit`'s rows).
+            let units = versions.get(UNITS).map_or(0, |v| v.rows);
+            let (exports, units, granules) = (versions.iter().map(|(rel, v)| (rel.clone(), v.rows, 0, 0)).collect(), (units, 0, 0), (units, 0, 0, 0));
             runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: 0.0, full_because: None, versions });
             continue;
         }
@@ -195,7 +196,8 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // Some workspace documents changed, and nothing else: their rows replaced, when the rest stands.
         let job = Job { name: &name, key: &key, text: &text, root, scratch, modes, binding, chunk_nodes, typing, options, program: &program, declared: &declared, producer };
         let full_because = match maintain(&job)? {
-            Ok((report, rows, exports, units, granules, began, versions)) => {
+            Ok((report, exports, units, granules, began, versions)) => {
+                let rows = stored_rows(&name, &wanted_rows(&reads, &versions, held))?;
                 hand_on(&name, &program, &reads, &rows, &mut facts)?;
                 hand_versions(&reads, &versions, &mut handed);
                 runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began, full_because: None, versions });
@@ -211,11 +213,29 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // document's cone inputs, so a run of changed documents can tell whether the rest stands.
         record(&name, &key, &report.consulted)?;
         record_documents(&name, &report.cone_inputs, true)?;
+        let wanted = wanted_rows(&reads, &versions, held);
+        let rows: BTreeMap<String, Vec<Vec<String>>> = rows.into_iter().filter(|(e, _)| wanted.contains(e)).collect();
         hand_on(&name, &program, &reads, &rows, &mut facts)?;
         hand_versions(&reads, &versions, &mut handed);
         runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began, full_because: Some(full_because), versions });
     }
     Ok((facts, runs, handed))
+}
+
+/// The exports whose rows the reader needs: those it reads and holds neither at this version nor at the one its delta
+/// is from.
+fn wanted_rows(reads: &[(String, String)], versions: &Deltas, held: &dyn Fn(&str) -> Option<u64>) -> Vec<String> {
+    let mut wanted: Vec<String> = reads
+        .iter()
+        .filter(|(rel, export)| {
+            let Some(v) = versions.get(export) else { return true };
+            !held(rel).is_some_and(|h| h == v.now || v.delta.as_ref().is_some_and(|(before, _, _)| *before == h))
+        })
+        .map(|(_, e)| e.clone())
+        .collect();
+    wanted.sort();
+    wanted.dedup();
+    wanted
 }
 
 /// The versions of the exports `reads` names, by the reader's relation.
@@ -262,7 +282,7 @@ struct Job<'a> {
     producer: [u8; 32],
 }
 
-type Maintained = (Report, BTreeMap<String, Vec<Vec<String>>>, Vec<(String, usize, usize, usize)>, (usize, usize, usize), (usize, usize, usize, usize), f64, Deltas);
+type Maintained = (Report, Vec<(String, usize, usize, usize)>, (usize, usize, usize), (usize, usize, usize, usize), f64, Deltas);
 
 /// The phase's fixed point kept in the phase store, when only workspace documents changed since its last run: the
 /// last run's key, every request answered alike, the same documents (`corpus::changes`). The facts are in SQLite,
@@ -347,8 +367,6 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
     let consulted: Vec<(String, String, String)> = consulted.into_iter().map(|(w, p, d)| if w == "doc" && let Some(n) = now.get(p.as_str()) { (w, p, (*n).to_owned()) } else { (w, p, d) }).collect();
     record(job.name, job.key, &consulted)?;
     record_documents(job.name, &report.cone_inputs, false)?;
-    // The reader's facts: every document's rows, from the store.
-    let all = stored_rows(job.name, &job.declared.exports)?;
     report.files = documents(&consulted);
     // Its parts: the changed documents' run (of it, the run's constants), the granules replaced, the reader's rows read.
     let at = super::thread_usage();
@@ -362,7 +380,7 @@ fn maintain(job: &Job) -> Result<std::result::Result<Maintained, String>> {
         ("maintained: the reader's rows read", reading.0, reading.1, rss, 0),
     ];
     crate::code_rule_dsl::logic::profile::decision("phase maintained (decision 0094 §4)", || format!("phase {}: {} documents run alone, {} granules replaced", job.name, changed.len(), only.len()));
-    Ok(Ok((report, all, exports, units, granules, began, versions)))
+    Ok(Ok((report, exports, units, granules, began, versions)))
 }
 
 /// The documents a run read: the workspace's and those it loaded, each once.
@@ -382,13 +400,13 @@ fn parse_consulted(text: &str) -> Vec<(String, String, String)> {
 /// Every row the phase store holds of `exports`, by export.
 fn stored_rows(phase: &str, exports: &[String]) -> Result<BTreeMap<String, Vec<Vec<String>>>> {
     let mut rows: BTreeMap<String, Vec<Vec<String>>> = exports.iter().map(|e| (e.clone(), Vec::new())).collect();
-    let Some(path) = store_path() else { return Ok(rows) };
+    let Some(path) = store_path().filter(|_| !exports.is_empty()) else { return Ok(rows) };
     let db = Connection::open(&path)?;
-    let mut read = db.prepare("SELECT rel, row FROM export_rows WHERE phase=?1")?;
-    for got in read.query_map([phase], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
-        let (rel, row) = got?;
-        if let Some(rs) = rows.get_mut(&rel) {
-            rs.push(row.split('\t').map(str::to_owned).collect());
+    // By the key's prefix: an export's rows, and no other's.
+    let mut read = db.prepare("SELECT row FROM export_rows WHERE phase=?1 AND rel=?2")?;
+    for (rel, rs) in &mut rows {
+        for row in read.query_map(params![phase, rel], |r| r.get::<_, String>(0))? {
+            rs.push(row?.split('\t').map(str::to_owned).collect());
         }
     }
     Ok(rows)
@@ -468,7 +486,7 @@ fn record(phase: &str, key: &str, consulted: &[(String, String, String)]) -> Res
 /// The last run's exports, by export, and the documents it read, when the phase is unchanged since: the same key,
 /// and everything it consulted as it was (`corpus::unchanged`). Its freshness then has nothing to record.
 #[allow(clippy::too_many_arguments)]
-fn reuse(phase: &str, key: &str, text: &str, root: &Path, typing: &Typing, options: &serde_json::Value, exports: &[String]) -> Result<Option<(BTreeMap<String, Vec<Vec<String>>>, usize)>> {
+fn reuse(phase: &str, key: &str, text: &str, root: &Path, typing: &Typing, options: &serde_json::Value) -> Result<Option<usize>> {
     let Some(path) = store_path().filter(|p| p.exists()) else { return Ok(None) };
     let db = Connection::open(&path)?;
     records(&db)?;
@@ -480,8 +498,7 @@ fn reuse(phase: &str, key: &str, text: &str, root: &Path, typing: &Typing, optio
     if !super::unchanged(&[text], root, typing, options, &consulted)? {
         return Ok(None);
     }
-    let rows = stored_rows(phase, exports)?;
-    Ok(Some((rows, documents(&consulted))))
+    Ok(Some(documents(&consulted)))
 }
 
 /// An export as handed on: its version (a digest of the phase store's epoch, the export and its version number), and
@@ -490,6 +507,8 @@ fn reuse(phase: &str, key: &str, text: &str, root: &Path, typing: &Typing, optio
 #[derive(Clone)]
 pub(crate) struct Versioned {
     pub(crate) now: u64,
+    /// Its rows at this version.
+    pub(crate) rows: usize,
     pub(crate) delta: Option<(u64, Vec<Vec<String>>, Vec<Vec<String>>)>,
 }
 
@@ -497,7 +516,7 @@ pub(crate) type Deltas = BTreeMap<String, Versioned>;
 
 fn versions_table(db: &Connection) -> Result<()> {
     db.execute_batch(
-        "CREATE TABLE IF NOT EXISTS export_version(phase TEXT, rel TEXT, v INTEGER, PRIMARY KEY(phase, rel)) WITHOUT ROWID;
+        "CREATE TABLE IF NOT EXISTS export_versions(phase TEXT, rel TEXT, v INTEGER, n INTEGER, PRIMARY KEY(phase, rel)) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS store_epoch(one INTEGER PRIMARY KEY CHECK (one = 1), epoch INTEGER);",
     )?;
     // A store made afresh numbers its versions from 0 again: its epoch tells its versions from an earlier store's.
@@ -506,11 +525,12 @@ fn versions_table(db: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// The store's epoch and an export's version number (0 before its first rows).
-fn version(db: &Connection, phase: &str, rel: &str) -> Result<(i64, u64)> {
+/// The store's epoch, an export's version number (0 before its first rows) and its rows.
+fn version(db: &Connection, phase: &str, rel: &str) -> Result<(i64, u64, usize)> {
     let epoch: i64 = db.query_row("SELECT epoch FROM store_epoch", [], |r| r.get(0))?;
-    let v: Option<i64> = db.query_row("SELECT v FROM export_version WHERE phase=?1 AND rel=?2", params![phase, rel], |r| r.get(0)).ok();
-    Ok((epoch, v.unwrap_or(0) as u64))
+    let v: Option<(i64, i64)> = db.query_row("SELECT v, n FROM export_versions WHERE phase=?1 AND rel=?2", params![phase, rel], |r| Ok((r.get(0)?, r.get(1)?))).ok();
+    let (v, n) = v.unwrap_or((0, 0));
+    Ok((epoch, v as u64, n as usize))
 }
 
 fn version_digest(epoch: i64, rel: &str, v: u64) -> u64 {
@@ -523,7 +543,7 @@ fn current_versions(phase: &str, exports: &[String]) -> Result<Deltas> {
     let Some(path) = store_path() else { return Ok(Deltas::new()) };
     let db = Connection::open(&path)?;
     versions_table(&db)?;
-    exports.iter().map(|rel| Ok((rel.clone(), { let (e, v) = version(&db, phase, rel)?; Versioned { now: version_digest(e, rel, v), delta: Some((version_digest(e, rel, v), Vec::new(), Vec::new())) } }))).collect()
+    exports.iter().map(|rel| Ok((rel.clone(), { let (e, v, n) = version(&db, phase, rel)?; Versioned { now: version_digest(e, rel, v), rows: n, delta: Some((version_digest(e, rel, v), Vec::new(), Vec::new())) } }))).collect()
 }
 
 type Kept = (Vec<(String, usize, usize, usize)>, (usize, usize, usize), (usize, usize, usize, usize));
@@ -580,13 +600,12 @@ fn keep(phase: &str, rows: &BTreeMap<String, Vec<Vec<String>>>, positions: &[Str
         let (added, gone) = (plus.len(), minus.len());
         // The export's version: the next when its rows changed, and the delta from the one before.
         let before = version(&tx, phase, rel)?;
-        if added + gone > 0 {
-            tx.execute("INSERT OR REPLACE INTO export_version VALUES (?1, ?2, ?3)", params![phase, rel, (before.1 + 1) as i64])?;
-            let split = |ls: Vec<String>| ls.into_iter().map(|l| l.split('\t').map(str::to_owned).collect()).collect();
-            deltas.insert(rel.clone(), Versioned { now: version_digest(before.0, rel, before.1 + 1), delta: Some((version_digest(before.0, rel, before.1), split(plus), split(minus))) });
-        } else {
-            deltas.insert(rel.clone(), Versioned { now: version_digest(before.0, rel, before.1), delta: Some((version_digest(before.0, rel, before.1), Vec::new(), Vec::new())) });
-        }
+        // Its rows: all of them here, or within `only` the last run's and the delta.
+        let n = if only.is_some() { (before.2 + added).saturating_sub(gone) } else { rs.len() };
+        let v = if added + gone > 0 { before.1 + 1 } else { before.1 };
+        tx.execute("INSERT OR REPLACE INTO export_versions VALUES (?1, ?2, ?3, ?4)", params![phase, rel, v as i64, n as i64])?;
+        let split = |ls: Vec<String>| ls.into_iter().map(|l| l.split('\t').map(str::to_owned).collect()).collect();
+        deltas.insert(rel.clone(), Versioned { now: version_digest(before.0, rel, v), rows: n, delta: Some((version_digest(before.0, rel, before.1), split(plus), split(minus))) });
         tx.execute(&format!("DELETE FROM export_rows WHERE phase=?1 AND rel=?2{} AND NOT EXISTS (SELECT 1 FROM temp.now n WHERE n.granule=export_rows.granule AND n.row=export_rows.row)", within("export_rows.granule")), params![phase, rel])?;
         tx.execute("INSERT OR IGNORE INTO export_rows SELECT ?1, ?2, granule, row FROM temp.now", params![phase, rel])?;
         exports.push((rel.clone(), rs.len(), added, gone));

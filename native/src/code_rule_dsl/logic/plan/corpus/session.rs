@@ -36,6 +36,9 @@ pub(in crate::code_rule_dsl) struct Session {
     /// Each phase export a run read, as bound: its version (`phases::Versioned`), the relation of atoms and its
     /// statistics. A run reading the same version binds it as it is: no row is interned or measured again.
     pub(super) phased: Mutex<std::collections::HashMap<String, (u64, PhasedSource)>>,
+    /// Each output file a run of the session wrote: the program's cross-file key and its rows. A later run of that
+    /// program whose output stratum is clean leaves the file as it is.
+    pub(super) written: Mutex<std::collections::HashMap<PathBuf, ([u8; 32], usize)>>,
     /// Which session this is: its runs' kept plans and derived values are taken back only by its own runs.
     generation: u64,
 }
@@ -67,6 +70,7 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         memo: Default::default(),
         cross: Mutex::new(Vec::new()),
         phased: Mutex::new(Default::default()),
+        written: Mutex::new(Default::default()),
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         #[cfg(test)]
         thread: std::thread::current().id(),
