@@ -54,3 +54,12 @@ for k in 1 4 16; do ./probe.sh a6 "--plan --iosurface --iters 40" chain_2048_204
 Core ML caches the ANE-compiled bundles in `~/Library/Caches/anebench/com.apple.e5rt.e5bundlecache`, about
 1 GB after the full sweep. Delete it to force cold loads. Its `weights.bin` sizes show the stored weight
 format (uint1/2/4, int8 or fp16).
+
+Real workloads (`real.py`; DATA = the `mo-data` export, variants listed in its docstring):
+
+```sh
+v=w5_plain   # or w1_docs_in, w1_rules_in, w1_packed8, w5_packed8, w4_slice512, ...
+$PY -I real.py $DATA $RUNS build $v
+$RUNS/bin/anebench $RUNS/models/$v.mlpackage --plan --iosurface --iters 30 --in $RUNS/io/$v --out $RUNS/io/$v/out
+$PY -I real.py $DATA $RUNS check $v    # exact cell-by-cell comparison against numpy int64
+```

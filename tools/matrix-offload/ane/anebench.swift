@@ -82,6 +82,7 @@ func elemSize(_ t: MLMultiArrayDataType) -> Int {
     switch t {
     case .float16: return 2
     case .float32, .int32: return 4
+    case .int8: return 1
     case .double: return 8
     default: return 4
     }
@@ -93,7 +94,7 @@ func makeInput(_ name: String, _ c: MLMultiArrayConstraint, _ dir: String?) thro
     let n = arr.count
     let es = elemSize(c.dataType)
     if let d = dir, let data = FileManager.default.contents(atPath: "\(d)/\(name).bin") {
-        precondition(data.count == n * es, "input \(name): file has \(data.count) bytes, want \(n * es)")
+        if data.count != n * es { print("input \(name): dtype \(c.dataType.rawValue) file has \(data.count) bytes, want \(n * es)"); exit(2) }
         arr.withUnsafeMutableBytes { p, _ in data.copyBytes(to: p.bindMemory(to: UInt8.self)) }
         return arr
     }

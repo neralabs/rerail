@@ -352,3 +352,133 @@ Honest limits:
 - The int8 path used per-tensor symmetric quantization only.
 - 4-bit at 4096^3 was measured without IOSurface (host CPU about 1 ms).
 - The 128 MB models were measured at M = 1 and 64 only.
+
+## Real workloads (data-layer corpus, 13,088 Python documents)
+
+The workloads come from the data-layer corpus (13,088 Python documents). The data is in the scratchpad
+`mo-data/`, with semantics as in `extract/src/bin/baseline.rs`. Models, inputs and exact checks are built by
+`real.py` and run with `anebench`. Every result below was compared cell by cell with an int64 numpy
+reference.
+
+Common conditions:
+
+- Load average was 7-16 throughout.
+- IOSurface I/O was used unless the row says otherwise.
+- A row is labelled ANE only when MLComputePlan placed every compute op on the ANE.
+- Reference times (CPU, SME, GPU) are the coordinator's numbers for the same job.
+
+### W1: prefilter overlap, rules as weights
+
+Counts[doc][rule] = popcount(doc & rule), computed as a 0/1 matmul over 767 rule-name bits:
+13,088 documents x 444 rules, about 8.91 GFLOP (counted as dense).
+
+| variant | placement | per-run input | constant (stored) | output | wall min / med (us) | host CPU (us) | TFLOPS | exact |
+|---|---|---|---|---|---|---|---|---|
+| docs as fp16 input (13088x767), rules 1-bit constant | ANE | 20.08 MB | 42.6 KB | 11.6 MB fp16 | **712 / 734** | 80 | 12.5 | 0 wrong of 5,811,072; 1,473,222 nonzero |
+| same, rules as fp16 constant | ANE | 20.08 MB | 681 KB | 11.6 MB | 734 / 765 | 93 | 12.1 | exact |
+| same, plain (non-IOSurface) input | ANE | 20.08 MB | 42.6 KB | 11.6 MB | 1108 / 1149 | 486 | 8.0 | exact |
+| docs packed 8 bits per fp16 value (13088x96), expanded on chip by floor arithmetic | ANE (floor, mul, sub, concat, matmul) | 2.51 MB | 42.6 KB | 11.6 MB | 2706 / 2756 | 131 | 3.3 | exact |
+| docs packed 11 bits per fp16 value (13088x70) | ANE | 1.83 MB | 42.6 KB | 11.6 MB | 22090 / 22171 | 271 | 0.4 | exact |
+| docs as int8 / uint8 input | cast on **CPU**, then ANE | 40.2 MB (exposed to the host as fp32) | 42.6 KB | 11.6 MB | 5605 / 6399 | 5852 | n/a | **WRONG: every count came out 0** |
+| transposed: rules (444x767) fp16 input, docs D^T (767x13088) 1-bit constant | ANE | 0.68 MB | 1.26 MB | 11.6 MB | **246 / 257** | 59 | 36 (dense-eq.) | exact |
+
+Against the references (CPU postings 6.9 ms, SME 0.69 ms, GPU 0.077 ms device):
+
+- The natural form (documents as the per-run input) takes 0.71 ms. That is level with SME and 9x slower
+  than the GPU.
+- The transposed form takes 0.25 ms (3.2x the GPU), but it bakes the documents into the model. Each new
+  document set costs about 0.7 s of ANE compile on first load. That only pays for document sets that stay
+  fixed across thousands of rule sets.
+- Packing the input saves 8-11x in input bytes, but expanding the packed values on chip costs more than the
+  bytes saved: 2.7 ms (8 bits per value) and 22 ms (11 bits per value).
+- Core ML presents int8 and uint8 inputs to the client as fp32 and casts them on the CPU. On this OS that
+  path also produced all-zero results. It is unusable.
+
+### W5: name co-occurrence C = B·Bᵀ (2048 x 2048 over 13,088 document bits)
+
+The full product is about 109.8 GFLOP. Counts reach 12,558, too large for exact fp16, so K (the documents)
+is split into chunks. Each partial count is at most the chunk size (≤ 2048), so every partial is exact in
+fp16. The chunks are summed on the host in int64. This is exact by construction, and was also checked: 0
+wrong cells.
+
+| variant | placement | per-run input | constant (1-bit) | output (fp16 partials) | wall min / med (us) | host CPU (us) | host partial sum | TFLOPS | Σ upper triangle |
+|---|---|---|---|---|---|---|---|---|---|
+| B fp16 input (2048x13088), 7 K-chunks of ≤1870 documents | ANE (slice, matmul x7, concat) | 53.6 MB | 3.36 MB | 7 x 8.4 MB = 58.7 MB, max partial 1866 | **4000 / 4029** | 119 | 31 ms numpy (int64) | 27.4 | 29,397,646 (exact; 0 of 4,194,304 cells wrong) |
+| B packed 8 bits per fp16 value; bit block k = chunk k (8 chunks of 1636) | ANE (floor x8, matmul x8) | 6.70 MB | 3.37 MB | 67.1 MB, max partial 1582 | 8499 / 8520 | 146 | 33 ms | 12.9 | exact |
+| B packed 11 bits per value (11 chunks of 1190) | ANE | 4.87 MB | 3.37 MB | 92.3 MB, max partial 1153 | 8885 / 8923 | 155 | 47 ms | 12.4 | exact |
+
+Against the references (CPU bitmap 77 ms, SME 1.8 ms, GPU 0.38 ms device): the ANE call alone takes
+4.0 ms, which is 2.2x SME and 10.5x the GPU. On top of that, the host must sum 7 fp16 partial matrices
+(29 M values, 59 MB). numpy took 31 ms for this. A NEON loop would take a few ms, but even that is longer
+than the GPU's whole job. The packed-input trick is again slower, because floor and the extra matmul
+chunks cost more than the 8x smaller input saves.
+
+### Bytes moved: does "per-run data must be fp16" erase the compression win?
+
+| job | CPU/GPU form reads (packed bits) | ANE natural form reads + writes | ratio |
+|---|---|---|---|
+| W1 | 1.26 MB docs + 43 KB rules = 1.30 MB | 20.1 MB fp16 docs + 43 KB 1-bit rules, plus 11.6 MB fp16 counts written | 15x on input, 24x total |
+| W1 transposed | (same 1.30 MB) | 0.68 MB fp16 rules + 1.26 MB 1-bit docs, plus 11.6 MB written | 1.5x input; output dominates |
+| W5 | 3.36 MB bitmap (read twice by a tiled kernel) | 53.6 MB fp16 + 3.36 MB 1-bit, plus 58.7 MB fp16 partials written (and read back by the host) | 16x on input, about 35x total |
+
+**Yes, in practice it does.** Only the constant side gets the 1-bit format. The per-run side costs
+16 bits per bit-entry. Exactness forces either the output to be fp16 counts, or (W5) to be K-chunked into
+partials, which multiplies the output bytes by the number of chunks.
+
+None of the input-shrinking tricks helped:
+
+- int8 inputs go through the CPU as fp32 and gave wrong results.
+- Packing bits into fp16 integers and expanding them with floor runs on the ANE and is exact, but is
+  2-4x slower than the plain fp16 input.
+
+The only form that shrinks the bytes and also wins is putting the large side in the constant (W1
+transposed). It has to be compiled per data set (0.7 s for 1.26 MB of bits). For the ANE, measured
+bandwidth is not the limiting factor in these jobs anyway: W5 moves about 116 MB in 4 ms (29 GB/s) while
+running at 27 TFLOPS. The cost is the fp16 inflation of per-run data and outputs, plus the host-side work
+around the call.
+
+### W2, W3, W4: estimates from the measured rates (no full runs)
+
+- **W2 (equality join counts, 4.14 G within-document compares).**
+  - The broadcast-equal rate measured in A5 is 14-28 G/s, which gives 4.14 G / 28 G/s = **148 ms at
+    best** (296 ms at 14 G/s).
+  - That assumes perfect batching. In fact the per-document tiles are ragged (p99 4.3 M, max 315 M
+    compares), so they would have to be padded into a few large calls (0.1 ms floor each, inflated work)
+    or run as 13,088 separate calls, which costs 1.3 s in call overhead alone.
+  - A matmul form has no dense structure to exploit: it would be per-document one-hot histograms.
+  - Against direct indexing at 2.3 ms CPU / 0.082 ms GPU, that is **≥ 64x worse than the CPU and ≥ 1800x
+    worse than the GPU.** Not run.
+- **W3 (closure over the condensed DAG, 10,824 components, 35 levels).**
+  - As matmul: one frontier step over all sources is Y(n x n) · A(n x n) = 2n³ = 2.54 TFLOP (dense).
+  - 35 level steps with A as a 1-bit constant, at 35-41 TFLOPS dense-equivalent (A6, sparse), take
+    about 35 x 2.54 / 38 ≈ **2.3 s**.
+  - 6 squarings of a dynamic fp16 Y·Y (no compression possible) at about 8 TFLOPS take
+    6 x 2.54 / 8 ≈ **1.9 s**.
+  - The 1-bit A would be 14.6 MB and n is within the K ≤ 16384 limit, so it fits.
+  - Against the bit-row DP at 0.4 ms CPU / 1.05 ms GPU, that is **about 5000x worse.** Not run.
+- **W4 (kind histogram, 22.3 M named nodes, 115 kinds).**
+  - The best ANE form is equal against 115 kind constants, cast, then reduce_sum over 2048-node rows
+    (partials ≤ 2048), with the host summing the partials.
+  - That is 22.3 M x 115 = 2.56 G compares, so at 14-28 G/s it takes **92-183 ms**. That is 17-33x the
+    CPU's 5.5 ms and 400-800x the GPU's 0.23 ms.
+  - Because this was the closest of the three, I ran a reduced version on real codes from `kinds.bin`:
+
+    | slice | placement | input | wall min / med (us) | host CPU (us) | rate | exact |
+    |---|---|---|---|---|---|---|
+    | first 131,072 nodes (64 x 2048) | ANE (equal, cast, reduce_sum) | 0.26 MB | 593 / 607 | 82 | 25 G cmp/s | 0 of 7,360 cells wrong |
+    | first 1,048,576 nodes (512 x 2048) | ANE | 2.1 MB | 4081 / 4119 | 137 | **29.6 G cmp/s** | 0 of 58,880 cells wrong |
+
+  - Scaled to 22.3 M nodes this gives about **87 ms**: 16x the CPU and 380x the GPU. The estimate holds.
+  - This is only the global per-kind histogram. The per-document histogram needs ragged segments on top
+    of it.
+
+### What the real workloads say
+
+- **The ANE is exact on all of these jobs once partial counts are kept ≤ 2048.**
+- **Its best real result is W1:** level with SME in the natural form, and 3.2x behind the GPU when the
+  large side is baked in as a 1-bit constant.
+- **W5 runs at 27 TFLOPS but still loses** to SME (2.2x) and the GPU (10x). The losses come from fp16
+  partial outputs and the host-side reduction.
+- **The compressed-weight advantage applies only to the constant side.** In these workloads the per-run
+  side is the large one, and as fp16 it is 16x the packed bits.
+- **Equality, closure and histogram work (W2-W4) are 16x to thousands of times off** the CPU and GPU forms.
