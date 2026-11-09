@@ -47,6 +47,10 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/sql_executor/documents/shards.rs',
     'native/src/code_rule_dsl/logic/strings.rs',
     'native/src/code_rule_dsl/logic/strings/functions.rs',
+    # Public signature verification errors use the same generic decoder and verifier.
+    'native/src/code_rule_dsl/logic/strings/signatures.rs',
+    'native/src/code_rule_dsl/logic/strings/signature-errors.json',
+    'native/src/code_rule_dsl/logic/strings/tests.rs',
     'native/src/code_rule_dsl/logic/strings/python_integer.rs',
     # Route demanded directory metadata through Final's phase-0 observer.
     'native/src/content_store/observe.rs',

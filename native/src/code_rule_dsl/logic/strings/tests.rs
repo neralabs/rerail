@@ -199,6 +199,31 @@ fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
     assert_eq!(verify(key, message, &format!("{signature}\u{2603}")), 0);
 }
 
+/// Exact public verification failures, recorded with Python's base64 transport and PyNaCl.
+/// One batch covers padding, ignored ASCII noise, signatures, and malformed inputs.
+#[test]
+fn signature_verification_errors_match_recorded_transport() {
+    let recording = include_str!("signature-errors.json");
+    let expected: serde_json::Value = serde_json::from_str(recording).unwrap();
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    functions::register(&db).unwrap();
+    let mut query = db.prepare("SELECT CAST(key AS INTEGER),
+        ed25519_ok(?1,json_extract(value,'$.message'),json_extract(value,'$.signature')),
+        ed25519_error(?1,json_extract(value,'$.message'),json_extract(value,'$.signature'))
+        FROM json_each(?2,'$.cases')").unwrap();
+    let rows = query.query_map(rusqlite::params![expected["key"].as_str().unwrap(), recording], |r|
+        Ok((r.get::<_,usize>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?))).unwrap();
+    let mut count = 0;
+    for row in rows {
+        let (i, valid, error) = row.unwrap();
+        let case = &expected["cases"][i];
+        assert_eq!(valid, case["valid"].as_i64().unwrap(), "{:?}", case["signature"]);
+        assert_eq!(error, case["error"].as_str().unwrap(), "{:?}", case["signature"]);
+        count += 1;
+    }
+    assert_eq!(count, expected["cases"].as_array().unwrap().len());
+}
+
 /// A test of each of a constant table's values (`contains(x, t)` for each surface x) gains the test of the whole
 /// table as one set before it, which the vocabulary answers once per string; the per-value test still decides.
 #[test]
