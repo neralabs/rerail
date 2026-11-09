@@ -122,6 +122,13 @@ fn run(lang: GrammarDialect, files: &[PathBuf], verbose: bool) -> Totals {
             let image = TapeImage::finish(list, classes, &grammar, &source, &|| false).unwrap();
             totals.time_pack[side] += cpu() - t;
             let bytes = image.to_bytes().unwrap();
+            // RERAIL_DUMP_TAPES=<dir>: each file's full (0) and named-only (1) image bytes, for
+            // compression studies; files are numbered in list order.
+            if let Some(dir) = std::env::var_os("RERAIL_DUMP_TAPES") {
+                let dir = PathBuf::from(dir).join(format!("{lang:?}").to_lowercase()).join(["full", "named"][side]);
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(dir.join(format!("{:05}.tape", totals.files)), &bytes).unwrap();
+            }
             totals.bytes[side] += bytes.len();
             totals.zstd[side] += zstd::encode_all(&bytes[..], 3).unwrap().len();
             totals.codes[side] += image.codes.len();
