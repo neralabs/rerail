@@ -35,6 +35,7 @@ pub(in crate::code_rule_dsl) mod memo;
 mod prepared;
 mod maintain;
 mod supports;
+mod recursive_spike;
 mod retain;
 mod keptstats;
 mod input_delta;
@@ -3935,6 +3936,9 @@ fn run_observed(
                     }
                     drop(s);
                     let s = span("retain");
+                    if recursive_spike::on() {
+                        recursive_spike::run(&cross.program, cell.as_ref(), &rows, &cross_inputs, &|a, b| crate::code_rule_dsl::logic::native::component::cat_symbols(&db, a, b));
+                    }
                     let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_program));
                     drop(s);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
