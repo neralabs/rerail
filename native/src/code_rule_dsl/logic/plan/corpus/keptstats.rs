@@ -111,7 +111,9 @@ impl Keeper {
     pub(super) fn encode(&self) -> Vec<u8> {
         let mut out = vec![1u8];
         let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
-        let docs: Vec<(&String, i64, i64)> = self.docs.iter().filter_map(|(p, (c, k))| match c { memo::Content::Stored(id) => Some((p, id.raw(), *k)), memo::Content::Held(_) => None }).collect();
+        let mut docs: Vec<(&String, i64, i64)> = self.docs.iter().filter_map(|(p, (c, k))| match c { memo::Content::Stored(id) => Some((p, id.raw(), *k)), memo::Content::Held(_) => None }).collect();
+        // In path order: the same keeper is the same blob.
+        docs.sort();
         int(&mut out, docs.len() as i64);
         for (p, id, k) in docs {
             int(&mut out, p.len() as i64);
