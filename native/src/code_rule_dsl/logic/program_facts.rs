@@ -291,6 +291,7 @@ impl Writer<'_> {
         for (rel, native) in &prog.natives {
             match native {
                 Native::BalancedRows { input, limits } => self.row("native_balanced_rows",vec![s(rel),s(input),s(limits)]),
+                Native::PythonSetRows { input } => self.row("native_python_set_rows", vec![s(rel), s(input)]),
                 Native::OrderedRows { input } => self.row("native_ordered_rows", vec![s(rel), s(input)]),
                 Native::BfsWalk { edge, roots } => self.row("native_bfs", vec![s(rel), s(edge), s(roots)]),
                 Native::DfsFirst { edge, target, roots } => {
@@ -598,6 +599,9 @@ impl<'a> Reader<'a> {
         }
         for row in self.get("native_balanced_rows") {
             prog.natives.insert(text(&row[0])?,Native::BalancedRows { input:text(&row[1])?,limits:text(&row[2])? });
+        }
+        for row in self.get("native_python_set_rows") {
+            prog.natives.insert(text(&row[0])?, Native::PythonSetRows { input: text(&row[1])? });
         }
         for row in self.get("native_ordered_rows") {
             prog.natives.insert(text(&row[0])?, Native::OrderedRows { input: text(&row[1])? });

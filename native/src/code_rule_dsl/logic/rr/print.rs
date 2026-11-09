@@ -130,6 +130,7 @@ fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
 fn native_rule(head: &Atom, native: &Native, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
     Ok(match native {
         Native::BalancedRows { input, limits } => format!("{} :- balanced_rows({}, {}, {}).",atom(head,kindsets)?,terms(&head.args)?,relation(input),relation(limits)),
+        Native::PythonSetRows { input } => format!("{} :- python_set_rows({}, {}).", atom(head, kindsets)?, terms(&head.args)?, relation(input)),
         Native::OrderedRows { input } => format!("{} :- ordered_rows({}, {}).", atom(head, kindsets)?, terms(&head.args)?, relation(input)),
         Native::BfsWalk { edge, roots } => format!("{} :- bfs_walk({}, {}, {}).", atom(head, kindsets)?, terms(&head.args)?, relation(edge), relation(roots)),
         Native::DfsFirst { edge, target, roots } => {

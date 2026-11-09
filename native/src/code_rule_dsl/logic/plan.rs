@@ -2270,6 +2270,7 @@ impl Run<'_, '_> {
         let (edge, target, roots) = match native {
             Native::BalancedRows { input, limits } => return self.balanced_rows(rel,input,limits),
             Native::OrderedRows { input } => return self.ordered_rows(rel, input),
+            Native::PythonSetRows { input } => return self.python_set_rows(rel, input),
             Native::BfsWalk { edge, roots } => return self.bfs_walk(rel, edge, roots),
             Native::DfsFirst { edge, target, roots } => (edge, target, roots),
             Native::MatchAll { input, pattern, groups, positions } => return self.match_all(rel, input, pattern, groups, *positions),
@@ -2342,6 +2343,32 @@ impl Run<'_, '_> {
         let count = rows.len();
         insert_many(self.db,&format!("INSERT OR IGNORE INTO {}",ident(rel)),rows.into_iter().map(|(task,row,bin,ordinal)|
             vec![values[task as usize].clone(),SqlValue::Integer(row),SqlValue::Integer(bin),SqlValue::Integer(ordinal)]).collect())?;
+        Ok(count)
+    }
+
+    /// One ordered read and one bulk write for all set tasks. No scalar callback.
+    fn python_set_rows(&mut self, rel: &str, input: &str) -> Result<usize> {
+        let ident = crate::code_rule_dsl::logic::sql::ident;
+        let (task, value, ordinal) = (self.model.col(input, 0), self.model.col(input, 1), self.model.col(input, 2));
+        let text = if self.model.inputs.atoms.is_some() { format!("sym_text({value})") } else { value.clone() };
+        let rows: Vec<(SqlValue, SqlValue, String)> = {
+            let mut statement = self.db.prepare(&format!("SELECT {task}, {value}, {text} FROM {} ORDER BY {task}, {ordinal}, {text}", ident(input)))?;
+            statement.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<_>>()?
+        };
+        let mut out = Vec::new();
+        let mut start = 0;
+        while start < rows.len() {
+            let mut end = start + 1;
+            while end < rows.len() && rows[end].0 == rows[start].0 { end += 1; }
+            let values: Vec<_> = rows[start..end].iter().map(|r| r.2.as_str()).collect();
+            for (ordinal, index) in super::native::python_set_rows::order(&values).into_iter().enumerate() {
+                let row = &rows[start + index];
+                out.push(vec![row.0.clone(), row.1.clone(), SqlValue::Integer(ordinal as i64)]);
+            }
+            start = end;
+        }
+        let count = out.len();
+        insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", ident(rel)), out)?;
         Ok(count)
     }
 

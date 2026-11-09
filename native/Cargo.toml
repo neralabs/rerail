@@ -94,6 +94,8 @@ rustc-hash = "=2.1.3"
 serde_json = { version = "1.0", features = ["preserve_order", "arbitrary_precision"] }
 serde_yaml_ng = "=0.10.0"
 sha2 = "0.10"
+# Fixed-seed CPython Unicode hashing for deterministic legacy set-order contracts.
+siphasher = "=1.0.4"
 tree-sitter-language = "=0.1.9"
 tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
 tree-sitter = "=0.27.1"

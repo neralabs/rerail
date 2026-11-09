@@ -1967,13 +1967,18 @@
     {
       "destination": "docs/rule-syntax/lib/data-layer/imperative-source.rr",
       "origin": "authored",
-      "sha256": "4349427bef94ae4eeef68c1420d1c9e12be87e0727de8762699ec4bd40e5bea7",
+      "sha256": "6873cf30ade4dd7ecb0fd7b0ed30ed2b69c6cfe47efdd448a6a40c6116acc49a",
       "importedSha256": "4baa259b0161fc34dd76c4627b46e63d4214cdad41448fc0587d86521ac3efbd",
       "repairs": [
         {
           "before": "4baa259b0161fc34dd76c4627b46e63d4214cdad41448fc0587d86521ac3efbd",
           "after": "4349427bef94ae4eeef68c1420d1c9e12be87e0727de8762699ec4bd40e5bea7",
           "reason": "Join source graph callers into primary predecessor selection, as proven by eight failing source positives"
+        },
+        {
+          "before": "4349427bef94ae4eeef68c1420d1c9e12be87e0727de8762699ec4bd40e5bea7",
+          "after": "6873cf30ade4dd7ecb0fd7b0ed30ed2b69c6cfe47efdd448a6a40c6116acc49a",
+          "reason": "Preserve actual normal/decorator insertion history and CPython caller-set order through one native batch"
         }
       ]
     }
@@ -2976,8 +2981,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "49035cc9098d3cafb19a1e4c33bc45ab796dce28",
-    "status": "Root Final through 49035cc90, with in-memory exports, native computed steps, and reviewed generic compatibility extensions",
+    "upstreamCommit": "6ae30c48a7d9c7cde74248ccecc0c4835ba54308",
+    "status": "Root Final through 6ae30c48a; generic typed set-order compatibility with no Python runtime",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3001,11 +3006,11 @@
     "nativeExtensions": [
       {
         "path": "Cargo.lock",
-        "sha256": "d6984f2dee78d5558c3ca5d562576a21a4256567ef35625c78bfbb522b370ccb"
+        "sha256": "7e2be5fd1f2388803b9519afbdcddd69f40748c743baea32a95f29e208ef3f9a"
       },
       {
         "path": "native/Cargo.toml",
-        "sha256": "d0d78f89516e66cabfdef13f752a4077927756baf6963ea58b935be223ba145c"
+        "sha256": "1a5c00cd50bbe5943b0d4850c399e9b01b5eb9a5b6706232f2fb0ee96494f660"
       },
       {
         "path": "native/src/code_rule_dsl/facts/repository.rs",
@@ -3013,7 +3018,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "3cf65e5b22ea2243d1dbc83f7673cfb5bd3da14443ff68cfc904d04643deeb87"
+        "sha256": "8462df6093609b74ec607845e3768bbf8b0919f5b149bd403c54e1f5beab4e2b"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
@@ -3053,11 +3058,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
-        "sha256": "22894e9a70ea053d85c45b2e42c4df328f2a29dd59b85de6bcc772064e98b031"
+        "sha256": "0343dc735b4247d9559665155cb4f9beccb3cc81d571ac5c0d6aa1c9d4d19f26"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "0cec76314aca31ca4a1a0d5f7e1e8cb901cfcd623b9491502e71ea08cda45eca"
+        "sha256": "0daa1550312db8d2610dbeb72bd75bd94e8429d2a0a66b6a04b691ce2b0ca1f7"
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
@@ -3068,16 +3073,20 @@
         "sha256": "a0d972d6f3e877b0ab6bf2bd222958542660dd9963f9085f0b5375e3c8806f4c"
       },
       {
+        "path": "native/src/code_rule_dsl/logic/native/python_set_rows.rs",
+        "sha256": "86ad7b22fb4b6e632229c36ea24d5f760d583f50ada005723cd843eabcd37e46"
+      },
+      {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "e3b12e95c0d1679d110338435b27278cac33d81dc0b6c68d5c11c97d18ae9e27"
+        "sha256": "1485de6e763e4aa646a0d52c6d7192c3feabef1a171d7b05cf44e81d5a62647a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "9235adc83a189b9d8f1b427509748a33c9c54cbc12dd02e0bfa176b64a07d7d6"
+        "sha256": "b434763f6c7325c90c8518c58e672c6a5caf9ced1ab0dfb0b66e7d576c2cfa9d"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "906ccb9ef056ad46b0159b731abbce769446a087ed0b0e7566431ede596627e1"
+        "sha256": "1b9a6bd2908ec98fd4ecc7c555407fa0f737307cb3a8b327b75d8cf3422bd893"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -3093,19 +3102,19 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",
-        "sha256": "2d0623d7ff74f6335d0b472162afb8448400aae50d242a7124cd8a95da7bdaad"
+        "sha256": "b945bb8c2e8eb3382f18daab9bd605d62ca57c658ef3d3113a10da2c4f141a6f"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "6bfa27e6778e5d98de46f7a1bc4733622eb2fd50392f5a960d531a082f776389"
+        "sha256": "2c7683d5850bf3cc220ab7291ef54c6aed8d07f25087ea32e6532f087a648ddd"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/print.rs",
-        "sha256": "84cd0f5ff82a55dd90502df5de208ec1d9a2ecc56f4e769f9c8ac341da4d4e2e"
+        "sha256": "7731bb76b8a639cd0f6ce0de14c63b42e780f1c916467740bb3fb2cdac1ee046"
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "d4e3330e58838ecd3b904ee401a7aa0d8428fde2848558d672f158fce334c1c4"
+        "sha256": "ab99059cf125788cc498eb9870ee9e2033681628aec744e0a433b731ca6892e8"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -3133,30 +3142,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "b96e32b96837a409de1677957518a2ad5bbb6191",
-    "cliArtifact": {
-      "engineCommit": "4721b1d810ac7bfd671606410d4c697feca19113",
-      "upstreamCommit": "49035cc9098d3cafb19a1e4c33bc45ab796dce28",
-      "sourceTrees": {
-        "native": "0f88544cce5cb13d16417ec51972e86e4d1bcb72",
-        "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "8eaf9b81349aeb5072a11fb5c51e66fd283dcb5d"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-65a1f519796a3f83",
-      "sha256": "65a1f519796a3f83bde030036f0152157de324cdfa4cd38bee36f7cd8254160b",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine"
-      ],
-      "seconds": 23.435
-    }
+    "upstreamMerge": "19363c47b97204a8223b648d92931b08357992c9"
   },
   "engineSourceSnapshots": [
     {

@@ -2792,3 +2792,52 @@ fn a_grammar_the_registry_does_not_have_is_refused() {
     let refused = lower(&rule("postgres")).unwrap_err();
     assert!(refused.contains("no grammar \"postgres\""), "{refused}");
 }
+
+#[test]
+fn python_set_rows_is_batched_typed_and_survives_program_facts() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("python-set-rows");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("sets.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl inserts(task: symbol, value: symbol, ordinal: number)
+inserts("a","impl.a::alpha",0). inserts("a","impl.a::zebra",1).
+inserts("a","impl.a::alpha",2).
+inserts("b","impl.a::zebra",0). inserts("b","impl.a::alpha",1).
+.decl empty(task: symbol, value: symbol, ordinal: number)
+.violation Item(at: span, task: symbol, value: symbol, ordinal: number) code "ITEM" "item"
+Item(@place("",0),t,v,i) :- python_set_rows(t,v,i,inserts).
+Item(@place("",0),t,v,i) :- python_set_rows(t,v,i,empty).
+"#).unwrap();
+    let (program, _) = read_file(&rule).unwrap();
+    let mut facts = super::super::program_facts::Facts::new();
+    super::super::program_facts::write(&mut facts,"sets",&program);
+    let decoded = super::super::program_facts::decode(&super::super::program_facts::encode(&facts)).unwrap();
+    let restored = super::super::program_facts::program(&decoded,"sets").unwrap();
+    assert_eq!(restored.natives, program.natives);
+    let printed = print(&restored).unwrap();
+    assert_eq!(parse(&printed).unwrap().natives, restored.natives);
+    let report = crate::code_rule_dsl::tools::run_rr(&rule,&root,&root.join("out"),&serde_json::json!({"inputFiles":[]})).unwrap();
+    for rows in [report["diagnostics"].as_array().unwrap().clone(), lowered_findings(&printed)] {
+        let mut actual: Vec<_> = rows.iter().map(|r| (
+            r["parameters"]["task"].as_str().unwrap().to_owned(),
+            r["parameters"]["value"].as_str().unwrap().to_owned(),
+            r["parameters"]["ordinal"].as_i64().unwrap(),
+        )).collect();
+        actual.sort_by_key(|r| (r.0.clone(), r.2));
+        assert_eq!(actual,vec![("a".into(),"impl.a::zebra".into(),0),("a".into(),"impl.a::alpha".into(),1),
+            ("b".into(),"impl.a::zebra".into(),0),("b".into(),"impl.a::alpha".into(),1)]);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn python_set_rows_rejects_malformed_columns() {
+    for columns in ["task: symbol, value: number, ordinal: number", "task: symbol, value: symbol", "task: symbol, value: symbol, ordinal: symbol"] {
+        let path = crate::code_rule_dsl::prefilter::tests::temp().with_extension("pyset-invalid.rr");
+        std::fs::write(&path,format!(".decl inserts({columns})\n.decl out(t: symbol,v: symbol,i: number)\nout(t,v,i) :- python_set_rows(t,v,i,inserts).\n.output out\n")).unwrap();
+        let error = read_file(&path).unwrap_err().to_string();
+        assert!(error.contains("python_set_rows: input must be"),"{error}");
+        std::fs::remove_file(path).unwrap();
+    }
+}

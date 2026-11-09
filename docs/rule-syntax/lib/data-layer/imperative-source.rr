@@ -15,5 +15,12 @@ sgd_argument(i+4,path) :- ipfs_root(path), path != "api", path != "impl", path !
 ipf_hit(sid,name) :- sgp_active(), sgc_symbol(n,_,_,sid), sgb_execution(n,name).
 ipf_lazy(sid) :- sgp_active(), sgc_symbol(n,_,_,sid), sgs_return(n,1,text), ipf_lazy_marker(marker), contains(marker,text).
 ipf_lazy(sid) :- sgp_active(), sgc_symbol(n,_,_,sid), sgs_parameter(n,_,_,1,text), ipf_lazy_marker(marker), contains(marker,text).
-ipf_queue_edge(callee,caller,caller) :- sgp_active(), sge_caller(a,b), ipf_vertex(a,callee), ipf_vertex(b,caller).
+// GraphBuilder adds normal edges in symbol order, then decorator edges.
+// Their first insertion history determines CPython caller-set iteration.
+.decl ipfs_normal(callee: symbol, caller: symbol)
+ipfs_normal(callee,caller) :- sgp_active(), sgr_target(caller,_,callee), sgc_kind(callee,k), k != "class".
+.decl ipfs_insert(callee: symbol, caller: symbol, ordinal: number)
+ipfs_insert(callee,caller,i) :- ipfs_normal(callee,caller), ipf_vertex(caller,i).
+ipfs_insert(callee,caller,n+i) :- sgp_active(), sge_legacy_name(caller,name), sgr_owner(caller,c), cm_lookup(c,name,callee), !ipfs_normal(callee,caller), ipf_vertex(caller,i), n = count : { ipf_vertex(_,_) }.
+ipf_queue_edge(callee,caller,i) :- python_set_rows(a,b,i,ipfs_insert), ipf_vertex(a,callee), ipf_vertex(b,caller).
 ipf_predecessor(sid,parent,i) :- sgp_active(), sge_caller(parent,sid), ipf_visit(parent,i).

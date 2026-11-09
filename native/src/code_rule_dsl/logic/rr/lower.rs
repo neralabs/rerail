@@ -70,7 +70,7 @@ fn test_of(rel: &str) -> Option<&'static str> {
 }
 
 /// The built-ins that take a relation, and its position.
-pub(super) const RELATION_ARG: [(&str, &[usize]); 11] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 12] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
     ("precedes_stop", &[2]),
@@ -80,6 +80,7 @@ pub(super) const RELATION_ARG: [(&str, &[usize]); 11] = [
     ("dfs_first_memo", &[3, 4, 5]),
     ("bfs_walk", &[3, 4]),
     ("ordered_rows", &[3]),
+    ("python_set_rows", &[3]),
     ("balanced_rows", &[4, 5]),
     ("components", &[3, 4]),
 ];
@@ -1884,6 +1885,13 @@ impl Lowerer {
                 let rel = self.balanced_rows(input, limits)?;
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(task)?,self.term(row)?,self.term(bin)?,self.term(ordinal)?], neg, gated: false }));
             }
+            ("python_set_rows", [task, value, ordinal, input]) => {
+                let STerm::Var(input) = input else {
+                    return Err(Error::Syntax("python_set_rows: input is a relation, by name".to_owned()));
+                };
+                let rel = self.python_set_rows(input)?;
+                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(task)?, self.term(value)?, self.term(ordinal)?], neg, gated: false }));
+            }
             ("ordered_rows", [first, second, ordinal, input]) => {
                 let STerm::Var(input) = input else {
                     return Err(Error::Syntax("ordered_rows: input is a relation, by name".to_owned()));
@@ -1944,6 +1952,23 @@ impl Lowerer {
             body:vec![atom(input,vec![v("task"),v("row"),v("key"),v("weight")]),atom(limits,vec![v("task"),v("count")])],
         });
         self.prog.natives.insert(rel.clone(),Native::BalancedRows { input:input.to_owned(),limits:limits.to_owned() });
+        Ok(rel)
+    }
+
+    fn python_set_rows(&mut self, input: &str) -> Result<String, Error> {
+        let rel = format!("rr_pyset_{input}");
+        if self.prog.natives.contains_key(&rel) { return Ok(rel); }
+        let cols = self.prog.decls.get(input).ok_or_else(|| Error::Syntax(format!("python_set_rows: undeclared input relation {input}")))?;
+        if cols.len() != 3 || !matches!(cols[0].1.as_str(), "sym" | "int" | "node") || cols[1].1 != "sym" || cols[2].1 != "int" {
+            return Err(Error::Syntax("python_set_rows: input must be (scalar task, symbol value, numeric insertion ordinal)".to_owned()));
+        }
+        self.prog.decls.insert(rel.clone(), cols.clone());
+        let v = |n: &str| Term::Var(n.to_owned());
+        self.prog.rules.push(Rule {
+            head: Atom { rel: rel.clone(), args: vec![v("task"), v("value"), Term::Int(0)], neg: false, gated: false },
+            body: vec![Literal::Atom(Atom { rel: input.to_owned(), args: vec![v("task"), v("value"), v("ordinal")], neg: false, gated: false })],
+        });
+        self.prog.natives.insert(rel.clone(), Native::PythonSetRows { input: input.to_owned() });
         Ok(rel)
     }
 

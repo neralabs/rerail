@@ -438,6 +438,8 @@ pub(in crate::code_rule_dsl) enum Native {
     /// Two typed scalar columns in increasing value order, with a zero-based
     /// global ordinal. The SQL window sorts the whole input batch once.
     OrderedRows { input: String },
+    /// Monotone string-set insertion order under CPython 3.13, hash seed zero.
+    PythonSetRows { input: String },
     /// Per-task weighted partitions, with stable occurrence IDs and bin limits.
     BalancedRows { input: String, limits: String },
     /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
@@ -453,7 +455,7 @@ impl Native {
     pub(in crate::code_rule_dsl) fn rename_reads(&mut self, rename: impl Fn(&str) -> String) {
         match self {
             Native::BalancedRows { input, limits } => { *input = rename(input); *limits = rename(limits); }
-            Native::OrderedRows { input } => *input = rename(input),
+            Native::OrderedRows { input } | Native::PythonSetRows { input } => *input = rename(input),
             Native::BfsWalk { edge, roots } => { *edge = rename(edge); *roots = rename(roots); }
             Native::DfsFirst { edge, target, roots } => {
                 *edge = rename(edge);
@@ -471,7 +473,7 @@ impl Native {
     pub(in crate::code_rule_dsl) fn reads(&self) -> Vec<&str> {
         match self {
             Native::BalancedRows { input, limits } => vec![input.as_str(), limits.as_str()],
-            Native::OrderedRows { input } => vec![input.as_str()],
+            Native::OrderedRows { input } | Native::PythonSetRows { input } => vec![input.as_str()],
             Native::BfsWalk { edge, roots } => vec![edge.as_str(), roots.as_str()],
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
             Native::MatchAll { input, .. } => vec![input.as_str()],
