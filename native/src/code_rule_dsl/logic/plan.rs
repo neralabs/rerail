@@ -251,8 +251,9 @@ pub(in crate::code_rule_dsl) struct Stats {
     indexes: HashMap<String, Vec<Vec<String>>>,
     /// Documents (node-id intervals, `stat_docrange`), if the facts have them.
     docs: Option<i64>,
-    /// Exact postings of the program's constants: (table, column, value) → n.
-    memo: HashMap<(String, String, Constant), i64>,
+    /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
+    /// read without a pass over every table's (`of_relation`, once per input of a session's run).
+    memo: HashMap<String, HashMap<(String, Constant), i64>>,
     steps_cache: RefCell<HashMap<(Option<String>, String), f64>>,
     kindsets: BTreeMap<String, Vec<String>>,
 }
@@ -342,9 +343,10 @@ impl Stats {
         let cols = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
         let vals = self
             .memo
-            .iter()
-            .filter(|((r, _, _), _)| r == rel)
-            .filter_map(|((_, c, v), n)| match v {
+            .get(rel)
+            .into_iter()
+            .flatten()
+            .filter_map(|((c, v), n)| match v {
                 Constant::Int(v) => Some((names.iter().position(|x| x == c)?, *v, *n)),
                 _ => None,
             })
@@ -359,7 +361,7 @@ impl Stats {
             self.col.insert((rel.to_owned(), col), m);
         }
         for (col, v, n) in vals {
-            self.memo.insert((rel.to_owned(), col, Constant::Int(v)), n);
+            self.memo.entry(rel.to_owned()).or_default().insert((col, Constant::Int(v)), n);
         }
     }
 
@@ -434,7 +436,10 @@ impl Stats {
             solving: BTreeSet::new(),
             indexes: HashMap::new(),
             docs: meta.get("docs").copied(),
-            memo: of("val").filter_map(|r| Some(((text(&r[0]), text(&r[1]), sql_constant(&r[3])?), int(&r[2])))).collect(),
+            memo: of("val").filter_map(|r| Some((text(&r[0]), (text(&r[1]), sql_constant(&r[3])?), int(&r[2])))).fold(HashMap::new(), |mut m, (t, k, n)| {
+                m.entry(t).or_insert_with(HashMap::new).insert(k, n);
+                m
+            }),
             steps_cache: RefCell::new(HashMap::new()),
             kindsets: prog.kindsets.clone(),
         })
@@ -442,7 +447,7 @@ impl Stats {
 
     /// Exact postings for a constant probe on an input column; `None` if the column has no statistics.
     fn const_freq(&self, rel: &str, cname: &str, v: &Constant) -> Option<i64> {
-        if let Some(&n) = self.memo.get(&(rel.to_owned(), cname.to_owned(), v.clone())) {
+        if let Some(&n) = self.memo.get(rel).and_then(|m| m.get(&(cname.to_owned(), v.clone()))) {
             return Some(n);
         }
         self.col.contains_key(&(rel.to_owned(), cname.to_owned())).then_some(0)
@@ -495,8 +500,9 @@ impl Stats {
 
 /// The planner's model of the data: statistics, distinct counts, and what the views are.
 pub(in crate::code_rule_dsl) struct Model {
-    /// The program's logical key and scalar analysis, made once per plan and shared (not made again per stratum).
-    pub(in crate::code_rule_dsl) analysis: std::sync::Arc<super::analysis::ProgramAnalysis>,
+    /// The program's logical key and scalar analysis, made once per plan and shared (not made again per stratum),
+    /// when first asked (`analysis`): only the SQL executor reads it, so the native set engine's runs never make it.
+    analysis: std::sync::OnceLock<std::sync::Arc<super::analysis::ProgramAnalysis>>,
     pub(in crate::code_rule_dsl) stats: Stats,
     pub(in crate::code_rule_dsl) ndv: HashMap<(String, usize), f64>,
     /// rel → (node column, document column) for projections of `node(d, n)`: documents are id intervals.
@@ -696,6 +702,18 @@ fn skew(rel: &str, c: usize, what: u64) -> f64 {
 pub(in crate::code_rule_dsl) type Plan = (Vec<Step>, f64, f64);
 
 impl Model {
+    /// `prog`'s logical key and scalar analysis (`analysis`), made the first time it is asked for; `prog` is the
+    /// program this model plans.
+    pub(in crate::code_rule_dsl) fn analysis(&self, prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+        std::sync::Arc::clone(self.analysis.get_or_init(|| {
+            let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
+            let analysis = program_analysis(prog);
+            let _explain = super::profile::span(|| "explain analysis".into());
+            analysis.explain();
+            analysis
+        }))
+    }
+
     fn card(&self, rel: &str) -> f64 {
         // `node` is the corpus's nodes, except where a batch binds it: then its estimate is the batch's.
         if rel == "node" && !self.inputs.batch.contains_key(rel) {
@@ -1599,15 +1617,63 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
     src
 }
 
+/// `ProgramAnalysis::analyze`'s result for `prog`, kept for the programs analysed last: a session's runs plan the
+/// same programs again (its file-local part every run, a maintained part while the same strata change), and the
+/// analysis is a function of what the digest reads (each relation's columns and lattice keys, the inputs, the
+/// relations with facts, the natives, and the rules in order).
+fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+    type Kept = Vec<(u128, std::sync::Arc<super::analysis::ProgramAnalysis>)>;
+    /// The programs analysed last, newest at the end: a few, as each holds a result per rule.
+    const KEEP: usize = 4;
+    static KEPT: std::sync::Mutex<Kept> = std::sync::Mutex::new(Vec::new());
+    let key = super::derived::digest(|d| {
+        d.u64(prog.decls.len() as u64);
+        for (rel, cols) in &prog.decls {
+            d.str(rel);
+            d.u64(cols.len() as u64);
+            cols.iter().for_each(|(_, t)| d.str(t));
+        }
+        d.u64(prog.lattice.len() as u64);
+        for (rel, l) in &prog.lattice {
+            d.str(rel);
+            d.u64(l.keys as u64);
+        }
+        d.u64(prog.inputs.len() as u64);
+        prog.inputs.iter().for_each(|r| d.str(r));
+        let facts: Vec<&String> = prog.facts.iter().filter(|(_, v)| !v.is_empty()).map(|(r, _)| r).collect();
+        d.u64(facts.len() as u64);
+        facts.iter().for_each(|r| d.str(r));
+        d.u64(prog.natives.len() as u64);
+        prog.natives.keys().for_each(|r| d.str(r));
+        d.u64(prog.rules.len() as u64);
+        for r in &prog.rules {
+            digest_atom(d, &r.head);
+            d.u64(r.body.len() as u64);
+            r.body.iter().for_each(|l| digest_literal(d, l));
+        }
+    });
+    let mut kept = KEPT.lock().unwrap();
+    if let Some(at) = kept.iter().position(|(k, _)| *k == key) {
+        let hit = kept.remove(at);
+        let analysis = std::sync::Arc::clone(&hit.1);
+        kept.push(hit);
+        super::profile::decision("program analysis", || "kept: the same program analysed earlier".into());
+        return analysis;
+    }
+    drop(kept);
+    super::profile::decision("program analysis", || "analysed".into());
+    let analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(prog));
+    let mut kept = KEPT.lock().unwrap();
+    if kept.len() >= KEEP {
+        kept.remove(0);
+    }
+    kept.push((key, std::sync::Arc::clone(&analysis)));
+    analysis
+}
+
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
 fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Model> {
-    let analysis = {
-        let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
-        let analysis = super::analysis::ProgramAnalysis::analyze(prog);
-        let _explain = super::profile::span(|| "explain analysis".into());
-        analysis.explain();
-        std::sync::Arc::new(analysis)
-    };
+    let analysis = std::sync::OnceLock::new();
     let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut stats = Stats::new(db, prog, &mut inputs)?;
     let mut ndv = HashMap::new();
@@ -4443,9 +4509,8 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
             });
             split = p;
-            // The program run is the split one: its analysis is that program's.
-            let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
-            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&split));
+            // The program run is the split one: its analysis is that program's, made when asked.
+            model.analysis = std::sync::OnceLock::new();
             &split
         }
         None => prog,

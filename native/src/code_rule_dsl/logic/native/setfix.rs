@@ -1956,6 +1956,49 @@ struct Sorted { ids: Vec<u32>, keys: Vec<i64>, starts: Vec<u32> }
 impl Sorted {
     fn of(col: &[i64]) -> Sorted {
         charge(Unit::IndexEntry, col.len() as u64);
+        // In each case the rows of a value are in row order, as a stable sort by value leaves them.
+        // A column already in order (a node column of rows in document order): its runs, nothing sorted.
+        if col.is_sorted() {
+            let (mut keys, mut starts) = (Vec::new(), Vec::new());
+            for (i, &v) in col.iter().enumerate() {
+                if keys.last() != Some(&v) {
+                    keys.push(v);
+                    starts.push(i as u32);
+                }
+            }
+            starts.push(col.len() as u32);
+            return Sorted { ids: (0..col.len() as u32).collect(), keys, starts };
+        }
+        // Few values (a kind, a name): counted, the values alone sorted, and each row placed at its value's next slot.
+        let mut counts: rustc_hash::FxHashMap<i64, u32> = rustc_hash::FxHashMap::default();
+        let few = col.len() / 8;
+        for &v in col {
+            *counts.entry(v).or_default() += 1;
+            if counts.len() > few {
+                break;
+            }
+        }
+        if counts.len() <= few {
+            let mut keys: Vec<i64> = counts.keys().copied().collect();
+            keys.sort_unstable();
+            let mut starts = Vec::with_capacity(keys.len() + 1);
+            let mut at = 0u32;
+            for k in &keys {
+                starts.push(at);
+                let n = counts[k];
+                // The value's next slot, counted up from its start as its rows are placed.
+                counts.insert(*k, at);
+                at += n;
+            }
+            starts.push(at);
+            let mut ids = vec![0u32; col.len()];
+            for (r, v) in col.iter().enumerate() {
+                let slot = counts.get_mut(v).expect("counted");
+                ids[*slot as usize] = r as u32;
+                *slot += 1;
+            }
+            return Sorted { ids, keys, starts };
+        }
         // Sorted as (value, row) pairs in place: the same order as rows sorted stably by value, without reading a
         // value through its row id at each comparison.
         let mut pairs: Vec<(i64, u32)> = col.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
@@ -2591,6 +2634,40 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
 #[cfg(test)]
 mod posted_tests {
     use super::*;
+
+    /// A column's sorted index is the same whichever way it is built (in order, few values, many): its rows sorted
+    /// stably by value.
+    #[test]
+    fn a_sorted_index_is_its_rows_sorted_stably_by_value() {
+        let mut x: u64 = 7;
+        let mut next = |m: u64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) % m) as i64
+        };
+        let columns: Vec<Vec<i64>> = vec![
+            vec![],
+            vec![5],
+            (0..100).map(|i| i / 3).collect(),
+            (0..1000).map(|_| next(7) - 3).collect(),
+            (0..1000).map(|_| next(1 << 40)).collect(),
+            (0..50).map(|_| next(2)).collect(),
+        ];
+        for col in columns {
+            let got = Sorted::of(&col);
+            let mut ids: Vec<u32> = (0..col.len() as u32).collect();
+            ids.sort_by_key(|&r| col[r as usize]);
+            assert_eq!(got.ids, ids, "{col:?}");
+            let mut keys = col.clone();
+            keys.sort_unstable();
+            keys.dedup();
+            assert_eq!(got.keys, keys);
+            assert_eq!(got.starts.len(), keys.len() + 1);
+            for (i, k) in keys.iter().enumerate() {
+                assert!(got.ids[got.starts[i] as usize..got.starts[i + 1] as usize].iter().all(|&r| col[r as usize] == *k));
+            }
+            assert_eq!(*got.starts.last().unwrap() as usize, col.len());
+        }
+    }
 
     /// Statistics read from a kept relation's postings are those measured from its rows, with dead rows left out.
     #[test]
