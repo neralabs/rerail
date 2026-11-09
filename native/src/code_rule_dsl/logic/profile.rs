@@ -359,9 +359,9 @@ impl Drop for Span {
 }
 
 /// Each live thread's innermost open span, as `thread: path` (for the memory sampler).
-fn open_paths() -> Vec<String> {
+fn open_paths() -> (Vec<String>, usize) {
     let all: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
-    all.iter().filter_map(|t| { let t = t.lock(); t.opens.last().map(|o| format!("{}: {}", t.name, o.path)) }).collect()
+    (all.iter().filter_map(|t| { let t = t.lock(); t.opens.last().map(|o| format!("{}: {}", t.name, o.path)) }).collect(), all.len())
 }
 
 /// The process's peaks so far, for a caller to print after a run (the run's report is written before its caller's

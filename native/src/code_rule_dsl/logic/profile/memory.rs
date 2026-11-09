@@ -103,8 +103,9 @@ pub(super) struct Sample {
     pub(super) max: u64,
     pub(super) live: u64,
     pub(super) resident: u64,
-    /// Each thread's innermost open span, as `thread: path`.
+    /// Each thread's innermost open span, as `thread: path`, and how many threads had opened a span (live).
     pub(super) open: Vec<String>,
+    pub(super) threads: usize,
 }
 
 #[derive(Default)]
@@ -142,14 +143,15 @@ pub(super) fn sample() {
                 if !(keep || rose > 0 || top) {
                     continue;
                 }
-                let open = super::open_paths();
+                let (mut open, threads) = super::open_paths();
+                open.extend(doing());
                 for p in &open {
                     let e = s.rise.entry(p.clone()).or_default();
                     e.0 += rose;
                     e.1 = e.1.max(now);
                 }
                 last_max = max;
-                let sample = Sample { at, unix, footprint: now, max, live, resident, open };
+                let sample = Sample { at, unix, footprint: now, max, live, resident, open, threads };
                 if top {
                     s.top = sample.clone();
                 }
@@ -159,6 +161,33 @@ pub(super) fn sample() {
             }
         });
     });
+}
+
+/// Work the sampler names that runs in no span (the roofline's loops, run while `write` holds the profile's
+/// records): set while the guard lives.
+pub(super) struct Doing(&'static str);
+
+static DOING: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+impl Doing {
+    pub(super) fn new(what: &'static str) -> Self {
+        DOING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(what);
+        Doing(what)
+    }
+}
+
+impl Drop for Doing {
+    fn drop(&mut self) {
+        let mut d = DOING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(i) = d.iter().position(|w| *w == self.0) {
+            d.remove(i);
+        }
+    }
+}
+
+/// What `Doing` guards name now.
+fn doing() -> Vec<String> {
+    DOING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().map(|w| (*w).to_owned()).collect()
 }
 
 /// The sampler's findings, for a report: its peak and what was open then, and the spans open while the high-water
@@ -195,9 +224,9 @@ pub(super) fn sampled_report(r: &mut String) {
 pub(super) fn sampled_tsv() -> String {
     use std::fmt::Write as _;
     let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\topen\n");
+    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tthreads\topen\n");
     for r in &s.rows {
-        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.open.join(" | "));
+        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
 }
