@@ -76,12 +76,35 @@ def install(suite, module):
         value=result[0]['parameters'];sys.stderr.write(value['stderr'])
         return bool(value['value'])
 
-    def pending_ratchet(*args, **kwargs):
-        raise NotImplementedError('Native direct-execution ratchet actions are not yet ported')
+    def ratchet_result(result):
+        for r in sorted((r['parameters'] for r in result if r['code']=='IR_OUTPUT'),key=lambda r:r['ordinal']):
+            sys.stdout.write(r['stdout']);sys.stderr.write(r['stderr'])
+        errors=[r['parameters'] for r in result if r['code']=='IR_ERROR']
+        if errors:
+            if len(errors)!=1:raise ValueError('One native ratchet error is required')
+            error=errors[0];kind={'AttributeError':AttributeError,'NotImplementedError':NotImplementedError}[error['error_type']]
+            raise kind(error['detail'])
+        values=[r['parameters']['value'] for r in result if r['code']=='IR_RESULT']
+        if len(values)!=1:raise ValueError('One native ratchet result is required')
+        return bool(values[0])
+
+    def check_ratchet(name,current_counts,*,root=None,require_signature=True,require_baseline=False):
+        root=Path(root) if root is not None else module.lint_ratchet.get_repo_root()
+        path=root/'.ratchet-baselines'/(name+'.json')
+        options=dict(ratchetName=name,ratchetPath=str(path),requireSignature=str(int(require_signature)),requireBaseline=str(int(require_baseline)),
+            currentKeys=list(current_counts),currentValues=[str(v) for v in current_counts.values()],missingBaseline=str(int(not path.exists())))
+        files=[]
+        if path.exists():
+            try:files=[dict(path='baseline.json',source=path.read_text())]
+            except Exception as error:options['readError']=str(error)
+        return ratchet_result(rows('_ratchet_check',files,options))
+
+    def update_ratchet(*args,**kwargs):
+        raise NotImplementedError('Native direct-execution baseline writes are not yet ported')
 
     suite.replace(module.lint_signing,'verify_allowlist',verification)
-    suite.replace(module.lint_ratchet,'check_ratchet',pending_ratchet)
-    suite.replace(module.lint_ratchet,'update_ratchet_baseline',pending_ratchet)
+    suite.replace(module.lint_ratchet,'check_ratchet',check_ratchet)
+    suite.replace(module.lint_ratchet,'update_ratchet_baseline',update_ratchet)
 
     def cli_report(entry, root, violations=(), verbose=False):
         result=rows(entry, options=dict(projectRoot=str(root),cliVerbose=str(int(verbose)),

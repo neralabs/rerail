@@ -108,12 +108,12 @@ def native_one(engine,case,source):
     from impl_direct_execution_contract import FUNCTIONS
     from impl_direct_execution_port import install
     from replay import execute_native, sign_native
-    rule=ROOT/'gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution.rr'
+    from policy_routes import policy_filename
     class Backend:
         def __init__(self):self.calls=[];self.signatures=[]
         def replace(self,owner,name,value):setattr(owner,name,value)
         def native(self,check,entry,files,options=None):
-            value=execute_native(engine,rule,files,dict(entryPoint=entry,**(options or {})))
+            value=execute_native(engine,ROOT/'gate/data-layer/packs/data-layer/candidates/rr'/policy_filename(check,entry),files,dict(entryPoint=entry,**(options or {})))
             self.calls.append(dict(value,entry=entry));return value['diagnostics']
         def sign_ed25519(self,requests):
             value=sign_native(engine,requests,environment=environment(case));self.signatures.append(dict(requests=requests,replies=value));return value

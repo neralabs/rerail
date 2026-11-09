@@ -2369,6 +2369,11 @@
           "reason": "Expose typed native settings for the unchanged original module assertions."
         }
       ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/impl-direct-execution-ratchet.rr",
+      "sha256": "0a9111422b7d0048a0740330cdcc3c83672c2995b3835398e225333670006816",
+      "origin": "authored"
     }
   ],
   "rules": [
@@ -3027,7 +3032,7 @@
         "originalTestsPerAPI": 174,
         "positiveOriginalScannerObservations": 35,
         "status": "draft",
-        "remaining": "Implement the 30 actual ratchet I/O contracts; the first native missing-baseline check is red.",
+        "remaining": "Ratchet checks partially implemented; fix Boolean-join regression, complete JSON conversions/diagnostics, and implement baseline writes.",
         "checkpoints": [
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-final04e3-checkpoint.json.gz",
@@ -3040,6 +3045,10 @@
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-ratchet-native-red.json.gz",
             "sha256": "e8618f54b179abd4649ab309930aafa21d39ec37a6db7f9126e23389fd37ad47"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-ratchet-checks-first-ladder.json.gz",
+            "sha256": "cf0f902bece95a5383263cc0e842dffcaecdd0f1550ba48cf7ccd4a1d807f4e7"
           }
         ]
       }

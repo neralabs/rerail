@@ -1,0 +1,62 @@
+.policy "data-layer-impl-direct-execution-ratchet" revision 1
+.description "Direct-execution ratchet checks and baseline actions"
+.language python
+.mode block
+#include "data-layer/signing.rr"
+
+.decl ir_count(key: symbol, value: number)
+.input ir_count(IO=json, filename="baseline.json", path="/counts")
+.decl ir_counts_type(value: symbol)
+.input ir_counts_type(IO=json, filename="baseline.json", path="/counts", projection="type")
+.decl ir_meta_type(value: symbol)
+.input ir_meta_type(IO=json, filename="baseline.json", path="/_metadata", projection="type")
+.decl ir_root_type(value: symbol)
+.input ir_root_type(IO=json, filename="baseline.json", projection="type")
+.decl ir_signature(value: symbol)
+.input ir_signature(IO=json, filename="baseline.json", path="/_metadata/signature")
+.decl ir_current(key: symbol, value: number)
+ir_current(k,to_number(v)) :- option_item("currentKeys",i,k), option_item("currentValues",i,v).
+.decl ir_path(value: symbol)
+ir_path(p) :- option("ratchetPath",p).
+.decl ir_name(value: symbol)
+ir_name(n) :- option("ratchetName",n).
+.decl ir_meta_object()
+ir_meta_object() :- ir_meta_type("object").
+ir_meta_object() :- ir_root_type("object"), !ir_meta_type(_).
+.decl ir_counts_object()
+ir_counts_object() :- ir_counts_type("object").
+ir_counts_object() :- ir_root_type("object"), !ir_counts_type(_).
+.decl ir_sig(value: symbol)
+ir_sig(s) :- ir_signature(s).
+ir_sig("UNSIGNED") :- ir_meta_object(), !ir_signature(_).
+ratchet_count(n,k,v) :- ir_name(n), ir_count(k,v).
+ratchet_sig(n,s) :- ir_name(n), ir_sig(s).
+.decl ir_verify()
+ir_verify() :- ir_meta_object(), ir_counts_object().
+.decl ir_current_base(key: symbol, current: number, previous: number)
+ir_current_base(k,c,b) :- ir_current(k,c), ir_count(k,b).
+ir_current_base(k,c,0) :- ir_current(k,c), !ir_count(k,_).
+.decl ir_load_error(value: symbol)
+ir_load_error(e) :- option("readError",e).
+.decl ir_problem(value: symbol)
+ir_problem(cat("ERROR: Failed to load baseline ",p,": ",e,"\n")) :- ir_path(p), ir_load_error(e).
+ir_problem(cat("FAIL: Baseline ",p," is unsigned and signature is required.\n")) :- ir_path(p), ir_verify(), ir_sig(s), unsigned_sig(s), option("requireSignature","1").
+ir_problem(cat("Signature verification failed: ",detail,"\nFAIL: Baseline signature verification failed for ",p,"\n")) :- ir_path(p), ir_name(n), ir_verify(), ir_sig(s), !unsigned_sig(s), ratchet_status(n,"invalid"), nera_key(key), body = join q by k sep "," : { ir_count(k,v), q = cat(@json_str(k),":",to_string(v)) }, message = cat("{\"counts\":{",body,"},\"linter\":",@json_str(n),"}"), detail = @ed25519_error(key,message,s).
+.decl ir_ready()
+ir_ready() :- option("missingBaseline","0"), ir_root_type("object"), !ir_problem(_), !input_error("baseline.json",_,_).
+.violation IrOutput(at: span, ordinal: number, stdout: symbol, stderr: symbol) code "IR_OUTPUT" "ratchet output"
+IrOutput(@place("",0),0,cat("No baseline found at ",p,". Run with --update-baseline to create one.\n"),"") :- option("missingBaseline","1"), ir_path(p).
+IrOutput(@place("",0),0,"",e) :- ir_problem(e).
+IrOutput(@place("",0),0,cat("  IMPROVED: ",k," decreased from ",to_string(b)," to ",to_string(c),"\n"),"") :- ir_ready(), ir_current_base(k,c,b), c < b.
+IrOutput(@place("",0),1,cat("  REGRESSION: ",k," increased from ",to_string(b)," to ",to_string(c),"\n"),"") :- ir_ready(), ir_current_base(k,c,b), c > b.
+IrOutput(@place("",0),2,cat("\nFAIL: ",to_string(n)," metric(s) regressed (+",to_string(total)," total). Run with --update-baseline --sign to approve increases.\n"),"") :- ir_ready(), n = count : { ir_current_base(_,c,b), c > b }, n > 0, total = sum delta : { ir_current_base(_,c,b), c > b, delta = c-b }.
+IrOutput(@place("",0),2,cat("  Ratchet OK: ",name," at ",to_string(c)," (baseline: ",to_string(b),")\n"),"") :- ir_ready(), ir_name(name), n = count : { ir_current_base(_,current,previous), current > previous }, n = 0, c = sum v : { ir_current(_,v) }, b = sum v : { ir_current_base(_,_,v) }.
+.violation IrResult(at: span, value: number) code "IR_RESULT" "ratchet result"
+IrResult(@place("",0),1) :- option("missingBaseline","1"), option("requireBaseline","0").
+IrResult(@place("",0),0) :- option("missingBaseline","1"), option("requireBaseline","1").
+IrResult(@place("",0),0) :- ir_problem(_).
+IrResult(@place("",0),0) :- ir_ready(), ir_current_base(_,c,b), c > b.
+IrResult(@place("",0),1) :- ir_ready(), n = count : { ir_current_base(_,c,b), c > b }, n = 0.
+.violation IrError(at: span, error_type: symbol, detail: symbol) code "IR_ERROR" "{detail}"
+IrError(@place("",0),"AttributeError","'list' object has no attribute 'get'") :- ir_root_type("array").
+IrError(@place("",0),"NotImplementedError",cat("Native JSON diagnostic compatibility remains unimplemented: ",e)) :- option("missingBaseline","0"), input_error("baseline.json",k,e), k != "missing", !ir_load_error(_).
