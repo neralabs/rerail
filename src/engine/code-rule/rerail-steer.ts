@@ -106,38 +106,74 @@ export const FEEDBACK_COMMAND_HINT = "rerail feedback <rule-id> '<that line>'";
 export const FEEDBACK_STDIN_HINT = "rerail feedback <rule-id> - <<'LINE'";
 
 /**
- * The command on Windows, where `rerail` is `rerail.cmd` and cmd.exe parses its arguments again: a `&`, `|`, `<` or `>`
- * in the agent's sentence would split the command there. The line goes through a pipe instead, which cmd never parses;
- * `echo` with single quotes reads the same in Git Bash and PowerShell.
+ * The command in Git Bash on Windows, where `rerail` is `rerail.cmd` and cmd.exe parses its arguments again: a `&`, `|`,
+ * `<` or `>` in the agent's sentence would split the command there. The line goes through a pipe instead, which cmd
+ * never parses.
  */
 export const WINDOWS_FEEDBACK_COMMAND_HINT = "echo '<that line>' | rerail feedback <rule-id> -";
 
 /**
- * How the session-start note tells the agent to record a declined steer's line, in its shell: the command, and the stdin
- * form for a line with a `'` in it. Codex and Cursor run PowerShell on Windows, which has no heredoc; it takes a
- * here-string, a line `@'` and a line starting `'@`, whose text it never reads.
+ * Has PowerShell pipe text to a program as UTF-8. Windows PowerShell 5.1, which every Windows 10 and 11 install ships,
+ * pipes ASCII by default and turns every other character into a `?`.
  */
-function feedbackHowTo(host: RerailHost, platform: NodeJS.Platform): string {
-  if (platform !== "win32") return `\`${FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
-  if (host === "codex" || host === "cursor") {
-    return `\`${WINDOWS_FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: a line \`@'\`, the line, then \`'@ | rerail feedback <rule-id> -\`)`;
-  }
-  return `\`${WINDOWS_FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
+const POWERSHELL_UTF8 = "$OutputEncoding = [Text.UTF8Encoding]::new();";
+
+/**
+ * The command in PowerShell, which Codex and Cursor run on Windows: the line piped in as UTF-8, past cmd.exe as in Git
+ * Bash. PowerShell reads ‘ ’ ‚ ‛ as single quotes too, and a quote inside a single-quoted string is written twice.
+ */
+export const POWERSHELL_FEEDBACK_COMMAND_HINT = `${POWERSHELL_UTF8} '<that line>' | rerail feedback <rule-id> -`;
+
+/** What the agent must do to its line in the PowerShell command: no quote of it may end the string. */
+const POWERSHELL_QUOTES = "each ' and ’ in the line written twice";
+
+/**
+ * The shell a coding agent runs the commands a steer names in: sh or bash off Windows (`posix`); on Windows Git Bash for
+ * Claude Code, OMP and Pi, and PowerShell for Codex and Cursor.
+ */
+export type SteerShell = "posix" | "git-bash" | "powershell";
+
+/** The shell `host` runs commands in on `platform`; on Windows a host that is not known is taken to run Git Bash. */
+export function steerShell(host: RerailHost | undefined, platform: NodeJS.Platform = process.platform): SteerShell {
+  if (platform !== "win32") return "posix";
+  return host === "codex" || host === "cursor" ? "powershell" : "git-bash";
 }
 
 /**
- * What the agent may do about it: fix it (follow it, for a tool call's guidance) or say why not, and record that line
- * with `rerail feedback` under the rule (named, when the steer has one and the id is a plain word); a Log is recorded only.
+ * How the session-start note tells the agent to record a declined steer's line, in its shell: the command, and the stdin
+ * form for a line with a quote in it. PowerShell has no heredoc; it takes a here-string, a line ending `@'` and a line
+ * starting `'@`, whose text it never reads.
  */
-function steerLatitude(trigger: SteerTrigger, findings: readonly SteerFinding[], platform: NodeJS.Platform): string {
+function feedbackHowTo(host: RerailHost, platform: NodeJS.Platform): string {
+  switch (steerShell(host, platform)) {
+    case "posix": return `\`${FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
+    case "git-bash": return `\`${WINDOWS_FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
+    case "powershell":
+      return `\`${POWERSHELL_FEEDBACK_COMMAND_HINT}\`, ${POWERSHELL_QUOTES} (or a line \`${POWERSHELL_UTF8} @'\`, the line, then `
+        + "`'@ | rerail feedback <rule-id> -`, which takes the line as written)";
+  }
+}
+
+const FEEDBACK_COMMANDS: Readonly<Record<SteerShell, string>> = {
+  "posix": FEEDBACK_COMMAND_HINT,
+  "git-bash": WINDOWS_FEEDBACK_COMMAND_HINT,
+  "powershell": POWERSHELL_FEEDBACK_COMMAND_HINT,
+};
+
+/**
+ * What the agent may do about it: fix it (follow it, for a tool call's guidance) or say why not, and record that line
+ * with `rerail feedback` under the rule (named, when the steer has one and the id is a plain word), in the agent's
+ * `shell`; a Log is recorded only.
+ */
+function steerLatitude(trigger: SteerTrigger, findings: readonly SteerFinding[], shell: SteerShell): string {
   if (findings.every(finding => finding.mode === "log")) return "Recorded only.";
   // Blocking is not built yet, so a Block-mode rule steers.
   const one = findings.length === 1;
   const verb = trigger.kind === "tool" ? "Follow" : "Fix";
   const ids = new Set(findings.map(finding => finding.ruleId));
   const rule = ids.size === 1 && SHELL_SAFE_RULE_ID.test(findings[0]!.ruleId) ? findings[0]!.ruleId : "<rule-id>";
-  const command = platform === "win32" ? WINDOWS_FEEDBACK_COMMAND_HINT : FEEDBACK_COMMAND_HINT;
-  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and run \`${command.replace("<rule-id>", rule)}\`.`;
+  const command = FEEDBACK_COMMANDS[shell].replace("<rule-id>", rule);
+  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and run \`${command}\`${shell === "powershell" ? `, with ${POWERSHELL_QUOTES}` : ""}.`;
 }
 
 /**
@@ -159,11 +195,12 @@ function findingLines({ ruleId, message, location, fix }: SteerFinding): string 
 }
 
 /**
- * The steer block for `findings`, in the order given: the trigger's lead, one line per finding, then the latitude. The
- * daemon renders it on the agent's own machine, so `platform` is the agent's.
+ * The steer block for `findings`, in the order given: the trigger's lead, one line per finding, then the latitude, whose
+ * command is written for the agent's `shell`. The daemon renders it on the agent's own machine, so by default the shell
+ * is this machine's for a coding agent that is not known.
  */
-export function steerBlock(trigger: SteerTrigger, findings: readonly SteerFinding[], platform: NodeJS.Platform = process.platform): string {
-  return [steerLead(trigger, findings.length), ...findings.map(findingLines), steerLatitude(trigger, findings, platform)].join("\n");
+export function steerBlock(trigger: SteerTrigger, findings: readonly SteerFinding[], shell: SteerShell = steerShell(undefined)): string {
+  return [steerLead(trigger, findings.length), ...findings.map(findingLines), steerLatitude(trigger, findings, shell)].join("\n");
 }
 
 /**

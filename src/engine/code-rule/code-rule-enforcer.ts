@@ -31,7 +31,7 @@ import {
   type AuditorCloseOptions,
   type SteerSourceOf,
 } from "./code-rule.js";
-import type { SteerTrigger } from "./rerail-steer.js";
+import type { SteerShell, SteerTrigger } from "./rerail-steer.js";
 import {
   AUDIT_BLIND_REASONS,
   AUDIT_FAILURE_CODES,
@@ -564,6 +564,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #nestedCheckouts: () => readonly string[];
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #followGitignore: boolean;
+  readonly #steerShell: SteerShell | undefined;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
   #scope: AuditScope;
@@ -644,6 +645,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
        * repository's setting when it opens, and it holds for the session's life.
        */
       followGitignore?: boolean;
+      /** The shell the session's coding agent runs commands in, which a steer's command is written for (`steerShell`). */
+      steerShell?: SteerShell | undefined;
     },
   ) {
     this.#catalog = catalog;
@@ -656,6 +659,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
     this.#timingLog = options.timingLog;
     this.#followGitignore = options.followGitignore ?? false;
+    this.#steerShell = options.steerShell;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -2007,7 +2011,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const boundary = checkoutPathBoundary(this.#workspaceRoot);
     const secret = new Set(violations.flatMap(({ path, mode }) =>
       path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
-    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path));
+    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path), this.#steerShell);
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,

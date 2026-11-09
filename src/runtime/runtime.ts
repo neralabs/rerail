@@ -49,7 +49,7 @@ import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-sch
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
-import { rewoundSteer, steerBlock, steerRules, subagentSteer } from "../engine/code-rule/rerail-steer.js";
+import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
 import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
@@ -705,6 +705,8 @@ export interface RerailRuntimeOptions {
      * (a flip mid-session would make the shell-write walk report every ignored file it starts or stops seeing as edited).
      */
     followGitignore: boolean;
+    /** The shell the session's coding agent runs commands in, which its steers' commands are written for. */
+    steerShell: SteerShell;
   } & AuditSettings) => CodeRuleAuditor;
   /** How long a turn end or command result waits for the session's shell-write walk; the bridge's default otherwise. */
   discoveryWaitMs?: number;
@@ -1032,7 +1034,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // Its lead says the findings belong to steps the agent has already moved past. Their paths are the session
     // folder's, so a file there that links to a secret is judged as one.
     const sensitive = checkoutPathBoundary(state.checkout.cwd).sensitive;
-    const steer = buildSteer(violations, { kind: "late" }, ruleId => sources.get(ruleId)?.(ruleId), sensitive);
+    const steer = buildSteer(violations, { kind: "late" }, ruleId => sources.get(ruleId)?.(ruleId), sensitive, steerShell(state.descriptor.host));
     const digest: AdapterDelivery = {
       sessionId: state.descriptor.sessionId,
       requested: "steer",
@@ -1302,6 +1304,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         ...this.#auditSettings,
         ...auditSettings,
         followGitignore: followsGitignore,
+        steerShell: steerShell(session.host),
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
@@ -1682,7 +1685,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         sessionId: sample.sessionId,
         requested: match.mode,
         mechanism: ADAPTER_CAPABILITIES[state.descriptor.host].delivery[match.mode],
-        content: steerBlock({ kind: "tool", tool: sampleTool(sample.source) }, findings),
+        content: steerBlock({ kind: "tool", tool: sampleTool(sample.source) }, findings, steerShell(state.descriptor.host)),
         ruleIds: [match.ruleId],
         rules: steerRules(findings, steerOrigin),
       };

@@ -28,6 +28,7 @@ import type {
 } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
+import type { SteerShell } from "./rerail-steer.js";
 import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 
 export interface CheckoutCodeRuleRouterOptions {
@@ -45,6 +46,8 @@ export interface CheckoutCodeRuleRouterOptions {
   readonly timingLog?: (line: string) => void;
   /** Every lane leaves out what Git ignores in its checkout (`NativeCodeRuleEnforcer`'s option); off by default. */
   readonly followGitignore?: boolean;
+  /** The shell the session's coding agent runs commands in, which every lane's steers are written for (`steerShell`). */
+  readonly steerShell?: SteerShell | undefined;
 }
 
 interface Lane {
@@ -354,6 +357,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         ...this.#settings,
         ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
         followGitignore: this.#options.followGitignore ?? false,
+        steerShell: this.#options.steerShell,
         presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
         nestedCheckouts: () => this.#nestedCheckoutsOf(root),
       });
