@@ -2123,7 +2123,8 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                     let row = rows.row(id);
                     if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) {
                         let value = if x.1 { syms.name(row.at(x.0)).to_string() } else { row.at(x.0).to_string() };
-                        got.push((by.iter().map(|&(c, sym)| sortable(row.at(c), sym)).collect(), value));
+                        // Then by x itself: a number by its value, not its digits.
+                        got.push((by.iter().chain([x]).map(|&(c, sym)| sortable(row.at(c), sym)).collect(), value));
                     }
                     false
                 });
