@@ -67,6 +67,8 @@ v(s, d) :- types__vtype(s, _, d).
     let s = rows("s");
     assert!(s.contains(&"n.f\t0\tc\tpkg.m.C".to_owned()), "an annotation through the re-export: {s:?}");
     assert!(s.contains(&"n.f\t1\td\tpkg.m.B".to_owned()), "a dotted annotation through `import pkg.m`: {s:?}");
+    // Every alternative names a class: no "" row, which would mean one names none.
+    assert!(!s.contains(&"n.f\t0\tc\t".to_owned()) && !s.contains(&"n.f\t1\td\t".to_owned()), "{s:?}");
     // A union: each alternative's head, None as builtins.None.
     assert!(s.contains(&"n.g\t0\tu\tpkg.m.B".to_owned()) && s.contains(&"n.g\t0\tu\tbuiltins.None".to_owned()), "{s:?}");
     let r = rows("r");

@@ -861,8 +861,8 @@ lwant(q) :- star_from(_, q).
 lwant(p) :- lwant(q), split_dot(q, p, _).
 .decl lres(q: symbol, d: symbol)
 lres(q, q) :- lwant(q), struct__def(q, "module").
-lres(q, d) :- lwant(q), !struct__def(q, "module"), split_dot(q, p, y), lres(p, m), struct__def(m, "module"), types__binds(m, y, d).
-lres(q, d) :- lwant(q), !struct__def(q, "module"), split_dot(q, p, y), lres(p, c), struct__def(c, "class"), types__attr(c, y, d, _), d != "".
+lres(q, d) :- lwant(q), !struct__def(q, "module"), split_dot(q, p, y), !contains(".", y), lres(p, m), struct__def(m, "module"), types__binds(m, y, d).
+lres(q, d) :- lwant(q), !struct__def(q, "module"), split_dot(q, p, y), !contains(".", y), lres(p, c), struct__def(c, "class"), types__attr(c, y, d, _), d != "".
 // lval(d, k, v): library symbol d's value: a module, a class or a function (itself), or a name declared a class's
 // instance (`x: C`), or None.
 .decl lval(d: symbol, k: symbol, v: symbol)
@@ -876,6 +876,12 @@ lval(d, "none", "builtins.None") :- types__vtype(d, _, "builtins.None"), !struct
 .decl lret(f: symbol, k: symbol, v: symbol)
 lret(f, "inst", t) :- types__rtype(f, _, t), struct__def(t, "class").
 lret(f, "none", "builtins.None") :- types__rtype(f, _, "builtins.None").
+// lopenret(f): some alternative of f's declared return is no class nor None (`Any`, a type variable, a name no
+// symbol gives; types.rr's "" row): a call of f may hold what no symbol names. lopenv(s): so is s's declared type.
+.decl lopenret(f: symbol)
+lopenret(f) :- types__rtype(f, _, ""), !lself(f).
+.decl lopenv(s: symbol)
+lopenv(s) :- types__vtype(s, _, ""), !struct__def(s, _).
 .decl lself(f: symbol)
 lself(f) :- types__rtype(f, _, "typing.Self").
 lself(f) :- types__rtype(f, _, "typing_extensions.Self").
@@ -1092,6 +1098,14 @@ vopen(c) :- vpos(c), callee(c, e), !pv(e, _, _), !pv(c, "super", _), !bcall(c, _
 // A library call whose value is not declared (no return annotation, a type variable, a special form), or an
 // instance's call with no `__call__`.
 vopen(c) :- vpos(c), callee(c, e), lv(e, "fn", f), !lret(f, _, _), !lself(f).
+vopen(c) :- vpos(c), callee(c, e), lv(e, "fn", f), lopenret(f).
+vopen(c) :- vpos(c), lcallf(c, f), lopenret(f).
+vopen(c) :- vpos(c), lical(c, f), lopenret(f).
+// A library name, attribute or declared value whose declared type is partly unknown.
+vopen(n) :- vpos(n), qn(n, q), lres(q, d), !wsown(d), lopenv(d).
+vopen(n) :- vpos(n), llook(n, c, a), types__attr(c, a, d, _), d != "", lopenv(d).
+vopen(n) :- vpos(n), llook(n, c, a), types__attr(c, a, "", k), s = @dot(k, a), lopenv(s).
+vopen(n) :- vpos(n), attr_of(n, o, a), lv(o, "mod", m), types__binds(m, a, d), lopenv(d).
 vopen(c) :- vpos(c), callee(c, e), lv(e, "inst", t), !lcallf(c, _).
 vopen(c) :- vpos(c), lcallf(c, f), !lret(f, _, _), !lself(f).
 vopen(c) :- vpos(c), callee(c, e), lv(e, "mod", _).

@@ -40,11 +40,15 @@
 // ---- where a symbol is: the module it is defined in ------------------------------------------------------------
 .decl owner(s: symbol, m: symbol)
 owner(s, s) :- struct__def(s, "module").
-owner(s, m) :- parent(s, p), owner(p, m).
-// parent(s, p): s is defined in p, by its symbol: made once, so the recursion above joins on p.
+// The nearest module up: `unittest.mock.patch` is unittest.mock's, though `unittest.mock` is also a name `unittest`
+// binds.
+owner(s, p) :- parent(s, p), struct__def(p, "module").
+owner(s, m) :- parent(s, p), !struct__def(p, "module"), owner(p, m).
+// parent(s, p): s is defined in p, by its symbol: made once, so the recursion above joins on p. `split_dot` gives
+// every split of s, so the last part is the one with no dot.
 .decl parent(s: symbol, p: symbol)
-parent(s, p) :- struct__def(s, k), k != "module", split_dot(s, p, _).
-parent(s, p) :- struct__vann(s, _), split_dot(s, p, _).
+parent(s, p) :- struct__def(s, k), k != "module", split_dot(s, p, x), !contains(".", x).
+parent(s, p) :- struct__vann(s, _), split_dot(s, p, x), !contains(".", x).
 
 // ---- a module's names ------------------------------------------------------------------------------------------
 // binds(m, x, d): module m binds x to symbol d: a definition, a value assigned (its symbol `m.x`), or what an
@@ -77,8 +81,8 @@ want(t) :- head_of(m, _, h), contains(".", h), x = @head(h), binds(m, x, d0), r 
     t = @dot(d0, r).
 .decl res(t: symbol, d: symbol)
 res(t, t) :- want(t), struct__def(t, _).
-res(t, d) :- want(t), !struct__def(t, _), split_dot(t, m, y), struct__def(m, "module"), binds(m, y, d).
-res(t, d) :- want(t), !struct__def(t, _), split_dot(t, c, y), struct__def(c, "class"), struct__member(c, y, d), d != "".
+res(t, d) :- want(t), !struct__def(t, _), split_dot(t, m, y), !contains(".", y), struct__def(m, "module"), binds(m, y, d).
+res(t, d) :- want(t), !struct__def(t, _), split_dot(t, c, y), !contains(".", y), struct__def(c, "class"), struct__member(c, y, d), d != "".
 
 // ---- annotations and bases, as written, resolved in their module -------------------------------------------------
 // head_of(m, e, h): expression e written in module m, its head name h: `typing.List[int]` gives `typing.List`, a
@@ -97,16 +101,28 @@ head_of(m, e, h) :- alt(m, e, a), h0 = @replace_all(a, "\\[.*$", ""), h = @repla
 rest(m, e, e) :- written(m, e).
 rest(m, e, b) :- rest(m, e, s), match("^[^|]*\\|\\s*(?<b>.*)$", s).
 alt(m, e, a) :- rest(m, e, s), match("^(?<a>[^|]*[^|\\s])\\s*(\\|.*)?$", s).
-// rexpr(m, e, d): e's head names d: a name of m, or else a builtin; a dotted head through its first name.
-.decl rexpr(m: symbol, e: symbol, d: symbol)
+// rexpr(m, e, d): e's head names d: a name of m, or else a builtin; a dotted head through its first name. hexpr
+// keeps which alternative h of a union names it.
+.decl hexpr(m: symbol, e: symbol, h: symbol, d: symbol)
 // `None` is the type of None.
-rexpr(m, e, "builtins.None") :- head_of(m, e, "None").
-rexpr(m, e, d) :- head_of(m, e, h), !contains(".", h), binds(m, h, d).
-rexpr(m, e, d) :- head_of(m, e, h), !contains(".", h), !mbound(m, h), binds("builtins", h, d).
-rexpr(m, e, d) :- head_of(m, e, h), contains(".", h), x = @head(h), binds(m, x, d0), r = substr(h, strlen(x) + 1, strlen(h) - strlen(x) - 1),
+hexpr(m, e, "None", "builtins.None") :- head_of(m, e, "None").
+hexpr(m, e, h, d) :- head_of(m, e, h), !contains(".", h), binds(m, h, d).
+hexpr(m, e, h, d) :- head_of(m, e, h), !contains(".", h), !mbound(m, h), binds("builtins", h, d).
+hexpr(m, e, h, d) :- head_of(m, e, h), contains(".", h), x = @head(h), binds(m, x, d0), r = substr(h, strlen(x) + 1, strlen(h) - strlen(x) - 1),
     t = @dot(d0, r), res(t, d).
+.decl rexpr(m: symbol, e: symbol, d: symbol)
+rexpr(m, e, d) :- hexpr(m, e, _, d).
+// resolved(m, e): every alternative of e names a class, or is None. One that does not (a type variable, `Any`, a
+// special form, a name of a module not read) leaves what e declares partly unknown: `sig`, `rtype` and `vtype` give
+// the symbols the alternatives name and a "" row.
+.decl hclass(m: symbol, e: symbol, h: symbol)
+hclass(m, e, h) :- hexpr(m, e, h, d), struct__def(d, "class").
+hclass(m, e, "None") :- head_of(m, e, "None").
+.decl unresolved(m: symbol, e: symbol)
+unresolved(m, e) :- written(m, e), !head_of(m, e, _).
+unresolved(m, e) :- head_of(m, e, h), !hclass(m, e, h).
 .decl resolved(m: symbol, e: symbol)
-resolved(m, e) :- rexpr(m, e, _).
+resolved(m, e) :- written(m, e), !unresolved(m, e).
 
 // ---- classes ---------------------------------------------------------------------------------------------------
 .decl bases(c: symbol, i: number, b: symbol)
@@ -131,7 +147,7 @@ attr(c, x, d, c) :- struct__member(c, x, d).
 attr(c, x, d, c) :- struct__member(c, x, ""), struct__alias(@dot(c, x), e), e != x, struct__member(c, e, d), d != "".
 attr(c, x, d, k) :- bases(c, i, b), attr(b, x, d, k), !defines(c, x), !shadowing(c, i, x).
 
-// ---- signatures and declared types: as written, and the symbol the head names ("" when none resolves) ------------
+// ---- signatures and declared types: as written, each alternative's symbol, and "" when one names no class ---------
 .decl sig(f: symbol, i: number, x: symbol, a: symbol, d: symbol)
 sig(f, i, x, "", "") :- struct__param(f, i, x, "").
 sig(f, i, x, a, d) :- struct__param(f, i, x, a), a != "", owner(f, m), rexpr(m, a, d).
