@@ -754,6 +754,10 @@ callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
 arg(c, t, i) :- node(_, c, "call", _, _), field(c, "arguments", a), child(a, s, i), text(s, t).
 .decl in_order(f: symbol, j: symbol)
 in_order(f, j) :- callee(c, f), j = join t by i sep ", " : { arg(c, t, i) }.
+.decl call_end(f: symbol, j: symbol)
+call_end(f, j) :- callee(c, f), node(_, c, "call", _, e), j = to_string(e).
+.decl call_end_joined(f: symbol, j: symbol)
+call_end_joined(f, j) :- callee(c, f), j = join e by s sep "," : { node(_, c, "call", s, e) }.
 .decl by_text(f: symbol, j: symbol)
 by_text(f, j) :- callee(c, f), j = join t sep "|" : { arg(c, t, _) }.
 .decl reversed(f: symbol, j: symbol)
@@ -769,7 +773,7 @@ total(f, s, w, g) :- callee(c, f), s = sum i : { arg(c, _, i) }, w = sum n : { a
 ccn(f, 10 * count : { arg(c, _, _) } + sum i : { arg(c, _, i) }) :- callee(c, f).
 .decl more(f: symbol)
 more(f) :- callee(c, f), 1 + count : { arg(c, _, _) } > 3.
-.output in_order, by_text, reversed, numbers, tuple, total, ccn, more
+.output in_order, call_end, call_end_joined, by_text, reversed, numbers, tuple, total, ccn, more
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -778,6 +782,8 @@ more(f) :- callee(c, f), 1 + count : { arg(c, _, _) } > 3.
     let mut text_order: Vec<String> = (0..=10).map(|i| format!("a{i}")).collect();
     text_order.sort();
     assert_eq!(read("in_order"), format!("f\tbb, a, cc\ng\t\nh\té, z, B\nm\t{}\n", a(&mut (0..=10), ", ")));
+    // An input read without its constant column (`kind`), which comes before x and k.
+    assert_eq!(read("call_end_joined"), read("call_end"));
     assert_eq!(read("by_text"), format!("f\ta|bb|cc\ng\t\nh\tB|z|é\nm\t{}\n", text_order.join("|")));
     assert_eq!(read("reversed"), format!("f\tccabb\ng\t\nh\tBzé\nm\t{}\n", a(&mut (0..=10).rev(), "")));
     let numbers = (0..=10).map(|i| i.to_string()).collect::<Vec<_>>().join("+");

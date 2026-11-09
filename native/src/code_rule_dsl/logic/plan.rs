@@ -3231,11 +3231,19 @@ impl Run<'_, '_> {
                         return None;
                     }
                     let sym = |c: usize| u8::from(prog_types(prog, &a.rel).get(c).copied() == Some("sym"));
+                    // An input is read without its constant columns (`atom`): a column's place among those read.
+                    let read = |c: usize| {
+                        if scc.contains(&a.rel) || native_rels.contains(&a.rel) {
+                            c
+                        } else {
+                            c - a.args[..c].iter().filter(|t| matches!(t, Term::Int(_) | Term::Str(_))).count()
+                        }
+                    };
                     let xc = column(o)?;
                     let mut bycols = Vec::new();
                     for b in by.iter().filter(|b| !slots.contains_key(*b)) {
                         let c = column(b)?;
-                        bycols.push(format!("{c}:{}", sym(c)));
+                        bycols.push(format!("{}:{}", read(c), sym(c)));
                     }
                     let mut a = a.clone();
                     for v in &local {
@@ -3245,7 +3253,7 @@ impl Run<'_, '_> {
                     let (sc, toks) = atom(&a, None, &mut slots)?;
                     let sep = const_tok(&Term::Str(sep.clone()))?;
                     let bylist = if bycols.is_empty() { "-".to_owned() } else { bycols.join(",") };
-                    lines.push(format!("strjoin {sc} {} {xc}:{} {bylist} {sep} {}", toks.join(" "), sym(xc), tok(&Term::Var(var.clone()), &mut slots)?));
+                    lines.push(format!("strjoin {sc} {} {}:{} {bylist} {sep} {}", toks.join(" "), read(xc), sym(xc), tok(&Term::Var(var.clone()), &mut slots)?));
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;
