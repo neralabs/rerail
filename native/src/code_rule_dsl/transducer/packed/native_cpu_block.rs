@@ -651,6 +651,14 @@ impl Emit<'_, '_> {
                 let bits = f.ins().iconst(types::I64, super::block::period_bits(k) as i64);
                 f.ins().ishl(bits, first)
             }
+            // Bit `j` of each byte's position: below 6 the word's pattern; from 6 on, bit
+            // `j - 6` of the block's index, spread to the word (`block::position`).
+            BlockInst::Position(j) if j < 6 => f.ins().iconst(types::I64, super::block::position(0, j) as i64),
+            BlockInst::Position(j) => {
+                let bit = f.ins().ushr_imm(i, i64::from(j - 6));
+                let bit = f.ins().band_imm(bit, 1);
+                f.ins().ineg(bit)
+            }
             BlockInst::Within(d) => within_word(&mut *f, i, len, d),
             // A slot an earlier pass stored: the block's word, as that pass made it.
             BlockInst::Load(k) => {
