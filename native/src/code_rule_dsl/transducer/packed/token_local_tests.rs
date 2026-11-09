@@ -255,3 +255,70 @@ fn rr_facts_hold_on_the_corpus() {
     assert!(checked.wrong.is_empty(), "{:#?}", &checked.wrong[..checked.wrong.len().min(10)]);
     assert!(checked.local > 100 && checked.anchored > 20, "too few claims: {checked:?}");
 }
+
+/// How much of the `.rr` grammar's tier 1 is token-level: each operation by its facts, and the
+/// share in the cones of values that only marks and the fallback read. A census for the plan's
+/// payoff (doc 25 §5); run by hand.
+#[test]
+#[ignore = "a census: run by hand"]
+fn rr_census() {
+    let c = super::rr_parser::compiled().expect("compiles");
+    let p = &c.block;
+    let starts: Vec<&Named> = c.values.iter().filter(|v| v.name.starts_with("token ") && v.name.ends_with(" start")).collect();
+    let anchors: Vec<u16> = starts.iter().map(|v| v.op).collect();
+    let facts = token_local::facts(p, &anchors);
+    let members = token_local::members(p);
+    let n = p.ops.len();
+    let (mut carried, mut positional, mut anchored, mut free) = (0, 0, 0, 0);
+    for x in 0..n {
+        if token_local::carried(p, &members, x) {
+            carried += 1;
+        } else if token_local::positional(&p.ops[x]) {
+            positional += 1;
+        } else if !facts[x].anchors.is_empty() {
+            anchored += 1;
+        } else {
+            free += 1;
+        }
+    }
+    eprintln!("{n} operations: {carried} carried, {positional} byte tests and positions, {anchored} local and anchored, {free} local, not anchored");
+    // Where the unanchored local operations come from, by statement.
+    let mut stmts: std::collections::BTreeMap<&str, (usize, usize)> = Default::default();
+    for x in 0..n {
+        let e = stmts.entry(c.origin.get(x).map_or("?", String::as_str)).or_default();
+        if token_local::carried(p, &members, x) {
+            e.1 += 1;
+        } else if !token_local::positional(&p.ops[x]) && facts[x].anchors.is_empty() {
+            e.0 += 1;
+        }
+    }
+    let mut stmts: Vec<_> = stmts.into_iter().filter(|s| s.1 .0 + s.1 .1 > 0).collect();
+    stmts.sort_by_key(|s| std::cmp::Reverse(s.1 .0));
+    eprintln!("local, not anchored (and carried), by statement:");
+    for (s, (l, k)) in stmts.iter().take(40) {
+        eprintln!("  {l:>4} ({k:>2})  {s}");
+    }
+    let kinds: Vec<String> = (0..p.outputs.len()).map(|k| c.labels.iter().filter(|l| usize::from(l.1) == k).map(|l| l.0.clone()).collect::<Vec<_>>().join("+")).collect();
+    eprintln!("outputs: {kinds:?}");
+    // The anchored values read by no carried value, by the outputs they reach.
+    let mut by: std::collections::BTreeMap<String, usize> = Default::default();
+    for x in 0..n {
+        let f = &facts[x];
+        if f.local.is_some() && !f.anchors.is_empty() && !token_local::positional(&p.ops[x]) {
+            let reach = if f.carried_readers.is_empty() { "no carried reader" } else { "a carried reader" };
+            let outs: Vec<&str> = f.outputs.iter().map(|&k| kinds[k].as_str()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+            *by.entry(format!("{reach}; outputs {outs:?}")).or_default() += 1;
+        }
+    }
+    for (k, v) in &by {
+        eprintln!("  {v:>4}  {k}");
+    }
+    // The named values that are anchored, and who reads them.
+    for v in &c.values {
+        let f = &facts[usize::from(v.op)];
+        if f.local.is_some() && !f.anchors.is_empty() && !token_local::positional(&p.ops[usize::from(v.op)]) && !v.name.starts_with("token ") {
+            let cone = f.local.as_ref().map_or(0, |l| l.cone.len());
+            eprintln!("  anchored {:<14} cone {cone:>3}  carried readers {:>2}  outputs {:?}", v.name, f.carried_readers.len(), f.outputs.iter().map(|&k| kinds[k].as_str()).collect::<std::collections::BTreeSet<_>>());
+        }
+    }
+}

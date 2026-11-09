@@ -1,6 +1,6 @@
 # Parser generators: moving token-level checks out of tier 1
 
-Status: 2026-11-09, plan. Step 1 done (§4).
+Status: 2026-11-09, plan. Step 1 done (§4). The payoff measured (§5): smaller than planned.
 
 ## Intro
 
@@ -104,3 +104,34 @@ The tests (`token_local_tests`):
 - on `.rr`: the keyword masks (`fix_w`, `suppress_w`, `options_w`, `over_w`, `input_w`,
   `output_w`, `agg_word`) are local and anchored on an identifier's first byte. Every claim
   holds on 55 corpus files (517 KB): 80 anchors and 680 local values, none wrong.
+
+## 5. What can move on `.rr`: measured
+
+The census (`rr_census`, run by hand) sorts tier 1's 832 operations by their facts:
+
+| Operations | Count |
+|---|---|
+| carried (`fill`, `toggle`, counts, fixed points) | 83 |
+| byte tests and positions | 69 |
+| local and anchored on a token's first byte | 79 |
+| local, anchored on no token | 601 |
+
+A value's inner terms are often unanchored: in `agg_word`, only the final `& id_first` is
+anchored, and its letter tests are not. So the movable work is the cones of anchored values,
+not the anchored operations alone:
+
+- **Movable now:** `fix_w`, `suppress_w`, `options_w`, `over_w` and their marks, about 90
+  operations (11%). Their only carried reader is the mark's placement, which reads zero
+  when the mark is on a token's first byte.
+- **Movable with checks of the next token (step 6):** `agg_word`, `input_w` and `output_w`.
+  Each feeds a `fill` that says "the token after this one" (`agg_span`, `io_run`). That
+  brings the total to about 25%.
+- **Not token-level:** the rest, about 75%. The regions, the depth count, the `\u`
+  escapes, the two-byte punctuation, JSON's refusals, and the tree section's checks are byte
+  work. They stay in tier 1.
+
+The earlier estimate, tier 1 down to 50–100 operations, was wrong. The literal check of
+step 3 is also weaker than planned. Tier 2 pairs a token's start with the next bit of a mask
+of every kind's last bytes. Proving that `fix_w` equals "the identifier's keyword is `fix`"
+also needs facts about the region masks (`code`, `hashword`), not only about the token's own
+masks.
