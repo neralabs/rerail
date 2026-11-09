@@ -13,7 +13,7 @@
 //   c4_call(c, x), c4_only(c, a), c4_comp(e, k), c4_elt(e, x)
 
 .violation C404(at: node) code "C404"
-    "Rewrite `dict([(k, v) for ...])` as the dict comprehension `{k: v for ...}`; check the result when the pair unpacks with `*`, as in `(k, *v)`."
+    "Rewrite `dict([(k, v) for ...])` as the dict comprehension `{{k: v for ...}}`; check the result when the pair unpacks with `*`, as in `(k, *v)`."
     suppress ruff "C404"
 C404(c) :- c4_call(c, "dict"), c4_only(c, l), c4_comp(l, "list"), c4_elt(l, x), kind(x, "tuple"),
     count : { child(x, i, _), !kind(i, "comment") } = 2.

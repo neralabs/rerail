@@ -33,7 +33,8 @@ test("report preserves execution trace, counter order, plans, and exclusive CPU"
     { id: 1, kind: "operator", sql: "INSERT INTO output SELECT * FROM frame" },
   ] };
   writeFileSync(join(raw, "profile-9-0.json"), JSON.stringify(catalogue));
-  const context = { scope: "clause", statement: 2, inputs: [["frame", 10]] };
+  const proof = { support_uniqueness: { proven: false, reason: "Input keys are not determined" } };
+  const context = { scope: "clause", statement: 2, inputs: [["frame", 10]], logicalAnalyses: [proof], logicalAnalysis: proof };
   writeFileSync(join(raw, "profile-9-0.jsonl"), [
     { kind: "sql", query: 0, startNs: 1000, wallNs: 100, cpuNs: 80, selfWallNs: 100, selfCpuNs: 80,
       rows: 2000, changes: 0, counters: [1000, 20, 3, 4], frame: [1,2,3,4,5,6,7], context, thread: "ThreadId(1)" },
@@ -47,6 +48,8 @@ test("report preserves execution trace, counter order, plans, and exclusive CPU"
     const q = report.queries.find(q => q.kind === "sql");
     assert.equal(q.frameScans, 1); assert.equal(q.frameIndexedRows, 7);
     assert.equal(report.actionableSummary.budget.frameIndexCpuMs, null);
+    assert.deepEqual(q.logicalAnalyses, [proof]);
+    assert.ok(readFileSync(join(directory, "profile.md"), "utf8").includes("Input keys are not determined"));
     assert.equal(q.vmSteps, 1000); assert.equal(q.autoIndexRows, 4);
     assert.ok(report.queries.find(q => q.kind === "operator").flags.some(f => f.code === "row-expansion"));
     const trace = JSON.parse(readFileSync(join(directory, "trace.json")));
@@ -270,7 +273,7 @@ test("execution inventory retains event attribution when identical SQL crosses p
     assert.equal(report.executionInventory.selfCpuNs, 60);
     assert.deepEqual(report.executionInventory.phases, {
       connectionSetup: 1, catalogPublication: 0, filePublication: 1, candidatePreparation: 1,
-      relationalEvaluation: 1, cleanup: 1, unknown: 1,
+      relationalEvaluation: 1, verification: 0, cleanup: 1, unknown: 1,
     });
     assert.equal(report.executionInventory.entries.length, 6);
     assert.ok(report.executionInventory.entries.every(e => !("sql" in e)), "inventory refers to the shared query catalogue without duplicating SQL");

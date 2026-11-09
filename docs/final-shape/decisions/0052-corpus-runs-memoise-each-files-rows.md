@@ -55,7 +55,7 @@ fl_v($p, $l) :- fl_v_at(_, $p, $l).
 The memo is off for a run when any of these hold:
 
 - a relation can't be given a document (file-local rules also read it, or it is a lattice);
-- the cross-file part reads base relations, since their rows come only from evaluated chunks;
+- ~~the cross-file part reads base relations~~ (no longer: their rows are memoised with each file's, decision 0063 §3);
 - the run reproduces T's facts, or uses typing.
 
 The profile says which applies.
@@ -123,7 +123,8 @@ The replay is unchanged, and the same on a second run that reads every check's f
 
 ## Open
 
-- Nothing removes old memo rows yet: each engine build or program writes a new plan's rows. They die
-  with their sources when the store collects them.
-- A run whose cross-file part reads base relations isn't memoised. Pushing reads into the chunks
-  (decision 0051) leaves none in the combined run, but some single rules keep them.
+- ~~Nothing removes old memo rows yet.~~ Closed: decision 0053 §2a collects every memo writer's old rows.
+- ~~A run whose cross-file part reads base relations isn't memoised.~~ Closed (2026-11-08): each file's memo entry
+  keeps its rows of the base relations the cross-file part reads (`memo::Entry::base`, decision 0063 §3), and since
+  O109 closed the run is memoised. Checked: an import-cycle rule reading `doc` across files, run twice outside a
+  session, reads 3 of 3 files from the stored memo the second time, with the same findings.

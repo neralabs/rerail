@@ -248,7 +248,9 @@ mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
 mod native_cpu_block;
-mod native_cpu_tier2;
+mod native_cpu_lanes;
+mod native_cpu_shape;
+mod native_cpu_stream;
 mod native_ir;
 mod output;
 mod packed_arena;
@@ -265,12 +267,25 @@ pub(in crate::code_rule_dsl) mod rir;
 mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
 pub(in crate::code_rule_dsl) mod block;
+pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
+mod grammar;
+mod bitlex_prove;
+mod bitlex_tier2;
+pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
+#[cfg(test)]
+mod bitlex_corpus_tests;
+#[cfg(test)]
+mod bitlex_ladder_tests;
+#[cfg(test)]
+mod bitlex_rr_tests;
+#[cfg(test)]
+mod bitlex_json_tests;
 // Tier 2's monoids, analysis and plan (docs/parser-generators/15, 16, 17).
 mod block_monoid;
 mod block_plan;
@@ -304,6 +319,36 @@ const REPEAT_END: u8 = 0x23;
 const FORK: u8 = 0x30;
 const GOTO: u8 = 0x31;
 const EMIT: u8 = 0x40;
+// Tier 2's words, over the token stream (decision 0087, `stream`).
+const TOKEN: u8 = 0x50;
+const SWITCH: u8 = 0x51;
+/// `WORD` in `rir`.
+const WORD_IS: u8 = 0x52;
+// 0x53 was `CHECK`, a token's check run per token: a check is tier 1's masks (doc 18 §4).
+const OPEN: u8 = 0x54;
+const CLOSE: u8 = 0x55;
+const LEAF: u8 = 0x56;
+const NODE_FIELD: u8 = 0x57;
+const NODE_SUPER: u8 = 0x58;
+const PUSH: u8 = 0x59;
+const RETURN: u8 = 0x5a;
+const ACCEPT: u8 = 0x5b;
+const SPAN: u8 = 0x5c;
+/// Refuses unless one of tier 1's totals is zero: the fallback.
+const EMPTY: u8 = 0x5d;
+/// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
+const MARK: u8 = 0x5e;
+/// Runs the next word when the token starts at a bit of mask `operand`, else skips it: which of
+/// two rows beginning with one byte the token is.
+const ROW: u8 = 0x5f;
+/// The innermost open node becomes a node of kind `operand`: its kind decided by this token.
+const RETAG: u8 = 0x60;
+/// The token's leaf joins the grammar's leaf before it (the pending extras between are its text,
+/// dropped): one leaf of kind `operand`, to this token's end.
+const MERGE: u8 = 0x61;
+/// A node of kind `operand` around the node last made at this level, open: it takes that node's
+/// field and start; `NODE_FIELD m=1` and `RETAG m=1` then act on the moved node.
+const WRAP: u8 = 0x62;
 
 pub(in crate::code_rule_dsl) const NAMED: u8 = 1;
 const GREEDY: u8 = 1;
@@ -813,6 +858,10 @@ pub(in crate::code_rule_dsl) struct Program {
     /// Block programs, the side programs over source bytes (`block`), as `value_programs` are
     /// the side programs over a node's text.
     block_programs: Vec<block::BlockProgram>,
+    /// Tier 2's switch tables (`SWITCH`, decision 0087).
+    switches: Vec<stream::ByteSwitch>,
+    /// Tier 2's readings (`RETAG m=3`) and provisional fields.
+    readings: stream::Readings,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
     digest: DigestMemo,
 }
@@ -984,6 +1033,8 @@ pub(in crate::code_rule_dsl) enum Error {
     /// pools do not.
     WalkFrames,
     BackendFailure,
+    /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
+    RefusedShape(String),
 }
 
 #[derive(Clone, Copy)]
@@ -1864,6 +1915,8 @@ impl Program {
             set_mode: false,
             ast_pattern: None,
             block_programs: Vec::new(),
+            switches: Vec::new(),
+            readings: stream::Readings::default(),
             digest: DigestMemo::default(),
         };
         program.validate()?;
@@ -2100,6 +2153,38 @@ impl Program {
                 digest.update(bytes);
             }
         }
+        if !self.switches.is_empty() {
+            digest.update(b"switches");
+            digest.update((self.switches.len() as u64).to_le_bytes());
+            for s in &self.switches {
+                digest.update([s.offset]);
+                for t in s.targets.iter().chain([&s.end]) {
+                    digest.update(t.to_le_bytes());
+                }
+            }
+        }
+        if !self.readings.is_empty() {
+            digest.update(b"readings");
+            digest.update((self.readings.maps.len() as u64).to_le_bytes());
+            for r in &self.readings.maps {
+                for list in [&r.kinds, &r.fields] {
+                    digest.update((list.len() as u64).to_le_bytes());
+                    for (a, b) in list {
+                        digest.update(a.to_le_bytes());
+                        digest.update(b.to_le_bytes());
+                    }
+                }
+                // A root's way, when it has one, tagged.
+                if let Some(w) = r.root {
+                    digest.update(b"root");
+                    digest.update(w.to_le_bytes());
+                }
+            }
+            digest.update((self.readings.provisional.len() as u64).to_le_bytes());
+            for f in &self.readings.provisional {
+                digest.update(f.to_le_bytes());
+            }
+        }
         crate::lower_hex(&digest.finalize())
     }
 
@@ -2320,6 +2405,29 @@ impl Program {
                 }
             })
         {
+            return Err(Error::InvalidOperand(0));
+        }
+        // A tier-2 program (decision 0087): its own words and rules.
+        if self.words.iter().any(|&w| stream::is_stream(split(w).0)) {
+            for (pc, &w) in self.words.iter().enumerate() {
+                let (opcode, mode, operand) = split(w);
+                match opcode {
+                    STOP => {
+                        if mode != 0 || operand != 0 {
+                            return Err(Error::InvalidMode(pc));
+                        }
+                    }
+                    GOTO => {
+                        if mode != 0 || usize::from(operand) >= self.words.len() {
+                            return Err(Error::InvalidTarget(pc));
+                        }
+                    }
+                    _ => stream::validate_word(self, pc, opcode, mode, operand)?,
+                }
+            }
+            return stream::validate(self);
+        }
+        if !self.switches.is_empty() {
             return Err(Error::InvalidOperand(0));
         }
         for (pc, &instruction) in self.words.iter().enumerate() {

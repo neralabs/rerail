@@ -10,8 +10,7 @@
 #   - `//.*` ends before '\n' and keeps a '\r': `//x\r\n` is the comment "//x\r".
 #   - `/*/ */` is one comment: the '*' of `/*` cannot start the `*/`. `/**/` is a comment.
 #   - number is -?(0|[1-9][0-9]*)(\.[0-9]*)?([eE]-?[0-9]+)? (grammar.js): an exponent's sign is
-#     '-' only, so `1e+5` is an error; `1.` and `1.e5` are numbers (the `json_number` check sends
-#     them to tree-sitter).
+#     '-' only, so `1e+5` is an error; `1.` and `1.e5` are numbers.
 #   - escape_sequence is two bytes, even for \u: "\u00e9" is escape_sequence "\u" and then
 #     string_content "00e9". A raw tab or control byte is string_content; '\n' is an error.
 #   - A comment's parent is the lowest common ancestor of the tokens before and after it, or the
@@ -32,6 +31,10 @@ class ws        = ' ' '\t' '\n' '\r' 0x0b 0x0c
 class lf        = '\n'
 # The structural bytes: one class, as simdjson's. Which one a token is, tier 2 reads.
 class op        = '{' '}' '[' ']' ',' ':'
+# A number's bytes.
+class digit     = '0'..'9'
+class nonzero   = '1'..'9'
+class expo      = 'e' 'E'
 
 # --- Strings: simdjson's stage 1 -----------------------------------------------------------------
 
@@ -68,7 +71,9 @@ keywords escape_sequence {
 # One token per structural byte; its kind is its text (tier 2).
 token punctuation     = start code & op
 keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
-# A run of word bytes is one token: a number, unless its text is a keyword (tier 2).
+# A run of word bytes is one token, as simdjson's stage 1 leaves it: a keyword if its text is
+# one (tier 2 compares it once), else a number, which tier 2 checks (below). Any other word fails
+# the check and sends the file to tree-sitter.
 token number          = start starts(word) last lasts(word)
 keywords number { "true" -> true  "false" -> false  "null" -> null }
 
@@ -81,39 +86,30 @@ error "newline in a string"        when body & lf
 # A string open at the end of the file is tier 2's: its node has no end, as simdjson's stage 1
 # finds it from the final carry, not per byte.
 
-# A comment (valid for tree-sitter-json, an extra) is in a word: its check fails, and the file
-# goes to tree-sitter.
+# A number's syntax is tier 2's, as simdjson's stage 2 parses a number (doc 18 §4): tier 1 only
+# finds the word. The number's arm checks its bytes against this grammar, tree-sitter-json's
+# -?(0|[1-9][0-9]*)(\.[0-9]*)?([eE]-?[0-9]+)?; a word that fails it goes to tree-sitter.
+check number = ['-'] ('0' | nonzero digit*) ['.' digit*] [expo ['-'] digit+]
 
-# --- The tree: tier 2, once per token (13-tape-on-the-gpu.md) -------------------------------------
+# A comment (valid for tree-sitter-json, an extra) is in a word: no grammar rule takes it, and
+# the file goes to tree-sitter.
+
+# --- The tree: tier 2, simdjson's stage 2 (18-tree-as-grammar.md) ---------------------------------
 #
-# Each token above is a leaf node. Inner nodes start and end at tokens; where several start at
-# one byte, the one listed first is outermost.
+# Each node's content, as tree-sitter-json's grammar.js states it. The compiler makes one state
+# machine per nesting level from it: the states are stage 2's labels, and a token no state takes
+# sends the file to tree-sitter. Every token is a leaf node.
 #
 # Observed (tree-sitter-json 0.24.8, runtime 0.27.1):
-#   - `document` starts at the first token and ends at the end of the file;
+#   - `document` spans the file from its first token to its last;
 #   - string_content is split around escapes, as the tokens are;
 #   - a value has the supertype `_value`; a key has the field `key`, a pair's value `value`.
 
 tree json {
-  mask last_byte = ~next(~empty)
-
-  node document start first token end last_byte
-  # A key is a string whose next token is ':': known from the bytes alone, so no scan waits on
-  # the stack (14-tier-2-design.md §1). The same pairs from the left, as simdjson's stage 2 finds
-  # them: a string right after a '{' or a ',' inside an object. A target uses one rule and checks
-  # the other. The pair ends with its value.
-  node pair     start string when before ':'
-                also when after ('{' | ',') and parent object
-                end with value
-  # Nesting on the writer's stack: 4 of the 28,470 data-layer files nest past 13.
-  node object   start '{'     end '}'     nested max 13
-  node array    start '['     end ']'     nested max 13
-  node string   start opening         end closing
-
-  check number is json_number
-
-  field key   of string = start of pair
-  field value of _value when after ':'
-  supertype _value of object array number true false null
-  supertype _value of string = not start of pair
+  node document               = value
+  node object nested          = '{' [pair (',' pair)*] '}'
+  node pair                   = key: string ':' value: value
+  node array nested           = '[' [value (',' value)*] ']'
+  node string                 = '"' (string_content | escape_sequence)* '"'
+  choice value supertype _value = object | array | string | number | true | false | null
 }

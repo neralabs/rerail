@@ -428,9 +428,7 @@ The converted gate's checks read no `parsed`.
 
 ## Open
 
-- The grammar names a library may use (`python-annotation`, `sql`, …): where they live (the language
-  registry, or `core.rr`), and which SQL dialects the registry has grammars for.
-- Whether a global embed's guests should be visible as documents to the strata of a *later*
-  evaluation (the next run, from the store) when their inputs have not changed. That would let a
-  global embed's guests be files for every policy at a cost of one run's delay; this record keeps them
-  as facts only.
+- ~~The grammar names a library may use, and which SQL dialects have grammars.~~ Decision 0082 §1–§2:
+  the language registry (dialect labels and `fragments`); one SQL grammar, `sql`.
+- ~~Whether a global embed's guests should be documents of a later run.~~ Decision 0082 §3: no; they
+  are documents in a later wave of the same run.

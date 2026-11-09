@@ -400,13 +400,70 @@ fn small_warm_updates_do_not_scan_large_groups_or_all_outer_candidates() {
 }
 
 #[test]
+fn unused_sum_groups_keep_wide_support_and_fail_only_when_read() {
+    let (_d, mut e) = executor();
+    let max = wire::integer(i64::MAX);
+    let min = wire::integer(i64::MIN);
+    bind(
+        &mut e,
+        "event",
+        &["id", "g", "v"],
+        json!([[1, 1, 2], [2, 2, max], [3, 2, 1]]),
+    );
+    bind(&mut e, "owner", &["g"], json!([[1]]));
+    let p = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl total(g:number,v:number)\ntotal(g,v) :- owner(g), v=sum x : {event(_,g,x)}.\n.output total\n";
+    e.run(p.into(), "python".into(), None).unwrap();
+    change(&mut e, json!([{"name":"event","insert":[[4,2,1]]}]));
+    assert!(
+        e.apply_changes(json!([{"name":"owner","insert":[[2]]}]).to_string(), None)
+            .unwrap_err()
+            .reason
+            .contains("integer overflow")
+    );
+    assert_eq!(rows(&e, "SELECT * FROM owner"), json!([[1]]));
+    change(
+        &mut e,
+        json!([{"name":"event","delete":[[2,2,max]]},{"name":"owner","insert":[[2]]}]),
+    );
+    compare(
+        &e,
+        p,
+        &[("event", &["id", "g", "v"]), ("owner", &["g"])],
+        &["total"],
+    );
+    change(
+        &mut e,
+        json!([{"name":"owner","delete":[[2]]},{"name":"event","delete":[[3,2,1],[4,2,1]],"insert":[[5,2,min],[6,2,-1]]}]),
+    );
+    assert!(
+        e.apply_changes(json!([{"name":"owner","insert":[[2]]}]).to_string(), None)
+            .unwrap_err()
+            .reason
+            .contains("integer overflow")
+    );
+    assert_eq!(rows(&e, "SELECT * FROM total"), json!([[1, 2]]));
+    change(
+        &mut e,
+        json!([{"name":"event","delete":[[6,2,-1]]},{"name":"owner","insert":[[2]]}]),
+    );
+    assert_eq!(rows(&e, "SELECT c1 FROM total WHERE c0=2"), json!([[min]]));
+    compare(
+        &e,
+        p,
+        &[("event", &["id", "g", "v"]), ("owner", &["g"])],
+        &["total"],
+    );
+}
+
+#[test]
 fn overflow_and_budget_failures_restore_reducer_state_and_allow_retry() {
     let (_d, mut e) = executor();
     let large = wire::integer(i64::MAX);
     bind(&mut e, "event", &["id", "g", "v"], json!([[1, 1, large]]));
     bind(&mut e, "owner", &["g"], json!([[1]]));
     e.run(AGG.into(), "python".into(), None).unwrap();
-    e.set_limits(json!({"max_steps":500}).to_string()).unwrap();
+    // Keep cancellation deterministic as the optimizer reduces VM work.
+    e.set_limits(json!({"max_steps":1}).to_string()).unwrap();
     assert!(
         e.apply_changes(json!([{"name":"owner","insert":[[2]]}]).to_string(), None)
             .is_err()
@@ -422,7 +479,7 @@ fn overflow_and_budget_failures_restore_reducer_state_and_allow_retry() {
     );
     assert_eq!(rows(&e, "SELECT * FROM global"), json!([[1, large]]));
     assert_eq!(rows(&e, "SELECT count(*) FROM event"), json!([[1]]));
-    e.set_limits(json!({"max_steps":1000}).to_string()).unwrap();
+    e.set_limits(json!({"max_steps":1}).to_string()).unwrap();
     let interrupted = e
         .apply_changes(
             json!([{"name":"event","insert":[[2,1,0]]}]).to_string(),

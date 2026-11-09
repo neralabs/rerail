@@ -305,6 +305,23 @@ CREATE TABLE IF NOT EXISTS facts_completions (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
+-- The cross-file memo's stored rows (decision 0076, cross_rows.rs). `cross_components` maps a component's digest
+-- (its plan, key and documents' keys) to a source holding that descriptor; `cross_rows` holds its rows of each
+-- memoised relation, clustered by (source, relation), so a run's lookup and its replay are one query each. Additive:
+-- every row cascades from its source, which a run's manifest names (decision 0053).
+CREATE TABLE IF NOT EXISTS cross_components (
+    digest TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS cross_components_by_source ON cross_components(source_id);
+CREATE TABLE IF NOT EXISTS cross_rows (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    rel TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER,
+    PRIMARY KEY (source_id, rel, seq)
+) STRICT, WITHOUT ROWID;
+
 -- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read
 -- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose
 -- manifest matches an earlier one of its root only moves that one's `last_run`. `corpus_live` is the union of the
@@ -338,6 +355,14 @@ CREATE TABLE IF NOT EXISTS corpus_plans (
     plan_digest BLOB PRIMARY KEY CHECK(length(plan_digest) = 32),
     live INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
+-- Per memo plan, the relations its entries hold rows of, with their declared columns as a JSON array of
+-- [name, type] (docs/sql-access/01-design.md §2): a session reads a run's frames by name. Collected with the plan.
+CREATE TABLE IF NOT EXISTS corpus_plan_relations (
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    relation TEXT NOT NULL,
+    columns TEXT NOT NULL,
+    PRIMARY KEY (plan_digest, relation)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS corpus_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,
@@ -370,6 +395,19 @@ CREATE TABLE IF NOT EXISTS corpus_stats (
     PRIMARY KEY (root_id, path)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
+-- The other memo plans a manifest names (`record_corpus_run_naming`): a prepared program's (decision 0073). They are
+-- live while a kept manifest names them. Additive: an older binary ignores it, and collects nothing by it.
+CREATE TABLE IF NOT EXISTS corpus_manifest_plans (
+    manifest_id INTEGER NOT NULL,
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    PRIMARY KEY (manifest_id, plan_digest)
+) STRICT, WITHOUT ROWID;
+-- The sweep of the corpus memo's retired schemas (`RETIRED_CORPUS_MEMO_SCHEMAS`): done once a pass finds no more.
+CREATE TABLE IF NOT EXISTS corpus_swept (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    done INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO corpus_swept(singleton, done) VALUES (1, 0);
 
 -- The single interner (atoms.rs, decision 0049): dense, append-only; atom 0 is the empty string.
 -- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,

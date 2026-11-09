@@ -149,7 +149,7 @@ fn diff(prog: &[Stmt], list: &str) {
         let mut j = 0;
         let lx = &out.tokens;
         let same = |a: &(usize, usize, String), b: &bitlex::eval::Token| {
-            a.0 == b.start && a.1 == b.end && (a.2 == b.kind || (b.soft && a.2.as_bytes() == &src[b.start..b.end]))
+            a.0 == b.start && a.1 == b.end && (a.2 == b.kind || b.soft.as_deref() == Some(a.2.as_str()))
         };
         while i < ts.len() || j < lx.len() {
             if i < ts.len() && j < lx.len() && same(&ts[i], &lx[j]) {
@@ -616,7 +616,8 @@ fn tree(prog: &[Stmt], list: &str) {
     let res = par_files(list, |_, src| {
         let (ts, ours) = tree_pair(prog, &lang, &tabs, src);
         match (ts, ours) {
-            (None, _) => ("tree-sitter error".to_owned(), None),
+            (None, Err(_)) => ("tree-sitter error, refused".to_owned(), None),
+            (None, Ok(_)) => ("TREE WHERE TREE-SITTER ERRS".to_owned(), Some("ours parses a file tree-sitter does not".to_owned())),
             (Some(_), Err(e)) => (format!("falls back: {}", e.split(" at byte").next().unwrap_or(&e)), Some(e)),
             (Some(ts), Ok(ours)) => {
                 let at = (0..ts.len().max(ours.len())).find(|&i| ts.get(i) != ours.get(i));
@@ -631,7 +632,7 @@ fn tree(prog: &[Stmt], list: &str) {
     let mut shown = 0;
     for (path, (verdict, detail)) in &res {
         *counts.entry(verdict.clone()).or_default() += 1;
-        if verdict != "equal" && verdict != "tree-sitter error" && shown < 12 {
+        if verdict != "equal" && verdict != "tree-sitter error, refused" && shown < 12 {
             println!("{path}: {verdict}: {}", detail.as_deref().unwrap_or(""));
             shown += 1;
         }
@@ -680,7 +681,7 @@ fn main() {
             match Ev::run(&prog, &src, &tabs) {
                 Ok(o) => {
                     for t in &o.tokens {
-                        println!("{:6} {:6} {:20} {:?}{}", t.start, t.end, t.kind, String::from_utf8_lossy(&src[t.start..t.end]), if t.soft { " soft" } else { "" });
+                        println!("{:6} {:6} {:20} {:?}{}", t.start, t.end, t.kind, String::from_utf8_lossy(&src[t.start..t.end]), if t.soft.is_some() { " soft" } else { "" });
                     }
                     for e in &o.errors {
                         println!("ERROR {e}");

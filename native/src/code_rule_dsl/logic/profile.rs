@@ -27,15 +27,17 @@
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
 //! steps by work, the roofline, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
+mod memory;
 mod roofline;
+mod watch;
 pub(in crate::code_rule_dsl) use roofline::Unit;
+pub use watch::watch;
 
 static ON: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(std::env::var_os("RERAIL_PROFILE").is_some()));
 
@@ -73,6 +75,14 @@ pub(in crate::code_rule_dsl) struct SpanTotal {
     pub(in crate::code_rule_dsl) calls: u64,
     pub(in crate::code_rule_dsl) total: f64,
     pub(in crate::code_rule_dsl) own: f64,
+    /// Bytes its thread allocated while it was open, in all and less the spans inside it, and bytes freed
+    /// (`memory`): allocated less freed is what it kept.
+    pub(in crate::code_rule_dsl) alloc: u64,
+    pub(in crate::code_rule_dsl) own_alloc: u64,
+    pub(in crate::code_rule_dsl) freed: u64,
+    /// How far the process's footprint high-water mark rose while it was open, in all and less the spans inside it.
+    pub(in crate::code_rule_dsl) rise: u64,
+    pub(in crate::code_rule_dsl) own_rise: u64,
 }
 
 #[derive(Default, Clone)]
@@ -97,6 +107,8 @@ struct State {
     decisions: BTreeMap<(String, String), u64>,
     /// Strata in the order first run: key, engine, why, loops.
     strata: Vec<Stratum>,
+    /// The strata that ran in SQLite (the SQL wave kernel), by key: the kind of literal the native engine declined.
+    fallbacks: BTreeMap<String, String>,
     /// Plans by (stratum, kind, plan text).
     plans: BTreeMap<(String, String, String), PlanTotal>,
     /// Device kernels by (span path, kernel).
@@ -105,6 +117,24 @@ struct State {
     work: BTreeMap<(String, Unit), u64>,
     /// Waits by (the waiter's span path, what it waited on, what that was doing when the wait began) (`wait`).
     waits: BTreeMap<(String, String, String), WaitTotal>,
+    /// Where each native stratum ran, by stratum (`placed`, decision 0095).
+    placements: BTreeMap<String, PlacedTotal>,
+}
+
+/// A stratum's placements, summed over its runs (chunks, guests, the cross-file part).
+#[derive(Default)]
+struct PlacedTotal {
+    runs: u64,
+    on_gpu: u64,
+    gpu_cheaper: u64,
+    device: bool,
+    forms: Vec<&'static str>,
+    missing: Vec<&'static str>,
+    planned_work: f64,
+    work: u64,
+    cpu_estimate: f64,
+    gpu_estimate: f64,
+    cpu: f64,
 }
 
 #[derive(Default)]
@@ -218,10 +248,56 @@ struct Open {
     path: String,
     start: f64,
     children: f64,
+    /// The thread's allocated and freed bytes, and the footprint's high-water mark, when it opened; what the spans
+    /// inside it allocated and raised.
+    alloc: (u64, u64),
+    peak: u64,
+    children_alloc: u64,
+    children_rise: u64,
+}
+
+/// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
+struct Thread {
+    name: String,
+    /// Its Mach port (macOS), for its CPU read from another thread; 0 elsewhere.
+    port: u32,
+    counters: memory::Counters,
+    opens: Vec<Open>,
+    /// The statement SQLite is running for it, and since when (`statement`).
+    statement: Option<(String, std::time::Instant)>,
+}
+
+/// Every thread that opened a span, while it lives.
+static THREADS: LazyLock<Mutex<Vec<std::sync::Weak<parking_lot::Mutex<Thread>>>>> = LazyLock::new(Default::default);
+
+fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
+    #[cfg(target_os = "macos")]
+    // SAFETY: the calling thread's own port; no right is taken.
+    let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
+    #[cfg(not(target_os = "macos"))]
+    let port = 0;
+    let me = std::sync::Arc::new(parking_lot::Mutex::new(Thread {
+        name: std::thread::current().name().unwrap_or("unnamed").to_owned(),
+        port,
+        counters: memory::Counters::mine(),
+        opens: Vec::new(),
+        statement: None,
+    }));
+    let mut all = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    all.retain(|t| t.strong_count() > 0);
+    all.push(std::sync::Arc::downgrade(&me));
+    me
 }
 
 thread_local! {
-    static STACK: RefCell<Vec<Open>> = const { RefCell::new(Vec::new()) };
+    static STACK: std::sync::Arc<parking_lot::Mutex<Thread>> = register();
+}
+
+/// Records the SQL statement this thread starts (`Some`), or that it ended (`None`), for a dump. Only when profiling.
+pub(in crate::code_rule_dsl) fn statement(text: Option<String>) {
+    if on() {
+        STACK.with(|s| s.lock().statement = text.map(|t| (t, std::time::Instant::now())));
+    }
 }
 
 /// An open span; it closes when dropped.
@@ -234,12 +310,13 @@ pub(in crate::code_rule_dsl) fn span(name: impl FnOnce() -> String) -> Span {
     }
     let name = name();
     STACK.with(|s| {
-        let mut s = s.borrow_mut();
-        let path = match s.last() {
+        let mut s = s.lock();
+        let path = match s.opens.last() {
             Some(top) => format!("{}/{name}", top.path),
             None => name,
         };
-        s.push(Open { path, start: cpu(), children: 0.0 });
+        let alloc = s.counters.read();
+        s.opens.push(Open { path, start: cpu(), children: 0.0, alloc, peak: memory::footprint().1, children_alloc: 0, children_rise: 0 });
     });
     Span(true)
 }
@@ -250,25 +327,36 @@ impl Drop for Span {
             return;
         }
         let now = cpu();
+        let peak = memory::footprint().1;
         STACK.with(|s| {
-            let mut s = s.borrow_mut();
-            let Some(open) = s.pop() else { return };
+            let mut s = s.lock();
+            let (allocated, freed) = s.counters.read();
+            let Some(open) = s.opens.pop() else { return };
             let total = now - open.start;
-            if let Some(parent) = s.last_mut() {
+            let alloc = allocated.saturating_sub(open.alloc.0);
+            let rise = peak.saturating_sub(open.peak);
+            if let Some(parent) = s.opens.last_mut() {
                 parent.children += total;
+                parent.children_alloc += alloc;
+                parent.children_rise += rise;
             }
             let mut state = STATE.lock().unwrap();
             let t = state.spans.entry(open.path).or_default();
             t.calls += 1;
             t.total += total;
             t.own += total - open.children;
+            t.alloc += alloc;
+            t.own_alloc += alloc.saturating_sub(open.children_alloc);
+            t.freed += freed.saturating_sub(open.alloc.1);
+            t.rise += rise;
+            t.own_rise += rise.saturating_sub(open.children_rise);
         });
     }
 }
 
 /// This thread's open span's path, `-` outside any.
 pub(in crate::code_rule_dsl) fn current() -> String {
-    STACK.with(|s| s.borrow().last().map_or_else(|| "-".to_owned(), |o| o.path.clone()))
+    STACK.with(|s| s.lock().opens.last().map_or_else(|| "-".to_owned(), |o| o.path.clone()))
 }
 
 /// Charges one run of statement `text` to the current span.
@@ -383,6 +471,142 @@ pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) 
 }
 
 /// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
+/// Records where native stratum `key` ran (`plan::placement`), its shape, the work it did and the CPU it took.
+pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Placement, shape: &crate::code_rule_dsl::logic::plan::placement::Shape, work: u64, cpu: f64) {
+    if !on() {
+        return;
+    }
+    let mut state = STATE.lock().unwrap();
+    let t = state.placements.entry(key.to_owned()).or_default();
+    t.runs += 1;
+    t.on_gpu += u64::from(p.gpu);
+    t.gpu_cheaper += u64::from(p.gpu_cheaper);
+    t.device |= p.device;
+    t.forms = shape.forms.iter().map(|f| f.name()).collect();
+    t.missing = p.missing.iter().map(|f| f.name()).collect();
+    t.planned_work += shape.work;
+    t.work += work;
+    t.cpu_estimate += p.cpu_s;
+    t.gpu_estimate += p.gpu_s;
+    t.cpu += cpu;
+}
+
+/// Where the native strata ran (decision 0095): how many on each backend, the strata the GPU would run cheaper and
+/// the forms it lacks for them, by their CPU. What the device must take on next, and what it would save.
+fn placements(r: &mut String, state: &State) {
+    use crate::code_rule_dsl::logic::plan::placement::gpu_price;
+    let all = &state.placements;
+    if all.is_empty() {
+        return;
+    }
+    let runs: u64 = all.values().map(|t| t.runs).sum();
+    let gpu: u64 = all.values().map(|t| t.on_gpu).sum();
+    let cpu: f64 = all.values().map(|t| t.cpu).sum();
+    let device = all.values().any(|t| t.device);
+    let _ = writeln!(
+        r,
+        "\n== Placement (decision 0095): {} strata, {runs} runs; {gpu} runs on the GPU, {} on the CPU ({cpu:.2} s CPU); binding {}",
+        all.len(),
+        runs - gpu,
+        if device { "Metal" } else { "CPU" }
+    );
+    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU assumed (2 ns a unit, 0.15 ms a submission) until the relational lab measures it.");
+    // The strata the GPU would run cheaper in at least one run, and did not.
+    let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
+    let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
+    // The GPU priced at the work each stratum did, not the work planned: a planned estimate can be far off (a cross
+    // product priced at 10^20 rows that met none).
+    let at_work = |t: &PlacedTotal| gpu_price(t.runs, t.work as f64);
+    let cheaper_gpu: f64 = cheaper.iter().map(|(_, t)| at_work(t)).sum();
+    let _ = writeln!(r, "The GPU would be cheaper for {} strata: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
+    // Strata whose planned work is off by 10x or more, either way, by their CPU: the placement read a wrong price, and
+    // the join order likely came from the same estimate.
+    let off = |t: &PlacedTotal| {
+        let (p, w) = (t.planned_work.max(1.0), (t.work as f64).max(1.0));
+        w / p >= 10.0 || p / w >= 10.0
+    };
+    let (under, over) = all.values().filter(|t| off(t)).fold(((0u64, 0.0), (0u64, 0.0)), |(u, o), t| {
+        if (t.work as f64) > t.planned_work { ((u.0 + 1, u.1 + t.cpu), o) } else { (u, (o.0 + 1, o.1 + t.cpu)) }
+    });
+    let _ = writeln!(r, "Planned work off by 10x or more: {} strata under (did more, {:.2} s CPU), {} over (did less, {:.2} s CPU); marked ! below.", under.0, under.1, over.0, over.1);
+    // By the form the GPU lacks: a stratum counts under each form it lacks.
+    let mut by: BTreeMap<&str, (u64, f64)> = BTreeMap::new();
+    for (_, t) in &cheaper {
+        for f in &t.missing {
+            let e = by.entry(f).or_default();
+            e.0 += 1;
+            e.1 += t.cpu;
+        }
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1));
+    let _ = writeln!(r, "GPU support missing, by form (a stratum counts under each form it lacks):");
+    let _ = writeln!(r, "{:>9} {:>7}  form", "cpu s", "strata");
+    for (f, (n, c)) in &by {
+        let _ = writeln!(r, "{c:>9.3} {n:>7}  {f}");
+    }
+    // The strata themselves, costliest first.
+    let mut top = cheaper.clone();
+    top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
+    let _ = writeln!(r, "Costliest strata the GPU would run cheaper:");
+    let _ = writeln!(r, "{:>8} {:>8} {:>12} {:>12} {:>5}  stratum: forms (missing on the GPU)", "cpu s", "gpu s", "planned", "work", "runs");
+    for (key, t) in top.iter().take(20) {
+        let mark = if off(t) { "!" } else { " " };
+        let _ = writeln!(r, "{:>8.3} {:>8.4} {:>12.0} {:>11}{mark} {:>5}  {}: {} (missing {})", t.cpu, at_work(t), t.planned_work, t.work, t.runs, short(key, 60), t.forms.join(", "), t.missing.join(", "));
+    }
+}
+
+/// Records that stratum `key` fell back to SQLite, and the kind of literal the native engine declined (`class`).
+pub(in crate::code_rule_dsl) fn fallback(key: &str, class: String) {
+    if !on() {
+        return;
+    }
+    STATE.lock().unwrap().fallbacks.insert(key.to_owned(), class);
+}
+
+/// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
+/// CPU (its `stratum …` spans, wherever they ran) and SQLite's VM steps. What the native engine lacks, by its cost.
+fn fallbacks(r: &mut String, state: &State) {
+    let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
+    let mut rows: Vec<(f64, u64, u64, &String, &String)> = state
+        .fallbacks
+        .iter()
+        .map(|(key, class)| {
+            let name = format!("stratum {key}");
+            let at = |p: &String| p == &name || p.ends_with(&format!("/{name}"));
+            let cpu: f64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.total).sum();
+            let calls: u64 = state.spans.iter().filter(|(p, _)| at(p)).map(|(_, t)| t.calls).sum();
+            let vm: u64 = state.sql.iter().filter(|((p, _), _)| at(p) || p.contains(&format!("{name}/"))).map(|(_, s)| s.vm).sum();
+            (cpu, vm, calls, key, class)
+        })
+        .collect();
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let total: f64 = rows.iter().map(|r| r.0).sum();
+    let _ = writeln!(r, "\n== Fell back to SQLite: {} strata the native engine declined, {total:.2} s CPU of {roots:.2} s", rows.len());
+    if rows.is_empty() {
+        return;
+    }
+    let mut by: BTreeMap<&String, (usize, f64, u64)> = BTreeMap::new();
+    for (cpu, vm, _, _, class) in &rows {
+        let e = by.entry(class).or_default();
+        e.0 += 1;
+        e.1 += cpu;
+        e.2 += vm;
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1));
+    let _ = writeln!(r, "By what the native engine has no step for:");
+    let _ = writeln!(r, "{:>9} {:>7} {:>14}  declined", "cpu s", "strata", "SQLite VM");
+    for (class, (n, cpu, vm)) in by.iter().take(15) {
+        let _ = writeln!(r, "{cpu:>9.3} {n:>7} {vm:>14}  {class}");
+    }
+    let _ = writeln!(r, "Costliest strata (their plans and reasons are under == Plan):");
+    let _ = writeln!(r, "{:>9} {:>6} {:>14}  stratum: declined", "cpu s", "runs", "SQLite VM");
+    for (cpu, vm, calls, key, class) in rows.iter().take(20) {
+        let _ = writeln!(r, "{cpu:>9.3} {calls:>6} {vm:>14}  {}: {class}", short(key, 90));
+    }
+}
+
 pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnce() -> String) {
     if !on() {
         return;
@@ -584,13 +808,112 @@ fn explain(r: &mut String, state: &State) {
     }
 }
 
+/// The memory section: the process now, the spans by bytes they allocated themselves, and those that raised the
+/// footprint's high-water mark (`memory`).
+fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
+    let (now, max) = memory::footprint();
+    let (live, resident) = memory::heap();
+    let _ = writeln!(
+        r,
+        "\n== Memory: footprint {} MB now, {} MB at most; jemalloc heap {} MB live, {} MB resident",
+        memory::mb(now as f64),
+        memory::mb(max as f64),
+        memory::mb(live as f64),
+        memory::mb(resident as f64)
+    );
+    let _ = writeln!(r, "Spans by bytes their thread allocated while open, less the spans inside them (own); kept = allocated less freed, in all");
+    let _ = writeln!(r, "{:>10} {:>10} {:>10} {:>9}  span", "own MB", "all MB", "kept MB", "calls");
+    let mut by: Vec<(&String, &SpanTotal)> = spans.iter().filter(|(_, t)| t.own_alloc > 0).collect();
+    by.sort_by_key(|(_, t)| std::cmp::Reverse(t.own_alloc));
+    for (p, t) in by.iter().take(25) {
+        let kept = t.alloc as f64 - t.freed as f64;
+        let _ = writeln!(r, "{:>10} {:>10} {:>10} {:>9}  {}", memory::mb(t.own_alloc as f64), memory::mb(t.alloc as f64), memory::mb(kept), t.calls, short(p, 140));
+    }
+    if by.is_empty() {
+        r.push_str(if memory::Counters::mine().read() == (0, 0) { "(no allocation recorded: no jemalloc counters on this build)\n" } else { "(no span has closed)\n" });
+    }
+    let mut rose: Vec<(&String, &SpanTotal)> = spans.iter().filter(|(_, t)| t.own_rise > 0).collect();
+    rose.sort_by_key(|(_, t)| std::cmp::Reverse(t.own_rise));
+    let _ = writeln!(r, "Spans that raised the footprint's high-water mark (own: less the spans inside them; the peak is the process's, so another thread may have raised it meanwhile)");
+    for (p, t) in rose.iter().take(15) {
+        let _ = writeln!(r, "{:>10} MB  {}", memory::mb(t.own_rise as f64), short(p, 140));
+    }
+}
+
+/// CPU (user + system) of the thread with Mach port `port` (macOS), read from another thread; `None` elsewhere.
+fn thread_cpu(port: u32) -> Option<f64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::thread_basic_info = unsafe { std::mem::zeroed() };
+        let mut count = (std::mem::size_of::<libc::thread_basic_info>() / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
+        // SAFETY: THREAD_BASIC_INFO fills `count` integers; a port of a thread that has exited returns an error.
+        let got = unsafe { libc::thread_info(port, libc::THREAD_BASIC_INFO as libc::thread_flavor_t, (&raw mut info).cast(), &mut count) };
+        if got != 0 {
+            return None;
+        }
+        let t = |v: libc::time_value_t| f64::from(v.seconds) + f64::from(v.microseconds) / 1e6;
+        Some(t(info.user_time) + t(info.system_time))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = port;
+        None
+    }
+}
+
+/// Every thread's open spans now, innermost last, with the CPU and bytes each has taken so far, and the SQL
+/// statement running: what a run was doing when it was dumped (`watch`). Open spans are not yet in the totals.
+pub(in crate::code_rule_dsl) fn open_spans() -> String {
+    let threads: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
+    let mut r = String::new();
+    let _ = writeln!(r, "== Open at the dump: each thread's open spans, outermost first, with CPU and bytes allocated since each opened");
+    let mut shown = 0;
+    for t in threads {
+        // A thread inside `span` holds its own lock only briefly; one that does not let go is reported as such.
+        let Some(t) = t.try_lock_for(std::time::Duration::from_millis(200)) else {
+            let _ = writeln!(r, "thread (busy: its span list stayed locked)");
+            continue;
+        };
+        if t.opens.is_empty() && t.statement.is_none() {
+            continue;
+        }
+        shown += 1;
+        let cpu = thread_cpu(t.port);
+        let (allocated, freed) = t.counters.read();
+        let _ = writeln!(
+            r,
+            "thread {:?}: cpu {} s, allocated {} MB, kept {} MB (its lifetime)",
+            t.name,
+            cpu.map_or_else(|| "?".to_owned(), |c| format!("{c:.2}")),
+            memory::mb(allocated as f64),
+            memory::mb(allocated as f64 - freed as f64)
+        );
+        for (depth, o) in t.opens.iter().enumerate() {
+            let name = o.path.rsplit('/').next().unwrap_or(&o.path);
+            let spent = cpu.map_or_else(|| "?".to_owned(), |c| format!("{:.3}", c - o.start));
+            let _ = writeln!(r, "  {:>9} s {:>9} MB  {}{}", spent, memory::mb(allocated.saturating_sub(o.alloc.0) as f64), "  ".repeat(depth), short(name, 160));
+        }
+        if let Some((text, since)) = &t.statement {
+            let _ = writeln!(r, "  SQL running for {:.2} s (wall): {}", since.elapsed().as_secs_f64(), short(text, 600));
+            let plan = STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).notes.get(&format!("plan:{}", normal(text))).cloned();
+            for line in plan.iter().flat_map(|p| p.lines()) {
+                let _ = writeln!(r, "      {line}");
+            }
+        }
+    }
+    if shown == 0 {
+        r.push_str("(no thread has an open span: profiling is off, or the run had not started)\n");
+    }
+    r
+}
+
 /// The report, and the tables, into `dir`. `header`: what was run (lines put first).
 pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let state = STATE.lock().unwrap();
-    let mut spans_tsv = String::from("path\tcalls\tcpu_s\town_s\n");
+    let mut spans_tsv = String::from("path\tcalls\tcpu_s\town_s\talloc_bytes\town_alloc_bytes\tfreed_bytes\tpeak_rise_bytes\town_peak_rise_bytes\n");
     for (p, t) in &state.spans {
-        let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}", t.calls, t.total, t.own);
+        let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", t.calls, t.total, t.own, t.alloc, t.own_alloc, t.freed, t.rise, t.own_rise);
     }
     std::fs::write(dir.join("spans.tsv"), spans_tsv)?;
     let mut sql: Vec<_> = state.sql.iter().collect();
@@ -609,12 +932,25 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}", work(steps), s.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
+    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\n");
+    for (key, t) in &state.placements {
+        let _ = writeln!(
+            placement_tsv,
+            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}",
+            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(",")
+        );
+    }
+    std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
 
     // The report.
     let mut r = String::new();
     r.push_str(header);
+    fallbacks(&mut r, &state);
+    placements(&mut r, &state);
     explain(&mut r, &state);
-    let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
+    // A root is a span with no parent recorded: a top span, or one whose parent was still open (a dump).
+    let root = |p: &str| p.rsplit_once('/').is_none_or(|(parent, _)| !state.spans.contains_key(parent));
+    let roots: f64 = state.spans.iter().filter(|(p, _)| root(p)).map(|(_, t)| t.total).sum();
     let _ = writeln!(r, "\n== Spans: CPU (user + system), summed over calls; own = less the spans inside it ({roots:.2} s in all)");
     let _ = writeln!(r, "{:>9} {:>9} {:>6} {:>9}  span", "cpu s", "own s", "%", "calls");
     // A tree: each span under its parent, children by CPU.
@@ -622,7 +958,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let mut kids: Vec<(&String, &SpanTotal)> = spans
             .iter()
             .filter(|(p, _)| match parent {
-                None => !p.contains('/'),
+                None => p.rsplit_once('/').is_none_or(|(parent, _)| !spans.contains_key(parent)),
                 Some(par) => p.strip_prefix(par).and_then(|rest| rest.strip_prefix('/')).is_some_and(|rest| !rest.contains('/')),
             })
             .collect();
@@ -638,6 +974,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         }
     }
     walk(&mut r, &state.spans, None, 0, roots);
+    memory_report(&mut r, &state.spans);
 
     let sql_ns: u64 = sql.iter().map(|(_, s)| s.ns).sum();
     let sql_vm: u64 = sql.iter().map(|(_, s)| s.vm).sum();
@@ -842,6 +1179,50 @@ mod tests {
         assert!(statements().iter().any(|(p, t, _)| p == "a/b" && t == "SELECT 1"));
     }
 
+    /// Decision 0084: a span charges the bytes its thread allocated, its own apart from its children's, and what it
+    /// freed; a dump lists the spans still open on every thread, with the SQL statement running.
+    #[test]
+    fn spans_charge_memory_and_a_dump_lists_what_is_open() {
+        let _serial = one_run();
+        set(true);
+        reset();
+        let mb = 1 << 20;
+        {
+            let _outer = span(|| "outer".into());
+            let kept = std::hint::black_box(vec![1u8; 8 * mb]);
+            {
+                let _inner = span(|| "inner".into());
+                drop(std::hint::black_box(vec![2u8; 16 * mb]));
+            }
+            drop(kept);
+        }
+        // Another thread, stopped inside a span with a statement running, while this one dumps.
+        let (opened, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let holder = std::thread::Builder::new()
+            .name("holder".into())
+            .spawn(move || {
+                let _held = span(|| "held open".into());
+                statement(Some("SELECT 42".into()));
+                opened.0.send(()).unwrap();
+                release.1.recv().unwrap();
+                statement(None);
+            })
+            .unwrap();
+        opened.1.recv().unwrap();
+        let open = open_spans();
+        release.0.send(()).unwrap();
+        holder.join().unwrap();
+        let s = spans();
+        set(false);
+        let jemalloc = memory::Counters::mine().read() != (0, 0);
+        if jemalloc {
+            assert!(s["outer/inner"].alloc >= 16 * mb as u64, "{}", s["outer/inner"].alloc);
+            assert!(s["outer"].alloc >= 24 * mb as u64 && s["outer"].own_alloc >= 8 * mb as u64 && s["outer"].own_alloc < 16 * mb as u64);
+            assert!(s["outer"].freed >= 24 * mb as u64);
+        }
+        assert!(open.contains("thread \"holder\"") && open.contains("held open") && open.contains("SQL running") && open.contains("SELECT 42"), "{open}");
+    }
+
     #[test]
     fn explain_shows_engines_plans_devices_and_decisions() {
         let _serial = one_run();
@@ -866,12 +1247,18 @@ mod tests {
             let _s = span(|| "xspan".into());
             device("xkernel", 1, 0.002, 0.003, 100);
         }
+        // A stratum that fell back to SQLite, and its span.
+        stratum("xsql", "SQL wave kernel", || "the native engine declined".into());
+        fallback("xsql", "aggregate join (string concatenation)".into());
+        drop(span(|| "stratum xsql".into()));
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("explain");
         write(&dir, "header\n").unwrap();
         let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
         set(false);
         assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
         assert!(report.contains("why: every rule has a native step"));
+        assert!(report.contains("== Fell back to SQLite: 1 strata"), "{report}");
+        assert!(report.contains("xsql: aggregate join (string concatenation)"), "{report}");
         assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
         // Actual rows add over the loops.
         assert!(report.contains("actual 9 -> 3"), "{report}");

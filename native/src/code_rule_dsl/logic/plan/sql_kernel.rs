@@ -29,7 +29,7 @@ pub(super) fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
     Ok((out, sentinels))
 }
 
-fn program_for(run: &Run<'_>, rels: &BTreeSet<String>) -> Result<schedule::Program> {
+fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::Program> {
     let mut operations = BTreeMap::new();
     let mut lattices_meta = Vec::new();
     for rel in rels {
@@ -79,7 +79,7 @@ fn program_for(run: &Run<'_>, rels: &BTreeSet<String>) -> Result<schedule::Progr
     })
 }
 
-pub(super) fn merge(run: &Run<'_>, rel: &str, select: &str) -> Result<usize> {
+pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
     let mut p = program_for(run, &BTreeSet::from([rel.into()]))?;
     p.steps.push(schedule::Step {
         output: rel.into(),
@@ -96,7 +96,7 @@ pub(super) fn merge(run: &Run<'_>, rel: &str, select: &str) -> Result<usize> {
 }
 
 pub(super) fn component(
-    run: &mut Run<'_>,
+    run: &mut Run<'_, '_>,
     scc: &BTreeSet<String>,
     rules: &[&Rule],
     planned: &[(Atom, Vec<Step>)],
@@ -150,6 +150,7 @@ pub(super) fn component(
         })
         .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
     let mut emitted = emit::Emitted {
+        analysis: std::sync::Arc::clone(&run.model.analysis),
         program: p,
         queries,
         setup: vec![],

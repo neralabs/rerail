@@ -60,7 +60,7 @@ pub(in crate::code_rule_dsl) use self::core::{drop_unread_core, is_core};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, Term as STerm, quote};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, Literal, Native, Program, RESERVED, Rule, SpanIn, Term, Value, axis};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, Literal, Native, Program, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
 mod findings;
@@ -105,7 +105,7 @@ pub(super) fn unanchored(p: &Term) -> Option<&Term> {
 }
 
 /// The built-ins that take a relation, and its position.
-pub(super) const RELATION_ARG: [(&str, &[usize]); 7] = [
+pub(super) const RELATION_ARG: [(&str, &[usize]); 8] = [
     ("within_stop", &[2]),
     ("nearest", &[2]),
     ("precedes_stop", &[2]),
@@ -113,6 +113,7 @@ pub(super) const RELATION_ARG: [(&str, &[usize]); 7] = [
     ("has", &[2]),
     ("dfs_first", &[3, 4]),
     ("dfs_first_memo", &[3, 4, 5]),
+    ("components", &[3, 4]),
 ];
 
 fn not_yet<T>(what: impl std::fmt::Display) -> Result<T, Error> {
@@ -179,6 +180,9 @@ struct Lowerer {
     siblings: Vec<Lit>,
     /// The relations the clause being lowered writes: a context leaves their atoms out where it can (`context`).
     heads: BTreeSet<String>,
+    /// A context for a `match_all` over a span (`aggregate`): made of the rule's literals, not inputs alone, so it
+    /// binds the span where the rule does and `span_patterns` finds its containers (decision 0081).
+    span_context: bool,
     /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
     /// lattice's top value (`v != top`), as the translated programs write it.
     top_is_var: bool,
@@ -193,6 +197,87 @@ struct Lowerer {
     /// The demand relations the text declares itself (O101): a printed program (`rr::print`) carries the demands
     /// it was lowered with, so reading it back makes none again.
     printed_demands: BTreeSet<String>,
+}
+
+/// The globs a program's `.scope` settings select documents by: (within, out), `dirs` and `include` within, `exclude`
+/// and `tests false` out. `None` for no scope and for `.scope given` (the files are a caller's, a test's, not found
+/// by walking a repository). `report dirs`, `text` and `embedded` say where findings land and how files are read, not
+/// which; an `option("…")` entry's value is a policy option's, not known here.
+pub(super) fn scope_globs(settings: &[(String, String)]) -> Option<(Vec<String>, Vec<String>)> {
+    if settings.iter().any(|(k, t)| k == "scope" && t.trim() == "given") {
+        return None;
+    }
+    let (mut within, mut out) = (Vec::new(), Vec::new());
+    for (_, text) in settings.iter().filter(|(k, _)| k == "scope") {
+        // The setting's tokens: comments are not in them.
+        let Ok(tokens) = super::syntax::tokens(text) else { continue };
+        let tokens: Vec<&super::syntax::Tok> = tokens.iter().map(|t| &t.0).collect();
+        let words: Vec<&str> = tokens.iter().filter_map(|t| if let super::syntax::Tok::Id(w) = t { Some(w.as_str()) } else { None }).collect();
+        // `report dirs` and `text` say where findings land and how files are read, not which.
+        if words.first().is_some_and(|w| matches!(*w, "report" | "text" | "embedded")) {
+            continue;
+        }
+        let mut word = "";
+        for (k, t) in tokens.iter().enumerate() {
+            match t {
+                // `option("…")`: an entry from a policy option, kept by name until the run's options are known
+                // (`front::OPTION_GLOB`); the form before it (`dirs`, `include`, `exclude`) stays the word.
+                super::syntax::Tok::Id(w) if w == "option" && matches!(tokens.get(k + 1), Some(super::syntax::Tok::P("("))) => {
+                    if let Some(super::syntax::Tok::Str(name)) = tokens.get(k + 2) {
+                        let entry = format!("{}{word}:{name}", crate::code_rule_dsl::logic::front::OPTION_GLOB);
+                        match word {
+                            "dirs" | "include" => within.push(entry),
+                            "exclude" => out.push(entry),
+                            _ => {}
+                        }
+                    }
+                }
+                super::syntax::Tok::Id(_) if matches!(tokens.get(k + 1), Some(super::syntax::Tok::P("("))) => word = "",
+                super::syntax::Tok::Id(w) => {
+                    if w == "false" && word == "tests" {
+                        out.extend(["test/**", "**/test/**", "tests/**", "**/tests/**"].map(str::to_owned));
+                    }
+                    word = w.as_str();
+                }
+                super::syntax::Tok::Str(g) if !matches!(tokens.get(k.wrapping_sub(1)), Some(super::syntax::Tok::P("("))) => match word {
+                    "dirs" => within.push(format!("{}/**", g.trim_end_matches('/'))),
+                    "include" => within.push(g.clone()),
+                    "exclude" => out.push(g.clone()),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+    if within.is_empty() && out.is_empty() {
+        return None;
+    }
+    Some((within, out))
+}
+
+/// The globs a `.scope <form> "…", …` setting lists, for a form that is not about which documents are read (`text`,
+/// `report dirs`).
+fn scope_list(settings: &[(String, String)], form: &[&str]) -> Vec<String> {
+    let mut found = Vec::new();
+    for (_, text) in settings.iter().filter(|(k, _)| k == "scope") {
+        let Ok(tokens) = super::syntax::tokens(text) else { continue };
+        let words: Vec<&str> = tokens.iter().take(form.len()).filter_map(|t| if let super::syntax::Tok::Id(w) = &t.0 { Some(w.as_str()) } else { None }).collect();
+        if words != form {
+            continue;
+        }
+        found.extend(tokens.iter().filter_map(|t| if let super::syntax::Tok::Str(g) = &t.0 { Some(g.clone()) } else { None }));
+    }
+    found
+}
+
+/// `.scope text "**/*.md", …`: documents read as text only (`front::Program::text_globs`).
+pub(super) fn scope_text_globs(settings: &[(String, String)]) -> Vec<String> {
+    scope_list(settings, &["text"])
+}
+
+/// `.scope report dirs "api", …`: where findings may land, as globs; facts still come from the whole scope.
+fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
+    scope_list(settings, &["report", "dirs"]).into_iter().map(|d| format!("{}/**", d.trim_end_matches('/'))).collect()
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
@@ -229,6 +314,10 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 [key, k] if key == crate::code_rule_dsl::typing::cross_rounds::PRAGMA && k.parse::<usize>().is_ok() => {
                     l.prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(k));
                 }
+                // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
+                [key, rels] if key == "cross-memo" => {
+                    l.prog.settings.push(("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\"")));
+                }
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
             Item::Policy(document) => l.prog.policies.push(document),
@@ -262,6 +351,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.declare_core()?;
     l.projections();
     l.span_patterns()?;
+    l.grammar_names()?;
     // The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
     // does not derive them (`next_sibling`, `precedes`) are declared in `core.rr` for the checker; they are no
     // relations of the program.
@@ -275,6 +365,12 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.kind_sets()?;
     l.unit();
     lower_boolean_relations(&mut l.prog);
+    // A printed program (its findings already rules) is read again with its `.scope` settings: the documents it
+    // selects are the same.
+    l.prog.text_globs = scope_text_globs(&l.prog.settings);
+    if l.prog.doc_scopes.is_none() {
+        l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
+    }
     crate::code_rule_dsl::logic::front::finish(l.prog)
 }
 
@@ -534,6 +630,7 @@ impl Lowerer {
             .and_then(|(_, text)| text.split('"').nth(1))
             .unwrap_or_default()
             .to_owned();
+        let scoped = self.scope_filter();
         self.prog.decls.insert("violation".to_owned(), [("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
         self.prog.outputs.retain(|o| o != "violation");
         self.prog.outputs.push("violation".to_owned());
@@ -559,18 +656,24 @@ impl Lowerer {
             } else {
                 vec![atom("docof", vec![v("rr_v0"), v("rr_d")]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")])]
             };
-            self.prog.rules.push(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).collect() });
+            self.prog.rules.push(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
             if !f.node && place_values {
                 let of = |g: &str| Term::Call(g.to_owned(), vec![v("rr_v0")]);
                 let mut found = head.clone();
                 found.args[3] = of(PLACE_PATH);
                 found.args[4] = of(PLACE_LINE);
-                self.prog.rules.push(Rule { head: found, body: vec![atom(&f.name, cols.clone()), Literal::Cmp { l: v("rr_v0"), op: "<", r: Term::Int(UNSET) }] });
+                let mut body = vec![atom(&f.name, cols.clone()), Literal::Cmp { l: v("rr_v0"), op: "<", r: Term::Int(UNSET) }];
+                // The scope tests the place's path, bound for it here.
+                if !scoped.is_empty() {
+                    body.push(Literal::Cmp { l: v("rr_p"), op: "=", r: of(PLACE_PATH) });
+                    body.extend(scoped.iter().cloned());
+                }
+                self.prog.rules.push(Rule { head: found, body });
             }
             if f.places {
                 let mut args = vec![v("rr_p"), v("rr_l")];
                 args.extend(cols.into_iter().skip(1));
-                self.prog.rules.push(Rule { head, body: vec![atom(&place_relation(&f.name), args)] });
+                self.prog.rules.push(Rule { head, body: std::iter::once(atom(&place_relation(&f.name), args)).chain(scoped.iter().cloned()).collect() });
             }
         }
         // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
@@ -581,6 +684,7 @@ impl Lowerer {
                 // A file's own error: a guest's is `.on guest_error`'s.
                 let not_guest = Literal::Atom(Atom { rel: "guest".to_owned(), args: vec![v("rr_d"), Term::Wild, Term::Wild, Term::Wild], neg: true, gated: false });
                 let mut body = vec![atom("syntax_error", vec![v("rr_d"), line, Term::Wild]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), not_guest];
+                body.extend(scoped.iter().cloned());
                 if line_one {
                     body.push(Literal::Cmp { l: v("rr_l"), op: "=", r: Term::Int(1) });
                 }
@@ -620,6 +724,91 @@ impl Lowerer {
         Ok(())
     }
 
+    /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rr`): a document's path is in scope in one
+    /// of `dirs` (each a directory or a glob of one, at the root) or `include`'s globs when there are any, in none
+    /// of `exclude`'s, and with `tests false` under no `test` or `tests` path part. Findings in other documents are
+    /// dropped; one at a path that is no document (a budget file) is kept. Facts still come from every file. A
+    /// `.scope given` program reads the files it is given, all in scope.
+    fn scope_filter(&mut self) -> Vec<Literal> {
+        let report = scope_report_globs(&self.prog.settings);
+        let given = self.prog.settings.iter().any(|(k, t)| k == "scope" && t.trim() == "given");
+        let (within, out) = match scope_globs(&self.prog.settings) {
+            Some(globs) => globs,
+            None if !report.is_empty() && !given => (Vec::new(), Vec::new()),
+            None => return Vec::new(),
+        };
+        // The corpus reads only these documents (`front::Program::doc_scopes`): their facts are the policy's, as the
+        // scripts' discovery has them; the drop below still holds for a combined run that reads more.
+        if !within.is_empty() || !out.is_empty() {
+            self.prog.doc_scopes = Some(vec![(within.clone(), out.clone())]);
+        }
+        let v = |s: &str| Term::Var(s.to_owned());
+        let doc = Literal::Atom(Atom { rel: "doc".to_owned(), args: vec![v("d"), v("p"), Term::Wild], neg: false, gated: false });
+        let glob = |g: &str| Literal::Cmp { l: Term::Call("glob".to_owned(), vec![v("p"), Term::Str(g.to_owned())]), op: "=", r: Term::Int(1) };
+        // An entry from a policy option (`front::OPTION_GLOB`): the option's values, as `option_item` holds them; a
+        // directory's documents are those under it.
+        let option_entry = |g: &str| g.strip_prefix(crate::code_rule_dsl::logic::front::OPTION_GLOB).and_then(|r| r.split_once(':')).map(|(f, n)| (f.to_owned(), n.to_owned()));
+        let by_option = |form: &str, name: &str| -> Vec<Literal> {
+            let item = Literal::Atom(Atom { rel: "option_item".to_owned(), args: vec![Term::Str(name.to_owned()), Term::Wild, v("rr_o")], neg: false, gated: false });
+            let test = if form == "dirs" {
+                Literal::Cmp { l: Term::Call("prefix".to_owned(), vec![v("p"), Term::Call("concat".to_owned(), vec![v("rr_o"), Term::Str("/".to_owned())])]), op: "=", r: Term::Int(1) }
+            } else {
+                Literal::Cmp { l: Term::Call("glob".to_owned(), vec![v("p"), v("rr_o")]), op: "=", r: Term::Int(1) }
+            };
+            vec![item, test]
+        };
+        if within.iter().chain(&out).chain(&report).any(|g| option_entry(g).is_some()) {
+            self.prog.decls.entry("option_item".to_owned()).or_insert_with(|| [("name", "sym"), ("i", "int"), ("v", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+            if !self.prog.inputs.iter().any(|i| i == "option_item") {
+                self.prog.inputs.push("option_item".to_owned());
+            }
+        }
+        let test = |g: &str| -> Vec<Literal> {
+            match option_entry(g) {
+                Some((form, name)) => by_option(&form, &name),
+                None => vec![glob(g)],
+            }
+        };
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
+        let head = |rel: &str, var: &str| Atom { rel: rel.to_owned(), args: vec![v(var)], neg: false, gated: false };
+        self.prog.decls.entry("doc".to_owned()).or_insert_with(|| [("d", "int"), ("path", "sym"), ("module", "sym")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        if !self.prog.inputs.iter().any(|i| i == "doc") {
+            self.prog.inputs.push("doc".to_owned());
+        }
+        // rr_scope_drop(p): a document's path out of the scope.
+        self.prog.decls.insert("rr_scope_drop".to_owned(), vec![("p".to_owned(), "sym".to_owned())]);
+        if !within.is_empty() {
+            self.prog.decls.insert("rr_scope_in".to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+            for g in &within {
+                self.prog.rules.push(Rule { head: head("rr_scope_in", "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+            }
+            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: vec![doc.clone(), atom("rr_scope_in", vec![v("d")], true)] });
+        }
+        for g in &out {
+            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+        }
+        // rr_scope_not(d): a document out of the scope, which a combined run's guards negate (decision 0091): in a
+        // pack that reads more documents than this policy's scope, the policy's rules see only the others' rows.
+        if !within.is_empty() || !out.is_empty() {
+            self.prog.decls.insert(SCOPE_NOT.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+            if !within.is_empty() {
+                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: vec![doc.clone(), atom("rr_scope_in", vec![v("d")], true)] });
+            }
+            for g in &out {
+                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+            }
+        }
+        // `.scope report dirs`: a finding in a document under none of them is dropped too.
+        if !report.is_empty() {
+            self.prog.decls.insert("rr_report_in".to_owned(), vec![("d".to_owned(), "int".to_owned())]);
+            for g in &report {
+                self.prog.rules.push(Rule { head: head("rr_report_in", "d"), body: vec![doc.clone(), glob(g)] });
+            }
+            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: vec![doc.clone(), atom("rr_report_in", vec![v("d")], true)] });
+        }
+        vec![atom("rr_scope_drop", vec![v("rr_p")], true)]
+    }
+
     /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
     fn guest_input(&mut self) {
         let cols = [("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")];
@@ -644,6 +833,13 @@ impl Lowerer {
             if key == "guests" {
                 if let [v @ ("on" | "off")] = words.as_slice() {
                     facts.push(("library".to_owned(), (*v).to_owned()));
+                }
+                continue;
+            }
+            // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rr`).
+            if key == "scope" {
+                if let ["embedded", v @ ("true" | "false")] = words.as_slice() {
+                    facts.push(("library".to_owned(), if *v == "true" { "on" } else { "off" }.to_owned()));
                 }
                 continue;
             }
@@ -838,7 +1034,7 @@ impl Lowerer {
                 }
                 out
             }
-            Lit::Pattern { pattern, .. } => return not_yet(format!("the pattern `{pattern}`")),
+            Lit::Pattern { subject, pattern, neg } => self.pattern(subject, pattern, *neg)?,
             Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "nearest" | "inside" | "has" | "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some() => {
                 self.node_axis(rel, args, *neg, outer)?
             }
@@ -1325,11 +1521,21 @@ impl Lowerer {
         let Term::Var(nv) = &n else { return Err(Error::Syntax("within_stop: the node is a variable".to_owned())) };
         let s = self.fresh("stop");
         let nearest = Literal::Nearest { n: nv.clone(), a: s.clone(), kindset: set.clone() };
+        // The nearest stop against a is by the tree, not by comparing ids (ids need not follow preorder, decision
+        // 0083 §3).
         if neg {
-            return Ok(vec![below(true), below(false).into_iter().chain([nearest, cmp(&Term::Var(s), ">", &a)]).collect()]);
+            // n is not below a, or its nearest stop is strictly below a.
+            let between = Literal::Atom(Atom { rel: within.to_owned(), args: vec![Term::Var(s.clone()), a.clone()], neg: false, gated: false });
+            return Ok(vec![below(true), below(false).into_iter().chain([nearest, between]).collect()]);
         }
         let none = Literal::Atom(Atom { rel: format!("{AXIS}{set}"), args: vec![n.clone(), Term::Wild], neg: true, gated: false });
-        Ok(vec![below(false).into_iter().chain([none]).collect(), below(false).into_iter().chain([nearest, cmp(&Term::Var(s), "<=", &a)]).collect()])
+        // The nearest stop is a, or a is below it.
+        let above = Literal::Atom(Atom { rel: within.to_owned(), args: vec![a.clone(), Term::Var(s.clone())], neg: false, gated: false });
+        Ok(vec![
+            below(false).into_iter().chain([none]).collect(),
+            below(false).into_iter().chain([nearest.clone(), cmp(&Term::Var(s.clone()), "=", &a)]).collect(),
+            below(false).into_iter().chain([nearest, above]).collect(),
+        ])
     }
 
     /// `match_all("re", s)`, and `match` with named groups (`core.rr`).
@@ -1379,7 +1585,10 @@ impl Lowerer {
         for term in positions { if let STerm::Var(v) = term { produced.push(v.clone()); } }
         let reads_capture = |l: &Lit| body_vars(std::slice::from_ref(l)).iter().any(|x| produced.contains(x));
         self.siblings.retain(|l| !reads_capture(l) && !matches!(l, Lit::Atom { rel, .. } if rel == "match_all"));
+        // The text a pattern scans keeps the derived atoms that say which nodes or spans it is (decision 0081).
+        self.span_context = true;
         let ctx = self.context(std::slice::from_ref(v));
+        self.span_context = false;
         self.siblings = saved;
         let ctx = ctx?;
         let name = self.fresh("mall");
@@ -1404,39 +1613,83 @@ impl Lowerer {
         Ok(vec![vec![Literal::Atom(Atom { rel: name, args, neg: false, gated: false })]])
     }
 
+    /// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
+    /// one the language registry has (decision 0082): a supported dialect's label or a fragment. A name it does not
+    /// have would make no guest and say nothing.
+    fn grammar_names(&self) -> Result<(), Error> {
+        let at = |rel: &str| match rel {
+            "embed" | "embed_value" => Some(2),
+            "parsed" | "sub_tape" => Some(1),
+            _ => None,
+        };
+        for rule in &self.prog.rules {
+            let atoms = std::iter::once(&rule.head).chain(rule.body.iter().filter_map(Literal::atom));
+            for a in atoms {
+                if let Some(i) = at(&a.rel)
+                    && let Some(Term::Str(g)) = a.args.get(i)
+                    && !crate::code_rule_dsl::language::is_grammar(g)
+                {
+                    return Err(Error::Syntax(format!(
+                        "{}: no grammar {g:?}; a grammar is a language registry dialect's label or fragment (languages/*.json)",
+                        rule.head.rel
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
-    /// the same body by `source`, `src_line` or `kind(c, "comment")`. Read off the rules, so a printed program (`rr::print`) has them too.
-    /// A derived relation's column holds `source` spans, or `src_line` spans, when every rule binds it so: directly,
-    /// or through another such column (a fixpoint).
+    /// the same body by `source`, `src_line`, `kind(c, K)` (a comment, or a node of kind K) or another `rx_span`'s
+    /// group (a capture; decision 0081). Read off the rules, so a printed program (`rr::print`) has them too.
+    /// A derived relation's column holds the spans its rules bind it to: each rule binds it so, directly or through
+    /// another such column (a fixpoint); rules that bind it differently give it each (string contents and comments).
     fn span_patterns(&mut self) -> Result<(), Error> {
-        let mut columns: BTreeMap<(String, usize), SpanIn> = BTreeMap::new();
-        let binder = |body: &[Literal], x: &str, columns: &BTreeMap<(String, usize), SpanIn>| {
+        let mut columns: BTreeMap<(String, usize), BTreeSet<SpanIn>> = BTreeMap::new();
+        let mut rounds = 0;
+        let binder = |body: &[Literal], x: &str, columns: &BTreeMap<(String, usize), BTreeSet<SpanIn>>| -> Option<BTreeSet<SpanIn>> {
             body.iter().filter_map(Literal::atom).filter(|b| !b.neg).find_map(|b| match (b.rel.as_str(), b.args.as_slice()) {
-                ("source", [_, Term::Var(y)]) if y == x => Some(SpanIn::Source),
-                ("src_line", [_, _, Term::Var(y)]) if y == x => Some(SpanIn::Line),
-                ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some(SpanIn::Comment),
-                _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).copied()).flatten()),
+                ("source", [_, Term::Var(y)]) if y == x => Some([SpanIn::Source].into()),
+                ("src_line", [_, _, Term::Var(y)]) if y == x => Some([SpanIn::Line].into()),
+                ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some([SpanIn::Comment].into()),
+                ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some([SpanIn::Kind(k.clone())].into()),
+                ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some([SpanIn::Capture(p.clone(), g.clone())].into()),
+                _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.clone(), i)).cloned()).flatten()),
             })
         };
+        // A declared relation no rule derives, and that is not read in, has no rows: its columns hold no nodes, and a
+        // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
+        {
+            let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
+            for (rel, cols) in &self.prog.decls {
+                if !heads.contains(rel) && !self.prog.inputs.iter().any(|i| i == rel) && !self.prog.natives.contains_key(rel) {
+                    for i in 0..cols.len() {
+                        columns.insert((rel.clone(), i), BTreeSet::new());
+                    }
+                }
+            }
+        }
         loop {
             let mut found = BTreeMap::new();
             let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
             for rel in heads {
                 let rules: Vec<&Rule> = self.prog.rules.iter().filter(|r| &r.head.rel == rel).collect();
                 for i in 0..rules[0].head.args.len() {
-                    let each: Option<Vec<SpanIn>> = rules.iter().map(|r| match r.head.args.get(i) {
+                    let each: Option<Vec<BTreeSet<SpanIn>>> = rules.iter().map(|r| match r.head.args.get(i) {
                         Some(Term::Var(x)) => binder(&r.body, x, &columns),
                         _ => None,
                     }).collect();
-                    if let Some(each) = each
-                        && each.windows(2).all(|w| w[0] == w[1])
-                        && !columns.contains_key(&(rel.clone(), i))
-                    {
-                        found.insert((rel.clone(), i), each[0]);
+                    if let Some(each) = each {
+                        let all: BTreeSet<SpanIn> = each.into_iter().flatten().collect();
+                        if columns.get(&(rel.clone(), i)) != Some(&all) {
+                            found.insert((rel.clone(), i), all);
+                        }
                     }
                 }
             }
-            if found.is_empty() {
+            rounds += 1;
+            // Sets only grow, and are bounded by the program's patterns and kinds; the bound is a guard.
+            if found.is_empty() || rounds > 64 {
                 break;
             }
             columns.extend(found);
@@ -1447,9 +1700,17 @@ impl Lowerer {
                     return Err(Error::Syntax(format!("{}: rx_span reads a constant pattern over a span variable", rule.head.rel)));
                 };
                 let Some(within) = binder(&rule.body, c, &columns) else {
-                    return not_yet(format!("{}: match_all over ${c}, a node or span not of `source`, `src_line` or a comment (O80: a node's matches as spans)", rule.head.rel));
+                                        return not_yet(format!("{}: match_all over ${c}, a node or span not bound by `source`, `src_line`, `kind` or a capture", rule.head.rel));
                 };
-                self.prog.rx_spans.insert((within, p.clone()));
+                for w in within {
+                    self.prog.rx_spans.insert((w, p.clone()));
+                }
+            }
+            // The AST patterns, read off the rules too.
+            for a in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "ast_match") {
+                if let Some(Term::Str(p)) = a.args.first() {
+                    self.prog.ast_patterns.insert(p.clone());
+                }
             }
         }
         Ok(())
@@ -1475,6 +1736,31 @@ impl Lowerer {
         Ok(vec![vec![text, test]])
     }
 
+    /// ``n ~ `pattern` ``: node n is a match of the AST pattern (ast-grep's syntax, in the program's language), and
+    /// each metavariable `$X` binds variable X to the node it captured. The batch matches the pattern once over each
+    /// document (`core_rr::CoreRows::patterns`) and makes `ast_match(p, n, g, c)`: capture g of the match at n is
+    /// node c, and capture "" is n itself. A negated pattern binds nothing: no match at n. A `$$$X` (a run of
+    /// nodes) and a `$_X` capture nothing.
+    fn pattern(&mut self, subject: &STerm, pattern: &str, neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+        let STerm::Var(n) = subject else {
+            return Err(Error::Syntax(format!("`{pattern}`: a pattern's subject is a variable")));
+        };
+        if !self.prog.inputs.iter().any(|i| i == "ast_match") {
+            self.prog.inputs.push("ast_match".to_owned());
+            let cols = [("p", "sym"), ("n", "node"), ("g", "sym"), ("c", "node")];
+            self.prog.decls.insert("ast_match".to_owned(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        }
+        let atom = |g: &str, c: Term, neg: bool| {
+            Literal::Atom(Atom { rel: "ast_match".to_owned(), args: vec![Term::Str(pattern.to_owned()), Term::Var(n.clone()), Term::Str(g.to_owned()), c], neg, gated: false })
+        };
+        if neg {
+            return Ok(vec![vec![atom("", Term::Wild, true)]]);
+        }
+        let mut out = vec![atom("", Term::Wild, false)];
+        out.extend(super::single_metavars(pattern).into_iter().map(|x| atom(&x, Term::Var(x.clone()), false)));
+        Ok(vec![out])
+    }
+
     /// `rx_span` as an input of the program (`facts::vtab::syntax`'s `Extra` makes it).
     fn rx_span_input(&mut self) {
         if !self.prog.inputs.iter().any(|i| i == "rx_span") {
@@ -1497,9 +1783,22 @@ impl Lowerer {
         })
     }
 
-    /// Whether a sibling atom reads `v` at a column declared a node (a node or span).
+    /// Whether a sibling atom reads `v` at a column declared a node (a node or span), or `v` is a named group of a
+    /// sibling `match_all` (or `match`) over a node or span: `rx_span`'s capture `m` is a span. Without the second, a
+    /// test of the capture in the same body (`match_all("(?<w>…)", t), match("…", w)`, RUF001's words) was a test of
+    /// the span's id as a text, and never held.
     fn node_typed(&self, v: &str) -> bool {
+        self.node_typed_at(v, 0)
+    }
+
+    fn node_typed_at(&self, v: &str, depth: usize) -> bool {
         self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, args, neg: false } if depth < 4 && matches!(rel.as_str(), "match_all" | "match") => match args.as_slice() {
+                [STerm::Str(re), STerm::Var(s), ..] if s != v && groups(re).iter().any(|g| g == v) => {
+                    self.span_container(s).is_some() || self.node_typed_at(s, depth + 1)
+                }
+                _ => false,
+            },
             Lit::Atom { rel, args, neg: false } => self.prog.decls.get(rel).is_some_and(|cols| {
                 args.iter().zip(cols).any(|(a, (_, t))| matches!(a, STerm::Var(x) if x == v) && t == "node")
             }),
@@ -1659,6 +1958,14 @@ impl Lowerer {
                 let rel = self.dfs_first(&edge, &target, roots.as_deref());
                 return Ok(Literal::Atom(Atom { rel, args: vec![self.term(r)?, self.term(hit)?, self.term(first)?], neg, gated: false }));
             }
+            ("components", [d, c, k, edge, own]) => {
+                let name = |t: &STerm| match t {
+                    STerm::Var(v) => Ok(v.clone()),
+                    _ => Err(Error::Syntax("components: the edge and own relations are named".to_owned())),
+                };
+                let rel = self.components(&name(edge)?, &name(own)?);
+                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(d)?, self.term(c)?, self.term(k)?], neg, gated: false }));
+            }
             _ => {}
         }
         if let Some((_, _)) = RELATION_ARG.iter().find(|(r, _)| *r == rel) {
@@ -1691,6 +1998,24 @@ impl Lowerer {
         let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
         self.prog.decls.insert(rel.clone(), cols);
         self.prog.natives.insert(rel.clone(), Native::DfsFirst { edge: edge.to_owned(), target: target.to_owned(), roots: roots.map(str::to_owned) });
+        rel
+    }
+
+    /// `components(_, _, _, edge, own)`'s relation `rr_components_<edge>_<own>`: `(d, c, key)`, made natively
+    /// (`front::Native::Components`). Its one rule reads both inputs and joins two documents, so it is evaluated
+    /// after them and in the cross-file part; the evaluator makes its rows, not the rule.
+    fn components(&mut self, edge: &str, own: &str) -> String {
+        let rel = format!("rr_components_{edge}_{own}");
+        if self.prog.natives.contains_key(&rel) {
+            return rel;
+        }
+        let v = |n: &str| Term::Var(n.to_owned());
+        let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
+        let body = vec![atom(own, vec![v("d"), v("k")]), atom(edge, vec![v("d"), v("e")]), atom(own, vec![v("e"), Term::Wild])];
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("d"), v("e"), v("k")], neg: false, gated: false }, body });
+        let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
+        self.prog.decls.insert(rel.clone(), cols);
+        self.prog.natives.insert(rel.clone(), Native::Components { edge: edge.to_owned(), own: own.to_owned() });
         rel
     }
 
@@ -1762,6 +2087,28 @@ impl Lowerer {
         // own component). The context may hold more rows than the rule; the rule joins it with its own literals.
         let inputs: BTreeSet<String> = self.prog.inputs.iter().cloned().collect();
         let base: Vec<Lit> = context(false).into_iter().filter(|l| !matches!(l, Lit::Atom { rel, .. } if !inputs.contains(rel))).collect();
+        // Of the inputs, only those that reach the variables asked about through shared variables: an input that
+        // meets them nowhere (`text(nm, x)` beside `text(a, t)` asked for `t`) filters nothing the rule does not,
+        // and joined in the context it is a cross product (every text times every text).
+        let base = if vars.is_empty() {
+            base
+        } else {
+            let mut reach: BTreeSet<String> = vars.iter().cloned().collect();
+            let mut kept = vec![false; base.len()];
+            let mut grew = true;
+            while grew {
+                grew = false;
+                for (i, l) in base.iter().enumerate() {
+                    let lv = body_vars(std::slice::from_ref(l));
+                    if !kept[i] && !lv.is_disjoint(&reach) {
+                        kept[i] = true;
+                        reach.extend(lv);
+                        grew = true;
+                    }
+                }
+            }
+            base.into_iter().zip(kept).filter_map(|(l, k)| k.then_some(l)).collect()
+        };
         let (base, base_bound) = Self::bound_context(base);
         // Aggregates stay out unless a variable needs one: `m = cat(…, body, …)` over `body = join … : { … }`.
         // So do atoms of the clause's own heads, where the rest binds the variables: through one, the aggregate
@@ -1771,13 +2118,35 @@ impl Lowerer {
         let own = |l: &Lit| matches!(l, Lit::Atom { rel, .. } if heads.contains(rel));
         let (first, bound) = Self::bound_context(context(false).into_iter().filter(|l| !own(l)).collect());
         let (first, bound) = if vars.iter().all(|v| bound.contains(v)) { (first, bound) } else { Self::bound_context(context(false)) };
-        let context = if vars.iter().all(|v| base_bound.contains(v)) {
+        // A context whose literals leave the variables asked about in separate groups is their cross product (every
+        // function times every name, where the derived atom that joins them is left out): the next choice is taken.
+        let joined = |lits: &[Lit]| {
+            let Some(v0) = vars.first() else { return true };
+            let mut reach: BTreeSet<String> = BTreeSet::from([v0.clone()]);
+            let mut grew = true;
+            while grew {
+                grew = false;
+                for l in lits.iter().filter(|l| matches!(l, Lit::Atom { neg: false, .. })) {
+                    let lv = body_vars(std::slice::from_ref(l));
+                    if !lv.is_disjoint(&reach) && !lv.is_subset(&reach) {
+                        reach.extend(lv);
+                        grew = true;
+                    }
+                }
+            }
+            vars.iter().all(|v| reach.contains(v))
+        };
+        let context = if !self.span_context && vars.iter().all(|v| base_bound.contains(v)) && joined(&base) {
             base
         } else if vars.iter().all(|v| bound.contains(v)) {
             first
         } else {
             Self::bound_context(context(true)).0
         };
+        // Only the literals tied to `vars` through shared variables: one tied to none tests that some row exists
+        // anywhere (`ann_root(_)` once `(s = a ; within(s, a))` is left out), which makes every row of the context
+        // depend on every document. Leaving it out widens the context, which the rule joins with its own literals.
+        let context = Self::connected(context, vars);
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
@@ -1787,6 +2156,27 @@ impl Lowerer {
             self.prog.rules.push(Rule { head: head.clone(), body: b });
         }
         Ok(head)
+    }
+
+    /// The literals of `context` reachable from `vars` through shared variables, in their order.
+    fn connected(context: Vec<Lit>, vars: &[String]) -> Vec<Lit> {
+        let mut reach: BTreeSet<String> = vars.iter().cloned().collect();
+        let of: Vec<BTreeSet<String>> = context.iter().map(|l| body_vars(std::slice::from_ref(l))).collect();
+        let mut keep = vec![false; context.len()];
+        loop {
+            let mut grew = false;
+            for (k, vs) in of.iter().enumerate() {
+                if !keep[k] && !vs.is_disjoint(&reach) {
+                    keep[k] = true;
+                    reach.extend(vs.iter().cloned());
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
     }
 
     /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.
@@ -1865,7 +2255,7 @@ impl Lowerer {
         // arithmetic, …) are no relations of the program, so a body of one of them goes through the helper.
         if let [Lit::Atom { rel, args, neg: false }] = body
             && test_of(rel).is_none()
-            && !matches!(rel.as_str(), "nearest" | "inside" | "has" | "split_dot" | "ast" | "within" | "within_stop" | "precedes_stop")
+            && !matches!(rel.as_str(), "nearest" | "inside" | "has" | "split_dot" | "ast" | "within" | "within_stop" | "precedes_stop" | "match_all" | "match" | "unset")
             && !self.rewritten(rel)
         {
             let Literal::Atom(mut atom) = self.atom(rel, args, false)? else { unreachable!("a plain atom") };
@@ -1887,7 +2277,22 @@ impl Lowerer {
         // Otherwise a helper relation of the body. `count` and `sum` range over the body's rows, a multiset of the
         // aggregated value, so they keep every variable; `min`, `max` and `join` (of distinct rows) keep those they
         // read (the aggregated one and a join's keys) and those the rule shares.
-        let inner = body_vars(body);
+        let mut inner = body_vars(body);
+        // A nested aggregate's variables that the rule shares are the helper's too: in `count : { ident(x), count : {
+        // ref(n, f, x) } = 0 }`, the inner count is per (f, x), so the helper is a relation of f and x, and f is bound
+        // inside it by the context. Without f, the inner count read it free, and the outer could not group by it.
+        let mut nested = Vec::new();
+        body.iter().for_each(|l| l.vars(&mut nested));
+        inner.extend(nested.into_iter().filter(|v| outer.contains(v)));
+        // `match_all`'s groups are variables of the body too, named in its regex: each match is a row to count.
+        for l in body {
+            if let Lit::Atom { rel, args, neg: false } = l
+                && rel == "match_all"
+                && let Some(STerm::Str(re)) = args.first()
+            {
+                inner.extend(groups(re));
+            }
+        }
         let cols: Vec<String> = inner.iter().filter(|v| matches!(op, AggOp::Count | AggOp::Sum) || own(v) || outer.contains(*v)).cloned().collect();
         if let Some(v) = over.iter().chain(&by).find(|v| !cols.contains(v)) {
             return Err(Error::Syntax(format!("{agg}: {v} is not bound in its body")));
@@ -1896,14 +2301,21 @@ impl Lowerer {
         let mut bodies = self.conjunction(body, outer)?;
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by
         // a context relation: the rule's other literals, projected on those variables.
-        let bound: BTreeSet<String> = body_vars(&body.iter().filter(|l| binds_columns(l)).cloned().collect::<Vec<_>>());
+        let bound: BTreeSet<String> = body_vars(
+            // `match_all` over a text the rule binds reads it, as a test does: its spans or texts come from the context.
+            &body.iter().filter(|l| binds_columns(l) && !matches!(l, Lit::Atom { rel, .. } if matches!(rel.as_str(), "match_all" | "match"))).cloned().collect::<Vec<_>>(),
+        );
         let needed: Vec<String> = inner.iter().filter(|v| outer.contains(*v) && !bound.contains(*v)).cloned().collect();
         if !needed.is_empty() {
             // The context holds every variable the body shares with the rule, those the body binds too: projected on
             // the tested ones alone (`ctx(j)`), it crossed every row of the body (`child(al, a, k)`, every argument of
             // every call) with every j of the rule, 20.6M rows for 4,133 counts on 50 files.
             let shared: Vec<String> = inner.iter().filter(|v| outer.contains(*v)).cloned().collect();
-            let ctx = self.context(&shared)?;
+            let span_subject = body.iter().any(|l| matches!(l, Lit::Atom { rel, args, .. } if matches!(rel.as_str(), "match_all" | "match") && matches!(args.get(1), Some(STerm::Var(v)) if needed.contains(v))));
+            self.span_context = span_subject;
+            let ctx = self.context(&shared);
+            self.span_context = false;
+            let ctx = ctx?;
             for b in &mut bodies {
                 b.insert(0, Literal::Atom(ctx.clone()));
             }
@@ -1912,7 +2324,9 @@ impl Lowerer {
         self.prog.decls.insert(name.clone(), types);
         let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone())).collect();
         for b in bodies {
-            self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args: args.clone(), neg: false, gated: false }, body: b });
+            // The empty value inside the body is the constant, as in a rule's own body.
+            let (args, b) = unset(args.clone(), b)?;
+            self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args, neg: false, gated: false }, body: b });
         }
         // The helper keeps every column (`count` counts distinct rows), but only the rule's variables group it.
         let args = cols.iter().map(|c| if outer.contains(c) || own(c) { Term::Var(c.clone()) } else { Term::Wild }).collect();
@@ -2358,6 +2772,12 @@ fn body_vars(lits: &[Lit]) -> BTreeSet<String> {
     for l in lits {
         match l {
             Lit::Atom { rel, args, .. } => {
+                // `match` and `match_all` bind their named groups, which no argument names.
+                if matches!(rel.as_str(), "match" | "match_all")
+                    && let Some(STerm::Str(re)) = args.first()
+                {
+                    out.extend(groups(re));
+                }
                 let skip: &[usize] = RELATION_ARG.iter().find(|(r, _)| *r == rel).map_or(&[], |(_, k)| k);
                 for (k, a) in args.iter().enumerate() {
                     if !(skip.contains(&k) && matches!(a, STerm::Var(_))) {

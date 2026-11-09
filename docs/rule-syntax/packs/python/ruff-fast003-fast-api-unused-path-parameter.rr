@@ -17,7 +17,7 @@
 //   fast_dep_unknown(f); ruff_arg, call_kwarg, plain_str (python/ruff)
 
 .violation FAST003(at: span, K: symbol, FN: symbol) code "FAST003"
-    "Declare `{K}` as a non-positional-only parameter of `{FN}` so FastAPI passes the `{{K}}` path value. Leave it if the handler reads `request.path_params`; else drop `{{K}}` from the path."
+    "Declare `{K}` as a non-positional-only parameter of `{FN}` so FastAPI passes the `{{{K}}}` path value. Leave it if the handler reads `request.path_params`; else drop `{{{K}}}` from the path."
     suppress ruff "FAST003"
 FAST003(b, k, fn) :- route_path(f, s), path_param(s, b, k), !fast_dep_unknown(f), !takes(f, k),
     field(f, "name", n), text(n, fn).

@@ -272,3 +272,38 @@ fn the_device_fix_waves_reach_the_cpus_fixpoint() {
     assert_eq!(pairs(&db, "SELECT c0, c1 FROM metal_out ORDER BY c0"), cpu);
     assert_eq!(pairs(&db, "SELECT c0, c1 FROM metal_warm ORDER BY c0"), cpu);
 }
+
+/// A request relation pauses the fixpoint; the rows the caller adds to a produced relation are the next wave's delta,
+/// and the run goes on from there (decision 0065 §2a). Here each request `x` is answered `got(x, x + 1)`, up to 5.
+#[test]
+fn a_fixpoint_pauses_for_requests_and_resumes_with_their_answers() {
+    let db = connection();
+    db.execute_batch("CREATE TEMP TABLE want(c0); INSERT INTO want VALUES (1); CREATE TEMP TABLE req(c0); CREATE TEMP TABLE got(c0, c1);").unwrap();
+    let spec = "name asks\nrel want i\nrel req i empty\nrel got ii empty\nrequest 1\nproduced 2\n\
+                rule 1 0 - - key ; ecols ; pat v0 ; head v0\nrule 0 2 - - key ; ecols ; pat v0 v1 ; head v1";
+    super::setfix::open(&db, spec).unwrap();
+    let mut pauses = 0;
+    loop {
+        let report = super::setfix::run(&db, "asks", 0).unwrap();
+        match report.rsplit(' ').next() {
+            Some("2") => {
+                pauses += 1;
+                let mut answer = Vec::new();
+                for (table, rows) in super::setfix::pending(&db, "asks").unwrap() {
+                    assert_eq!(table, "req");
+                    answer.extend(rows.iter().filter(|r| r[0] < 5).map(|r| vec![r[0], r[0] + 1]));
+                }
+                super::setfix::add(&db, "asks", "got", &answer).unwrap();
+            }
+            Some("1") => break,
+            other => panic!("unexpected status {other:?}: {report}"),
+        }
+    }
+    assert_eq!(pauses, 5, "one pause per request, as each answer makes the next");
+    let ints = |sql: &str| -> Vec<i64> { db.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap() };
+    assert_eq!(ints("SELECT c0 FROM want ORDER BY c0"), [1, 2, 3, 4, 5]);
+    assert_eq!(ints("SELECT c0 FROM req ORDER BY c0"), [1, 2, 3, 4, 5]);
+    // A produced relation is the caller's to write: the fixpoint writes none of its rows.
+    assert_eq!(ints("SELECT count(*) FROM got"), [0]);
+    super::setfix::close(&db, "asks").unwrap();
+}

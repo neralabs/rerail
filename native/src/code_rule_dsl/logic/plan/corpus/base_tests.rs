@@ -396,9 +396,9 @@ none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A file with no grammar (`.md`, `.rst`, `.txt`, …) is a text-only document: `doc`, `source`, `src_line`,
-/// `tape_line`, `line_count` and `match_all`, each as W reads a file of no language (its lines `\r\n`, `\r`, `\n`,
-/// U+2028 and U+2029), and no node. A file that is not UTF-8 is no document; a hidden one neither.
+/// A file with no grammar that `.scope text` reads (`.md`, `.rst`, `.txt`, …) is a text-only document: `doc`, `source`,
+/// `src_line`, `tape_line`, `line_count` and `match_all`, each as W reads a file of no language (its lines `\r\n`, `\r`,
+/// `\n`, U+2028 and U+2029), and no node. A file that is not UTF-8 is no document; a hidden one neither.
 #[test]
 fn text_files_are_text_only_documents() {
     let rst = "Graph query\r\n===========\n\nUse graph_query_builder( no more.\u{2028}needle here\nlast needle";
@@ -407,6 +407,7 @@ fn text_files_are_text_only_documents() {
     let dir = corpus("text-docs", &files);
     std::fs::write(dir.join("docs/logo.png"), [0x89, b'P', b'N', b'G', 0xff, 0xfe, 0x00]).unwrap();
     let program = r#"
+.scope text "**/*.md", "**/*.rst", "**/*.txt"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl source(d: number, sp: span)

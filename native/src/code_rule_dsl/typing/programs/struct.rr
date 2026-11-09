@@ -1,0 +1,110 @@
+// P1, `struct` (decision 0083 §1): the structure of every document, the workspace's and the libraries' its imports
+// reach, keyed by symbols. It reads module-level statements, imports, class headers and the definitions in class
+// bodies, and annotations as written; it never reads a function's body.
+//
+// The workspace's files seed it. Each import is resolved by python/modules.rr, and a library module it resolves to
+// is loaded as a document inside this phase's fixed point (decision 0065 §2a): the loaded document's imports are
+// resolved in turn, so the phase ends when the import frontier is closed.
+//
+// What it hands on (`.export`) names definitions by symbol, never by node: a module by its dotted name, a definition
+// in it by `module.name`, a definition in a class by `module.Class.name`, and the k-th redefinition of a name in one
+// scope (k > 0) by `name#k`. An edit renumbers nodes, never symbols. Each row is about its first column, a symbol:
+// its granule, which freshness keys (`corpus::phases`).
+//
+// ```text
+// # m.py                                  unit("m", h0).  unit("m.C", h1).  unit("m.C.run", h2).
+// from os import path                     def("m.C", "class").  def("m.C.run", "function").
+// class C(Base):                          binds("m", "path", "import", "os.path").  binds("m", "C", "def", "m.C").
+//     def run(self, n: int) -> bool: ...  base("m.C", 0, "Base").  member("m.C", "run", "m.C.run").
+//                                         param("m.C.run", 1, "n", "int").  ret("m.C.run", "bool").
+// ```
+
+#include "core.rr"
+#include "python/modules.rr"
+#include "python/conditions.rr"
+
+.phase struct
+.export unit, def, binds, base, member, param, ret, module_file, at
+// Where a definition is: kept, and handed on to the findings that cite it, but not part of its granule's digest.
+.positions at
+
+// ---- the scopes P1 reads: a module, and the classes defined at module level or in such a class ----------------
+.decl scope(kind: symbol)
+scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
+.decl modnode(d: number, m: node)
+modnode(d, m) :- node(d, m, "module", _, _).
+.decl modname(m: node, q: symbol)
+modname(m, q) :- modnode(d, m), doc(d, _, q), q != "".
+
+// A definition f named x whose nearest scope is s: a function or a class, not in a branch never taken.
+.decl defnode(f: node, x: symbol, k: symbol)
+defnode(f, x, "function") :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), !py_dead_at(f).
+defnode(f, x, "class") :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x), !py_dead_at(f).
+.decl pscope(s: node)
+pscope(m) :- modname(m, _).
+pscope(c) :- pdef(c, _, _, "class").
+.decl pdef(f: node, s: node, x: symbol, k: symbol)
+pdef(f, s, x, k) :- defnode(f, x, k), nearest(f, s, scope), pscope(s).
+
+// The k-th definition of x in s, by position: 0 for the first.
+.decl start(n: node, b: number)
+start(n, b) :- pdef(n, _, _, _), node(_, n, _, b, _).
+.decl ord(f: node, k: number)
+ord(f, k) :- pdef(f, s, x, _), start(f, b), k = count : { pdef(g, s, x, _), start(g, c), c < b }.
+
+// ---- symbols ---------------------------------------------------------------------------------------------------
+.decl sym(n: node, q: symbol)
+sym(m, q) :- modname(m, q).
+sym(f, @dot(q, x)) :- pdef(f, s, x, _), sym(s, q), ord(f, 0).
+sym(f, cat(@dot(q, x), cat("#", to_string(k)))) :- pdef(f, s, x, _), sym(s, q), ord(f, k), k > 0.
+
+// ---- what P1 hands on ------------------------------------------------------------------------------------------
+// unit(s, h): each definition P1 read, with its own code's digest: its freshness.
+.decl unit(s: symbol, h: symbol)
+unit(q, h) :- sym(n, q), def_digest(n, h).
+.decl def(s: symbol, k: symbol)
+def(q, "module") :- modname(m, q), sym(m, q).
+def(q, k) :- pdef(f, _, _, k), sym(f, q).
+// binds(m, x, how, t): module m binds x, by a definition (t its symbol), an import (t the qualified name imported),
+// or an assignment (t "").
+.decl binds(m: symbol, x: symbol, how: symbol, t: symbol)
+binds(q, x, "def", t) :- pdef(f, s, x, _), modname(s, q), sym(f, t).
+binds(q, x, "assign", "") :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), nearest(a, s, scope),
+    modname(s, q), !py_dead_at(a).
+binds(q, y, "import", @dot(m, y)) :- impmod(i, m), field(i, "name", n), kind(n, "dotted_name"), text(n, y), nearest(i, s, scope), modname(s, q).
+binds(q, a, "import", @dot(m, y)) :- impmod(i, m), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, y),
+    field(x, "alias", al), text(al, a), nearest(i, s, scope), modname(s, q).
+binds(q, t, "import", t) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), child(n, c, 0), text(c, t),
+    nearest(i, s, scope), modname(s, q), !py_dead_at(i).
+binds(q, a, "import", m) :- kind(i, "import_statement"), field(i, "name", x), kind(x, "aliased_import"), field(x, "name", n), text(n, m),
+    field(x, "alias", al), text(al, a), nearest(i, s, scope), modname(s, q), !py_dead_at(i).
+// The module an import-from names: absolute, or relative to the document's package.
+.decl impmod(i: node, m: symbol)
+impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m), !py_dead_at(i).
+impmod(i, p) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
+    child(mn, pre, 0), text(pre, "."), !child(mn, _, 1), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
+impmod(i, @dot(p, m)) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "relative_import"),
+    child(mn, pre, 0), text(pre, "."), child(mn, dn, 1), text(dn, m), docof(i, d), pkg(d, p), p != "", !py_dead_at(i).
+// base(c, i, b): class c's i-th base, as written, on one line: runs of white space one space each (a value
+// handed on is one line of an output; so are `param`'s and `ret`'s annotations).
+.decl base(c: symbol, i: number, b: symbol)
+base(q, i, b) :- pdef(c, _, _, "class"), sym(c, q), field(c, "superclasses", args), child(args, e, i), !kind(e, "keyword_argument"), text(e, w), b = @replace_all(w, "\\s+", " ").
+// member(c, x, t): class c defines x, by a definition (t its symbol) or an assignment in its body (t "").
+.decl member(c: symbol, x: symbol, t: symbol)
+member(q, x, t) :- pdef(f, c, x, _), pdef(c, _, _, "class"), sym(c, q), sym(f, t).
+member(q, x, "") :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), nearest(a, c, scope),
+    pdef(c, _, _, "class"), sym(c, q), !py_dead_at(a).
+// param(f, i, x, a): function f's i-th parameter x and its annotation as written ("" when it has none).
+.decl param(f: symbol, i: number, x: symbol, a: symbol)
+param(q, i, x, "") :- pdef(f, _, _, "function"), sym(f, q), field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
+param(q, i, x, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "parameters", ps), child(ps, p, i), child(p, id, 0), kind(id, "identifier"),
+    text(id, x), field(p, "type", t), text(t, w), a = @replace_all(w, "\\s+", " ").
+// ret(f, a): function f's return annotation as written.
+.decl ret(f: symbol, a: symbol)
+ret(q, a) :- pdef(f, _, _, "function"), sym(f, q), field(f, "return_type", r), text(r, w), a = @replace_all(w, "\\s+", " ").
+// module_file(m, p): the file module m was read from, a workspace file or the library file its import resolved to.
+.decl module_file(m: symbol, p: symbol)
+module_file(q, p) :- modnode(d, m), modname(m, q), doc(d, p, _).
+// at(s, p, l): where definition s is, path and line: a position, kept out of freshness (`.positions`).
+.decl at(s: symbol, p: symbol, l: number)
+at(q, p, l) :- sym(n, q), docof(n, d), doc(d, p, _), line(n, l).

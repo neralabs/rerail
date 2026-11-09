@@ -72,6 +72,24 @@ const OPCODES: &[(u8, &str)] = &[
     (FORK, "FORK"),
     (GOTO, "GOTO"),
     (EMIT, "EMIT"),
+    (TOKEN, "TOKEN"),
+    (SWITCH, "SWITCH"),
+    (WORD_IS, "WORD"),
+    (OPEN, "OPEN"),
+    (CLOSE, "CLOSE"),
+    (LEAF, "LEAF"),
+    (NODE_FIELD, "NODE_FIELD"),
+    (NODE_SUPER, "NODE_SUPER"),
+    (PUSH, "PUSH"),
+    (RETURN, "RETURN"),
+    (ACCEPT, "ACCEPT"),
+    (SPAN, "SPAN"),
+    (EMPTY, "EMPTY"),
+    (MARK, "MARK"),
+    (ROW, "ROW"),
+    (RETAG, "RETAG"),
+    (MERGE, "MERGE"),
+    (WRAP, "WRAP"),
 ];
 
 /// How an opcode's operand prints.
@@ -84,11 +102,21 @@ enum Operand {
     Assert,
     Kind,
     Field,
+    /// A string: `sN`.
+    String,
+    /// A switch table: `TN`.
+    Switch,
 }
 
-fn operand(opcode: u8) -> Operand {
+/// An operand's shape by opcode and mode: `RETAG m=3`'s is a reading's index.
+fn operand(opcode: u8, mode: u8) -> Operand {
     match opcode {
-        FORK | GOTO => Operand::Target,
+        RETAG if mode == 3 => Operand::Number,
+        FORK | GOTO | PUSH => Operand::Target,
+        WORD_IS => Operand::String,
+        SWITCH => Operand::Switch,
+        OPEN | LEAF | NODE_SUPER | RETAG | MERGE | WRAP => Operand::Kind,
+        NODE_FIELD => Operand::Field,
         CAPTURE | EMIT => Operand::Label,
         TEXT => Operand::Predicate,
         ASSERT => Operand::Assert,
@@ -247,16 +275,7 @@ fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
     }
 }
 
-/// Kind ids `kA kB …`, as many as follow.
-fn kind_list(line: &mut Line<'_>) -> Result<Vec<u16>, String> {
-    let mut out = Vec::new();
-    while line.peek_word().is_some_and(|w| w.starts_with('k') && w[1..].chars().all(|c| c.is_ascii_digit()) && w.len() > 1) {
-        out.push(line.number("k")?);
-    }
-    Ok(out)
-}
-
-/// Block program `at`'s rows: tables, operations, outputs, extracts, delay, node and code rows.
+/// Block program `at`'s rows: tables, operations, outputs, extracts, delay, and the tree section (`tree_rows`).
 pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
     let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     for (t, table) in block.tables.iter().enumerate() {
@@ -264,6 +283,11 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     }
     for (value, op) in block.ops.iter().enumerate() {
         let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
+    }
+    // `block N rounds %c %n …`: one fixed point's carries, each with its next.
+    for group in &block.rounds {
+        let pairs: Vec<String> = group.iter().map(|(c, x)| format!("%{c} %{x}")).collect();
+        let _ = writeln!(out, "  block {at} rounds {}", pairs.join(" "));
     }
     for (k, value) in block.outputs.iter().enumerate() {
         match block.output_delay(k) {
@@ -278,99 +302,17 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     for value in &block.extracts {
         let _ = writeln!(out, "  block {at} extract %{value}");
     }
+    for value in &block.totals {
+        let _ = writeln!(out, "  block {at} total %{value}");
+    }
+    for value in &block.masks {
+        let _ = writeln!(out, "  block {at} mask %{value}");
+    }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
     }
-    tree_rows(out, at, block);
 }
 
-/// Block program `at`'s tree rows (decision 0071):
-///
-/// ```text
-/// block N node R kind K start %s|first end %e|with F|last [leaf] [nested D] [after rA rB…]
-///     [parent rP] [check K V] [extra]
-/// block N code R field|supertype ID when %m | start rS | not rS | after rA rB… | always
-/// block N keyword R HEX K
-/// block N skip %v
-/// ```
-///
-/// A node row's conditions: `after kA…`, `parent kP`, `before kB…`, then `also` and the other
-/// rule's.
-pub(super) fn tree_rows(out: &mut String, at: usize, block: &block::BlockProgram) {
-    use super::block::{Fact, RowEnd, RowStart};
-    let kinds = |ks: &[u16]| ks.iter().map(|k| format!(" k{k}")).collect::<String>();
-    for (r, row) in block.nodes.iter().enumerate() {
-        let start = match row.start {
-            RowStart::At(v) => format!("%{v}"),
-            RowStart::Kind(k) => format!("k{k}"),
-            RowStart::FirstToken => "first".to_owned(),
-        };
-        let end = match row.end {
-            RowEnd::At(v) => format!("%{v}"),
-            RowEnd::Kind(k) => format!("k{k}"),
-            RowEnd::With(f) => format!("with {f}"),
-            RowEnd::LastToken => "last".to_owned(),
-        };
-        let mut more = String::new();
-        if row.leaf {
-            more.push_str(" leaf");
-        }
-        if let Some(d) = row.nested {
-            let _ = write!(more, " nested {d}");
-        }
-        if row.match_scan {
-            more.push_str(" match scan");
-        }
-        if !row.after.is_empty() {
-            let _ = write!(more, " after{}", kinds(&row.after));
-        }
-        if let Some(p) = row.parent {
-            let _ = write!(more, " parent k{p}");
-        }
-        if !row.before.is_empty() {
-            let _ = write!(more, " before{}", kinds(&row.before));
-        }
-        if let Some(c) = &row.also {
-            more.push_str(" also");
-            if !c.after.is_empty() {
-                let _ = write!(more, " after{}", kinds(&c.after));
-            }
-            if let Some(p) = c.parent {
-                let _ = write!(more, " parent k{p}");
-            }
-            if !c.before.is_empty() {
-                let _ = write!(more, " before{}", kinds(&c.before));
-            }
-        }
-        if let Some((k, v)) = row.check {
-            let _ = write!(more, " check {k} {}", v.name());
-        }
-        if row.extra {
-            more.push_str(" extra");
-        }
-        let _ = writeln!(out, "  block {at} node {r} kind {} start {start} end {end}{more}", row.kind);
-    }
-    for c in &block.codes {
-        let what = if c.field { "field" } else { "supertype" };
-        let when = match &c.when {
-            Fact::At(v) => format!("%{v}"),
-            Fact::StartOf(r) => format!("start r{r}"),
-            Fact::NotStartOf(r) => format!("not r{r}"),
-            Fact::After(ks) => format!("after{}", kinds(ks)),
-            Fact::Always => "always".to_owned(),
-        };
-        let _ = writeln!(out, "  block {at} code {} {what} {} when {when}", c.node, c.id);
-    }
-    for k in &block.keywords {
-        let hex: String = k.word.iter().map(|b| format!("{b:02x}")).collect();
-        let _ = writeln!(out, "  block {at} keyword {} {hex} {}", k.node, k.kind);
-    }
-    if let Some(v) = block.skip {
-        let _ = writeln!(out, "  block {at} skip %{v}");
-    }
-}
-
-/// The program as `rir`, its kinds and fields named by `names` where given.
 pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Names>) -> String {
     let mut out = String::new();
     let grammar = names.map_or("none".to_owned(), Names::header);
@@ -385,6 +327,10 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
     for (at, long) in program.longs.iter().enumerate() {
         let _ = writeln!(out, "  long {at} {long}");
     }
+    for (at, s) in program.switches.iter().enumerate() {
+        switch_rows(&mut out, at, s);
+    }
+    reading_rows(&mut out, &program.readings);
     for (at, predicate) in program.predicates.iter().enumerate() {
         let (kind, source) = match predicate {
             TextPredicate::Equal(source) => ("equal", source),
@@ -450,7 +396,7 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         if mode != 0 {
             let _ = write!(out, " m={mode}");
         }
-        let _ = match operand(opcode) {
+        let _ = match operand(opcode, mode) {
             Operand::Target => write!(out, " @{arg:04}"),
             Operand::Label => write!(out, " L{arg}"),
             Operand::Predicate => write!(out, " P{arg}"),
@@ -458,8 +404,10 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
             Operand::Kind => write!(out, " {}", kind(names, arg)),
             Operand::Field => write!(out, " {}", field(names, arg)),
             Operand::Number => write!(out, " {arg}"),
+            Operand::String => write!(out, " s{arg}"),
+            Operand::Switch => write!(out, " T{arg}"),
         };
-        if operand(opcode) == Operand::Label
+        if operand(opcode, mode) == Operand::Label
             && let Some(name) = program.label_name(arg)
         {
             let _ = write!(out, "  ; {name}");
@@ -636,6 +584,12 @@ impl Line<'_> {
         Ok(out)
     }
 
+    /// The next word, which must be `key`.
+    fn want(&mut self, key: &str) -> Result<(), String> {
+        let word = self.word()?;
+        if word == key { Ok(()) } else { Err(format!("expected `{key}`, found `{word}`")) }
+    }
+
     fn end(&mut self) -> Result<(), String> {
         match self.tokens.next() {
             None => Ok(()),
@@ -712,6 +666,8 @@ struct Parts {
     directives: Vec<(String, u16, u16, Option<u16>, [i32; 4])>,
     pattern: Option<PackedPattern>,
     block_programs: Vec<block::BlockProgram>,
+    switches: Vec<stream::ByteSwitch>,
+    readings: stream::Readings,
     words: Vec<u32>,
 }
 
@@ -738,6 +694,12 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
         "label" => {
             index(line, parts.labels.len(), "label")?;
             parts.labels.push(line.number("s")?);
+        }
+        "switch" => switch_row(parts, line)?,
+        "reading" => reading_row(parts, line)?,
+        "provisional" => {
+            let f: u16 = line.number("#")?;
+            parts.readings.provisional.push(f);
         }
         "long" => {
             index(line, parts.longs.len(), "long")?;
@@ -806,8 +768,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             let program = parts.block_programs.last_mut().expect("pushed");
             let first = line.word()?;
             if first == "output" {
-                if !program.extracts.is_empty() {
-                    return Err(format!("block {at} output after an extract"));
+                if !program.extracts.is_empty() || !program.totals.is_empty() || !program.masks.is_empty() {
+                    return Err(format!("block {at} output after an extract or a total"));
                 }
                 program.outputs.push(line.number("%")?);
                 // `output %v delay d`: its own delay; recorded for every output once one has one
@@ -824,147 +786,44 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     program.output_delays.resize(k, u8::MAX);
                     program.output_delays.push(own.unwrap_or(u8::MAX));
                 }
-            } else if first == "node" {
-                // `block N node R kind K start … end … [more]` (`tree_rows`), in rank order.
-                use super::block::{RowEnd, RowStart};
-                let r: usize = line.number("")?;
-                if r != program.nodes.len() {
-                    return Err(format!("block {at} node {r} out of order (expected {})", program.nodes.len()));
-                }
-                let want = |line: &mut Line<'_>, key: &str| -> Result<(), String> {
-                    let word = line.word()?;
-                    if word == key { Ok(()) } else { Err(format!("expected `{key}`, found `{word}`")) }
-                };
-                want(line, "kind")?;
-                let kind = line.number("")?;
-                want(line, "start")?;
-                let start = match line.word()?.as_str() {
-                    "first" => RowStart::FirstToken,
-                    v if v.starts_with('k') => RowStart::Kind(v[1..].parse().map_err(|_| format!("a bad start `{v}`"))?),
-                    v => RowStart::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad start `{v}`"))?),
-                };
-                want(line, "end")?;
-                let end = match line.word()?.as_str() {
-                    "last" => RowEnd::LastToken,
-                    "with" => RowEnd::With(line.number("")?),
-                    v if v.starts_with('k') => RowEnd::Kind(v[1..].parse().map_err(|_| format!("a bad end `{v}`"))?),
-                    v => RowEnd::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad end `{v}`"))?),
-                };
-                let mut row = block::NodeRow {
-                    kind,
-                    start,
-                    end,
-                    extra: false,
-                    leaf: false,
-                    nested: None,
-                    after: Vec::new(),
-                    parent: None,
-                    before: Vec::new(),
-                    also: None,
-                    match_scan: false,
-                    check: None,
-                };
-                while let Ok(word) = line.word() {
-                    if word == "also" {
-                        if row.also.is_some() {
-                            return Err("a node row has one `also`".into());
-                        }
-                        row.also = Some(block::RowCond::default());
-                        continue;
-                    }
-                    // After `also`, the conditions are the other rule's.
-                    if let Some(c) = row.also.as_mut() {
-                        match word.as_str() {
-                            "after" => c.after = kind_list(line)?,
-                            "before" => c.before = kind_list(line)?,
-                            "parent" => c.parent = Some(line.number("k")?),
-                            other => return Err(format!("`also` is followed by conditions only, not `{other}`")),
-                        }
-                        continue;
-                    }
-                    match word.as_str() {
-                        "leaf" => row.leaf = true,
-                        "extra" => row.extra = true,
-                        "nested" => row.nested = Some(line.number("")?),
-                        "match" => match line.word()?.as_str() {
-                            "scan" => row.match_scan = true,
-                            "barrier" => {}
-                            other => return Err(format!("a close finds its open by `barrier` or `scan`, not `{other}`")),
-                        },
-                        "after" => row.after = kind_list(line)?,
-                        "before" => row.before = kind_list(line)?,
-                        "parent" => row.parent = Some(line.number("k")?),
-                        "check" => {
-                            let k = line.number("")?;
-                            let name = line.word()?;
-                            row.check = Some((k, block::Validator::named(&name).ok_or_else(|| format!("no validator `{name}`"))?));
-                        }
-                        other => return Err(format!("a node row has no `{other}`")),
-                    }
-                }
-                program.nodes.push(row);
-            } else if first == "code" {
-                // `block N code R field|supertype ID when …` (`tree_rows`).
-                use super::block::Fact;
-                let node = line.number("")?;
-                let field = match line.word()?.as_str() {
-                    "field" => true,
-                    "supertype" => false,
-                    other => return Err(format!("a code row is a field or a supertype, not `{other}`")),
-                };
-                let id = line.number("")?;
-                let word = line.word()?;
-                if word != "when" {
-                    return Err(format!("expected `when`, found `{word}`"));
-                }
-                let when = match line.word()?.as_str() {
-                    "start" => Fact::StartOf(line.number("r")?),
-                    "not" => Fact::NotStartOf(line.number("r")?),
-                    "after" => Fact::After(kind_list(line)?),
-                    "always" => Fact::Always,
-                    v => Fact::At(v.strip_prefix('%').and_then(|n| n.parse().ok()).ok_or_else(|| format!("a bad fact `{v}`"))?),
-                };
-                program.codes.push(block::CodeRow { node, field, id, when });
-            } else if first == "keyword" {
-                let node = line.number("")?;
-                let hex = line.word()?;
-                let word = (0..hex.len() / 2)
-                    .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("a bad keyword `{hex}`")))
-                    .collect::<Result<Vec<u8>, String>>()?;
-                let kind = line.number("")?;
-                program.keywords.push(block::KeywordRow { node, word, kind });
-            } else if first == "skip" {
-                program.skip = Some(line.number("%")?);
-
             } else if first == "delay" {
                 // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).
                 let d: u64 = line.number("")?;
                 program.delay = u8::try_from(d).map_err(|_| format!("block {at} delay {d} is more than 63"))?;
+            } else if first == "rounds" {
+                // `block N rounds %c %n …`: a fixed point's carries, each with its next, after
+                // the operations.
+                if !program.outputs.is_empty() {
+                    return Err(format!("block {at} rounds after an output"));
+                }
+                let mut group = Vec::new();
+                while line.peek_word().is_some() {
+                    let c: u64 = line.number("%")?;
+                    let x: u64 = line.number("%")?;
+                    let value = |v: u64| u16::try_from(v).map_err(|_| format!("block {at} rounds value %{v} too large"));
+                    group.push((value(c)?, value(x)?));
+                }
+                if group.is_empty() {
+                    return Err(format!("block {at} rounds with no carry"));
+                }
+                program.rounds.push(group);
             } else if first == "extract" {
                 program.extracts.push(line.number("%")?);
+            } else if first == "total" {
+                program.totals.push(line.number("%")?);
+            } else if first == "mask" {
+                program.masks.push(line.number("%")?);
             } else if first == "table" {
                 let t: usize = line.number("")?;
                 if t != program.tables.len() || !program.ops.is_empty() {
                     return Err(format!("block {at} table {t} out of order (expected {}, before the operations)", program.tables.len()));
                 }
-                let nibbles = |line: &mut Line<'_>, key: &str| -> Result<[u8; 16], String> {
-                    let word = line.word()?;
-                    let hex = word.strip_prefix(key).ok_or_else(|| format!("expected `{key}…`, found `{word}`"))?;
-                    let mut out = [0u8; 16];
-                    if hex.len() != 32 {
-                        return Err(format!("a table half is 16 bytes of hex, not `{hex}`"));
-                    }
-                    for (i, o) in out.iter_mut().enumerate() {
-                        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("bad hex `{hex}`"))?;
-                    }
-                    Ok(out)
-                };
-                let lo = nibbles(line, "lo=")?;
-                let hi = nibbles(line, "hi=")?;
+                let lo = table_half(line, "lo=")?;
+                let hi = table_half(line, "hi=")?;
                 program.tables.push(block::ClassTable { lo, hi });
             } else {
                 let value: usize = first.strip_prefix('%').and_then(|v| v.parse().ok()).ok_or_else(|| format!("a bad value `{first}`"))?;
-                if value != program.ops.len() || !program.outputs.is_empty() {
+                if value != program.ops.len() || !program.outputs.is_empty() || !program.rounds.is_empty() {
                     return Err(format!("block {at} value %{value} out of order (expected %{})", program.ops.len()));
                 }
                 if line.word()? != "=" {
@@ -1004,7 +863,7 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 line.next()?;
             }
             let prefixed = |line: &mut Line<'_>, prefix: &str| line.number::<u16>(prefix);
-            let arg = match operand(opcode) {
+            let arg = match operand(opcode, mode) {
                 Operand::Target => prefixed(line, "@")?,
                 Operand::Label => prefixed(line, "L")?,
                 Operand::Predicate => prefixed(line, "P")?,
@@ -1012,6 +871,8 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 Operand::Kind => line.kind()?,
                 Operand::Field => line.field()?,
                 Operand::Number => prefixed(line, "")?,
+                Operand::String => prefixed(line, "s")?,
+                Operand::Switch => prefixed(line, "T")?,
             };
             parts.words.push(word(opcode, mode, arg));
         }
@@ -1142,6 +1003,8 @@ fn build(parts: Parts) -> Result<Program, String> {
         set_mode: parts.set_mode,
         ast_pattern: parts.pattern,
         block_programs: parts.block_programs,
+        switches: parts.switches,
+        readings: parts.readings,
         digest: DigestMemo::default(),
     };
     program.validate().map_err(verifier)?;
@@ -1207,3 +1070,146 @@ pub(in crate::code_rule_dsl) fn fused(pack: &super::fusion::Fused, members: &[&P
 #[cfg(test)]
 #[path = "rir_tests.rs"]
 mod tests;
+
+/// A class table's half, `lo=HEX` or `hi=HEX`: 16 bytes of hex.
+fn table_half(line: &mut Line<'_>, key: &str) -> Result<[u8; 16], String> {
+    let word = line.word()?;
+    let hex = word.strip_prefix(key).ok_or_else(|| format!("expected `{key}…`, found `{word}`"))?;
+    let mut out = [0u8; 16];
+    if hex.len() != 32 {
+        return Err(format!("a table half is 16 bytes of hex, not `{hex}`"));
+    }
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("bad hex `{hex}`"))?;
+    }
+    Ok(out)
+}
+
+/// A target of a switch: `@PC`, or `refuse`.
+fn switch_target(t: u16) -> String {
+    if t == stream::REFUSE { "refuse".to_owned() } else { format!("@{t:04}") }
+}
+
+/// Switch table `at` (decision 0087): `switch N at OFFSET end TARGET`, then a row per run of
+/// bytes with one target, `switch N 0xLO-0xHI TARGET`; bytes in no row refuse.
+pub(super) fn switch_rows(out: &mut String, at: usize, s: &stream::ByteSwitch) {
+    let _ = writeln!(out, "  switch {at} at {} end {}", s.offset, switch_target(s.end));
+    let mut b = 0usize;
+    while b < 256 {
+        let t = s.targets[b];
+        let mut e = b;
+        while e + 1 < 256 && s.targets[e + 1] == t {
+            e += 1;
+        }
+        if t != stream::REFUSE {
+            let _ = writeln!(out, "  switch {at} {b:#04x}-{e:#04x} {}", switch_target(t));
+        }
+        b = e + 1;
+    }
+}
+
+/// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,
+/// `reading N field #F as #G`; then `provisional #F`.
+pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
+    use std::fmt::Write as _;
+    for (at, r) in readings.maps.iter().enumerate() {
+        // A reading with no row would be lost: a kind row each has one (the compiler's).
+        for &(k, m) in &r.kinds {
+            let _ = match m {
+                stream::KEEP => writeln!(out, "  reading {at} #{k} keep"),
+                stream::GONE => writeln!(out, "  reading {at} #{k} gone"),
+                m => writeln!(out, "  reading {at} #{k} as #{m}"),
+            };
+        }
+        for &(f, g) in &r.fields {
+            let _ = writeln!(out, "  reading {at} field #{f} as #{g}");
+        }
+        let _ = match r.root {
+            None => Ok(()),
+            Some(stream::GONE) => writeln!(out, "  reading {at} root gone"),
+            Some(m) => writeln!(out, "  reading {at} root as #{m}"),
+        };
+    }
+    for f in &readings.provisional {
+        let _ = writeln!(out, "  provisional #{f}");
+    }
+}
+
+fn reading_row(parts: &mut Parts, line: &mut Line<'_>) -> Result<(), String> {
+    let at: usize = line.number("")?;
+    let maps = &mut parts.readings.maps;
+    if at == maps.len() {
+        maps.push(stream::Reading::default());
+    } else if at + 1 != maps.len() {
+        return Err(format!("reading {at} out of order (expected {})", maps.len()));
+    }
+    let r = &mut maps[at];
+    if line.peek_word().as_deref() == Some("root") {
+        line.next()?;
+        if r.root.is_some() {
+            return Err(format!("reading {at}: two roots"));
+        }
+        r.root = Some(match line.word()?.as_str() {
+            "gone" => stream::GONE,
+            "as" => line.number("#")?,
+            w => return Err(format!("a reading's root row is `reading N root gone` or `root as #M`, not `{w}`")),
+        });
+        return Ok(());
+    }
+    if line.peek_word().as_deref() == Some("field") {
+        line.next()?;
+        let f: u16 = line.number("#")?;
+        if line.word()? != "as" {
+            return Err("a reading's field row is `reading N field #F as #G`".into());
+        }
+        r.fields.push((f, line.number("#")?));
+        return Ok(());
+    }
+    let k: u16 = line.number("#")?;
+    let m = match line.word()?.as_str() {
+        "keep" => stream::KEEP,
+        "gone" => stream::GONE,
+        "as" => line.number("#")?,
+        w => return Err(format!("a reading's row is `#K as #M`, `#K gone` or `#K keep`, not `{w}`")),
+    };
+    r.kinds.push((k, m));
+    Ok(())
+}
+
+fn switch_row(parts: &mut Parts, line: &mut Line<'_>) -> Result<(), String> {
+    let at: usize = line.number("")?;
+    let target = |line: &mut Line<'_>| -> Result<u16, String> {
+        match line.peek_word().as_deref() {
+            Some("refuse") => {
+                line.next()?;
+                Ok(stream::REFUSE)
+            }
+            _ => line.number("@"),
+        }
+    };
+    if line.peek_word().as_deref() == Some("at") {
+        if at != parts.switches.len() {
+            return Err(format!("switch {at} out of order (expected {})", parts.switches.len()));
+        }
+        line.next()?;
+        let offset: u8 = line.number("")?;
+        if line.word()? != "end" {
+            return Err("a switch is `switch N at OFFSET end TARGET`".into());
+        }
+        let end = target(line)?;
+        parts.switches.push(stream::ByteSwitch { end, ..stream::ByteSwitch::refusing(offset) });
+        return Ok(());
+    }
+    if at + 1 != parts.switches.len() {
+        return Err(format!("switch {at}'s bytes before its header"));
+    }
+    let range = line.word()?;
+    let (lo, hi) = range.split_once('-').ok_or_else(|| format!("a byte range is `0xLO-0xHI`, not `{range}`"))?;
+    let byte = |x: &str| x.strip_prefix("0x").and_then(|h| u8::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad byte `{x}`"));
+    let (lo, hi) = (byte(lo)?, byte(hi)?);
+    let t = target(line)?;
+    for b in lo..=hi {
+        parts.switches[at].targets[usize::from(b)] = t;
+    }
+    Ok(())
+}

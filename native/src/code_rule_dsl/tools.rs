@@ -1,6 +1,7 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
 //! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
 
+pub use super::logic::profile::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
@@ -14,6 +15,21 @@ pub fn execute_sql_request(store_path: String, request_json: String) -> napi::Re
 /// A SQL extension request for the standalone tool. The same session serves the bindings,
 /// lowered rule program and subsequent SQL queries; no AST matcher is lowered to SQL.
 pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
+    let profiling = super::logic::profile::on();
+    let _run = profiling.then(super::logic::profile::one_run);
+    if profiling { super::logic::profile::reset(); }
+    let span = super::logic::profile::span(||"SQL extension request".into());
+    let result = sql_request(store,request);
+    drop(span);
+    if profiling {
+        if let Some(directory) = super::logic::profile::directory() {
+            super::logic::profile::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
+        }
+    }
+    result
+}
+
+fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Query {
@@ -175,6 +191,16 @@ pub fn convert_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
 pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
     serde_json::Value::Array(paths.iter().map(|path| {
         match super::logic::rr::read_file(path) {
+            // A program the reader passes still has to type: each variable one domain (a kind, a name, …), as a run
+            // checks when it plans (`plan::lower::domains`). A run would stop there, so the check does too.
+            Ok((program, _)) if let Err(error) = super::logic::rr::print(&program)
+                .map_err(|e| e.to_string())
+                .and_then(|text| super::logic::plan::corpus::combine(&[text.as_str()], "").map_err(|e| e.to_string()))
+                // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
+                .and_then(|combined| super::logic::plan::lower::domains(&super::logic::front::prune(combined)).map(|_| ()).map_err(|e| e.to_string())) =>
+            {
+                serde_json::json!({"path": path, "status": "types-failed", "error": error})
+            }
             Ok((program, files)) => serde_json::json!({
                 "path": path, "status": "reader-passed", "rules": program.rules.len(),
                 "outputs": program.outputs,
@@ -215,7 +241,7 @@ pub fn run_rr(
         Binding::Cpu,
         1 << 18,
         &Default::default(),
-        options,
+        &with_reuse(options),
     )
     .map_err(|e| e.to_string())?;
     let rows = match std::fs::read_to_string(out.join("rr_diagnostic.csv")) {
@@ -291,14 +317,79 @@ pub fn assemble(text: &str) -> Result<String, String> {
 
 /// A program file's `.rr` text, with what it `#include`s from the library (`docs/rule-syntax/lib`) read in.
 pub fn program_text(path: &std::path::Path) -> Result<String, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    if !text.lines().any(|l| l.trim_start().starts_with("#include")) {
-        return Ok(text);
+    program_texts(&[path]).map(|mut texts| texts.remove(0))
+}
+
+/// [`program_text`] for each of `paths`: phase 0 resolves all their `#include`s in one run of `bootstrap.rr`
+/// (`plan::corpus::phase0`), not one run each.
+pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> {
+    use super::logic::plan::corpus::{observe, phase0};
+    let read = |path: &std::path::Path| -> Result<String, String> {
+        let (bytes, _) = observe(|o| o.read(path)).ok_or_else(|| format!("{}: cannot read the file", path.display()))?;
+        String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
+    };
+    let texts: Vec<String> = paths.iter().map(|p| read(p)).collect::<Result<_, _>>()?;
+    // A policy (`.policy`, `.language`) is read as `run-rr` reads it: its language's base relations are declared by
+    // reading the file (O111), which a policy's text does not do itself.
+    let policy = |text: &str| text.lines().map(str::trim_start).any(|l| l.starts_with(".policy") || l.starts_with(".language"));
+    let includes = |text: &str| text.lines().any(|l| l.trim_start().starts_with("#include"));
+    let mut seeds = Vec::new();
+    for (path, text) in paths.iter().zip(&texts) {
+        if includes(text) {
+            seeds.push(phase0::Seed::File(path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?));
+        }
     }
-    let program = super::logic::rr::parse_file(path)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
-    super::logic::rr::print(&program).map_err(|error| format!("{}: {error}", path.display()))
+    let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
+    let mut graphs = graphs.into_iter();
+    let mut out = Vec::with_capacity(texts.len());
+    for (path, text) in paths.iter().zip(texts) {
+        if !includes(&text) {
+            out.push(if policy(&text) { format!("#include \"core.rr\"\n{text}") } else { text });
+            continue;
+        }
+        let graph = graphs.next().expect("a graph per seed");
+        // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
+        // run however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
+        let canonical = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+        let own = module_text(&canonical, &text, &graph, &mut Vec::new(), &read)?;
+        out.push(if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own });
+    }
+    Ok(out)
+}
+
+/// `text` (the file `path`'s) with each `#include` phase 0 resolved to a file outside the library written in, each
+/// once.
+fn module_text(
+    path: &std::path::Path,
+    text: &str,
+    graph: &super::logic::plan::corpus::phase0::Graph,
+    seen: &mut Vec<std::path::PathBuf>,
+    read: &dyn Fn(&std::path::Path) -> Result<String, String>,
+) -> Result<String, String> {
+    let library = super::logic::rr::library().canonicalize().map_err(|e| e.to_string())?;
+    let from = path.to_string_lossy().into_owned();
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let name = line.trim_start().strip_prefix("#include").and_then(|rest| rest.split('"').nth(1));
+        match name {
+            Some(name) => {
+                let found = graph.includes.get(&from).into_iter().flatten().find(|(_, n, _)| n == name).map(|(_, _, p)| p.clone());
+                let Some(found) = found else {
+                    return Err(format!("{}: #include {name:?}: no such file", path.display()));
+                };
+                if found.starts_with(&library) {
+                    out.push_str(line);
+                } else if !seen.contains(&found) {
+                    seen.push(found.clone());
+                    let inner = read(&found)?;
+                    out.push_str(&module_text(&found, &inner, graph, seen, read)?);
+                }
+            }
+            None => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 /// The run's settings (t21 E4): `key=value` lines of `<root>/rerail.env` (blank lines and `#` comments
@@ -325,12 +416,23 @@ pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
         let l = l.trim_start();
         l.strip_prefix(".decl").is_some_and(|r| r.trim_start().strip_prefix("env").is_some_and(|r| r.trim_start().starts_with('(')))
     });
+    // A text in module form (decision 0089) reads `core.rr`, which declares `env`.
+    let declares = declares || program.lines().any(|l| l.trim_start().starts_with("#include"));
     if !declares || settings.is_empty() {
         return program.to_owned();
     }
     let quote = super::logic::rr::quote;
     let facts: String = settings.iter().map(|(k, v)| format!("env({}, {}).\n", quote(k), quote(v))).collect();
     format!("{program}\n// The run's settings (--env, rerail.env).\n{facts}")
+}
+
+/// The command line's runs keep their outputs for phase 0's cutoff (`corpus::reuse`), unless the caller said.
+fn with_reuse(options: &serde_json::Value) -> serde_json::Value {
+    let mut options = options.clone();
+    if let Some(map) = options.as_object_mut() {
+        map.entry("reuse").or_insert(serde_json::Value::Bool(true));
+    }
+    options
 }
 
 /// [`program_text`] under the name the wasm build's callers use: a rule as written in the library, its includes
@@ -351,7 +453,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     if programs.len() > 1 && t_facts.is_some() {
         return Err("T facts reproduce one program's run, not several".into());
     }
-    let options = serde_json::json!({ "env": settings });
+    let options = serde_json::json!({ "env": settings, "reuse": true });
     let programs: Vec<&str> = programs.iter().map(String::as_str).collect();
     let report = super::logic::plan::corpus::run_with_options(&programs, root, t_facts, out, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
         .map_err(|error| error.to_string())?;
@@ -418,7 +520,7 @@ mod settings_tests {
 //   rerail-engine check-rr <rule>... | convert-rr <rule>...
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr <rule>...";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr <rule>...";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -439,6 +541,7 @@ pub fn cli(args: &[String]) -> Result<String, String> {
             _ => Err("usage: rerail-engine sql <store.sqlite> <request.json>".into()),
         },
         Some("logic") => logic_command(&args[1..]),
+        Some("facts-stamp") => facts_stamp_command(&args[1..]),
         Some("run-rr") if args.len() == 4 || args.len() == 5 => {
             let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
             serde_json::to_string(&crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &options)?).map_err(|e| e.to_string())
@@ -489,6 +592,12 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             "--modes" => modes = Some(args.next().ok_or("--modes requires a value")?.clone()),
             "--env" => env.push(args.next().ok_or("--env requires key=value")?.clone()),
             "--chunk" => chunk = args.next().ok_or("--chunk requires a value")?.parse().map_err(|_| "--chunk takes a node count")?,
+            // Where `artifact=` inputs are read (data-layer/RUN-FACTS.md section 2); `<root>/.rerail/facts` without it.
+            "--facts" => crate::code_rule_dsl::logic::plan::corpus::inputs::set_facts_dir(args.next().ok_or("--facts requires a directory")?.into())?,
+            // In CI: a missing, stale or malformed artifact fails the run (RUN-FACTS.md section 5).
+            "--require-facts" => crate::code_rule_dsl::logic::plan::corpus::inputs::require_facts(),
+            // The revision `at="base"` inputs are read at: a commit id or a reference name.
+            "--base" => crate::code_rule_dsl::logic::plan::corpus::inputs::set_base(args.next().ok_or("--base requires a revision")?.clone())?,
             other => positional.push(other.to_owned()),
         }
     }
@@ -513,7 +622,21 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             .filter(|path| path.extension().is_some_and(|x| x == "rr"))
             .collect();
         files.sort();
-        files.iter().map(|path| crate::tools::program_text(path)).collect::<Result<Vec<_>, _>>()?
+        // A file another one `#include`s is a library of it (`…confusables.rr`), not a program of its own: alone it
+        // has neither the declarations it reads nor the rules that fill its inputs.
+        let included: std::collections::BTreeSet<std::ffi::OsString> = files
+            .iter()
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .flat_map(|text| {
+                text.lines()
+                    .filter_map(|l| l.trim().strip_prefix("#include"))
+                    .filter_map(|rest| rest.trim().strip_prefix('"')?.strip_suffix('"').map(|p| Path::new(p).file_name().map(ToOwned::to_owned)))
+                    .flatten()
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
+        crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]
     };
@@ -522,6 +645,32 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     }
     let run = || crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
     if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
+}
+
+/// `facts-stamp <raw> --out <dir> --root <repository> <policy.rr>…` (data-layer/RUN-FACTS.md section 1, `rerail facts
+/// stamp`): wraps each producer's output with the digest of the inputs the policies declare for it.
+fn facts_stamp_command(args: &[String]) -> Result<String, String> {
+    use crate::code_rule_dsl::logic::plan::corpus::inputs;
+    let (mut raw, mut out, mut root, mut policies) = (None, None, None, Vec::new());
+    let mut args = args.iter();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--out" => out = Some(args.next().ok_or("--out requires a directory")?.clone()),
+            "--root" => root = Some(args.next().ok_or("--root requires a directory")?.clone()),
+            other if raw.is_none() => raw = Some(other.to_owned()),
+            other => policies.push(other.to_owned()),
+        }
+    }
+    let (Some(raw), Some(out)) = (raw, out) else { return Err(USAGE.into()) };
+    let root = root.unwrap_or_else(|| ".".into());
+    // The declarations, from each policy with its `#include`s read in: `.artifact` lines only.
+    let mut settings = Vec::new();
+    for policy in &policies {
+        let text = crate::tools::program_text(Path::new(policy))?;
+        settings.extend(text.lines().filter_map(|l| l.trim().strip_prefix(".artifact ")).map(|rest| ("artifact".to_owned(), rest.to_owned())));
+    }
+    let declared = inputs::artifacts(&settings).map_err(|e| e.to_string())?;
+    inputs::stamp(Path::new(&raw), Path::new(&out), Path::new(&root), &declared)
 }
 
 /// `gc`: collects a store until nothing is left to collect (decision 0053): converts a store made before 0053 to

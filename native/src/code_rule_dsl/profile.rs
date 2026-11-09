@@ -6,7 +6,8 @@ pub(super) mod memory;
 pub(super) use clock::thread_cpu_ns;
 pub(super) mod navigation;
 mod semantic;
-pub(super) mod sql;
+#[allow(unused_imports)]
+pub(super) use super::sql_profile as sql;
 pub(crate) mod trace;
 use ast_grep_core::matcher::{DumpPattern, Matcher};
 use serde_json::{Value, json};
@@ -37,6 +38,8 @@ fn describe_matcher(matcher: &AstMatcher, language: GrammarDialect) -> Value {
         AstMatcher::Kind(kind) => json!({ "kind": kind.potential_kinds().map(|kinds|
             kinds.iter().map(|id| kind_name(id as u16)).collect::<Vec<_>>()) }),
         AstMatcher::Regex(_) => json!({ "regex": true }),
+        AstMatcher::Supertype(supertype) => json!({ "supertype": kind_name(supertype.class),
+            "kinds": supertype.kinds.iter().map(|&id|kind_name(id)).collect::<Vec<_>>() }),
         AstMatcher::Never => json!({ "never": true }),
         #[cfg(test)]
         AstMatcher::TestUnknown(_) => json!({ "testUnknown": true }),

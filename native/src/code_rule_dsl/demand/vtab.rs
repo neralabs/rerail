@@ -1891,13 +1891,10 @@ pub(in crate::code_rule_dsl) fn register_module(
     // A relation's rows come from the statistics of the match facts it fills (`fact_stats`,
     // merged by `stats::ingest` as the driver writes them), not from fixed seeds; without them,
     // SQLite's own default for a virtual table.
-    let estimate = |name: &str| -> SqlResult<i64> {
-        connection
-            .query_row("SELECT max(rows) FROM fact_stats WHERE tbl = ?1", [name], |row| {
-                row.get::<_, Option<i64>>(0)
-            })
-            .map(|rows| rows.unwrap_or(DEFAULT_ESTIMATED_ROWS).max(1))
-    };
+    let estimates = connection.prepare("SELECT tbl,max(rows) FROM fact_stats WHERE tbl IN('rerail_batch_status','rerail_producer_status','rerail_terminal_match','rerail_capture','rerail_document_map') GROUP BY tbl")?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(DEFAULT_ESTIMATED_ROWS).max(1))))?
+        .collect::<SqlResult<HashMap<_, _>>>()?;
+    let estimate = |name: &str| -> SqlResult<i64> { Ok(estimates.get(name).copied().unwrap_or(DEFAULT_ESTIMATED_ROWS)) };
     let register = |name, module: RelationModule| {
         connection.create_module(name, &MODULE, Some(Arc::new(module)))
     };

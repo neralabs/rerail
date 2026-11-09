@@ -21,7 +21,7 @@
 //   brace_name, brace_nested, call_pos, call_kw, call_star, call_kwsplat
 
 .violation UP032(at: node) code "UP032"
-    "Replace this `.format()` call with an f-string, putting each argument inside its `{}` placeholder; keep `.format()` when the string is passed to a translation function."
+    "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
     suppress ruff "UP032"
 UP032(c) :- format_call(c, v), brace_ok(v), !brace_nested(v, _, _, _, _, _), !call_star(c), !call_kwsplat(c),
     !mixed(v), count : { brace_name(v, k, _, _), !refers(c, k, _) } = 0, count : { refers(c, _, e), quoted(e) } = 0, !split_field(c),

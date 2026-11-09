@@ -29,6 +29,10 @@ impl Reducer {
                     names("", rule.width)
                 ))?,
             )?;
+            storage.restrict_indexes(
+                &table,
+                &(rule.width..rule.width + self.keys()).collect::<Vec<_>>(),
+            )?;
         } else {
             db.execute_batch(&format!("CREATE TEMP TABLE {table}({},{keys},PRIMARY KEY({})) WITHOUT ROWID; CREATE INDEX {table}_keys ON {table}({})", schema(rule.width), names("",rule.width), (0..self.keys()).map(|i|format!("k{i}")).collect::<Vec<_>>().join(","))).map_err(error)?;
         }
@@ -52,6 +56,16 @@ impl Reducer {
         )
     }
     pub fn mark_contexts(&self, w: &Work<'_>, rule: &Rule, keys: &str, dirty: &str) -> Result<()> {
+        execute(
+            w.db,
+            &format!(
+                "INSERT OR IGNORE INTO {dirty} {}",
+                self.affected_contexts(rule, keys)
+            ),
+        )?;
+        Ok(())
+    }
+    pub fn affected_contexts(&self, rule: &Rule, keys: &str) -> String {
         let same = if self.dynamic() {
             (0..self.keys())
                 .map(|i| format!("c.k{i}=k.c{i}"))
@@ -85,14 +99,10 @@ impl Reducer {
         } else {
             rule.contexts.clone()
         };
-        execute(
-            w.db,
-            &format!(
-                "INSERT OR IGNORE INTO {dirty} SELECT {} FROM {keys} k CROSS JOIN {context} c WHERE {same}",
-                names("c", rule.width)
-            ),
-        )?;
-        Ok(())
+        format!(
+            "SELECT {} FROM {keys} k CROSS JOIN {context} c WHERE {same}",
+            names("c", rule.width)
+        )
     }
     pub fn refresh_dependencies(
         &self,
