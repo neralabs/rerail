@@ -11,7 +11,8 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 ## Active engine
 
 Build and develop the engine in this repository root. Its adopted Final rerail shape commit is
-`004df7e75`. The manifest binds its frozen CLI and exact source trees.
+`04e3b5b83`. Its new root build and acceptance checks are in progress.
+The completed Final 49 cohort remains recorded with its frozen CLI and exact source trees.
 Merge `219657a9a` adopts the latest Metal join implementation.
 The root planner also preserves literal facts when every derivation joins an empty relation (`4367e310b`).
 The latest accepted dedicated step-suite cohort is repaired Final `004df7e75`.
