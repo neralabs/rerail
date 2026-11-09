@@ -96,7 +96,73 @@ Writing P2 found two engine faults, both fixed:
 - a recursion through `split_dot` scanned every definition per row. The program now joins on a `parent`
   relation made once.
 
+### The analysis phase, P3 (`typing/programs/calls_p3.rr`)
+
+P3 is calls_cx.rr run over the workspace's documents alone. It loads no library document, and it includes no
+`python/modules.rr`. It reads `struct__def`, `struct__base` and `types__binds, attr, owner, sig, rtype, vtype,
+callret`. Values are of two sorts:
+- a workspace value is a node, as before (`pv(n, k, v)`): P3 parses the workspace;
+- a library value is a symbol, `lv(n, k, s)`: n may be the library's s, of kind `mod`, `cls`, `fn`, `inst` or
+  `none`.
+
+Library values come from:
+- imports, builtins and literals, resolved by `lres` through `types__binds`;
+- attributes of library modules, classes and instances (`types__attr`), and a workspace class's library bases
+  (`lbase`, `lfound`);
+- calls (a class's instance, a function's declared return), `__call__`, and implicit calls (`o[i]`, loops, `with`);
+- annotations that name a library class, for parameters, returns and class attributes.
+
+They flow back into workspace values where a library declares it:
+- `(f: F) -> F` decorators keep the definition;
+- `Callable[P, A] -> Callable[P, B]` wrappers, such as `contextmanager`, call it (`types__callret`);
+- `-> Self` returns the receiver.
+
+A library value is open (`vopen`) where its declared type is partly unknown. P2's `""` row marks it: some
+alternative names no class and is not None.
+
+Against Jedi over the 84 files (dev build, load 15–30), with each run's store new (cold) or kept (warm):
+
+| | calls_cx | P3 (P1 + P2 + calls_p3) |
+|---|---|---|
+| agree | 6,299 | 6,380 |
+| program unknown, Jedi decided | 722 | 643 |
+| program no edge, Jedi a definition | 414 | 412 |
+| program another definition | 2 | 2 |
+| main-thread CPU, cold | 87.0 s | 43.3 s |
+| main-thread CPU, warm | 91.9 s | 15.2 s |
+| process user CPU, cold / warm | 97.7 / 102.5 s | 60.1 / 23.8 s |
+| documents in the analysis run | 267 | 84 |
+
+No call is answered worse than calls_cx answers it: no line has more "no edge" or "another definition" answers.
+86 calls calls_cx left unknown are now decided, and 17 it decided are now unknown. Those 17 are mostly generics
+instantiated through a library class (`Mapping.get`, `Future.result`, `IO.fileno` on `open()`'s overloads), which
+P3 does not do yet.
+
+Faults found on the way, all fixed:
+- **The constants' run started the phases** (engine, `phases::facts`). The constants' own run passes its options
+  on, and a phase run under them was a constants run itself, so it wrote none of its exports ("phase struct: unit:
+  No such file"). The constants' run now starts no phase: a phase export is a run input, never a constant. Test:
+  `phases::tests::a_reader_with_constants_runs_its_phases_once_as_themselves`.
+- **`split_dot(q, p, x)` gives every split of q**, not the last one: `@dot` is `@cat`, inverted at each dot. P2's
+  `parent` gave `unittest.mock.patch` two modules, `unittest.mock` and `unittest`, and resolved its annotation in
+  both. A rule that wants the last part now requires `!contains(".", x)`.
+- **An alias rule inside the `binds` recursion was quadratic per module.** Each new binding of a module joined every
+  assignment of that module: 65.8 s. The aliases are now made first and keyed by the name they read (4.5 s).
+- **A join order scanned every class**: `lattr` put `struct__def(t, "class")` before `types__vtype` (16.3 s for 288 k
+  rows). The program now joins on a relation made first (`ldecl`); the planner's choice is noted below.
+
 ## What is missing
+
+### P3 still to come
+
+- Generic instantiation through a library's classes (`list[C]`'s `__iter__`, `dict[str, C].get`, the `gpar`,
+  `wbind` and `fbind` machinery on stub nodes): needs P2's schemes. These are the 17 calls above.
+- Overloads fitted by arity. Today the returns of every overload are taken, and any open one makes the call open.
+- `async def` in stubs: struct does not mark it, so an awaited library call's value is typed as its return.
+- The cross-file memo per import component (`RERAIL_PYTHON_CROSS_MEMO`) is not used with P3 yet; the runs above are
+  without it.
+- The warm run's process peaked at 1.08 GB RSS, though the run reports 352 MB: what holds the rest (the phase rows
+  read back from the store, most likely) is not measured yet. It is over the 1 GB budget.
 
 ### P2 still to come
 
@@ -153,14 +219,13 @@ Still to come:
 | 2 | engine, done | phase runs flat; an upstream phase checked once; loads refused in a later phase; kept when unchanged | phase tests |
 | 3 | done here | `types.rr` (P2): binds, bases/anc, attr, sig/rtype/vtype, owner | 10.3 s cold, 0.11 s unchanged |
 | 4 | spike, done | P1 → P2 → a reader over the 84 files | 99.3% of imports present, 91.2% of annotations |
-| 5 | Typing-support | P3 `calls.rr`: no loads, symbols, anti-joins over `types.` | 6,299 Jedi answers agree |
+| 5 | done here | P3 `calls_p3.rr`: no loads, library values as symbols from `types.` | 6,380 agree (calls_cx 6,299); 43.3 s cold, 15.2 s warm |
 | 6 | engine | searches (`inst`, `mro_find`) as the on-demand path (t26) | `wbind`/`gpar` work gone |
 | 7 | after 0094 §4 | P2 from struct's delta | an edit's cost in P2 |
 
-Step 5 is the long pole now. It is a rewrite of `calls_cx.rr`'s library half, the hybrid above, checked against
-the 6,299 Jedi answers. It is worth doing only if P3 without the stub rows saves more than the 21 s P1 and P2
-cost cold, since kept runs cost 0.2 s. Today's figures: the stubs are 3.0 M of 5.94 M rows, and the cone is
-5.1 s of joins.
+Step 5 paid for itself. Cold, P1 + P2 + P3 cost half of calls_cx's main-thread CPU (43.3 s against 87.0 s).
+Warm, with P1 and P2 kept, P3 costs a sixth of it (15.2 s), because calls_cx gains nothing from a kept store. The
+long pole is now step 6: generics through libraries, as searches.
 
 ## Dovetailing with the other worktrees
 
@@ -175,6 +240,11 @@ A read-only survey of every worktree, 2026-11-09. Nobody else has a `types.rr` o
 | More-ergonomic-rule-syntax | the cone reading held exports, a third copy | not to be redone |
 | Matrix-offload-spikes | a draft numbered 0096, as is Typing-support's | a numbering clash to settle when they meet |
 
+After the 2026-11-09 merge of Typing-support and serverplan-quality, `fbind` is the costliest join in calls_cx
+(6.4 s, 20 M work, where t27 had it off the list). Its delta plan reads `pv(a, "inst", k)`, then `tfix(k, …)`, then
+`fgp`, then `fcall(c, f, i, a)`, though `fcall` is bound by `a` straight after `pv`. That is a pricing question for
+the statistics branches (serverplan-quality, wolfeel), not changed here. P3 does not run `fbind` over library rows.
+
 Likely conflicts when these meet: `plan/corpus.rs` (every branch), `phases.rs` (Typing-support), `plan.rs`
 (the search here, statistics in Two-pass and wolfeel), and `typing/file_local.rs` (Typing-support, wolfeel).
 
@@ -183,5 +253,7 @@ Likely conflicts when these meet: `plan/corpus.rs` (every branch), `phases.rs` (
 - **What should be cheap may not be.** P1 and P2 cost 21 s cold in the dev build, more than the 5.1 s cone they
   replace, because they read every document's structure. The saving has to come from P3, with no stub rows
   (half of today's), and from P1 and P2 kept across runs (0.2 s).
+- **`split_dot` is every split.** A rule that means "the last part" must say so (`!contains(".", x)`); a rule
+  over symbols that forgets it is wrong only where a symbol's prefix is also a module.
 - **Positions are not freshness.** `.positions at` keeps positions out of a granule's digest. A P3 report that
   names lines must take them from `struct__at` at the end, never key on them.
