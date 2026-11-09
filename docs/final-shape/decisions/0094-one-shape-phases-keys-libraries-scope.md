@@ -19,7 +19,7 @@ The questions, and who answers them:
 | Where may a fact over every document be read? | 0093: only by findings (reports) | accepted, not built |
 | How is a library held? | 0089: a module, held once per run; equal requests share one cone | stages 1–2 built |
 | What does a policy's scope limit? | 0091: its own rules and findings, never which facts exist | built |
-| How is a changed fact maintained? | deferred: exact maintenance (counting or another), or 0077's DRed | DRed built; 0090 step 1 |
+| How is a changed fact maintained? | deferred: exact maintenance (counting or another), or 0077's DRed | DRed built; 0090 steps 1 and 3 |
 | When is a fact a search? | 0083 §4: `.search`, memoised, after maintenance | not built |
 | How is a node named? | §2 below | flag only |
 | What does a run load, and what changed? | §6 below (phase 0) | being designed |
@@ -99,6 +99,13 @@ The id scheme is part of the per-file memo's plan key, so a change of scheme mis
   maintenance proper (over-delete, insert, rederive) is 5% of cold already; the rest is overhead linear in the
   stored fixpoint (deltas as anti-joins of whole relations, survivor copies, binding, re-planning), plus input
   deltas inflated by preorder ids (§2).
+- **Where DRed stands (2026-11-08)**, on `session_costs` (3,000 files, one edit, a 9,000,000-row closure): 14.2 s
+  CPU before, 2.2 s after, cold about 2 s. Three changes: a maintained relation's net delta from its own
+  del, redo and ins rows (0090 step 1); relations kept as the engine held them, with their indexes, and read
+  in place next run (step 3); and an insert that stops at rows that survived. Without that stop, one new edge
+  inserted the whole closure again: a bug, not DRed's cost. What is left is the survivors' copy (`h :- h__old,
+  !h__del`, 1.8 s here), which costs what deriving `h` cold does. Reading the survivors in place needs a relation
+  with deleted rows in the engine's core: any mechanism needs it, counting included.
 - **Statistics are maintained like data**: stored counts updated by deltas, not measured again on a warm run.
 - **Every keyed read from SQLite has a test of its plan** (`SEARCH … USING PRIMARY KEY`). SQLite falls back to a
   scan without saying so; one such read took 33 s.
