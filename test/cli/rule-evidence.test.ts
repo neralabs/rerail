@@ -109,6 +109,18 @@ describe("risky commands", () => {
     ]);
   });
 
+  it("counts PowerShell's and cmd's recursive deletes, which Codex and Cursor run on Windows, in any case", () => {
+    counted("recursive delete", [
+      "Remove-Item -Recurse -Force build", "remove-item build -recurse -force", "Remove-Item -Path build -Recurse:$true -Force",
+      "rm -r -fo build", "rm -Recurse -Force build", "ri -Recurse -Force build", "del -Recurse -Force build", "erase -rec -for build",
+      "rd /s /q build", "RD /S /Q build", "rmdir /s build", "cd x; Remove-Item -Recurse -Force y",
+    ]);
+    ignored("recursive delete", [
+      "Remove-Item build", "Remove-Item -Recurse build", "Remove-Item -Force a.txt", "rd build", "rmdir /q build",
+      "echo Remove-Item -Recurse -Force x", "Get-ChildItem -Recurse -Force", "del /q a.txt",
+    ]);
+  });
+
   it("counts publishing, sudo and piping a download to a shell", () => {
     counted("publish", ["npm run build && npm publish", "npm run build\nnpm publish", "cargo publish", "twine upload dist/*"]);
     ignored("publish", ["grep 'npm publish' docs", "npm run publish-docs"]);
