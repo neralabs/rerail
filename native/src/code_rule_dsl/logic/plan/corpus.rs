@@ -1864,7 +1864,7 @@ fn run_observed(
     for rel in split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
-            "node" if decodes => &["d", "n", "start"],
+            "node" if decodes => &["d", "n"],
             "doc" if decodes => &["d", "path"],
             _ => &[],
         };
