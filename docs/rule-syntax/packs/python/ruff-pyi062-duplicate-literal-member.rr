@@ -13,3 +13,4 @@
 .violation PYI062(at: node) code "PYI062" "Remove the repeated member `{at}` from this Literal; an earlier member already covers it."
     suppress ruff "PYI062"
 PYI062(m) :- literal_leaf(l, m), lit_key(m, k), literal_leaf(l, e), e < m, lit_key(e, k).
+PYI062(m) :- literal_leaf(l, m), kind(m, t), value(m, v), literal_leaf(l, e), e < m, kind(e, t), value(e, v).

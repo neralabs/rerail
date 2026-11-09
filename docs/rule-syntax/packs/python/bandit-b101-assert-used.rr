@@ -3,6 +3,7 @@
 .language python
 .mode steer
 .scope include "**/*"
+.scope exclude "**/tests/**", "**/test_*.py", "**/*_test.py", "**/conftest.py"
 // Bandit's B101 (assert_used): every assert statement. `python -O` compiles them away.
 //   assert user.is_admin                 B101
 //   if not user.is_admin: raise Denied   not reported
