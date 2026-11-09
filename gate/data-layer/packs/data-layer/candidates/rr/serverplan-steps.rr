@@ -205,7 +205,7 @@ ssp_extra("check_runtime_builder_names_are_enum_members",m,m,c,n,0,"STEP-031","r
 // check_runtime_builder_kind_name_pairs is intentionally empty in the pinned
 // source: runtime-builder deletion made that validation obsolete.
 
-ssp_problem_hit("check_closed_post_op_migration_guardrail",m,m,c,v,0,"STEP-027","CompiledStep(runtime_ref_ids=...) without SQL grammar is forbidden in closed post-op modules") :- ssp_module(d,m), ssp_strict(d), docof(c,d), ssp_missing_grammar(c), ssp_kw(c,"runtime_ref_ids",v).
+ssp_problem_hit("check_closed_post_op_migration_guardrail",m,m,c,v,0,"STEP-027","CompiledStep(runtime_ref_ids=...) without SQL grammar is forbidden in closed post-op modules") :- ssp_module(d,m), ssp_strict(d), docof(c,d), ssp_missing_grammar(c), ssp_last_kw(c,"runtime_ref_ids",v).
 ssp_problem_hit("check_closed_post_op_migration_guardrail",m,m,c,v,i+1,"STEP-027","CompiledStep(post_op_with_refs=...) is forbidden in closed post-op modules") :- ssp_module(d,m), ssp_strict(d), docof(c,d), ssp_compiled(c), ssp_kw(c,"post_op_with_refs",v), visit_index(v,i).
 ssp_problem_hit("check_closed_post_op_migration_guardrail",m,m,c,v,i+1,"STEP-027","CompiledStep(post_op=...) must be a closed CompiledPostOp factory call") :- ssp_module(d,m), ssp_strict(d), docof(c,d), ssp_compiled(c), ssp_kw(c,"post_op",v), !ssp_closed(v), visit_index(v,i).
 
@@ -300,3 +300,68 @@ ssp_cb_problem(cb,kind,n,3,"uses runtime txn/conn authority — callbacks must s
 .decl ssp_cb_first(cb: node, kind: symbol, n: node, priority: number, tail: symbol)
 ssp_cb_first(cb,kind,n,priority,tail) :- ssp_cb_problem(cb,kind,n,priority,tail), visit_index(n,i), i = min j : { ssp_cb_problem(cb,kind,m,_,_), visit_index(m,j) }, priority = min p : { ssp_cb_problem(cb,kind,n,p,_) }.
 SSPRow(@place(path,l),"STEP-026",cat(cls,".compile() callback '",@nfkc(name),"' ",tail),ci,fi,calli,kwi,0,"check_compile_callbacks_no_runtime_authority") :- ssp_run("check_compile_callbacks_no_runtime_authority"), ssp_step(c,cls), ssp_method(c,f,"compile"), ssp_callback(f,call,kw,kind,cb), ssp_cb_first(cb,kind,n,_,tail), def_name(cb,name), docof(c,d), ssp_doc(d,path), line(n,l), visit_index(c,ci), visit_index(f,fi), visit_index(call,calli), visit_index(kw,kwi).
+
+ssp_entry("check_runtime_refs_post_op_requires_runtime_refs_guardrail").
+ssp_entry("check_runtime_ref_closed_post_op_consumption_guardrail").
+ssp_entry("check_helper_anchored_runtime_ref_post_op_guardrail").
+.decl ssp_fn(d: number, f: node)
+ssp_fn(d,f) :- ssp_doc(d,_), docof(f,d), kind(f,"function_definition").
+.decl ssp_collection(n: node)
+ssp_collection(n) :- kind(n,k), (k = "tuple" ; k = "expression_list" ; k = "list" ; k = "set").
+.decl ssp_element(n: node, v: node)
+ssp_element(n,v) :- ssp_collection(n), child(n,raw,_), !kind(raw,"comment"), unparen(raw,v).
+.decl ssp_dict_value(n: node, v: node)
+ssp_dict_value(n,v) :- kind(n,"dictionary"), child(n,p,_), kind(p,"pair"), field(p,"value",raw), unparen(raw,v).
+ssp_dict_value(n,v) :- kind(n,"dictionary"), child(n,p,_), kind(p,"dictionary_splat"), child(p,raw,0), unparen(raw,v).
+.decl ssp_runtime_ref_call(c: node)
+ssp_runtime_ref_call(c) :- ssp_named_call(c,name), (name = "runtime_refs_post_op" ; suffix(".runtime_refs_post_op",name)).
+.decl ssp_sets_refs(c: node)
+ssp_sets_refs(c) :- kind(c,"call"), ssp_first_kw(c,name,v), (name = "runtime_ref_ids" ; name = "source_refs"), ssp_nonempty(v).
+
+// Boolean expression evaluation follows exactly the supported AST shapes:
+// calls' arguments, collection elements, dictionary values, and local names.
+// Attribute receivers, dictionary keys, and unsupported expressions stay opaque.
+.decl ssp_expr_child(n: node, v: node)
+ssp_expr_child(n,v) :- ssp_arg(n,v).
+ssp_expr_child(n,v) :- ssp_element(n,v).
+ssp_expr_child(n,v) :- ssp_dict_value(n,v).
+.decl ssp_eval_edge(f: node, n: node, v: node)
+ssp_eval_edge(f,n,v) :- ssp_fn(_,f), ssp_under(n,f), ssp_expr_child(n,v).
+ssp_eval_edge(f,n,v) :- ssp_fn(_,f), ssp_under(n,f), ssp_name(n,name), ssp_binding(f,name,v).
+.decl ssp_consumes(f: node, n: node)
+ssp_consumes(f,n) :- ssp_fn(_,f), ssp_under(n,f), ssp_sets_refs(n).
+ssp_consumes(f,n) :- ssp_fn(d,f), ssp_under(n,f), ssp_named_call(n,name), ssp_ref_summary(d,name).
+ssp_consumes(f,n) :- ssp_eval_edge(f,n,v), ssp_consumes(f,v).
+.decl ssp_ref_summary(d: number, name: symbol)
+ssp_ref_summary(d,@nfkc(name)) :- ssp_fn(d,f), def_name(f,name), ssp_walk(f,r), ssp_ret(r,v), ssp_consumes(f,v).
+
+// The source's seen-name set belongs to one expression path. A repeated local
+// alias falls back to the function summary of that name. A normal reachability
+// closure loses this distinction on cycles. Valid Python identifiers contain no
+// slash, so slash-delimited names encode that finite path state unambiguously.
+// A finite lower-stratum fuel domain makes the bound explicit to the engine.
+// Each appended name is a distinct local binding, so N bindings need at most N
+// append steps. This is a derived bound, not a rule limit.
+.decl ssp_alias_fuel(f: node, step: number)
+ssp_alias_fuel(f,0) :- ssp_fn(_,f).
+ssp_alias_fuel(f,rank+1) :- ssp_binding(f,name,_), rank = count : { ssp_binding(f,other,_), other < name }.
+.decl ssp_refless_visit(f: node, root: node, n: node, seen: symbol, fuel: number)
+ssp_refless_visit(f,v,v,"/",0) :- ssp_fn(_,f), ssp_walk(f,r), ssp_ret(r,v).
+ssp_refless_visit(f,root,v,seen,fuel) :- ssp_refless_visit(f,root,n,seen,fuel), !ssp_runtime_ref_call(n), ssp_expr_child(n,v).
+ssp_refless_visit(f,root,v,cat(seen,name,"/"),fuel+1) :- ssp_refless_visit(f,root,n,seen,fuel), ssp_alias_fuel(f,fuel), ssp_name(n,name), ssp_binding(f,name,v), !contains(cat("/",name,"/"),seen).
+.decl ssp_refless(f: node, root: node)
+ssp_refless(f,root) :- ssp_refless_visit(f,root,n,_,_), ssp_runtime_ref_call(n), !ssp_sets_refs(n).
+ssp_refless(f,root) :- ssp_fn(d,f), ssp_refless_visit(f,root,n,_,_), ssp_named_call(n,name), !ssp_runtime_ref_call(n), ssp_refless_summary(d,name).
+ssp_refless(f,root) :- ssp_fn(d,f), ssp_refless_visit(f,root,n,_,_), ssp_name(n,name), !ssp_binding(f,name,_), ssp_refless_summary(d,name).
+ssp_refless(f,root) :- ssp_fn(d,f), ssp_refless_visit(f,root,n,seen,_), ssp_name(n,name), contains(cat("/",name,"/"),seen), ssp_refless_summary(d,name).
+.decl ssp_refless_summary(d: number, name: symbol)
+ssp_refless_summary(d,@nfkc(name)) :- ssp_fn(d,f), def_name(f,name), ssp_walk(f,r), ssp_ret(r,v), ssp_refless(f,v).
+
+ssp_problem_hit("check_runtime_refs_post_op_requires_runtime_refs_guardrail",m,f,f,f,0,"STEP-034","runtime_refs_post_op must declare non-empty runtime_ref_ids/source_refs; raw-row terminal materialization must use a closed materialization spec, not the runtime-ref helper as a metadata carrier") :- ssp_module(d,m), ssp_fn(d,f), def_name(f,name), ssp_refless_summary(d,@nfkc(name)).
+ssp_problem_hit("check_runtime_ref_closed_post_op_consumption_guardrail",m,f,c,v,0,"STEP-033","CompiledStep(runtime_ref_ids=..., closed_post_op=...) uses a closed post-op that still consumes runtime refs; request an explicit SQL-visible transport relation with CtePublicationContract columns, complete SqlColumnTypeHints, and any needed prefixed transport columns, then decode from raw_result") :- ssp_module(d,m), ssp_fn(d,f), ssp_under(c,f), kind(c,"call"), ssp_last_kw(c,"runtime_ref_ids",ref), ssp_nonempty(ref), ssp_last_kw(c,"closed_post_op",v), ssp_consumes(f,v).
+.decl ssp_call_label(c: node, name: symbol)
+ssp_call_label(c,name) :- ssp_named_call(c,name).
+ssp_call_label(c,"<call>") :- kind(c,"call"), !ssp_named_call(c,_).
+.decl ssp_declared_runtime_refs(c: node)
+ssp_declared_runtime_refs(c) :- ssp_last_kw(c,"runtime_ref_ids",v), ssp_nonempty(v).
+ssp_problem_hit("check_helper_anchored_runtime_ref_post_op_guardrail",m,f,c,v,0,"STEP-035",cat(name," carries a runtime-ref-consuming closed_post_op without declaring runtime_ref_ids on the same compiled step; helper CTE anchors must publish SQL-visible transport rows with static columns and SqlColumnTypeHints instead of hiding runtime-ref materialization from the linter")) :- ssp_module(d,m), ssp_fn(d,f), ssp_under(c,f), kind(c,"call"), ssp_last_kw(c,"closed_post_op",v), ssp_consumes(f,v), !ssp_declared_runtime_refs(c), ssp_call_label(c,name).

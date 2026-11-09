@@ -2119,7 +2119,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "7df45429f46b495ea340a65c07d57fca9b5274d4ccb05207e26ff8c7268acb55",
+      "sha256": "a1b61bec5730b11d80def232e1b94ab79807987830453c125cb6413cc46593fc",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2157,6 +2157,21 @@
           "before": "fdd14098151c9a18b64df3f67542a3450cef910b1e9b6edf46b99eadd60ab21a",
           "after": "7df45429f46b495ea340a65c07d57fca9b5274d4ccb05207e26ff8c7268acb55",
           "reason": "Preserve positional arguments across comments and distinguish first-keyword helpers from last-keyword dictionaries"
+        },
+        {
+          "before": "7df45429f46b495ea340a65c07d57fca9b5274d4ccb05207e26ff8c7268acb55",
+          "after": "520ed2c9068da1e45abbf239f52851e673f27907c804a35a6702733c02102998",
+          "reason": "Preserve the last runtime-ref keyword in closed-module grammar dictionaries"
+        },
+        {
+          "before": "520ed2c9068da1e45abbf239f52851e673f27907c804a35a6702733c02102998",
+          "after": "0daa26633a3c267efe5ffd4fe187548b902f38786eed8d8b94d05836a20a55c1",
+          "reason": "Translate runtime-ref helper summaries with path-specific seen-name semantics"
+        },
+        {
+          "before": "0daa26633a3c267efe5ffd4fe187548b902f38786eed8d8b94d05836a20a55c1",
+          "after": "a1b61bec5730b11d80def232e1b94ab79807987830453c125cb6413cc46593fc",
+          "reason": "Make expression-state progress provable with a finite domain derived from local bindings"
         }
       ]
     }
@@ -2628,7 +2643,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "7df45429f46b495ea340a65c07d57fca9b5274d4ccb05207e26ff8c7268acb55"
+      "ruleSha256": "a1b61bec5730b11d80def232e1b94ab79807987830453c125cb6413cc46593fc"
     },
     {
       "check": "serverplan_state_tripwires",

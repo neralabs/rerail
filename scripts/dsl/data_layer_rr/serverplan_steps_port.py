@@ -68,7 +68,10 @@ def install(suite, module):
                    'check_sql_visible_steps_declare_cte_type_hints',
                    'check_cte_type_hints_not_inferred_from_column_names',
                    'check_result_materialization_spec_no_source_ref_escape_hatch',
-                   'check_compile_callbacks_no_runtime_authority'}
+                   'check_compile_callbacks_no_runtime_authority',
+                   'check_runtime_refs_post_op_requires_runtime_refs_guardrail',
+                   'check_runtime_ref_closed_post_op_consumption_guardrail',
+                   'check_helper_anchored_runtime_ref_post_op_guardrail'}
     for name in FUNCTIONS:
         if name in implemented:
             def bind(entry):

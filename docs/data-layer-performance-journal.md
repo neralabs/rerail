@@ -9513,3 +9513,32 @@ The [TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan
 The source recorder now retains engine identity and program text before comparison, including failed runs.
 Original-suite regression after these repairs remains to run. The earlier 95-test checkpoint identifies its earlier program exactly.
 Serverplan-steps and the full migration remain incomplete.
+
+### 2026-11-09 — Runtime-ref summaries and original-suite regression
+
+The draft now defines 24 of the 31 detector functions.
+The three new functions track consuming helper returns, refless runtime-ref helpers, and helper-anchored post-ops.
+Their SQL clauses preserve last-assignment lookup, dictionary-value traversal, helper fixed points, and source finding order.
+
+The source's alias-cycle result depends on its starting name.
+The translation retains a separate seen-name state for each expression path.
+The engine initially rejects that finite value cycle because it cannot infer the string-membership bound.
+A finite counter domain, derived from the number of local bindings, supplies an existing supported termination proof.
+There is no fixed depth limit and no new native engine implementation.
+
+Duplicate runtime-ref keywords expose another defect: the draft reports both values instead of the dictionary's last value.
+The captured red result has an extra finding and an incorrect line. The repaired lookup matches the source.
+All twenty-five added source/native cases pass, including sixteen positives.
+These cases include alias cycles, short-circuit behavior, helper chains, and opaque dictionary keys.
+
+Original-suite regression passes 102 tests and 162 complete observations on Final `e3dbedd64`.
+Thirty-seven positive detector observations cover twenty-two functions.
+The supplemental corpus covers MISC_RUNTIME; obsolete kind/name validation remains empty by source definition.
+All twelve original-suite shards finish within 115 seconds. No semantic fallback or missing result occurs.
+A disabled runtime-ref consumer fails the original recursive-wrapper positive test as expected.
+All 130 focused engine tests and 171 harness tests pass. Two existing engine helpers remain ignored.
+
+The [new checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-finale3db-checkpoint.json.gz) records these results and the remaining 62 original tests.
+Seven detector functions and seven scanner, signature, or CLI entry points remain untranslated.
+Production reporting, discovery, complete controls, update acceptance, and global migration acceptance remain open.
+The inventory still contains seven absent translations. The new draft is not a completed port.

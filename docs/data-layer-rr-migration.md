@@ -2307,3 +2307,21 @@ Final `e3dbedd64` is now merged and built in this worktree.
 Additional TDD cases repair positional-only separators, comments in call arguments, and first-versus-last keyword lookup.
 All nineteen added source/native cases pass, including eleven positives.
 The original-suite regression must run again after these repairs. The 95-test checkpoint remains an earlier, separately bound result.
+
+The [subsequent checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-finale3db-checkpoint.json.gz) completes that regression and three additional detector translations.
+It passes 102 original tests, 162 complete observations, and twenty-five additional source/native cases.
+It explicitly leaves 62 original tests outside native coverage.
+Path-specific alias states preserve the source's cycle behavior. A bound derived from local bindings proves termination.
+
+The remaining detector functions are:
+
+- `check_closed_post_op_runtime_builder_no_callable_escape_hatches`
+- `check_runtime_refs_without_sql_grammar_guardrail`
+- `check_row_materializer_raw_row_shaping_guardrail`
+- `check_literal_payload_materializer_dispatch_guardrail`
+- `check_compiled_result_builders_do_not_fail_closed`
+- `check_legacy_postop_user_callable_escape_hatches`
+- `check_step_role_contract_guardrails`
+
+All seven scanner, signature, and CLI entry points remain open, followed by production and update acceptance.
+The seven absent rules and earlier migration gaps remain open.

@@ -65,6 +65,51 @@ GRAMMAR_CASES = [
         return CompiledStep(grammar=sql, grammar=None, closed_post_op=scalar_column_post_op("value"))
 '''),
 ]
+MIGRATION_CASES = [
+    ('last-runtime-ref-keyword', '''CLOSED_POST_OP_STRICT = True
+value = CompiledStep(
+    runtime_ref_ids=first,
+    runtime_ref_ids=second,
+    grammar=None,
+)
+'''),
+]
+REFERENCE_CASES = [
+    ('path-sensitive-local-alias-cycle', 'check_runtime_refs_post_op_requires_runtime_refs_guardrail', '''def a():
+    return runtime_refs_post_op()
+def b():
+    a = c
+    c = a
+    return a
+def c_helper():
+    a = c
+    c = a
+    return c
+'''),
+    ('declared-refs-short-circuit', 'check_runtime_refs_post_op_requires_runtime_refs_guardrail', '''def bad():
+    return runtime_refs_post_op()
+def good():
+    return runtime_refs_post_op(runtime_ref_ids=("ref",), nested=bad())
+'''),
+    ('consuming-helper-and-alias', 'check_runtime_ref_closed_post_op_consumption_guardrail', '''def factory():
+    return value(runtime_ref_ids=("ref",))
+def wrapper():
+    return factory()
+def compile():
+    op = wrapper()
+    return CompiledStep(runtime_ref_ids=("ref",), closed_post_op=op)
+'''),
+    ('helper-anchor-consumes-refs', 'check_helper_anchored_runtime_ref_post_op_guardrail', '''def factory():
+    return value(source_refs=("ref",))
+def wrapper():
+    return factory()
+def build():
+    return with_anchor(closed_post_op=wrapper())
+'''),
+    ('dictionary-keys-are-opaque', 'check_runtime_ref_closed_post_op_consumption_guardrail', '''def build():
+    return CompiledStep(runtime_ref_ids=("ref",), closed_post_op={factory(runtime_ref_ids=("ref",)): None})
+'''),
+]
 
 
 def main():
@@ -83,6 +128,8 @@ def main():
     cases = [(identity,source,'check_misc_runtime_is_deleted') for identity,source in CASES]
     cases += [(identity,source,'check_compile_callbacks_no_runtime_authority') for identity,source in CALLBACK_CASES]
     cases += [(identity,source,'check_virtual_execute_runtime_scalar_value_guardrail') for identity,source in GRAMMAR_CASES]
+    cases += [(identity,source,'check_closed_post_op_migration_guardrail') for identity,source in MIGRATION_CASES]
+    cases += [(identity,source,entry) for identity,entry,source in REFERENCE_CASES]
     baseline = read_json(args.baseline) if args.command == 'native' else None
     if baseline:
         if not baseline['passed'] or baseline['sourcePin'] != PIN:raise ValueError('A passing source recording is required')
