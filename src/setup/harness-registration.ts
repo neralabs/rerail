@@ -388,7 +388,7 @@ async function isRerailHookEntry(context: Context, entry: JsonObject, executable
  * on PATH. The POSIX form execs only inside the test, so a non-zero hook exit never re-runs the hook
  * through the fallback; `exec` also leaves stdio alone, so hook input still arrives on stdin.
  */
-function hookCommand(context: HookCommandContext, executable: string): string {
+export function hookCommand(context: HookCommandContext, executable: string): string {
   const node = shellArgument(context.nodePath, context.platform);
   const hook = shellArgument(join(context.root, executable), context.platform);
   if (context.platform === "win32") return windowsCmdHookCommand(node, hook);

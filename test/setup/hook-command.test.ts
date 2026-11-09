@@ -1,6 +1,6 @@
 import { join, win32 } from "node:path";
 import { describe, expect, it } from "vitest";
-import { generatedHookTarget, windowsCmdHookCommand } from "../../src/setup/harness-registration.js";
+import { generatedHookTarget, hookCommand, windowsCmdHookCommand } from "../../src/setup/harness-registration.js";
 
 // Pure functions only: nothing here registers a hook or writes a coding agent's settings.
 const CURSOR_HOOK = join("dist", "hosts", "cursor", "cursor-hook.js");
@@ -14,6 +14,14 @@ describe("the Windows cmd hook command", () => {
     const command = windowsCmdHookCommand(`"${node}"`, `"${hook}"`);
     expect(command).toBe(`cmd /d /c "if exist "${node}" ("${node}" "${hook}") else (for %I in (node.exe) do @"%~$PATH:I" "${hook}")"`);
     expect(command).not.toContain("(node ");
+  });
+
+  it("keeps each % of a Windows path single, since no batch file reads the command back", () => {
+    // cmd.exe given a command line on its own, as Cursor gives it a hook, reads `%%` as two characters.
+    const percent = String.raw`C:\Users\a%b`;
+    const command = hookCommand({ platform: "win32", nodePath: win32.join(percent, "node.exe"), root: win32.join(percent, ".rerail", "current") }, CURSOR_HOOK);
+    expect(command).toContain(`"${win32.join(percent, "node.exe")}"`);
+    expect(command).not.toContain("%%");
   });
 
   it.runIf(process.platform === "win32")("recognizes the form it writes and the forms earlier releases wrote", () => {
