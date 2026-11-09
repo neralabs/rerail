@@ -19,7 +19,7 @@ import { gitBranchTips, gitCommitsBetween, gitCrlfPaths, gitHead, headMovedOnlyB
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { renameWithRetry } from "../file-replace.js";
-import { crlfCheckout, lfStored } from "./line-endings.js";
+import { blobIds, heldAs, textAs } from "./line-endings.js";
 import { openNoFollow } from "../no-follow.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { IGNORED_DIRECTORIES } from "./code-rule-enforcer.js";
@@ -174,19 +174,7 @@ function gitRevisions(path: string, before: string | undefined): string[] {
   const revisions = [`:./${path}`, `:2:./${path}`, `:3:./${path}`, `HEAD:./${path}`];
   return before === undefined ? revisions : [...revisions, `${before}:./${path}`];
 }
-/**
- * How a file whose bytes have `digest` holds `blob`: as stored, as a checkout writes it with CRLF line breaks when its
- * repository's settings have it do so (`crlf`, `gitCrlfPaths`), or not at all (undefined). No blob and no digest, a file
- * absent on both sides, counts as held as stored.
- */
-function heldAs(blob: Buffer | undefined, digest: string | undefined, crlf: boolean): "stored" | "crlf" | undefined {
-  if (blob === undefined) return digest === undefined ? "stored" : undefined;
-  if (digest === undefined) return undefined;
-  if (sha256(blob) === digest) return "stored";
-  const checkedOut = crlf ? crlfCheckout(blob) : undefined;
-  return checkedOut !== undefined && sha256(checkedOut) === digest ? "crlf" : undefined;
-}
-/** Whether a file at `path` whose bytes have `digest` holds the blob `revision` names, in either form. */
+/** Whether a file at `path` whose bytes have `digest` holds the blob `revision` names, in either form (`heldAs`). */
 function holdsBlob(view: GitBlobs, path: string, revision: string, digest: string): boolean {
   const blob = view.blobs.get(revision);
   return blob !== undefined && heldAs(blob, digest, view.crlf.has(path)) !== undefined;
@@ -218,10 +206,6 @@ function movedFromText(view: GitBlobs, path: string, prior: string | undefined):
   const earlier = view.committed ? undefined : view.blobs.get(`HEAD:./${path}`);
   const previous = earlier ?? view.blobs.get(`${view.before}:./${path}`);
   return previous === undefined ? undefined : { previousText: textAs(previous, form) };
-}
-/** `blob` as text in `form`, so it lines up with a working tree that holds it that way. */
-function textAs(blob: Buffer, form: "stored" | "crlf"): string {
-  return (form === "crlf" ? crlfCheckout(blob) ?? blob : blob).toString("utf8");
 }
 /** The read error of a file too large to be a source or holding binary data, found once it was read. */
 const NOT_TEXT_ERROR = "Source exceeds its byte budget or contains binary data";
@@ -1585,14 +1569,7 @@ export class CodeRuleBridge {
   async #restoredFromBranches(checkout: string, view: GitBlobs, named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>): Promise<string[]> {
     // Git names a blob by the SHA-1, or in a SHA-256 repository the SHA-256, of its header and bytes; `HEAD`'s id says which.
     const algorithm = view.head.length === 64 ? "sha256" : "sha1";
-    const blobId = (text: string): string => {
-      const bytes = Buffer.from(text, "utf8");
-      return createHash(algorithm).update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-    };
-    const ids = new Map(named.map(({ edit, path }) => {
-      const stored = view.crlf.has(path) ? lfStored(edit.generatedText!) : undefined;
-      return [edit.path, stored === undefined ? [blobId(edit.generatedText!)] : [blobId(edit.generatedText!), blobId(stored)]];
-    }));
+    const ids = new Map(named.map(({ edit, path }) => [edit.path, blobIds(edit.generatedText!, algorithm, view.crlf.has(path))]));
     const known = await readGitBlobIds(checkout, [...new Set([...ids.values()].flat())]);
     const candidates = named.filter(({ edit }) => ids.get(edit.path)!.some(id => known.has(id)));
     if (candidates.length === 0) return [];
