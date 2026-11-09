@@ -94,6 +94,17 @@ pub(in crate::code_rule_dsl) struct Compiled {
     /// The fallback's outputs (`FALLBACK`): one per delay its masks have, none brought to
     /// another delay; the file goes to tree-sitter when any has a bit.
     pub(super) fallbacks: Vec<u16>,
+    /// Tier 1's cost by source: each statement (its kind and name) or lowering step, with the
+    /// block operations it added and how many of them are `back_fill`'s (each a backward pass).
+    pub(super) costs: Vec<Cost>,
+}
+
+/// A statement's share of tier 1 (`Compiled::costs`).
+#[derive(Clone, Debug)]
+pub(in crate::code_rule_dsl) struct Cost {
+    pub(super) what: String,
+    pub(super) ops: u32,
+    pub(super) back_fills: u32,
 }
 
 impl Compiled {
@@ -172,6 +183,8 @@ struct Lowering {
     /// Each `toggle(x)`: its value and `x`'s, the modes tier 2's states are read in
     /// (`row_modes`).
     toggles: Vec<(Val, Val)>,
+    /// Each cost's source and its operations' range (`Compiled::costs`).
+    costs: Vec<(String, usize, usize)>,
 }
 
 /// Whether a keyword gives kind `name`.
@@ -221,6 +234,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         checks: Vec::new(),
         toggles: Vec::new(),
         soft: Vec::new(),
+        costs: Vec::new(),
     };
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
@@ -232,7 +246,10 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         }
     }
     low.stmts(stmts)?;
+    let from = low.program.ops.len();
     let token_rows = low.tokens()?;
+    low.cost("the token rows".into(), from);
+    let from = low.program.ops.len();
     // The tree section: its state machine, its checks and tier 2's words (decision 0087), before
     // the outputs, since the words' guards join the fallback.
     let has_tree = !low.tree.is_empty();
@@ -529,14 +546,47 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         machine = text;
     }
     low.program.delay = delay;
+    low.cost("the tree section's checks and the outputs".into(), from);
+    // Only the operations kept count: a rounds group's first tries are dead.
+    let keep = kept(&low.program);
+    let costs = low
+        .costs
+        .iter()
+        .map(|(what, from, to)| {
+            let live = (*from..*to).filter(|&k| keep[k]);
+            let back_fills = live.clone().filter(|&k| matches!(low.program.ops[k], BlockOp::BackFill(..))).count() as u32;
+            Cost { what: what.clone(), ops: live.count() as u32, back_fills }
+        })
+        .collect();
     let program = live(&low.program);
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
-    Ok(Compiled { rows: rows(&program), words, machine, labels, fallbacks })
+    Ok(Compiled { rows: rows(&program), words, machine, labels, fallbacks, costs })
 }
 
 impl Lowering {
+    /// The operations added since `from`, as a cost of `what` (`Compiled::costs`).
+    fn cost(&mut self, what: String, from: usize) {
+        let to = self.program.ops.len();
+        if to > from {
+            self.costs.push((what, from, to));
+        }
+    }
+
     fn stmts(&mut self, stmts: &[Stmt]) -> Result<(), String> {
         for stmt in stmts {
+            let from = self.program.ops.len();
+            // A tree and its rounds are costed by their statements.
+            let nested = matches!(stmt, Stmt::Tree { .. } | Stmt::Rounds { .. });
+            self.stmt(stmt)?;
+            if !nested {
+                self.cost(cost_name(stmt), from);
+            }
+        }
+        Ok(())
+    }
+
+    fn stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        {
             match stmt {
                 Stmt::Lexer(_) | Stmt::Class(..) => {}
                 Stmt::Mask(name, expr) => {
@@ -596,7 +646,11 @@ impl Lowering {
                 }
                 Stmt::Rounds { n: None, body, .. } => {
                     ::bitlex::syntax::strictly_causal(body)?;
+                    // One cost for the group: its body is lowered once per try.
+                    let (from, costs) = (self.program.ops.len(), self.costs.len());
                     self.rounds(body)?;
+                    self.costs.truncate(costs);
+                    self.cost("rounds until settled (every try)".into(), from);
                 }
                 Stmt::Rounds { n: Some(n), .. } => return Err(format!("`rounds {n}` is not compiled: only `rounds until settled`, whose fixed point is exact")),
                 other => return Err(format!("not compiled yet: {}", statement(other))),
@@ -1650,6 +1704,12 @@ fn row_modes(
 
 /// The program with only the operations its outputs read, renumbered in order.
 fn live(program: &BlockProgram) -> BlockProgram {
+    let keep = kept(program);
+    live_of(program, &keep)
+}
+
+/// Whether each operation reaches an output (`live`).
+fn kept(program: &BlockProgram) -> Vec<bool> {
     let mut keep = vec![false; program.ops.len()];
     for &v in &program.outputs {
         keep[usize::from(v)] = true;
@@ -1678,6 +1738,10 @@ fn live(program: &BlockProgram) -> BlockProgram {
             break;
         }
     }
+    keep
+}
+
+fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
     let mut number = vec![u16::MAX; program.ops.len()];
     let mut out = BlockProgram { tables: program.tables.clone(), delay: program.delay, ..BlockProgram::default() };
     for (at, op) in program.ops.iter().enumerate() {
@@ -1700,6 +1764,17 @@ fn rows(program: &BlockProgram) -> String {
     let mut out = String::new();
     super::rir::block_rows(&mut out, 0, program);
     out
+}
+
+/// A statement's kind and name, for `Compiled::costs`.
+fn cost_name(stmt: &Stmt) -> String {
+    let name = match stmt {
+        Stmt::Mask(n, _) | Stmt::Number(n, _) | Stmt::Error(n, _) | Stmt::Escape(n, _) => n.clone(),
+        Stmt::Count { name, .. } => name.clone(),
+        Stmt::Token { kind, .. } | Stmt::Mark { kind, .. } => kind.clone(),
+        _ => String::new(),
+    };
+    format!("{} {name}", statement(stmt).to_lowercase())
 }
 
 fn statement(stmt: &Stmt) -> String {
