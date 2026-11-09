@@ -58,6 +58,7 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("kindset", &["p:sym", "set:sym"]),
         ("kindset_kind", &["p:sym", "set:sym", "k:int", "kind:sym"]),
         ("fact_row", &["p:sym", "rel:sym", "row:int", "width:int"]),
+        ("fact_empty", &["p:sym", "rel:sym"]),
         ("fact", &["p:sym", "rel:sym", "row:int", "i:int", "kind:sym", "n:int", "s:sym"]),
         ("demand", &["p:sym", "k:int", "rel:sym"]),
         ("demand_dropped", &["p:sym", "k:int", "a:sym", "b:sym"]),
@@ -222,6 +223,9 @@ impl Writer<'_> {
             }
         }
         for (rel, rows) in &prog.facts {
+            if rows.is_empty() {
+                self.row("fact_empty", vec![s(rel)]);
+            }
             for (row, values) in rows.iter().enumerate() {
                 self.row("fact_row", vec![s(rel), n(row), n(values.len())]);
                 for (i, v) in values.iter().enumerate() {
@@ -516,6 +520,9 @@ impl<'a> Reader<'a> {
             values.entry((text(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
         }
         let mut facts: BTreeMap<String, Vec<(i64, Vec<Value>)>> = BTreeMap::new();
+        for row in self.get("fact_empty") {
+            facts.entry(text(&row[0])?).or_default();
+        }
         for row in self.get("fact_row") {
             let (rel, k) = (text(&row[0])?, int(&row[1])?);
             let row_values = ordered(values.remove(&(rel.clone(), k)).unwrap_or_default());
@@ -767,6 +774,24 @@ pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn empty_fact_tables_and_nullary_rows_survive_program_roundtrips() {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(".decl data(x: number)\n.decl flag()\n.output data, flag\n").unwrap();
+        program.facts.insert("data".into(), Vec::new());
+        program.facts.insert("flag".into(), vec![Vec::new()]);
+        let mut facts = super::Facts::new();
+        super::write(&mut facts,"p",&program);
+        let restored = super::decode(&super::encode(&facts)).unwrap();
+        assert_eq!(super::program(&restored,"p").unwrap().facts,program.facts);
+        let document = super::document(&facts,&Default::default()).unwrap();
+        assert_eq!(super::program(&super::document_facts(&document).unwrap(),"p").unwrap().facts,program.facts);
+        // Legacy programs have no marker. Their nonempty and nullary facts
+        // still read back with the same rows.
+        facts.remove("fact_empty");
+        program.facts.remove("data");
+        assert_eq!(super::program(&facts,"p").unwrap().facts,program.facts);
+    }
+
     #[test]
     fn ast_pattern_requests_survive_stored_programs_and_legacy_rows() {
         let source = r#"
