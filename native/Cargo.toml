@@ -46,6 +46,8 @@ p-anchor-corpus = []
 # time; they run as their own gate: `cargo test --lib --features metal-tests -- transducer::`.
 metal-tests = []
 [dependencies]
+# Relational kernels on every lane and the executor that batches their launches (decision 0096).
+rerail-accel = { path = "../accel" }
 ast-grep-core = "=0.50.0"
 # Python, TypeScript, TSX and JavaScript are not ast-grep's: Rerail builds them from its patched
 # vendored grammars (grammars/tree-sitter-{python,typescript,javascript}/PATCHES.md).

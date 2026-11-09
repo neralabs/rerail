@@ -260,3 +260,47 @@ fn a_fixpoint_pauses_for_requests_and_resumes_with_their_answers() {
     assert_eq!(ints("SELECT count(*) FROM got"), [0]);
     super::setfix::close(&db, "asks").unwrap();
 }
+
+/// The closure form (decision 0096 §1): a linear recursion that walks one column along an edge gives the rows
+/// semi-naive gives, by chains (one successor per node) and by bit rows (a node with two successors, a cycle).
+#[test]
+fn a_walk_along_an_edge_runs_as_its_closure() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    for (case, edges) in [
+        ("chain", vec![(1, 2), (2, 3), (3, 4), (5, 3), (6, 6)]),
+        ("dag", vec![(1, 2), (1, 3), (2, 4), (3, 4), (4, 5), (5, 4), (7, 1)]),
+    ] {
+        let db = connection();
+        db.execute_batch("CREATE TABLE s(c0, c1); INSERT INTO s VALUES (1, 10), (5, 20), (6, 30), (7, 40), (9, 50); CREATE TABLE e(c0, c1);").unwrap();
+        for (a, b) in &edges {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        db.execute_batch("CREATE TABLE r(c0, c1)").unwrap();
+        let src = |t: &str| format!("t:b:{}:{}:ii", hex(t), hex("c0, c1"));
+        let seed = format!("pos {} v0 v1\nhead v0 v1", src("s"));
+        let walk = format!("pos d0 v0 v1\npos {} v0 v2\nhead v2 v1", src("e"));
+        let name = format!("walk_{case}");
+        super::setfix::open(&db, &format!("name {name}\nrel r ii empty\nseed 0 {}\njoin 0 0 {}", hex(&seed), hex(&walk))).unwrap();
+        let report = super::setfix::run(&db, &name, 0).unwrap();
+        assert!(report.ends_with(" 1"), "{report}");
+        let mut got = pairs(&db, "SELECT c0, c1 FROM r ORDER BY c0, c1");
+        got.sort();
+        // Reachability by search: each seed's node, and every node a path of one or more edges leads to.
+        let mut want = Vec::new();
+        for (n, t) in [(1, 10), (5, 20), (6, 30), (7, 40), (9, 50)] {
+            let mut seen = std::collections::BTreeSet::from([n]);
+            let mut todo = vec![n];
+            while let Some(v) = todo.pop() {
+                for &(a, b) in &edges {
+                    if a == v && seen.insert(b) {
+                        todo.push(b);
+                    }
+                }
+            }
+            want.extend(seen.into_iter().map(|v| (v, t)));
+        }
+        want.sort();
+        assert_eq!(got, want, "{case}");
+        super::setfix::close(&db, &name).unwrap();
+    }
+}

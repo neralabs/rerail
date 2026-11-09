@@ -41,7 +41,7 @@
 //!   they are the same as another's. Outputs, inputs, lattices, relations with facts and demanded relations are kept
 //!   as they are.
 
-use super::front::{Atom, Literal, Program, Rule, Term, Value};
+use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// What was simplified.
@@ -73,6 +73,9 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) similar: usize,
     pub(in crate::code_rule_dsl) similar_groups: usize,
     pub(in crate::code_rule_dsl) similar_examples: Vec<String>,
+    /// Derived relations made their projection on the columns some reader reads (decision 0096 §1, `count only`
+    /// inferred): each with the columns it lost.
+    pub(in crate::code_rule_dsl) projected: Vec<(String, Vec<usize>)>,
 }
 
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
@@ -106,6 +109,7 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         }
     }
     report.unread = drop_unread(prog);
+    report.projected = project_unread_columns(prog);
     if super::profile::on() {
         let (i, k, c, m, n) = (report.implied, report.kind_tests, report.constants, report.merged.len(), report.inlined.len());
         let (w, y, u, x, s) = (report.singletons, report.keyed, report.unread.len(), report.existentials.len(), report.within);
@@ -113,6 +117,13 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         if !report.climbs.is_empty() {
             super::profile::decision("recursion along the tree made an axis", || {
                 format!("{} recursive components that step one `child` edge at a time read `within` instead: {}", report.climbs.len(), report.climbs.iter().take(8).cloned().collect::<Vec<_>>().join(", "))
+            });
+        }
+        if !report.projected.is_empty() {
+            let cols: usize = report.projected.iter().map(|(_, c)| c.len()).sum();
+            super::profile::decision("columns no reader reads dropped (decision 0096, count only)", || {
+                let some: Vec<String> = report.projected.iter().take(8).map(|(r, c)| format!("{r} {c:?}")).collect();
+                format!("{} relations lost {cols} columns no reader reads, so their rows are their projection: {}", report.projected.len(), some.join(", "))
             });
         }
         if report.similar > 0 {
@@ -1032,6 +1043,128 @@ fn drop_unread(prog: &mut Program) -> Vec<String> {
     unread
 }
 
+/// **Columns no reader reads go** (decision 0096 §1: `count only`, inferred). A derived relation whose column is `_` in
+/// every atom that reads it, positive or negated, keeps only its other columns: its rows become their projection, so
+/// a reader that asks only whether a row exists (`!r($x, _)`, `r($x, _)`) reads one row per key, not every row the
+/// rules make. The rows the readers see are the same: the column decides nothing they test.
+///
+/// Not projected: kept relations (outputs, inputs, lattices, natives and what they read, facts, demand, gates),
+/// answered and nullary ones, and a relation an aggregate reads (a count, a sum or a string join counts its rows, which
+/// a projection would merge). One column at least stays. Dropping a head column can leave its variable named once in
+/// the body, made `_` there, which can free another relation's column: so it repeats until nothing changes.
+fn project_unread_columns(prog: &mut Program) -> Vec<(String, Vec<usize>)> {
+    if std::env::var("RERAIL_PROJECT_COLUMNS").is_ok_and(|v| v == "off") {
+        return Vec::new();
+    }
+    let mut lost: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    loop {
+        // Per relation: the columns a reader reads; `None` once something reads it whole.
+        let mut read: HashMap<String, Option<BTreeSet<usize>>> = HashMap::new();
+        for rule in &prog.rules {
+            let exists = existence_counts(rule);
+            for l in &rule.body {
+                match l {
+                    Literal::Agg { var, op: AggOp::Count, atom, .. } if exists.contains(var) => {
+                        let e = read.entry(atom.rel.clone()).or_insert_with(|| Some(BTreeSet::new()));
+                        if let Some(cols) = e {
+                            cols.extend(atom.args.iter().enumerate().filter(|(_, t)| !matches!(t, Term::Wild)).map(|(c, _)| c));
+                        }
+                    }
+                    Literal::Atom(a) => {
+                        let e = read.entry(a.rel.clone()).or_insert_with(|| Some(BTreeSet::new()));
+                        if let Some(cols) = e {
+                            cols.extend(a.args.iter().enumerate().filter(|(_, t)| !matches!(t, Term::Wild)).map(|(c, _)| c));
+                        }
+                    }
+                    Literal::Agg { atom, .. } => {
+                        read.insert(atom.rel.clone(), None);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut changed = false;
+        let heads: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+        for rel in heads {
+            if kept(prog, &rel) || prog.nullary.contains(&rel) || prog.answers.contains_key(&rel) || prog.answers.values().flatten().any(|a| *a == rel) {
+                continue;
+            }
+            let Some(Some(cols)) = read.get(&rel) else { continue };
+            let Some(decl) = prog.decls.get(&rel) else { continue };
+            let n = decl.len();
+            let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
+            if keep.is_empty() {
+                keep.push(0);
+            }
+            if keep.len() == n {
+                continue;
+            }
+            let gone: Vec<usize> = (0..n).filter(|c| !keep.contains(c)).collect();
+            let project = |a: &mut Atom| a.args = keep.iter().map(|&c| a.args[c].clone()).collect();
+            for rule in &mut prog.rules {
+                if rule.head.rel == rel {
+                    project(&mut rule.head);
+                }
+                // Every reader, an existence count's atom too (any other aggregate's read keeps the relation whole).
+                for l in &mut rule.body {
+                    if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                        && a.rel == rel
+                    {
+                        project(a);
+                    }
+                }
+            }
+            let decl = prog.decls.get_mut(&rel).unwrap();
+            *decl = keep.iter().map(|&c| decl[c].clone()).collect();
+            // Columns as the relation first had them.
+            let orig = lost.entry(rel).or_default();
+            let mut at: Vec<usize> = (0..n + orig.len()).filter(|c| !orig.contains(c)).collect();
+            for g in gone.iter().rev() {
+                orig.push(at.remove(*g));
+            }
+            orig.sort_unstable();
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+        for rule in &mut prog.rules {
+            wild_singletons(rule);
+        }
+    }
+    lost.into_iter().collect()
+}
+
+/// The counts of `rule` that only test existence: `$c = count { … }` whose `$c` is named nowhere but in comparisons
+/// with 0 (`$c = 0`, `$c != 0`, `$c > 0`), the converter's "there is no such row". Such a count is the same over a
+/// relation's projection on the columns it reads.
+fn existence_counts(rule: &Rule) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    for l in &rule.body {
+        let Literal::Agg { var, op: AggOp::Count, .. } = l else { continue };
+        if rule.head.vars().contains(var) {
+            continue;
+        }
+        let zero = |t: &Term| matches!(t, Term::Int(0));
+        let is = |t: &Term| matches!(t, Term::Var(v) if v == var);
+        let only_zero = rule.body.iter().all(|m| match m {
+            Literal::Agg { var: v, .. } if v == var => true,
+            Literal::Cmp { l, op, r } => {
+                let mut named = BTreeSet::new();
+                l.vars(&mut named);
+                r.vars(&mut named);
+                let names = named.contains(var);
+                !names || (((is(l) && zero(r)) || (is(r) && zero(l))) && matches!(*op, "=" | "!=" | "<>" | ">" | "<"))
+            }
+            other => !other.vars().contains(var),
+        });
+        if only_zero {
+            out.insert(var.clone());
+        }
+    }
+    out
+}
+
 /// `l` with the variable `from` renamed `to`.
 fn rename_var(l: &Literal, from: &str, to: &str) -> Literal {
     fn term(t: &Term, from: &str, to: &str) -> Term {
@@ -1888,5 +2021,29 @@ mod tests {
         assert!(out.contains("!k($a)") && out.contains("!not_both_all($a)") && !out.contains("named") && !out.contains("not_k"), "{out}");
         assert!(rules.iter().any(|r| r == r#"not_both_all($n) :- k($n), text($n, "z")"#), "{rules:?}");
         assert!(!prog.decls.contains_key("not_k") && !prog.decls.contains_key("named") && prog.decls.contains_key("read_negated"));
+    }
+
+    /// A relation read only by `count { … } = 0` loses the columns the count does not name, in the count's atom as in
+    /// its rules' heads (both arities change together).
+    #[test]
+    fn an_existence_count_reads_the_projection() {
+        let mut prog = super::super::rr::parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .input node
+            .decl pair(a: node, b: node, k: symbol)
+            .decl out(n: node)
+            .output out
+            pair(a, b, k) :- node(_, a, k, _, _), node(_, b, k, _, _), a != b.
+            out(n) :- node(_, n, "call", _, _), count : { pair(n, _, _) } = 0.
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert_eq!(report.projected, vec![("pair".to_owned(), vec![1, 2])]);
+        assert_eq!(prog.decls["pair"].len(), 1);
+        let text: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        assert!(text.iter().any(|r| r.starts_with("out(") && r.contains("pair($n)")), "{text:?}");
+        assert!(text.iter().any(|r| r.starts_with("pair($a) :-")), "{text:?}");
     }
 }

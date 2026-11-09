@@ -4,6 +4,8 @@
 //! The code-rule runtime will call this module through coarse Rust operations.
 
 pub(crate) mod atoms;
+#[cfg(target_os = "macos")]
+mod accel_models;
 // Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
 mod bounded_insert;
@@ -651,6 +653,9 @@ impl ContentStore {
             Self::initialize(&mut connection)
         })?;
         drop(connection);
+        // Compiled Neural Engine models are facts of this store (decision 0096 §3).
+        #[cfg(target_os = "macos")]
+        rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection {

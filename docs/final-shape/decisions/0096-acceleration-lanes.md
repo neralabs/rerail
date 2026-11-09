@@ -297,13 +297,17 @@ All of it was checked exactly against the CPU reference. Times are from debug bu
   - **`count only`, inferred.** A derived relation's column that no reader reads, positive or negated or in a count
     compared with 0 (the converter's "no such row"), is dropped: the relation's rows are their projection.
     - On a 59-program slice of the Python pack it projected 62 relations (83 columns), with identical outputs.
-    - That run predates the count case. The large relations it reaches are the `rr_agg*` helpers read only by
-      `count {…} = 0`.
+    - With the count case, on the 8 programs that read `bound_in` (486 files): 47 relations lost 74 columns,
+      among them the `rr_agg*` helpers. Outputs are identical with it on and off. Local CPU was 14.2 s on and
+      14.5 s off (user + sys, load 9–19): no gain at this size.
+    - The count case first left the count's own atom at the old arity, and the planner panicked. A test now covers
+      it.
     - `RERAIL_PROJECT_COLUMNS=off` turns it off.
   - **`closure`.** A component whose one recursive probe walks one column along an edge relation (`seed ∘ E⁺`) runs
     the edge's join once per distinct node. Its reach comes by chains when every node has one successor (tree
     climbs), and by the executor's `Closure` kernel otherwise, up to 16,384 nodes. Larger graphs run semi-naive from
-    the seeds. `RERAIL_CLOSURE_FORM=off` turns it off.
+    the seeds. `RERAIL_CLOSURE_FORM=off` turns it off. On the same slice, outputs are identical with it on and off
+    (local CPU 14.2 s on, 13.9 s off: noise).
   - **Model facts:** the content store's `accel_models`.
   - **The lanes per binding:** `logic::lanes`.
 

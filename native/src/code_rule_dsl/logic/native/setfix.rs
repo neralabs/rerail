@@ -51,6 +51,7 @@ use std::time::Instant;
 
 /// Strata captured and run again on their own (decision 0095, step 0).
 pub(in crate::code_rule_dsl) mod lab;
+mod closure;
 
 fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()) }
 
@@ -361,7 +362,7 @@ pub struct Store { rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// `requests`: relations whose new rows the caller answers (`pending`, `add`), each with the rows answered so far.
 /// `produced`: relations only the caller adds to, which the fixpoint does not write.
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
-                   requests: Vec<(usize, usize)>, produced: Vec<usize> }
+                   requests: Vec<(usize, usize)>, produced: Vec<usize>, closure: Option<closure::Closure> }
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
@@ -569,7 +570,9 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
     let mut reg = COMPONENTS.lock().unwrap();
     let key = (scope(conn), name.clone());
     reg.retain(|(k, _)| *k != key);
-    reg.push((key, Arc::new(Mutex::new(Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced }))));
+    let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None };
+    comp.closure = closure::recognize(&comp);
+    reg.push((key, Arc::new(Mutex::new(comp))));
     Ok(name)
 }
 
@@ -612,7 +615,42 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
     let wave_trace = std::env::var_os("RDL_WAVE_TRACE").is_some();
     let mut gates = std::mem::take(&mut comp.gates);
     let gates_done: Vec<usize> = gates.iter().map(|g| g.done).collect();
-    loop {
+    // The closure form (decision 0096 §1): seeds once, then the walk's reach over distinct nodes. When the reach is
+    // too large for it, the seeds' rows are the first delta and the waves below run semi-naive from there.
+    if !seeded && let Some(cl) = comp.closure.take() {
+        let tp = Instant::now();
+        let mut guard = comp.store.write().unwrap();
+        let store = &mut *guard;
+        let mut syms = symbols.write().unwrap();
+        let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
+        for (pi, p) in comp.probes.iter().enumerate() {
+            let (Body::Join(j), SEED) = (&p.body, p.delta) else { continue };
+            runs += 1;
+            let n = run_join(j, p.head, store, &mut syms, &mut fresh);
+            visits += n;
+            per[pi].1 += n;
+        }
+        let k = store.rels[0].k;
+        for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data[i * k..][..k]); }
+        let lanes = crate::code_rule_dsl::logic::lanes::executor();
+        let ran = closure::run(&cl, store, &mut syms, lanes);
+        seeded = true;
+        waves = 1;
+        let n = store.rels[0].n;
+        match ran {
+            Some(r) => {
+                visits += r.nodes as u64 + r.rows as u64;
+                if wave_trace { eprintln!("      {name}: closure over {} nodes by {}, {} rows, {:.1} ms", r.nodes, r.how, r.rows, tp.elapsed().as_secs_f64() * 1e3); }
+                store.rels[0].set_delta(n, n);
+                done = true;
+            }
+            None => store.rels[0].set_delta(0, n),
+        }
+        drop(syms);
+        drop(guard);
+        comp.closure = Some(cl);
+    }
+    while !done {
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
         // Probe rules: SQL over the vtabs, while no lock is held (the vtab cursors take read locks).
         let mut raw: Vec<(usize, Vec<Vec<Value>>)> = Vec::new();
@@ -1750,7 +1788,9 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
 
 #[derive(Clone, Copy)]
 enum Key { Slot(usize), Const(i64) }
+#[derive(Clone)]
 enum Src { Delta(usize), Full(usize), FullMulti(usize, Vec<usize>), In(Arc<InRel>, Arc<Csr>) }
+#[derive(Clone)]
 enum Step {
     /// Key columns (bound), columns that bind a slot, and column pairs that must be equal (a variable repeated in
     /// the atom, first seen here).
@@ -1988,8 +2028,17 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
 fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> u64 {
-    struct Ctx<'a> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
-                     key: Vec<i64>, row: Vec<i64> }
+    run_join_in(j, head, store, syms, fresh, &[], None)
+}
+
+/// Runs `j` with `preset` slots bound, and its head rows appended to `out` (not added to any relation).
+fn run_join_collect(j: &JoinRule, store: &Store, syms: &mut Interner, preset: &[(usize, i64)], out: &mut Vec<i64>) -> u64 {
+    run_join_in(j, 0, store, syms, &mut [], preset, Some(out))
+}
+
+fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>) -> u64 {
+    struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
+                     key: Vec<i64>, row: Vec<i64>, collect: Option<&'c mut Vec<i64>> }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -2004,7 +2053,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             match self { Rows::In(r) => is_dead(&r.dead, id), Rows::Comp(r) => r.dead(id), Rows::Source(_) => false }
         }
     }
-    fn go<'a>(cx: &mut Ctx<'a>, i: usize, slots: &mut [i64]) {
+    fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
         let (j, store): (&'a JoinRule, &'a Store) = (cx.j, cx.store);
         if i > 0 { let c = &j.counts[i - 1][1]; c.set(c.get() + 1); }
         if let Some(c) = j.counts.get(i) { c[0].set(c[0].get() + 1); }
@@ -2015,6 +2064,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 cx.row.push(v);
             }
             cx.n += 1;
+            if let Some(c) = &mut cx.collect { c.extend_from_slice(&cx.row); return; }
             if !store.rels[cx.head].contains(&cx.row) { cx.fresh[cx.head].add(&cx.row); }
             return;
         };
@@ -2190,8 +2240,9 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             Step::In { a, set, want } => if set.contains(&val(slots, *a)) == *want { go(cx, i + 1, slots) },
         }
     }
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new() };
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), collect };
     let mut slots = vec![0i64; j.nslots];
+    for &(s, v) in preset { slots[s] = v; }
     go(&mut cx, 0, &mut slots);
     cx.n
 }
