@@ -2868,6 +2868,18 @@ So per-unit rows would save at most 4 to 7 s of the roughly 100 s a pack edit co
 - `push_local_joins`;
 - preparing the whole program again for one rule.
 
+Decision 0094 places stage 3 after phase 0, which keys the prepared program by the module graph.
+
+**Measured again after the day's merges (2026-11-08, trunk at `32b16e4fe`, with O141's fix).** Whole pack, 534
+programs over the Ruff fixtures, no profile, load 27 to 56:
+
+- rc 0, 6,184 findings, equal to before the merges;
+- 64.6 s CPU (stage 1 alone: 76.7 s), 821G instructions;
+- peak footprint 1,124 MB, still over the 1 GB budget.
+
+Before the fix, the merged trunk took 161.6 s with the profile on (100.1 s before the merges). Quarter 1 went
+from 11.7 s before the merges to 19.6 s, and back to 10.6 s with the fix.
+
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.
@@ -2986,3 +2998,24 @@ candidates) on each merge of the day.
 
 **Closure:** the merge that adds the cost is found by bisecting the day's merges, and the cost is explained or
 removed.
+
+**Closed (2026-11-08).** The cause was found by sampling, not bisecting.
+
+- **Where.** `sql_kernel::component` ran `ProgramAnalysis::analyze` over the whole program for every stratum it
+  ran, in every chunk. That analysis is the logical key and scalar analysis from `0edfc6227`, which came in through
+  the Rerail-rule-expressivity merge (`9be591511`).
+- **What it cost.** Each stratum's own time rose from about 1 ms to 0.45 s, with 233 MB allocated, outside every
+  named span. On the Python pack that was hundreds of strata.
+- **The fix.** The planner's model already made the analysis once per plan. It is now held behind an `Arc` and
+  shared. It is made again only when the demand split replaces the program (`plan::run`). `emit` shares it too,
+  where it was deep-copied.
+
+s50, 43 files, the same 32 violations:
+
+| guards | before the merges (`329e0b5d1`) | after (`9be591511`) | with the fix |
+|---|---|---|---|
+| off | 380.8G | 644.5G | 336.3G |
+| on | 390.5G | 681.1G | 343.3G |
+
+The fix leaves the pack slightly cheaper than before the merges. The analysis, planner, corpus and SQL executor
+tests pass, and so does the replay gate (`converted_rules_give_the_recorded_findings`).
