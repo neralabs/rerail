@@ -242,3 +242,95 @@ fn rr_look() {
         eprintln!("  engine: {:?}", engine(&doc).0);
     }
 }
+
+/// Every `.rr` file of the repository through a step's compiled path (`RERAIL_RR_STEP`, the
+/// last step by default), against the engine's tree: the files it parses as the engine does,
+/// those it parses differently or the engine refuses (each a bug), and those it sends to the
+/// engine, by the reference's reason. Run by name.
+#[test]
+#[ignore = "the corpus: run by name"]
+fn rr_corpus() {
+    let steps = steps_in(DIR);
+    let want = std::env::var("RERAIL_RR_STEP").ok();
+    let (name, source) = steps.iter().rev().find(|s| want.as_ref().is_none_or(|w| s.0.contains(w.as_str()))).expect("a step");
+    let c = super::bitlex_ladder_tests::compile_step(name, source);
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("the repository").to_path_buf();
+    let mut files = Vec::new();
+    let mut work = vec![root];
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "rr") {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    let (mut same, mut bytes_parsed) = (0usize, 0usize);
+    let (mut differ, mut refused_by_engine) = (Vec::new(), Vec::new());
+    let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut fell = Vec::new();
+    for f in &files {
+        let bytes = std::fs::read(f).expect("reads");
+        let Ok(src) = std::str::from_utf8(&bytes) else { continue };
+        match c.parser.parse(&bytes) {
+            Ok(nodes) => {
+                let ours = named(&c, &super::bitlex_ladder_tests::as_ids(nodes));
+                let (theirs, error) = engine(src);
+                if error {
+                    refused_by_engine.push(f.display().to_string());
+                } else if ours == theirs {
+                    same += 1;
+                    bytes_parsed += bytes.len();
+                } else {
+                    let at = ours.iter().zip(&theirs).position(|(a, b)| a != b).unwrap_or(ours.len().min(theirs.len()));
+                    differ.push(format!("{}: node {at}: step {:?}, engine {:?}", f.display(), ours.get(at), theirs.get(at)));
+                }
+            }
+            Err(_) => {
+                let why = super::bitlex_ladder_tests::refusal(&c, &bytes);
+                let mut why = why.split(" (byte").next().unwrap_or("").to_owned();
+                // The grammar's refusal: the token it stops at, and the statement's first word.
+                if why == "the token" {
+                    why = stopped_at(&c, &bytes).unwrap_or(why);
+                }
+                *reasons.entry(why.clone()).or_default() += 1;
+                fell.push((why, f.display().to_string()));
+            }
+        }
+    }
+    eprintln!("{name}: {} files: {same} parsed as the engine does ({bytes_parsed} bytes), {} to the engine, {} differ, {} the engine refuses", files.len(), fell.len(), differ.len(), refused_by_engine.len());
+    let mut by: Vec<(&String, &usize)> = reasons.iter().collect();
+    by.sort_by(|a, b| b.1.cmp(a.1));
+    for (why, n) in by {
+        let first = fell.iter().find(|f| &f.0 == why).map_or("", |f| f.1.as_str());
+        eprintln!("  {n:>5} {why}   e.g. {first}");
+    }
+    for d in differ.iter().take(20) {
+        eprintln!("  DIFFERS {d}");
+    }
+    for d in refused_by_engine.iter().take(20) {
+        eprintln!("  ENGINE REFUSES {d}");
+    }
+    assert!(differ.is_empty() && refused_by_engine.is_empty(), "{} differ, {} the engine refuses", differ.len(), refused_by_engine.len());
+}
+
+/// Where the reference's grammar stops on `bytes`: the token's text and the first token of the
+/// statement it is in (a `.`-directive's word, or the token at the line's start).
+fn stopped_at(c: &Compiled, bytes: &[u8]) -> Option<String> {
+    let out = ::bitlex::eval::Ev::run(&c.stmts, bytes, &std::collections::HashMap::new()).ok()?;
+    let e = ::bitlex::tree::nodes(out.tree.as_ref()?, &out.tokens, bytes.len()).err()?;
+    let at: usize = e.split(" at byte ").nth(1)?.split(|ch: char| !ch.is_ascii_digit()).next()?.parse().ok()?;
+    let t = out.tokens.iter().find(|t| t.start >= at && !t.mark)?;
+    let text = String::from_utf8_lossy(&bytes[t.start..t.end.min(t.start + 12)]).into_owned();
+    let line_start = bytes[..t.start].iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
+    let first: String = String::from_utf8_lossy(&bytes[line_start..]).split_whitespace().next().unwrap_or("").chars().take(12).collect();
+    let directive = if first.starts_with('.') { first } else { String::new() };
+    let _ = directive;
+    let after = out.tokens.iter().filter(|u| u.start >= t.end && !u.mark && u.kind != "comment").map(|u| String::from_utf8_lossy(&bytes[u.start..u.end.min(u.start + 12)]).into_owned()).next().unwrap_or_default();
+    Some(format!("stops at a statement starting {} {text:?} {after:?}", t.kind))
+}
