@@ -9,7 +9,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `check/`: the checks `npm run check` and `check:*` run, including the layer boundary lint
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
   enough and named so Windows can check it out), the child process check (`check-child-process.mjs`: code in `src/`
-  starts processes only through `src/engine/child-process.ts`, which hides their windows on Windows), the rename check
+  starts processes only through `src/engine/child-process.ts`, which hides their windows on Windows and starts a
+  program there only by its absolute path), the rename check
   (`check-file-replace.mjs`: code in `src/` renames files only through `src/engine/file-replace.ts`, which retries a
   rename Windows refuses while another process holds the file), the internal reference check
   (`check-internal-refs.mjs`: no internal ticket ID, and no `nera-` identifier outside its list of public ones, in a tracked path or text), the CI

@@ -7,8 +7,11 @@
  * libuv starts the child with SW_HIDE and, when no stdio is inherited, with CREATE_NO_WINDOW, so it opens no window.
  * The option does nothing on macOS and Linux. `npm run check:child-process` fails on any other `node:child_process`
  * import in `src/`.
+ *
+ * On Windows it also refuses a program named by anything but an absolute path (`assertProgramPath`).
  */
 import * as childProcess from "node:child_process";
+import { win32 } from "node:path";
 import { promisify } from "node:util";
 
 const HIDDEN = { windowsHide: true } as const;
@@ -25,12 +28,32 @@ export function withHiddenWindow(args: readonly unknown[]): unknown[] {
   return [...args.slice(0, at), { ...(options as object | null | undefined), ...HIDDEN }, ...args.slice(at + 1)];
 }
 
+/**
+ * Refuses, on Windows, to start a program named by a bare name or a relative path: Windows looks for one in the current
+ * folder before PATH, and Rerail runs inside repositories it does not trust, so a `git.exe`, `node.exe` or
+ * `powershell.exe` committed to one would run in Rerail's place and get what Rerail hands it. Rerail names every program
+ * by absolute path there (`windowsSystemProgram`, `resolveExecutable` with `binaryOnly`, `gitExecutable`). A command
+ * line run with `shell: true` is the shell's to read, and is let through.
+ */
+export function assertProgramPath(args: readonly unknown[], platform: NodeJS.Platform = process.platform): void {
+  if (platform !== "win32") return;
+  const [command] = args;
+  const options = args[Array.isArray(args[1]) ? 2 : 1];
+  const shell = typeof options === "object" && options !== null && "shell" in options && Boolean(options.shell);
+  if (typeof command === "string" && !shell && !win32.isAbsolute(command)) {
+    throw new Error(`Rerail starts a program on Windows by its absolute path, never from the current folder; it was asked for ${command}`);
+  }
+}
+
 type Starter = "spawn" | "spawnSync" | "execFile" | "execFileSync";
 
 /** `name` of node:child_process, read at each call so a test's module mock is the one called. */
 function hidden<Name extends Starter>(name: Name): (typeof childProcess)[Name] {
   // Reflect.apply returns any; the cast restores the overloads of the function it calls.
-  return ((...args: unknown[]) => Reflect.apply(childProcess[name], undefined, withHiddenWindow(args))) as (typeof childProcess)[Name];
+  return ((...args: unknown[]) => {
+    assertProgramPath(args);
+    return Reflect.apply(childProcess[name], undefined, withHiddenWindow(args));
+  }) as (typeof childProcess)[Name];
 }
 
 export const spawn = hidden("spawn");
@@ -47,6 +70,7 @@ export const execFile: typeof childProcess.execFile = Object.assign(hidden("exec
       if (error === null) resolve({ stdout, stderr });
       else reject(Object.assign(error, { stdout, stderr }));
     };
+    assertProgramPath(args);
     Reflect.apply(childProcess.execFile, undefined, [...withHiddenWindow(args), settle]);
   }),
 });
@@ -57,5 +81,6 @@ export const execFile: typeof childProcess.execFile = Object.assign(hidden("exec
  * browser. Never pass a console program here.
  */
 export function spawnShown(command: string, args: readonly string[], options: childProcess.SpawnOptions): childProcess.ChildProcess {
+  assertProgramPath([command, args, options]);
   return childProcess.spawn(command, args, { ...options, windowsHide: false });
 }

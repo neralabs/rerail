@@ -6,10 +6,15 @@
 // a new console window, and Windows 11 hands it to Windows Terminal, which takes focus. One missed option opened a
 // window every few seconds while the daemon ran Git, so the option is set in one place and this check keeps it there.
 //
+// Windows also looks for a program named without a folder in the current folder before PATH, and Rerail runs inside
+// repositories it does not trust, so on Windows the helper refuses a program that is not named by absolute path.
+//
 // Rules, over every tracked .ts, .mts, .js and .mjs file under src/:
 //   bypass   Only the helper loads `node:child_process` (or `child_process`) as a value: an `import` or `export`
 //            declaration that is not type-only, `import x = require(...)`, `require(...)` or `import(...)`.
 //   hidden   The helper sets `windowsHide: true` in the options it passes on.
+//   path     The helper refuses a program not named by absolute path (`assertProgramPath`), and no call to one of its
+//            starters names a program by a literal that is not an absolute path.
 //
 //   node scripts/check/check-child-process.mjs   (npm run check:child-process; part of npm run check)
 import { spawnSync } from "node:child_process";
@@ -20,6 +25,9 @@ import ts from "typescript";
 
 export const HELPER = "src/engine/child-process.ts";
 const MODULES = new Set(["node:child_process", "child_process"]);
+const STARTERS = new Set(["spawn", "spawnSync", "execFile", "execFileSync", "spawnShown"]);
+/** An absolute POSIX path, a drive-letter path or a UNC path. */
+const ABSOLUTE = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u;
 const CODE = /\.(?:[cm]?[jt]s)$/u;
 
 /** Whether an import or export declaration brings in values, not only types. */
@@ -65,6 +73,23 @@ function childProcessLoads(path, text) {
   return lines;
 }
 
+/** The lines of `text` that start a program named by a literal that is not an absolute path. */
+function bareProgramNames(path, text) {
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, false, /\.[cm]?js$/u.test(path) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+  const lines = [];
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && STARTERS.has(node.expression.text)) {
+      const [command] = node.arguments;
+      if (command !== undefined && ts.isStringLiteralLike(command) && !ABSOLUTE.test(command.text)) {
+        lines.push(source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return lines;
+}
+
 /** Every problem in `files` (`{ path, text }`, repository-relative `/`-separated paths), as `{ path, line, rule, message }`. */
 export function childProcessProblems(files) {
   const problems = [];
@@ -74,12 +99,21 @@ export function childProcessProblems(files) {
       if (!/\bwindowsHide: true\b/u.test(text)) {
         problems.push({ path, line: 1, rule: "hidden", message: "the child-process helper must set windowsHide: true" });
       }
+      if (!/\bassertProgramPath\(args\)/u.test(text)) {
+        problems.push({ path, line: 1, rule: "path", message: "the child-process helper must refuse a program not named by absolute path (assertProgramPath)" });
+      }
       continue;
     }
     for (const line of childProcessLoads(path, text)) {
       problems.push({
         path, line, rule: "bypass",
         message: `loads node:child_process; import spawn, spawnSync, execFile or execFileSync from ${HELPER} instead, which hides the child's window on Windows`,
+      });
+    }
+    for (const line of bareProgramNames(path, text)) {
+      problems.push({
+        path, line, rule: "path",
+        message: "names a program without its folder, which Windows looks for in the current folder first; pass an absolute path (windowsSystemProgram, resolveExecutable with binaryOnly)",
       });
     }
   }

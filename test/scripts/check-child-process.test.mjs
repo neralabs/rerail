@@ -42,7 +42,18 @@ describe("check-child-process", () => {
 
   it("requires the helper, and requires it to set windowsHide: true", () => {
     expect(rules(childProcessProblems([]))).toEqual([`${HELPER}:1:hidden`]);
-    expect(rules(childProcessProblems([{ path: HELPER, text: "export const spawn = childProcess.spawn;\n" }]))).toEqual([`${HELPER}:1:hidden`]);
+    expect(rules(childProcessProblems([{ path: HELPER, text: "export const spawn = childProcess.spawn;\n" }])))
+      .toEqual([`${HELPER}:1:hidden`, `${HELPER}:1:path`]);
+  });
+
+  it("flags a program named by a literal Windows would look for in the current folder", () => {
+    const problems = childProcessProblems([
+      helper,
+      { path: "src/a.ts", text: 'import { spawn } from "./engine/child-process.js";\nspawn("rundll32", ["url.dll"]);\n' },
+      { path: "src/b.ts", text: 'execFileSync("powershell.exe", ["-Command", "x"]);\n' },
+      { path: "src/c.ts", text: 'spawnSync("/usr/bin/xcode-select", ["-p"]);\nspawn(String.raw`C:\\Windows\\System32\\taskkill.exe`, []);\nspawn(program, []);\n' },
+    ]);
+    expect(rules(problems)).toEqual(["src/a.ts:2:path", "src/b.ts:1:path"]);
   });
 
   it("passes on this checkout's src/", () => {

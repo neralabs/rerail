@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
 
-import { execFile, execFileSync, spawn, spawnShown, spawnSync, withHiddenWindow } from "../../src/engine/child-process.js";
+import { assertProgramPath, execFile, execFileSync, spawn, spawnShown, spawnSync, withHiddenWindow } from "../../src/engine/child-process.js";
 import { gitExecutable, gitHead, readGitBlobIds, readGitBlobs, runGit } from "../../src/engine/git.js";
 
 /** Whether a recorded child_process call passed `windowsHide: true` in its options. */
@@ -31,6 +31,19 @@ describe("withHiddenWindow", () => {
     expect(withHiddenWindow(["git", ["status"], callback])).toEqual(["git", ["status"], { windowsHide: true }, callback]);
     expect(withHiddenWindow(["git", ["status"], undefined, callback])).toEqual(["git", ["status"], { windowsHide: true }, callback]);
     expect(withHiddenWindow(["git", ["status"], { windowsHide: false }])).toEqual(["git", ["status"], { windowsHide: true }]);
+  });
+});
+
+describe("assertProgramPath", () => {
+  it("refuses on Windows a program the current folder could supply, and allows an absolute path or a shell line", () => {
+    for (const command of ["git", "node.exe", String.raw`.\node.exe`, String.raw`bin\git.exe`, "rundll32"]) {
+      expect(() => assertProgramPath([command, []], "win32"), command).toThrow(/absolute path/u);
+    }
+    expect(() => assertProgramPath([String.raw`C:\Program Files\Git\cmd\git.exe`, ["status"]], "win32")).not.toThrow();
+    expect(() => assertProgramPath([String.raw`\\server\share\tool.exe`], "win32")).not.toThrow();
+    expect(() => assertProgramPath(["bash ~/.claude/statusline.sh", { shell: true }], "win32")).not.toThrow();
+    // macOS and Linux look a bare name up on PATH alone.
+    expect(() => assertProgramPath(["xdg-open", ["https://example.test"]], "linux")).not.toThrow();
   });
 });
 
