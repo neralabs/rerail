@@ -158,6 +158,56 @@ fn facts_dir(root: &Path) -> PathBuf {
     FACTS_DIR.get().cloned().unwrap_or_else(|| root.join(".rerail").join("facts"))
 }
 
+/// `logic --require-facts` (data-layer/RUN-FACTS.md section 5, the CI column): an artifact that is missing,
+/// stale or malformed fails the run, and so does a failed one unless the policy reports it.
+static REQUIRE_FACTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(in crate::code_rule_dsl) fn require_facts() {
+    REQUIRE_FACTS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The revision `git_rev("base", …)` names, which `at="base"` inputs are read at: `logic --base REV`, a commit id
+/// or a reference name (`origin/main`). The merge base of a change is the caller's to compute until the git
+/// provider gives `git_rev` (decision 0094, order of work).
+static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub(in crate::code_rule_dsl) fn set_base(rev: String) -> std::result::Result<(), String> {
+    BASE.set(rev).map_err(|_| "the base revision is already set".to_owned())
+}
+
+fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unreadable", detail: detail.to_string() } }
+
+/// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
+fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
+    let repo = gix::discover(root).map_err(|e| unreadable(format!("no repository holds {}: {e}", root.display())))?;
+    let resolve = || -> std::result::Result<gix::ObjectId, Box<dyn std::error::Error + Send + Sync>> {
+        let commit = match gix::ObjectId::from_hex(rev.as_bytes()) {
+            Ok(id) => id,
+            Err(_) => repo.find_reference(rev)?.peel_to_id()?.detach(),
+        };
+        Ok(repo.find_object(commit)?.peel_to_tree()?.id)
+    };
+    let tree = resolve().map_err(|e| unreadable(format!("base revision {rev}: {e}")))?;
+    let workdir = repo.workdir().ok_or_else(|| unreadable("the repository has no work tree"))?;
+    let canonical = |p: &Path| p.canonicalize().map_err(|e| unreadable(format!("{}: {e}", p.display())));
+    let prefix = canonical(root)?.strip_prefix(canonical(workdir)?).map(Path::to_path_buf).map_err(unreadable)?;
+    Ok((repo, tree, prefix))
+}
+
+/// Reads repository-relative files as they are at the base revision, from the object store; the repository is
+/// opened on the first read. A path the base tree lacks is `missing`, as a file the tree lacks is.
+fn base_reader<'a>(root: &'a Path, rev: Option<&'a str>) -> impl FnMut(&str) -> ReadResult<String> + 'a {
+    let mut tree: Option<ReadResult<(gix::Repository, gix::ObjectId, PathBuf)>> = None;
+    move |path| {
+        let rev = rev.ok_or_else(|| Failure { kind: "missing", detail: "no base revision: run with --base REV".into() })?;
+        let (repo, id, prefix) = tree.get_or_insert_with(|| base_tree(root, rev)).as_ref().map_err(Clone::clone)?;
+        let entry = repo.find_tree(*id).map_err(unreadable)?.lookup_entry_by_path(prefix.join(path)).map_err(unreadable)?
+            .ok_or_else(|| Failure { kind: "missing", detail: format!("{path} is not in {rev}") })?;
+        let blob = entry.object().map_err(unreadable)?;
+        String::from_utf8(blob.data.clone()).map_err(|e| malformed(format!("{path} at {rev}: {e}")))
+    }
+}
+
 /// The format of a stamped artifact (RUN-FACTS.md section 3).
 pub(in crate::code_rule_dsl) const FORMAT: &str = "rerail.facts/v1";
 
@@ -355,7 +405,26 @@ pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> 
             let digest = inputs_digest(root, globs).map_err(|detail| Failure { kind: "malformed", detail })?;
             artifact_data(name, &text, &digest)
         },
-    )
+        &mut base_reader(root, BASE.get().map(String::as_str)),
+    )?;
+    if REQUIRE_FACTS.load(std::sync::atomic::Ordering::Relaxed) {
+        required(program)?;
+    }
+    Ok(())
+}
+
+/// `--require-facts`: the artifact errors that fail a CI run. A `failed` artifact is the policy's to report when one
+/// of its rules reads `input_error` (RUN-FACTS.md section 5); the other kinds always fail.
+fn required(program: &front::Program) -> Result<()> {
+    let reports = program.rules.iter().any(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| !a.neg && a.rel == "input_error"));
+    let failing: Vec<String> = program.facts.get("input_error").into_iter().flatten()
+        .filter_map(|row| match row.as_slice() {
+            [Value::Str(path), Value::Str(kind), Value::Str(detail)] if path.starts_with("artifact:") && !(reports && kind == "failed") =>
+                Some(format!("{path}: {kind}: {detail}")),
+            _ => None,
+        })
+        .collect();
+    if failing.is_empty() { Ok(()) } else { Err(Error::Plan(format!("--require-facts: {}", failing.join("; ")))) }
 }
 
 fn populate_with(
@@ -363,9 +432,11 @@ fn populate_with(
     root: &Path,
     read: &mut impl FnMut(&str) -> ReadResult<String>,
     artifact: &mut impl FnMut(&str) -> ReadResult<Json>,
+    base: &mut impl FnMut(&str) -> ReadResult<String>,
 ) -> Result<()> {
     let settings: Vec<_> = program.settings.iter().filter(|(k, _)| k == "input").map(|(_, s)| s.clone()).collect();
     let mut readers = Readers::default();
+    let mut base_readers = Readers::default();
     let mut artifacts: BTreeMap<String, ReadResult<Json>> = BTreeMap::new();
     let mut errors: Vec<Vec<Value>> = Vec::new();
     // Relations an artifact left without rows, and why (FINDINGS-LAYER.md section 2).
@@ -373,8 +444,16 @@ fn populate_with(
     for setting in settings {
         let Some((rel, params)) = setting.strip_suffix(')').and_then(|s| s.split_once('(')) else { return Err(Error::Plan(format!("invalid input setting: {setting}"))); };
         let params = parameters(params)?;
-        if params.contains_key("at") {
-            return Err(Error::Plan(format!("{rel}: the revision reader (at=) is not implemented (O138)")));
+        // `at="base"`: the file as it is at `git_rev("base", …)`. Its readers compare it with the tree, mostly through
+        // `!` (a burn-down list that may only shrink), so a base that cannot be read withholds them, as an artifact
+        // does.
+        let at_base = match params.get("at").map(String::as_str) {
+            None => false,
+            Some("base") => true,
+            Some(other) => return Err(Error::Plan(format!("{rel}: at={other:?}: only \"base\" is a revision an input is read at"))),
+        };
+        if at_base && (params.contains_key("artifact") || params.contains_key("dir")) {
+            return Err(Error::Plan(format!("{rel}: at=\"base\" reads one repository file (filename=)")));
         }
         let io = params.get("IO").map_or("file", String::as_str);
         if !["file", "lines", "json", "yaml", "jsonl"].contains(&io) { return Err(Error::Plan(format!("{rel}: unsupported input reader {io}"))); }
@@ -434,10 +513,19 @@ fn populate_with(
                     failure.map_or(Ok(rows), Err)
                 }
             }
+        } else if at_base {
+            base_readers.rows(path, io, pointer, records, Vec::new(), columns, base)
         } else { readers.rows(path, io, pointer, records, Vec::new(), columns, read) };
         program.inputs.retain(|name| name != rel);
         match result {
             Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
+            Err(error) if at_base => {
+                let row = vec![Value::Str(format!("{path}@base")), Value::Str(error.kind.to_owned()), Value::Str(error.detail.clone())];
+                if !errors.contains(&row) {
+                    errors.push(row);
+                }
+                incomplete.insert(rel.to_owned(), format!("{path}@base {}", error.kind));
+            }
             Err(error) => errors.push(vec![Value::Str(path.clone()), Value::Str(error.kind.to_owned()), Value::Str(error.detail)]),
         }
     }
@@ -571,10 +659,87 @@ mod tests {
 
     fn none(_: &str) -> ReadResult<Json> { panic!("no artifact is read") }
 
+    fn no_base(_: &str) -> ReadResult<String> { panic!("no file is read at the base revision") }
+
+    /// A burn-down list that may only shrink: its entries at the base revision and in the tree.
+    const BURN_DOWN: &str = r#"
+.decl now(n: number, e: symbol)
+.input now(IO=lines, filename="allow.txt")
+.decl was(n: number, e: symbol)
+.input was(IO=lines, filename="allow.txt", at="base")
+.decl now_entry(e: symbol)
+now_entry(e) :- now(_, e).
+.decl grew(e: symbol)
+grew(e) :- now_entry(e), !was(_, e).
+.output grew
+"#;
+
+    fn burn_down(base: &mut impl FnMut(&str) -> ReadResult<String>) -> front::Program {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(BURN_DOWN).unwrap();
+        populate_with(&mut program, Path::new("."), &mut |_| Ok("a\nb\nc\n".to_owned()), &mut none, base).unwrap();
+        program
+    }
+
     #[test]
-    fn revision_inputs_fail_closed() {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(".decl a(n: number)\n.input a(IO=json, filename=\"policy.json\", at=\"base\")\n").unwrap();
-        assert!(populate_with(&mut program, Path::new("."), &mut |_| panic!("unsupported input must not be read"), &mut none).is_err());
+    fn a_base_input_reads_the_file_at_the_base_revision() {
+        let mut reads = Vec::new();
+        let program = burn_down(&mut |path| { reads.push(path.to_owned()); Ok("a\nb\n".to_owned()) });
+        assert_eq!(reads, ["allow.txt"]);
+        assert_eq!(program.facts["was"], vec![vec![Value::Int(1), Value::Str("a".into())], vec![Value::Int(2), Value::Str("b".into())]]);
+        assert_eq!(program.facts["now"].len(), 3, "the tree's reading is its own");
+        assert!(program.rules.iter().any(|r| r.head.rel == "grew"));
+    }
+
+    /// Without a base, the comparison is withheld rather than reporting every entry as new.
+    #[test]
+    fn an_unreadable_base_gives_an_input_error_and_withholds_the_comparison() {
+        let program = burn_down(&mut |_| Err(Failure { kind: "missing", detail: "no base revision".into() }));
+        assert_eq!(error_kinds(&program), [r#"Str("allow.txt@base") Str("missing")"#]);
+        assert!(!program.rules.iter().any(|r| r.head.rel == "grew"), "a rule reading the base through ! is withheld");
+        assert!(program.rules.iter().any(|r| r.head.rel == "now_entry"));
+    }
+
+    #[test]
+    fn only_the_base_revision_is_read_and_only_from_a_file() {
+        for input in [r#"at="head", filename="a.json""#, r#"at="base", dir="allow/""#, r#"at="base", artifact="x""#] {
+            let mut program = crate::code_rule_dsl::logic::rr::parse(&format!(".decl a(n: number)\n.input a(IO=json, {input})\n")).unwrap();
+            assert!(populate_with(&mut program, Path::new("."), &mut |_| panic!("not read"), &mut none, &mut no_base).is_err(), "{input}");
+        }
+    }
+
+    /// The base reader over a real repository: a commit, then an edit in the work tree. The root is a
+    /// subdirectory, so paths are read under its prefix.
+    #[test]
+    fn the_base_reader_reads_the_object_store() {
+        let dir = std::env::temp_dir().join(format!("rerail-base-{}", std::process::id()));
+        let root = dir.join("sub");
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap().status.success(), "git {args:?}");
+        git(&["init", "-q"]);
+        std::fs::write(root.join("allow.txt"), "a\nb\n").unwrap();
+        git(&["add", "sub/allow.txt"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
+        std::fs::write(root.join("allow.txt"), "a\nb\nc\n").unwrap();
+        let head = String::from_utf8(std::process::Command::new("git").arg("-C").arg(&dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap();
+        for rev in [head.trim(), "HEAD"] {
+            let mut read = base_reader(&root, Some(rev));
+            assert_eq!(read("allow.txt").unwrap(), "a\nb\n", "{rev}");
+            assert_eq!(read("absent.txt").unwrap_err().kind, "missing");
+        }
+        assert_eq!(base_reader(&root, None)("allow.txt").unwrap_err().kind, "missing");
+        assert_eq!(base_reader(&root, Some("no-such-ref"))("allow.txt").unwrap_err().kind, "unreadable");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `--require-facts`: a missing artifact fails; a failed one fails unless a rule reads `input_error`.
+    #[test]
+    fn required_facts_fail_the_run_unless_the_policy_reports_a_failure() {
+        assert!(required(&budget_with(None)).is_err());
+        assert!(required(&budget_with(Some(stamped("ok", "sha256:now", r#"{"total": 12}"#)))).is_ok());
+        assert!(required(&budget_with(Some(stamped("failed", "sha256:now", "null")))).is_err());
+        let mut reporting = budget_with(Some(stamped("failed", "sha256:now", "null")));
+        reporting.rules.extend(crate::code_rule_dsl::logic::rr::parse(".decl input_error(p: symbol, k: symbol, d: symbol)\n.decl e(p: symbol)\ne(p) :- input_error(p, _, _).\n").unwrap().rules);
+        assert!(required(&reporting).is_ok());
     }
 
     /// The blob id is git's: `printf 'hello\n' | git hash-object --stdin`.
@@ -645,7 +810,7 @@ quiet() :- ceiling(_), !over(_).
                 None => Err(Failure { kind: "missing", detail: "collection.json".into() }),
                 Some(t) => artifact_data(name, t, "sha256:now"),
             }
-        })
+        }, &mut no_base)
         .unwrap();
         program
     }
@@ -694,7 +859,7 @@ quiet() :- ceiling(_), !over(_).
 .input b(IO=json, filename="shared.json", path="/b")
 "#).unwrap();
         let mut reads = 0;
-        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(r#"{"a":7,"b":"kept"}"#.to_owned()) }, &mut none).unwrap();
+        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(r#"{"a":7,"b":"kept"}"#.to_owned()) }, &mut none, &mut no_base).unwrap();
         assert_eq!(reads, 1);
         assert_eq!(program.facts["a"], vec![vec![Value::Int(7)]]);
         assert_eq!(program.facts["b"], vec![vec![Value::Str("kept".into())]]);
@@ -706,7 +871,7 @@ quiet() :- ceiling(_), !over(_).
         let first = ".decl base_sig(s: symbol)\n.input base_sig(IO=json, filename=\"noqa.json\", path=\"/signature\")\n.decl result(s: symbol)\nresult(s) :- base_sig(s).\n.output result\n";
         let second = first.replace("noqa.json", "budget.json");
         let mut program = super::super::combine(&[first, &second], "").unwrap();
-        populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none).unwrap();
+        populate_with(&mut program, Path::new("."), &mut |name| Ok(format!("{{\"signature\":\"{name}\"}}")), &mut none, &mut no_base).unwrap();
         assert_eq!(program.facts.get("p0_base_sig"), Some(&vec![vec![Value::Str("noqa.json".into())]]));
         assert_eq!(program.facts.get("p1_base_sig"), Some(&vec![vec![Value::Str("budget.json".into())]]));
         assert!(!program.facts.contains_key("base_sig"));

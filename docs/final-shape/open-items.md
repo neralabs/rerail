@@ -2957,8 +2957,16 @@ missing; 2 of its 3 rules)`). `rerail-engine facts-stamp RAW --out DIR --root RE
 sample both checks now run, in 0.2 s and 1.0 s of CPU: without artifacts, with a failed producer, and with a fresh
 artifact (no Unknown). Tests: `corpus::inputs` (12).
 
-**Still open:** item 7 (`at="base"`, refused with this item's number); Unknown *places* (FINDINGS-LAYER §2's second
-evaluation), which needs the findings layer; `--require-facts`.
+**Built 2026-11-08 (item 7, `--require-facts`):** `at="base"` reads a `filename=` input from the object store, through
+`gix`, at `logic --base REV` (a commit id or a reference name), under the corpus root's prefix in the repository.
+Without a base, or with a path the base lacks, the input gives `input_error("PATH@base", kind, …)` and its readers
+under `!` are withheld, as an artifact's are: a burn-down comparison never reports every entry as new.
+`--require-facts` fails the run on an artifact that is missing, stale or malformed, and on a failed one unless a rule
+reads `input_error` (RUN-FACTS §5). Tests: `corpus::inputs` (16).
+
+**Still open:** the merge base. `--base` names the revision; computing the merge base of a change and giving
+`git_rev`, `git_has` and `git_commit` as facts is the git provider's (0094's order of work, last). Unknown *places*
+(FINDINGS-LAYER §2's second evaluation), which needs the findings layer.
 
 ## O139. `RERAIL_PROFILE` adds 5–8 s of CPU to every run
 
