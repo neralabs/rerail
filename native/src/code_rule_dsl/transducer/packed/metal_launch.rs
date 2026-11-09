@@ -93,6 +93,13 @@ pub(crate) fn check_submission() -> Result<(), Error> {
     EVALUATION.with_borrow(|slot| {
         let budget = slot.as_ref().ok_or(Error::BackendFailure)?;
         if budget.borrow().budget.refused() {
+            if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+                let mut kernels = std::collections::BTreeMap::<String, usize>::new();
+                for record in &budget.borrow().records {
+                    *kernels.entry(record.kernel.clone()).or_default() += 1;
+                }
+                eprintln!("REFUSED dispatches {kernels:?}");
+            }
             Err(Error::BackendLaunchLimit)
         } else {
             Ok(())

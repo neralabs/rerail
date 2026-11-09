@@ -1084,6 +1084,10 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         Ok(rounds)
     };
     let mut wanted = expected.clone();
+    if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+        let levels = plan.steps.iter().map(|(_, levels)| levels.len()).sum::<usize>();
+        eprintln!("PLAN steps {} levels {levels} fixed {fixed} groups {groups} per group {per_group:?} expected {expected:?} files {}", plan.steps.len(), files.len());
+    }
     let mut rounds = plan_rounds(0, &wanted)?;
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);

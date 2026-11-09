@@ -1042,10 +1042,16 @@ fn rer131_pack_keys() {
         copied += 1;
     }
     let store = ContentStore::open(&temp("pack-keys-store").with_extension("sqlite")).unwrap();
-    let mut rules = Rules::lower(&policies, ExecutionBackend::CpuInterpreter).unwrap();
+    let backend = match std::env::var("RERAIL_BACKEND").as_deref() {
+        Ok("jit") => ExecutionBackend::CpuJit,
+        #[cfg(target_os = "macos")]
+        Ok("metal") => ExecutionBackend::MetalInterpreter,
+        _ => ExecutionBackend::CpuInterpreter,
+    };
+    let mut rules = Rules::lower(&policies, backend).unwrap();
     let start = cpu();
     let root = directory_root(&store, &dir).unwrap();
-    let found = keys(&audit(&store, WS, root, &mut rules).unwrap());
+    let found = keys(&audit(&store, WS, root, &mut rules).inspect_err(|error| eprintln!("AUDIT {error:?}")).unwrap());
     eprintln!("PACK {}: {} rules, {} files, {} keys, cpu {:?}", pack.display(), policies.len(), copied, found.len(), cpu() - start);
     if let Ok(path) = std::env::var("RERAIL_DUMP_KEYS") {
         std::fs::write(&path, found.iter().map(|k| format!("{}\t{}\t{}\t{}\n", k.0, k.1, k.2, k.3)).collect::<String>()).unwrap();
