@@ -71,6 +71,28 @@ describe("running the registered Claude hook as Claude Code will", () => {
     expect(await runRegisteredClaudeHook(home)).toBeUndefined();
   });
 
+  it("reads an answer written after the hook process exited, as one a process it started writes on a loaded machine", async () => {
+    // The hook hands its stdout to a process of its own that answers 300 ms later, and exits at once: Node reports the
+    // hook's exit before its stdout ends.
+    const home = await homeRunning([
+      "const { spawn } = require('node:child_process');",
+      "spawn(process.execPath, ['-e', \"setTimeout(() => process.stdout.write('{}'), 300)\"],",
+      "  { cwd: require('node:os').tmpdir(), detached: true, stdio: ['ignore', 'inherit', 'ignore'], windowsHide: true }).unref();",
+    ].join("\n"));
+    expect(await runRegisteredClaudeHook(home)).toBeUndefined();
+  });
+
+  it("gives up on a hook whose stdout stays open past the time limit, and says so", async () => {
+    const home = await homeRunning([
+      "const { spawn } = require('node:child_process');",
+      "spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'],",
+      "  { cwd: require('node:os').tmpdir(), detached: true, stdio: ['ignore', 'inherit', 'ignore'], windowsHide: true }).unref();",
+    ].join("\n"));
+    const started = Date.now();
+    expect(await runRegisteredClaudeHook(home, process.env, 300)).toBe("Claude Code's Rerail hook did not answer within 0.3 s");
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+
   it("finds a bare node on PATH, as the exec form Rerail registers on Windows names it, and never in the current folder", async () => {
     const home = await homeRunning("let t='';process.stdin.on('data',c=>t+=c).on('end',()=>{JSON.parse(t);process.stdout.write('{}');});", "node");
     expect(await runRegisteredClaudeHook(home)).toBeUndefined();
