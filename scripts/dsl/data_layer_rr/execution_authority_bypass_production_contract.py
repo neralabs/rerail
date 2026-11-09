@@ -35,6 +35,8 @@ CASES=[dict(id='empty',files=[]),dict(id='clean',files=[dict(path='impl/a.py',so
 
 
 REGISTRY='l2050_transaction/execution_authority_tokens.py'
+REGISTRY_INPUT=read_json(ROOT/'gate/data-layer/fixtures/host/data-layer-port/rr-authority-registry-input.json')
+assert REGISTRY_INPUT['sourcePin']==PIN and sha(REGISTRY_INPUT['source'].encode())==REGISTRY_INPUT['sha256']
 
 def registry_source(rows):
     import json
@@ -42,10 +44,10 @@ def registry_source(rows):
     return 'EXPLICIT_EXECUTION_AUTHORITY_CALLSITES = (\n'+'\n'.join(calls)+'\n)\n'
 
 CASES += [
-    dict(id='default-config-positive',defaultConfig=True,files=[dict(path=REGISTRY,source=(ROOT/'.rerail/data-layer-testsuite-positives/upstream-git'/REGISTRY).read_text()),dict(path='impl/a.py',source=BAD+'_legacy_boundary_var\n')]),
+    dict(id='default-config-positive',defaultConfig=True,files=[dict(path=REGISTRY,source=REGISTRY_INPUT['source']),dict(path='impl/a.py',source=BAD+'_legacy_boundary_var\n')]),
     dict(id='default-config-empty-registry',defaultConfig=True,signed=[],files=[dict(path=REGISTRY,source=registry_source([]))]),
     dict(id='default-config-duplicate-registry',defaultConfig=True,signed=[['impl.a','helper'],['impl.a','helper']],files=[dict(path=REGISTRY,source=registry_source([['impl.a','helper'],['impl.a','helper']])),dict(path='impl/a.py',source='def helper(): explicit_execution_authority()\n')]),
-    dict(id='default-config-test-exceptions',defaultConfig=True,files=[dict(path=REGISTRY,source=(ROOT/'.rerail/data-layer-testsuite-positives/upstream-git'/REGISTRY).read_text()),dict(path='l2050_transaction/tests/test_execution_boundary.py',source='def test_raw_explicit_authority_contextvar_value_does_not_authorize(): _explicit_authority_var\ndef test_explicit_execution_authority_uses_outer_callsite():\n _legacy_boundary_var\n def helper(): explicit_execution_authority()\n')]),
+    dict(id='default-config-test-exceptions',defaultConfig=True,files=[dict(path=REGISTRY,source=REGISTRY_INPUT['source']),dict(path='l2050_transaction/tests/test_execution_boundary.py',source='def test_raw_explicit_authority_contextvar_value_does_not_authorize(): _explicit_authority_var\ndef test_explicit_execution_authority_uses_outer_callsite():\n _legacy_boundary_var\n def helper(): explicit_execution_authority()\n')]),
 ]
 
 
@@ -154,11 +156,13 @@ def main():
     for n in ['source','engine','baseline','out']:p.add_argument('--'+n,type=Path)
     p.add_argument('--part',type=int,default=0);p.add_argument('--parts',type=int,default=1);a=p.parse_args();assert a.out and 0<=a.part<a.parts
     paths=[Path(__file__),Path(__file__).with_name('execution_authority_bypass_port.py'),RULE]
-    report=dict(format='rerail.authority-production/v1',sourcePin=PIN,fullMigrationAcceptance=False,passed=False,cases=[],programs={str(f.relative_to(ROOT)):dict(sha256=sha(f.read_bytes()),text=f.read_text()) for f in paths})
+    report=dict(format='rerail.authority-production/v1',sourcePin=PIN,moduleDoc=REGISTRY_INPUT['moduleDoc'],fullMigrationAcceptance=False,passed=False,cases=[],programs={str(f.relative_to(ROOT)):dict(sha256=sha(f.read_bytes()),text=f.read_text()) for f in paths})
     if a.command=='source':
         a.source=a.source.absolute();assert git(a.source,'rev-parse','HEAD')==PIN
         n='scripts/lint_execution_authority_bypass.py';compare((a.source/n).read_bytes(),subprocess.check_output(['git','-C',str(a.source),'show',PIN+':'+n]))
+        compare((a.source/REGISTRY).read_text(),REGISTRY_INPUT['source'])
         sys.path[:0]=[str(a.source),str(a.source/'scripts')];module=importlib.import_module('scripts.lint_execution_authority_bypass')
+        compare(module.__doc__,REGISTRY_INPUT['moduleDoc'])
         for case in CASES:report['cases'].append(dict(input=case,**source_case(module,case)));write_json(a.out,report)
     else:
         if any(n.startswith(('scripts.lint_','lint_execution_authority_bypass')) for n in sys.modules):raise ValueError('Native acceptance cannot import source rules')

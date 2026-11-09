@@ -13,11 +13,12 @@ from suite import Suite
 class NativeEntryTests(unittest.TestCase):
     def test_step_collectors_use_their_focused_native_policy(self):
         suite = Suite.__new__(Suite)
+        suite.execution_mode = 'snapshot'
         suite.rule_root, suite.item = Path('/rules'), None
         suite.calls, suite.inputs = [], {}
         class Worker:
             stdin = io.StringIO()
-            stdout = io.StringIO(json.dumps(dict(result=dict(programInputs=[],diagnostics=[],phases={})))+'\n')
+            stdout = io.StringIO(json.dumps(dict(executionMode="snapshot",result=dict(programInputs=[],diagnostics=[],phases={})))+'\n')
         suite.worker = Worker()
         with patch('suite.select.select',return_value=([suite.worker.stdout],[],[])):
             suite.native('serverplan_steps','collect_current_step022_blockers',[])
@@ -27,12 +28,13 @@ class NativeEntryTests(unittest.TestCase):
         for entry in [None, 'check_file']:
             with self.subTest(entry=entry):
                 suite = Suite.__new__(Suite)
+                suite.execution_mode = "snapshot"
                 suite.rule_root = Path('/rules')
                 suite.item = None
                 suite.calls, suite.inputs = [], {}
                 class Worker:
                     stdin = io.StringIO()
-                    stdout = io.StringIO(json.dumps(dict(result=dict(programInputs=[],diagnostics=[],phases={})))+'\n')
+                    stdout = io.StringIO(json.dumps(dict(executionMode="snapshot",result=dict(programInputs=[],diagnostics=[],phases={})))+'\n')
                 suite.worker = Worker()
                 with patch('suite.select.select',return_value=([suite.worker.stdout],[],[])):
                     self.assertEqual([],suite.native('grammar_fragment_usage',entry,[],dict(scope='production')))

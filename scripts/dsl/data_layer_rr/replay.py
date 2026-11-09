@@ -158,12 +158,15 @@ def execute(engine, rule, record, sources):
     return result(record, native['diagnostics']), native
 
 
-def worker(engine):
+def worker(engine, execution_mode="snapshot"):
     """Controlled native test transport, started before upstream audit hooks are installed."""
+    if execution_mode not in {"snapshot","workspace"}:
+        raise ValueError("Unknown native execution mode: "+execution_mode)
+    execute_api = execute_native if execution_mode == "snapshot" else execute_workspace
     for line in sys.stdin:
         try:
             request = json.loads(line)
-            response = dict(result=execute_native(engine, Path(request['rule']), request['files'], request['options']))
+            response = dict(result=execute_api(engine, Path(request['rule']), request['files'], request['options']),executionMode=execution_mode)
         except Exception as error:
             response = dict(error=f'{type(error).__name__}: {error}')
         print(json.dumps(response), flush=True)
@@ -228,7 +231,7 @@ def main():
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 3 and sys.argv[1] == '--worker':
-        worker(Path(sys.argv[2]))
+    if len(sys.argv) == 3 and sys.argv[1] in {'--worker','--workspace-worker'}:
+        worker(Path(sys.argv[2]), 'workspace' if sys.argv[1] == '--workspace-worker' else 'snapshot')
     else:
         main()

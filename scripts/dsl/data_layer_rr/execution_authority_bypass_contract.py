@@ -39,7 +39,7 @@ class Contract:
         if self.baseline:
             from suite import Suite
             self.backend = Suite(args.source, args.engine, ['execution_authority_bypass'], args.part,
-                                 args.parts, args.baseline, args.rule_root)
+                                 args.parts, args.baseline, args.rule_root, execution_mode=args.mode)
 
     def value(self, value):
         root=self.item.funcargs.get('tmp_path') if self.item else None
@@ -175,13 +175,13 @@ class Contract:
             assert sha((ROOT/name).read_bytes()) == digest, 'Harness changed: '+name
         result = dict(format='rerail.execution-authority-bypass-original-contracts/v1', sourcePin=PIN, commit=PIN,
             pytest_exit_code=int(code), exitCode=int(code), oracle=self.backend is None, source_mismatches=[],
-            fullMigrationAcceptance=False, part=self.args.part, parts=self.args.parts, collected=self.collected, selectedCases=self.selected, selectedEntries=self.args.entries,
+            fullMigrationAcceptance=False, mode=self.args.mode if self.backend else 'source', part=self.args.part, parts=self.args.parts, collected=self.collected, selectedCases=self.selected, selectedEntries=self.args.entries,
             cases=self.cases, calls=self.calls, events=[], missingResults=missing,
             semanticFallbacks=self.fallbacks, hostProtocolCalls=self.host_protocol_calls, harnessFiles=self.harness,
             sourceFiles={n: sha((self.args.source/n).read_bytes()) for n in
                 ['scripts/lint_execution_authority_bypass.py', 'scripts/tests/test_lint_execution_authority_bypass.py']})
         if self.backend:
-            result.update(engineSha256=sha(self.args.engine.read_bytes()), nativeCalls=self.backend.calls)
+            result.update(engineSha256=sha(self.args.engine.read_bytes()), nativeCalls=self.backend.calls,policySha256={'execution_authority_bypass':sha((self.backend.rule_root/'execution-authority-bypass.rr').read_bytes())})
         write_json(self.args.out, result)
         if missing and not code:
             raise AssertionError('Original observations missing: '+repr(missing))
@@ -192,6 +192,7 @@ def main():
     parser.add_argument('command', choices=['source', 'native'])
     for name in ['source', 'out', 'baseline', 'engine', 'rule-root']:
         parser.add_argument('--'+name, type=Path, required=name in ['source', 'out'])
+    parser.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot')
     parser.add_argument('--entries',help='Explicit native helper slice; does not certify the complete original suite')
     parser.add_argument('--part', type=int, default=0)
     parser.add_argument('--parts', type=int, default=1)

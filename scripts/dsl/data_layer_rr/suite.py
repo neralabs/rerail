@@ -73,7 +73,10 @@ class NativeRegexMatch:
 
 
 class Suite:
-    def __init__(self, source, engine, checks, part, parts, baseline, rule_root=None):
+    def __init__(self, source, engine, checks, part, parts, baseline, rule_root=None, execution_mode="snapshot"):
+        if execution_mode not in {"snapshot","workspace"}:
+            raise ValueError("Unknown native execution mode: "+execution_mode)
+        self.execution_mode = execution_mode
         manifest = migration.read_json(ROOT / migration.MANIFEST)
         migration.verify_source_cohort(ROOT, manifest['engineSource'])
         for retired in ('.rerail/rr-migration-20261106/engine',
@@ -97,7 +100,7 @@ class Suite:
         self.baseline_sha = sha(raw)
         self.observations, self.observed = [], Counter()
         self.cache = tempfile.TemporaryDirectory(prefix='rerail-rr-assertion-cache-')
-        self.worker = subprocess.Popen([sys.executable, str(Path(__file__).with_name('replay.py')), '--worker', str(engine)],
+        self.worker = subprocess.Popen([sys.executable, str(Path(__file__).with_name('replay.py')), '--workspace-worker' if execution_mode == 'workspace' else '--worker', str(engine)],
             text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=ROOT,
             env={**os.environ, 'RERAIL_TAPE_CACHE': str(Path(self.cache.name) / 'store.sqlite')})
 
@@ -113,7 +116,7 @@ class Suite:
         from policy_routes import policy_filename
         rule = self.rule_root / policy_filename(check, entry)
         request = dict(rule=str(rule), files=files, options=dict(({} if entry is None else dict(entryPoint=entry)), **(options or {})))
-        call = dict(test=self.item.nodeid if self.item else '<native-configuration>', check=check, entry=entry, policy=str(rule), files=len(files), status='started',
+        call = dict(test=self.item.nodeid if self.item else '<native-configuration>', check=check, entry=entry, policy=str(rule), files=len(files), status='started', executionMode=self.execution_mode,
                     inputFiles=[dict(path=f['path'], sourceSha256=sha(f['source'].encode())) for f in files],
                     options=request['options'])
         self.calls.append(call)
@@ -129,6 +132,9 @@ class Suite:
         if 'error' in response:
             call.update(status='failed', error=response['error'])
             raise AssertionError(response['error'])
+        if response.get('executionMode') != self.execution_mode:
+            call.update(status='failed',error='Native execution mode differs from the requested API')
+            raise ValueError(call['error'])
         result = response['result']
         previous = self.inputs.setdefault((check, rule.name), result['programInputs'])
         if previous != result['programInputs']:

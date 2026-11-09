@@ -24,12 +24,12 @@ def groups(rows):
     return result
 
 
-def native_case(engine,case):
+def native_case(engine,case,module_doc):
     config=case['config'];calls=[]
     cls=make_dataclass('AuthorityViolation',[(k,t) for k,t in [('path',str),('line',int),('code',str),('message',str)]],frozen=True,slots=True)
     with tempfile.TemporaryDirectory(prefix='authority-frontend-native-') as temporary:
         root=Path(temporary);write_fixture(root,case['input']['files'])
-        module=SimpleNamespace(REPO_ROOT=root,AuthorityViolation=cls,__doc__=None)
+        module=SimpleNamespace(REPO_ROOT=root,AuthorityViolation=cls,__doc__=module_doc)
         module.EXPLICIT_EXECUTION_AUTHORITY_CALLSITES=tuple(SimpleNamespace(module=m,function=f) for m,f in zip(config['signedModules'],config['signedFunctions']))
         for name,prefix in [('CURATED_EXPLICIT_AUTHORITY_CALLSITES','curated'),('PRIVATE_SYMBOL_TEST_EXCEPTIONS','privateException'),('EXPLICIT_AUTHORITY_TEST_EXCEPTIONS','explicitException')]:setattr(module,name,frozenset(zip(config[prefix+'Modules'],config[prefix+'Functions'])))
         module.PRIVATE_AUTH_SYMBOLS=frozenset(config['privateSymbols']);module.AUTH_MONKEYPATCH_MARKERS=tuple(config['monkeypatchMarkers'])
@@ -68,7 +68,7 @@ def main():
     paths=[Path(__file__),Path(production.__file__),ROOT/'scripts/dsl/data_layer_rr/execution_authority_bypass_port.py']
     report=dict(format='rerail.authority-native-frontend/v1',sourcePin=PIN,fullMigrationAcceptance=False,passed=False,engineSha256=sha(a.engine.read_bytes()),baselineSha256=sha(a.baseline.read_bytes()),cases=[],harnessFiles={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in paths})
     for case in source['cases'][a.part::a.parts]:
-        expected={k:case['expected'][k] for k in ['cliSelectedFiles','scanRepo','scanGroups','cli']};actual,calls=native_case(a.engine.absolute(),case)
+        expected={k:case['expected'][k] for k in ['cliSelectedFiles','scanRepo','scanGroups','cli']};actual,calls=native_case(a.engine.absolute(),case,source['moduleDoc'])
         passed=production.canonical_completion(actual)==production.canonical_completion(expected)
         report['cases'].append(dict(input=case['input'],expected=expected,actual=actual,native=calls,passed=passed));write_json(a.out,report)
     for path,digest in report['harnessFiles'].items():compare(digest,sha((ROOT/path).read_bytes()))
