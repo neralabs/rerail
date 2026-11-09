@@ -99,6 +99,15 @@ export function localBranches(root: string): LocalBranch[] {
   });
 }
 
+/** Remote-tracking branches with their tips, without the `<remote>/HEAD` symbolic refs. */
+export function remoteBranches(root: string): Array<{ readonly ref: string; readonly commit: string }> {
+  const output = gitOutput(root, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)", "refs/remotes"], LIST_OPTIONS) ?? "";
+  return output.split("\n").flatMap(line => {
+    const [ref, commit, symref] = line.split("\0");
+    return ref === undefined || ref === "" || commit === undefined || commit === "" || symref !== "" ? [] : [{ ref, commit }];
+  });
+}
+
 /** The best common ancestor of two commits, or null when they share none or either is unknown. */
 export function mergeBase(root: string, a: string, b: string): string | null {
   if (!revisionArgument(a) || !revisionArgument(b)) return null;

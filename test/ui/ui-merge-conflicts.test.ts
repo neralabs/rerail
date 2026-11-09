@@ -36,9 +36,28 @@ const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
     conflict("conflict:dates", { status: "dismissed", title: "Dates", resolution: { action: "dismiss", by: "person", name: "tbelanger", logId: null, rule: null, text: null, at: "2026-11-02T11:40:00Z" } }),
   ],
   decisionLog: {
-    entries: [
-      logItem("older", "2026-10-30T10:00:00Z", { title: "Dates via formatDate", outcome: "New decision", by: { kind: "person", name: "lfischer" } }),
-      logItem("newer", "2026-11-02T11:30:00Z", { title: "Retries in callers", outcome: "Theirs (PR #412)", by: { kind: "policy", name: "precedent" }, rule: null }),
+    questions: [
+      {
+        question: "overlap:retries",
+        title: "Retries in callers",
+        items: [
+          logItem("newer", "2026-11-02T11:30:00Z", {
+            question: "overlap:retries", title: "Retries in callers", outcome: "Theirs (PR #412)", by: { kind: "precedent", name: "precedent" }, rule: null,
+            source: { ref: "refs/pull/412/head", label: "PR #412" }, follows: { ref: "refs/pull/412/head", candidateId: "candidate:retry-in-transport-1a2b3c" },
+          }),
+          logItem("oldest", "2026-10-28T09:00:00Z", { question: "overlap:retries", title: "Retries in callers", status: "void", outcome: "Mine", source: { ref: "jbarnes-retries", label: "jbarnes-retries" } }),
+        ],
+      },
+      {
+        question: "overlap:dates",
+        title: "Dates via formatDate",
+        items: [
+          logItem("older", "2026-10-30T10:00:00Z", {
+            question: "overlap:dates", title: "Dates via formatDate", status: "in-force", verdict: "new", outcome: "New decision", by: { kind: "person", name: "lfischer" },
+            source: { ref: "refs/remotes/origin/main", label: "origin/main" },
+          }),
+        ],
+      },
     ],
     problems: [],
   },
@@ -286,22 +305,41 @@ describe("Merge Assist's conflicts", () => {
     expect(dismissed!.querySelector("code.mrule")).toBeNull();
   });
 
-  it("lists the decision log newest first: when, title, outcome, by and rule", () => {
+  it("lists the decision log by question: when, status, outcome, by, branch and rule, newest first", () => {
     click(button("matab", "log"));
     render(root);
-    const table = panel("log").querySelector("table.mlog")!;
-    expect(table.querySelectorAll("th").map(th => th.textContent)).toEqual(["When", "Title", "Outcome", "By", "Rule"]);
-    const rows = table.querySelectorAll("tbody tr").map(tr => tr.querySelectorAll("td").map(td => td.textContent));
-    expect(rows.map(r => r.slice(1))).toEqual([
-      ["Retries in callersText newer.", "Theirs (PR #412)", "precedent", "—"],
-      ["Dates via formatDateText older.", "New decision", "lfischer", ".rerail/candidates/older.json"],
+    const log = panel("log");
+    expect(log.querySelectorAll("h3.mlq").map(h => h.textContent)).toEqual(["Retries in callers", "Dates via formatDate"]);
+    const tables = log.querySelectorAll("table.mlog");
+    expect(tables[0]!.querySelectorAll("th").map(th => th.textContent)).toEqual(["When", "Status", "Outcome", "By", "Branch", "Rule"]);
+    const rows = (table: FakeElement) => table.querySelectorAll("tbody tr").map(tr => tr.querySelectorAll("td").map(td => td.textContent).slice(1));
+    expect(rows(tables[0]!)).toEqual([
+      ["Provisional", "Theirs (PR #412)Text newer.Follows candidate:retry-in-transport-1a2b3c on refs/pull/412/head", "precedent", "PR #412", "—"],
+      ["Void", "MineText oldest.", "tbelanger", "jbarnes-retries", ".rerail/candidates/oldest.json"],
     ]);
-    expect(table.querySelectorAll(".mby").map(b => b.className)).toEqual(["badge mby policy", "badge mby person"]);
-    expect(table.querySelector("time")!.getAttribute("datetime")).toBe("2026-11-02T11:30:00Z");
+    expect(rows(tables[1]!)).toEqual([["In force", "New decisionText older.", "lfischer", "origin/main", ".rerail/candidates/older.json"]]);
+    expect(log.querySelectorAll(".mst").map(chip => chip.className)).toEqual(["badge mst provisional", "badge mst void", "badge mst in-force"]);
+    expect(log.querySelectorAll(".mby").map(b => b.className)).toEqual(["badge mby precedent", "badge mby person", "badge mby person"]);
+    expect(tables[0]!.querySelector("time")!.getAttribute("datetime")).toBe("2026-11-02T11:30:00Z");
+  });
+
+  it("filters the decision log by status, and shows every entry again from All", () => {
+    click(button("matab", "log"));
+    render(root);
+    const filters = () => panel("log").querySelectorAll("button.mlogf").map(b => [b.textContent, b.getAttribute("aria-pressed")]);
+    expect(filters()).toEqual([["All3", "true"], ["In force1", "false"], ["Provisional1", "false"], ["Void1", "false"]]);
+    click(button("malog", "void"));
+    render(root);
+    expect(panel("log").querySelectorAll("h3.mlq").map(h => h.textContent)).toEqual(["Retries in callers"]);
+    expect(panel("log").querySelectorAll("tbody tr")).toHaveLength(1);
+    expect(filters()[3]).toEqual(["Void1", "true"]);
+    click(button("malog", "all"));
+    render(root);
+    expect(panel("log").querySelectorAll("tbody tr")).toHaveLength(3);
   });
 
   it("says when nothing is open or logged, and opens on Decisions then", () => {
-    data.mergeAssist = fixture({ conflicts: [], decisionLog: { entries: [], problems: ["refs/rerail/decisions: entry 3 is not valid JSON."] } });
+    data.mergeAssist = fixture({ conflicts: [], decisionLog: { questions: [], problems: ["origin/main: 3f2a.json: not JSON"] } });
     render(root);
     expect(button("matab", "decisions")!.getAttribute("aria-pressed")).toBe("true");
     expect(button("matab", "conflicts")!.textContent).toBe("Conflicts");
@@ -312,8 +350,9 @@ describe("Merge Assist's conflicts", () => {
     expect(panel("conflicts").querySelector("details.mfold")!.hidden).toBe(true);
     click(button("matab", "log"));
     render(root);
-    expect(panel("log").textContent).toContain("No decisions logged yet");
-    expect(panel("log").querySelector('[role="status"]')!.textContent).toContain("entry 3 is not valid JSON.");
+    expect(panel("log").textContent).toContain("No decisions recorded yet");
+    expect(panel("log").querySelector('[role="status"]')!.textContent).toContain("3f2a.json: not JSON");
+    expect(panel("log").querySelector("button.mlogf")).toBeNull();
     expect(panel("log").querySelector("table")).toBeNull();
   });
 

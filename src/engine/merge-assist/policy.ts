@@ -89,9 +89,19 @@ export const policySchema = z.object({
   panel: panelSchema.prefault({}),
   reserve: z.array(z.enum(RESERVED_CLASSES)).default([...RESERVED_CLASSES])
     .refine(classes => new Set(classes).size === classes.length, "reserved classes are distinct"),
+  /** How loud an open conflict gets (`dimmer.ts`). */
+  dimmer: z.object({
+    /** What one interruption of the person costs, in lines of rework: the checkpoint threshold. */
+    interruptCost: z.number().positive().max(1_000_000).default(300),
+    /** Lines per hour on the contested files above which a lock-in ×4 conflict may stop the line. */
+    stopGrowthPerHour: z.number().nonnegative().max(1_000_000).default(50),
+    /** Checkpoint prompts one person gets per day; the rest wait, queued. */
+    checkpointsPerDay: z.number().int().min(0).max(100).default(3),
+  }).strict().prefault({}),
 }).strict();
 
 export type Policy = z.output<typeof policySchema>;
+export type DimmerConfig = Policy["dimmer"];
 export type PolicyCheck = Policy["checks"]["run"][number];
 export type PolicyBenchmark = Policy["criteria"]["benchmarks"][number];
 

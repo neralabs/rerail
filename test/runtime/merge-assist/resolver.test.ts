@@ -5,15 +5,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  appendDecision,
   type CheckResult,
   type ConflictRecord,
   defaultPolicy,
   type Policy,
-  personDecisionEntry,
+  positionFingerprint,
   questionOf,
-  readDecisions,
+  readLedger,
+  sealDecisionEntry,
   type SideId,
+  writeWorktreeDecision,
 } from "../../../src/engine/index.js";
 import { type CheckRunner, createLocalCheckRunner, decisionEntryFor, panelOrder, resolveConflict } from "../../../src/runtime/index.js";
 import { FakeJudge } from "./support/merge-assist-workspace.js";
@@ -95,7 +96,7 @@ describe("resolveConflict", () => {
     const { root, record } = await conflict();
     const judge = transportJudge();
     const checks = runner({ a: "pass", b: "fail" });
-    const resolution = await resolveConflict({ root, repositoryKey: "test", record, policy: withChecks(policy()), judge, checks, log: [] });
+    const resolution = await resolveConflict({ root, repositoryKey: "test", record, policy: withChecks(policy()), judge, checks, ledger: { items: [] } });
     expect(resolution).toMatchObject({ verdict: "a", step: "hard-checks" });
     expect(resolution.steps.map(step => step.step)).toEqual(["precedent", "hard-checks"]);
     expect(checks.calls.sort()).toEqual(["a", "b"]);
@@ -105,7 +106,7 @@ describe("resolveConflict", () => {
   it("asks a blind panel, records every vote, and picks the same design whichever slot it is in", async () => {
     const { root, record } = await conflict();
     const judge = transportJudge();
-    const resolution = await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ criteria: { ...defaultPolicy().criteria, blastRadius: { enabled: false, ratio: 3, minLines: 100 } } }), judge, checks: null, log: [], seed: 7 });
+    const resolution = await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ criteria: { ...defaultPolicy().criteria, blastRadius: { enabled: false, ratio: 3, minLines: 100 } } }), judge, checks: null, ledger: { items: [] }, seed: 7 });
     expect(resolution).toMatchObject({ verdict: "b", step: "panel" });
     const panel = resolution.evidence.panel!;
     expect(panel.votes.map(vote => [vote.perspective, vote.vote, vote.readings.map(reading => reading.shown)])).toEqual([0, 1, 2].map(index => {
@@ -120,7 +121,7 @@ describe("resolveConflict", () => {
       expect(task.prompt).not.toContain(record.sides.a.sha);
     }
     const swapped = { ...record, sides: { a: record.sides.b, b: record.sides.a } };
-    expect((await resolveConflict({ root, repositoryKey: "test", record: swapped, policy: policy({ criteria: { ...defaultPolicy().criteria, blastRadius: { enabled: false, ratio: 3, minLines: 100 } } }), judge: transportJudge(), checks: null, log: [], seed: 7 })).verdict).toBe("a");
+    expect((await resolveConflict({ root, repositoryKey: "test", record: swapped, policy: policy({ criteria: { ...defaultPolicy().criteria, blastRadius: { enabled: false, ratio: 3, minLines: 100 } } }), judge: transportJudge(), checks: null, ledger: { items: [] }, seed: 7 })).verdict).toBe("a");
   });
 
   it("escalates when the panel does not agree, or a judge fails", async () => {
@@ -132,7 +133,7 @@ describe("resolveConflict", () => {
       const scores = { conventions: 3, simplicity: 3, compatibility: 3, goal: 3 };
       return { scores: { X: scores, Y: scores }, preferred: "X", reasons: ["X fits."] };
     });
-    const resolution = await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ steps: ["panel"] }), judge: split, checks: null, log: [] });
+    const resolution = await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ steps: ["panel"] }), judge: split, checks: null, ledger: { items: [] } });
     expect(resolution.verdict).toBe("escalated");
     expect(resolution.reason).toMatch(/does not agree/u);
     expect(resolution.evidence.panel!.votes.flatMap(vote => vote.readings).filter(reading => reading.error !== null).map(reading => reading.error)).toEqual(["timeout: no answer"]);
@@ -141,32 +142,43 @@ describe("resolveConflict", () => {
   it("escalates a reserved class before the panel, and when no judge is available", async () => {
     const { root, record } = await conflict({ transport: { "src/auth/token.ts": "export const ttl = 60;\n" } });
     const judge = transportJudge();
-    const reserved = await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ reserve: ["security"], steps: ["precedent", "panel"] }), judge, checks: null, log: [] });
+    const reserved = await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ reserve: ["security"], steps: ["precedent", "panel"] }), judge, checks: null, ledger: { items: [] } });
     expect(reserved).toMatchObject({ verdict: "escalated", step: "escalate", evidence: { reserved: ["security"] } });
     expect(judge.tasks).toHaveLength(0);
-    expect((await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ steps: ["panel"] }), judge: null, checks: null, log: [] })).reason).toBe("The panel is needed, and no judge is available.");
+    expect((await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ steps: ["panel"] }), judge: null, checks: null, ledger: { items: [] } })).reason).toBe("The panel is needed, and no judge is available.");
   });
 
-  it("follows precedent from the decision log, and its entries round-trip", async () => {
+  it("follows precedent from the ledger view, and its entries round-trip", async () => {
     const { root, record } = await conflict();
     const judge = transportJudge();
     const first = await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ steps: ["precedent", "panel"] }), judge, checks: null });
     expect(first.step).toBe("panel");
-    const appended = appendDecision(root, decisionEntryFor(record, first, new Date("2026-11-07T00:00:00Z")));
-    expect(appended.ok).toBe(true);
+    const at = { kind: "hunks" as const, path: "src/client.ts", lines: [{ lo: 0, hi: 1e9 }] };
+    const position = async (side: SideId) => ({ fingerprint: (await positionFingerprint(root, record.base, record.sides[side].sha, at))!, at });
+    const positions = { a: await position("a"), b: await position("b") };
+    const panelEntry = decisionEntryFor(record, first, positions, new Date("2026-11-07T00:00:00Z"))!;
+    expect(panelEntry).toMatchObject({ verdict: "b", decidedBy: { kind: "policy", step: "panel" }, result: { kind: "decision", candidateId: null } });
+    await writeWorktreeDecision(root, panelEntry);
     const again = await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ steps: ["precedent", "panel"] }), judge: transportJudge(), checks: null });
-    expect(again).toMatchObject({ verdict: "b", step: "precedent" });
-    const person = personDecisionEntry(record, { verdict: "a", name: "Tim", reason: "Client retries are what we ship.", result: { kind: "amendment", rule: null, text: "Retry in the client." } });
-    expect(appendDecision(root, person).ok).toBe(true);
-    const log = await readDecisions(root);
-    expect(log.entries.map(({ entry }) => [entry.verdict, entry.decidedBy.kind, entry.result?.side])).toEqual([["b", "policy", "a"], ["a", "person", "b"]]);
-    expect(log.entries[0]!.entry.evidence).toMatchObject({ panel: { votes: expect.any(Array) } });
+    expect(again).toMatchObject({ verdict: "b", step: "precedent", evidence: { precedent: { entry: { id: panelEntry.id } } } });
+    expect(decisionEntryFor(record, again, positions)).toMatchObject({ decidedBy: { kind: "precedent", entry: panelEntry.id } });
+
+    // A person's later verdict outranks the panel's: recorded on the transport branch (its side a), for the client.
+    const side = (id: SideId) => ({ ref: record.sides[id].ref, label: id === "a" ? "PR #12" : "PR #14", sha: record.sides[id].sha, author: null, ...positions[id] });
+    const person = sealDecisionEntry({
+      ...panelEntry, sides: { a: side("b"), b: side("a") }, verdict: "b", decidedBy: { kind: "person", name: "Tim" },
+      result: { candidateId: null, kind: "decision", text: "Retry in the client.", rule: null, follows: null }, recordedAt: "2026-11-08T00:00:00.000Z",
+    });
+    await writeWorktreeDecision(root, person);
+    const view = await readLedger(root);
+    expect(view.items.map(item => [item.entry.id, item.status, item.place])).toEqual([[panelEntry.id, "provisional", "branch"], [person.id, "provisional", "branch"]]);
     expect((await resolveConflict({ root, repositoryKey: "test", record, policy: policy({ steps: ["precedent"] }), judge: null, checks: null })).verdict).toBe("a");
+    expect(decisionEntryFor(record, { ...first, verdict: "escalated", step: "escalate" }, positions)).toBeNull();
   });
 
   it("decides by blast radius when one side changes many times the source lines", async () => {
     const { root, record } = await conflict({ client: { "src/retry.ts": "export const x = 1;\n".repeat(150) } });
-    const resolution = await resolveConflict({ root, repositoryKey: "test", record, policy: policy(), judge: null, checks: null, log: [] });
+    const resolution = await resolveConflict({ root, repositoryKey: "test", record, policy: policy(), judge: null, checks: null, ledger: { items: [] } });
     expect(resolution).toMatchObject({ verdict: "b", step: "criteria" });
     expect(resolution.reason).toMatch(/^Blast radius/u);
   });

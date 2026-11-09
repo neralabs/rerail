@@ -36,6 +36,7 @@ export const ConflictNoticeSchema = z.object({
   id: z.string().min(1),
   text: z.string(),
   url: z.string().optional(),
+  ask: z.string().optional(),
 }).strict();
 
 const DeliverySchema: z.ZodType<AdapterDelivery> = z.object({

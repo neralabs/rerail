@@ -43,7 +43,7 @@ const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   own: [],
   findings: [],
   conflicts: [],
-  decisionLog: { entries: [], problems: [] },
+  decisionLog: { questions: [], problems: [] },
   ...over,
 });
 

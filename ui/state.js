@@ -144,6 +144,8 @@ export const ui = {
   mergeOpen: new Set(),
   /** Merge Assist's tab the person chose ("conflicts", "decisions", "log"), or `null` for the default (`tabOf`). */
   mergeTab: null,
+  /** The decision log's status filter ("in-force", "provisional", …), or `null` for every entry. */
+  mergeLogStatus: null,
   /** The decision being written for a conflict: `{ id, action: "mine"|"theirs"|"new", text }`, or `null`. */
   mergeDraft: null,
   /** Merge Assist being turned on or off, and a Scan now, while their request is out for the repository shown. */

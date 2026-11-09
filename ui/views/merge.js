@@ -3,12 +3,14 @@
  * `gh`, whether Git ignores `.rerail/candidates/`, whether rules can steer here), then Turn on Merge Assist. On: the
  * status strip (branch and base, the judging CLI, `gh`, the last scan and its problems, the hourly judgment budget,
  * Scan now and Turn off), then three tabs:
- * - Conflicts: open conflicts as cards (both sides, the evidence, Keep mine, Take theirs, Write a new decision…, Not a
+ * - Conflicts: open conflicts as cards, loudest first (each with its level, short id, queued and snooze state, both
+ *   sides, the dimmer's reasons as its size, the evidence, Keep mine, Take theirs, Write a new decision…, Not a
  *   conflict), logged ones muted, then the resolved and dismissed ones folded. Keep mine, Take theirs and a new
  *   decision open the decision text in the card; Confirm saves it. Shown first while any conflict is open.
  * - Decisions: Decided differently, Needs your review, Added from other branches and Decisions on this branch, with
  *   the ones marked as not a rule folded under it.
- * - Decision log: every verdict from `refs/rerail/decisions`, newest first.
+ * - Decision log: the ledger view, every entry from `.rerail/decisions/` on the base branch, this branch and live
+ *   refs, grouped by question, with a status chip each, the branch it was read from, and a filter by status.
  * What each shows comes from `merge-model.js`. When the status cannot be read, the page says why and shows nothing to
  * act on until a read succeeds again.
  *
@@ -24,10 +26,10 @@ import { data, ui, repoName } from "../state.js";
 import { captureScope, inScope, writeMergeAssist } from "../poll.js";
 import { copyText, invalidate, toast } from "../shell.js";
 import {
-  DECISION_MAX, KIND_TEXT, LEVEL_TEXT, MERGE_TABS, authorOf, branchText, budgetText, conflictSections, conflictToast,
-  draftProblem, draftText, githubText, hunkLines, judgeText, levelText, levelTitle, logEntries, logWhen, peerLabel,
+  DECISION_MAX, KIND_TEXT, LEVEL_BADGE, LEVEL_TEXT, MERGE_TABS, QUEUED_TEXT, authorOf, branchText, budgetText, conflictSections, conflictToast,
+  draftProblem, draftText, githubText, hunkLines, judgeText, levelText, levelTitle, LEDGER_STATUS_TEXT, LEDGER_STATUS_TITLE, logQuestions, logStatusCounts, logWhen, peerLabel,
   quoted, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, sideHeading,
-  tabOf, writeError,
+  snoozeText, tabOf, writeError,
 } from "../merge-model.js";
 
 export const needs = ["mergeAssist"];
@@ -164,6 +166,12 @@ function chooseTab(name) {
   invalidate();
 }
 
+/** Show only the decision log's entries with one status, or all of them again (`all`, or the status already shown). */
+function filterLog(name) {
+  ui.mergeLogStatus = name === "all" || name === ui.mergeLogStatus || !(name in LEDGER_STATUS_TEXT) ? null : name;
+  invalidate();
+}
+
 /* ---------- conflicts ---------- */
 
 const conflictOf = id => data.mergeAssist?.conflicts.find(c => c.id === id);
@@ -237,6 +245,7 @@ export const actions = {
   macopy: id => copyMessage(id),
   mafold: name => fold(name),
   matab: name => chooseTab(name),
+  malog: name => filterLog(name),
   mamine: id => openDraft(id, "mine"),
   matheirs: id => openDraft(id, "theirs"),
   manew: id => openDraft(id, "new"),
@@ -417,14 +426,33 @@ function conflictButtons(conflict) {
   ];
 }
 
+/** What the dimmer measured: one plain sentence per signal, as the agent's card shows them. */
+function conflictSize(reasons) {
+  if (reasons.length === 0) return null;
+  return h("div.msize", null, h("span.k", null, "Size"), h("ul.mreasons", null, reasons.map(line => h("li", null, line))));
+}
+
+/** Why a card is quieter than its level, or put off: queued over the budget, or snoozed with "later". */
+function conflictState(conflict) {
+  const lines = [conflict.queued ? QUEUED_TEXT : null, snoozeText(conflict)].filter(line => line !== null);
+  return lines.length === 0 ? null : h("p.mstate", null, lines.join(". "));
+}
+
 function conflictCard(conflict) {
   const logged = conflict.level === "logged";
+  const snooze = snoozeText(conflict);
   return h(`article.mcard.${conflict.level}`, { "data-kind": conflict.kind },
     h("div.mchead", null,
       h(`span.badge.mkind.${conflict.kind}`, null, KIND_TEXT[conflict.kind]),
+      h(`span.badge.mlvl.${conflict.level}`, { title: LEVEL_TEXT[conflict.level] }, LEVEL_BADGE[conflict.level]),
+      conflict.queued ? h("span.badge.mqueued", { title: QUEUED_TEXT }, "Queued") : null,
+      snooze === null ? null : h("span.badge.msnoozed", { title: snooze }, "Later"),
       h("h3.mctitle", null, conflict.title),
-      h("span.mcage", null, "Open for ", ageSlot(), logged ? null : [" · ", LEVEL_TEXT.ambient])),
+      h("span.mshort", { title: `Name it in chat as #${conflict.shortId}` }, `#${conflict.shortId}`),
+      h("span.mcage", null, "Open for ", ageSlot(), logged ? null : [" · ", LEVEL_TEXT[conflict.level]])),
+    conflictState(conflict),
     h("div.mvs", null, sideBox(conflict.mine, "mine"), sideBox(conflict.theirs, "theirs")),
+    conflictSize(conflict.reasons),
     whyConflict(conflict.evidence),
     h("div.meditslot"),
     h("div.macts", null, conflictButtons(conflict),
@@ -445,7 +473,7 @@ function draftEditor(conflict, draft) {
       h("span.meditacts", null,
         h("button.btn.sm.ghost", { "data-act": "macancel", "data-i": conflict.id }, "Cancel"),
         h("button.btn.sm.solid", { "data-act": "maconfirm", "data-i": conflict.id }, "Confirm"))),
-    h("p.mnote2", null, "Saved as a decision on this branch in ", h("code", null, ".rerail/candidates/"), " and recorded in the decision log."));
+    h("p.mnote2", null, "Saved as a decision on this branch in ", h("code", null, ".rerail/candidates/"), " with a ledger entry in ", h("code", null, ".rerail/decisions/"), ". Commit both with your work."));
 }
 
 function draftHint(text) {
@@ -472,7 +500,7 @@ function patchDraft(node, conflict) {
 }
 
 /** What a card shows, for its key: a change rebuilds the card. Its age, busy state and draft are patched. */
-const conflictContent = c => [c.status, c.level, c.kind, c.title, c.mine, c.theirs, c.evidence];
+const conflictContent = c => [c.status, c.level, c.queued, c.snooze, c.reasons, c.shortId, c.kind, c.title, c.mine, c.theirs, c.evidence];
 
 function syncCards(list, items) {
   syncChildren(list, items, c => `${c.id}\u0000${JSON.stringify(conflictContent(c))}`, conflictCard, (node, conflict) => {
@@ -500,23 +528,38 @@ function closedRow(conflict) {
 
 /* ---------- the decision log ---------- */
 
-const LOG_COLUMNS = ["When", "Title", "Outcome", "By", "Rule"];
+const LOG_COLUMNS = ["When", "Status", "Outcome", "By", "Branch", "Rule"];
 
 function logRow(entry) {
   const at = Date.parse(entry.recordedAt);
   return h("tr", null,
     h("td", { "data-label": "When" }, h("time", { datetime: entry.recordedAt, title: Number.isNaN(at) ? null : stamp(at) }, logWhen(entry.recordedAt))),
-    h("td", { "data-label": "Title" }, h("span.mlt", null, entry.title), entry.text === null ? null : h("span.sub", null, entry.text)),
-    h("td", { "data-label": "Outcome" }, entry.outcome),
+    h("td", { "data-label": "Status" }, h(`span.badge.mst.${entry.status}`, { title: LEDGER_STATUS_TITLE[entry.status] }, LEDGER_STATUS_TEXT[entry.status])),
+    h("td", { "data-label": "Outcome" }, entry.outcome, h("span.sub", null, entry.text),
+      entry.follows === null ? null : h("span.sub", null, "Follows ", h("code", null, entry.follows.candidateId), ` on ${entry.follows.ref}`)),
     h("td", { "data-label": "By" }, h(`span.badge.mby.${entry.by.kind}`, null, entry.by.name)),
+    h("td", { "data-label": "Branch" }, entry.source.label),
     h("td", { "data-label": "Rule" }, entry.rule === null ? h("span.sub", { "aria-label": "None" }, "—") : h("code.mrule", null, entry.rule)));
 }
 
-function logTable(entries) {
-  return h("div.list.mlogwrap", null, h("table.mlog", null,
-    h("caption.vh", null, "Decision log, newest first"),
-    h("thead", null, h("tr", null, LOG_COLUMNS.map(name => h("th", { scope: "col" }, name)))),
-    h("tbody", null, entries.map(logRow))));
+/** One question: its title, then a table of its entries, newest first. */
+function logQuestion(question) {
+  return h("div.list.mlogwrap", null,
+    h("h3.mlq", null, question.title),
+    h("table.mlog", null,
+      h("caption.vh", null, `Decision log for ${question.title}, newest first`),
+      h("colgroup", null, LOG_COLUMNS.map(name => h(`col.c-${name.toLowerCase()}`))),
+      h("thead", null, h("tr", null, LOG_COLUMNS.map(name => h("th", { scope: "col" }, name)))),
+      h("tbody", null, question.items.map(logRow))));
+}
+
+/** The status filter: All, then each status the ledger holds, with its count. */
+function logFilter(counts, chosen) {
+  const button = (name, label, count) => h("button.mlogf", { "data-act": "malog", "data-i": name, "aria-pressed": (chosen ?? "all") === name ? "true" : "false" }, label, h("span.mtabn", null, fmt(count)));
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  return h("div.mlogfilter", { role: "group", "aria-label": "Show decisions by status" },
+    button("all", "All", total),
+    Object.entries(LEDGER_STATUS_TEXT).filter(([name]) => counts[name] > 0 || chosen === name).map(([name, label]) => button(name, label, counts[name])));
 }
 
 /**
@@ -568,9 +611,9 @@ function buildConflicts(panel) {
 }
 
 function buildLog(panel) {
-  const head = h("div.ghead"), problems = h("div"), table = h("div"), empty = h("div");
-  panel.append(h("section.msec.mlogsec", { "data-section": "log" }, head, problems, table, empty));
-  return { head, problems, table, empty };
+  const head = h("div.ghead"), problems = h("div"), filter = h("div"), table = h("div"), empty = h("div");
+  panel.append(h("section.msec.mlogsec", { "data-section": "log" }, head, problems, filter, table, empty));
+  return { head, problems, filter, table, empty };
 }
 
 function build() {
@@ -783,7 +826,7 @@ function renderConflicts(status) {
   const { open, closed } = on ? conflictSections(status, ui.mergePending) : { open: [], closed: [] };
   const c = page.conflicts;
   renderHead(c, "Open conflicts", open.length,
-    ["Work in flight that overlaps yours. Rerail never picks a side: what you choose is saved as a decision on this branch and recorded in the decision log."]);
+    ["Work in flight that overlaps yours. Rerail never picks a side: what you choose is saved as a decision on this branch, with an entry for the decision log, for you to commit."]);
   setAttr(c.list, "hidden", open.length === 0);
   syncCards(c.list, open);
   const empty = on && open.length === 0 ? conflictsEmpty(status, closed.length) : null;
@@ -795,25 +838,29 @@ function renderConflicts(status) {
 }
 
 const LOG_EMPTY = {
-  title: "No decisions logged yet",
-  lines: [["When you resolve a conflict, or an earlier decision answers one, the verdict is recorded here and in ", { code: "refs/rerail/decisions" }, ", which every checkout of this repository reads."]],
+  title: "No decisions recorded yet",
+  lines: [["When you resolve a conflict, or an earlier verdict answers one, Rerail writes an entry to ", { code: ".rerail/decisions/" }, " on this branch. Commit it with your work: every checkout reads it from there, and it is final once it merges."]],
 };
 
 function renderLogProblems(problems) {
   setContent(page.log.problems, JSON.stringify(problems), () => (problems.length === 0 ? null
     : h("div.welcome.warn.mnote", { role: "status" }, icon("steered", 14),
-      h("div", null, h("b", null, "Part of the decision log could not be read."), h("ul.mbul", null, problems.map(p => h("li", null, p)))))));
+      h("div", null, h("b", null, "Some decision entries could not be read."), h("ul.mbul", null, problems.map(p => h("li", null, p)))))));
 }
 
 function renderLog(status) {
   const on = status !== null && status.enabled;
-  const entries = on ? logEntries(status) : [];
+  const counts = on ? logStatusCounts(status) : {};
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  const chosen = ui.mergeLogStatus;
+  const questions = on ? logQuestions(status, chosen) : [];
   const l = page.log;
-  renderHead(l, "Decision log", entries.length,
-    ["Every verdict on a conflict, newest first: yours and precedent’s. It lives in ", { code: "refs/rerail/decisions" }, ", which every checkout reads."]);
+  renderHead(l, "Decision log", total,
+    ["Every verdict on a conflict, by question: entries in ", { code: ".rerail/decisions/" }, " on the base branch, this branch and the branches in flight. In force once merged; provisional until then."]);
   renderLogProblems(on ? status.decisionLog.problems : []);
-  setContent(l.table, JSON.stringify([entries, startOfDay()]), () => (entries.length === 0 ? null : logTable(entries)));
-  setContent(l.empty, JSON.stringify(on && entries.length === 0), () => (on && entries.length === 0 ? emptyBlock(LOG_EMPTY) : null));
+  setContent(l.filter, JSON.stringify([counts, chosen]), () => (total === 0 ? null : logFilter(counts, chosen)));
+  setContent(l.table, JSON.stringify([questions, startOfDay()]), () => (questions.length === 0 ? null : h("div", null, questions.map(logQuestion))));
+  setContent(l.empty, JSON.stringify(on && total === 0), () => (on && total === 0 ? emptyBlock(LOG_EMPTY) : null));
 }
 
 /** After a draft opens, its text; after one closes, the button that opened it. */

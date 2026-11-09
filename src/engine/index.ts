@@ -84,7 +84,8 @@ export {
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
 export { type CodeRuleAuditor, type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
 export {
-  asLateSteer, conflictLine, conflictNote, type ConflictNoteInput, conflictUrl, decidedNote, headlineText, mergeAssistNote, type MergeAssistNote,
+  asLateSteer, checkpointNote, conflictCard, type ConflictCardInput, conflictLine, conflictNote, type ConflictNoteInput, conflictUrl, decidedNote,
+  headlineText, mergeAssistNote, type MergeAssistNote, stopNote, verdictsNote,
   SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
   steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
@@ -167,7 +168,13 @@ export * from "./merge-assist/alignment/units.js";
 export { baseBranch, mergeBase, mergeTreeConflicts } from "./merge-assist/branch-git.js";
 export * from "./merge-assist/conflict-record.js";
 export * from "./merge-assist/policy.js";
-export * from "./merge-assist/decision-log.js";
+export * from "./merge-assist/decision-entry.js";
+export * from "./merge-assist/decision-files.js";
+export * from "./merge-assist/ledger.js";
+export * from "./merge-assist/commit-staging.js";
 export * from "./merge-assist/conflict-evidence.js";
 export * from "./merge-assist/overlap.js";
 export * from "./merge-assist/conflicts.js";
+export * from "./merge-assist/conflict-signals.js";
+export * from "./merge-assist/dimmer.js";
+export * from "./merge-assist/chat-answer.js";

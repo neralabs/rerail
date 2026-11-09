@@ -127,7 +127,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_conflict_set",
     method: "PUT",
     path: "/api/merge-assist/conflicts",
-    summary: internalTesting("Resolve an in-flight conflict with another branch: keep this branch's side (mine), take theirs, write a new decision (new, with text), or dismiss it as not a conflict. A verdict appends to the decision log (refs/rerail/decisions) and writes a decision on this branch that steers every agent from then on. Only a person resolves a conflict: a coding agent reads them with merge_assist_get and is refused here (invalid-state)."),
+    summary: internalTesting("Resolve an in-flight conflict with another branch: keep this branch's side (mine), take theirs, write a new decision (new, with text), or dismiss it as not a conflict. A verdict writes a ledger entry (.rerail/decisions/<id>.json) and a decision into this branch's working tree, for the person to commit; the decision steers every agent from then on. Only a person resolves a conflict: a coding agent reads them with merge_assist_get and is refused here (invalid-state)."),
     body: mergeAssistConflictBodySchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {

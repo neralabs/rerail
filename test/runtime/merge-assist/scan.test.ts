@@ -460,7 +460,7 @@ describe("Merge Assist scan", { timeout: 30_000 }, () => {
     const other = candidate({ id: "candidate:other-decision-1b2c3d", decision: "Name API files after their resource." });
     const intruder = ws.worktree("intruder", { record: true });
     commit(intruder, candidateFiles(hijack, other));
-    await service.openSession(intruder, "codex");
+    await service.openSession(intruder, "codex", "session-1");
 
     const status = await service.scan(ws.repo);
 

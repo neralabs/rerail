@@ -1,5 +1,5 @@
 /**
- * A conflict as the decision log records it, and the vocabulary policy steps decide it in: the two sides, the steps,
+ * A conflict as the resolver reads it, and the vocabulary policy steps decide it in: the two sides, the steps,
  * a step's result, the record (repository, base, question, both sides' refs, commits, sanitised intents and anchors),
  * the question two sides disagree on, and how a side's description is made fit for a resolver. No YAML and no Git: the
  * policy file itself is `policy.ts`.
@@ -31,7 +31,7 @@ export interface StepResult {
 
 const SHA = /^[0-9a-f]{40,64}$/u;
 
-/** One side of a conflict as the decision log records it (the status shows a side as `ConflictSide`). */
+/** One side of a conflict as the resolver reads it (the status shows a side as `ConflictSide`). */
 export const recordSideSchema = z.object({
   /** The side's ref: a branch, or a pull request's `refs/pull/<n>/head`. */
   ref: z.string().min(1).max(500),

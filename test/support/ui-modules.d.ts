@@ -146,7 +146,7 @@ declare module "*/ui/state.js" {
   export const ui: {
     filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean;
     selectedSession: string | null; panel: object | null; mergePending: Map<string, string>; mergeOpen: Set<string>; mergeSwitching: boolean; mergeScanning: boolean;
-    mergeTab: "conflicts" | "decisions" | "log" | null; mergeDraft: { id: string; action: "mine" | "theirs" | "new"; text: string } | null;
+    mergeTab: "conflicts" | "decisions" | "log" | null; mergeLogStatus: import("../../src/engine/index.js").LedgerStatus | null; mergeDraft: { id: string; action: "mine" | "theirs" | "new"; text: string } | null;
   };
   export function keptPacks(): readonly string[];
   export function isAudited(id: string): boolean;
@@ -320,7 +320,6 @@ declare module "*/ui/merge-model.js" {
   export function quoted(text: string): string;
   type Conflict = import("../../src/engine/index.js").Conflict;
   type ConflictAction = import("../../src/engine/index.js").ConflictAction;
-  type DecisionLogItem = import("../../src/engine/index.js").DecisionLogItem;
   export const DECISION_MAX: number;
   export function conflictSections(status: Status, pending?: Map<string, string>): { open: Array<Conflict & { busy: boolean }>; closed: Array<Conflict & { busy: boolean }> };
   export function tabOf(status: Status, chosen: string | null, pending?: Map<string, string>): "conflicts" | "decisions" | "log";
@@ -332,7 +331,12 @@ declare module "*/ui/merge-model.js" {
   export function draftProblem(text: string): string | null;
   export function resolveBody(conflictId: string, action: ConflictAction, text?: string): { conflictId: string; action: ConflictAction; text?: string };
   export function conflictToast(conflict: Conflict, action: ConflictAction, text: string, ignored: boolean): { done: string; fail: string };
-  export function logEntries(status: Status): DecisionLogItem[];
+  type LedgerStatus = import("../../src/engine/index.js").LedgerStatus;
+  type DecisionLogQuestion = import("../../src/engine/index.js").DecisionLogQuestion;
+  export const LEDGER_STATUS_TEXT: Record<LedgerStatus, string>;
+  export const LEDGER_STATUS_TITLE: Record<LedgerStatus, string>;
+  export function logStatusCounts(status: Status): Record<LedgerStatus, number>;
+  export function logQuestions(status: Status, filter?: LedgerStatus | null): DecisionLogQuestion[];
   export function logWhen(iso: string): string;
 }
 

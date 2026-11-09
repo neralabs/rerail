@@ -112,19 +112,30 @@
 .mtab[aria-pressed="true"]{background:var(--header);border-color:var(--header);color:var(--background)}
 .mtab[disabled]{opacity:.6}
 
-/* ---- conflict cards: both sides, the evidence, the choices; logged ones muted ---- */
+/* ---- conflict cards: level, both sides, size, the evidence, the choices; logged ones muted ---- */
 .mcards{display:grid;gap:12px}
 .mcards[hidden]{display:none}
 .mcard{display:grid;gap:10px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--card-shadow);min-width:0}
 .mcard.ambient{border-left:3px solid var(--warning)}
+.mcard.checkpoint{border-left:3px solid var(--brand)}
+.mcard.stop{border-left:3px solid var(--danger-foreground)}
 .mcard.logged{background:var(--sheet-inset);box-shadow:none}
 .mcard.logged .mctitle,.mcard.logged .msum{color:var(--muted-foreground)}
 .mcard[aria-busy="true"]{opacity:.7}
 .mchead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
 .mctitle{margin:0;flex:1 1 220px;min-width:0;font-size:14px;font-weight:600;line-height:1.4;color:var(--foreground);overflow-wrap:anywhere}
 .mcage{font-size:12px;color:var(--muted-foreground)}
-.badge.mkind.decisions{background:var(--warning-subtle);color:var(--warning-foreground)}
+.mshort{font:12px var(--font-mono);color:var(--muted-foreground)}
+.badge.mkind.decisions,.badge.mkind.verdicts{background:var(--warning-subtle);color:var(--warning-foreground)}
 .badge.mkind.overlap{background:var(--brand-subtle);color:var(--brand-foreground)}
+.badge.mlvl.stop{background:var(--danger-subtle);color:var(--danger-foreground)}
+.badge.mlvl.checkpoint{background:var(--brand-subtle);color:var(--brand-foreground)}
+.badge.mlvl.ambient{background:var(--warning-subtle);color:var(--warning-foreground)}
+.badge.mqueued,.badge.msnoozed{background:var(--sheet-inset);color:var(--muted-foreground)}
+.mstate{margin:0;font-size:12px;color:var(--muted-foreground)}
+.msize{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:12.5px}
+.mreasons{display:flex;flex-wrap:wrap;gap:4px 12px;margin:0;padding:0;list-style:none;color:var(--foreground)}
+.mreasons li{overflow-wrap:anywhere}
 .mside.mine{border-color:var(--brand-border)}
 .msum{margin:0;font-size:13px;line-height:1.5;color:var(--foreground);overflow-wrap:anywhere}
 .mhunk{margin:8px 0 0;padding:8px 10px;max-height:24em;overflow:auto;font:12px/1.45 var(--font-mono);background:var(--sheet-inset);border:1px solid var(--border);border-radius:var(--radius-lg);white-space:pre-wrap;overflow-wrap:anywhere}
@@ -167,12 +178,30 @@ code.mrule{font-size:11.5px;overflow-wrap:anywhere}
 .mlog{width:100%;border-collapse:collapse;font-size:13px;line-height:1.45}
 .mlog th,.mlog td{padding:9px 12px;text-align:left;vertical-align:top;border-top:1px solid var(--border)}
 .mlog thead th{border-top:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
-.mlog td{overflow-wrap:anywhere}
+/* Fixed columns, the same in every question's table, so they line up; words wrap whole, branch names never. */
+.mlog{table-layout:fixed}
+.mlog td{overflow-wrap:break-word;word-break:normal}
+.mlog col.c-when{width:9%}.mlog col.c-status{width:11%}.mlog col.c-outcome{width:36%}
+.mlog col.c-by{width:12%}.mlog col.c-branch{width:14%}.mlog col.c-rule{width:18%}
+.mlog td[data-label="Branch"],.mlog td[data-label="Status"],.mlog td[data-label="When"]{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mlog .mlt{font-weight:500;color:var(--foreground)}
 .mlog .sub{display:block;font-size:12px;color:var(--muted-foreground)}
 .mlog time{white-space:nowrap;color:var(--muted-foreground)}
 .badge.mby.person{background:var(--brand-subtle);color:var(--brand-foreground)}
 .badge.mby.policy{background:var(--success-subtle);color:var(--success-foreground)}
+.badge.mby.precedent{background:var(--info-subtle);color:var(--info-foreground)}
+/* A ledger entry's status chip. */
+.badge.mst{white-space:nowrap}
+.badge.mst.in-force{background:var(--success-subtle);color:var(--success-foreground)}
+.badge.mst.provisional{background:var(--brand-subtle);color:var(--brand-foreground)}
+.badge.mst.reopened,.badge.mst.flagged{background:var(--warning-subtle);color:var(--warning-foreground)}
+.badge.mst.superseded,.badge.mst.void{background:var(--subtle);color:var(--muted-foreground)}
+.mlq{margin:16px 0 6px;padding:0 12px;font-size:13px;font-weight:600;color:var(--foreground)}
+.mlogfilter{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.mlogf{padding:3px 10px;border-radius:var(--pill);border:1px solid var(--border);background:var(--card);font-size:12px;font-weight:500;line-height:18px;color:var(--muted-foreground);white-space:nowrap}
+.mlogf:hover{background:var(--hover);color:var(--foreground)}
+.mlogf[aria-pressed="true"]{background:var(--header);border-color:var(--header);color:var(--background)}
+.mlogf .mtabn{margin-left:6px}
 /* Narrow screens: each entry stacks, its column's name beside each value. */
 @media (max-width:640px){
   .mlog thead{display:none}
@@ -180,6 +209,8 @@ code.mrule{font-size:11.5px;overflow-wrap:anywhere}
   .mlog tr{padding:10px 12px;border-top:1px solid var(--border)}
   .mlog tbody tr:first-child{border-top:0}
   .mlog td{position:relative;padding:3px 0 3px 84px;border-top:0}
+  .mlog{table-layout:auto}
+  .mlog td[data-label="Branch"]{white-space:normal}
   .mlog td::before{content:attr(data-label);position:absolute;left:0;top:5px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
   .mcard{padding:12px}
 }

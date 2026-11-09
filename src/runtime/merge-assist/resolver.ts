@@ -1,7 +1,7 @@
 /**
  * Merge Assist's resolver: given a conflict record and the repository, it runs the policy and returns the verdict
  * with its evidence, or an escalation with the reason. Steps run in the policy's order and the first that decides
- * wins: precedent from the decision log, hard checks (each side's checks run by a `CheckRunner`, undeclared public
+ * wins: precedent from the ledger view, hard checks (each side's checks run by a `CheckRunner`, undeclared public
  * contract breaks), measurable criteria, then the judge panel; a reserved class goes to a person before the panel, and
  * so does whatever nothing decides. The resolver reads Git and what the record carries; it never sees how the work
  * ended (merge state, comments, closing text, cross-references), so a record's intents must be sanitised.
@@ -12,11 +12,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitExecutable } from "../../engine/git.js";
 import { baseDocs, contractBreaks, declaresBreak, reservedClassesOf, sideChanges, sideDiff, type SideChanges } from "../../engine/merge-assist/conflict-evidence.js";
-import { decidePrecedent, type DecisionEntry, decisionInForce, DECISION_ENTRY_FORMAT, type LoggedDecision, newDecisionId, readDecisions } from "../../engine/merge-assist/decision-log.js";
+import { refLabel } from "../../engine/merge-assist/conflicts.js";
+import { DECISION_ENTRY_FORMAT, type DecisionEntry, MAX_RESULT_TEXT, type Position, sealDecisionEntry } from "../../engine/merge-assist/decision-entry.js";
+import { decidePrecedent, type LedgerView, readLedger } from "../../engine/merge-assist/ledger.js";
 import {
   type ConflictRecord,
   type DecidingStep,
-  otherSide,
   sanitizeIntent,
   stripCrossReferences,
   SIDES,
@@ -63,8 +64,8 @@ export interface ResolveInput {
   readonly judge: AgentJudge | null;
   /** Null: no check runs, and every check counts as unknown. */
   readonly checks: CheckRunner | null;
-  /** The decision log; read from `refs/rerail/decisions` when absent. */
-  readonly log?: readonly LoggedDecision[];
+  /** The ledger view; read from the repository (`readLedger`) when absent. */
+  readonly ledger?: Pick<LedgerView, "items">;
   /** The panel's seed; 0 by default. */
   readonly seed?: number;
 }
@@ -76,7 +77,7 @@ export interface SideEvidence {
 }
 
 export interface ResolutionEvidence {
-  readonly precedent: { readonly entry: { readonly id: string; readonly commit: string } | null } | null;
+  readonly precedent: { readonly entry: { readonly id: string } | null } | null;
   readonly sides: Readonly<Record<SideId, SideEvidence>>;
   readonly checks: Readonly<Record<SideId, SideCheckOutcome>> | null;
   readonly measures: Readonly<Record<SideId, SideMeasures>> | null;
@@ -128,8 +129,9 @@ export async function resolveConflict(input: ResolveInput): Promise<Resolution> 
   if (missing.length > 0) return escalation(`The repository does not hold side ${missing.join(" and ")}'s head or the base.`, steps, evidence);
 
   if (policy.steps.includes("precedent")) {
-    const log = input.log ?? (await readDecisions(root)).entries;
-    const precedent = decidePrecedent(record, log, (entry: DecisionEntry) => decisionInForce(root, record.base, entry));
+    const ledger = input.ledger ?? await readLedger(root);
+    // A record carries no positions: precedent matches it by its sides' refs.
+    const precedent = decidePrecedent({ question: record.question, sides: { a: { ref: record.sides.a.ref, fingerprint: null }, b: { ref: record.sides.b.ref, fingerprint: null } } }, ledger);
     steps.push({ step: precedent.step, winner: precedent.winner, reason: precedent.reason });
     evidence = { ...evidence, precedent: { entry: precedent.entry } };
     if (precedent.winner !== null) return decided(precedent, steps, evidence);
@@ -193,29 +195,43 @@ function decided(result: StepResult, steps: StepResult[], evidence: ResolutionEv
 }
 
 /**
- * The decision log entry for a resolution: the record, the deciding step with its evidence, the verdict, the policy
- * step as the decider, and for a verdict, the losing side's decision to follow the winner's design (`rule` is set
- * once a rule is written for it).
+ * The ledger entry for a resolution: the record's question and sides with their positions, the verdict, the deciding
+ * step (precedent names the entry it followed), and the losing side's decision to follow the winner's design. An
+ * escalation is no entry: the conflict stays open for a person.
  */
-export function decisionEntryFor(record: ConflictRecord, resolution: Resolution, recordedAt: Date = new Date()): DecisionEntry {
-  const winner = resolution.verdict === "escalated" ? null : resolution.verdict;
-  return {
+export function decisionEntryFor(
+  record: ConflictRecord,
+  resolution: Resolution,
+  positions: Readonly<Record<SideId, { readonly fingerprint: string; readonly at: Position }>>,
+  recordedAt: Date = new Date(),
+): DecisionEntry | null {
+  if (resolution.verdict === "escalated") return null;
+  const winner = resolution.verdict;
+  const precedent = resolution.evidence.precedent?.entry ?? null;
+  const decidedBy = resolution.step === "precedent" && precedent !== null
+    ? { kind: "precedent" as const, entry: precedent.id }
+    : resolution.step === "hard-checks" || resolution.step === "criteria" || resolution.step === "panel" ? { kind: "policy" as const, step: resolution.step } : null;
+  if (decidedBy === null) return null;
+  const side = (id: SideId) => ({ ref: record.sides[id].ref, label: refLabel(record.sides[id].ref), sha: record.sides[id].sha, author: null, ...positions[id] });
+  const intent = firstLine(record.sides[winner].intent);
+  return sealDecisionEntry({
     format: DECISION_ENTRY_FORMAT,
-    id: newDecisionId(),
-    recordedAt: recordedAt.toISOString(),
-    conflict: record,
-    step: resolution.step,
-    reason: resolution.reason.slice(0, 4_000),
-    evidence: JSON.parse(JSON.stringify({ steps: resolution.steps, ...resolution.evidence })) as Record<string, unknown>,
-    verdict: resolution.verdict,
-    decidedBy: { kind: "policy", step: resolution.step },
-    result: winner === null ? null : {
+    question: record.question,
+    title: (intent || record.question).slice(0, 300),
+    base: record.base,
+    sides: { a: side("a"), b: side("b") },
+    verdict: winner,
+    decidedBy,
+    result: {
+      candidateId: null,
       kind: "decision",
-      side: otherSide(winner),
+      text: `Follow the design of ${record.sides[winner].ref} (${record.sides[winner].sha.slice(0, 12)}): ${intent || "its change"}.`.slice(0, MAX_RESULT_TEXT),
       rule: null,
-      text: `Follow the design of ${record.sides[winner].ref} (${record.sides[winner].sha.slice(0, 12)}): ${firstLine(record.sides[winner].intent) || "its change"}.`.slice(0, 2_000),
+      follows: null,
     },
-  };
+    supersedes: null,
+    recordedAt: recordedAt.toISOString(),
+  });
 }
 
 function firstLine(text: string): string {

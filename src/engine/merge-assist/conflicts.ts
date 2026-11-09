@@ -1,19 +1,16 @@
 /**
- * In-flight conflicts as Merge Assist reports them (CONTRACT: lane 2): their ids, how loud each is (the dimmer), the
- * order the status lists them in, the record the decision log keeps for one, and the log as the person reads it.
+ * In-flight conflicts as Merge Assist reports them (CONTRACT: lane 2): their ids, the files the dimmer keeps quiet, the
+ * order the status lists them in, and the record kept for one.
  * Pure: the runtime finds the conflicts and stores them.
  */
 import { createHash } from "node:crypto";
-import type { LoggedDecision } from "./decision-log.js";
-import type { Conflict, ConflictKind, ConflictLevel, ConflictSide, DecisionLogItem } from "./model.js";
+import { CONFLICT_LEVELS, type Conflict, type ConflictSide } from "./model.js";
 import { type ConflictRecord, sanitizeIntent, type SideId } from "./conflict-record.js";
 
 /** How many resolved, and how many dismissed, conflicts the status lists; every open one is listed. */
 export const SETTLED_CONFLICTS_SHOWN = 20;
-/** How many decision log entries the status lists, newest first. */
-export const LOG_ITEMS_SHOWN = 50;
 
-/** Files whose overlaps only the Conflicts page shows: lockfiles, changelogs, generated output and docs. */
+/** Files whose overlaps the dimmer keeps on the Conflicts page only: lockfiles, changelogs, generated output and docs. */
 const QUIET_FILES: readonly RegExp[] = [
   /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|go\.sum|bun\.lockb|[^/]+\.lock)$/iu,
   /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|NEWS)(?:\.[a-z]+)?$/iu,
@@ -26,20 +23,27 @@ export function conflictId(question: string, theirsRef: string): string {
   return `conflict:${question}:${createHash("sha256").update(theirsRef).digest("hex").slice(0, 8)}`;
 }
 
-/**
- * The dimmer, v0: an overlap is `logged` (the Conflicts page only) when every file in it is a lockfile, a changelog,
- * generated output or under `docs/`; anything else, and every contradiction between decisions, is `ambient`.
- */
-export function conflictLevel(kind: ConflictKind, files: readonly string[]): ConflictLevel {
-  if (kind === "decisions" || files.length === 0) return "ambient";
-  return files.every(file => QUIET_FILES.some(pattern => pattern.test(file))) ? "logged" : "ambient";
+/** The six hex characters a person types to name a conflict in chat (`#a1b2c3`). */
+export function shortConflictId(id: string): string {
+  return createHash("sha256").update(id).digest("hex").slice(0, 6);
 }
 
-/** Open conflicts first (newest first), then the latest resolved, then the latest dismissed. */
+/** Whether every one of `files` is a lockfile, a changelog, generated output or under `docs/`: the dimmer logs it only. */
+export function quietFiles(files: readonly string[]): boolean {
+  return files.length > 0 && files.every(file => QUIET_FILES.some(pattern => pattern.test(file)));
+}
+
+/** A newly found conflict's dimmer fields before the dimmer has seen it: logged, unmeasured, not queued or snoozed. */
+export function undimmed(id: string): Pick<Conflict, "shortId" | "level" | "signals" | "score" | "reasons" | "queued" | "queuedFor" | "snooze"> {
+  return { shortId: shortConflictId(id), level: "logged", signals: null, score: 0, reasons: [], queued: false, queuedFor: null, snooze: null };
+}
+
+/** Open conflicts first (loudest first, then newest), then the latest resolved, then the latest dismissed. */
 export function orderConflicts(conflicts: readonly Conflict[]): Conflict[] {
   const latest = (status: Conflict["status"]): Conflict[] => conflicts
     .filter(conflict => conflict.status === status)
-    .sort((left, right) => (right.resolution?.at ?? right.detectedAt).localeCompare(left.resolution?.at ?? left.detectedAt));
+    .sort((left, right) => (status === "open" ? CONFLICT_LEVELS.indexOf(right.level) - CONFLICT_LEVELS.indexOf(left.level) : 0)
+      || (right.resolution?.at ?? right.detectedAt).localeCompare(left.resolution?.at ?? left.detectedAt));
   return [...latest("open"), ...latest("resolved").slice(0, SETTLED_CONFLICTS_SHOWN), ...latest("dismissed").slice(0, SETTLED_CONFLICTS_SHOWN)];
 }
 
@@ -51,7 +55,7 @@ export function refLabel(ref: string): string {
   return ref.replace(/^refs\/(?:heads|remotes)\//u, "");
 }
 
-/** The decision log's record of a conflict: both sides' refs, commits, sanitized intents and files, on `question`. */
+/** A conflict's record, as the resolver reads one: both sides' refs, commits, sanitized intents and files, on `question`. */
 export function conflictRecord(
   input: { repository: string; base: string; question: string },
   sides: Readonly<Record<SideId, { side: ConflictSide; files: readonly string[] }>>,
@@ -63,39 +67,4 @@ export function conflictRecord(
     anchors: { files: [...files], symbols: [] },
   });
   return { repository: input.repository, base: input.base, question: input.question, sides: { a: recordSide(sides.a), b: recordSide(sides.b) } };
-}
-
-/** What a log entry decided, from this branch's side (`mine`, its ref): Mine, Theirs (who), New decision or Escalated. */
-function outcomeOf({ entry }: LoggedDecision, mine: string | null): string {
-  if (entry.verdict === "escalated") return "Escalated";
-  if (entry.result?.kind === "amendment") return "New decision";
-  const winner = entry.conflict.sides[entry.verdict].ref;
-  if (winner === mine) return "Mine";
-  const sides = [entry.conflict.sides.a.ref, entry.conflict.sides.b.ref];
-  return sides.includes(mine ?? "") ? `Theirs (${refLabel(winner)})` : `For ${refLabel(winner)}`;
-}
-
-/** A log entry's title: the conflict's own title when this checkout knows it, else the files it was about. */
-function titleOf({ entry }: LoggedDecision, titles: ReadonlyMap<string, string>): string {
-  const known = titles.get(entry.conflict.question);
-  if (known !== undefined) return known;
-  const files = [...new Set([...entry.conflict.sides.a.anchors.files, ...entry.conflict.sides.b.anchors.files])];
-  return files.length === 0 ? entry.conflict.question : `${files[0]}${files.length > 1 ? ` and ${files.length - 1} more` : ""}`;
-}
-
-/** The decision log as the status lists it: newest first, at most {@link LOG_ITEMS_SHOWN}. */
-export function decisionLogItems(log: readonly LoggedDecision[], mine: string | null, titles: ReadonlyMap<string, string>): DecisionLogItem[] {
-  return log.slice(-LOG_ITEMS_SHOWN).reverse().map(logged => {
-    const { entry } = logged;
-    const by = entry.decidedBy.kind === "person" ? entry.decidedBy.name : entry.decidedBy.step;
-    return {
-      id: entry.id,
-      recordedAt: entry.recordedAt,
-      title: titleOf(logged, titles),
-      outcome: outcomeOf(logged, mine),
-      by: { kind: entry.decidedBy.kind, name: by },
-      rule: entry.result?.rule ?? null,
-      text: entry.result?.text ?? null,
-    };
-  });
 }

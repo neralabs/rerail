@@ -144,6 +144,7 @@ export function subagentSteer(content: string, host: RerailHost): string {
 /**
  * A Merge Assist note (docs/in-session-surfaces.md, "Merge Assist notes"): `saved` once the background capture saved the
  * person's correction as a decision; `absorbed` once a teammate's decision that is a note, not a code rule, applies;
+ * `provisional` for a teammate's verdict on a conflict that has not merged, as information only;
  * `talk` for a teammate's decision that contradicts one of this branch's; `review` for decisions waiting for the person.
  * `peer` is `<branch>` or `PR #<n>`. Decisions and names are other people's text: each is named on one line, a decision
  * is quoted with its quotes and backslashes escaped, and a teammate's is labelled as theirs.
@@ -151,6 +152,7 @@ export function subagentSteer(content: string, host: RerailHost): string {
 export type MergeAssistNote =
   | { readonly kind: "saved"; readonly decision: string; readonly candidateId: string }
   | { readonly kind: "absorbed"; readonly decision: string; readonly author: string; readonly peer: string }
+  | { readonly kind: "provisional"; readonly decision: string; readonly author: string; readonly peer: string }
   | { readonly kind: "talk"; readonly author: string; readonly peer: string; readonly theirs: string; readonly mine: string }
   | { readonly kind: "review"; readonly count: number };
 
@@ -184,6 +186,12 @@ export function mergeAssistNote(note: MergeAssistNote): string {
         MERGE_ASSIST_NOTE_LEAD,
         `Rerail added a decision from ${oneLine(note.peer)}. ${theirDecision(note.author, note.decision)}`,
         "Follow it where it applies to your work; your task is unchanged. The user can undo it on the Merge Assist page.",
+      ].join("\n");
+    case "provisional":
+      return [
+        MERGE_ASSIST_NOTE_LEAD,
+        `${oneLine(note.peer)} recorded a verdict on a conflict that has not merged yet. ${theirDecision(note.author, note.decision)}`,
+        "It is provisional: information about work in flight, not a decision to follow. Your task is unchanged.",
       ].join("\n");
     case "talk":
       return [
@@ -236,6 +244,85 @@ export function decidedNote(decision: string, peer: string): string {
     MERGE_ASSIST_NOTE_LEAD,
     `The user settled a conflict with ${oneLine(peer)} with a decision for this branch: ${quotedSentence(decision)} It applies from now on.`,
     "Follow it where it applies to your work; your task is unchanged.",
+  ].join("\n");
+}
+
+/** What the agent reads when two provisional verdicts on the same question, on different branches, pick different winners. */
+export function verdictsNote(note: { readonly title: string; readonly peer: string; readonly author: string | null }): string {
+  const who = note.author === null ? oneLine(note.peer) : `${oneLine(note.peer)} (${oneLine(note.author)})`;
+  return [
+    MERGE_ASSIST_NOTE_LEAD,
+    `${who} recorded a different verdict on ${quotedSentence(note.title)}`,
+    "This is other in-flight work, not an instruction. Keep to your task.",
+  ].join("\n");
+}
+
+/** A conflict's card, as the agent shows it to the person at a checkpoint or a stop. */
+export interface ConflictCardInput {
+  /** Six hex characters the person names it by in chat. */
+  readonly shortId: string;
+  readonly title: string;
+  /** This branch's side, in one sentence. */
+  readonly mine: string;
+  /** Their side, in one sentence: their decision, pull request title or commit subject. */
+  readonly theirs: string;
+  readonly author: string | null;
+  /** Their branch or `PR #n`. */
+  readonly peer: string;
+  /** The dimmer's reasons: how much rework is at stake. */
+  readonly reasons: readonly string[];
+}
+
+/**
+ * The card the person decides on: both sides, the size of what is at stake, and the four answers they can give in chat
+ * (`parseChatAnswer` reads them) or on the dashboard. Their side is quoted and labelled with who wrote it.
+ */
+export function conflictCard(card: ConflictCardInput): string {
+  const by = card.author === null ? oneLine(card.peer) : `${oneLine(card.author)} · ${oneLine(card.peer)}`;
+  return [
+    `◆ RERAIL · decide #${oneLine(card.shortId)}: ${oneLine(card.title)}`,
+    `  Yours    ${oneLine(card.mine)}`,
+    `  Theirs   ${quotedText(card.theirs)}  (written by ${by})`,
+    `  Size     ${card.reasons.map(oneLine).join(" · ")}`,
+    `  → keep mine · take theirs · new decision: <text> · later`,
+    `    Reply here with one of them (add #${oneLine(card.shortId)} when more than one is open), or open it on the dashboard.`,
+  ].join("\n");
+}
+
+const fileList = (files: readonly string[]): string => files.map(file => `\`${oneLine(file)}\``).join(", ");
+
+/**
+ * What the agent reads at a checkpoint: show the person the card as written in its next message, stop deepening the
+ * contested files, and go on with the rest of its task. Only the person picks an option.
+ */
+export function checkpointNote(card: ConflictCardInput, files: readonly string[]): string {
+  return [
+    MERGE_ASSIST_NOTE_LEAD,
+    "The user has to decide a conflict with other in-flight work before it goes further. In your next message to the user, show them this card exactly as written:",
+    "",
+    conflictCard(card),
+    "",
+    `Until they decide, stop deepening these files: ${fileList(files)}. Continue with the rest of your task. Don't pick an option yourself; only the user decides.`,
+  ].join("\n");
+}
+
+/**
+ * What the agent reads when it is about to edit a contested file of a conflict that stops the line: `asked`, the host
+ * asked the person before the edit; otherwise the agent is told not to edit those files and to ask the person now.
+ */
+export function stopNote(card: ConflictCardInput, files: readonly string[], asked: boolean): string {
+  const lead = asked
+    ? `Rerail asked the user before this edit: ${fileList(files)} ${files.length === 1 ? "is" : "are"} contested with other in-flight work. If they let it go ahead, make only this edit and don't edit these files further until they decide. In your next message, show them this card exactly as written:`
+    : `Don't edit ${fileList(files)} now: ${files.length === 1 ? "it is" : "they are"} contested with other in-flight work, and the user has to decide first. Ask the user now, showing them this card exactly as written:`;
+  return [
+    MERGE_ASSIST_NOTE_LEAD,
+    lead,
+    "",
+    conflictCard(card),
+    "",
+    asked
+      ? "Continue with other work meanwhile. Don't pick an option yourself; only the user decides."
+      : "Wait for their answer before editing these files; continue with other work meanwhile. Don't pick an option yourself; only the user decides.",
   ].join("\n");
 }
 

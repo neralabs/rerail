@@ -158,11 +158,20 @@ function resolutionText(conflict: Conflict): string {
   return `${verdict}, ${by}${resolution.rule === null ? "" : `; decision ${plain(resolution.rule)}`}`;
 }
 
-/** One open conflict: what, both sides, why, and how to settle it. */
+const KIND_WORDS: Readonly<Record<Conflict["kind"], string>> = { overlap: "overlapping work", decisions: "decided differently", verdicts: "different verdicts" };
+
+/** A conflict's level as a line says it: the level, and whether it waits over budget (queued) or was put off (later). */
+function levelWords(conflict: Conflict): string {
+  const snoozed = conflict.snooze !== null && conflict.snooze.endedAt === null;
+  return `${conflict.level}${conflict.queued ? ", queued" : ""}${snoozed ? ", later" : ""}`;
+}
+
+/** One open conflict: what, how loud and why, both sides, why it is a conflict, and how to settle it. */
 function openConflictEntry(conflict: Conflict, hunks: boolean): string[] {
   const hunk = (side: Conflict["mine"]): string[] => (hunks && side.hunk !== null ? side.hunk.split("\n").map(line => `      ${plain(line)}`) : []);
   return [
-    `${conflict.id}  ${quoted(conflict.title)}  (${conflict.kind === "overlap" ? "overlapping work" : "decided differently"}${conflict.level === "logged" ? ", logged only" : ""})`,
+    `${conflict.id}  #${plain(conflict.shortId)}  ${quoted(conflict.title)}  (${KIND_WORDS[conflict.kind]}; ${levelWords(conflict)})`,
+    ...(conflict.reasons.length === 0 ? [] : [`  Size:   ${conflict.reasons.map(plain).join(" · ")}`]),
     `  Yours:  ${sideLine(conflict.mine)}`,
     ...hunk(conflict.mine),
     `  Theirs: ${sideLine(conflict.theirs)}${conflict.theirs.url === null ? "" : ` ${plain(conflict.theirs.url)}`}`,
@@ -183,15 +192,25 @@ function conflictSections(status: MergeAssistStatus, hunks: boolean): string[] {
   return [...section("Conflicts", open.map(conflict => openConflictEntry(conflict, hunks))), ...section("Settled conflicts", settled.map(settledConflictEntry))];
 }
 
-/** `rerail merge-assist conflicts`: every conflict, open ones with both sides' hunks, and the latest decision log entries. */
+/** One question of the decision ledger: its title, then each entry's status, outcome, who, where it was read, when and text. */
+function ledgerEntry(question: MergeAssistStatus["decisionLog"]["questions"][number]): string[] {
+  return [
+    quoted(question.title),
+    ...question.items.flatMap(item => [
+      `  ${item.status}  ${plain(item.outcome)}, by ${plain(item.by.name)} · ${plain(item.source.label)} · ${timeText(item.recordedAt)}`,
+      `    ${quoted(item.text)}${item.follows === null ? "" : ` (follows ${plain(item.follows.candidateId)} on ${plain(item.follows.ref)})`}`,
+    ]),
+  ];
+}
+
+/** `rerail merge-assist conflicts`: every conflict, open ones with both sides' hunks, and the decision ledger by question. */
 export function formatConflicts(status: MergeAssistStatus, dashboardUrl: string | null): string {
   const open = status.conflicts.filter(conflict => conflict.status === "open").length;
-  const log = status.decisionLog.entries.slice(0, 5).map(entry => [`${timeText(entry.recordedAt)}  ${quoted(entry.title)}: ${plain(entry.outcome)}, by ${plain(entry.by.name)}`]);
   return [
     `● ${count(open, "open conflict", "open conflicts")} in ${repositoryName(status.checkout)}${status.branch === null ? "" : ` (${plain(status.branch)})`}.`,
     ...(status.enabled ? [] : ["  Merge Assist is off here, so Rerail finds no conflicts. Turn it on with rerail merge-assist on."]),
     ...conflictSections(status, true),
-    ...section("Decision log (refs/rerail/decisions)", log),
+    ...section("Decision ledger (.rerail/decisions/, by question)", status.decisionLog.questions.map(ledgerEntry)),
     ...status.decisionLog.problems.map(problem => `  ${plain(problem)}`),
     ...(dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`]),
   ].join("\n");
@@ -297,7 +316,7 @@ function decisionOf(status: MergeAssistStatus, findingId: string): string {
 function resolveLine(id: string, status: MergeAssistStatus): string {
   const conflict = status.conflicts.find(entry => entry.id === id);
   if (conflict === undefined) return `● Resolved ${id}.`;
-  const logged = conflict.resolution?.logId === null || conflict.resolution === null ? "" : ` Logged as decision ${conflict.resolution.logId} in refs/rerail/decisions.`;
+  const logged = conflict.resolution?.logId === null || conflict.resolution === null ? "" : ` Recorded as ledger entry .rerail/decisions/${conflict.resolution.logId}.json; commit it with your work.`;
   return `● ${quoted(conflict.title)}: ${resolutionText(conflict)}.${logged}`;
 }
 

@@ -167,13 +167,15 @@ export function steerHookOutput(
   const unseen = deliveries.filter(delivery => delivery.shown !== true);
   if (hook === "Stop") {
     const shown = lines(unseen);
-    return "systemMessage" in shown ? prepareGuidanceOutput(shown, deliveryRuleIds(unseen.filter(delivery => delivery.rules.length > 0))) : shown;
+    const ruleIds = deliveryRuleIds(unseen.filter(delivery => delivery.rules.length > 0));
+    return "systemMessage" in shown && ruleIds.length > 0 ? prepareGuidanceOutput(shown, ruleIds) : shown;
   }
   const content = deliveryText(deliveries.map(delivery => (delivery.shown === true ? { ...delivery, content: asLateSteer(delivery.content) } : delivery)));
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
   if (context === "" || contextEvents[hook] !== true) return {};
   const output = { ...lines(unseen), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
-  return deliveryText(unseen) === undefined ? output : prepareGuidanceOutput(output, deliveryRuleIds(unseen));
+  // A note that names no rule (a Merge Assist note) shows the person no steer line, so it is not counted as a steer.
+  return deliveryRuleIds(unseen).length === 0 ? output : prepareGuidanceOutput(output, deliveryRuleIds(unseen));
 }
 
 interface LockOwner {

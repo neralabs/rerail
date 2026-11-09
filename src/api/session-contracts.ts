@@ -10,6 +10,10 @@ export const sessionResponseSchema = z.object({
   hud: z.object({
     activeRuleCount: z.number().int().nonnegative().nullable(),
     steeringCount: z.number().int().nonnegative().nullable(),
+    mergeAssist: z.object({
+      conflicts: z.number().int().nonnegative(),
+      decide: z.object({ id: z.string(), title: z.string() }).nullable(),
+    }).optional().describe("Merge Assist's footer segment: absent while no conflict in the session's checkout is open above logged."),
   }),
   audit: createSelectSchema(audits)
     .pick({ workspaceRoot: true, scope: true, mode: true, status: true })

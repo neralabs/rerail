@@ -266,7 +266,8 @@ describe("rerail merge-assist", () => {
     expect(stdout).toBe([
       "● 1 open conflict in app (tbelanger/export-api).",
       "  Conflicts (1):",
-      `    ${conflict.id}  "model.rs · fn compile"  (overlapping work)`,
+      `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (overlapping work; ambient)`,
+      "      Size:   local code: ×1 · +40 lines on theirs in 2 h · 3 callers · pull request open: about 24 h to merge · no verdict yet: even odds either side loses",
       "      Yours:  This branch (Tim Belanger): \"edits native/src/model.rs\" at native/src/model.rs:469",
       "          @@ -469 +469 @@",
       "          -matchers: Vec<GrammarMatcher>,",
@@ -280,17 +281,51 @@ describe("rerail merge-assist", () => {
     ].join("\n"));
     stdout = "";
     await run(["--repo", checkout], null);
-    expect(stdout).toContain(`  Conflicts (1):\n    ${conflict.id}  "model.rs · fn compile"  (overlapping work)\n      Yours:  This branch`);
+    expect(stdout).toContain(`  Conflicts (1):\n    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (overlapping work; ambient)\n      Size:   local code: ×1`);
     expect(stdout).not.toContain("@@ -469");
+
+    stdout = "";
+    status = path => sampleStatus(path, { conflicts: [sampleConflict({ level: "checkpoint", queued: true, snooze: { at: "2026-11-03T14:06:00Z", level: "checkpoint", pullRequest: true, base: "3".repeat(40), endedAt: null } })] });
+    await run(["conflicts", "--repo", checkout], null);
+    expect(stdout).toContain(`    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (overlapping work; checkpoint, queued, later)\n`);
 
     stdout = "";
     status = path => sampleStatus(path, { conflicts: [resolved] });
     expect(await run(["resolve", conflict.id, "theirs", "--text", "Share them.", "--repo", checkout], null)).toBe(0);
-    expect(stdout).toBe(`● "model.rs · fn compile": took PR #398's side, by Tim Belanger; decision .rerail/candidates/share-compiled-matchers-1a2b3c.json. Logged as decision ${"0".repeat(32)} in refs/rerail/decisions.\n`);
+    expect(stdout).toBe(`● "model.rs · fn compile": took PR #398's side, by Tim Belanger; decision .rerail/candidates/share-compiled-matchers-1a2b3c.json. Recorded as ledger entry .rerail/decisions/${"0".repeat(32)}.json; commit it with your work.\n`);
     expect(service.calls.at(-1)).toEqual({ method: "resolveConflict", checkout, conflictId: conflict.id, action: "theirs", text: "Share them.", actor: "person" });
 
     await expect(run(["resolve", conflict.id, "--repo", checkout])).rejects.toThrow(/^merge-assist resolve needs mine, theirs, new or dismiss/u);
     await expect(run(["resolve", "--repo", checkout])).rejects.toThrow(/^merge-assist resolve needs a conflict id/u);
     await expect(run(["status", "--text", "x", "--repo", checkout])).rejects.toThrow(/^--text goes with merge-assist resolve/u);
+  });
+
+  it("lists the decision ledger by question, with each entry's status, outcome, who, branch and text", async () => {
+    const item = (id: string, over: Partial<MergeAssistStatus["decisionLog"]["questions"][number]["items"][number]>) => ({
+      id, question: "overlap:q", title: "model.rs · fn compile", status: "provisional" as const, verdict: "b" as const, outcome: "Theirs (PR #398)",
+      by: { kind: "person" as const, name: "Tim Belanger" }, source: { ref: "tbelanger/export-api", label: "This branch" }, recordedAt: "2026-11-03T14:10:00Z",
+      rule: ".rerail/candidates/share-compiled-matchers-1a2b3c.json", text: "Share compiled matchers", follows: null, ...over,
+    });
+    status = path => sampleStatus(path, {
+      decisionLog: {
+        questions: [{
+          question: "overlap:q", title: "model.rs · fn compile", items: [
+            item("a".repeat(32), { follows: { ref: "refs/pull/398/head", candidateId: "candidate:share-compiled-matchers-9f8e7d" } }),
+            item("b".repeat(32), { status: "in-force", outcome: "Mine", source: { ref: "refs/remotes/origin/main", label: "origin/main" }, recordedAt: "2026-11-01T09:00:00Z", text: "Clone the matchers" }),
+          ],
+        }],
+        problems: ["jbarnes-model: 1234.json: not JSON"],
+      },
+    });
+    expect(await run(["conflicts", "--repo", checkout], null)).toBe(0);
+    expect(stdout).toContain([
+      "  Decision ledger (.rerail/decisions/, by question) (1):",
+      "    \"model.rs · fn compile\"",
+      "      provisional  Theirs (PR #398), by Tim Belanger · This branch · 2026-11-03 14:10 UTC",
+      "        \"Share compiled matchers\" (follows candidate:share-compiled-matchers-9f8e7d on refs/pull/398/head)",
+      "      in-force  Mine, by Tim Belanger · origin/main · 2026-11-01 09:00 UTC",
+      "        \"Clone the matchers\"",
+      "  jbarnes-model: 1234.json: not JSON",
+    ].join("\n"));
   });
 });

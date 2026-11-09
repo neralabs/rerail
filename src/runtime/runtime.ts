@@ -748,7 +748,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       state.pendingCodeRuleCalls.push({ id, toolName: event.toolName });
       if (paths.length > 0) state.mergeAssistEdits.add(id);
+      const stops = await this.#mergeAssistStops(state, event);
+      if (stops.length > 0) state.eventDeliveries.set(event.eventId, [...(state.eventDeliveries.get(event.eventId) ?? []), ...stops]);
+      const staging = await this.#mergeAssistCommitStaging(state, event);
+      if (staging !== undefined) state.eventDeliveries.set(event.eventId, [...(state.eventDeliveries.get(event.eventId) ?? []), staging]);
     }
+    if (event.kind === "user-prompt") this.#answerMergeAssistFromChat(state, event.text);
     await this.#router(descriptor.host).ingest(event);
     if (event.kind === "result") {
       if (state.mergeAssistEdits.delete(event.toolCallId)) this.#detectMergeAssistConflicts(state);
@@ -1680,7 +1685,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
     if (step === "start") {
       const running = service();
-      if (running !== undefined) scan(running, running.openSession(checkoutPath, host));
+      if (running !== undefined) scan(running, running.openSession(checkoutPath, host, sessionId));
       return;
     }
     if (state.mergeAssistCaptureQueued) return;
@@ -1693,7 +1698,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const result = await running.captureSession({ sessionId, host, checkoutPath, events: this.#sessionEvents });
       this.#queueMergeAssistNotes(state, running);
       // A new decision may contradict another branch's: the scan compares them (§5.3).
-      if (result.saved.length > 0) scan(running, running.scanSession(checkoutPath, host));
+      if (result.saved.length > 0) scan(running, running.scanSession(checkoutPath, host, sessionId));
     }).catch(failed);
     state.mergeAssistCapture = capture;
     void capture.finally(() => {
@@ -1732,11 +1737,80 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (state.closed || this.#stopped()) return;
     const running = this.#mergeAssistService(state);
     if (running === undefined) return;
-    void running.detectAfterEdit(state.checkout.root).then(ran => {
+    void running.detectAfterEdit(state.checkout.root, state.descriptor.sessionId).then(ran => {
       if (ran) this.#queueMergeAssistNotes(state, running);
     }, (error: unknown) => {
       process.stderr.write(`rerail: Merge Assist could not find conflicts in session ${state.descriptor.sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
     });
+  }
+
+  /**
+   * The person's prompt: when it plainly answers a checkpoint or stop card (`keep mine`, `take theirs`, `new decision:
+   * …`, `later`), Merge Assist records it as theirs in the background, as the dashboard would; the note of the verdict
+   * goes out at a later boundary. Never holds the prompt.
+   */
+  #answerMergeAssistFromChat(state: RuntimeSessionState, prompt: string): void {
+    if (state.closed || this.#stopped()) return;
+    const failed = (error: unknown): void => {
+      process.stderr.write(`rerail: Merge Assist could not record an answer in session ${state.descriptor.sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
+    };
+    try {
+      const running = this.#mergeAssistService(state);
+      if (running === undefined) return;
+      void running.answerFromChat(state.checkout.root, prompt, state.descriptor.sessionId).then(answer => {
+        if (answer.kind === "answer") this.#queueMergeAssistNotes(state, running);
+      }, failed);
+    } catch (error) {
+      failed(error);
+    }
+  }
+
+  /**
+   * A tool call about to edit a contested file of a conflict that stops the line: its stop notes ride this call's own
+   * answer (a hook host's `PreToolUse`), asking the person first where the host can. Recorded as given at once, since
+   * the answer carries them. Reads only the database; never fails the call.
+   */
+  async #mergeAssistStops(state: RuntimeSessionState, event: Extract<AdapterEvent, { kind: "call" }>): Promise<AdapterDelivery[]> {
+    try {
+      const running = this.#mergeAssistService(state);
+      if (running === undefined) return [];
+      const { sessionId, host } = state.descriptor;
+      const root = state.checkout.root;
+      const notes = running.stopNotes(sessionId, root, { toolName: event.toolName, input: event.input }, ADAPTER_CAPABILITIES[host].asksPerson, state.mergeAssistNotesInFlight);
+      const deliveries: AdapterDelivery[] = [];
+      for (const note of notes) {
+        const delivery: AdapterDelivery = {
+          sessionId, requested: "steer", mechanism: ADAPTER_CAPABILITIES[host].delivery.steer, content: note.content, ruleIds: [], rules: [], strategy: "message",
+          ...(note.conflict === undefined ? {} : { conflict: note.conflict }),
+        };
+        await this.#append(state, { type: "delivery", delivery });
+        deliveries.push(delivery);
+      }
+      running.markNotesDelivered(sessionId, root, notes.flatMap(note => note.marks));
+      return deliveries;
+    } catch (error) {
+      process.stderr.write(`rerail: Merge Assist could not check a call against its conflicts in session ${state.descriptor.sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return [];
+    }
+  }
+
+  /**
+   * The agent's `git commit` call, in a checkout with Merge Assist on: the decision files that commit would leave out,
+   * as context on this call's own answer, once per commit attempt. Never stages, never blocks; never fails the call.
+   */
+  async #mergeAssistCommitStaging(state: RuntimeSessionState, event: Extract<AdapterEvent, { kind: "call" }>): Promise<AdapterDelivery | undefined> {
+    try {
+      const running = this.#mergeAssistService(state);
+      const content = running?.commitStaging(state.checkout.root, event.toolName, event.input) ?? null;
+      if (content === null) return undefined;
+      const { sessionId, host } = state.descriptor;
+      const delivery: AdapterDelivery = { sessionId, requested: "steer", mechanism: ADAPTER_CAPABILITIES[host].delivery.steer, content, ruleIds: [], rules: [], strategy: "message" };
+      await this.#append(state, { type: "delivery", delivery });
+      return delivery;
+    } catch (error) {
+      process.stderr.write(`rerail: Merge Assist could not check a commit for decision files in session ${state.descriptor.sessionId}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return undefined;
+    }
   }
 
   /** Wait for the session's Merge Assist capture, at most {@link MERGE_ASSIST_CLOSE_WAIT_MS}. */

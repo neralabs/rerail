@@ -2,11 +2,11 @@
  * Candidate files on disk and in Git. Candidates are data other people wrote, so reading them follows no symlink
  * (not `.rerail`, not `.rerail/candidates`, not a file), checks each size before reading, reads at most
  * {@link MAX_CANDIDATES_PER_BRANCH} files by name order, and only names {@link isCandidateFileName} accepts; other
- * names in the folder are left alone. A Git tree is read by object, from regular-file blobs only.
+ * names in the folder are left alone. A Git tree is read by object, from regular-file blobs only (`guarded-files.ts`).
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
-import { chmod, lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { readGitBlobs, runGit } from "../git.js";
 import {
@@ -19,6 +19,7 @@ import {
   serializeCandidate,
   type Candidate,
 } from "./candidate.js";
+import { byteOrder, commitObject, NO_FOLLOW, NOT_REGULAR, readGuardedFile, realFolder, tooLarge, treeFolderEntries, unreadableEntry, writeGuardedFile } from "./guarded-files.js";
 
 export interface CandidateSet {
   readonly candidates: Candidate[];
@@ -28,22 +29,11 @@ export interface CandidateSet {
   readonly truncated: boolean;
 }
 
-/** `O_NOFOLLOW` where the platform has it; Windows has no symlink-following open to refuse. */
-const NO_FOLLOW = constants.O_NOFOLLOW ?? 0;
 const RERAIL_DIRECTORY = CANDIDATE_DIRECTORY.slice(0, CANDIDATE_DIRECTORY.indexOf("/"));
 /** The problem for a candidate file over the size limit, after `<file name>: `. */
-export const CANDIDATE_TOO_LARGE = `larger than ${MAX_CANDIDATE_BYTES} bytes`;
+export const CANDIDATE_TOO_LARGE = tooLarge(MAX_CANDIDATE_BYTES);
 /** The problem for a candidate name that is a folder, symlink or other non-regular entry, after `<file name>: `. */
-export const CANDIDATE_NOT_REGULAR = "not a regular file";
-
-function errorCode(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined;
-}
-
-/** Names in byte order, so every machine reads the same first {@link MAX_CANDIDATES_PER_BRANCH}. */
-function byteOrder(left: string, right: string): number {
-  return Buffer.compare(Buffer.from(left), Buffer.from(right));
-}
+export const CANDIDATE_NOT_REGULAR = NOT_REGULAR;
 
 /**
  * The candidate file names to read: the first {@link MAX_CANDIDATES_PER_BRANCH} in byte order, so every machine and
@@ -69,50 +59,6 @@ export function candidateFromText(name: string, text: string): { candidate: Cand
 }
 
 /**
- * Whether the folder at `path` (relative name `label`) is a real directory: false with no problem when it is missing,
- * false with a problem when it is anything else, a symlink included.
- */
-async function realFolder(path: string, label: string, problems: string[]): Promise<boolean> {
-  try {
-    const entry = await lstat(path);
-    if (entry.isDirectory()) return true;
-    problems.push(`${label}: not a folder${entry.isSymbolicLink() ? " (a symbolic link, which Rerail does not follow)" : ""}`);
-    return false;
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return false;
-    problems.push(`${label}: cannot be read (${errorCode(error) ?? "error"})`);
-    return false;
-  }
-}
-
-/** A candidate file's bytes, opened without following a symlink, its size checked on the open file before reading. */
-async function readCandidateFile(path: string, name: string): Promise<{ text: string } | { problem: string }> {
-  let handle;
-  try {
-    handle = await open(path, constants.O_RDONLY | NO_FOLLOW);
-  } catch (error) {
-    return { problem: `${name}: ${errorCode(error) === "ELOOP" ? CANDIDATE_NOT_REGULAR : `cannot be read (${errorCode(error) ?? "error"})`}` };
-  }
-  try {
-    const entry = await handle.stat();
-    if (!entry.isFile()) return { problem: `${name}: ${CANDIDATE_NOT_REGULAR}` };
-    if (entry.size > MAX_CANDIDATE_BYTES) return { problem: `${name}: ${CANDIDATE_TOO_LARGE}` };
-    // One byte more than the limit, so a file that grew since the check is still caught.
-    const buffer = Buffer.alloc(MAX_CANDIDATE_BYTES + 1);
-    let length = 0;
-    for (;;) {
-      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
-      if (bytesRead === 0) break;
-      length += bytesRead;
-      if (length > MAX_CANDIDATE_BYTES) return { problem: `${name}: ${CANDIDATE_TOO_LARGE}` };
-    }
-    return { text: buffer.subarray(0, length).toString("utf8") };
-  } finally {
-    await handle.close();
-  }
-}
-
-/**
  * The candidates in `root`'s working tree, under `.rerail/candidates/`: regular files only (never through a symlink,
  * `.rerail` and the folder included), names matching {@link isCandidateFileName}, each size checked before reading, at
  * most {@link MAX_CANDIDATES_PER_BRANCH} in name order. A missing folder is an empty set.
@@ -127,7 +73,7 @@ export async function readWorktreeCandidates(root: string): Promise<CandidateSet
   const { read, problems: extra, truncated } = capCandidateNames(names);
   const candidates: Candidate[] = [];
   for (const name of read) {
-    const file = await readCandidateFile(join(folder, name), name);
+    const file = await readGuardedFile(join(folder, name), name, MAX_CANDIDATE_BYTES);
     const outcome = "text" in file ? candidateFromText(name, file.text) : file;
     if ("candidate" in outcome) candidates.push(outcome.candidate);
     else problems.push(outcome.problem);
@@ -135,79 +81,16 @@ export async function readWorktreeCandidates(root: string): Promise<CandidateSet
   return { candidates, problems: [...problems, ...extra], truncated };
 }
 
-/** Create the folder at `path` (0o755) unless it is there; refuse anything there that is not a real directory. */
-async function ensureFolder(path: string, label: string): Promise<void> {
-  try {
-    await mkdir(path, { mode: 0o755 });
-  } catch (error) {
-    if (errorCode(error) !== "EEXIST") throw error;
-  }
-  const entry = await lstat(path);
-  if (!entry.isDirectory()) throw new Error(`${label} is not a folder${entry.isSymbolicLink() ? " (a symbolic link, which Rerail does not follow)" : ""}, so the candidate was not written`);
-}
-
 /**
- * Write `candidate` to `root`'s `.rerail/candidates/<name>.json`, mode 0o644 so it can be committed: the folders are
- * created as needed and refused when either is a symlink, the text goes to a new temporary file opened exclusively
- * without following a symlink, and a rename puts it in place. Returns the file's absolute path.
+ * Write `candidate` to `root`'s `.rerail/candidates/<name>.json`, mode 0o644 so it can be committed (`writeGuardedFile`).
+ * Returns the file's absolute path.
  */
 export async function writeWorktreeCandidate(root: string, candidate: Candidate): Promise<string> {
   const name = candidateFileName(candidate.id);
   const text = serializeCandidate(candidate);
   const checked = candidateFromText(name, text);
   if ("problem" in checked) throw new Error(`candidate ${candidate.id} was not written: ${checked.problem}`);
-  await ensureFolder(join(root, RERAIL_DIRECTORY), RERAIL_DIRECTORY);
-  const folder = join(root, CANDIDATE_DIRECTORY);
-  await ensureFolder(folder, CANDIDATE_DIRECTORY);
-  const path = join(folder, name);
-  const temporary = join(folder, `.${name}.${randomBytes(6).toString("hex")}.tmp`);
-  const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW, 0o644);
-  try {
-    try {
-      await handle.writeFile(text, "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    // The mode a umask narrowed is set back: the file is meant to be committed and read by anyone.
-    await chmod(temporary, 0o644);
-    await rename(temporary, path);
-  } catch (error) {
-    await unlink(temporary).catch(() => undefined);
-    throw error;
-  }
-  return path;
-}
-
-/** One `git ls-tree -l -z` entry under the candidate folder. */
-interface TreeEntry {
-  readonly mode: string;
-  readonly type: string;
-  readonly object: string;
-  readonly size: number | null;
-  readonly name: string;
-}
-
-/** The entries of `git ls-tree -l -z <commit> -- .rerail/candidates/` directly in that folder, or undefined when Git fails. */
-function treeEntries(repoRoot: string, commit: string): TreeEntry[] | undefined {
-  const result = runGit(repoRoot, ["ls-tree", "-l", "-z", "--full-tree", commit, "--", `${CANDIDATE_DIRECTORY}/`], { maxBuffer: 16 * 1024 * 1024 });
-  if (result.status !== 0 || result.error !== undefined) return undefined;
-  const prefix = `${CANDIDATE_DIRECTORY}/`;
-  return result.stdout.split("\0").flatMap(record => {
-    // `<mode> SP <type> SP <object> SP+ <size> TAB <path>`; the size is `-` for a tree.
-    const match = /^(\d{6}) (\w+) ([0-9a-f]+) +(\d+|-)\t(.+)$/su.exec(record);
-    if (match === null) return [];
-    const [, mode = "", type = "", object = "", size = "", path = ""] = match;
-    if (!path.startsWith(prefix) || path.slice(prefix.length).includes("/")) return [];
-    return [{ mode, type, object, size: size === "-" ? null : Number(size), name: path.slice(prefix.length) }];
-  });
-}
-
-/** A commit's object id, or undefined for one this repository does not hold. */
-function commitObject(repoRoot: string, commit: string): string | undefined {
-  if (commit.length === 0 || commit.startsWith("-")) return undefined;
-  const result = runGit(repoRoot, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${commit}^{commit}`]);
-  return result.status === 0 ? result.stdout.trim() || undefined : undefined;
+  return await writeGuardedFile(root, CANDIDATE_DIRECTORY, name, text);
 }
 
 /**
@@ -219,22 +102,17 @@ function commitObject(repoRoot: string, commit: string): string | undefined {
 export async function readTreeCandidates(repoRoot: string, commit: string): Promise<CandidateSet> {
   const object = commitObject(repoRoot, commit);
   if (object === undefined) return { candidates: [], problems: [`${commit}: not a commit in this repository`], truncated: false };
-  const entries = treeEntries(repoRoot, object);
+  const entries = treeFolderEntries(repoRoot, object, CANDIDATE_DIRECTORY);
   if (entries === undefined) return { candidates: [], problems: [`${CANDIDATE_DIRECTORY}: Git could not list it at ${commit}`], truncated: false };
   const named = new Map(entries.filter(entry => isCandidateFileName(entry.name)).map(entry => [entry.name, entry]));
   const { read, problems: extra, truncated } = capCandidateNames([...named.keys()]);
-  const unreadable = (entry: TreeEntry): string | undefined => {
-    if (entry.type !== "blob" || entry.mode !== "100644") return CANDIDATE_NOT_REGULAR;
-    if (entry.size === null || entry.size > MAX_CANDIDATE_BYTES) return CANDIDATE_TOO_LARGE;
-    return undefined;
-  };
-  const objects = read.map(name => named.get(name)!).filter(entry => unreadable(entry) === undefined).map(entry => entry.object);
+  const objects = read.map(name => named.get(name)!).filter(entry => unreadableEntry(entry, MAX_CANDIDATE_BYTES) === undefined).map(entry => entry.object);
   const blobs = await readGitBlobs(repoRoot, objects, { maxBlobBytes: MAX_CANDIDATE_BYTES });
   const candidates: Candidate[] = [];
   const problems: string[] = [];
   for (const name of read) {
     const entry = named.get(name)!;
-    const problem = unreadable(entry);
+    const problem = unreadableEntry(entry, MAX_CANDIDATE_BYTES);
     const blob = blobs.get(entry.object);
     if (problem !== undefined || blob === undefined) {
       problems.push(`${name}: ${problem ?? "cannot be read from Git"}`);
@@ -292,7 +170,7 @@ export function committedCandidates(root: string, candidateIds: readonly string[
   if (candidateIds.length === 0) return committed;
   const head = commitObject(root, "HEAD");
   if (head === undefined) return committed;
-  const entries = new Map((treeEntries(root, head) ?? []).map(entry => [entry.name, entry]));
+  const entries = new Map((treeFolderEntries(root, head, CANDIDATE_DIRECTORY) ?? []).map(entry => [entry.name, entry]));
   const format = runGit(root, ["rev-parse", "--show-object-format"]).stdout.trim() || "sha1";
   if (format !== "sha1" && format !== "sha256") return committed;
   for (const id of candidateIds) {

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { conflictId, conflictLevel } from "../../../src/engine/merge-assist/conflicts.js";
+import { conflictId, quietFiles } from "../../../src/engine/merge-assist/conflicts.js";
 import { identify, overlaps, ownBase, refHunks, workspaceRanges } from "../../../src/engine/merge-assist/overlap.js";
 
 const roots: string[] = [];
@@ -109,14 +109,14 @@ describe("the overlap rule", () => {
   });
 });
 
-describe("a conflict's level and id", () => {
-  it("logs overlaps only in lockfiles, changelogs, generated output and docs; everything else and every contradiction is ambient", () => {
+describe("a conflict's quiet files and id", () => {
+  it("keeps quiet only overlaps entirely in lockfiles, changelogs, generated output and docs", () => {
     for (const file of ["package-lock.json", "Cargo.lock", "web/yarn.lock", "CHANGELOG.md", "dist/app.js", "src/api.generated.ts", "docs/guide.md"]) {
-      expect(conflictLevel("overlap", [file]), file).toBe("logged");
+      expect(quietFiles([file]), file).toBe(true);
     }
-    expect(conflictLevel("overlap", ["docs/guide.md", "src/model.ts"])).toBe("ambient");
-    expect(conflictLevel("overlap", ["README.md"])).toBe("ambient");
-    expect(conflictLevel("decisions", ["docs/**"])).toBe("ambient");
+    expect(quietFiles(["docs/guide.md", "src/model.ts"])).toBe(false);
+    expect(quietFiles(["README.md"])).toBe(false);
+    expect(quietFiles([])).toBe(false);
   });
 
   it("keeps the same id for the same question and ref", () => {

@@ -102,6 +102,11 @@ export const candidateSchema = z.object({
   /** Code fragments whose presence in new code means the decision is at stake. */
   signals: z.array(signalSchema).max(MAX_SIGNALS, `a candidate has at most ${MAX_SIGNALS} signals`).optional(),
   supersedes: candidateIdSchema.nullable(),
+  /**
+   * Set when a person took another branch's decision on a conflict: that decision, by its ref and id. The text above
+   * is the decision as it was then; delivery follows the reference to its latest text when it can read it.
+   */
+  follows: z.object({ ref: z.string().min(1).max(500), candidateId: candidateIdSchema }).strict().optional(),
 }).strict().superRefine((candidate, context) => {
   const rule = candidate.rule as CodeRule | undefined;
   if (rule === undefined) return;

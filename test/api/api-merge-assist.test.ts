@@ -321,7 +321,7 @@ describe("a coding agent's dismissal, through the real service", { timeout: 30_0
         body: JSON.stringify({ checkout: ws.repo, conflictId: conflict!.id, action: "theirs" }),
       });
       expect(response.status).toBe(200);
-      expect(mergeAssistStatusSchema.parse(await response.json()).conflicts[0]).toMatchObject({ status: "resolved", resolution: { action: "theirs", by: "person", text: "Capitalise b" } });
+      expect(mergeAssistStatusSchema.parse(await response.json()).conflicts[0]).toMatchObject({ status: "resolved", resolution: { action: "theirs", by: "person", text: "Capitalise b (src/api/model.ts:2)" } });
     } finally {
       stores.close();
     }

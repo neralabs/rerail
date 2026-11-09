@@ -12,6 +12,7 @@ import {
   commit,
   compareAnswer,
   FakeJudge,
+  git,
   mergeAssistWorkspaces,
   ORDERS_CLEAN,
   ORDERS_RETRY,
@@ -22,6 +23,8 @@ import {
 const workspace = mergeAssistWorkspaces();
 
 const CORRECTION = "No, don't wrap API calls in retry loops; retries belong in the transport.";
+/** Their change to line 10 of the model, and 7 lines that build on it: enough growth for the dimmer to make it ambient. */
+const SHARED = ["  shared 10", ...Array.from({ length: 7 }, (_, index) => `  built ${index + 1}`)].join("\n");
 
 /** A session runtime over the workspace's database with Merge Assist `service`, and an evaluator that finds nothing. */
 function sessionRuntime(ws: Workspace, service: MergeAssistRuntime): RerailRuntime {
@@ -152,7 +155,8 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
     const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
     const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
-    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, "  shared 10") }, "Share compiled matchers");
+    // Their change to line 10 and 7 lines built on it, and this edit's line: 9 lines in the hour, an ambient overlap.
+    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
     const noted = Promise.withResolvers<void>();
@@ -192,7 +196,7 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
     const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
     const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
-    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, "  shared 10") }, "Share compiled matchers");
+    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
     writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
@@ -212,10 +216,46 @@ describe("Merge Assist in a session", { timeout: 30_000 }, () => {
       const after = await runtime.ingest({ kind: "user-prompt", eventId: "second", sessionId, text: "And then?" });
       expect(after.map(delivery => delivery.content)).toEqual([[
         "This note comes from Rerail, not the user.",
-        "The user settled a conflict with jbarnes-model with a decision for this branch: \"Share compiled matchers\". It applies from now on.",
+        "The user settled a conflict with jbarnes-model with a decision for this branch: \"Share compiled matchers (src/api/model.ts:10)\". It applies from now on.",
         "Follow it where it applies to your work; your task is unchanged.",
       ].join("\n")]);
       expect(await runtime.ingest({ kind: "user-prompt", eventId: "third", sessionId, text: "Thanks." })).toEqual([]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("names the decision files a git commit would leave out, at that commit's call, once per attempt, and never blocks it", async () => {
+    const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
+    const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
+    const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
+    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, "  shared 10") }, "Share compiled matchers");
+    writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    const [conflict] = (await service.scan(ws.repo)).conflicts;
+    const resolved = await service.resolveConflict(ws.repo, conflict!.id, "theirs");
+    const { logId, rule } = resolved.conflicts[0]!.resolution!;
+    const runtime = sessionRuntime(ws, service);
+    const session = { host: "claude-code" as const, sessionId: "commit-session", cwd: ws.repo };
+    const { sessionId } = session;
+    const staging = (deliveries: readonly AdapterDelivery[]) => deliveries.filter(delivery => delivery.content.startsWith("Rerail: include"));
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      const other = await runtime.ingest({ kind: "call", eventId: "status", sessionId, toolCallId: "1", toolName: "Bash", input: { command: "git status" } });
+      expect(staging(other)).toEqual([]);
+      const attempt = await runtime.ingest({ kind: "call", eventId: "commit-1", sessionId, toolCallId: "2", toolName: "Bash", input: { command: "git add src && git commit -m 'Clone matchers'" } });
+      expect(staging(attempt)).toEqual([expect.objectContaining({
+        content: `Rerail: include these decision files in this commit: ${rule}, .rerail/decisions/${logId}.json`,
+        rules: [],
+        strategy: "message",
+      })]);
+      await runtime.ingest({ kind: "result", eventId: "commit-1-done", sessionId, toolCallId: "2", toolName: "Bash", output: "ok" });
+      // A second attempt is told again; once the files are staged, nothing is said.
+      expect(staging(await runtime.ingest({ kind: "call", eventId: "commit-2", sessionId, toolCallId: "3", toolName: "Bash", input: { command: "git commit -m again" } }))).toHaveLength(1);
+      await runtime.ingest({ kind: "result", eventId: "commit-2-done", sessionId, toolCallId: "3", toolName: "Bash", output: "ok" });
+      git(ws.repo, "add", "--", ".rerail");
+      expect(staging(await runtime.ingest({ kind: "call", eventId: "commit-3", sessionId, toolCallId: "4", toolName: "Bash", input: { command: "git commit -m staged" } }))).toEqual([]);
     } finally {
       await runtime.dispose();
     }

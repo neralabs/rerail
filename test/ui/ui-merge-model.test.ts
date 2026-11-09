@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Finding, MergeAssistStatus, OwnDecision } from "../../src/engine/index.js";
 import {
   authorOf, budgetText, conflictSections, conflictToast, draftProblem, draftText, githubText, hunkLines, judgeText,
-  logEntries, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, tabOf,
+  logQuestions, logStatusCounts, readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf, tabOf,
   waitingCount, writeError,
 } from "../../ui/merge-model.js";
 import { conflict, logItem, resolved, side } from "./support/merge-conflicts.js";
@@ -43,7 +43,7 @@ const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   own: [],
   findings: [],
   conflicts: [],
-  decisionLog: { entries: [], problems: [] },
+  decisionLog: { questions: [], problems: [] },
   ...over,
 });
 
@@ -249,11 +249,13 @@ describe("conflicts", () => {
     expect(tabOf(status({ conflicts }), "constructor")).toBe("conflicts");
   });
 
-  it("counts ambient conflicts in the sidebar, and a decided-differently finding only when no conflict carries it", () => {
+  it("counts every open conflict in the sidebar as the Conflicts tab does, and a decided-differently finding only when no conflict carries it", () => {
     const talk = [finding("carried", "talk", "open"), finding("alone", "talk", "open")];
     const carrier = conflict("decisions", { kind: "decisions", theirs: side({ label: "jbarnes/x", decisionId: "candidate:carried" }) });
-    // ambient-old, ambient-new, the decisions conflict, and the finding no conflict carries; never the logged one.
-    expect(waitingCount(status({ findings: talk, conflicts: [...conflicts, carrier] }))).toBe(4);
+    const all = status({ findings: talk, conflicts: [...conflicts, carrier] });
+    // ambient-old, ambient-new, the logged one, the decisions conflict, and the finding no conflict carries.
+    expect(conflictSections(all).open).toHaveLength(4);
+    expect(waitingCount(all)).toBe(conflictSections(all).open.length + 1);
     expect(waitingCount(status({ conflicts, enabled: false }))).toBe(0);
   });
 
@@ -298,8 +300,11 @@ describe("conflicts", () => {
     expect(hunkLines("@@ -1 +1 @@\n-old\n+new\n same\n").map(l => l.kind)).toEqual(["meta", "del", "add", "ctx"]);
   });
 
-  it("lists the decision log newest first", () => {
-    const entries = [logItem("old", at(600)), logItem("new", at(1)), logItem("mid", at(30))];
-    expect(logEntries(status({ decisionLog: { entries, problems: [] } })).map(e => e.id)).toEqual(["new", "mid", "old"]);
+  it("lists each question's ledger entries newest first, filtered by status, and counts them per status", () => {
+    const items = [logItem("old", at(600)), logItem("new", at(1), { status: "in-force" }), logItem("mid", at(30), { status: "void" })];
+    const decisionLog = { questions: [{ question: "q", title: "Q", items }, { question: "r", title: "R", items: [logItem("other", at(5))] }], problems: [] };
+    expect(logQuestions(status({ decisionLog })).map(q => [q.question, q.items.map(e => e.id)])).toEqual([["q", ["new", "mid", "old"]], ["r", ["other"]]]);
+    expect(logQuestions(status({ decisionLog }), "void").map(q => [q.question, q.items.map(e => e.id)])).toEqual([["q", ["mid"]]]);
+    expect(logStatusCounts(status({ decisionLog }))).toEqual({ "in-force": 1, provisional: 2, reopened: 0, flagged: 0, superseded: 0, void: 1 });
   });
 });

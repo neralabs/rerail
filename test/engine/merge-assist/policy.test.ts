@@ -34,6 +34,7 @@ describe("parsePolicy", () => {
       criteria: { compatibility: { enabled: true, minDifference: 1 }, blastRadius: { enabled: true, ratio: 3, minLines: 100 }, benchmarks: [] },
       panel: { judges: 3, agreement: 3 },
       reserve: ["public-api", "security", "data-model"],
+      dimmer: { interruptCost: 300, stopGrowthPerHour: 50, checkpointsPerDay: 3 },
     });
   });
 

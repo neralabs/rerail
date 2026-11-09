@@ -39,8 +39,9 @@
  * accuracy over decided pairs and the escalation rate with Wilson 95% intervals, the step that decided each pair, the
  * split by which side was adopted, and, given swapped runs, whether each verdict picked the same design both ways.
  *
- * `log-smoke` writes a decision-log entry for every resolution of seed 0 (unswapped) into a scratch clone of each
- * pair's repository and reads the log back.
+ * `log-smoke` writes a ledger entry file (`.rerail/decisions/<id>.json`) for every resolution of seed 0 (unswapped)
+ * that decided, into the working tree of a scratch clone of each pair's repository, and reads the ledger view back;
+ * an escalation is no entry. Each side's position is its change to the conflict's first shared file.
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -50,19 +51,21 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixturesPath } from "../test/support/oracles.js";
 import {
-  appendDecision,
   type CheckResult,
   type ConflictRecord,
   conflictRecordSchema,
   type Policy,
   type PolicyCheck,
   parsePolicy,
+  hunkFingerprint,
+  positionFingerprint,
   questionOf,
-  readDecisions,
+  readLedger,
   sanitizeIntent,
   sideChanges,
   type SideId,
   type Verdict,
+  writeWorktreeDecision,
 } from "../src/engine/index.js";
 import {
   type AgentJudge,
@@ -579,7 +582,7 @@ async function resolveAll(flags: Flags): Promise<void> {
       policy,
       judge,
       checks: recorded === null ? null : recordedChecks(recorded),
-      log: [],
+      ledger: { items: [] },
       seed,
     });
     const chosen = resolution.verdict === "escalated" ? null : resolution.verdict === entry.first ? "first" : "second";
@@ -674,6 +677,14 @@ function score(flags: Flags): void {
 
 // ------------------------------------------------------------------------------------------------------- log smoke
 
+/** A side's position for the smoke: its whole change to the record's first shared file, from the base. */
+async function smokePositions(clone: string, record: ConflictRecord): Promise<Record<SideId, { fingerprint: string; at: { kind: "hunks"; path: string; lines: Array<{ lo: number; hi: number }> } }>> {
+  const shared = record.sides.a.anchors.files.find(file => record.sides.b.anchors.files.includes(file)) ?? record.sides.a.anchors.files[0] ?? record.sides.b.anchors.files[0] ?? "README.md";
+  const at = { kind: "hunks" as const, path: shared, lines: [{ lo: 0, hi: 1e9 }] };
+  const position = async (side: SideId) => ({ fingerprint: (await positionFingerprint(clone, record.base, record.sides[side].sha, at)) ?? hunkFingerprint([]), at });
+  return { a: await position("a"), b: await position("b") };
+}
+
 async function logSmoke(flags: Flags): Promise<void> {
   const runs = required(flags, "results").split(",").flatMap(path => readJson<{ runs: ResolveRun[] }>(path).runs).filter(run => run.seed === 0 && !run.swapped);
   const { records } = readJson<{ records: PairRecord[] }>(required(flags, "records"));
@@ -681,25 +692,31 @@ async function logSmoke(flags: Flags): Promise<void> {
   const scratch = resolve(required(flags, "scratch"));
   mkdirSync(scratch, { recursive: true });
   const written = new Map<string, string[]>();
+  let escalated = 0;
   for (const run of runs) {
     const entry = records.find(candidate => candidate.id === run.id)!;
     const clone = join(scratch, entry.repo.replace("/", "__"));
-    if (!existsSync(clone)) execFileSync("git", ["clone", "--quiet", "--bare", "--shared", repoPath(repos, entry.repo), clone]);
-    const decision = decisionEntryFor(entry.record, run.resolution);
-    const appended = appendDecision(clone, decision);
-    if (!appended.ok) throw new Error(`${run.id}: ${appended.reason}`);
+    if (!existsSync(clone)) execFileSync("git", ["clone", "--quiet", "--shared", repoPath(repos, entry.repo), clone]);
+    const decision = decisionEntryFor(entry.record, run.resolution, await smokePositions(clone, entry.record));
+    if (decision === null) {
+      escalated += 1;
+      console.log(`${run.id}: escalated by ${run.resolution.step}, no entry`);
+      continue;
+    }
+    const path = await writeWorktreeDecision(clone, decision);
     written.set(clone, [...(written.get(clone) ?? []), decision.id]);
-    console.log(`${run.id}: ${decision.verdict} by ${decision.step} → ${appended.commit.slice(0, 12)} in ${clone}`);
+    console.log(`${run.id}: ${decision.verdict} by ${run.resolution.step} → ${path} in ${clone}`);
   }
   let matched = 0;
   for (const [clone, ids] of written) {
-    const log = await readDecisions(clone);
-    const read = log.entries.map(logged => logged.entry.id);
-    const ok = ids.every(id => read.includes(id)) && log.problems.length === 0;
+    const view = await readLedger(clone);
+    const read = new Map(view.items.map(item => [item.entry.id, item]));
+    const ok = ids.every(id => read.get(id)?.place === "branch") && view.problems.length === 0;
     if (ok) matched += 1;
-    console.log(`${clone}: wrote ${ids.length}, read back ${read.length}${log.problems.length > 0 ? `, problems: ${log.problems.join("; ")}` : ""} ${ok ? "OK" : "MISMATCH"}`);
+    const statuses = [...new Set(ids.map(id => read.get(id)?.status ?? "missing"))].join(", ");
+    console.log(`${clone}: wrote ${ids.length}, read back ${ids.filter(id => read.has(id)).length} on this branch (${statuses})${view.problems.length > 0 ? `, problems: ${view.problems.join("; ")}` : ""} ${ok ? "OK" : "MISMATCH"}`);
   }
-  console.log(`\nDecision log smoke: ${runs.length} entries in ${written.size} scratch clones, ${matched}/${written.size} read back whole.`);
+  console.log(`\nLedger smoke: ${runs.length - escalated} entries in ${written.size} scratch clones (${escalated} escalations, no entry), ${matched}/${written.size} read back whole.`);
   if (matched !== written.size) process.exitCode = 1;
 }
 

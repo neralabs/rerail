@@ -9,12 +9,16 @@
  * rule; the same change on both sides does not conflict. Renames are ignored.
  */
 import { createHash } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { runGit } from "../git.js";
 
 /** The most unchanged base lines two hunks may leave between them and still conflict. */
 export const ADJACENT_LINES = 3;
 /** The most lines of one side's change one conflict shows. */
 export const HUNK_LINES = 40;
+/** The largest untracked file whose lines a position is taken over. */
+const MAX_UNTRACKED_BYTES = 5 * 1024 * 1024;
 /** A binary file's change covers the whole file. */
 const WHOLE_FILE = 1e9;
 const DIFF_OPTIONS = { maxBuffer: 512 * 1024 * 1024, timeout: 60_000 };
@@ -220,6 +224,28 @@ export function commitRanges(repo: string, base: string, head: string, paths: re
   const ranges = new Map<string, LineRange[]>();
   for (const [path, hunks] of diffHunks(repo, base, head, paths)) ranges.set(path, hunks.map(rangeOf));
   return ranges;
+}
+
+/**
+ * The `-`/`+` lines (without the `@@` header) of the hunks in `path` from `from` to `to` (`to` null: the working
+ * files, an untracked file all `+`) that touch or adjoin any of `lines`, base lines as {@link LineRange} has them.
+ * Throws when Git cannot diff the two.
+ */
+export function hunkLinesAt(repo: string, from: string, to: string | null, path: string, lines: readonly { readonly lo: number; readonly hi: number }[]): string[] {
+  const hunks = diffHunks(repo, from, to, [path]).get(path) ?? [];
+  if (hunks.length === 0 && to === null && (gitRead(repo, ["ls-files", "--others", "--exclude-standard", "--", `:(literal)${path}`]) ?? "").trim() !== "") {
+    // An untracked file: all of it is new, as `workspaceRanges` counts it. Only a regular file within the size limit
+    // is read, never through a symbolic link.
+    const file = lstatSync(join(repo, path), { throwIfNoEntry: false });
+    if (file === undefined || !file.isFile() || file.size > MAX_UNTRACKED_BYTES) return [];
+    return readFileSync(join(repo, path), "utf8").split("\n").map(line => `+${line}`);
+  }
+  return hunks
+    .filter(hunk => {
+      const range = rangeOf(hunk);
+      return lines.some(line => Math.max(range.lo, line.lo) - Math.min(range.hi, line.hi) - 1 <= ADJACENT_LINES);
+    })
+    .flatMap(hunk => hunk.lines.slice(1));
 }
 
 /**

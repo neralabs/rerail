@@ -26,6 +26,10 @@ export const STATE_KEYS = {
   github: (repositoryKey: string) => `github:${repositoryKey}`,
   /** The checkout's in-flight conflicts, open, resolved and dismissed (`conflict-store.ts`). */
   conflicts: (checkoutPath: string) => `conflicts:${checkoutPath}`,
+  /** What the checkout saw of the decision ledger, for the view's void status (`ledger-store.ts`). */
+  ledger: (checkoutPath: string) => `ledger:${checkoutPath}`,
+  /** The interruptions the dimmer granted a person: checkpoint prompts per day, stops per session (`conflict-level.ts`). */
+  budget: (person: string) => `budget:${person}`,
 } as const;
 
 export function readState<T>(db: StateQueries, key: string, schema: z.ZodType<T>): T | undefined {

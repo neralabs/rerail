@@ -39,6 +39,13 @@ export function sampleConflict(overrides: Partial<Conflict> = {}): Conflict {
     kind: "overlap",
     status: "open",
     level: "ambient",
+    shortId: "a1b2c3",
+    signals: null,
+    score: 120,
+    reasons: ["local code: ×1", "+40 lines on theirs in 2 h", "3 callers", "pull request open: about 24 h to merge", "no verdict yet: even odds either side loses"],
+    queued: false,
+    queuedFor: null,
+    snooze: null,
     question: "overlap:0123456789abcdef01234567",
     title: "model.rs · fn compile",
     mine: {
@@ -75,7 +82,7 @@ export function sampleStatus(checkout: string, overrides: Partial<MergeAssistSta
     own: [],
     findings: [],
     conflicts: [],
-    decisionLog: { entries: [], problems: [] },
+    decisionLog: { questions: [], problems: [] },
     ...overrides,
   };
 }

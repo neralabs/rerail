@@ -10,7 +10,9 @@ export const side = (over: Partial<ConflictSide> = {}): ConflictSide => ({
 
 /** An open, ambient overlap with pull request #398, detected `detectedAt`. */
 export const conflict = (id: string, over: Partial<Conflict> = {}): Conflict => ({
-  id, kind: "overlap", status: "open", level: "ambient", question: `question:${id}`, title: `Shared matchers ${id}`,
+  id, shortId: "a1b2c3", kind: "overlap", status: "open", level: "ambient", signals: null, score: 120,
+  reasons: ["local code: ×1", "+40 lines on theirs in 2 h", "3 callers"], queued: false, queuedFor: null, snooze: null,
+  question: `question:${id}`, title: `Shared matchers ${id}`,
   mine: side(),
   theirs: side({
     label: "PR #398", ref: "refs/pull/398/head", sha: "bbb222", author: "Tim", url: "https://github.com/acme/storefront/pull/398",
@@ -34,7 +36,14 @@ export const resolved = (id: string, action: "mine" | "theirs" | "new", by: "per
   });
 
 export const logItem = (id: string, recordedAt: string, over: Partial<DecisionLogItem> = {}): DecisionLogItem => ({
-  id, recordedAt, title: `Question ${id}`, outcome: "Theirs (PR #398)", by: { kind: "person", name: "tbelanger" },
-  rule: `.rerail/candidates/${id}.json`, text: `Text ${id}.`,
+  id, question: `overlap:${id}`, title: `Question ${id}`, status: "provisional", verdict: "b", outcome: "Theirs (PR #398)",
+  by: { kind: "person", name: "tbelanger" }, source: { ref: "mine", label: "This branch" }, recordedAt,
+  rule: `.rerail/candidates/${id}.json`, text: `Text ${id}.`, follows: null,
   ...over,
+});
+
+/** The decision log as the status carries it: one question per item, in the order given. */
+export const logOf = (items: readonly DecisionLogItem[], problems: string[] = []) => ({
+  questions: items.map(item => ({ question: item.question, title: item.title, items: [item] })),
+  problems,
 });

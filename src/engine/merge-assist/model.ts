@@ -108,8 +108,11 @@ export const lastScanSchema = z.object({
 });
 export type LastScan = z.infer<typeof lastScanSchema>;
 
-/** overlap: overlapping hunks with a branch in flight; decisions: a peer's decision contradicts one of this branch's. */
-export const CONFLICT_KINDS = ["overlap", "decisions"] as const;
+/**
+ * overlap: overlapping hunks with a branch in flight; decisions: a peer's decision contradicts one of this branch's;
+ * verdicts: two provisional ledger entries on the same question, on different refs, pick different winners.
+ */
+export const CONFLICT_KINDS = ["overlap", "decisions", "verdicts"] as const;
 export type ConflictKind = (typeof CONFLICT_KINDS)[number];
 
 export const CONFLICT_STATUSES = ["open", "resolved", "dismissed"] as const;
@@ -119,9 +122,49 @@ export type ConflictStatus = (typeof CONFLICT_STATUSES)[number];
 export const CONFLICT_ACTIONS = ["mine", "theirs", "new", "dismiss"] as const;
 export type ConflictAction = (typeof CONFLICT_ACTIONS)[number];
 
-/** ambient: one line to the agent and the person; logged: on the Conflicts page only. */
-export const CONFLICT_LEVELS = ["ambient", "logged"] as const;
+/**
+ * How loud an open conflict is (the dimmer, `dimmer.ts`): logged, on the Conflicts page only; ambient, one line to the
+ * agent and the person and a footer segment; checkpoint, a card the agent shows the person at the next boundary;
+ * stop, the person is asked before an edit to a contested file.
+ */
+export const CONFLICT_LEVELS = ["logged", "ambient", "checkpoint", "stop"] as const;
 export type ConflictLevel = (typeof CONFLICT_LEVELS)[number];
+
+/**
+ * What makes a contested change hard to undo, from the hardest: a persisted schema, migration or file format; a public
+ * API (an exported signature in a package entry or index file); a retirement (a deleted file or exported symbol); an
+ * exported signature elsewhere; local code.
+ */
+export const LOCK_IN_CLASSES = ["persisted", "public-api", "retirement", "exported", "local"] as const;
+export type LockInClass = (typeof LOCK_IN_CLASSES)[number];
+
+export const conflictSignalsSchema = z.object({
+  quiet: z.boolean().describe("Every contested file is a lockfile, a changelog, generated output or under docs/."),
+  lockIn: z.union([z.literal(1), z.literal(2), z.literal(4)]),
+  lockInClass: z.enum(LOCK_IN_CLASSES),
+  blastRadius: z.number().int().nonnegative().describe("callers plus otherRefs."),
+  callers: z.number().int().nonnegative().describe("Files in the base referring to the contested symbols, at most 200."),
+  otherRefs: z.number().int().nonnegative().describe("Other live refs touching the contested files."),
+  growthPerHour: z.number().nonnegative(),
+  linesTheirs: z.number().int().nonnegative().describe("Lines theirs added to the contested files since their work forked."),
+  linesMine: z.number().int().nonnegative().describe("Lines this branch, committed and working, added to them since it forked."),
+  windowHours: z.number().nonnegative().describe("Hours since the two sides' work forked (at least 1): growth's window."),
+  pLose: z.number().min(0).max(1),
+  hoursToMerge: z.number().nonnegative(),
+  pullRequest: z.boolean().describe("A pull request is open on theirs."),
+  verdict: z.boolean().describe("A verdict or precedent on the question exists in the ledger."),
+});
+export type ConflictSignals = z.infer<typeof conflictSignalsSchema>;
+
+/** "Later": the person put the conflict off until its level rises, theirs opens a pull request, or the base moves. */
+export const conflictSnoozeSchema = z.object({
+  at: z.string(),
+  level: z.enum(CONFLICT_LEVELS).describe("The level when snoozed: a higher one ends the snooze."),
+  pullRequest: z.boolean().describe("Whether theirs had a pull request open: one opening ends the snooze."),
+  base: z.string().describe("The base branch's tip: a merge that moves it ends the snooze."),
+  endedAt: z.string().nullable().describe("When the snooze ended; null while it holds."),
+});
+export type ConflictSnooze = z.infer<typeof conflictSnoozeSchema>;
 
 export const conflictSideSchema = z.object({
   label: z.string().describe("\"This branch\", \"This session\", \"PR #398\" or a branch name."),
@@ -150,10 +193,17 @@ export type ConflictResolution = z.infer<typeof conflictResolutionSchema>;
 
 export const conflictSchema = z.object({
   id: z.string().describe("Stable: \"conflict:\" + question + \":\" + a short hash of theirs.ref."),
+  shortId: z.string().describe("Six hex characters a person can type to name the conflict in chat."),
   kind: z.enum(CONFLICT_KINDS),
   status: z.enum(CONFLICT_STATUSES),
-  level: z.enum(CONFLICT_LEVELS),
-  question: z.string().describe("The question key shared with the decision log."),
+  level: z.enum(CONFLICT_LEVELS).describe("While open, it never drops; resolution resets it."),
+  signals: conflictSignalsSchema.nullable().describe("What the dimmer measured at the last detection; null before the first."),
+  score: z.number().nonnegative().describe("Expected rework lines if it is left to merge."),
+  reasons: z.array(z.string()).describe("One plain sentence per signal, as the card shows them."),
+  queued: z.boolean().describe("Over the interruption budget: shown below its level until the budget allows it."),
+  queuedFor: z.enum(CONFLICT_LEVELS).nullable().describe("While queued, the level it waits for; it rises to it once the budget frees."),
+  snooze: conflictSnoozeSchema.nullable(),
+  question: z.string().describe("The question key ledger entries share."),
   title: z.string(),
   mine: conflictSideSchema,
   theirs: conflictSideSchema,
@@ -163,16 +213,36 @@ export const conflictSchema = z.object({
 });
 export type Conflict = z.infer<typeof conflictSchema>;
 
+/**
+ * Where a ledger entry stands, from where it sits in Git (`ledger.ts`): in-force on the base branch; superseded there by
+ * a later entry on its question; flagged when merged but the code contradicts it; provisional only on this branch or a
+ * live ref; reopened when the winner's position moved since; void once it left every live ref without merging.
+ */
+export const LEDGER_STATUSES = ["in-force", "provisional", "reopened", "flagged", "superseded", "void"] as const;
+export type LedgerStatus = (typeof LEDGER_STATUSES)[number];
+
 export const decisionLogItemSchema = z.object({
   id: z.string(),
-  recordedAt: z.string(),
+  question: z.string(),
   title: z.string(),
-  outcome: z.string().describe("\"Theirs (PR #398)\", \"Mine\", \"New decision\" or \"Escalated\"."),
-  by: z.object({ kind: z.enum(["person", "policy"]), name: z.string() }),
+  status: z.enum(LEDGER_STATUSES),
+  verdict: z.enum(["a", "b", "new"]).describe("a: the recording branch's side won; b: the other side; new: a new decision."),
+  outcome: z.string().describe("From this branch: \"Mine\", \"Theirs (PR #398)\" or \"New decision\"."),
+  by: z.object({ kind: z.enum(["person", "precedent", "policy"]), name: z.string() }),
+  source: z.object({ ref: z.string(), label: z.string() }).describe("Where the entry was read: the base branch, this branch, or a live ref."),
+  recordedAt: z.string(),
   rule: z.string().nullable(),
-  text: z.string().nullable(),
+  text: z.string(),
+  follows: z.object({ ref: z.string(), candidateId: z.string() }).nullable(),
 });
 export type DecisionLogItem = z.infer<typeof decisionLogItemSchema>;
+
+export const decisionLogQuestionSchema = z.object({
+  question: z.string(),
+  title: z.string().describe("The newest entry's title."),
+  items: z.array(decisionLogItemSchema).describe("Newest first."),
+});
+export type DecisionLogQuestion = z.infer<typeof decisionLogQuestionSchema>;
 
 export const mergeAssistStatusSchema = z.object({
   repositoryKey: z.string(),
@@ -192,6 +262,7 @@ export const mergeAssistStatusSchema = z.object({
   own: z.array(ownDecisionSchema),
   findings: z.array(findingSchema),
   conflicts: z.array(conflictSchema).describe("Open first, then resolved (latest 20), then dismissed (latest 20)."),
-  decisionLog: z.object({ entries: z.array(decisionLogItemSchema), problems: z.array(z.string()) }).describe("Newest first, at most 50."),
+  decisionLog: z.object({ questions: z.array(decisionLogQuestionSchema), problems: z.array(z.string()) })
+    .describe("The ledger view grouped by question, the question with the newest entry first; at most 50 entries."),
 });
 export type MergeAssistStatus = z.infer<typeof mergeAssistStatusSchema>;

@@ -76,7 +76,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       own: [],
       findings: [],
       conflicts: [],
-      decisionLog: { entries: [], problems: [] },
+      decisionLog: { questions: [], problems: [] },
     });
     expect(judge.tasks).toEqual([]);
     // A repository off GitHub never runs gh.

@@ -30,7 +30,7 @@ describe("Merge Assist activation", { timeout: 30_000 }, () => {
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
     // A session starting there applies that checkout's candidates.
-    await service.openSession(other, "codex");
+    await service.openSession(other, "codex", "session-1");
 
     const mine = ownRuleId(ws.repo, SLEEP_ID);
     const theirs = ownRuleId(other, SLEEP_ID);
@@ -78,9 +78,9 @@ describe("Merge Assist activation", { timeout: 30_000 }, () => {
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
     await service.setEnabled(second, true);
-    await service.openSession(intruder, "codex");
+    await service.openSession(intruder, "codex", "session-1");
     // This checkout reconciles again, after the others wrote theirs.
-    await service.openSession(ws.repo, "codex");
+    await service.openSession(ws.repo, "codex", "session-1");
 
     const stored = Object.fromEntries(ws.database.select().from(libraryRules).all().map(row => [row.ruleId, JSON.stringify(row.document)]));
     expect(Object.keys(stored).sort()).toEqual([ownRuleId(ws.repo, SLEEP_ID), ownRuleId(intruder, SLEEP_ID), ownRuleId(second, SLEEP_ID)].sort());
@@ -107,10 +107,10 @@ describe("Merge Assist activation", { timeout: 30_000 }, () => {
     // The nested checkout's own decision applies there and only there; its reconciling keeps the parent's rule off.
     const own = candidate({ id: "candidate:name-files-by-resource-2c3d4e", decision: "Name API files after their resource.", rule: forbidRule("candidate:name-files-by-resource-2c3d4e", String.raw`\bapi_\w+`) });
     writeFiles(nested, candidateFiles(own));
-    await service.openSession(nested, "codex");
+    await service.openSession(nested, "codex", "session-1");
     expect(ws.rulesOn(nested)).toEqual([ownRuleId(nested, own.id)]);
     expect(ws.rulesOn(ws.repo)).toEqual([ownRuleId(ws.repo, SLEEP_ID)]);
-    await service.openSession(ws.repo, "codex");
+    await service.openSession(ws.repo, "codex", "session-1");
     expect(ws.rulesOn(nested)).toEqual([ownRuleId(nested, own.id)]);
   });
 

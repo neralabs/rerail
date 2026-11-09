@@ -96,16 +96,16 @@ export function sectionsOf(status, pending = new Map()) {
 }
 
 /**
- * The sidebar's count: what waits for the person, 0 while off. Open conflicts that reach the session (`ambient`),
- * findings that need review, and decided-differently findings no conflict already carries (each one also becomes a
- * conflict of kind `decisions`).
+ * The sidebar's count: what waits for the person, 0 while off. Every open conflict, logged ones included, as the
+ * Conflicts tab counts them; findings that need review; and decided-differently findings no conflict already carries
+ * (each one also becomes a conflict of kind `decisions`).
  */
 export function waitingCount(status, pending = new Map()) {
   if (status === null || status === undefined || !status.enabled) return 0;
   const { talk, review } = sectionsOf(status, pending);
   const carried = new Set(status.conflicts.filter(c => c.kind === "decisions").map(c => c.theirs.decisionId));
-  const ambient = conflictSections(status, pending).open.filter(c => c.level === "ambient");
-  return ambient.length + review.length + talk.filter(f => !carried.has(f.candidate.id)).length;
+  const open = conflictSections(status, pending).open;
+  return open.length + review.length + talk.filter(f => !carried.has(f.candidate.id)).length;
 }
 
 /* ---------- conflicts ---------- */
@@ -113,15 +113,33 @@ export function waitingCount(status, pending = new Map()) {
 /** The longest decision text a person may save when resolving a conflict (the API's limit). */
 export const DECISION_MAX = 600;
 
-export const KIND_TEXT = { overlap: "Overlapping work", decisions: "Contradicting decisions" };
-export const LEVEL_TEXT = { ambient: "Told your agent and you in the session", logged: "Logged, no interruption" };
+export const KIND_TEXT = { overlap: "Overlapping work", decisions: "Contradicting decisions", verdicts: "Different verdicts" };
+/** What each level did in the session, as a card says it beside its age. */
+export const LEVEL_TEXT = {
+  stop: "Asks you before an edit to these files",
+  checkpoint: "Your agent shows you a card to decide",
+  ambient: "Told your agent and you in the session",
+  logged: "Logged, no interruption",
+};
+/** A level's badge on its card. */
+export const LEVEL_BADGE = { stop: "Stop", checkpoint: "Checkpoint", ambient: "Ambient", logged: "Logged" };
+/** The open list's order: the loudest first. */
+const LEVEL_RANK = { stop: 0, checkpoint: 1, ambient: 2, logged: 3 };
 
-const levelRank = conflict => (conflict.level === "ambient" ? 0 : 1);
+/** Why a queued conflict is quieter than its score calls for: today's checkpoints, or the session's one stop, are used. */
+export const QUEUED_TEXT = "Queued: over the interruption budget, so shown as ambient until it frees up";
+
+/** A snoozed conflict's chip: put off with "later" until it gets louder, theirs opens a pull request, or a merge. */
+export function snoozeText(conflict) {
+  if (conflict.snooze === null || conflict.snooze === undefined) return null;
+  if (conflict.snooze.endedAt !== null) return null;
+  return "Later: snoozed until it gets louder, theirs opens a pull request, or a merge";
+}
 
 /**
- * The Conflicts tab's lists from the status and the writes in flight (`conflict:<id>` → action). `open`: ambient
- * ones first, then logged, each newest first; one marked Not a conflict leaves at once. `closed`: resolved and
- * dismissed, as the status orders them. Each item carries `busy` while its write is in flight.
+ * The Conflicts tab's lists from the status and the writes in flight (`conflict:<id>` → action). `open`: loudest
+ * first (stop, checkpoint, ambient, logged), each newest first; one marked Not a conflict leaves at once. `closed`:
+ * resolved and dismissed, as the status orders them. Each item carries `busy` while its write is in flight.
  */
 export function conflictSections(status, pending = new Map()) {
   const open = [], closed = [];
@@ -130,7 +148,7 @@ export function conflictSections(status, pending = new Map()) {
     if (conflict.status === "open" && action === "dismiss") continue;
     (conflict.status === "open" ? open : closed).push({ ...conflict, busy: action !== undefined });
   }
-  open.sort((a, b) => levelRank(a) - levelRank(b) || newestFirst("detectedAt")(a, b));
+  open.sort((a, b) => LEVEL_RANK[a.level] - LEVEL_RANK[b.level] || newestFirst("detectedAt")(a, b));
   return { open, closed };
 }
 
@@ -210,10 +228,41 @@ export function conflictToast(conflict, action, text, ignored) {
   };
 }
 
-/* ---------- the decision log ---------- */
+/* ---------- the decision log: the ledger view ---------- */
 
-/** The decision log's entries, newest first. */
-export const logEntries = status => [...status.decisionLog.entries].sort(newestFirst("recordedAt"));
+/** Where a ledger entry stands, as its chip says it, in the order the filter lists them. */
+export const LEDGER_STATUS_TEXT = {
+  "in-force": "In force",
+  provisional: "Provisional",
+  reopened: "Reopened",
+  flagged: "Flagged",
+  superseded: "Superseded",
+  void: "Void",
+};
+
+/** What each status means, as the chip's title says it. */
+export const LEDGER_STATUS_TITLE = {
+  "in-force": "Merged into the base branch: every agent follows it.",
+  provisional: "Only on a branch that has not merged: information for other branches until it does.",
+  reopened: "The winning side changed since: the conflict is open again.",
+  flagged: "Merged, but the code in the base branch contradicts it: a person should look.",
+  superseded: "A later entry on the same question replaced it.",
+  void: "Its branch merged without it, or went away: it no longer counts.",
+};
+
+/** How many entries the ledger holds per status. */
+export function logStatusCounts(status) {
+  const counts = Object.fromEntries(Object.keys(LEDGER_STATUS_TEXT).map(name => [name, 0]));
+  for (const question of status.decisionLog.questions) for (const item of question.items) counts[item.status] += 1;
+  return counts;
+}
+
+/** The ledger's questions, each with its entries newest first, only those with `filter`'s status when one is chosen. */
+export function logQuestions(status, filter = null) {
+  return status.decisionLog.questions
+    .map(question => ({ ...question, items: question.items.filter(item => filter === null || item.status === filter).sort(newestFirst("recordedAt")) }))
+    .filter(question => question.items.length > 0);
+}
 
 /** When an entry was recorded: the time today, else the day ("Nov 3"). */
 export function logWhen(iso) {

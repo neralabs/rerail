@@ -35,7 +35,7 @@ function status(findingStatus: "open" | "applied"): MergeAssistStatus {
       reason: "r", evidence: { violations: [], conflicts: [], mine: null, judgment: null }, message: null, updatedAt: "2026-11-02T11:00:00Z",
     }],
     conflicts: [],
-    decisionLog: { entries: [], problems: [] },
+    decisionLog: { questions: [], problems: [] },
   };
 }
 

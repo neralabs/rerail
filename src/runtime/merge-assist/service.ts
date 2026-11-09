@@ -11,8 +11,10 @@ import { gitText } from "../../engine/git.js";
 import { baseBranch, currentBranch, githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
 import { candidateHash, candidatesInForce, type Candidate, type CandidateState } from "../../engine/merge-assist/candidate.js";
 import { candidatesIgnored, committedCandidates, readWorktreeCandidates, writeWorktreeCandidate } from "../../engine/merge-assist/candidate-files.js";
-import { decisionLogItems, orderConflicts } from "../../engine/merge-assist/conflicts.js";
-import { readDecisions } from "../../engine/merge-assist/decision-log.js";
+import { orderConflicts } from "../../engine/merge-assist/conflicts.js";
+import { commitStagingNote, gitCommitIn, shellCommandOf, unstagedDecisionFiles } from "../../engine/merge-assist/commit-staging.js";
+import { parseChatAnswer, type ChatAnswer } from "../../engine/merge-assist/chat-answer.js";
+import { ledgerLog } from "../../engine/merge-assist/ledger.js";
 import {
   findingSchema,
   githubReadinessSchema,
@@ -32,10 +34,12 @@ import { activationFailures, deactivateRepository, itemRuleId, ownRuleId, reconc
 import { createAgentJudge, type AgentJudge } from "./agent-judge.js";
 import { captureCorrections, type CaptureResult, type SessionEventSource } from "./capture.js";
 import { detectConflicts } from "./conflict-detect.js";
+import { isSnoozed, snoozed } from "./conflict-level.js";
 import { answerConflict } from "./conflict-resolve.js";
 import { readConflicts, replaceConflict } from "./conflict-store.js";
 import { createGithubClient, type GithubClient, type PullRequestSummary } from "./github.js";
-import { markNotesDelivered, pendingNotes, type PendingNote } from "./notes.js";
+import { refreshLedger, viewLedger } from "./ledger-store.js";
+import { cardsShown, markNotesDelivered, pendingNotes, stopNotes, type EditCall, type PendingNote } from "./notes.js";
 import { authorName, osUser, personName } from "./people.js";
 import { scanPeers, type ItemEvidence } from "./scan.js";
 import { STATE_KEYS, deleteState, isoSeconds, readState, writeState } from "./state.js";
@@ -70,7 +74,7 @@ export interface MergeAssistService {
   resolveFinding(checkoutPath: string, findingId: string, action: FindingAction, actor?: MergeAssistActor): Promise<MergeAssistStatus>;
   /**
    * Settle an open in-flight conflict: keep this branch's side, take theirs, write a new decision (`text` required),
-   * or dismiss it as not a conflict. Each verdict appends to the decision log and writes a decision on this branch.
+   * or dismiss it as not a conflict. Each verdict writes a ledger entry and a decision into this branch's working tree.
    * Only a person decides: a coding agent is refused.
    */
   resolveConflict(checkoutPath: string, conflictId: string, action: ConflictAction, text?: string, actor?: MergeAssistActor): Promise<MergeAssistStatus>;
@@ -87,20 +91,37 @@ export interface MergeAssistSession {
 /** What a session's runtime asks of Merge Assist, besides the facade. Each does nothing while Merge Assist is off. */
 export interface MergeAssistRuntime extends MergeAssistService {
   /** A session started in the checkout: apply what the candidates call for, then scan the other branches. */
-  openSession(checkoutPath: string, host: RerailHost): Promise<void>;
+  openSession(checkoutPath: string, host: RerailHost, sessionId: string): Promise<void>;
   /** A turn ended: capture the session's new corrections and apply a saved decision. The scan that follows is {@link scanSession}. */
   captureSession(session: MergeAssistSession): Promise<CaptureResult>;
   /** Scan the other branches for a session's checkout, as after a saved decision (it may contradict another branch's). */
-  scanSession(checkoutPath: string, host: RerailHost): Promise<void>;
+  scanSession(checkoutPath: string, host: RerailHost, sessionId: string): Promise<void>;
   /** The notes for the session it has not been handed, leaving out items whose marks are in `inFlight`. Reads only. */
   pendingNotes(sessionId: string, checkoutPath: string, inFlight?: ReadonlySet<string>): PendingNote[];
+  /**
+   * The stop notes for a tool call about to edit contested files, once per conflict and session; `asks` when the
+   * session's host can ask the person before the call. Reads only.
+   */
+  stopNotes(sessionId: string, checkoutPath: string, call: EditCall, asks: boolean, inFlight?: ReadonlySet<string>): PendingNote[];
   /** Record notes as handed to the session, once a delivery took them. */
   markNotesDelivered(sessionId: string, checkoutPath: string, marks: readonly string[]): void;
   /**
    * The agent edited files in the checkout: find its in-flight conflicts again, at most once per
-   * {@link CONFLICT_DETECT_INTERVAL_MS} per checkout. Resolves to whether it ran.
+   * {@link CONFLICT_DETECT_INTERVAL_MS} per checkout. `sessionId` is the session whose edit it was, whose stop budget a
+   * stop is granted from. Resolves to whether it ran.
    */
-  detectAfterEdit(checkoutPath: string): Promise<boolean>;
+  detectAfterEdit(checkoutPath: string, sessionId?: string | null): Promise<boolean>;
+  /**
+   * The person's prompt in a session: when it plainly answers a checkpoint or stop card that session was handed
+   * (`parseChatAnswer`), record it as theirs, as the dashboard does: a verdict, or "later", which snoozes the conflict.
+   * Resolves to what it read.
+   */
+  answerFromChat(checkoutPath: string, prompt: string, sessionId: string): Promise<ChatAnswer>;
+  /**
+   * A tool call in the checkout: when it runs `git commit` and decision files under `.rerail/decisions/` or
+   * `.rerail/candidates/` would be left out of that commit, the context naming them; else null. Reads only.
+   */
+  commitStaging(checkoutPath: string, toolName: string, input: unknown): string | null;
 }
 
 export interface MergeAssistServiceOptions {
@@ -255,8 +276,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return mark !== undefined && this.#now() - mark.since < SCAN_STALE_MS;
   }
 
-  /** Scan the checkout once at a time across processes; a request while one runs joins it here, or leaves it be elsewhere. */
-  #scanOnce(checkout: CheckoutContext, host?: RerailHost): Promise<void> {
+  /**
+   * Scan the checkout once at a time across processes; a request while one runs joins it here, or leaves it be elsewhere.
+   * `sessionId` is the session that asked for it, if any: its stop budget is the one the detection that follows draws on.
+   */
+  #scanOnce(checkout: CheckoutContext, host?: RerailHost, sessionId: string | null = null): Promise<void> {
     const path = checkout.checkoutPath;
     const running = this.#scans.get(path);
     if (running !== undefined) return running;
@@ -278,7 +302,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
           githubReadiness: () => this.#githubReadiness(checkout.repositoryKey, true),
           now: this.#now,
         });
-        await this.#detect(checkout);
+        await this.#detect(checkout, sessionId);
         await this.#reconcile(checkout);
       } finally {
         deleteState(this.#db, markKey);
@@ -302,22 +326,20 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return pulls;
   }
 
-  /** Find the checkout's in-flight conflicts; apply what precedent decided for this branch. */
-  async #detect(checkout: CheckoutContext): Promise<void> {
+  /** Find the checkout's in-flight conflicts for `sessionId` (null outside a session). */
+  async #detect(checkout: CheckoutContext, sessionId: string | null): Promise<void> {
     const pulls = await this.#openPulls(checkout);
-    const decided = await detectConflicts({ database: this.#db, checkout, pulls, now: this.#now });
-    if (decided) await this.#reconcile(checkout);
+    await detectConflicts({ database: this.#db, checkout, pulls, sessionId, now: this.#now });
   }
 
-  /** This branch's in-flight conflicts as the status lists them, and the decision log newest first. */
+  /** This branch's in-flight conflicts as the status lists them, and the ledger view grouped by question. */
   async #conflictsView(root: string): Promise<Pick<MergeAssistStatus, "conflicts" | "decisionLog">> {
     const stored = readConflicts(this.#db, root);
-    const log = await readDecisions(root);
-    const titles = new Map(stored.map(entry => [entry.conflict.question, entry.conflict.title]));
+    const ledger = viewLedger(this.#db, root);
     const mine = currentBranch(root) ?? gitText(root, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]) ?? null;
     return {
       conflicts: orderConflicts(stored.map(entry => entry.conflict)),
-      decisionLog: { entries: decisionLogItems(log.entries, mine, titles), problems: log.problems },
+      decisionLog: { questions: ledgerLog(ledger, mine), problems: ledger.problems },
     };
   }
 
@@ -450,25 +472,54 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     const context = { database: this.#db, checkout, now: this.#now };
     const answered = await answerConflict(context, stored, { action, text, name: personName(root) });
     this.#db.transaction(tx => replaceConflict(tx, root, answered, this.#now()), { behavior: "immediate" });
-    if (action !== "dismiss") await this.#reconcile(checkout);
+    if (action !== "dismiss") {
+      // The verdict's entry shows in the ledger view at once, not at the next detection.
+      await refreshLedger(this.#db, root, null, this.#now());
+      await this.#reconcile(checkout);
+    }
     return await this.status(root);
   }
 
-  async detectAfterEdit(checkoutPath: string): Promise<boolean> {
+  async detectAfterEdit(checkoutPath: string, sessionId: string | null = null): Promise<boolean> {
     const checkout = lookupCheckout(this.#db, checkoutPath);
     if (checkout === undefined || !mergeAssistEnabled(this.#db, checkout.repositoryKey)) return false;
     const last = this.#detectedAt.get(checkout.checkoutPath);
     if (last !== undefined && this.#now() - last < CONFLICT_DETECT_INTERVAL_MS) return false;
     this.#detectedAt.set(checkout.checkoutPath, this.#now());
-    await this.#detect(checkout);
+    await this.#detect(checkout, sessionId);
     return true;
   }
 
-  async openSession(checkoutPath: string, host: RerailHost): Promise<void> {
+  async answerFromChat(checkoutPath: string, prompt: string, sessionId: string): Promise<ChatAnswer> {
+    const checkout = lookupCheckout(this.#db, checkoutPath);
+    if (checkout === undefined || !mergeAssistEnabled(this.#db, checkout.repositoryKey)) return { kind: "none" };
+    const root = checkout.checkoutPath;
+    // Only the session the card was handed to answers it: a prompt in any other (a headless `claude -p` an agent runs
+    // from its shell, say) is not the person answering.
+    const shown = cardsShown(this.#db, sessionId);
+    const open = readConflicts(this.#db, root).map(entry => entry.conflict)
+      .filter(conflict => conflict.status === "open" && (conflict.level === "checkpoint" || conflict.level === "stop") && shown(conflict))
+      .map(conflict => ({ id: conflict.id, shortId: conflict.shortId, title: conflict.title, snoozed: isSnoozed(conflict) }));
+    const answer = parseChatAnswer(prompt, open);
+    if (answer.kind !== "answer") return answer;
+    if (answer.option !== "later") {
+      await this.resolveConflict(root, answer.conflictId, answer.option, answer.text ?? undefined, "person");
+      return answer;
+    }
+    const base = baseBranch(root)?.ref ?? null;
+    this.#db.transaction(tx => {
+      const stored = readConflicts(tx, root).find(entry => entry.conflict.id === answer.conflictId);
+      if (stored === undefined || stored.conflict.status !== "open" || isSnoozed(stored.conflict)) return;
+      replaceConflict(tx, root, { ...stored, conflict: snoozed(stored.conflict, root, base, this.#now()) }, this.#now());
+    }, { behavior: "immediate" });
+    return answer;
+  }
+
+  async openSession(checkoutPath: string, host: RerailHost, sessionId: string): Promise<void> {
     const checkout = lookupCheckout(this.#db, checkoutPath);
     if (checkout === undefined || !mergeAssistEnabled(this.#db, checkout.repositoryKey)) return;
     await this.#reconcile(checkout);
-    await this.#scanOnce(checkout, host);
+    await this.#scanOnce(checkout, host, sessionId);
   }
 
   async captureSession(session: MergeAssistSession): Promise<CaptureResult> {
@@ -485,18 +536,30 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return result;
   }
 
-  async scanSession(checkoutPath: string, host: RerailHost): Promise<void> {
+  async scanSession(checkoutPath: string, host: RerailHost, sessionId: string): Promise<void> {
     const checkout = lookupCheckout(this.#db, checkoutPath);
     if (checkout === undefined || !mergeAssistEnabled(this.#db, checkout.repositoryKey)) return;
-    await this.#scanOnce(checkout, host);
+    await this.#scanOnce(checkout, host, sessionId);
   }
 
   pendingNotes(sessionId: string, checkoutPath: string, inFlight: ReadonlySet<string> = new Set()): PendingNote[] {
     return pendingNotes(this.#db, sessionId, checkoutPath, inFlight);
   }
 
+  stopNotes(sessionId: string, checkoutPath: string, call: EditCall, asks: boolean, inFlight: ReadonlySet<string> = new Set()): PendingNote[] {
+    return stopNotes(this.#db, sessionId, checkoutPath, call, asks, inFlight);
+  }
+
   markNotesDelivered(sessionId: string, checkoutPath: string, marks: readonly string[]): void {
     markNotesDelivered(this.#db, sessionId, checkoutPath, marks, this.#now());
+  }
+
+  commitStaging(checkoutPath: string, toolName: string, input: unknown): string | null {
+    const command = shellCommandOf(toolName, input);
+    const commit = command === null ? null : gitCommitIn(command);
+    if (commit === null) return null;
+    const files = unstagedDecisionFiles(checkoutPath, commit.all);
+    return files.length === 0 ? null : commitStagingNote(files);
   }
 }
 

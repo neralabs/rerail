@@ -42,6 +42,8 @@ export interface AdapterCapabilityProfile {
   delivery: Readonly<Record<RuleMode, DeliveryMechanism>>;
   lifecycleEvents: readonly string[];
   sampleEvents: Readonly<Record<"user" | "assistant" | "tool" | "turn", string>>;
+  /** Whether its tool-call hook can ask the person before a call goes ahead (Claude Code's `permissionDecision: "ask"`). */
+  asksPerson: boolean;
 }
 
 export const ADAPTER_CAPABILITIES = {
@@ -50,6 +52,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "native",
     persistence: "session-entries",
+    asksPerson: false,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -68,6 +71,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "native",
     persistence: "session-entries",
+    asksPerson: false,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -86,6 +90,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "event",
     persistence: "jsonl-ledger",
+    asksPerson: true,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -104,6 +109,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "completed",
     toolSurface: "event",
     persistence: "jsonl-ledger",
+    asksPerson: false,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -122,6 +128,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "completed",
     toolSurface: "event",
     persistence: "jsonl-ledger",
+    asksPerson: false,
     delivery: {
       log: "observe",
       steer: "deferred-context",
@@ -294,6 +301,11 @@ export interface ConflictNotice {
   /** `your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher`. */
   readonly text: string;
   readonly url?: string | undefined;
+  /**
+   * A stop: the question a host that can ask the person before a tool call (`asksPerson`) puts to them, at the call that
+   * edits a contested file. Absent for every other surface.
+   */
+  readonly ask?: string | undefined;
 }
 
 /** Whether `value`, read back from a file or a host's transcript, is a `SteerRule`. */
@@ -352,7 +364,8 @@ export async function sendNativeDeliveries(
         { deliverAs: "steer" },
       );
     }
-    if (delivery.content.trim() === "") continue;
+    // A note that names no rule (a Merge Assist note) shows the person no steer line, so it is not counted as a steer.
+    if (delivery.content.trim() === "" || delivery.ruleIds.length === 0) continue;
     try {
       await record(delivery.sessionId, randomUUID(), delivery.ruleIds);
     } catch (error) {

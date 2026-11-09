@@ -187,6 +187,18 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("R E R A I L ● rules unavailable · steering unavailable");
   });
 
+  it("adds Merge Assist's segment: the overlaps open, or the decision waiting on the person, linked to its card", async () => {
+    const session = response.context!.session!;
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 2, decide: null } };
+    const overlaps = await read();
+    expect(overlaps.text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ 2 conflicts");
+    expect(overlaps.parts.at(-1)!.url).toMatch(/#merge$/u);
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 1, decide: { id: "conflict:overlap:abc:12345678", title: "where retries live: a long title that the footer has to cut short" } } };
+    const decide = await read();
+    expect(decide.text).toBe("R E R A I L ● 3 rules · steered 2× · ◉ decide: where retries live: a long title that the foote…");
+    expect(decide.parts.at(-1)!.url).toMatch(/#merge\?conflict=conflict:overlap:abc:12345678$/u);
+  });
+
   it("reports not on here only where Rerail is stopped, and Not set up with the start command where no rules are configured", async () => {
     response.repositoryState = "stopped";
     const stopped = await read();

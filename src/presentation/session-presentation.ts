@@ -155,7 +155,14 @@ async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origi
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
-/** `R E R A I L ● 26 rules`, with `steered N×` only once Rerail has steered in this session (A1f). */
+/** The longest conflict title the footer's `◉ decide:` segment shows. */
+const FOOTER_TITLE = 48;
+
+/**
+ * `R E R A I L ● 26 rules`, with `steered N×` only once Rerail has steered in this session (A1f), and Merge Assist's
+ * segment while the checkout has a conflict open above logged: `◉ decide: <title>` for one waiting on the person,
+ * else `◐ N conflicts`.
+ */
 function onPresentation(
   origin: URL,
   { session, hud }: z.infer<typeof sessionResponseSchema>,
@@ -171,6 +178,15 @@ function onPresentation(
   ];
   if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
   else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
+  if (hud.mergeAssist !== undefined) {
+    const dashboard = new URL(rulesDashboardUrl(origin, scope));
+    dashboard.hash = "";
+    const { decide, conflicts } = hud.mergeAssist;
+    const title = decide === null || decide.title.length <= FOOTER_TITLE ? decide?.title : `${decide.title.slice(0, FOOTER_TITLE - 1).trimEnd()}…`;
+    items.push(decide === null
+      ? { text: `◐ ${conflicts} ${conflicts === 1 ? "conflict" : "conflicts"}`, url: `${dashboard.href}#merge` }
+      : { text: `◉ decide: ${title}`, url: conflictUrl(dashboard.href, decide.id) });
+  }
   items.push(...health.map(text => ({ text, url: null })));
   return presentation({
     status: "on", brandUrl: sessionUrl, items, presence, repositoryState: "started",

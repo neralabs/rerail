@@ -11,6 +11,7 @@ import { ruleConfigurationSignature } from "../engine/catalog/rule-configuration
 import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
+import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
 
 /** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
 export type CodeRulesPendingBoundary = "call" | "result" | "turn-end";
@@ -91,6 +92,8 @@ const sessionCursorSchema = z.tuple([z.number().int(), z.string()]);
 export interface SessionHud {
   activeRuleCount: number | null;
   steeringCount: number | null;
+  /** The footer's Merge Assist segment, present only while the session's checkout has a conflict open above logged. */
+  mergeAssist?: ConflictFooter;
 }
 
 /** What a session's active-rule count was computed from, so the footer can tell whether it is still current. */
@@ -399,7 +402,9 @@ export class SqliteSessionReader {
         }).from(events)
           .where(and(eq(events.sessionId, sessionId), eq(events.kind, "steering-delivered"))).get()!.total
         : null;
-      return { activeRuleCount: current ? coverage.activeRuleCount : null, steeringCount };
+      const session = database.select({ cwd: sessions.cwd }).from(sessions).where(eq(sessions.sessionId, sessionId)).get();
+      const mergeAssist = session === undefined ? undefined : conflictFooter(database, session.cwd);
+      return { activeRuleCount: current ? coverage.activeRuleCount : null, steeringCount, ...(mergeAssist === undefined ? {} : { mergeAssist }) };
     });
   }
 
