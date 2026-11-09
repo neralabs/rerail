@@ -213,7 +213,8 @@ fn try_lock(file: &File) -> Result<(), TryLockError> {
     }
 }
 
-fn sidecar(path: &Path, suffix: &str) -> PathBuf {
+/// `path` with `suffix` appended to its file name (the arena's lock and journal files).
+fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     PathBuf::from(name)
@@ -432,7 +433,7 @@ impl Atoms {
             return Ok(());
         }
         let open = |suffix: &str| {
-            std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(sidecar(path, suffix))
+            std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(suffixed(path, suffix))
         };
         let file = open("-atoms.lock")?;
         match try_lock(&file) {
@@ -610,7 +611,7 @@ impl Atoms {
         let seen = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .open(sidecar(path, "-atoms.want"))
+            .open(suffixed(path, "-atoms.want"))
             .is_ok_and(|file| matches!(try_lock(&file), Err(TryLockError::WouldBlock)));
         *wanted = (Some(Instant::now()), seen);
         seen
