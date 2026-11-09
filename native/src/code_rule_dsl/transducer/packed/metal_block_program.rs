@@ -121,6 +121,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::Fill(a, e) => [12, u32::from(a), carry, u32::from(e)],
         BlockInst::Within(d) => [13, 0, 0, u32::from(d)],
         BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
+        BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
         // The period in `a` (`k | r << 8`, never read as a slot: it is clamped), its bits in `b` and `imm`.
         BlockInst::Phase(k, r) => {
             let bits = super::block::period_bits(k);
@@ -193,7 +194,8 @@ pub(in crate::code_rule_dsl) fn run_batch(
 ) -> Result<BatchRun, Error> {
     // A fixed point (`rounds`) is the CPU's for now: each lane would run its rounds in its own
     // frame, within `block::MAX_ROUNDS`, to the same values.
-    if programs.iter().any(|p| !p.groups.is_empty()) {
+    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet.
+    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
@@ -1288,6 +1290,7 @@ fn emit(
             }
             BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) => unreachable!(),
             BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
+            BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
     }

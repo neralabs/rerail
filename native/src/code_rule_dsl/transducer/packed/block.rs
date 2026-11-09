@@ -56,6 +56,13 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     /// `e`; a byte in both starts a new fill. One add per word (`carry::fill`). Carry: whether a
     /// fill is open into the next block, a borrow like `escaped`'s.
     Fill(u16, u16),
+    /// Bitlex's `back_fill(s, e)`, `fill`'s mirror: each byte from a byte of `s` back to, not
+    /// including, the byte of `e` before it: `b[i] = s[i] | (b[i + 1] & !e[i])`. A fact carried
+    /// back to the start of what it belongs to, a look ahead past any number of bytes. One add per
+    /// word on the bits reversed (`carry::back_fill`). Carry: whether a fill comes back into the
+    /// block from the next, so it runs over the blocks last to first: an executor runs it in a
+    /// pass of its own after the values it reads (`stages`).
+    BackFill(u16, u16),
     /// The bytes inside the stream at a delay `d`: bit `i` is set when `d <= i < len + d`. A
     /// program with a delay (`BlockProgram::delay`) runs past the end; the compiler cleans `~`
     /// with this, so no value has bits outside the stream. No carry: each executor knows the
@@ -121,6 +128,14 @@ pub(super) mod carry {
         (f, f >> 63)
     }
 
+    /// `back_fill`: `fill` on the bits reversed, `b[i] = s[i] | (b[i + 1] & !e[i])` with
+    /// `b[64] = cin` (0 or 1, the next block's bit 0); the carry out is `b[0]`.
+    pub(in crate::code_rule_dsl) fn back_fill(s: u64, e: u64, cin: u64) -> (u64, u64) {
+        let (f, _) = fill(s.reverse_bits(), e.reverse_bits(), cin);
+        let b = f.reverse_bits();
+        (b, b & 1)
+    }
+
     /// `escaped`: simdjson's branch-free escape finder (`find_escaped_branchless`) with the
     /// carry in (`cin`, 0 or 1: the block's first byte is escaped). Every byte an odd-offset
     /// bit of a run escapes, escaped bits of the run included; the carry out is the add's
@@ -152,6 +167,7 @@ impl BlockOp {
             BlockOp::Toggle(a) => format!("toggle %{a}"),
             BlockOp::Escaped(a) => format!("escaped %{a}"),
             BlockOp::Fill(a, b) => two("fill", a, b),
+            BlockOp::BackFill(a, b) => two("back_fill", a, b),
             BlockOp::Within(0) => "within".to_owned(),
             BlockOp::Within(d) => format!("within {d}"),
             BlockOp::Phase(k, r) => format!("phase {k} {r}"),
@@ -164,7 +180,7 @@ impl BlockOp {
         match *self {
             BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => vec![a],
-            BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) => {
+            BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) | BlockOp::BackFill(a, b) => {
                 vec![a, b]
             }
         }
@@ -180,6 +196,7 @@ impl BlockOp {
             BlockOp::Escaped(a) => BlockOp::Escaped(f(a)),
             BlockOp::Carry(a) => BlockOp::Carry(f(a)),
             BlockOp::Fill(a, b) => BlockOp::Fill(f(a), f(b)),
+            BlockOp::BackFill(a, b) => BlockOp::BackFill(f(a), f(b)),
             BlockOp::And(a, b) => BlockOp::And(f(a), f(b)),
             BlockOp::Or(a, b) => BlockOp::Or(f(a), f(b)),
             BlockOp::Xor(a, b) => BlockOp::Xor(f(a), f(b)),
@@ -225,6 +242,7 @@ impl BlockOp {
             ["toggle", a] => Ok(BlockOp::Toggle(value(a)?)),
             ["escaped", a] => Ok(BlockOp::Escaped(value(a)?)),
             ["fill", a, b] => Ok(BlockOp::Fill(value(a)?, value(b)?)),
+            ["back_fill", a, b] => Ok(BlockOp::BackFill(value(a)?, value(b)?)),
             ["carry", a] => Ok(BlockOp::Carry(value(a)?)),
             ["within"] => Ok(BlockOp::Within(0)),
             ["within", d] => match d.parse::<u8>() {
@@ -276,6 +294,7 @@ impl BlockOp {
             BlockOp::Within(d) => out.extend([14, d]),
             BlockOp::Phase(k, r) => out.extend([15, k, r]),
             BlockOp::Carry(a) => two(out, 16, a, a),
+            BlockOp::BackFill(a, b) => two(out, 17, a, b),
         }
     }
 }
@@ -381,6 +400,10 @@ pub(in crate::code_rule_dsl) fn groups(ops: &[BlockOp], rounds: &[Vec<(u16, u16)
             }
         }
         let members: Vec<usize> = (0..n).filter(|&x| ahead[x] && behind[x]).collect();
+        // A fixed point settles block by block, first to last: a `back_fill` carries the other way.
+        if let Some(&m) = members.iter().find(|&&m| matches!(ops[m], BlockOp::BackFill(..))) {
+            return Err(format!("rounds group {g}: `back_fill` %{m} in a fixed point"));
+        }
         for &m in &members {
             if owner[m].replace(g).is_some() {
                 return Err(format!("rounds group {g} shares value %{m} with another"));
@@ -715,6 +738,19 @@ impl BlockProgram {
                 BlockOp::Fill(a, b) => {
                     let pairs = v(a).iter().zip(v(b)).enumerate().map(|(i, (&x, &y))| (i, x, y));
                     carried(pairs, &first, 0u64, |x, y, c| carry::fill(x, y, c))
+                }
+                // Last block to first, the carry zero at each file's last block.
+                BlockOp::BackFill(a, b) => {
+                    let (s, e) = (v(a), v(b));
+                    let mut out = vec![0u64; s.len()];
+                    let mut c = 0u64;
+                    for i in (0..s.len()).rev() {
+                        if i + 1 == s.len() || first[i + 1] {
+                            c = 0;
+                        }
+                        (out[i], c) = carry::back_fill(s[i], e[i], c);
+                    }
+                    out
                 }
             };
             values[x] = words;

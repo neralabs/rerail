@@ -388,6 +388,23 @@ Every carry is a single bit, and every carry combines associatively:
 So on Metal a block's carry comes from a prefix scan over the blocks before it, and every block
 runs at once. On the CPU the carry passes from one block to the next in a register.
 
+A `back_fill` carries the other way: a block's word needs the blocks after it. It looks ahead
+past any number of bytes, where `next` looks ahead a fixed number. Examples are the name after
+blanks and comments, or a `:` at the end of a line. The CPU runs a program that has them in
+passes over each file:
+
+- Each value has a level: the most `back_fill`s on a way to it. A fixed point's values all take
+  the highest level among them.
+- Level 0 runs in a forward pass, as a program without `back_fill`. Then each level's
+  `back_fill`s run in a backward pass, the blocks last to first. Then the level's other values
+  run in another forward pass.
+- A value read in a later pass is stored, one word per block, in a slot. The later pass loads
+  it as it was made.
+
+Each pass is a function of its own, with the same loops and checks. One file pass and one
+block pass; the body has no other loop. Metal refuses such a program for now. Its scan would
+run backward over the groups, as its fixed points' rounds are still to come.
+
 ### 3.2 Machines
 
 1. **Symbols.** Each event byte gets its symbol number by selects over the event masks

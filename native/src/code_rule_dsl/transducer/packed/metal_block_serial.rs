@@ -937,6 +937,10 @@ pub(in crate::code_rule_dsl) fn run_serial_split(programs: &[&BlockNative], file
 /// Run `files` in segments (each under `programs[file.program]`, in its planes form): one first
 /// pass, the checks and runs again until every start agrees, then the positions and totals.
 pub(in crate::code_rule_dsl) fn run_serial(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
+    // A `back_fill` runs last block to first: a pass this executor does not have yet.
+    if programs.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
+        return Err(Error::UnsupportedBackend);
+    }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
     let refs: Vec<&BlockNative> = forms.iter().collect();

@@ -484,11 +484,19 @@ pub(super) fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
 /// masks), over the calls it pops, and (a grammar with wraps) over the node table once, at the
 /// end; nothing calls.
 pub(super) fn check_shape(name: &str, c: &Compiled) {
-    let block = &c.native.block_programs[0];
-    let body = super::block_tests::body_of(&c.parser.tier1.clif);
-    let branches = body.iter().filter(|l| super::block_tests::opcode(l) == "brif").count();
-    let ascii = usize::from(c.parser.tier1.ascii_branch);
-    assert_eq!(branches, 1 + 2 * block.extracts.len() + ascii + c.parser.tier1.gate_branches + c.parser.tier1.round_branches, "{name}: tier 1 branches beyond its loop, its flattening, its ASCII test and its gates");
+    // Each pass of tier 1 (one, without `back_fill`): a forward pass's body as above; a
+    // backward pass's function branches only for its files, its blocks and their ends.
+    for (k, pass) in c.parser.tier1.passes.iter().enumerate() {
+        let branches = |lines: &[String]| lines.iter().filter(|l| super::block_tests::opcode(l) == "brif").count();
+        if pass.back {
+            let lines: Vec<String> = pass.clif.lines().map(|l| l.trim().to_owned()).collect();
+            assert_eq!(branches(&lines), 4, "{name}: tier 1's backward pass {k} branches beyond its loops");
+            continue;
+        }
+        let body = super::block_tests::body_of(&pass.clif);
+        let want = 1 + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches;
+        assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test and its gates");
+    }
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
     for (b, step) in heads {

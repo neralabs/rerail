@@ -548,6 +548,12 @@ pub(super) enum BlockInst {
     Escaped(u16),
     /// `fill(s, e)` (`block::BlockOp::Fill`): one add per word, its carry a borrow.
     Fill(u16, u16),
+    /// `back_fill(s, e)` (`block::BlockOp::BackFill`): `fill` over the bits reversed, its carry
+    /// from the next block. Never in a body: a pass of its own, last block to first (`passes`).
+    BackFill(u16, u16),
+    /// The word a pass before stored in slot `k` for the block (`passes`): a value of the
+    /// program made in an earlier pass, as that pass made it.
+    Load(u16),
     /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
     Within(u8),
     /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
@@ -560,14 +566,14 @@ pub(super) enum BlockInst {
 impl BlockInst {
     /// Whether the instruction carries across blocks.
     pub(super) fn carried(&self) -> bool {
-        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..))
+        matches!(self, BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::Escaped(_) | BlockInst::Fill(..) | BlockInst::BackFill(..))
     }
 
     /// The values the instruction reads.
     pub(super) fn operands(&self) -> Vec<usize> {
         match *self {
             BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) => vec![usize::from(a)],
-            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
+            BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) | BlockInst::BackFill(a, b) => {
                 vec![usize::from(a), usize::from(b)]
             }
             _ => vec![],
@@ -595,6 +601,7 @@ impl BlockNative {
                 BlockOp::Toggle(a) => BlockInst::Toggle(a),
                 BlockOp::Escaped(a) => BlockInst::Escaped(a),
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
+                BlockOp::BackFill(a, b) => BlockInst::BackFill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
                 BlockOp::Carry(a) => BlockInst::Carry(a),
@@ -663,6 +670,7 @@ impl BlockNative {
                 BlockInst::Toggle(a) => f.push(BlockInst::Toggle(m(a))),
                 BlockInst::Escaped(a) => f.push(BlockInst::Escaped(m(a))),
                 BlockInst::Fill(a, b) => f.push(BlockInst::Fill(m(a), m(b))),
+                BlockInst::BackFill(a, b) => f.push(BlockInst::BackFill(m(a), m(b))),
                 BlockInst::Carry(a) => f.push(BlockInst::Carry(m(a))),
                 other => f.push(other),
             };
@@ -684,6 +692,165 @@ impl BlockNative {
                 .map(|g| super::block::Group { members: g.members.iter().map(|&x| place(x)).collect(), carries: g.carries.iter().map(|&(c, x)| (place(c), place(x))).collect() })
                 .collect(),
         }
+    }
+}
+
+/// A pass over a file's blocks, of a program in passes (`BlockNative::passes`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Pass {
+    /// First block to first: a body, as a program without passes runs it. Its `Load`s read the
+    /// slots of passes before it. Before the last pass, output `k` is stored to slot
+    /// `stores[k]`, each block's word as the body made it (no cut, no delay); the last pass's
+    /// outputs are the program's.
+    Forward { body: BlockNative, stores: Vec<u16> },
+    /// Last block to first: each `back_fill` (`block::carry::back_fill`), its start's slot, its
+    /// end's, and its own, the carry zero at the file's last block.
+    Back(Vec<(u16, u16, u16)>),
+}
+
+/// A program as passes over each file's blocks, and the slots they store per block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Passes {
+    pub passes: Vec<Pass>,
+    pub slots: u16,
+}
+
+impl BlockNative {
+    /// The program as passes. A `back_fill` reads its operands over the whole file before it
+    /// gives its first word, so each value's level is the most `back_fill`s on a way to it (a
+    /// fixed point's members all at the highest of theirs): level 0's values in a first forward
+    /// pass, each level's `back_fill`s in a backward pass after the level before, its other
+    /// values in a forward pass after that. A value read in a later pass, and an output made
+    /// before the last, has a slot. A program without `back_fill` is one forward pass.
+    pub(super) fn passes(&self) -> Passes {
+        let n = self.insts.len();
+        let back = |x: usize| matches!(self.insts[x], BlockInst::BackFill(..));
+        let mut level = vec![0usize; n];
+        loop {
+            let mut changed = false;
+            for x in 0..n {
+                let l = self.insts[x].operands().into_iter().map(|o| level[o]).max().unwrap_or(0) + usize::from(back(x));
+                if l > level[x] {
+                    level[x] = l;
+                    changed = true;
+                }
+            }
+            for g in &self.groups {
+                let top = g.members.iter().map(|&m| level[m]).max().unwrap_or(0);
+                for &m in &g.members {
+                    if level[m] < top {
+                        level[m] = top;
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let top = level.iter().copied().max().unwrap_or(0);
+        if top == 0 {
+            return Passes { passes: vec![Pass::Forward { body: self.clone(), stores: Vec::new() }], slots: 0 };
+        }
+        // Each value's pass: level L's `back_fill`s in pass 2L - 1, its others in pass 2L.
+        let pass = |x: usize| 2 * level[x] - usize::from(back(x));
+        let last = 2 * top;
+        let mut slot: Vec<Option<u16>> = vec![None; n];
+        let mut slots = 0u16;
+        let mut give = |x: usize, slot: &mut Vec<Option<u16>>| {
+            if slot[x].is_none() {
+                slot[x] = Some(slots);
+                slots += 1;
+            }
+        };
+        for x in 0..n {
+            for o in self.insts[x].operands() {
+                if pass(o) != pass(x) {
+                    give(o, &mut slot);
+                }
+            }
+        }
+        for &v in &self.outputs {
+            if pass(usize::from(v)) != last {
+                give(usize::from(v), &mut slot);
+            }
+        }
+        let mut passes = Vec::new();
+        for p in 0..=last {
+            if p % 2 == 1 {
+                let fills: Vec<(u16, u16, u16)> = (0..n)
+                    .filter(|&x| pass(x) == p)
+                    .map(|x| match self.insts[x] {
+                        BlockInst::BackFill(a, b) => (slot[usize::from(a)].expect("read later"), slot[usize::from(b)].expect("read later"), slot[x].expect("read later")),
+                        _ => unreachable!("a back pass holds `back_fill`s"),
+                    })
+                    .collect();
+                passes.push(Pass::Back(fills));
+                continue;
+            }
+            let mine: Vec<usize> = (0..n).filter(|&x| pass(x) == p).collect();
+            // The values of passes before read here, loaded first; then the pass's own, in order.
+            let mut loads: Vec<usize> = mine.iter().flat_map(|&x| self.insts[x].operands()).filter(|&o| pass(o) != p).collect();
+            if p == last {
+                loads.extend(self.outputs.iter().map(|&v| usize::from(v)).filter(|&v| pass(v) != p));
+            }
+            loads.sort_unstable();
+            loads.dedup();
+            let mut local: Vec<Option<u16>> = vec![None; n];
+            let mut insts = Vec::with_capacity(loads.len() + mine.len());
+            for &x in &loads {
+                local[x] = Some(insts.len() as u16);
+                insts.push(BlockInst::Load(slot[x].expect("read later")));
+            }
+            for &x in &mine {
+                local[x] = Some(insts.len() as u16);
+                let m = |o: u16| local[usize::from(o)].expect("made before");
+                insts.push(match self.insts[x] {
+                    BlockInst::Not(a) => BlockInst::Not(m(a)),
+                    BlockInst::And(a, b) => BlockInst::And(m(a), m(b)),
+                    BlockInst::Or(a, b) => BlockInst::Or(m(a), m(b)),
+                    BlockInst::Xor(a, b) => BlockInst::Xor(m(a), m(b)),
+                    BlockInst::AndNot(a, b) => BlockInst::AndNot(m(a), m(b)),
+                    BlockInst::Prev(a, k) => BlockInst::Prev(m(a), k),
+                    BlockInst::Toggle(a) => BlockInst::Toggle(m(a)),
+                    BlockInst::Escaped(a) => BlockInst::Escaped(m(a)),
+                    BlockInst::Fill(a, b) => BlockInst::Fill(m(a), m(b)),
+                    BlockInst::Carry(a) => BlockInst::Carry(m(a)),
+                    BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("not in a forward pass"),
+                    other => other,
+                });
+            }
+            let place = |x: usize| usize::from(local[x].expect("the pass's"));
+            let groups: Vec<super::block::Group> = self
+                .groups
+                .iter()
+                .filter(|g| g.members.iter().all(|&m| pass(m) == p))
+                .map(|g| super::block::Group { members: g.members.iter().map(|&x| place(x)).collect(), carries: g.carries.iter().map(|&(c, x)| (place(c), place(x))).collect() })
+                .collect();
+            let body = |outputs: Vec<u16>, last: bool| BlockNative {
+                tables: self.tables.clone(),
+                insts: insts.clone(),
+                output_delays: if last { self.output_delays.clone() } else { vec![0; outputs.len()] },
+                outputs,
+                extracts: if last { self.extracts.clone() } else { Vec::new() },
+                totals: if last { self.totals.clone() } else { Vec::new() },
+                masks: if last { self.masks.clone() } else { Vec::new() },
+                delay: self.delay,
+                groups: groups.clone(),
+            };
+            if p == last {
+                let outputs = self.outputs.iter().map(|&v| local[usize::from(v)].expect("loaded or made")).collect();
+                passes.push(Pass::Forward { body: body(outputs, true), stores: Vec::new() });
+            } else {
+                let stored: Vec<usize> = mine.iter().copied().filter(|&x| slot[x].is_some()).collect();
+                if stored.is_empty() {
+                    continue;
+                }
+                let outputs = stored.iter().map(|&x| local[x].expect("the pass's")).collect();
+                passes.push(Pass::Forward { body: body(outputs, false), stores: stored.iter().map(|&x| slot[x].expect("stored")).collect() });
+            }
+        }
+        Passes { passes, slots }
     }
 }
 

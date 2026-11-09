@@ -832,6 +832,21 @@ impl Lowering {
         self.two(s, e, BlockOp::Fill, true)
     }
 
+    /// `back_fill(s, e)`: `s` cleaned past the end first, so that no fill comes back from there;
+    /// the result cleaned before the start, where a fill may run back into the bits that stand
+    /// for the bytes before the stream at its delay. Clean on both sides.
+    fn back_fill(&mut self, s: Val, e: Val) -> Result<Val, String> {
+        let s = if s.dirty {
+            let w = self.within(s.d)?;
+            Val { v: self.op(BlockOp::And(s.v, w)), dirty: false, set: None, ..s }
+        } else {
+            s
+        };
+        let b = self.two(s, e, BlockOp::BackFill, false)?;
+        let w = self.within(b.d)?;
+        Ok(Val { v: self.op(BlockOp::And(b.v, w)), ..b })
+    }
+
     /// A pattern over the stream's byte positions (bit `i % 64` for byte `i`).
     fn pattern(&mut self, c: u64) -> Val {
         self.leaf(BlockOp::Const(c), c != 0)
@@ -1003,6 +1018,10 @@ impl Lowering {
             "fill" => {
                 let (start, end) = (mask(self, 0)?, mask(self, 1)?);
                 self.fill(start, end)
+            }
+            "back_fill" => {
+                let (start, end) = (mask(self, 0)?, mask(self, 1)?);
+                self.back_fill(start, end)
             }
             _ => Err(format!("not compiled yet: {f}")),
         }
