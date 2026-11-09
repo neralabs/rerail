@@ -2205,3 +2205,20 @@ The repair keeps one upstream writer and schema, while retaining legacy request 
 The expanded real-file source recording contains 37 cases and actual plugin planning, extraction, and complete reporter results.
 Two [production mismatches](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-production-red.json.gz) expose missing extractor fields and a missing trigger-file gate.
 Those repairs now await a new engine build and acceptance rerun. Full migration acceptance remains open.
+
+### 2026-11-08 — Imperative real-source acceptance on Final 24d
+
+Final `24d05da80` is merged and registered. Its root CLI and unit builds take 36.588 and 98.763 seconds.
+All 144 original imperative tests and 129 complete observations pass, with no semantic fallback or missing results.
+All 39 real-file cases match ordered findings, complete extractor fields, plugin metadata, and complete reporter lists.
+All twelve persistent-workspace steps pass, across 24 runs sharing one cache.
+The new operator preserves normal and legacy insertion phases and fixed-seed Python caller-set iteration.
+Native producer ordinals preserve source reporter order across diagnostic clause groups.
+The initial transport mistakenly reused a variable for two result lists. Its captured failure remains explicit; the corrected transport passes.
+The [acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-imperative-source-acceptance.json.gz) contains programs, source recordings, harnesses, builds, and results.
+All 127 focused native tests pass, plus 163 tooling tests and 127 tooling subtests. All 102 policy/table readers pass.
+Two existing annotated native helpers remain ignored. No external fixture suite or full repository cold benchmark runs.
+Real-source CLI and mutation-control acceptance remain open. Full migration acceptance remains open.
+The next draft, serverplan-bypass, has seven recorded source tests. Its native scaffold passes three controls and fails four actual positive assertions.
+The [red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-bypass-scaffold-red.json.gz) retains those failures.
+The inventory now contains 92 drafts and eight absent translations. Draft count is not completion coverage.

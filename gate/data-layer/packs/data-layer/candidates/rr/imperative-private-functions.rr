@@ -105,12 +105,12 @@ ipf_plugin_enabled() :- dir_entry("scripts","lint_imperative_private_functions.p
 .severity IPFDirect error
 .severity IPFEager error
 .severity IPFCalls error
-.violation IPFDirect(at: span, qualname: symbol, detail: symbol) code "direct_execution" "{qualname}: {detail}"
-.violation IPFEager(at: span, qualname: symbol, detail: symbol) code "eager_signature" "{qualname}: {detail}"
-.violation IPFCalls(at: span, qualname: symbol, detail: symbol) code "calls_imperative" "{qualname}: {detail}"
-IPFDirect(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_plugin_enabled(), ipf_finding(sid,_,"direct_execution",detail), ipfr_symbol(sid,path,line,qual).
-IPFEager(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_plugin_enabled(), ipf_finding(sid,_,"eager_signature",detail), ipfr_symbol(sid,path,line,qual).
-IPFCalls(@place(path,line),qual,detail) :- !option("entryPoint",_), ipf_plugin_enabled(), ipf_finding(sid,_,"calls_imperative",detail), ipfr_symbol(sid,path,line,qual).
+.violation IPFDirect(at: span, ordinal: number, qualname: symbol, detail: symbol) code "direct_execution" "{qualname}: {detail}"
+.violation IPFEager(at: span, ordinal: number, qualname: symbol, detail: symbol) code "eager_signature" "{qualname}: {detail}"
+.violation IPFCalls(at: span, ordinal: number, qualname: symbol, detail: symbol) code "calls_imperative" "{qualname}: {detail}"
+IPFDirect(@place(path,line),i,qual,detail) :- !option("entryPoint",_), ipf_plugin_enabled(), ipf_fact(_,i,path,line,qual,_,"direct_execution",detail).
+IPFEager(@place(path,line),i,qual,detail) :- !option("entryPoint",_), ipf_plugin_enabled(), ipf_fact(_,i,path,line,qual,_,"eager_signature",detail).
+IPFCalls(@place(path,line),i,qual,detail) :- !option("entryPoint",_), ipf_plugin_enabled(), ipf_fact(_,i,path,line,qual,_,"calls_imperative",detail).
 
 ipf_hint("path",0,"/connection").
 ipf_hint("path",1,"/graph_query").

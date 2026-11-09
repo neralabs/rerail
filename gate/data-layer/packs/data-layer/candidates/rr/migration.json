@@ -1943,7 +1943,7 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
       "origin": "authored",
-      "sha256": "95cd068327a0cf2f61df5cf7f191587caa8cf71d4002697d87098a980e6c6168",
+      "sha256": "55dae37109fe4b0a5ef5082077f8cfaea09cd6847a10569efea82630039bcf4d",
       "importedSha256": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730",
       "repairs": [
         {
@@ -1965,6 +1965,11 @@
           "before": "e2ecc29be31342e5917fc0ca67644de528a52f4fb562be73e37fee05fd2abd0e",
           "after": "95cd068327a0cf2f61df5cf7f191587caa8cf71d4002697d87098a980e6c6168",
           "reason": "Complete extractor DTOs and enforce the actual production trigger-file scope, driven by successful native mismatches"
+        },
+        {
+          "before": "95cd068327a0cf2f61df5cf7f191587caa8cf71d4002697d87098a980e6c6168",
+          "after": "55dae37109fe4b0a5ef5082077f8cfaea09cd6847a10569efea82630039bcf4d",
+          "reason": "Expose native source reporter ordinals across native diagnostic clause groups"
         }
       ]
     },
@@ -1991,6 +1996,11 @@
           "reason": "Preserve actual normal/decorator insertion history and CPython caller-set order through one native batch"
         }
       ]
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-bypass.rr",
+      "origin": "authored",
+      "sha256": "2916ccab6aa6849480c8e93dcc1fc2e83be4dec2d1bc3915f93a002844fde2cd"
     }
   ],
   "rules": [
@@ -2442,15 +2452,16 @@
       "legacySha256": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
-      "ruleSha256": "95cd068327a0cf2f61df5cf7f191587caa8cf71d4002697d87098a980e6c6168"
+      "ruleSha256": "55dae37109fe4b0a5ef5082077f8cfaea09cd6847a10569efea82630039bcf4d"
     },
     {
       "check": "serverplan_bypass",
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-bypass.json",
       "legacySha256": "1dc17f26cd4f28f2405ecf0b51067aa45864416fb1933385dcf1e57f54e12cdb",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-bypass.rr",
+      "ruleSha256": "2916ccab6aa6849480c8e93dcc1fc2e83be4dec2d1bc3915f93a002844fde2cd"
     },
     {
       "check": "serverplan_steps",

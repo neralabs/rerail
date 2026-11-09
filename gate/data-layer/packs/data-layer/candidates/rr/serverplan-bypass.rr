@@ -1,0 +1,24 @@
+.policy "data-layer-serverplan-bypass" revision 1
+.description "SQL execution bypassing ServerPlan"
+.language python
+.mode block
+.scope given
+// Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_serverplan_bypass.py
+#include "python/ast.rr"
+.decl sb_method(value: symbol)
+sb_method("_execute_raw_sql"). sb_method("_query_raw_sql_async"). sb_method("_execute_raw_sql_async").
+.violation SBConfig(at: span, value: symbol) code "SB_CONFIG" "configuration"
+SBConfig(@place("",0),value) :- option("entryPoint","configuration"), sb_method(value).
+.decl sb_allowlist(value: symbol)
+sb_allowlist(value) :- option_item("allowlistEntries",_,value).
+.violation SBValue(at: span, value: symbol) code "SB_VALUE" "value"
+SBValue(@place("",0),value) :- option("entryPoint","_get_all_allowlisted"), sb_allowlist(value).
+.decl sb_message(value: symbol)
+sb_message(cat("{\"allowlist\": [",entries,"], \"purpose\": \"serverplan_bypass\", \"version\": 1}")) :- entries = join quoted by value sep ", " : { sb_allowlist(value), quoted = @json_str(value) }.
+.violation SBBool(at: span, value: number) code "SB_BOOL" "boolean"
+.decl sb_verified()
+sb_verified() :- option("publicKey",key), option("signature",signature), signature != "NEEDS_SIGNING", sb_message(message), @ed25519_ok(@replace_all(key,"[\\t-\\r ]",""),message,signature) = 1.
+SBBool(@place("",0),1) :- option("entryPoint","_verify_allowlist_integrity"), sb_verified().
+SBBool(@place("",0),0) :- option("entryPoint","_verify_allowlist_integrity"), !sb_verified().
+.violation SBRow(at: span, ordinal: number, file_path: symbol, line_number: number, method_name: symbol, context: symbol, reason: symbol) code "SB_ROW" "{reason}"
+SBRow(@place("",0),0,"",0,"","","") :- option("entryPoint",entry), (entry = "scan_file" ; entry = "scan_source"), 1 = 0.

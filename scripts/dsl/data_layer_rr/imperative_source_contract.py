@@ -92,7 +92,7 @@ def native_case(engine,item):
     native=execute_workspace(engine,ROOT/'gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr',item['files'],dict(entryPoint='analyze_source'))
     unexpected=[r for r in native['diagnostics'] if r['code'] not in {'IPF_FINDING','IPF_FACT'}]
     if unexpected:raise ValueError('Unexpected native source diagnostics: '+repr(unexpected))
-    rows=sorted((r['parameters'] for r in native['diagnostics'] if r['code']=='IPF_FINDING'),key=lambda r:r['ordinal'])
+    findings=sorted((r['parameters'] for r in native['diagnostics'] if r['code']=='IPF_FINDING'),key=lambda r:r['ordinal'])
     facts=[]
     for row in sorted((r['parameters'] for r in native['diagnostics'] if r['code']=='IPF_FACT'),key=lambda r:r['ordinal']):
         facts.append({k:(bool(v) if k=='private' else v) for k,v in row.items() if k!='ordinal'})
@@ -103,8 +103,13 @@ def native_case(engine,item):
     if len(modes)!=1 or len(descriptions)!=1:raise ValueError('Complete native plugin metadata required')
     plugin=dict(name=policies[0]['id'].removeprefix('data-layer-').replace('-','_'),enforcement=modes[0],description=descriptions[0])
     severities={v.split()[0]:v.split()[1] for k,v in settings if k=='severity'}
-    violations=[dict(linter_name=plugin['name'],code=r['code'],path=r['path'],line=r['line'],message=r['message'],severity=severities.get(r['clause'],'error')) for r in production['diagnostics']]
-    return dict(findings=rows,facts=facts,plugin=plugin,violations=violations),[native['programInputs'],production['programInputs']]
+    rows=production['diagnostics']
+    ordinals=[r['parameters']['ordinal'] for r in rows]
+    if sorted(ordinals)!=list(range(len(rows))):raise ValueError('Complete dense native reporter ordinals required')
+    # Native diagnostics are a relation grouped by clause. The source list's
+    # order is explicit data from the native producer, never inferred here.
+    violations=[dict(linter_name=plugin['name'],code=r['code'],path=r['path'],line=r['line'],message=r['message'],severity=severities.get(r['clause'],'error')) for r in sorted(rows,key=lambda r:r['parameters']['ordinal'])]
+    return dict(findings=findings,facts=facts,plugin=plugin,violations=violations),[native['programInputs'],production['programInputs']]
 
 
 def main():
