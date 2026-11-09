@@ -3448,6 +3448,8 @@ impl Run<'_, '_> {
         }
         let started = std::time::Instant::now();
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
+        // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
+        let mut timed: Vec<f64> = Vec::new();
         self.fx().open(&lines.join("\n"))?;
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
@@ -3470,6 +3472,14 @@ impl Run<'_, '_> {
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;
             let f: Vec<&str> = f.split_whitespace().collect();
+            if let Some(per) = f.get(7).filter(|_| f.len() == 9 && super::profile::on()) {
+                for (k, item) in per.split(',').enumerate() {
+                    if timed.len() <= k {
+                        timed.resize(k + 1, 0.0);
+                    }
+                    timed[k] += item.rsplit(':').next().and_then(|c| c.parse::<f64>().ok()).unwrap_or(0.0) / 1e3;
+                }
+            }
             if f.last() == Some(&"2") {
                 answer_pending(self.db, self.model.inputs.atoms.is_some(), &mut self.answer, &mut self.answered, &name, scc)?;
                 continue;
@@ -3554,7 +3564,7 @@ impl Run<'_, '_> {
             let empty = Vec::new();
             let kinds = seeds.iter().map(|r| format!("seed {}", r.head)).chain(probes.iter().map(|(r, ai, _)| format!("join {} (delta at {ai})", r.head)));
             for ((k, o), kind) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate().zip(kinds) {
-                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty));
+                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0));
             }
             // After the native plans: they are charged to this stratum's `engine run (joins)` by the current span.
             let _record = super::profile::span(|| "profile record".into());

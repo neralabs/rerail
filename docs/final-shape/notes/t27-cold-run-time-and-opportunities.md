@@ -93,10 +93,47 @@ A warm run pays for the workspace alone.
   than on joins. The ranking above could change there.
 - Warm runs. They replay the memos (t25: 23.6 s dev, 4.4 s optimized), so their cost is replay into SQLite.
 
+## Reading the profile next time
+
+A run with `RERAIL_PROFILE=<dir>` now writes the analysis above itself. `profile.txt` has these sections after
+the span tree:
+- **By kind of work.** Every span's own CPU, in one class each, such as the joins of each part, planning, moving
+  rows, the memos or measuring. The classes add up to the run (`kinds.tsv`). An `other: …` class lists its
+  largest spans, which are where the next span should go.
+- **Own CPU no span inside names.** A span whose own CPU is at least 0.5 s and a quarter of its total. Each one
+  marks a span that is missing.
+- **Join order searches by head relation.** A rule is searched on first sight, or again when a size it reads
+  moves (decision 0038).
+- **Native joins by head relation.** The CPU of each probe and the work of each step, summed by the relation
+  derived (`heads.tsv`). Lowering's copies (`rr_in_annotation_0_r`, `fl12_r`) count as `r`. `native.tsv` has a
+  `cpu_s` column per plan.
+
+The next run (D9, main thread 72.9 s, load about 10–20, 6,299 answers agree) had nothing unexplained:
+
+| | CPU |
+|---|---|
+| joins, cross-file part | 23.6 s |
+| joins, file-local part | 12.6 s |
+| **join order search** | **11.9 s** |
+| moving rows to the cross-file part | 4.9 s |
+| engine open and indexes | 3.3 s |
+| measuring sources | 2.7 s |
+| statistics phase | 2.5 s |
+| planning strata, other than the search | 2.0 s |
+| other threads (parse, batches) | 2.1 s |
+| guests 1.6 s; cross-file memo 1.5 s; the cone 1.4 s; the rest under 1 s each | |
+
+The 11.9 s was hidden before. It came under "other" and "planning strata". `wbind` alone is 9.9 s of it, in 295
+searches of a 15-literal body. Its sizes move between waves, so its kept plan is searched again each time. That
+is about a third of a second per search for a relation with 23 rows (t26). `fgp` (16 literals, 34 searches) is
+1.0 s. Every other head is under 0.1 s.
+
 ## Open items
 
 - Demand per read, chosen from stored liveness (t26 § The on-demand path). Start with `bv` and `found`, which are
   selective, and with `wbind`, whose cost is in its probes.
+- `wbind`'s join order search (9.9 s): keep its order across waves while its delta alone grows, bound the
+  search for wide bodies, or replace `wbind` with the searches of t28.
 - Base-row statistics summed from the chunks' instead of measured again.
 - One columnar pass for exporting to the cross-file part.
 - The joins' own costs in the dev build (`RowRef::at`, `Stored::rows_of`, index sorts): to be judged in the

@@ -1340,6 +1340,25 @@ pub(crate) fn run_with_options(
         r
     })
 }
+thread_local! {
+    /// Runs under way on this thread: a run started inside another (a phase, the constants, phase 0) is nested.
+    static RUNS_UNDER_WAY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts a run under way on this thread until dropped.
+struct UnderWay;
+impl UnderWay {
+    fn enter() -> UnderWay {
+        RUNS_UNDER_WAY.with(|n| n.set(n.get() + 1));
+        UnderWay
+    }
+}
+impl Drop for UnderWay {
+    fn drop(&mut self) {
+        RUNS_UNDER_WAY.with(|n| n.set(n.get() - 1));
+    }
+}
+
 
 #[allow(clippy::too_many_arguments)]
 fn run_observed(
@@ -1383,11 +1402,14 @@ fn run_observed(
     };
     // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
     // profiling on may have turned it off meanwhile.
-    // Phase 0's own run holds it only when no run does (phase 0 alone, as its benchmark runs it): nested in a run's
-    // preparing, it is the outer run's, and neither resets nor writes it.
+    // A run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and phase
+    // 0's own run hold it only when no run does: nested, the profile is the outer run's, and such a run neither
+    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one.
+    let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0;
+    let _under_way = UnderWay::enter();
     let _profile = if !crate::code_rule_dsl::logic::profile::on() {
         None
-    } else if phase0::active() {
+    } else if phase0::active() || nested {
         crate::code_rule_dsl::logic::profile::one_run_if_free()
     } else {
         Some(crate::code_rule_dsl::logic::profile::one_run())
