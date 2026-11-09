@@ -9977,3 +9977,23 @@ It handles binary float truncation, arbitrary decimal text, Boolean values, Unic
 The policy separately selects numeric comparison ceilings and coerced signature content, as the source does.
 Native JSON syntax diagnostics replace the placeholder for malformed JSON and UTF-8 BOM inputs.
 Tests and fresh root builds are in progress. This checkpoint does not certify these new changes.
+
+### 2026-11-10 — Projected-kind regression and repaired engine
+
+Broader tests exposed a planner panic in the merged engine. The keep chooser prices projected relations.
+Its kind-specific estimate indexed two arguments even after projection reduced the input to one column.
+The existing Boolean-set regression reproduces the panic. The repair applies kind-specific estimates only to two-column atoms.
+The standalone regression now passes. The [focused engine receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-final07b-focused-engine-validation.json.gz) records 161 passing tests and two existing ignored file-writing helpers.
+All 205 tooling tests pass, including five checkpoint coverage and integrity tests.
+
+Before this repair, fourteen individual ratchet CLI cases passed on debug artifact `9df9aad42d05db13…`.
+These include signed writes, exact Unicode baseline bytes, string and float conversion, malformed JSON, and the UTF-8 BOM.
+Their [partial receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-impl-direct-ratchet-json-partial.json.gz) is explicitly incomplete.
+The remaining queue stopped when the broader engine test failed. No complete two-API ratchet acceptance is claimed.
+The unfinished release build was terminated with status 143 before changing engine sources.
+
+The repaired unit build took 56.710 seconds. The next CLI uses the existing optimized `profiling` Cargo profile.
+This profile avoids release LTO while retaining optimized engine code. Compilation is recorded separately.
+The next acceptance run will cover the entire ratchet corpus through both APIs, then repeat the affected original-suite checks.
+Full migration acceptance remains open. The recorded CLI corpus also does not exhaust arbitrary shared-helper input values.
+Non-string signature metadata, scalar roots other than arrays, and baselines beyond the engine's signed integer range still need explicit parity coverage and implementation.
