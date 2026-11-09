@@ -119,6 +119,10 @@ fn unmaintainable(prog: &front::Program, scc: &BTreeSet<String>, rules: &[&Rule]
             return Some("its own old rows not kept");
         }
     }
+    // Counting (`supports`) has no witness of a row's level: a recursive stratum is derived again.
+    if super::supports::counting() && rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(&a.rel)))) {
+        return Some("recursive, under counting");
+    }
     for rule in rules {
         if !rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) {
             return Some("a head term");
@@ -195,6 +199,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             continue;
         }
         maintained += 1;
+        let exact = scc.iter().all(|r| super::supports::is_support(r));
         if mine.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(&a.rel)))) {
             recursive += 1;
         }
@@ -298,6 +303,10 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             }) {
                 olds.insert(b.rel.clone());
             }
+            // A support's row has one derivation (`supports`): an overdeleted row is gone, never rederived.
+            if exact {
+                continue;
+            }
             let mut red = vec![atom(named(h, "del"), rule.head.args.clone(), false)];
             red.extend(rule.body.iter().cloned());
             rules.push(Rule { head: Atom { rel: named(h, "redo"), ..rule.head.clone() }, body: red });
@@ -308,10 +317,14 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             olds.insert(rel.clone());
             rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "old"), v.clone(), false), atom(named(rel, "del"), v.clone(), true)] });
             rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "ins"), v.clone(), false)] });
-            rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "redo"), v, false)] });
+            if !exact {
+                rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "redo"), v, false)] });
+            }
             fresh.push((rel.clone(), named(rel, "del")));
             fresh.push((rel.clone(), named(rel, "ins")));
-            fresh.push((rel.clone(), named(rel, "redo")));
+            if !exact {
+                fresh.push((rel.clone(), named(rel, "redo")));
+            }
         }
         maint.extend(scc.iter().cloned());
         changed.extend(scc.iter().cloned());
@@ -321,7 +334,11 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         let head = |suffix: &str| Atom { rel: named(rel, suffix), args: v.clone(), neg: false, gated: false };
         if maint.contains(rel) {
             // A maintained relation's net change, from its own overdeleted, rederived and inserted rows.
-            let body = vec![atom(named(rel, "del"), v.clone(), false), atom(named(rel, "redo"), v.clone(), true), atom(named(rel, "ins"), v.clone(), true)];
+            let body = if super::supports::is_support(rel) {
+                vec![atom(named(rel, "del"), v.clone(), false), atom(named(rel, "ins"), v.clone(), true)]
+            } else {
+                vec![atom(named(rel, "del"), v.clone(), false), atom(named(rel, "redo"), v.clone(), true), atom(named(rel, "ins"), v.clone(), true)]
+            };
             rules.push(Rule { head: head("minus"), body });
             rules.push(Rule { head: head("plus"), body: vec![atom(named(rel, "ins"), v.clone(), false), atom(named(rel, "old"), v.clone(), true)] });
         } else {

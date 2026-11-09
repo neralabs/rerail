@@ -32,6 +32,7 @@ pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
 mod prepared;
 mod maintain;
+mod supports;
 mod retain;
 mod bridge;
 pub(crate) mod phases;
@@ -2917,6 +2918,20 @@ pub(crate) fn run_with_options(
             match session.as_ref().map(|s| &s.cross) {
                 // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
                 Some(cell) => {
+                    // `RERAIL_MAINTAIN=count`: exact maintenance by counting, each rule's derivations held as its
+                    // support relation (`supports`), to compare with delete-and-rederive.
+                    let counted;
+                    let cross = if supports::counting() {
+                        let (c, through, kept) = supports::supports(&cross);
+                        crate::code_rule_dsl::logic::profile::decision("maintenance by counting (supports)", || format!("{through} rules through support relations, {kept} kept their form"));
+                        if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
+                            eprintln!("O125 counting: {through} rules through supports, {kept} kept their form");
+                        }
+                        counted = c;
+                        &counted
+                    } else {
+                        &cross
+                    };
                     // Each linear cost of a session's run is its own span (decision 0090, step 1).
                     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("session/{name}"));
                     let s = span("digest inputs");
