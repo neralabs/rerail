@@ -4433,7 +4433,9 @@ fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     text.sort();
     // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
     if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
-        for files in [&mut python, &mut rust, &mut rr] {
+        // Documents read as text too: a rule that reads every text document (a check over the repository's docs)
+        // would otherwise read all of them in every sample.
+        for files in [&mut python, &mut rust, &mut rr, &mut text] {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
