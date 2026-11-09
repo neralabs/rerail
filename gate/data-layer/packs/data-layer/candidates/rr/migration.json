@@ -2092,6 +2092,12 @@
           "reason": "Correlate the scan API with its explicit input document; a world-loaded neighbour must not be relabeled as the requested file"
         }
       ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/bootstrap.rr",
+      "origin": "Final shape",
+      "upstreamCommit": "7d1e4007317d1ced555df6d8850d752289984b61",
+      "sha256": "50260741a4735993fc5fe7e7000cc51d4c3e5e47197a01c717e1fd4e4b9b7fed"
     }
   ],
   "rules": [
@@ -3093,8 +3099,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "f59b58d6f8cbbb2a71ef9ec191549fd5527f5869",
-    "status": "Adopting Final f59 observer, execution reuse, and parser work; integration acceptance pending",
+    "upstreamCommit": "7d1e4007317d1ced555df6d8850d752289984b61",
+    "status": "Adopting Final 7d1e40073, including observed filesystem and in-memory load exports; native acceptance pending",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3198,7 +3204,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "d8237affd8f5d009280f6505cf6d72dfec3c458fa7d729f4e10e64bbd20cf154"
+        "sha256": "7a2c20d89d2454693da44cad48f8872f850bee234ea35a5f746d9d8302835c95"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -3258,7 +3264,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "50a4b75ece5dc142555177a1aca4c4a05e2f7096"
+    "upstreamMerge": "a931a926f753e11adaaa7de15ae4b15a1500f59b"
   },
   "engineSourceSnapshots": [
     {
