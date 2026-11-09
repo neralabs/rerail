@@ -259,6 +259,7 @@ pub(in crate::code_rule_dsl) mod native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub(in crate::code_rule_dsl) mod rows_sort;
 mod native_cpu_lanes;
+mod native_cpu_pressure;
 mod native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
@@ -292,6 +293,9 @@ mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
+mod token_local;
+#[cfg(test)]
+mod token_local_tests;
 #[cfg(test)]
 mod bitlex_corpus_tests;
 #[cfg(test)]
