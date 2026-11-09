@@ -9732,3 +9732,31 @@ The native signing action and source-update acceptance remain open.
 Seven translations, earlier port gaps, and global 100-rule acceptance also remain open.
 The next engine cohort must merge and validate Final's newer row-program change.
 No full-repository cold run occurs in this increment.
+
+### 2026-11-09 — Native signing checkpoint on Final b73
+
+The root engine now includes Final `ce80f6873`, `1f16e9a62`, and `b73d28aab`.
+The [signing checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-signing-checkpoint.json.gz) retains the source and native recordings.
+All 38 signing cases match complete file bytes, streams, status, and exceptions.
+Five successful but incorrect native policies fail parity. Both original publication tests pass, including the positive case.
+
+A separate batched native utility reads each named key once and signs public messages.
+Rule evaluation neither signs nor reads private keys. The acceptance fixtures use public synthetic seeds and sanitize the child environment.
+The `.rr` policy defines canonical messages, exact rewrite rules, errors, and reporting.
+A failing native run exposes unsupported dynamic `match_all`; the repair uses the existing `count_matches` function.
+No new engine feature is necessary for that repair.
+
+Three signing unit tests fail against the initial stub, then pass with the implementation.
+Two expected literals in the initial fixtures required correction against independent Python and PyNaCl references.
+All 145 focused engine tests and 186 tooling tests pass. Two existing engine helpers remain ignored.
+The debug build takes 97.362 seconds, the unit build 275.793 seconds, and the optimized build 914.474 seconds.
+These compilation times are separate from acceptance execution.
+
+Engine adoption now records a source audit before compilation. A peer update cannot invalidate an otherwise identical build during registration.
+Registration still checks the audited source trees, build ancestry, extension boundaries, and executable hash.
+A failing test precedes this repair. Changed source trees still fail registration.
+
+The broad inventory includes 48 tests beyond the dedicated 164-test step suite.
+The two publication tests now pass. Two traversal tests and 44 readiness tests still require explicit acceptance.
+The step rule remains a draft. Seven absent translations and earlier migration gaps remain open.
+No full-repository cold run occurs.

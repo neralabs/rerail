@@ -2382,3 +2382,12 @@ The accepted binary comes from `997fcb4ab`, which repairs two local test calls f
 Final `ce80f6873` arrives during compilation and remains for the next engine cohort.
 Native `--sign-allowlist` and source-update acceptance are still unimplemented.
 The rule remains a draft. Seven absent translations and the earlier migration gaps remain open.
+
+### 2026-11-09 — Signing implemented; broad acceptance remains open
+
+The [signing checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-signing-checkpoint.json.gz) records 38 complete source/native comparisons and five mutation controls.
+Both original publication tests also pass, including their positive finding.
+Final `b73d28aab` is merged into the root engine. All 145 focused engine tests and 186 tooling tests pass.
+The broad inventory still requires two traversal tests and 44 readiness tests.
+The full migration gate and the combined step-suite replay on this engine remain open.
+Seven absent translations and earlier acceptance gaps remain open.

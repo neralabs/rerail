@@ -46,6 +46,9 @@ CASES=[dict(id='no-key',key=None),dict(id='empty-key',key=''),dict(id='short-key
     dict(id='unknown-flag-precedes-signing',key=SEED,args=['--sign-allowlist','--unknown']),
     dict(id='missing-source-file',key=SEED,missing=True),dict(id='directory-source',key=SEED,directory=True),
     dict(id='read-only-source',key=SEED,readOnly=True),
+    dict(id='repeat-identical-signing',key=SEED,repeat=2),
+    dict(id='missing-key-before-missing-file',key=None,missing=True),
+    dict(id='invalid-key-before-missing-file',key='0g',missing=True),
 ]
 
 
@@ -74,7 +77,10 @@ def exercise(module,case,root):
     module.LIFECYCLE_RUNTIME_STATE_ALLOWLIST=frozenset(case.get('runtime',[]))
     out,err=io.StringIO(),io.StringIO()
     with patch.object(sys,'argv',['lint_serverplan_steps.py',*case.get('args',['--sign-allowlist'])]),contextlib.redirect_stdout(out),contextlib.redirect_stderr(err):
-        try:result=dict(status=module.cli_main())
+        try:
+            statuses=[module.cli_main() for _ in range(case.get('repeat',1))]
+            result=dict(status=statuses[-1])
+            if len(statuses)>1:result['statuses']=statuses
         except BaseException as error:
             result=dict(error=dict(type=type(error).__module__+'.'+type(error).__qualname__,args=list(error.args),filename=getattr(error,'filename',None)))
     after=base64.b64encode(target.read_bytes()).decode('ascii') if target.is_file() else None
@@ -128,7 +134,7 @@ def main():
     report=dict(format='rerail.serverplan-steps-signing/v1',sourcePin=PIN,fullMigrationAcceptance=False,passed=False,cases=[],
         fixtureKeys='Public, synthetic seeds only. Child environments omit all ambient signing keys.',
         selection=dict(part=args.part,parts=args.parts,total=len(CASES)),sourceFiles={n:sha((args.source/n).read_bytes()) for n in source_names},
-        harnessFiles={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in [Path(__file__),*[Path(__file__).with_name(n) for n in ['serverplan_steps_port.py','replay.py','policy_routes.py','migration.py']]]})
+        harnessFiles={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in [Path(__file__),*[Path(__file__).with_name(n) for n in ['serverplan_steps_port.py','serverplan_steps_contract.py','suite.py','replay.py','policy_routes.py','migration.py']]]})
     if args.command=='native':
         args.engine=args.engine.absolute();baseline=read_json(args.baseline);assert baseline['passed'];compare(CASES,[v['input'] for v in baseline['cases']]);report['engineSha256']=sha(args.engine.read_bytes())
     for index in range(args.part,len(CASES),args.parts):

@@ -23,6 +23,6 @@ SSPSignResult(@place("",0),1,0,"","",cat("ERROR: Failed to decode NERA_SIGNING_K
 .decl ssps_pattern(pattern: symbol)
 ssps_pattern(cat("(?m)^(ALLOWLIST_SIGNATURE(?:",space,"*:",space,"*str)?",space,"*=",space,"*)(?:\"[^\"]*\"|NEEDS_SIGNING|UNSIGNED)(.*)")) :- space = "[\\t\\n\\v\\f\\r \\x1c-\\x1f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]".
 .decl ssps_matched()
-ssps_matched() :- option("entryPoint","_sign_update"), option("scriptSource",source), ssps_pattern(pattern), match_all(pattern,source,_,_,_).
+ssps_matched() :- option("entryPoint","_sign_update"), option("scriptSource",source), ssps_pattern(pattern), @count_matches(pattern,source) > 0.
 SSPSignResult(@place("",0),0,1,@replace_all(source,pattern,cat("${1}\"",signature,"\"${2}")),cat("Updated ALLOWLIST_SIGNATURE in ",path,"\n"),"") :- option("entryPoint","_sign_update"), option("scriptSource",source), option("newSignature",signature), option("scriptPath",path), ssps_pattern(pattern), ssps_matched().
 SSPSignResult(@place("",0),1,0,"","",cat("ERROR: Could not find ALLOWLIST_SIGNATURE in ",path,"\n")) :- option("entryPoint","_sign_update"), option("scriptPath",path), !ssps_matched().

@@ -72,7 +72,7 @@ def main():
     compare((args.source/filename).read_bytes(),subprocess.check_output(['git','-C',str(args.source),'show',PIN+':'+filename]))
     report=dict(format='rerail.serverplan-steps-cli-contract/v1',sourcePin=PIN,fullMigrationAcceptance=False,
         passed=False,cases=[],selection=dict(part=args.part,parts=args.parts,total=len(CASES)),
-        untestedActions=['--sign-allowlist'],harnessFiles={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in
+        separateActionContracts={'--sign-allowlist':'serverplan_steps_signing_contract.py'},harnessFiles={str(p.relative_to(ROOT)):sha(p.read_bytes()) for p in
         [Path(__file__),*[Path(__file__).with_name(n) for n in ['serverplan_steps_port.py','replay.py','policy_routes.py','migration.py']]]})
     if args.command == 'source':
         sys.path.insert(0,str(args.source.absolute()));module=importlib.import_module('scripts.lint_serverplan_steps')

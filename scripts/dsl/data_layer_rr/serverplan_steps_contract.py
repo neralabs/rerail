@@ -196,11 +196,12 @@ class Contract:
         result = dict(format='rerail.serverplan-steps-original-contracts/v1', sourcePin=PIN, commit=PIN,
             pytest_exit_code=int(code), exitCode=int(code), oracle=self.backend is None, source_mismatches=[],
             fullMigrationAcceptance=False, part=self.args.part, parts=self.args.parts, collected=self.collected, selectedCases=self.selected, selectedEntries=self.args.entries,
+            testFiles=self.args.test_file,
             moduleAssertions=self.args.include_module_assertions,moduleSettings=self.module_settings,
             cases=self.cases, calls=self.calls, events=[], missingResults=missing,
             semanticFallbacks=self.fallbacks, hostProtocolCalls=self.host_protocol_calls, harnessFiles=self.harness,
             sourceFiles={n: sha((self.args.source/n).read_bytes()) for n in
-                ['scripts/lint_serverplan_steps.py', 'scripts/tests/test_lint_serverplan_steps.py']})
+                ['scripts/lint_serverplan_steps.py', *self.args.test_file]})
         if self.backend:
             result.update(engineSha256=sha(self.args.engine.read_bytes()), nativeCalls=self.backend.calls)
         write_json(self.args.out, result)
@@ -215,19 +216,21 @@ def main():
         parser.add_argument('--'+name, type=Path, required=name in ['source', 'out'])
     parser.add_argument('--entries',help='Explicit native helper slice; does not certify the complete original suite')
     parser.add_argument('--include-module-assertions',action='store_true',help='Also run original assertions without API calls, over native module settings')
+    parser.add_argument('--test-file',action='append',help='Unchanged original test files; defaults to the dedicated step suite')
     parser.add_argument('--part', type=int, default=0)
     parser.add_argument('--parts', type=int, default=1)
     args = parser.parse_args()
+    args.test_file=args.test_file or ['scripts/tests/test_lint_serverplan_steps.py']
     for name in ['source', 'out', 'baseline', 'engine', 'rule_root']:
         if getattr(args, name) is not None:
             setattr(args, name, getattr(args, name).absolute())
     assert git(args.source, 'rev-parse', 'HEAD') == PIN and 0 <= args.part < args.parts
-    for name in ['scripts/lint_serverplan_steps.py', 'scripts/tests/test_lint_serverplan_steps.py']:
+    for name in ['scripts/lint_serverplan_steps.py', *args.test_file]:
         assert (args.source/name).read_bytes() == subprocess.check_output(['git','-C',str(args.source),'show',PIN+':'+name])
     sys.path[:0] = [str(args.source), str(args.source/'scripts'), str(ROOT/'scripts/dsl/data_layer_audit')]
     os.chdir(args.source)
     contract = Contract(args)
-    code = pytest.main(['-q','-p','no:cacheprovider','-o','addopts=','scripts/tests/test_lint_serverplan_steps.py'], plugins=[contract])
+    code = pytest.main(['-q','-p','no:cacheprovider','-o','addopts=',*args.test_file], plugins=[contract])
     contract.finish(code)
     raise SystemExit(code)
 
