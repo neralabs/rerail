@@ -2660,26 +2660,13 @@ fn run_observed(
             if !drain(process)? {
                 return Err(Error::Plan("the chunk builder ended before a load's documents".to_owned()));
             }
-            // The new documents' rows of the per-file relations the cone reads, from `x`, by their first location:
-            // one statement per relation for the whole batch, a range join on the key when that column leads it.
+            // The new documents' rows of the per-file relations the cone reads, from the exports held in memory
+            // (`exports.rs`), by their first location. The chunks wrote them there while `drain` ran.
             let new: std::collections::HashSet<i64> = keys.iter().copied().collect();
-            db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS rr_load_new(lo INTEGER, hi INTEGER); DELETE FROM temp.rr_load_new;")?;
-            super::insert_many(&db, "INSERT INTO temp.rr_load_new", keys.iter().map(|d| vec![SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect())?;
             for rel in &per_file {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied()).ok_or_else(|| Error::Plan(format!("{rel}: no location column")))?;
                 let width = lowered.program.decls[rel].len();
-                let table = crate::code_rule_dsl::logic::sql::ident(rel);
-                let row = |r: &rusqlite::Row| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vec<_>>>();
-                let rows: Vec<Vec<i64>> = if at == 0 {
-                    let cols = (0..width).map(|c| format!("t.c{c}")).collect::<Vec<_>>().join(", ");
-                    db.prepare(&format!("SELECT {cols} FROM temp.rr_load_new n JOIN x.{table} t ON t.c0 BETWEEN n.lo AND n.hi"))?
-                        .query_map([], row)?
-                        .collect::<rusqlite::Result<_>>()?
-                } else {
-                    let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                    let all: Vec<Vec<i64>> = db.prepare(&format!("SELECT {cols} FROM x.{table}"))?.query_map([], row)?.collect::<rusqlite::Result<_>>()?;
-                    all.into_iter().filter(|r| new.contains(&memo::document_of(r[at]))).collect()
-                };
+                let rows = exports.borrow().rows_of_docs(rel, width, at, &new);
                 out.push((rel.clone(), rows));
             }
             Ok(out)
@@ -3026,7 +3013,9 @@ fn run_observed(
                     let digests: HashMap<String, u64> = cross_inputs.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref()))).collect();
                     drop(s);
                     let ckey = retain::key(&prepared_key, &cross.program);
-                    let mut cell = cell.lock().expect("the session's cross-file part");
+                    let mut cells = cell.lock().expect("the session's cross-file part");
+                    // Taken out while the run uses it; a run that fails leaves no kept part for this program.
+                    let mut cell = cells.remove(&ckey);
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
                     // The O125 spike's progress: each step of a session's run, with this thread's CPU.
                     let trace = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
@@ -3276,7 +3265,11 @@ fn run_observed(
                         *m.entry(*why).or_insert(0) += 1;
                         m
                     });
-                    *cell = Some(next);
+                    // Every program's kept part shares the one budget: past it, only this program's is kept.
+                    if next.bytes() + cells.values().map(retain::Retained::bytes).sum::<usize>() > retain::budget() {
+                        cells.clear();
+                    }
+                    cells.insert(ckey, next);
                 }
                 None => {
                     let exported: BTreeSet<&String> = split.exports.iter().collect();
