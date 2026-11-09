@@ -2129,3 +2129,21 @@ This cohort reuses the registered root CLI built from `8ccb4ce4e`, based on Fina
 No engine changes, build, full repository cold run, Python rule execution, or Linear ticket occurs in this delivery.
 Deletion mode, import cleanup, production CLI/registry integration, and remaining default-entry contracts remain open.
 The inventory remains 89 drafts and eleven absent translations. Neither rule 89 nor the 100-rule migration is marked complete.
+
+### 2026-11-08 — Raw-execute detector and modern world integration
+
+The raw-execute rule now uses native semantic AST traversal and the source's distinct plugin scope.
+Explicit filesystem requests include cache directories that the implicit source walk excludes.
+The rule preserves definition exit order, nested function ownership, duplicate calls, raising stubs, and fact-formatting quirks.
+
+Acceptance uses Final `d60c1a832` and root engine source `fa47dda79`.
+Two engine repairs preserve world dependency snapshots and dispatch requests from combined policy and library namespaces.
+All four original tests and five observations pass without source-detector fallback.
+The expanded cohort passes 187 API cases, 31 snapshot cases, and 31 workspace cases, including fifteen workspace positives.
+Fourteen mutation controls and three combined-scope cases pass.
+All 101 readers, 136 focused native tests, and 160 tooling tests pass, with 124 tooling subtests.
+
+The [receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-raw-execute-native-contracts.json.gz) retains complete results and exact consumed programs.
+It also retains earlier failed verifier runs and source references.
+Raw-execute callback-collector/factory/CLI and registry/lifecycle acceptance remain open.
+The inventory contains 90 drafts and ten absent translations. Full migration acceptance remains open.

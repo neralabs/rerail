@@ -9235,3 +9235,43 @@ Final advances to `32b16e4fe` before final acceptance.
 This checkpoint preserves the authored rule and evidence before the engine merge.
 The earlier observations use the registered Final-stage-two artifact. They do not certify the newer engine.
 The migration inventory now contains 90 drafts and ten absent translations. Full migration acceptance remains open.
+### 2026-11-08 — Raw-execute acceptance on the merged Final engine
+
+The branch adopts Final through `d60c1a832`.
+The final CLI and unit artifacts use root engine source `fa47dda79`.
+Their separate builds take 22.716 and 46.820 seconds.
+
+The Final merge exposes two generic engine defects.
+World dependency snapshots omit demanded metadata and host values.
+New failing tests prove stale file sizes and changed or absent host values.
+The repaired snapshots hash each demanded projection and share one directory read.
+
+Combined policies also rename their filesystem requests away from the engine dispatcher.
+An implicit source walk hides this defect for ordinary files.
+A hidden-cache positive exposes the missing request.
+Canonical request bridges preserve each producer namespace and deliver its requests to the existing world dispatcher.
+A functional test covers both policy and library requests without primary source documents.
+
+The final cohort passes all four original tests and five complete observations.
+It also passes 187 supplemental API cases, 31 snapshot reporter cases, and 31 actual workspace cases.
+Fifteen workspace cases contain findings.
+Fourteen changed-clause controls produce mismatches through successful native execution.
+Three combined-scope cases preserve complete diagnostics and duplicate occurrences.
+Eight persistent-workspace steps for rule 89 pass on the same engine.
+
+The acceptance verifier initially mishandles the engine's JSON-lines diagnostic output.
+Three regression tests now cover full fields, Unicode escapes, and duplicate ordinals.
+The Unicode mutation also moves to the active scope filter after the scope repair.
+The earlier failed verifier runs remain in the receipt.
+
+All 101 policy/table readers pass in one invocation.
+All 136 focused native tests pass.
+Three native report or translation helpers remain ignored by their existing annotations.
+All 160 tooling tests pass, with 124 subtests.
+The external Ruff and SQLFluff fixture suites remain outside this focused cohort, as previously authorized.
+
+The [acceptance receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-raw-execute-native-contracts.json.gz) retains complete observations, program bytes, harness bytes, builds, logs, commands, and its validator.
+No full repository cold run occurs. This cohort makes no performance claim.
+The raw-execute callback-collector/factory/CLI and registry/lifecycle contracts remain open.
+Rule 89 deletion and production integration also remain open.
+The inventory remains 90 drafts and ten absent translations. Full migration acceptance remains open.

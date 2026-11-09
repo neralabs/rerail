@@ -27,6 +27,20 @@ observed_raw(path,line,detail,i) :- rre_fact(_,i,path,line,detail).
 '''
 
 
+def read_diagnostics(path):
+    # The engine writes one JSON object per line, including its own JSON escapes.
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def matches(expected,rows,diagnostics):
+    wanted=[dict(policy='data-layer-raw-execute-regression',clause='RRERemoved',code='RER001',
+                 path=path,line=int(line),at=0,tag=None,message=detail,
+                 parameters=dict(ordinal=int(ordinal),detail=detail))
+            for path,line,detail,ordinal in expected]
+    key=lambda row:json.dumps(row,sort_keys=True)
+    return rows==expected and sorted(diagnostics,key=key)==sorted(wanted,key=key)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ['engine','oracle','output']:parser.add_argument('--'+name,type=Path,required=True)
@@ -66,9 +80,9 @@ def main():
                 if not path.is_file():raise ValueError('Missing native observation output: '+str(sorted(p.name for p in out.iterdir()))+'\n'+run.stdout)
                 rows=list(csv.reader(path.open(),delimiter='\t'))
                 rows.sort(key=lambda r:int(r[3]))
-                diagnostics=list(csv.reader((out/'rr_diagnostic.csv').open(),delimiter='\t'))
+                diagnostics=read_diagnostics(out/'rr_diagnostic.csv')
                 runs[mode]=dict(rows=rows,diagnostics=diagnostics,stdout=run.stdout,stderr=run.stderr)
-            passed=all(r['rows']==expected and len(r['diagnostics'])==len(expected) and all('RER001' in row for row in r['diagnostics']) for r in runs.values())
+            passed=all(matches(expected,r['rows'],r['diagnostics']) for r in runs.values())
             result['cases'].append(dict(id=label,expected=expected,runs=runs,passed=passed))
             write_json(args.output,result)
     result.update(complete=True,passed=all(c['passed'] for c in result['cases']))

@@ -23,7 +23,7 @@ SPECS=[
  ('unicode-digits','api','raw-execute-fact-178','rre_digits(value) :-',None,r'rre_digits(value) :- rre_parts(_,_,value,_,1), match_all("\\A[0-9]+\\z",value).'),
  ('ruff-cache-is-in-scope','workspace','raw-reporter-18','pfd_skip(".git")','pfd_skip("venv")','pfd_skip(".ruff_cache")'),
  ('pytest-cache-is-in-scope','workspace','raw-reporter-19','pfd_skip("__pycache__")','pfd_skip("tmp")','pfd_skip(".pytest_cache")'),
- ('unicode-production-root','workspace','raw-reporter-4','pfd_root(path) :-',r'l\\d{4}_','l[0-9]{4}_'),
+ ('unicode-production-root','workspace','raw-reporter-4','rre_file(d) :- !option("entryPoint",_)',r'l\\d{4}_','l[0-9]{4}_'),
  ('enforcement','workspace','raw-reporter-0','.mode block','block','log'),
 ]
 
