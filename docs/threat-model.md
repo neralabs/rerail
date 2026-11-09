@@ -771,7 +771,10 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - **Device key** goes to `security -i` on stdin, not `argv` (`src/activation/device-keystore.ts`).
 - **Engine socket** lives in `tmpdir()/rerail-<uid>/`, checked before `listen` to be the person's own, 0700 and not a
   symlink (`src/runtime/engine-service.ts`). On Windows it is a named pipe, which any local user could create first
-  under its predictable name; the engine then listens on that name with a random suffix. On Linux another user can create that folder first; the daemon then
+  under its predictable name. The daemon asks the holder to answer a random challenge with an HMAC keyed by the access
+  capability (`src/runtime/engine-proof.ts`), so the holder never sees the capability; one that cannot answer is not
+  this home's engine, and the engine listens on that name with a random suffix. On Linux another user can create that
+  folder first; the daemon then
   listens in a `run` folder beside its database under the 0700 Rerail home (`chooseEngineSocketPath`) and records the
   path in `daemon.json` for hooks. Start fails only if no folder is usable, naming each folder, why it was refused,
   and who must remove it.

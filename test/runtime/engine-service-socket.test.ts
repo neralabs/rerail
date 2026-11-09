@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { engineHoldsCapability, engineProof } from "../../src/runtime/engine-proof.js";
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../src/runtime/engine-service.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { startTestRepository } from "../support/started-repository.js";
@@ -168,8 +170,91 @@ describe.runIf(process.platform !== "win32")("engine service socket directory", 
   });
 });
 
+describe("starting the engine on a pipe name another process holds", () => {
+  // Off Windows a `\\.\pipe\` name is a relative path: a Unix socket in the current folder, which refuses a second
+  // listener with EADDRINUSE as a held Windows pipe does, so these run on every platform.
+  const CAPABILITY = "PERSISTENT-DASHBOARD-CAPABILITY";
+  let root: string;
+  let previousFolder: string;
+  let pipeCount = 0;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-held-pipe-"));
+    previousFolder = process.cwd();
+    process.chdir(root);
+  });
+
+  afterEach(async () => {
+    process.chdir(previousFolder);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const pipeName = (): string => String.raw`\\.\pipe\rerail-test-${process.pid}-${Date.now().toString(16)}-${pipeCount++}`;
+
+  it("never shows a holder that is not this home's engine the capability, and listens on the fallback", async () => {
+    const pipe = pipeName();
+    const seen: string[] = [];
+    // A 400 to everything is what this home's engine answers an empty event, so it once stopped every start.
+    const squatter = createHttpServer((incoming, response) => {
+      const chunks: Buffer[] = [];
+      incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+      incoming.on("end", () => {
+        seen.push(JSON.stringify({ method: incoming.method, url: incoming.url, headers: incoming.headers, body: Buffer.concat(chunks).toString("utf8") }));
+        response.writeHead(400).end("{}");
+      });
+    });
+    await new Promise<void>(resolve => squatter.listen(pipe, resolve));
+    try {
+      const service = await startEngineService({ socketPath: pipe, storageRoot: join(root, "state"), accessToken: CAPABILITY, pipeFallback: () => `${pipe}-fallback` });
+      try {
+        expect(service.socketPath).toBe(`${pipe}-fallback`);
+        expect(seen).toHaveLength(1);
+        expect(seen.join("\n")).not.toContain(CAPABILITY);
+      } finally {
+        await service.close();
+      }
+    } finally {
+      await new Promise<void>(resolve => squatter.close(() => resolve()));
+    }
+  });
+
+  it("starts no second engine beside this home's own, and moves aside for another home's", async () => {
+    const pipe = pipeName();
+    const own = await startEngineService({ socketPath: pipe, storageRoot: join(root, "state"), accessToken: CAPABILITY });
+    try {
+      await expect(startEngineService({ socketPath: pipe, storageRoot: join(root, "state"), accessToken: CAPABILITY, pipeFallback: () => `${pipe}-1` }))
+        .rejects.toThrow(/in use by a running daemon/u);
+      const other = await startEngineService({ socketPath: pipe, storageRoot: join(root, "other"), accessToken: "another-home", pipeFallback: () => `${pipe}-2` });
+      expect(other.socketPath).toBe(`${pipe}-2`);
+      await other.close();
+    } finally {
+      await own.close();
+    }
+  });
+});
+
+describe("engine proof", () => {
+  it("is answered only by an engine holding the capability, and the challenge is all a holder sees", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-engine-proof-"));
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-proof-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    const service = await startEngineService({ socketPath, storageRoot: join(root, "state"), accessToken: "capability" });
+    try {
+      expect(await engineHoldsCapability(socketPath, "capability")).toBe(true);
+      expect(await engineHoldsCapability(socketPath, "not-the-capability")).toBe(false);
+      const challenge = "ab".repeat(32);
+      expect(engineProof("capability", challenge)).not.toContain("capability");
+      expect(engineProof("capability", challenge)).not.toBe(engineProof("another", challenge));
+    } finally {
+      await service.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("an engine pipe another process holds", () => {
-  const PIPE = String.raw`\.\pipe\rerail-0123456789abcdef01234567`;
+  const PIPE = String.raw`\\.\pipe\rerail-0123456789abcdef01234567`;
   const held = Object.assign(new Error("listen EADDRINUSE"), { code: "EADDRINUSE" });
 
   it("listens on the fallback pipe when the holder is not this home's engine, and says where", async () => {

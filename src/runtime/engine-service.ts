@@ -1,5 +1,5 @@
 import { lstat, mkdir, unlink } from "node:fs/promises";
-import { createServer, request, type Server } from "node:http";
+import { createServer, request, type Server, type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import { dirname, resolve as resolvePath } from "node:path";
 import { z } from "zod/v4";
@@ -12,6 +12,7 @@ import {
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
+import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -146,10 +147,11 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
    */
   accessToken?: string;
   /**
-   * A pipe name to listen on instead when `socketPath`, a Windows named pipe, is held by a process that is not this
-   * home's engine service. Any local user can create a pipe of any name, and `socketPath` is derived from the database
-   * path, which anyone can work out, so without one a pipe made first stops every daemon start. Clients find the pipe
-   * through the state file, never by computing it. A socket path the caller named outright gets none.
+   * A pipe name to listen on instead when `socketPath`, a Windows named pipe, is held by a process that cannot prove it
+   * is this home's engine service (`engineHoldsCapability`). Any local user can create a pipe of any name, and
+   * `socketPath` is derived from the database path, which anyone can work out, so without one a pipe made first stops
+   * every daemon start. Clients find the pipe through the state file, never by computing it. A socket path the caller
+   * named outright gets none.
    */
   pipeFallback?: () => string;
 };
@@ -279,33 +281,23 @@ async function socketAnswers(socketPath: string): Promise<boolean> {
 }
 
 /**
- * Whether this home's engine service answers on the pipe `socketPath`: it takes `accessToken` and refuses the empty
- * request after it (400). Another user's process holding the name has no such token. Without a token to present, any
+ * Whether this home's engine service answers on the pipe `socketPath`: it proves it holds `accessToken` by answering a
+ * challenge (`engineHoldsCapability`), which never shows the holder the capability. Any local user can create the pipe
+ * name first, and a probe that presented the capability would hand it to them. Without a capability to check, any
  * holder counts as this home's.
  */
 async function ownEngineAnswers(socketPath: string, accessToken: string | undefined): Promise<boolean> {
-  if (accessToken === undefined) return true;
-  const { promise, resolve } = Promise.withResolvers<boolean>();
-  const body = "{}";
-  const outgoing = request({
-    socketPath,
-    method: "POST",
-    path: "/events",
-    agent: false,
-    headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), [DAEMON_ACCESS_HEADER]: accessToken },
-  }, (response) => {
-    response.resume();
-    resolve(response.statusCode === 400);
-  });
-  outgoing.setTimeout(PIPE_PROBE_TIMEOUT_MS, () => outgoing.destroy(new Error("Engine probe timed out")));
-  // A holder that never answers, or hangs up, is not this home's engine; the first verdict wins.
-  outgoing.on("error", () => resolve(false));
-  outgoing.on("close", () => resolve(false));
-  outgoing.end(body);
-  return await promise;
+  return accessToken === undefined || await engineHoldsCapability(socketPath, accessToken);
 }
 
-const PIPE_PROBE_TIMEOUT_MS = 2_000;
+/** Answers a challenge sent to {@link ENGINE_PROOF_PATH} with the proof that this engine holds `accessToken`. */
+function answerEngineChallenge(challenge: unknown, accessToken: string, response: ServerResponse): void {
+  if (!isEngineChallenge(challenge)) {
+    response.writeHead(400).end(JSON.stringify({ error: "engine-challenge-required" }));
+    return;
+  }
+  response.end(JSON.stringify({ proof: engineProof(accessToken, challenge) }));
+}
 
 /** What listening beside a held pipe needs; tests pass their own. */
 export interface HeldPipeListening {
@@ -380,6 +372,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   };
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
+    if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
+      answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], options.accessToken, response);
+      incoming.resume();
+      return;
+    }
     if (incoming.method !== "POST" || incoming.url !== "/events") {
       response.writeHead(404).end();
       return;

@@ -799,6 +799,28 @@ describe("Rerail daemon", () => {
     expect(daemon.port).not.toBe(1);
   });
 
+  it("records the engine pipe it listens on when another process holds the default one", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const databasePath = join(root, "rerail.sqlite");
+    const held = defaultEngineSocketPath(databasePath, "win32");
+    // Off Windows the pipe name is a relative path: a Unix socket in the current folder, held as a pipe would be.
+    const previousFolder = process.cwd();
+    process.chdir(root);
+    const squatter = createServer((_request, response) => response.writeHead(400).end("{}"));
+    await new Promise<void>((resolveListening) => squatter.listen(held, () => resolveListening()));
+    try {
+      const daemon = await start({ databasePath, enginePlatform: "win32", stateFile: join(root, "daemon.json") });
+      const recorded = JSON.parse(await readFile(join(root, "daemon.json"), "utf8")) as DaemonState;
+      expect(recorded.kernelSocketPath).not.toBe(held);
+      expect(recorded.kernelSocketPath.startsWith(`${held}-`)).toBe(true);
+      expect(daemon.state().kernelSocketPath).toBe(recorded.kernelSocketPath);
+      await daemon.close();
+    } finally {
+      await new Promise<void>((resolveClosed) => squatter.close(() => resolveClosed()));
+      process.chdir(previousFolder);
+    }
+  });
+
   // Review of #49 (N1): a resource that fails to close does not keep the next one open.
   it("releases its engine socket on a failed start even when the native session server fails to close", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));

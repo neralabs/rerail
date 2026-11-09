@@ -89,6 +89,11 @@ export interface RerailDaemonOptions {
   nativeHealth?: () => NativeHealth;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
+  /**
+   * The platform whose default engine endpoint the daemon takes when `kernelSocketPath` names none
+   * (`defaultEngineSocketPath`): a named pipe on Windows, a Unix socket elsewhere. Tests take Windows' on any OS.
+   */
+  enginePlatform?: NodeJS.Platform;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
   /**
@@ -481,7 +486,7 @@ export class RerailDaemon {
     // Anyone on the machine can make `rerail-<uid>` in a shared temp directory first, so a refused one falls back to a
     // `run` folder beside the database, checked the same way. Clients find the socket through the state file, never by
     // computing it. A socket path the caller named is used or refused, never replaced.
-    const defaultSocketPath = defaultEngineSocketPath(databasePath);
+    const defaultSocketPath = defaultEngineSocketPath(databasePath, options.enginePlatform);
     const kernelSocketPath = options.kernelSocketPath
       ?? await chooseEngineSocketPath([defaultSocketPath, join(dirname(databasePath), "run", basename(defaultSocketPath))]);
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
