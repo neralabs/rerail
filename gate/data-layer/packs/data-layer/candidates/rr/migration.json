@@ -2862,7 +2862,7 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-execution-authority-bypass.json",
       "legacySha256": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
       "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
       "previousEvidence": {
@@ -2909,7 +2909,50 @@
         },
         "comparison": "Complete values; only unspecified whole-file completion groups may permute. Registry and per-file order and multiplicity remain exact."
       },
-      "acceptancePending": "Revalidate after adopting Final 49f791af1; previousEvidence certifies Final 004 only."
+      "evidence": {
+        "assertions": 7,
+        "positives": 6,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
+        "engineCommit": "d16c4d68e960cae7aaff7896d4eb9a72d64d9b22",
+        "corpusSha256": "d6cd54654e9d32fa7beb478f97e0c38aacc67cc0499dd9c693d3a7148d1a4a69",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "35871cc256e516f4aca1569fc102361f5b69a4725d942a843da32785df76ba5e",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory.json",
+          "sha256": "b5b76fa604931179d976db422044913943860448aa6edb2898f9470d688a4e5b"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-final49-native-snapshot.json",
+            "sha256": "bab9c628fb3540f707afb265ccb7dafe3017cf8905284566ac0f794a10efcce9"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-final49-native-workspace.json",
+            "sha256": "c0e0127de3fd4b4e79c577b9787222266b6c3a51e81ca22e503d31bc6aacfbfd"
+          }
+        ],
+        "acceptanceCheckpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-final49-checkpoint.json.gz",
+          "sha256": "eda03319c43f54b369c268a045f31659eee5b7184dc97d15a8cf2537dacc665a"
+        },
+        "supplemental": {
+          "apiCases": 81,
+          "failures": 0,
+          "frontendCases": 26,
+          "inputRefusals": 8,
+          "mutationControls": 12,
+          "originalTestsPerAPI": 7,
+          "persistentSteps": 15,
+          "productionCases": 26,
+          "semanticFallbacks": 0,
+          "skipped": 0,
+          "verifiedNativeExecutions": 577
+        },
+        "comparison": "Complete values; only unspecified whole-file completion groups may permute. Registry and per-file order and multiplicity remain exact."
+      }
     },
     {
       "check": "impl_direct_execution",
