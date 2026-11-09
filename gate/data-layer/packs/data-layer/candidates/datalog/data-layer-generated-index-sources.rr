@@ -1,3 +1,4 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl generated_fn_marks(kind: symbol)
 generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 .decl child(p: node, c: node, i: number)

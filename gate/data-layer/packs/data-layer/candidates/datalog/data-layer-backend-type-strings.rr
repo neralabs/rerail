@@ -1,3 +1,4 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl comparison_0_bt002_first(c: node, n: number)
 .decl comparison_0_bt002_hit(c: node, d: number, s: symbol)
 .decl comparison_0_bt002_start(c: node, n: number)

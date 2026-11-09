@@ -1,3 +1,4 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl spt_arglist_kind(kind: symbol)
 spt_arglist_kind("argument_list").
 .decl spt_block_kind(kind: symbol)
@@ -1264,7 +1265,7 @@ rr_agg13(j, p) :- rr_ctx14(p), spt_flow_jnws(j), j > p.
 spt_flow_jnext(p, i) :- spt_flow_jafter(p), rr_t12 = @add(p, 1), spt_flow_jws(rr_t12), i = min j : { rr_agg13(j, p) }.
 spt_flow_jobj(t) :- spt_flow_rkh(_), t = min j : { spt_flow_jnws(j) }, spt_flow_js(t, 123).
 spt_flow_jkeyish(o) :- spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_js(i, 58).
-rr_ctx17(v) :- spt_flow_jobj(_), spt_flow_jkeyish(o), spt_flow_jdepth(o, 1), spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_jnext(i, v), spt_flow_jopen(v).
+rr_ctx17(v) :- spt_flow_jkeyish(o), spt_flow_jdepth(o, 1), spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_jnext(i, v), spt_flow_jopen(v).
 rr_agg16(j, v) :- rr_ctx17(v), spt_flow_jclose(j), spt_flow_jdepth(j, 2), j > v.
 spt_flow_jentry(o, v, m) :- spt_flow_jobj(_), spt_flow_jkeyish(o), spt_flow_jdepth(o, 1), spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_jnext(i, v), spt_flow_jopen(v), m = min j : { rr_agg16(j, v) }.
 spt_flow_jmember(v, o) :- spt_flow_jentry(_, v, m), spt_flow_jstr(o, _), o > v, o < m, spt_flow_jdepth(o, 2), !spt_flow_jkeyish(o).

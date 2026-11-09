@@ -1,3 +1,4 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl mode_split_imports(kind: symbol)
 mode_split_imports("import_statement"). mode_split_imports("import_from_statement").
 .decl mode_split_patterns(kind: symbol)
