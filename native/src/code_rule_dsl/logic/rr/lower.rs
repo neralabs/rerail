@@ -1729,9 +1729,22 @@ impl Lowerer {
         })
     }
 
-    /// Whether a sibling atom reads `v` at a column declared a node (a node or span).
+    /// Whether a sibling atom reads `v` at a column declared a node (a node or span), or `v` is a named group of a
+    /// sibling `match_all` (or `match`) over a node or span: `rx_span`'s capture `m` is a span. Without the second, a
+    /// test of the capture in the same body (`match_all("(?<w>…)", t), match("…", w)`, RUF001's words) was a test of
+    /// the span's id as a text, and never held.
     fn node_typed(&self, v: &str) -> bool {
+        self.node_typed_at(v, 0)
+    }
+
+    fn node_typed_at(&self, v: &str, depth: usize) -> bool {
         self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, args, neg: false } if depth < 4 && matches!(rel.as_str(), "match_all" | "match") => match args.as_slice() {
+                [STerm::Str(re), STerm::Var(s), ..] if s != v && groups(re).iter().any(|g| g == v) => {
+                    self.span_container(s).is_some() || self.node_typed_at(s, depth + 1)
+                }
+                _ => false,
+            },
             Lit::Atom { rel, args, neg: false } => self.prog.decls.get(rel).is_some_and(|cols| {
                 args.iter().zip(cols).any(|(a, (_, t))| matches!(a, STerm::Var(x) if x == v) && t == "node")
             }),

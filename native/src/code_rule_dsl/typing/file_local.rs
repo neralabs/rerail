@@ -685,7 +685,8 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
 /// a finding's location) or relations of documents (`p9_path_module(d, m)`), is a row per node of the chunk: on 200
 /// files, 611,865 rows for each such rule, every one held by the cross part. It is pushed only when that keeps the
 /// cross part off the base relations (so the per-file memo works); when the cross part reads them anyway, it reads
-/// these lookups there too.
+/// these lookups there too. So is a component that enumerates subtrees (`descends`): `within(n, a)` with `n`
+/// narrowed only by its attributes.
 pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
     let original = prog.clone();
     let made = push_with(prog, false);
@@ -826,6 +827,22 @@ fn unrestricted(prog: &crate::code_rule_dsl::logic::front::Program, atoms: &[&cr
         && atoms.iter().all(|a| (attribute(&a.rel) && plain(a)) || (!attribute(&a.rel) && !prog.decls.get(&a.rel).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span")))))
 }
 
+/// Whether a component enumerates subtrees: `within(n, a)` with `n` read by no other atom of it but a node's
+/// attributes (`docof`, `visit_index`, `line`, …). Its rows are every node under each `a` it narrows, whatever reads
+/// it: `c4_shadow`'s `binding(s, x, site, _), within(n, s), earlier(site, n)` made 922,044 rows on the Python pack's
+/// fixtures for a cross-file reader that binds `n` from a few hundred asks (`c4_builtin_ask(n, x)`).
+fn descends(atoms: &[&crate::code_rule_dsl::logic::front::Atom]) -> bool {
+    use crate::code_rule_dsl::logic::front::Term;
+    let attribute = |rel: &str| matches!(rel, "docof" | "line" | "end_line" | "col" | "visit_index" | "ast_depth");
+    atoms.iter().any(|w| match (w.rel.as_str(), w.args.as_slice()) {
+        ("within", [Term::Var(n), a]) if a != &Term::Var(n.clone()) => atoms
+            .iter()
+            .filter(|b| !std::ptr::eq(**b, *w) && b.args.iter().any(|t| matches!(t, Term::Var(x) if x == n)))
+            .all(|b| attribute(&b.rel)),
+        _ => false,
+    })
+}
+
 fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrestricted: bool) -> Vec<String> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
@@ -945,7 +962,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 }
                 // A component that holds a row for every node of the chunk (nothing in it narrows its nodes) is left
                 // when the cross part reads base relations anyway (`push_local_joins`).
-                if keep_unrestricted && unrestricted(prog, &atoms) {
+                if keep_unrestricted && (unrestricted(prog, &atoms) || descends(&atoms)) {
                     continue;
                 }
                 // Comparisons and negated file-local reads over only this component's variables go with it.
