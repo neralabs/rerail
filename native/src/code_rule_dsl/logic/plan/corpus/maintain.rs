@@ -164,18 +164,6 @@ fn named_heads(rule: &Rule) -> Rule {
 /// `r__plus` and `r__minus` in place of their diff of every old and new row.
 pub(in crate::code_rule_dsl) type Given = std::collections::HashMap<String, (Arc<dyn Source>, Arc<dyn Source>)>;
 
-/// An input's rows new and gone, read from the documents that changed (`input_delta`), as `Given`'s sources:
-/// named as the planner reads their statistics (`sql_col` of `r__plus`, `r__minus`).
-pub(in crate::code_rule_dsl) fn rows_given(rel: &str, width: usize, new: &[Vec<i64>], gone: &[Vec<i64>]) -> (Arc<dyn Source>, Arc<dyn Source>) {
-    let source = |suffix: &str, rows: &[Vec<i64>]| {
-        let name = named(rel, suffix);
-        let columns = (0..width).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&name, c)).collect();
-        let values = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
-        crate::code_rule_dsl::logic::native::component::columns_source(columns, values)
-    };
-    (source("plus", new), source("minus", gone))
-}
-
 /// `given` answers for an input whose delta it has (`Given`'s, or found by its documents), asked only for the inputs a
 /// maintained stratum reads the delta of.
 pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
