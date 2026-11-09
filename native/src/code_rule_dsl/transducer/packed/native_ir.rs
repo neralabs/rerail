@@ -558,6 +558,8 @@ pub(super) enum BlockInst {
     Within(u8),
     /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
     Phase(u8, u8),
+    /// Plane `j` of each byte's position (`block::BlockOp::Position`), from the position.
+    Position(u8),
     /// A fixed point's carry (`block::BlockOp::Carry`): its initial value's word in a block's
     /// first round, its next's after.
     Carry(u16),
@@ -604,6 +606,7 @@ impl BlockNative {
                 BlockOp::BackFill(a, b) => BlockInst::BackFill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
+                BlockOp::Position(j) => BlockInst::Position(j),
                 BlockOp::Carry(a) => BlockInst::Carry(a),
             })
             .collect();

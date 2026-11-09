@@ -72,6 +72,11 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     /// of the position, for a period that does not divide 64 (`Const` holds the others). No
     /// carry: each executor knows the position, as for `within`.
     Phase(u8, u8),
+    /// The bytes whose stream position has bit `j` set (`j` in 0..=63): one plane of the
+    /// position as a number, for numbers kept as planes (`bitlex_compile`'s `number`). No carry:
+    /// each executor knows the position, as for `phase`. Below bit 6 the plane is a pattern of
+    /// the word; from bit 6 on, all of the word or none.
+    Position(u8),
     /// A carry of a fixed point (`BlockProgram::rounds`): in a block's first round, `init`'s
     /// word; in each round after, its next's word in the round before.
     Carry(u16),
@@ -171,6 +176,7 @@ impl BlockOp {
             BlockOp::Within(0) => "within".to_owned(),
             BlockOp::Within(d) => format!("within {d}"),
             BlockOp::Phase(k, r) => format!("phase {k} {r}"),
+            BlockOp::Position(j) => format!("position {j}"),
             BlockOp::Carry(a) => format!("carry %{a}"),
         }
     }
@@ -178,7 +184,7 @@ impl BlockOp {
     /// The values the operation reads.
     pub(super) fn operands(&self) -> Vec<u16> {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) => vec![],
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) | BlockOp::BackFill(a, b) => {
                 vec![a, b]
@@ -189,7 +195,7 @@ impl BlockOp {
     /// The operation with each operand `v` replaced by `f(v)`.
     pub(super) fn renumbered(&self, f: impl Fn(u16) -> u16) -> Self {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) => *self,
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) => *self,
             BlockOp::Not(a) => BlockOp::Not(f(a)),
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
             BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
@@ -253,6 +259,10 @@ impl BlockOp {
                 (Ok(k), Ok(r)) if (1..=63).contains(&k) && r < k => Ok(BlockOp::Phase(k, r)),
                 _ => Err(format!("a bad phase `{k} {r}`")),
             },
+            ["position", j] => match j.parse::<u8>() {
+                Ok(j) if j < 64 => Ok(BlockOp::Position(j)),
+                _ => Err(format!("a bad position bit `{j}`")),
+            },
             _ => Err(format!("an unknown block operation `{}`", words.join(" "))),
         }
     }
@@ -295,6 +305,7 @@ impl BlockOp {
             BlockOp::Phase(k, r) => out.extend([15, k, r]),
             BlockOp::Carry(a) => two(out, 16, a, a),
             BlockOp::BackFill(a, b) => two(out, 17, a, b),
+            BlockOp::Position(j) => out.extend([18, j]),
         }
     }
 }
@@ -485,6 +496,7 @@ impl BlockProgram {
             // Up to 63 bytes: the halo is one 64-bit word on every executor.
             BlockOp::Prev(_, k) => (1..=63).contains(&k),
             BlockOp::Phase(k, r) => (1..=63).contains(&k) && r < k,
+            BlockOp::Position(j) => j < 64,
             _ => true,
         });
         // The extract pass writes positions from the undelayed outputs.
@@ -715,6 +727,7 @@ impl BlockProgram {
             let words: Vec<u64> = match *op {
                 BlockOp::Within(d) => place.iter().map(|&(at, len)| within_at(at, len, d)).collect(),
                 BlockOp::Phase(k, r) => place.iter().map(|&(at, _)| phase(64 * at, k, r)).collect(),
+                BlockOp::Position(j) => place.iter().map(|&(at, _)| position(at, j)).collect(),
                 BlockOp::Carry(_) => unreachable!("a carry is its group's, run with it"),
                 BlockOp::Eq(byte) => blocks.iter().map(|block| eq(block, byte)).collect(),
                 BlockOp::Class { table, bits } => {
@@ -919,6 +932,16 @@ pub(super) fn phase(at: usize, k: u8, r: u8) -> u64 {
     let k = usize::from(k);
     let first = (usize::from(r) + k - at % k) % k;
     period_bits(k as u8) << first
+}
+
+/// Plane `j` of the positions of word `at`'s bytes: bit `i` is bit `j` of `64 at + i`.
+pub(in crate::code_rule_dsl) fn position(at: usize, j: u8) -> u64 {
+    const LOW: [u64; 6] = [0xAAAA_AAAA_AAAA_AAAA, 0xCCCC_CCCC_CCCC_CCCC, 0xF0F0_F0F0_F0F0_F0F0, 0xFF00_FF00_FF00_FF00, 0xFFFF_0000_FFFF_0000, 0xFFFF_FFFF_0000_0000];
+    match j {
+        0..=5 => LOW[usize::from(j)],
+        _ if (at as u64) >> (j - 6) & 1 == 1 => u64::MAX,
+        _ => 0,
+    }
 }
 
 pub(super) fn within_at(at: usize, len: usize, d: u8) -> u64 {
