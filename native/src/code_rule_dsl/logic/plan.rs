@@ -67,6 +67,7 @@ impl From<super::front::Error> for Error {
 type Result<T> = std::result::Result<T, Error>;
 
 pub(in crate::code_rule_dsl) mod corpus;
+pub(in crate::code_rule_dsl) mod placement;
 mod demand;
 pub(in crate::code_rule_dsl) mod lower;
 
@@ -3279,6 +3280,8 @@ impl Run<'_, '_> {
         let rule_no = |r: &Rule| numbers.get(&(r as *const Rule)).copied();
         // Per seed, then per probe: (kind, rule, plan as EXPLAIN shows it, planning CPU, replans).
         let mut explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)> = Vec::new();
+        // Its shape and planned work, for where it runs (`placement`, decision 0095).
+        let mut shape = placement::Shape::default();
         // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
         let missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
             let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
@@ -3294,9 +3297,10 @@ impl Run<'_, '_> {
         for r in &seeds {
             let span = planning(r, "plan");
             let t0 = if profiling { super::profile::now() } else { 0.0 };
-            let ((order, _, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
+            let ((order, work, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
+            shape.add(&order, &r.head.args, work, false);
             let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
                 if answering {
                     let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|a| !scc.contains(a)).collect();
@@ -3346,8 +3350,9 @@ impl Run<'_, '_> {
             for (ai, a) in recursive(&r.body, scc) {
                 let _span = planning(r, "plan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
-                let ((order, _, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
+                let ((order, work, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
+                shape.add(&order, &r.head.args, work, true);
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
                     if answering {
@@ -3406,6 +3411,10 @@ impl Run<'_, '_> {
             let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), lines.join("\n")));
         }
         let started = std::time::Instant::now();
+        // Where it runs (decision 0095). The device has no relational form yet, so every stratum runs here; the
+        // placement is recorded with the CPU it took, for the profile's "Placement" section.
+        let placed = placement::place(&shape);
+        let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s } else { 0.0 };
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
         self.fx().open(&lines.join("\n"))?;
         let sql_views = sql_probe.iter().any(|p| *p);
@@ -3508,6 +3517,11 @@ impl Run<'_, '_> {
                 probes[k].2 = new;
             }
             chunk *= 2;
+        }
+        if profiling {
+            let (u, s) = corpus::thread_usage();
+            let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();
+            super::profile::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at);
         }
         if super::profile::on() {
             let empty = Vec::new();
