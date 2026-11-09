@@ -360,6 +360,23 @@ Before a stratum opens, the planner has priced each of its rules: an estimate of
        have more than three keys.
    - Not yet: the planner pricing `tile` (Σ |left| × |right| per chunk, which the lab now measures), and running it
      from the engine. The replay's numbers are the first measured GPU price: about 0.45 ns per pair compared.
+   - **Grouped by key run** (`Grouping::Key`, `run_join`): both sides sorted by key 0's own value, so a group is a
+     key run and key 0 needs no comparison. This is the "same key run after a sort" partition of §4. It fits every
+     key type, symbols included. Each further key of symbols is held as a 16-bit code from one dictionary shared by
+     both sides (`Codes`; exact up to 2^16 values).
+     - Most runs are a row or two, so a run does not get a threadgroup of its own. Instead, each thread takes a
+       left row of a matched run (a bounded binary search finds its run) and loops over the right run.
+     - The work is the pairs of key 0 alone, so for a one-key join it is the output itself.
+   - **The lab check:** all 232 two-atom joins of the 144 captures run this way and give the CPU hash join's pairs:
+     5,632,341 pairs, with 5,632,341 compared. All of them happen to have one key, so no codes were needed.
+     - GPU: 20.8 ms. CPU hash join: 471 ms.
+     - The chunk tile, for the 110 joins it fits, compared 387 million pairs in 172 ms. By key run is the form for
+       equality: the chunk tile pays |left| × |right| per document, while the key run pays only the output.
+     - **But the host's part is 442 ms of CPU**: the sort into key runs, the forms, the upload and the runs'
+       merge. That is as much as the CPU hash join. The device join wins only once the sort is on the device (step
+       4's `sort`) and a relation stays resident and sorted for the strata that read it (step 5).
+   - The chunk tile stays for what equality does not cover: pairs within a document under `within`, `@doc`
+     equality and order comparisons (the brute force per document that §4 meant).
 4. **Negation, then aggregates (`sort`, `group`).**
 5. **Device waves (§5)**, once enough strata run to make whole levels.
 6. **Recursion:** the queue for file-local fixpoints, waves for the rest.
