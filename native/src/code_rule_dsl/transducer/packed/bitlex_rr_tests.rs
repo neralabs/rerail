@@ -110,6 +110,16 @@ const CASES: &[(&str, &str)] = &[
     // An extra between a word and the `(` that wraps it: never the node the wrap moves.
     ("r(x) :- s // c\n(x), t /* d */ (x).", "05"),
     ("r(n) :- n = count : { s(_) }.", "08"),
+    // Aggregates: values, keys, separators; at a literal's start; the words as names elsewhere.
+    ("r(n) :- n = sum v by k sep \",\" : { t(k, v) }, m = max x + 1 : { u(x); w(x) }.", "08"),
+    ("r(n) :- count : { s(_) } = 1, min(a, b) > 1, sum x : { t(x) } > 2, n = join s by (k, j) : { u(s, k, j) }.", "08"),
+    (".decl r(max: number, count: t)\nr(count, min) :- s(sum), count = 1, mean(x), max - 1 > join.", "08"),
+    ("r(n) :- n = sum strlen(x) - strlen(a) : { t(x, a), !u(a) }.", "08"),
+    // `count` in a value takes its `:`; a named argument in a value is no value.
+    ("r(n) :- n = sum count : { s(_) } : { t(_) }.", "08"),
+    ("r(n) :- n = sum f(k: v) : { s(_) }.", "never"),
+    // `min (…) : { … }`, an aggregate the engine tells from a call after its `)`: to the engine.
+    ("r(n) :- n = min (a + b) : { s(a, b) }.", "never"),
     ("r(-1).", "06"),
     // Arithmetic: precedence, left to right; `-` and a number one leaf, across an extra too;
     // unary minus over a primary; parentheses; functor calls.

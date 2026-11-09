@@ -298,7 +298,7 @@ reference on the corpus.
 | rr-05 | `!`, `must`/`may` heads, `~` with backtick literals, strings, comments and block comments in any order | A2, A5, A6 |
 | rr-06 | arithmetic with precedence, unary `-`, `- 1` as one leaf, `( )`, `@f(…)` | A5, A7, A11 |
 | rr-07 | `;` alternatives, groups, atom or call | A5, A6 |
-| rr-08 | aggregates: `count`, `min`, `max`, `sum`, `mean`, `join … by … sep` | A10 |
+| rr-08 | aggregates: `count`, `min`, `max`, `sum`, `mean`, `join … by … sep`; their words soft, a value with no named argument; `min (…) : {…}` (told from a call after its `)`) goes to the engine | A10 |
 | rr-09 | `.violation` (code, tag, fix, suppress, options), `=>` edits, JSON objects, `.policy {…}` | A8, A10 |
 | rr-10 | `.input`/`.output`, `.type`, `.lattice`, `.pragma`, `.functor`, `.edit`: all of `.rr` | A8 |
 
