@@ -294,3 +294,69 @@ fn super_width(plan: &Compiled, name: &str) -> Option<usize> {
     let end = plan.sql[start..].find(')')? + start;
     Some(plan.sql[start..end].split(',').count())
 }
+
+/// Test-only physical rewrite: the authored rules and semantic operators remain unchanged.
+pub(super) fn physical_sql(mut sql: String, prog: &Program) -> String {
+    if !sql.contains("async_site(") { return sql; }
+    let candidate = std::env::var_os("RERAIL_CANDIDATE_SPIKE").is_some();
+    let membership = std::env::var_os("RERAIL_LOOKUP_SQL_IN").is_some();
+    if !candidate && !membership {return sql;}
+    let ctes=bodies(&sql);
+    if candidate {
+        let target_relations:BTreeSet<_>=prog.natives.values().filter_map(|native| match native {
+            super::super::super::front::Native::Python {kind,input,targets:Some(target)} if kind=="qualified" && input=="async_reference" => Some(target),
+            _=>None,
+        }).collect();
+        let targets=target_relations.into_iter().map(|n|format!("SELECT c0 FROM {}",ident(n))).collect::<Vec<_>>().join(" UNION ");
+        assert!(!targets.is_empty());
+        let mut patches=Vec::new();
+        for (name,range) in ctes {
+            let body=match name.as_str() {
+                "async_site"=>Some("SELECT c0,c1,c2 FROM __rr_candidates"),
+                "async_reference"=>Some("SELECT c2 FROM __rr_candidates WHERE (c4 & 1) != 0 AND c2 >= 0"),
+                "async_open_receiver"=>Some("SELECT c1,c3 FROM __rr_candidates WHERE (c4 & 2) != 0"),
+                _=>None,
+            };
+            if let Some(body)=body {patches.push((range,body));}
+        }
+        assert_eq!(patches.len(),3);
+        for (range,body) in patches.into_iter().rev() {sql.replace_range(range,body);}
+        let definition=format!("__rr_candidates(c0,c1,c2,c3,c4) AS MATERIALIZED (SELECT c0,c1,c2,c3,c4 FROM rr_batch_python_candidates WHERE frame=0 AND targets=(SELECT json_group_array(sym_text(c0)) FROM ({targets}))),\n");
+        sql.insert_str("WITH RECURSIVE ".len(),&definition);
+        if std::env::var_os("RERAIL_DEMAND_FRAME_GUARD").is_some() {
+            let mut gates=Vec::new();
+            for (name,range) in bodies(&sql) {
+                let body=&sql[range.clone()];
+                if name.starts_with("__rr_demand_") {
+                    assert!(body.contains("rr_demand_frame("));
+                    gates.push((range,format!("{body} HAVING count(*) > 0")));
+                }else if let Some(super::super::super::front::Native::Python{kind,..})=prog.natives.get(&name) {
+                    let frame=body.split("frame=(SELECT handle FROM ").nth(1).unwrap().split(')').next().unwrap();
+                    let guarded=body.replace(&format!("FROM rr_batch_python_{kind} WHERE"),&format!("FROM {frame} AS demanded CROSS JOIN rr_batch_python_{kind} WHERE"))
+                        .replace(&format!("frame=(SELECT handle FROM {frame})"),"frame=demanded.handle");
+                    gates.push((range,guarded));
+                }
+            }
+            for (range,body) in gates.into_iter().rev(){sql.replace_range(range,&body);}
+        }
+        if std::env::var_os("RERAIL_EMPTY_DEMAND_GUARD").is_some() {
+            let mut guards=Vec::new();
+            for (name,range) in bodies(&sql) {
+                if let Some(super::super::super::front::Native::Python{input,..})=prog.natives.get(&name) {
+                    let body=&sql[range.clone()];
+                    let guarded=body.replacen(" WHERE ",&format!(" WHERE EXISTS (SELECT 1 FROM {}) AND ",ident(input)),1);
+                    assert_ne!(&guarded,body);guards.push((range,guarded));
+                }
+            }
+            for (range,body) in guards.into_iter().rev(){sql.replace_range(range,&body);}
+        }
+    } else {
+        let range=ctes.into_iter().find(|(n,_)|n=="async_open_receiver").unwrap().1;
+        let old=&sql[range.clone()];
+        let body=old.replace("t1.c1 AS c0","t2.node AS c0").replace("FROM async_site t1 CROSS JOIN main.py_attribute t2","FROM main.py_attribute t2").replace("(t2.node = t1.c1)","(t2.node IN (SELECT c1 FROM async_site))");
+        assert!(body!=old && !body.contains("t1."));sql.replace_range(range,&body);
+    }
+    sql
+}
+
+pub(crate) mod setup;

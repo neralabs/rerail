@@ -532,3 +532,71 @@ The result rows remain identical on both the full corpus and positive fixture. T
 Two initial lab launches fail configuration checks: a missing case file and a cache-specific atom literal in a replacement.
 Those attempts are stopped and retained as configuration failures; the valid replacement leaves atom IDs untouched.
 The runner now checks case-file existence and JSON before launching the engine.
+
+## Candidate selection and bulk index spikes
+
+The user requested concrete validation of earlier candidate screening and genuine bulk index traversal.
+The plan and gates are recorded in `candidate-and-index-spikes.md` before implementation.
+The experiment keeps existing semantic resolution and rule composition, and changes the structural producer boundary only.
+Separate lookup experiments compare point probes, bounded merge, galloping search, and adaptive traversal.
+
+The first positive fixture rejects the candidate rewrite with a circular CTE dependency.
+A suffix search included semantic result relations among target inputs.
+The corrected spike reads target relations from typed `Native::Python` metadata and preserves the failure log.
+All four initial producer modes then preserve all 178 recorded Ruff findings.
+
+Initial producer profiles reduce SQL work from 3.39 million to about 0.92 million VM instructions.
+The range variant visits 67,385 calls instead of 691,328. It retains exact context checks for nested execution boundaries.
+Screening every call first performs 690,248 qualification screens and takes 0.434 producer CPU seconds.
+Context ranges perform 65,292 screens and take 0.070 producer CPU seconds.
+
+The range producer still admits 3,083 direct candidates whose core qualification shape is absent.
+The core helper conflates well-formed non-name heads with unknown syntax through `Option`.
+The reference exposes `Known`, `NotApplicable`, and `Unknown` separately.
+A refined spike preserves that distinction and passes a node-by-node comparison against the reference, including malformed syntax and Unicode.
+An independent SQL guard checks for nonempty demands before semantic producer invocation.
+
+The index matrix confirms that dense and clustered requests benefit from a merge; sparse requests do not benefit from scanning the range.
+The complete-job profile measures only 4.91 ms in the original attribute index lookup and 1.30 ms with adaptive traversal.
+Key-list decoding costs about 2.6 ms. These costs cannot explain the remaining local execution time.
+The lookup variants therefore remain experiments; reduced comparisons do not establish an end-to-end engine win.
+
+Alternating unprofiled runs reject the initial range producer as a performance winner: local CPU rises from 0.990 to 1.145 seconds.
+This contradicts an interpretation based only on lower VM counts and isolated producer CPU.
+A stack sample taken after process startup locates 373 of 429 composed-executor samples under `sqlite3Reprepare`.
+An earlier sample captured only dynamic-loader startup and is retained as unusable profiling evidence.
+
+Batch setup repeatedly registers native, symbol, string, and sum functions before cached statements execute.
+The next spike uses SQLite connection-owned client data to install these functions once per connection.
+It adds an automatic-reprepare counter and a focused invalidation/lifetime test.
+A separate demand-frame gate tests an explicit empty outer relation instead of duplicating demand expressions through `EXISTS`.
+
+
+The full-corpus counter records 71 automatic reprepares in the baseline and zero with stable setup.
+The positive gate and all 178 edge findings pass with the demand-frame gate.
+However, the nine-test composition suite catches stale adopted inputs with stable registration: the second run reads seven instead of nine.
+The same test passes without stable setup.
+
+The composition path creates a local `Modules` owner for adopted inputs and drops it after each run.
+That removes the current binding from the registry while cached SQLite statements retain the older binding cell.
+Repeated function registration had forced recompilation and masked this lifetime dependency.
+The revised spike keeps those binding owners in connection-owned state and continues rebinding their current sources.
+The existing replacement test is the regression gate; cached statements must observe new versions without recompilation.
+
+
+The connection-owned binding correction passes all nine composition tests, including the previously failing input-version replacement test.
+The registration unit test, positive 120-key fixture, and all four edge jobs also pass on the final binary.
+The final series compares stable registration alone, typed candidates, independent `EXISTS` guards, and nonempty demand-frame drivers.
+The runner records automatic recompilations and keeps alternating unprofiled timings separate from instrumented profiles.
+
+
+The final profile records 80 executions and 732,887 VM instructions, with zero automatic recompilations.
+The baseline records 80 executions, 3,386,852 VM instructions, and 71 automatic recompilations.
+The frame-driven query takes 250 ms, including native leaves and initial preparation, against 774 ms for the baseline.
+An independent `EXISTS` guard raises initial SQLite preparation from 8.1 to 31.2 ms, even after setup becomes stable.
+
+Three alternating unprofiled pairs reduce median local CPU from 1.090 to 0.503 seconds, and whole corpus-run CPU from 12.387 to 11.765 seconds.
+The acceptance script passes all gates, including the original statement budget and positive VM ceiling.
+The final profile locates most remaining cost before SQL: projection/interning costs 5.40 exclusive CPU seconds, and text tests cost 0.86 seconds.
+The SQL-only experimental rewrite occurs after `Projection::of`; production integration must lower typed candidate demands before source-demand analysis.
+Deferred projection itself remains unbenchmarked by these spikes. The report distinguishes that integration requirement from the measured SQL-boundary improvement.

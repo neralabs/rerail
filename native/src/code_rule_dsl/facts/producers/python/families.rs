@@ -252,3 +252,6 @@ pub(crate) fn qualification_chain(g:&Grammar,f:&Facts,n:u32)->Option<(String,Vec
     tail.reverse();
     Some((crate::code_rule_dsl::identifier::python_name(f.text(n).into()).into_owned(),tail))
 }
+
+#[cfg(test)]
+pub(crate) mod candidate_spike;

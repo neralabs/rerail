@@ -4218,7 +4218,10 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 /// `temp` tables, dropped by the next run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
+    #[cfg(not(test))]
     super::native::register_symbols(db)?;
+    #[cfg(test)]
+    compose::experiments::setup::run(db,2,||super::native::register_symbols(db))?;
     let inputs = Inputs {
         facts: "main.".to_owned(),
         stats: format!("{stats}."),
@@ -4315,8 +4318,14 @@ pub(in crate::code_rule_dsl) fn run_atoms_native_answering(
 }
 
 fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs, hooks: Hooks<'_>) -> Result<Outcome> {
+    #[cfg(not(test))]
     super::native::register(db)?;
+    #[cfg(test)]
+    compose::experiments::setup::run(db,1,||super::native::register(db))?;
+    #[cfg(not(test))]
     super::native::register_symbols(db)?;
+    #[cfg(test)]
+    compose::experiments::setup::run(db,2,||super::native::register_symbols(db))?;
     super::native::forget_inputs(db);
     let out = run(&lowered.program, db, inputs, Some(lowered), hooks);
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
@@ -4406,8 +4415,14 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     });
     let lowered=adjusted.as_ref();
     let setup = super::profile::span(|| "setup".into());
+    #[cfg(not(test))]
     super::strings::register(db)?;
+    #[cfg(test)]
+    compose::experiments::setup::run(db,4,||super::strings::register(db))?;
+    #[cfg(not(test))]
     super::native::aggregation::register_sum(db)?;
+    #[cfg(test)]
+    compose::experiments::setup::run(db,8,||super::native::aggregation::register_sum(db))?;
     if inputs.atoms.is_some() && inputs.given.is_some() && PLANS.with(|p|p.borrow().is_some())
         && hooks.answer.is_none()
         && compose::enabled() && compose::accepts(prog)? {
@@ -4418,7 +4433,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         for rel in super::native::component::adopted(db).into_iter().filter(|r|reads.contains(r)) {
             let held=super::native::component::held(db,&rel).ok_or_else(||Error::Plan(format!("missing retained input {rel}")))?;
             let source=held.source((0..prog.decls[&rel].len()).map(|c|sql_col(&rel,c)).collect());
-            if !crate::code_rule_dsl::facts::vtab::replace_bound_source(db,&rel,source.clone())?{bindings.bind(db,&rel,source)?;}
+            if !crate::code_rule_dsl::facts::vtab::replace_bound_source(db,&rel,source.clone())? {
+                #[cfg(test)]
+                if compose::experiments::setup::bind(db,&rel,source.clone())? {continue;}
+                bindings.bind(db,&rel,source)?;
+            }
         }
         let plan=compose::planned(prog,db,inputs)?;
         let mut out=plan.execute(db,prog,lowered,&mut hooks)?;

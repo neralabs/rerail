@@ -1786,3 +1786,6 @@ pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Si
 
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod tests;
+
+#[cfg(test)]
+mod candidate_spike;

@@ -16,6 +16,8 @@ pub(super) fn register(db: &Connection, binding: &Binding) -> Result<()> {
         ("origins", 2),
         ("assigned", 2),
         ("arguments", 5),
+        #[cfg(test)]
+        ("candidates", 5),
     ] {
         let name = CString::new(format!("rr_batch_python_{kind}")).unwrap();
         db.create_module(
@@ -132,6 +134,13 @@ unsafe impl VTabCursor for ProducerCursor {
     fn filter(&mut self, index: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
         self.rows.clear();
         self.at = 0;
+        #[cfg(test)]
+        if self.producer.kind == "candidates" {
+            let targets = serde_json::from_str(&args.get::<String>(1)?).map_err(|e| failure(&e.to_string()))?;
+            self.rows = self.producer.binding.current().python_batch().ok_or_else(|| failure("missing candidate batch"))?
+                .candidate_spike(&targets).map_err(|e| failure(&e))?;
+            return Ok(());
+        }
         let keys = super::demand::read(args.get::<i64>(0)?)?;
         let targets: std::collections::BTreeSet<String> = if index == 1 {
             serde_json::from_str(&args.get::<String>(1)?).map_err(|e| failure(&e.to_string()))?

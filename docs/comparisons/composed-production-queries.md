@@ -143,7 +143,8 @@ It does not establish a causal speed ratio. No whole-job speedup is claimed.
 The separate profile attributes 8.395 ms to local query compilation and 0.760 ms to cross-file query compilation.
 Each compilation occurs once in the job.
 SQLite preparation totals 4.842 ms; composed query execution, including preparation, totals about 885 ms.
-Thus repeated preparation does not explain the remaining query cost.
+That conclusion was incorrect: the preparation span measures explicit cache access, but misses automatic recompilation inside `sqlite3_step`.
+The [candidate and index experiments](candidate-and-index-spikes.md#preparation-lifetime-experiment) investigate repeated registration and record SQLite reprepare counters.
 
 Validation passes eight composition tests, one frame-lifetime test, four semantic-demand tests, 93 RR tests, and nine file-local tests.
 Three pre-existing tests remain ignored.

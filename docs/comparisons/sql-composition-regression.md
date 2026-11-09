@@ -6,6 +6,8 @@ It also moved existing native relational work into SQLite. The earlier VM compar
 The failure was accepting statement count and result parity without a cost ceiling on both empty and nonempty outputs.
 The full corpus produced no findings. It did not expose the expensive string split in ASYNC222.
 
+The follow-up [candidate and index experiments](candidate-and-index-spikes.md) identify automatic statement recompilation and test narrower typed producer demands.
+
 ## Controlled comparison
 
 The diagnostic binary can execute either the native path or composed queries over the same prepared program and source bindings.

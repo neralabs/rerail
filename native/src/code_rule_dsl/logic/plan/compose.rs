@@ -340,10 +340,11 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         arms.join(" UNION ALL ")
     };
     Ok(Compiled {
-        sql: if defs.is_empty() {
-            body
-        } else {
-            format!("WITH RECURSIVE {} {body}", defs.join(",\n"))
+        sql: {
+            let sql = if defs.is_empty() {body} else {format!("WITH RECURSIVE {} {body}", defs.join(",\n"))};
+            #[cfg(test)]
+            let sql = experiments::physical_sql(sql, prog);
+            sql
         },
         outputs,
         kept: model.inputs.kept.clone(),
@@ -372,6 +373,8 @@ impl Compiled {
             db.prepare_cached(&self.sql)?;
         }
         let mut query = db.prepare_cached(&self.sql)?;
+        #[cfg(test)]
+        query.reset_status(rusqlite::StatementStatus::RePrepare);
         let mut cursor = query.query([])?;
         while let Some(row) = cursor.next()? {
             let rel = &self.outputs[row.get::<_, i64>(0)? as usize];
@@ -382,6 +385,8 @@ impl Compiled {
             );
         }
         drop(cursor);
+        #[cfg(test)]
+        super::super::profile::decision("composed automatic reprepare",||query.get_status(rusqlite::StatementStatus::RePrepare).to_string());
         drop(query);
         if let Some(before) = counters {
             for (rel, after) in crate::code_rule_dsl::facts::vtab::counters(db) {
@@ -398,7 +403,11 @@ impl Compiled {
             }
         }
         #[cfg(test)]
-        experiments::replay(self, db, &values)?;
+        {
+            experiments::replay(self, db, &values)?;
+            let work = crate::code_rule_dsl::facts::vtab::lookup_spike::take_work();
+            if work.requests > 0 { super::super::profile::decision("lookup spike", || serde_json::to_string(&work).unwrap()); }
+        }
         let mut out = Outcome::default();
         for (rel, rows) in values {
             if self.kept.contains(&rel) {
@@ -499,4 +508,4 @@ impl Compiled {
 mod tests;
 
 #[cfg(test)]
-mod experiments;
+pub(super) mod experiments;

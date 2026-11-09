@@ -825,6 +825,8 @@ unsafe impl VTabCursor for Cursor {
             let column = (index / 2 - 1) as usize;
             let mut values = Vec::new();
             if batch {
+                #[cfg(test)]
+                let _span=crate::code_rule_dsl::logic::profile::span(|| "SQL IN key decode".into());
                 stats.batches.fetch_add(1, Ordering::Relaxed);
                 let mut iter = args.in_values(0)?;
                 while let Some(value) = iter.next()? {
@@ -835,6 +837,8 @@ unsafe impl VTabCursor for Cursor {
             } else {
                 values.extend(integer(&args.get::<Value>(0)?));
             }
+            #[cfg(test)]
+            let _span=batch.then(||crate::code_rule_dsl::logic::profile::span(|| "SQL IN index lookup".into()));
             self.direct=self.source.direct_one(column,&values);
             if self.direct.is_none() {self.selected = self.source.lookup(column, &values);}
         }
@@ -956,6 +960,8 @@ impl Source for Relation {
         Some(rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect())
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        #[cfg(test)]
+        if let Some(rows) = lookup_spike::selected(self, column, values) { return Some(rows); }
         let rows = &self.index(column).rows;
         Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
     }
@@ -973,3 +979,6 @@ mod s_relation;
 mod p_table;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod lookup_spike;
