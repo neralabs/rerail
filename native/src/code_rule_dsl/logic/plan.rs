@@ -3129,7 +3129,7 @@ impl Run<'_, '_> {
                         let c = column(v)?;
                         a.args[c] = Term::Wild;
                     }
-                    let (sc, toks) = atom(&a, None, &mut slots)?;
+                    let (sc, toks, _) = atom(&a, None, &mut slots)?;
                     let sep = const_tok(&Term::Str(sep.clone()))?;
                     let bylist = if bycols.is_empty() { "-".to_owned() } else { bycols.join(",") };
                     lines.push(format!("strjoin {sc} {} {xc}:{} {bylist} {sep} {}", toks.join(" "), sym(xc), tok(&Term::Var(var.clone()), &mut slots)?));

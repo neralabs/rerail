@@ -301,6 +301,28 @@ Maximum(@place("a.py", 1), v) :- v = max rank : { event(1, _, "keep", rank) }.
 }
 
 #[test]
+fn string_joins_use_projected_columns_after_constant_filters() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("join-projection");
+    std::fs::create_dir_all(&root).unwrap();
+    let rule = root.join("rule.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl item(owner: number, label: symbol, rank: number)
+item(1, "keep", 4). item(1, "keep", 9). item(1, "skip", 100).
+.decl event(owner: number, name: symbol, label: symbol, rank: number)
+event(k, cat(name, to_string(rank)), label, rank) :- item(k, label, rank), option("name", name).
+.violation Joined(at: span, value: symbol) code "JOINED" "{value}"
+Joined(@place("a.py", 1), value) :- value = join name by rank sep "," : { event(1, name, "keep", rank) }.
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"),
+        &serde_json::json!({"name": "x", "inputFiles": []})).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{report}");
+    assert_eq!(rows[0]["message"], "x4,x9", "{report}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn annotation_constants_keep_python_values_and_stay_inside_annotations() {
     let rows = finding_contract(r#"
 def f(a: 1_000.00, b: list[b'\xff'], c: 0x10,
