@@ -3310,6 +3310,13 @@ the wrapper's, in bytes, not the engine's.)
 - Direction (to decide): module- and class-level values as written in P1, evaluated across files after P2
   (`len`, `int`, enum members, by symbol); `pytest-collect` reads them for imported names, and runs on the
   checked files only.
+- `values` prototyped (`cabb761ad`; typing/programs/values.rr, exports `len(q, n)`): exact on the fixture in both
+  scopes. Over the whole workspace (2026-11-09, the four enum files checked, struct and values over all 9,010
+  documents) it did not finish in 1,500 s: 1,803 s user + 33 s sys, load 11–33 at the start and about 20 at the
+  end. The values phase's store was still being written when it stopped, so the four counts were not read.
+  Not yet profiled. A likely cause, unchecked: `python/lengths` and `nearest` run over every node of every
+  document, not only module and class bodies. Next: profile `values` alone on the 133-file sample, then narrow
+  it (lengths only for module- and class-level values, or documents some checked document imports).
 
 **Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.
