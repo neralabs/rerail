@@ -1368,8 +1368,15 @@ fn spike_o125_replay() {
     let cold = run();
     keep(a - 1, "cold");
     println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s; rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    // `O125_FULL_ONLY`: each step a full run alone (to profile it apart from the session's runs).
+    let full_only = std::env::var_os("O125_FULL_ONLY").is_some();
     for step in a..=b {
         let files = overlay(step);
+        if full_only {
+            let f = session::full(run);
+            println!("o125r {step:02} ({files} files): full {:.1} s CPU, cross {:.1} s, local {:.1} s", cpu(&f), phase(&f, "cross"), phase(&f, "local"));
+            continue;
+        }
         let r = run();
         show_spans(step);
         keep(step, "session");
