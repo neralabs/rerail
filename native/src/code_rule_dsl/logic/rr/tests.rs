@@ -2956,3 +2956,41 @@ Found(@place("",0),cat(value," explanation")) :- mixed(value).
     assert_eq!(rows[0]["parameters"]["value"], "static explanation");
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// A run's configuration facts must feed private Boolean joins even with no source documents.
+/// Exposing an intermediate relation is observational only; it cannot change a finding.
+#[test]
+fn json_boolean_joins_do_not_depend_on_intermediate_outputs() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("json-bool-join");
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = r#"
+.policy "contract:json-bool-join" revision 1
+.language python
+.decl meta(t: symbol)
+.input meta(IO=json,filename="baseline.json",path="/_metadata",projection="type")
+.decl counts(t: symbol)
+.input counts(IO=json,filename="baseline.json",path="/counts",projection="type")
+.decl has_meta()
+has_meta() :- meta("object").
+.decl has_counts()
+has_counts() :- counts("object").
+.decl verified_shape()
+verified_shape() :- has_meta(), has_counts().
+.violation Seen(at: span) code "SEEN" "seen"
+Seen(@place("",0)) :- verified_shape().
+"#;
+    for (case, source, expected) in [
+        ("objects", r#"{"counts":{},"_metadata":{}}"#, 1),
+        ("null-meta", r#"{"counts":{},"_metadata":null}"#, 0),
+        ("array-counts", r#"{"counts":[],"_metadata":{}}"#, 0),
+    ] {
+        std::fs::write(dir.join("baseline.json"), source).unwrap();
+        for expose in [false, true] {
+            let policy = dir.join(format!("{case}-{expose}.rr"));
+            std::fs::write(&policy, format!("{program}\n{}", if expose { ".output has_meta, has_counts\n" } else { "" })).unwrap();
+            let report = crate::code_rule_dsl::tools::run_rr(&policy, &dir, &dir.join(format!("out-{case}-{expose}")), &serde_json::Value::Null).unwrap();
+            let seen = report["diagnostics"].as_array().unwrap().iter().filter(|r| r["code"] == "SEEN").count();
+            assert_eq!(seen, expected, "{case}, exposed={expose}: {report}");
+        }
+    }
+}

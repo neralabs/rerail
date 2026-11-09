@@ -3528,7 +3528,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "04e3b5b83cc915926d842a8fe3ba6d94c78b555b",
-    "status": "Final 04e3b5b83 optimized root CLI validated: 158 focused engine tests and 199 tooling tests pass; two existing engine helpers ignored. Authority: 577 verified native executions. Direct execution: all 174 original tests per API, 445 native executions plus 112 signing executions. Native ratchet actions remain open.",
+    "status": "Native JSON Boolean-join regression added from the actual ratchet port; rebuild and TDD repair pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3660,7 +3660,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "c6ce3f3cc4cce77f1e690a9e850db024ee51d8cad101079ab290c757e306e9c2"
+        "sha256": "24dd9ed0c86295a080e9e5db9ba5052440472635b17a6cd4f5429c143ce6d599"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
