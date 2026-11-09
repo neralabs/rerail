@@ -17,8 +17,14 @@
 //! on the Neural Engine. A model it would run elsewhere is refused with the reason ([`Ane::refusal`]), and the lane
 //! does not take that kernel. Nothing moves to the CPU silently.
 //!
-//! **One submission** runs each model's launches together: their rows are concatenated, cut into tiles, and the
-//! tiles go to Core ML as one batch (`predictionsFromBatch:`).
+//! **One submission** runs each model's launches together: their rows are concatenated and cut into tiles, one
+//! prediction a tile.
+//!
+//! **Inputs and outputs live in IOSurfaces.** A tile's fp16 rows are written in place into an IOSurface-backed
+//! array, and the engine writes its counts into IOSurfaces given as the outputs' backings, so Core ML copies
+//! nothing on the host. The surfaces are kept in a pool by shape and reused by later submissions
+//! ([`coreml::Surface`]). A shape past IOSurface's limits ([`coreml::surface_fits`]) cannot be backed by one, and
+//! only such a shape takes the older path: plain arrays, one batch call (`predictionsFromBatch:`).
 
 pub mod coreml;
 pub mod package;
@@ -47,8 +53,10 @@ mod aot {
 pub const MIN_FLOPS: f64 = 0.25e9;
 /// Loaded models kept at once (Core ML holds at most about 119 compiled models per process).
 pub const MAX_LOADED: usize = 64;
-/// Tiles in one batch call: bounds the fp16 inputs held at once.
+/// Tiles in one batch call (plain arrays only): bounds the fp16 inputs held at once.
 pub const MAX_BATCH: usize = 16;
+/// Bytes of IOSurfaces the pool keeps between submissions; past it, returned surfaces are freed.
+pub const MAX_POOL_BYTES: usize = 256 << 20;
 
 /// Compiled models by key: what the engine keeps as facts in its content store. The value is an archive of the
 /// compiled `.mlmodelc` directory ([`package::archive`]).
@@ -137,14 +145,18 @@ pub struct Prepared {
 }
 
 /// Where the last submission's wall time went, in seconds: expanding `a`'s bits to fp16, the prediction calls, and
-/// summing the partial counts (with the outputs' conversion and the thresholds).
+/// summing the partial counts (with the outputs' conversion and the thresholds). `predict_cpu` is the process's CPU
+/// (user + sys) over the prediction calls: Core ML's own host work. `surfaces` says whether the tiles ran on
+/// IOSurfaces.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Split {
     pub expand: f64,
     pub predict: f64,
+    pub predict_cpu: f64,
     pub sum: f64,
     pub calls: usize,
     pub tiles: usize,
+    pub surfaces: bool,
 }
 
 struct Model {
@@ -173,6 +185,10 @@ pub struct Ane {
     state: Mutex<State>,
     last: Mutex<Split>,
     extra_aot: Vec<(Vec<u8>, Arc<[u8]>)>,
+    /// IOSurfaces by `(rows, cols)`, reused across submissions.
+    pool: Mutex<HashMap<(usize, usize), Vec<coreml::Surface>>>,
+    /// Tests only: every shape on plain arrays, so the path for shapes no IOSurface holds is checked too.
+    arrays_only: std::sync::atomic::AtomicBool,
 }
 
 static INSTANCE: AtomicUsize = AtomicUsize::new(0);
@@ -186,7 +202,7 @@ impl Ane {
     pub fn with_aot(store: Arc<dyn ModelStore>, extra_aot: Vec<(Vec<u8>, Arc<[u8]>)>) -> Self {
         let base = std::env::var_os("RERAIL_ANE_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
         let dir = base.join(format!("rerail-ane-{}-{}", std::process::id(), INSTANCE.fetch_add(1, Ordering::Relaxed)));
-        Ane { store, dir, cfg: coreml::config(), state: Mutex::new(State::default()), last: Mutex::default(), extra_aot }
+        Ane { store, dir, cfg: coreml::config(), state: Mutex::new(State::default()), last: Mutex::default(), extra_aot, pool: Mutex::default(), arrays_only: Default::default() }
     }
 
     /// Where the last submission's time went.
@@ -329,8 +345,8 @@ impl Ane {
         Ok(Model { model, template: t.clone(), outputs })
     }
 
-    /// Runs every launch against one model: their rows concatenated, tiled, predicted in batches; partial counts
-    /// summed per piece; thresholds applied.
+    /// Runs every launch against one model: their rows concatenated, tiled, predicted; partial counts summed per
+    /// piece; thresholds applied.
     fn run_model(&self, m: &Model, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
         let t = &m.template;
         // Every row of every launch, in order: (launch, row).
@@ -350,7 +366,147 @@ impl Ane {
         let n = t.n;
         let mut counts = vec![0u32; total * n];
         let tiles = total.div_ceil(t.m);
-        let mut split = Split { tiles, ..Default::default() };
+        let surfaces = !self.arrays_only.load(Ordering::Relaxed)
+            && (0..t.pieces.len()).all(|p| coreml::surface_fits(t.m, t.k(p))) && coreml::surface_fits(t.m, n);
+        let mut split = Split { tiles, surfaces, ..Default::default() };
+        if surfaces {
+            self.counts_on_surfaces(m, total, &row_of, &mut counts, &mut split)?;
+        } else {
+            self.counts_on_arrays(m, total, &row_of, &mut counts, &mut split)?;
+        }
+        // Each launch's share, as the reference gives it.
+        let t0 = Instant::now();
+        let outs: Vec<Output> = parts
+            .iter()
+            .zip(&starts)
+            .map(|(&(a, b, min), &s)| {
+                let c = &counts[s * n..(s + a.rows) * n];
+                match min {
+                    None => Output::Counts { rows: a.rows, cols: b.rows, data: c.to_vec() },
+                    Some(min) => Output::Pairs(
+                        c.chunks(n.max(1))
+                            .enumerate()
+                            .flat_map(|(i, row)| row.iter().enumerate().filter(|&(j, &x)| x >= min[j]).map(move |(j, _)| (i as u32, j as u32)))
+                            .collect(),
+                    ),
+                }
+            })
+            .collect();
+        split.sum += t0.elapsed().as_secs_f64();
+        *self.last.lock().unwrap() = split;
+        Ok(outs)
+    }
+}
+
+impl Ane {
+    /// A surface of `rows` × `cols` from the pool, or a new one.
+    fn take(&self, rows: usize, cols: usize) -> Result<coreml::Surface, String> {
+        if let Some(s) = self.pool.lock().unwrap().get_mut(&(rows, cols)).and_then(|v| v.pop()) {
+            return Ok(s);
+        }
+        coreml::Surface::new(rows, cols)
+    }
+
+    /// Returns surfaces to the pool, freeing those past [`MAX_POOL_BYTES`].
+    fn give(&self, surfaces: Vec<coreml::Surface>) {
+        let mut pool = self.pool.lock().unwrap();
+        let mut held: usize = pool.values().flatten().map(|s| s.bytes()).sum();
+        for s in surfaces {
+            if held + s.bytes() <= MAX_POOL_BYTES {
+                held += s.bytes();
+                pool.entry((s.rows, s.cols)).or_default().push(s);
+            }
+        }
+    }
+
+    /// The partial counts, tile by tile, on IOSurfaces: each tile's rows expanded in place into the pieces' input
+    /// surfaces, one prediction, and the outputs read from the surfaces Core ML wrote them into.
+    fn counts_on_surfaces<'b>(
+        &self,
+        m: &Model,
+        total: usize,
+        row_of: &(dyn Fn(usize) -> (&'b Bits, usize) + Sync),
+        counts: &mut [u32],
+        split: &mut Split,
+    ) -> Result<(), String> {
+        let t = &m.template;
+        let n = t.n;
+        let np = t.pieces.len();
+        let mut held = Vec::with_capacity(2 * np);
+        let r = (|| {
+            for p in 0..np {
+                held.push(self.take(t.m, t.k(p))?);
+            }
+            for _ in 0..np {
+                held.push(self.take(t.m, n)?);
+            }
+            let (ins, outs) = held.split_at(np);
+            let in_names: Vec<String> = (0..np).map(|p| format!("x{p}")).collect();
+            let inputs: Vec<(&str, &coreml::Surface)> = in_names.iter().map(String::as_str).zip(ins).collect();
+            let outputs: Vec<(&str, &coreml::Surface)> = m.outputs.iter().map(String::as_str).zip(outs).collect();
+            let bad = std::sync::atomic::AtomicBool::new(false);
+            for tile in 0..split.tiles {
+                let t0 = Instant::now();
+                for (p, s) in ins.iter().enumerate() {
+                    let (w0, w1) = t.pieces[p];
+                    let (k, stride) = (t.k(p), s.stride);
+                    s.write(|buf| {
+                        buf.par_chunks_mut(stride).enumerate().for_each(|(r, row)| {
+                            let g = tile * t.m + r;
+                            if g < total {
+                                let (a, i) = row_of(g);
+                                expand(&a.row(i)[w0..w1], &mut row[..k]);
+                            } else {
+                                row[..k].fill(0);
+                            }
+                        })
+                    })?;
+                }
+                split.expand += t0.elapsed().as_secs_f64();
+                let t0 = Instant::now();
+                let (call, cpu) = coreml::predict_surfaces(&m.model, &inputs, &outputs)?;
+                split.predict_cpu += cpu;
+                split.predict += call;
+                split.calls += 1;
+                let lo = tile * t.m;
+                let hi = (lo + t.m).min(total);
+                for s in outs {
+                    let stride = s.stride;
+                    s.read(|data| {
+                        counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
+                            for (o, &h) in out.iter_mut().zip(&data[r * stride..r * stride + n]) {
+                                match half_count(h) {
+                                    Some(c) => *o += c,
+                                    None => bad.store(true, Ordering::Relaxed),
+                                }
+                            }
+                        })
+                    })?;
+                }
+                split.sum += t0.elapsed().as_secs_f64() - call;
+                if bad.load(Ordering::Relaxed) {
+                    return Err("an output was not an exact count".to_string());
+                }
+            }
+            Ok(())
+        })();
+        self.give(held);
+        r
+    }
+
+    /// The partial counts on plain arrays, for a shape no IOSurface can hold: per batch of tiles, the rows expanded
+    /// into host buffers, which Core ML copies at each prediction, and one batch call.
+    fn counts_on_arrays<'b>(
+        &self,
+        m: &Model,
+        total: usize,
+        row_of: &(dyn Fn(usize) -> (&'b Bits, usize) + Sync),
+        counts: &mut [u32],
+        split: &mut Split,
+    ) -> Result<(), String> {
+        let t = &m.template;
+        let n = t.n;
+        let tiles = split.tiles;
         for first in (0..tiles).step_by(MAX_BATCH) {
             let t0 = Instant::now();
             let last = (first + MAX_BATCH).min(tiles);
@@ -387,7 +543,7 @@ impl Ane {
             let bad = std::sync::atomic::AtomicBool::new(false);
             split.expand += t0.elapsed().as_secs_f64();
             let t0 = Instant::now();
-            let call = coreml::predict(&m.model, &mut items, &m.outputs, |item, _piece, data, rows, cols, stride| {
+            let (call, cpu) = coreml::predict(&m.model, &mut items, &m.outputs, |item, _piece, data, rows, cols, stride| {
                 if rows != t.m || cols != n {
                     return Err(format!("output of {rows} x {cols}, expected {} x {n}", t.m));
                 }
@@ -405,33 +561,14 @@ impl Ane {
                 Ok(())
             })?;
             split.predict += call;
+            split.predict_cpu += cpu;
             split.sum += t0.elapsed().as_secs_f64() - call;
             split.calls += 1;
             if bad.load(Ordering::Relaxed) {
-                return Err("an output was not an exact count".into());
+                return Err("an output was not an exact count".to_string());
             }
         }
-        // Each launch's share, as the reference gives it.
-        let t0 = Instant::now();
-        let outs: Vec<Output> = parts
-            .iter()
-            .zip(&starts)
-            .map(|(&(a, b, min), &s)| {
-                let c = &counts[s * n..(s + a.rows) * n];
-                match min {
-                    None => Output::Counts { rows: a.rows, cols: b.rows, data: c.to_vec() },
-                    Some(min) => Output::Pairs(
-                        c.chunks(n.max(1))
-                            .enumerate()
-                            .flat_map(|(i, row)| row.iter().enumerate().filter(|&(j, &x)| x >= min[j]).map(move |(j, _)| (i as u32, j as u32)))
-                            .collect(),
-                    ),
-                }
-            })
-            .collect();
-        split.sum += t0.elapsed().as_secs_f64();
-        *self.last.lock().unwrap() = split;
-        Ok(outs)
+        Ok(())
     }
 }
 

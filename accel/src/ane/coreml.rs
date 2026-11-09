@@ -18,6 +18,33 @@ unsafe extern "C" {}
 #[link(name = "Foundation", kind = "framework")]
 unsafe extern "C" {}
 
+type CvBuffer = *mut c_void;
+
+#[link(name = "CoreVideo", kind = "framework")]
+unsafe extern "C" {
+    static kCVPixelBufferIOSurfacePropertiesKey: Id;
+    fn CVPixelBufferCreate(alloc: *const c_void, width: usize, height: usize, format: u32, attrs: Id, out: *mut CvBuffer) -> i32;
+    fn CVPixelBufferLockBaseAddress(pb: CvBuffer, flags: u64) -> i32;
+    fn CVPixelBufferUnlockBaseAddress(pb: CvBuffer, flags: u64) -> i32;
+    fn CVPixelBufferGetBaseAddress(pb: CvBuffer) -> *mut c_void;
+    fn CVPixelBufferGetBytesPerRow(pb: CvBuffer) -> usize;
+}
+#[link(name = "IOSurface", kind = "framework")]
+unsafe extern "C" {
+    static kIOSurfaceWidth: Id;
+    static kIOSurfaceHeight: Id;
+    fn IOSurfaceGetPropertyMaximum(property: Id) -> usize;
+}
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    fn CFRelease(cf: *const c_void);
+}
+
+/// `kCVPixelFormatType_OneComponent16Half` (`'L00h'`): one fp16 a pixel.
+const ONE_COMPONENT_16_HALF: u32 = u32::from_be_bytes(*b"L00h");
+/// `kCVPixelBufferLock_ReadOnly`.
+const LOCK_READ_ONLY: u64 = 1;
+
 type Id = *mut Object;
 
 /// `MLComputeUnitsCPUAndNeuralEngine`.
@@ -214,13 +241,13 @@ pub struct Input<'a> {
 
 /// Runs one prediction per item (`predictionsFromBatch:`), every item's inputs given; for each item, each output
 /// in `outputs` is handed to `read` as `(item, output index, data, rows, cols, row stride)` (strides in elements).
-/// Returns the wall seconds of the prediction call alone.
+/// Returns the wall seconds of the prediction call alone, and the process's CPU (user + sys) over it.
 pub fn predict(
     model: &Obj,
     items: &mut [Vec<Input<'_>>],
     outputs: &[String],
     mut read: impl FnMut(usize, usize, &[u16], usize, usize, usize) -> Result<(), String>,
-) -> Result<f64, String> {
+) -> Result<(f64, f64), String> {
     autoreleasepool(|| {
         let mut providers = Vec::with_capacity(items.len());
         for item in items.iter_mut() {
@@ -258,7 +285,9 @@ pub fn predict(
         let batch: Id = unsafe { msg_send![alloc, initWithFeatureProviderArray: list] };
         let mut err: Id = std::ptr::null_mut();
         let t0 = std::time::Instant::now();
+        let c0 = crate::exec::process_cpu();
         let out: Id = unsafe { msg_send![model.0, predictionsFromBatch: batch error: &mut err] };
+        let cpu = crate::exec::process_cpu() - c0;
         let wall = t0.elapsed().as_secs_f64();
         let _: () = unsafe { msg_send![batch, release] };
         if out.is_null() {
@@ -292,6 +321,146 @@ pub fn predict(
                 read(i, o, data, rows, cols, stride)?;
             }
         }
-        Ok(wall)
+        Ok((wall, cpu))
+    })
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// IOSurface-backed arrays.
+//
+// An array that Core ML is handed as plain memory is copied, on the host, into memory the Neural Engine can read,
+// at every prediction (and its outputs copied back out). An array backed by an IOSurface is that memory already:
+// the host writes the inputs into it in place, the engine reads them there, and writes its outputs into a surface
+// given as the output's backing (`MLPredictionOptions.outputBackings`). The spike measured host CPU a call falling
+// about 4× with them (`tools/matrix-offload/ane/RESULTS-ane.md`, "IOSurface I/O").
+
+/// Whether an fp16 array of `rows` × `cols` can be IOSurface-backed: a surface is one pixel per element, `cols`
+/// wide and `rows` high, within IOSurface's guaranteed maxima.
+pub fn surface_fits(rows: usize, cols: usize) -> bool {
+    let (w, h) = unsafe { (IOSurfaceGetPropertyMaximum(kIOSurfaceWidth), IOSurfaceGetPropertyMaximum(kIOSurfaceHeight)) };
+    rows > 0 && cols > 0 && cols <= w && rows <= h
+}
+
+/// An fp16 matrix in an IOSurface (a `CVPixelBuffer` of `OneComponent16Half`), and the `MLMultiArray` over it.
+/// Rows are `stride` elements apart: the surface pads each row to its alignment.
+pub struct Surface {
+    pb: CvBuffer,
+    array: Obj,
+    pub rows: usize,
+    pub cols: usize,
+    pub stride: usize,
+}
+
+// The buffer is written only between `write`'s lock and unlock, by one owner at a time (the pool hands it out).
+unsafe impl Send for Surface {}
+unsafe impl Sync for Surface {}
+
+impl Surface {
+    /// A new surface of `rows` × `cols` fp16. `Err` names the IOSurface that could not be made.
+    pub fn new(rows: usize, cols: usize) -> Result<Surface, String> {
+        autoreleasepool(|| {
+            let empty: Id = unsafe { msg_send![class!(NSDictionary), dictionary] };
+            let attrs: Id = unsafe { msg_send![class!(NSDictionary), dictionaryWithObject: empty forKey: kCVPixelBufferIOSurfacePropertiesKey] };
+            let mut pb: CvBuffer = std::ptr::null_mut();
+            let st = unsafe { CVPixelBufferCreate(std::ptr::null(), cols, rows, ONE_COMPONENT_16_HALF, attrs, &mut pb) };
+            if st != 0 || pb.is_null() {
+                return Err(format!("creating an IOSurface pixel buffer of {rows} x {cols} fp16: CVPixelBufferCreate returned {st}"));
+            }
+            let bytes = unsafe { CVPixelBufferGetBytesPerRow(pb) };
+            let shape = array(&[number(rows as i64), number(cols as i64)]);
+            let alloc: Id = unsafe { msg_send![class!(MLMultiArray), alloc] };
+            // The array retains the buffer; this keeps its own reference too, released on drop.
+            let arr: Id = unsafe { msg_send![alloc, initWithPixelBuffer: pb shape: shape] };
+            if arr.is_null() {
+                unsafe { CFRelease(pb) };
+                return Err(format!("wrapping an IOSurface of {rows} x {cols} fp16 as an MLMultiArray"));
+            }
+            let strides = ints(unsafe { msg_send![arr, strides] });
+            let stride = bytes / 2;
+            if strides != [stride as i64, 1] {
+                let _: () = unsafe { msg_send![arr, release] };
+                unsafe { CFRelease(pb) };
+                return Err(format!("an IOSurface of {rows} x {cols} fp16: strides {strides:?}, expected [{stride}, 1]"));
+            }
+            Ok(Surface { pb, array: Obj(arr), rows, cols, stride })
+        })
+    }
+
+    /// Bytes the surface holds.
+    pub fn bytes(&self) -> usize {
+        self.rows * self.stride * 2
+    }
+
+    /// Writes the surface in place: `f` gets its elements, `rows × stride` of them, row `r` at `r * stride`.
+    pub fn write<R>(&self, f: impl FnOnce(&mut [u16]) -> R) -> Result<R, String> {
+        self.locked(0, |p| f(unsafe { std::slice::from_raw_parts_mut(p, self.rows * self.stride) }))
+    }
+
+    /// Reads the surface: `f` gets its elements as `write`'s.
+    pub fn read<R>(&self, f: impl FnOnce(&[u16]) -> R) -> Result<R, String> {
+        self.locked(LOCK_READ_ONLY, |p| f(unsafe { std::slice::from_raw_parts(p, self.rows * self.stride) }))
+    }
+
+    fn locked<R>(&self, flags: u64, f: impl FnOnce(*mut u16) -> R) -> Result<R, String> {
+        let st = unsafe { CVPixelBufferLockBaseAddress(self.pb, flags) };
+        if st != 0 {
+            return Err(format!("locking an IOSurface of {} x {}: {st}", self.rows, self.cols));
+        }
+        let p = unsafe { CVPixelBufferGetBaseAddress(self.pb) } as *mut u16;
+        let r = if p.is_null() { None } else { Some(f(p)) };
+        unsafe { CVPixelBufferUnlockBaseAddress(self.pb, flags) };
+        r.ok_or_else(|| format!("an IOSurface of {} x {} has no base address", self.rows, self.cols))
+    }
+}
+
+impl Drop for Surface {
+    fn drop(&mut self) {
+        // This reference; the array (dropped next) holds its own.
+        unsafe { CFRelease(self.pb) };
+    }
+}
+
+/// Runs one prediction on IOSurface-backed arrays: `inputs` by feature name, written already, and `outputs` by
+/// feature name as the outputs' backings, which Core ML writes. Returns the wall seconds of the prediction call, and
+/// the process's CPU (user + sys) over it.
+pub fn predict_surfaces(model: &Obj, inputs: &[(&str, &Surface)], outputs: &[(&str, &Surface)]) -> Result<(f64, f64), String> {
+    autoreleasepool(|| {
+        let dict: Id = unsafe { msg_send![class!(NSMutableDictionary), dictionary] };
+        for (name, s) in inputs {
+            let fv: Id = unsafe { msg_send![class!(MLFeatureValue), featureValueWithMultiArray: s.array.0] };
+            let _: () = unsafe { msg_send![dict, setObject: fv forKey: nsstring(name)] };
+        }
+        let mut err: Id = std::ptr::null_mut();
+        let alloc: Id = unsafe { msg_send![class!(MLDictionaryFeatureProvider), alloc] };
+        let provider: Id = unsafe { msg_send![alloc, initWithDictionary: dict error: &mut err] };
+        if provider.is_null() {
+            return Err(error(err, "making a feature provider"));
+        }
+        let backs: Id = unsafe { msg_send![class!(NSMutableDictionary), dictionary] };
+        for (name, s) in outputs {
+            let _: () = unsafe { msg_send![backs, setObject: s.array.0 forKey: nsstring(name)] };
+        }
+        let opts: Id = unsafe { msg_send![class!(MLPredictionOptions), new] };
+        let _: () = unsafe { msg_send![opts, setOutputBackings: backs] };
+        let t0 = std::time::Instant::now();
+        let c0 = crate::exec::process_cpu();
+        let out: Id = unsafe { msg_send![model.0, predictionFromFeatures: provider options: opts error: &mut err] };
+        let cpu = crate::exec::process_cpu() - c0;
+        let wall = t0.elapsed().as_secs_f64();
+        let _: () = unsafe { msg_send![provider, release] };
+        let _: () = unsafe { msg_send![opts, release] };
+        if out.is_null() {
+            return Err(error(err, "predicting on IOSurfaces"));
+        }
+        // Each output must be the backing it was given: Core ML wrote into the surface, not somewhere else.
+        for (name, s) in outputs {
+            let fv: Id = unsafe { msg_send![out, featureValueForName: nsstring(name)] };
+            let ma: Id = if fv.is_null() { std::ptr::null_mut() } else { unsafe { msg_send![fv, multiArrayValue] } };
+            let pb: CvBuffer = if ma.is_null() { std::ptr::null_mut() } else { unsafe { msg_send![ma, pixelBuffer] } };
+            if pb != s.pb {
+                return Err(format!("predicting on IOSurfaces: output {name} was not written into its backing"));
+            }
+        }
+        Ok((wall, cpu))
     })
 }

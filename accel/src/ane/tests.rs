@@ -201,6 +201,29 @@ fn exact_past_2048_and_past_16384() {
 }
 
 #[test]
+fn surfaces_and_arrays_agree_and_surfaces_are_reused() {
+    // The IOSurface path (every shape here fits one) and the plain-array path (kept for shapes no IOSurface holds),
+    // on the same lane and model, against the reference; a later submission takes its surfaces from the pool.
+    let lane = ane();
+    let mut rng = Rng(23);
+    let b = bits(&mut rng, 140, 3000, 4).fixed();
+    let a = bits(&mut rng, 2048 + 900, 3000, 3);
+    let ks = [product(&a, &b, None), product(&a, &b, Some(thresholds(&mut rng, &b, 3)))];
+    let refs: Vec<&Kernel> = ks.iter().collect();
+    let want: Vec<Output> = refs.iter().map(|k| crate::cpu::run(k)).collect();
+    assert_eq!(lane.submit(&refs).unwrap(), want);
+    assert!(lane.last_split().surfaces);
+    let pooled = |l: &Ane| l.pool.lock().unwrap().values().map(Vec::len).sum::<usize>();
+    let held = pooled(&lane);
+    assert!(held >= 2, "the surfaces went back to the pool");
+    assert_eq!(lane.submit(&refs).unwrap(), want);
+    assert_eq!(pooled(&lane), held, "the second submission reused them");
+    lane.arrays_only.store(true, Ordering::Relaxed);
+    assert_eq!(lane.submit(&refs).unwrap(), want);
+    assert!(!lane.last_split().surfaces);
+}
+
+#[test]
 fn store_and_aot_skip_the_compile() {
     let store: Arc<dyn ModelStore> = Arc::new(MemoryStore::default());
     let mut rng = Rng(9);
@@ -282,29 +305,39 @@ fn time(name: &str, a: Bits, b: Bits, iters: usize) {
     let prep_wall = t0.elapsed().as_secs_f64();
     let p = lane.prepared(&b).unwrap();
     let want = crate::cpu::run(&k);
-    let first = lane.submit(&[&k]).unwrap();
-    assert_eq!(first[0], want, "{name}: exact");
-    let (mut walls, mut calls, c0) = (Vec::new(), Vec::new(), crate::exec::process_cpu());
-    for _ in 0..iters {
-        let t = Instant::now();
-        let out = lane.submit(&[&k]).unwrap();
-        walls.push(t.elapsed().as_secs_f64());
-        std::hint::black_box(out);
-        calls.push(lane.last_split());
-    }
-    let s = calls[calls.len() / 2];
-    calls.sort_by(|x, y| x.predict.total_cmp(&y.predict));
-    let cpu = (crate::exec::process_cpu() - c0) / iters as f64;
-    walls.sort_by(f64::total_cmp);
     let tiles = a.rows.div_ceil(package::TILE_ROWS);
     println!(
-        "{name}: a {} x {} words, b {} rows; {} pieces, {tiles} tiles; units {:.3e}; prepare {:.3} s (write {:.3}, compile {:.3}, plan {:.3}, first load {:.3}); \
-         submit wall min {:.3} ms / median {:.3} ms; host CPU (user+sys) {:.3} ms a submit; per unit {:.3e} s (min wall / units); \
-         prediction call min {:.3} ms / median {:.3} ms ({} calls, {} tiles), per unit {:.3e} s; a median submit's host expand {:.3} ms, sum {:.3} ms",
+        "{name}: a {} x {} words, b {} rows; {} pieces, {tiles} tiles; units {:.3e}; prepare {:.3} s (write {:.3}, compile {:.3}, plan {:.3}, first load {:.3})",
         a.rows, a.words, b.rows, p.pieces, k.units(), prep_wall, p.write, p.compile, p.plan, p.load,
-        walls[0] * 1e3, walls[walls.len() / 2] * 1e3, cpu * 1e3, walls[0] / k.units(),
-        calls[0].predict * 1e3, calls[calls.len() / 2].predict * 1e3, s.calls, s.tiles, calls[0].predict / k.units(), s.expand * 1e3, s.sum * 1e3
     );
+    // The same lane and model, on IOSurfaces and then on plain arrays.
+    for arrays in [false, true] {
+        lane.arrays_only.store(arrays, Ordering::Relaxed);
+        let first = lane.submit(&[&k]).unwrap();
+        assert_eq!(first[0], want, "{name}: exact");
+        assert_eq!(lane.last_split().surfaces, !arrays);
+        let (mut walls, mut calls, c0) = (Vec::new(), Vec::new(), crate::exec::process_cpu());
+        for _ in 0..iters {
+            let t = Instant::now();
+            let out = lane.submit(&[&k]).unwrap();
+            walls.push(t.elapsed().as_secs_f64());
+            std::hint::black_box(out);
+            calls.push(lane.last_split());
+        }
+        let cpu = (crate::exec::process_cpu() - c0) / iters as f64;
+        let core_ml_cpu = calls.iter().map(|c| c.predict_cpu).sum::<f64>() / iters as f64;
+        let s = calls[calls.len() / 2];
+        calls.sort_by(|x, y| x.predict.total_cmp(&y.predict));
+        walls.sort_by(f64::total_cmp);
+        println!(
+            "{name} on {}: submit wall min {:.3} ms / median {:.3} ms; host CPU (user+sys) {:.3} ms a submit, of which {:.3} ms in the prediction calls; \
+             per unit {:.3e} s (min wall / units); prediction call min {:.3} ms / median {:.3} ms ({} calls, {} tiles), per unit {:.3e} s; \
+             a median submit's host expand {:.3} ms, sum {:.3} ms",
+            if arrays { "plain arrays" } else { "IOSurfaces" },
+            walls[0] * 1e3, walls[walls.len() / 2] * 1e3, cpu * 1e3, core_ml_cpu * 1e3, walls[0] / k.units(),
+            calls[0].predict * 1e3, calls[calls.len() / 2].predict * 1e3, s.calls, s.tiles, calls[0].predict / k.units(), s.expand * 1e3, s.sum * 1e3
+        );
+    }
 }
 
 #[test]
