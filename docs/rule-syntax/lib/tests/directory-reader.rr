@@ -1,0 +1,5 @@
+// Shared-library request fixture for the combined external-world regression.
+#include "core.rr"
+.decl asked(path: symbol)
+.decl entries(name: symbol)
+entries(name) :- asked(path), dir_entry(path,name,0), suffix(".py",name).

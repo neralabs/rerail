@@ -2098,6 +2098,11 @@
       "origin": "Final shape",
       "upstreamCommit": "7d1e4007317d1ced555df6d8850d752289984b61",
       "sha256": "50260741a4735993fc5fe7e7000cc51d4c3e5e47197a01c717e1fd4e4b9b7fed"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/tests/directory-reader.rr",
+      "sha256": "6ee56b3c0a2523d61f45ad4c43d21e06895b2d2c6ca7d137fc3740e417dd61db",
+      "origin": "authored shared-library regression fixture"
     }
   ],
   "rules": [
@@ -3099,7 +3104,7 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "7d1e4007317d1ced555df6d8850d752289984b61",
+    "upstreamCommit": "01c58b38ac75c8ed2e79effb1f74a61d50202a43",
     "status": "Adopting Final 7d1e40073, including observed filesystem and in-memory load exports; native acceptance pending",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
@@ -3204,7 +3209,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "7a2c20d89d2454693da44cad48f8872f850bee234ea35a5f746d9d8302835c95"
+        "sha256": "3c4aaf6ad8952deeeb673a0a529edd5f36b665d74772311bb7aea9923c9bb65a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -3216,7 +3221,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "86d9781872e35c6c7fd5bd674d2a95f4b76a4790944e9951ad07f1e5b2275f83"
+        "sha256": "89c85be9d1ac71fed9c632706d6812f2b660d42468ba6743e0daee003dd0981d"
       },
       {
         "path": "native/src/code_rule_dsl/logic/program_facts.rs",

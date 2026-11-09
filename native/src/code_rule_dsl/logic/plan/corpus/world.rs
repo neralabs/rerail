@@ -70,6 +70,7 @@ pub(super) struct World {
     root: PathBuf,
     dirs: BTreeMap<String, Vec<(String, bool)>>,
     metadata: BTreeMap<String, Vec<DirectoryEntry>>,
+    snapshot_metadata: bool,
     dir_requests: BTreeSet<String>,
     metadata_requests: BTreeSet<String>,
     files: BTreeMap<String, Vec<String>>,
@@ -110,7 +111,8 @@ impl World {
                 }
             }
         }
-        World { roots, root: root.to_path_buf(), budget, ..World::default() }
+        let snapshot_metadata = prog.rules.iter().any(|r| r.head.rel == "rr_dir_metadata_req");
+        World { roots, root: root.to_path_buf(), budget, snapshot_metadata, ..World::default() }
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
@@ -130,6 +132,9 @@ impl World {
         // Adopt Final's phase-0 observer for the common names/type projection.
         let entries = super::observe(|o| o.listing(&path)).map(|l| l.as_ref().clone()).unwrap_or_default();
         self.dirs.insert(asked.to_owned(), entries);
+        // Programs consuming both projections observe one snapshot. Directory-only
+        // programs retain the observer's cheap names/type listing.
+        if self.snapshot_metadata { self.read_metadata(asked); }
     }
 
     /// A directory's entries, sorted (none when it is refused or missing).
@@ -151,6 +156,7 @@ impl World {
     fn read_metadata(&mut self, asked: &str) {
         if self.metadata.contains_key(asked) { return; }
         self.read_directory(asked);
+        if self.metadata.contains_key(asked) { return; }
         let Some(path) = self.allowed(asked) else { return; };
         let names = self.dirs.get(asked).cloned().unwrap_or_default();
         let paths: Vec<_> = names.iter().map(|(name, _)| path.join(name)).collect();
@@ -394,11 +400,23 @@ mod tests {
     }
 
     #[test]
+    fn directory_only_requests_do_not_stat_each_child() {
+        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-listing-only");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("a.py"), "abc").unwrap();
+        let program = front::parse(".decl rr_dir_req(path: symbol)\n.decl ask(path: symbol)\nask(\".\").\nrr_dir_req(p) :- ask(p).").unwrap();
+        let mut world = World::new(&root, &program);
+        assert_eq!(world.dir("."), vec![("a.py".to_owned(), false)]);
+        assert!(world.metadata.is_empty(), "a names/type consumer must not construct metadata rows");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn directory_projections_share_one_listing_but_new_runs_refresh_it() {
         let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-directory-cache");
         std::fs::create_dir_all(root.join("pkg")).unwrap();
         std::fs::write(root.join("pkg/a.py"), "abc").unwrap();
-        let program = front::parse("").unwrap();
+        let program = front::parse(".decl rr_dir_metadata_req(path: symbol)\n.decl ask(path: symbol)\nask(\"pkg\").\nrr_dir_metadata_req(p) :- ask(p).").unwrap();
         let mut world = World::new(&root, &program);
         assert_eq!(world.dir("pkg"), vec![("a.py".to_owned(), false)]);
         std::fs::write(root.join("pkg/a.py"), "changed").unwrap();

@@ -4499,19 +4499,12 @@ mod tests {
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("combined-world-requests");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("payload.py"),"pass\n").unwrap();
-        let library = dir.join("directory-reader.rr");
-        std::fs::write(&library,r#"
-#include "core.rr"
-.decl asked(path: symbol)
-.decl entries(name: symbol)
-entries(name) :- asked(path), dir_entry(path,name,0), suffix(".py",name).
-"#).unwrap();
         let _serial = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         for modular in [false,true] {
-            let include = if modular { format!("#include {:?}\n",library) } else { "#include \"core.rr\"\n.decl asked(path: symbol)\n.decl entries(name: symbol)\nentries(name) :- asked(path), dir_entry(path,name,0), suffix(\".py\",name).\n".to_owned() };
+            let include = if modular { "#include \"tests/directory-reader.rr\"\n".to_owned() } else { "#include \"core.rr\"\n.decl asked(path: symbol)\n.decl entries(name: symbol)\nentries(name) :- asked(path), dir_entry(path,name,0), suffix(\".py\",name).\n".to_owned() };
             let first = format!(".language python\n.scope dirs \"__no_primary__\"\n{include}\nasked(\".\").\n.decl seen(name: symbol)\nseen(name) :- entries(name).\n.output seen\n");
-            let quiet_include = if modular { format!("#include {:?}\n",library) } else { String::new() };
+            let quiet_include = if modular { "#include \"tests/directory-reader.rr\"\n".to_owned() } else { String::new() };
             let second = format!(".language python\n.scope dirs \"__no_primary__\"\n{quiet_include}\n.decl marker(value: symbol)\nmarker(\"other\").\n.output marker\n");
             let out = dir.join(if modular {"library-out"} else {"policy-out"});
             super::run_all(&[&first,&second],&dir,&out,"program",crate::code_rule_dsl::typing::file_local::Binding::Cpu,1<<18).unwrap();
