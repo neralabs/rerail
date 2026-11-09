@@ -107,27 +107,51 @@ impl RelStats {
         };
         let n = flat.len() / width;
         self.rows += sign * n as i64;
-        let mut counts: FxHashMap<(i64, i64), i64> = FxHashMap::default();
+        // One pass a column: each row's value counted in its document's map (a document's rows mostly come together,
+        // so its map is looked up once a run); the sums are read from the maps. A document is its row's
+        // `document_of`; a value's count is split by whether the row's `doc32` is 0, as `syntax::measured` groups
+        // sqd by `doc32` (all rows whose first column is a document key are one group there).
+        type Doc = (FxHashMap<i64, (i64, i64)>, bool);
+        let mut docs: FxHashMap<i64, Doc> = FxHashMap::default();
         let mut values: FxHashMap<i64, i64> = FxHashMap::default();
-        let mut crossing: FxHashMap<i64, bool> = FxHashMap::default();
+        let mut zero: FxHashMap<i64, i64> = FxHashMap::default();
         for (c, col) in self.cols.iter_mut().enumerate().take(width) {
-            counts.clear();
+            docs.clear();
             values.clear();
-            crossing.clear();
+            zero.clear();
+            let mut at: Option<(i64, Doc)> = None;
             for row in flat.chunks_exact(width) {
-                let (v, (d32, dof)) = (row[c], of(row));
-                *counts.entry((d32, v)).or_default() += 1;
-                *values.entry(v).or_default() += 1;
-                *crossing.entry(dof).or_default() |= !names(v, row);
+                let (v, (d32, doc)) = (row[c], of(row));
+                if at.as_ref().is_none_or(|(d, _)| *d != doc) {
+                    if let Some((d, m)) = at.take() {
+                        docs.insert(d, m);
+                    }
+                    at = Some((doc, docs.remove(&doc).unwrap_or_default()));
+                }
+                let (_, (m, crosses)) = at.as_mut().expect("set");
+                let e = m.entry(v).or_default();
+                if d32 == 0 { e.0 += 1 } else { e.1 += 1 }
+                *crosses |= !names(v, row);
             }
-            col.sqd += sign * counts.values().map(|k| k * k).sum::<i64>();
-            // Distinct values per document: (document, value) pairs, by the document a row names.
-            let mut per_doc: FxHashMap<(i64, i64), ()> = FxHashMap::default();
-            for row in flat.chunks_exact(width) {
-                per_doc.insert((of(row).1, row[c]), ());
+            if let Some((d, m)) = at.take() {
+                docs.insert(d, m);
             }
-            col.local_ndv += sign * per_doc.len() as i64;
-            col.crossing += sign * crossing.values().filter(|x| **x).count() as i64;
+            let (mut sqd, mut local, mut crossing) = (0i64, 0i64, 0i64);
+            for (m, crosses) in docs.values() {
+                local += m.len() as i64;
+                crossing += i64::from(*crosses);
+                for (&v, &(small, large)) in m {
+                    *values.entry(v).or_default() += small + large;
+                    sqd += large * large;
+                    if small > 0 {
+                        *zero.entry(v).or_default() += small;
+                    }
+                }
+            }
+            sqd += zero.values().map(|k| k * k).sum::<i64>();
+            col.sqd += sign * sqd;
+            col.local_ndv += sign * local;
+            col.crossing += sign * crossing;
             Self::values(col, &values, sign);
         }
     }
@@ -359,5 +383,57 @@ mod tests {
         let got = kept.statistics(&|_| true);
         assert_eq!(got[1].1, 310);
         assert_eq!(got[1].2, 5, "b holds 0..4 and 9");
+    }
+
+    /// The one-pass count gives the counters the four passes it replaced gave: rows naming their document by its
+    /// key or by its nodes, documents whose rows come apart, values crossing documents, with and without `at`.
+    #[test]
+    fn one_pass_counts_as_the_four_passes_did() {
+        use rustc_hash::FxHashMap;
+        // The old count, kept here as the reference.
+        fn old(stats: &mut RelStats, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>) {
+            let of = |row: &[i64]| match at {
+                None => (super::doc32(row[0]), super::document_of(row[0])),
+                Some(at) => {
+                    let d = at.map_or(-1, |c| row[c] >> 32);
+                    (d, d)
+                }
+            };
+            let names = |v: i64, row: &[i64]| match at {
+                None => super::names_doc(v, row[0]),
+                Some(at) => at.is_some_and(|c| v >> 32 == row[c] >> 32),
+            };
+            stats.rows += sign * (flat.len() / width) as i64;
+            for (c, col) in stats.cols.iter_mut().enumerate().take(width) {
+                let (mut counts, mut values, mut crossing, mut per_doc) = (FxHashMap::<(i64, i64), i64>::default(), FxHashMap::<i64, i64>::default(), FxHashMap::<i64, bool>::default(), FxHashMap::<(i64, i64), ()>::default());
+                for row in flat.chunks_exact(width) {
+                    let (v, (d32, dof)) = (row[c], of(row));
+                    *counts.entry((d32, v)).or_default() += 1;
+                    *values.entry(v).or_default() += 1;
+                    *crossing.entry(dof).or_default() |= !names(v, row);
+                    per_doc.insert((dof, v), ());
+                }
+                col.sqd += sign * counts.values().map(|k| k * k).sum::<i64>();
+                col.local_ndv += sign * per_doc.len() as i64;
+                col.crossing += sign * crossing.values().filter(|x| **x).count() as i64;
+                RelStats::values(col, &values, sign);
+            }
+        }
+        let mut flat = Vec::new();
+        for i in 0..600i64 {
+            let d = 1 + i % 7;
+            let first = if i % 5 == 0 { d } else { d << 32 | i };
+            let other = if i % 11 == 0 { (d + 1) << 32 | i } else { d << 32 | (i / 3) };
+            flat.extend([first, i % 4, other]);
+        }
+        for at in [None, Some(None), Some(Some(0)), Some(Some(2))] {
+            let (mut a, mut b) = (RelStats::new(vec!["x".into(), "k".into(), "y".into()]), RelStats::new(vec!["x".into(), "k".into(), "y".into()]));
+            a.rows_of(&flat, 3, 1, at);
+            old(&mut b, &flat, 3, 1, at);
+            assert_eq!(a, b, "at {at:?}");
+            a.rows_of(&flat[..300], 3, -1, at);
+            old(&mut b, &flat[..300], 3, -1, at);
+            assert_eq!(a, b, "at {at:?}, counted out");
+        }
     }
 }
