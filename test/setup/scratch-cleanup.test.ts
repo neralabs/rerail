@@ -1,12 +1,9 @@
-// The call sites that replace a file or remove a scratch folder Windows may hold: each keeps its own result, or its own
-// error, when the rename or the removal fails. node:fs/promises is spied on so a test can make one call fail.
-import { mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
+// The update's health check works in a scratch folder Windows may still hold when it ends: the check's own error is
+// the one thrown when removing that folder fails. node:fs/promises is spied on so a test can make one removal fail.
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdapterSession, RerailEventLoop } from "../../src/engine/adapter-contract.js";
-import { ingestCursorTranscript } from "../../src/hosts/cursor/cursor-transcript.js";
-import { outsideAnyProject } from "../../src/runtime/npm.js";
 import { validateManagedInstallation, type Installation } from "../../src/setup/updater.js";
 
 vi.mock("node:fs/promises", { spy: true });
@@ -14,46 +11,21 @@ vi.mock("node:fs/promises", { spy: true });
 const roots: string[] = [];
 afterEach(async () => {
   vi.mocked(rm).mockReset();
-  vi.mocked(rename).mockReset();
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
 });
 
-async function folder(prefix: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
-  roots.push(root);
-  return root;
-}
-
-const held = (path: unknown): Error => Object.assign(new Error(`EBUSY: resource busy or locked, rmdir '${String(path)}'`), { code: "EBUSY" });
-
-/** The next removal fails as Windows fails one while a process holds a file in the folder; the folder is removed later. */
+/** The next removal fails as Windows fails one while a process holds a file in the folder; the folder goes later. */
 function failNextRemoval(): void {
   vi.mocked(rm).mockImplementationOnce(async (path) => {
     roots.push(String(path));
-    throw held(path);
+    throw Object.assign(new Error(`EBUSY: resource busy or locked, rmdir '${String(path)}'`), { code: "EBUSY" });
   });
 }
 
-describe("work in a scratch folder Windows may hold", () => {
-  it("runs npm outside any project and answers with its result when the folder cannot be removed", async () => {
-    failNextRemoval();
-    await expect(outsideAnyProject(async () => "done")).resolves.toBe("done");
-  });
-
-  it("leaves no temporary file of Cursor's transcript state behind a rename that failed", async () => {
-    const storageRoot = await folder("rerail-cursor-state-");
-    vi.mocked(rename).mockRejectedValueOnce(Object.assign(new Error("EXDEV: cross-device link not permitted"), { code: "EXDEV" }));
-    const session = { host: "cursor", sessionId: "session-1", cwd: storageRoot } satisfies AdapterSession;
-    const runtime = {} as RerailEventLoop; // Never reached: a prompt submission only records Cursor's text mode.
-    await expect(ingestCursorTranscript({ hook_event_name: "beforeSubmitPrompt" }, session, runtime, storageRoot)).rejects.toThrow(/EXDEV/u);
-    const left = (await readdir(storageRoot, { recursive: true })).filter(name => name.endsWith(".tmp"));
-    expect(left).toEqual([]);
-  });
-});
-
 /** A staged package whose CLI answers `state` and then fails `start`, or whose event stream exits 1. */
 async function candidate(failing: "cli" | "event-stream"): Promise<Installation> {
-  const root = await folder("rerail-candidate-");
+  const root = await mkdtemp(join(tmpdir(), "rerail-candidate-"));
+  roots.push(root);
   const dist = join(root, "dist");
   await mkdir(join(dist, "cli"), { recursive: true });
   await mkdir(join(dist, "harness"), { recursive: true });

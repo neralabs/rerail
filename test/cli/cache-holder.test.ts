@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { cacheHolder } from "../../src/cli/setup-cli.js";
-import { MAIN_INSTANCE_HOLDER_FILE } from "../../src/engine/native/main-instance.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -27,7 +26,7 @@ describe("the uninstall's cache holder", () => {
     roots.push(cache);
     // A daemon Windows ended at logoff left its record; the pid now belongs to an unrelated live process.
     const recorded = process.pid + 1;
-    await writeFile(join(cache, MAIN_INSTANCE_HOLDER_FILE), JSON.stringify({ pid: recorded }));
+    await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: recorded }));
     expect(cacheHolder(cache, windows([]))).toBeUndefined();
     expect(cacheHolder(cache, windows(["rerail-0123456789abcdef01234567"]))).toBe(recorded);
     expect(cacheHolder(cache, { ...windows([]), platform: "linux" })).toBe(recorded);
