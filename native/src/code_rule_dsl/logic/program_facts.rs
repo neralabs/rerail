@@ -74,6 +74,8 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
+        // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
+        ("ast_pattern", &["p:sym", "s:sym"]),
         ("policy", &["p:sym", "k:int", "json:sym"]),
         ("setting", &["p:sym", "k:int", "key:sym", "text:sym"]),
         // `doc_scopes`: present when the program reads only some documents; each entry k's globs, side 0 the
@@ -319,6 +321,9 @@ impl Writer<'_> {
                 SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
             };
             self.row("rx_span", vec![s(&span), s(text)]);
+        }
+        for text in &prog.ast_patterns {
+            self.row("ast_pattern", vec![s(text)]);
         }
     }
 }
@@ -588,6 +593,9 @@ impl<'a> Reader<'a> {
             };
             prog.rx_spans.insert((span, text(&row[1])?));
         }
+        for row in self.get("ast_pattern") {
+            prog.ast_patterns.insert(text(&row[0])?);
+        }
         if !self.get("doc_scoped").is_empty() {
             let mut scopes: BTreeMap<i64, (Vec<(i64, String)>, Vec<(i64, String)>)> = self.get("doc_scope").iter().map(|r| Ok((int(&r[0])?, Default::default()))).collect::<Result<_, String>>()?;
             for row in self.get("doc_scope_glob") {
@@ -749,5 +757,17 @@ mod tests {
             assert_eq!(back.doc_scopes, scopes);
             assert_eq!(back.text_globs, prog.text_globs);
         }
+    }
+
+    /// The AST patterns a program matches survive its facts: a stored program read back (a prepared program,
+    /// O-stored-patterns) still asks the batch for `ast_match` rows. Without them, a run that reuses it finds no
+    /// pattern matches.
+    #[test]
+    fn ast_patterns_read_back_as_written() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
+        prog.ast_patterns = ["$O[:-$K]".to_owned(), "print($$$A)".to_owned()].into();
+        let mut facts = super::Facts::new();
+        super::write(&mut facts, "p", &prog);
+        assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
     }
 }
