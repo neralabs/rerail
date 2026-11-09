@@ -333,3 +333,44 @@ The doubled CPU is the cost of these stopgaps:
 Step 3b removes most of them. Mode-0 walks whose target cannot match a
 token become named walks, and only clauses whose root can start at a
 token get token candidates.
+
+## 8. Step 3b, first part: what a walk over tokens costs
+
+Each change below was measured on S7 with the named-only probe. The
+interpreter found 519 keys, the full set, after each one.
+
+| Change | Interpreter CPU |
+|---|---|
+| Step 3a | 69 s |
+| Text bits: the index row for the records, scanning only the tokens | 48 s |
+| `Domain::Records`, see below | 46 s |
+| Children merged lazily by slot; NEXT by slot | 41 s |
+| Full documents, same run window | 31 s |
+
+**`Domain::Records`.** A kind-less rule that cannot match a token gets
+this domain. `MatchTree::may_match_token` decides it, conservatively:
+
+- a token has no children, so a `has` conjunct rules tokens out;
+- a supertype rules them out too;
+- `regex` and `not` may match a token.
+
+Label passes with this domain never enter a token. Wherever a domain
+only proposes starts, it is read as every node, which is a sound
+superset.
+
+**Slots.** The column holds each record's slot among its parent's
+children, 4 B a record. So a walk merges a record's children with no
+list, and steps to a record's next sibling with one binary search
+among the parent's tokens.
+
+**Tried and dropped.** Testing each token's text on its own, in place
+of the batched scan, took 137 s. Text tests are built for the batch.
+
+**What is left, about 9 s:**
+
+- text bits for tokens, about 2 s: the batched scan still reads the
+  whole source. Token postings (step 5) replace it.
+- formulas and packed walks, about 0.6 s.
+- the layer, about 0.8 s.
+- token candidates, about 0.3 s.
+- label passes over complements, which cover tokens.

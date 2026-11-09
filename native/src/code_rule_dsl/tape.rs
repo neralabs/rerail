@@ -2429,7 +2429,7 @@ impl TapeDoc {
     pub(super) fn transducer_children(&self, node: u32) -> walk::Children<'_> {
         match (self.at(node), self.walk_column()) {
             (walk::At::Token(..), _) => walk::Children::Listed(Vec::new().into_iter()),
-            (walk::At::Record(record), Some(column)) => walk::Children::Listed(self.walk_children(record, column).into_iter()),
+            (walk::At::Record(record), Some(column)) => self.merged_children(record, column),
             (walk::At::Record(record), None) => walk::Children::Linked { doc: self, next: self.data[record as usize].first },
         }
     }
@@ -2471,10 +2471,8 @@ impl TapeDoc {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn transducer_next_sibling(&self, node: u32, named: bool) -> Option<u32> {
-        if self.walk_column().is_some() {
-            let parent = self.transducer_parent(node)?;
-            let siblings = self.transducer_children(parent);
-            return siblings.skip_while(|&sibling| sibling != node).skip(1).find(|&sibling| !named || self.transducer_is_named(sibling));
+        if let Some(column) = self.walk_column() {
+            return self.walk_next_sibling(node, named, column);
         }
         let mut next = self.data[node as usize].next;
         while next != NONE {
@@ -2583,6 +2581,11 @@ impl TapeDoc {
     }
 
     /// A text test's row from the term index, by its slot key (`with_texts`).
+    /// The term index's row of `key` over the records, walking or not.
+    pub(super) fn record_text_row(&self, key: &str) -> Option<&Arc<Vec<u64>>> {
+        self.texts.get(key)
+    }
+
     pub(super) fn transducer_text_row(&self, key: &str) -> Option<&Arc<Vec<u64>>> {
         // The term index's rows cover the records: a walk over tokens scans their text (token
         // postings: t30 §3, step 5).

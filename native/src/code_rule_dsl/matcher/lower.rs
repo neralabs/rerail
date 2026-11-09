@@ -233,6 +233,29 @@ impl MatchTree {
 }
 
 impl MatchTree {
+    /// Whether the tree may match a token (an anonymous leaf: a keyword, operator or punctuation),
+    /// conservatively: `false` only where it cannot. A token has no children, so `has` never holds
+    /// at one; a kind is tested where it is known (`kinds`), so a kind answers `true` here.
+    pub(in crate::code_rule_dsl) fn may_match_token(&self) -> bool {
+        match self {
+            Self::Supertype(..) | Self::Never => false,
+            Self::Walk { axis: Axis::Has, .. } => false,
+            Self::Count { axis: Axis::Has, min, .. } => *min == 0,
+            Self::All(trees) => trees.iter().all(Self::may_match_token),
+            Self::Any(trees) => trees.iter().any(Self::may_match_token),
+            Self::Recursive(_, tree) => tree.may_match_token(),
+            Self::Kind(_)
+            | Self::Pattern(_)
+            | Self::Constrained(..)
+            | Self::Regex(_)
+            | Self::Not(_)
+            | Self::Walk { .. }
+            | Self::Recur(_)
+            | Self::Count { .. }
+            | Self::Fact(_) => true,
+        }
+    }
+
     /// The kinds a node must have for the tree to match it, where they are known: the anchor a
     /// label pass starts from.
     pub(in crate::code_rule_dsl) fn kinds(&self) -> Option<BTreeSet<u16>> {

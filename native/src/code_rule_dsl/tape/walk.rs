@@ -28,22 +28,26 @@ pub(in crate::code_rule_dsl) struct TokenRow {
 }
 
 /// The tokens the records leave out, by parent: record `r`'s are `rows[offsets[r]..offsets[r + 1]]`.
+/// With each record's slot among its parent's children, a walk merges a record's children and
+/// steps between siblings without listing them.
 #[derive(Debug, Default)]
 pub(in crate::code_rule_dsl) struct TokenColumn {
     offsets: Vec<u32>,
     rows: Vec<TokenRow>,
+    slots: Vec<u32>,
 }
 
 impl TokenColumn {
     /// The column of `doc`, recognized from its source (`tokens::TokenGrammar::sequence`).
     pub(super) fn build(doc: &TapeDoc) -> Self {
         let records = doc.data.len();
-        let mut column = Self { offsets: Vec::with_capacity(records + 1), rows: Vec::new() };
+        let mut column = Self { offsets: Vec::with_capacity(records + 1), rows: Vec::new(), slots: vec![0; records] };
         for record in 0..records as u32 {
             column.offsets.push(column.rows.len() as u32);
             for (slot, item) in doc.transducer_parts(record).into_iter().enumerate() {
-                if let Item::Token { kind, field, start, end } = item {
-                    column.rows.push(TokenRow { start, end, slot: slot as u32, kind, field });
+                match item {
+                    Item::Token { kind, field, start, end } => column.rows.push(TokenRow { start, end, slot: slot as u32, kind, field }),
+                    Item::Child(child) => column.slots[child as usize] = slot as u32,
                 }
             }
         }
@@ -74,9 +78,21 @@ impl TokenColumn {
         (self.offsets.partition_point(|&offset| offset <= token) - 1) as u32
     }
 
+    /// A record's slot among its parent's children.
+    pub(in crate::code_rule_dsl) fn slot(&self, record: u32) -> u32 {
+        self.slots[record as usize]
+    }
+
+    /// Record `parent`'s token at slot `slot`, if a token is there.
+    pub(in crate::code_rule_dsl) fn token_at(&self, parent: u32, slot: u32) -> Option<u32> {
+        let tokens = self.of(parent);
+        let rows = &self.rows[tokens.start as usize..tokens.end as usize];
+        rows.binary_search_by_key(&slot, |row| row.slot).ok().map(|at| tokens.start + at as u32)
+    }
+
     /// Bytes held.
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        self.offsets.len() * 4 + self.rows.len() * std::mem::size_of::<TokenRow>()
+        (self.offsets.len() + self.slots.len()) * 4 + self.rows.len() * std::mem::size_of::<TokenRow>()
     }
 }
 
@@ -84,6 +100,8 @@ impl TokenColumn {
 /// merged list.
 pub(in crate::code_rule_dsl) enum Children<'d> {
     Linked { doc: &'d TapeDoc, next: u32 },
+    /// A walk's: the records' links and the record's tokens, merged by slot.
+    Merged { doc: &'d TapeDoc, column: &'d TokenColumn, next: u32, token: u32, end: u32 },
     Listed(std::vec::IntoIter<u32>),
 }
 
@@ -92,6 +110,20 @@ impl Iterator for Children<'_> {
     fn next(&mut self) -> Option<u32> {
         match self {
             Self::Linked { doc, next } => {
+                let current = *next;
+                if current == super::NONE {
+                    return None;
+                }
+                *next = doc.data[current as usize].next;
+                Some(current)
+            }
+            Self::Merged { doc, column, next, token, end } => {
+                let records = doc.data.len() as u32;
+                let take_token = *token < *end && (*next == super::NONE || column.row(*token).slot < column.slot(*next));
+                if take_token {
+                    *token += 1;
+                    return Some(records + *token - 1);
+                }
                 let current = *next;
                 if current == super::NONE {
                     return None;
@@ -147,21 +179,48 @@ impl TapeDoc {
         }
     }
 
-    /// `record`'s children in a walk, tokens included, in source order.
-    pub(super) fn walk_children(&self, record: u32, column: &TokenColumn) -> Vec<u32> {
-        let records = self.data.len() as u32;
+    /// `record`'s children in a walk, tokens included, in source order: no list is made.
+    pub(super) fn merged_children<'d>(&'d self, record: u32, column: &'d TokenColumn) -> Children<'d> {
         let tokens = column.of(record);
-        let mut out = Vec::with_capacity(tokens.len());
-        let mut kids = self.record_children(record).peekable();
-        let mut token = tokens.start;
-        while kids.peek().is_some() || token < tokens.end {
-            if token < tokens.end && column.row(token).slot as usize == out.len() || kids.peek().is_none() {
-                out.push(records + token);
-                token += 1;
-            } else {
-                out.push(kids.next().unwrap());
+        Children::Merged { doc: self, column, next: self.data[record as usize].first, token: tokens.start, end: tokens.end }
+    }
+
+    /// The next sibling of walk node `node`, any or named, by slot (`TokenColumn::slot`).
+    pub(super) fn walk_next_sibling(&self, node: u32, named: bool, column: &TokenColumn) -> Option<u32> {
+        let records = self.data.len() as u32;
+        match self.at(node) {
+            // A token is never named: a record's next named sibling is the records' own.
+            At::Record(record) if named => {
+                let mut next = self.data[record as usize].next;
+                while next != super::NONE && !self.transducer_is_named(next) {
+                    next = self.data[next as usize].next;
+                }
+                (next != super::NONE).then_some(next)
+            }
+            At::Record(record) => {
+                let parent = self.data[record as usize].parent;
+                if parent == super::NONE {
+                    return None;
+                }
+                if let Some(token) = column.token_at(parent, column.slot(record) + 1) {
+                    return Some(records + token);
+                }
+                let next = self.data[record as usize].next;
+                (next != super::NONE).then_some(next)
+            }
+            At::Token(token, row) => {
+                let parent = column.parent(token);
+                if !named && token + 1 < column.of(parent).end && column.row(token + 1).slot == row.slot + 1 {
+                    return Some(records + token + 1);
+                }
+                // The record after it: the first of the parent's records past its slot.
+                let mut next = self.data[parent as usize].first;
+                while next != super::NONE && (column.slot(next) < row.slot || named && !self.transducer_is_named(next)) {
+                    next = self.data[next as usize].next;
+                }
+                (next != super::NONE).then_some(next)
             }
         }
-        out
     }
+
 }

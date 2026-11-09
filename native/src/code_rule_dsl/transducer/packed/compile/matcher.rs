@@ -114,14 +114,25 @@ impl Label {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Domain {
     All,
+    /// Every record, and none of a walk's tokens (`TapeDoc::walking_tokens`): a tree that cannot
+    /// match a token (`MatchTree::may_match_token`). On a full document, every node.
+    Records,
     Kinds(Vec<u16>),
     Label(u16),
 }
 
 impl Domain {
     fn of(tree: &MatchTree) -> Self {
-        tree.kinds()
-            .map_or(Self::All, |kinds| Self::Kinds(kinds.into_iter().collect()))
+        match tree.kinds() {
+            Some(kinds) => Self::Kinds(kinds.into_iter().collect()),
+            None if tree.may_match_token() => Self::All,
+            None => Self::Records,
+        }
+    }
+
+    /// Whether node `node` of `tape` is in the domain where its kind or label is not asked.
+    fn spans(&self, tape: &TapeDoc, node: u32) -> bool {
+        !matches!(self, Self::Records) || (node as usize) < tape.record_count()
     }
 }
 
@@ -242,7 +253,7 @@ impl Labels {
     /// counts by capture and complements can be any node. A label met again (recursion) is any.
     fn bound(&self, domain: &Domain, seen: &mut Vec<u16>) -> Option<BTreeSet<u16>> {
         match domain {
-            Domain::All => None,
+            Domain::All | Domain::Records => None,
             Domain::Kinds(kinds) => Some(kinds.iter().copied().collect()),
             Domain::Label(id) if seen.contains(id) => None,
             Domain::Label(id) => {
@@ -318,7 +329,7 @@ impl Labels {
         };
         let starts = |domain: &Domain| match domain {
             Domain::Label(label) => Some(*label),
-            Domain::All | Domain::Kinds(_) => None,
+            Domain::All | Domain::Records | Domain::Kinds(_) => None,
         };
         match self.def(id) {
             Label::Pattern(_, _) | Label::Empty => Vec::new(),
@@ -825,6 +836,7 @@ impl LoweredWave {
         let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
         let domain = |domain: &Domain| match domain {
             Domain::All => "all".to_owned(),
+            Domain::Records => "records".to_owned(),
             Domain::Kinds(kinds) => format!("kinds{}", super::rir::kinds(grammar, kinds)),
             Domain::Label(label) => format!("L{label}"),
         };
@@ -1053,6 +1065,7 @@ impl LoweredWave {
     pub(in crate::code_rule_dsl) fn starts(&self, clause: usize, tape: &TapeDoc, node: u32) -> bool {
         match &self.clauses[clause].domain {
             Domain::All | Domain::Label(_) => true,
+            Domain::Records => (node as usize) < tape.record_count(),
             Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
         }
     }
@@ -1256,8 +1269,9 @@ fn metal<'a>(
         let starts = bound.unwrap_or_else(|| starts.clone());
         let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone());
         Arc::clone(shared.entry(key).or_insert_with(|| {
+            // A records domain lists every node here: its tree tests each (a superset is sound).
             let kinds = match starts {
-                Domain::All => None,
+                Domain::All | Domain::Records => None,
                 Domain::Kinds(kinds) => Some(kinds),
                 Domain::Label(_) => unreachable!("a label domain is bounded by its kinds"),
             };
@@ -1933,7 +1947,8 @@ fn formulas(
             let walk = Micro::of(program)?;
             // The starts: the domain's nodes.
             let starts = match domain {
-                Domain::All => Set::All,
+                // A records domain as every node: its walk tests each (a superset is sound).
+                Domain::All | Domain::Records => Set::All,
                 Domain::Kinds(kinds) => Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()),
                 Domain::Label(label) => Set::Class(*label),
             };
@@ -1964,6 +1979,7 @@ fn formulas(
                             if *CHECK {
                                 let starts = (0..view.transducer_len() as u32).filter(|&node| match domain {
                                     Domain::All => true,
+                                    Domain::Records => domain.spans(view, node),
                                     Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
                                     Domain::Label(label) => has(&sets[tape], *label, node),
                                 });
@@ -2108,14 +2124,20 @@ fn sweep_with(
                 Label::Empty => None,
                 _ => Some(None),
             };
-            (kinds, entry)
+            // A records domain (`Domain::Records`): no pass at a walk's tokens.
+            let records = matches!(clause.labels.def(id), Label::Roots(_, Domain::Records) | Label::Targets(_, Domain::Records));
+            (kinds, entry, records)
         })
         .collect::<Vec<_>>();
     let mut entries: Vec<(u32, u32)> = Vec::new();
+    let record_count = tape.record_count() as u32;
     for node in 0..len {
         let kind = tape.transducer_kind(node);
-        for (pass, (kinds, entry)) in starts.iter().enumerate() {
+        for (pass, (kinds, entry, records)) in starts.iter().enumerate() {
             let Some(kinds) = kinds else { continue };
+            if *records && node >= record_count {
+                continue;
+            }
             if kinds.is_some_and(|kinds| kinds.binary_search(&kind).is_err()) {
                 continue;
             }
@@ -2375,6 +2397,7 @@ fn walked(label: &Label, walk: &Micro, program: &Program, tape: &TapeDoc, sets: 
 fn domain<'a>(domain: &'a Domain, tape: &'a TapeDoc, sets: &'a [Vec<u64>]) -> impl Iterator<Item = u32> + 'a {
     (0..tape.transducer_len() as u32).filter(move |&node| match domain {
         Domain::All => true,
+        Domain::Records => domain.spans(tape, node),
         Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
         Domain::Label(label) => has(sets, *label, node),
     })

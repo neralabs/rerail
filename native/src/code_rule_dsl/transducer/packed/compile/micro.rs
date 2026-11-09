@@ -246,6 +246,18 @@ impl Micro {
     /// Slot `slot`'s bits on `tape` (`texts`): the term index's row where the tape has it
     /// (`R[tid]`, `prefilter::terms`), else each node's text tested.
     pub(in crate::code_rule_dsl) fn slot(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
+        // A walk over tokens (`TapeDoc::walking_tokens`): the index's row covers the records, and
+        // only the tokens' texts are tested.
+        if tape.walks_tokens()
+            && let Some(row) = tape.record_text_row(&self.slot_key(program, slot))
+        {
+            crate::code_rule_dsl::prof::count("texts.indexed", 1);
+            let mut bits = self.scan_from(program, slot, tape, tape.record_count() as u32)?;
+            for (word, &records) in bits.iter_mut().zip(row.iter()) {
+                *word |= records;
+            }
+            return Some(bits);
+        }
         if let Some(row) = tape.transducer_text_row(&self.slot_key(program, slot)) {
             crate::code_rule_dsl::prof::count("texts.indexed", 1);
             // `RERAIL_TEXTS_CHECK`: the index's row against the text's.
@@ -293,15 +305,20 @@ impl Micro {
     /// node's; a Lua pattern on each node's text. A lowered test's bits cover every node, whatever
     /// the slot's kind: they are keyed by plan alone (`slot_key`).
     fn scan(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
+        self.scan_from(program, slot, tape, 0)
+    }
+
+    /// [`Self::scan`] of the nodes from `from` on: the others' bits are clear.
+    fn scan_from(&self, program: &Program, slot: usize, tape: &TapeDoc, from: u32) -> Option<Vec<u64>> {
         let (value, kind) = self.texts[slot];
         let len = tape.transducer_len();
         if let Some(lowered) = self.lowered(program, slot) {
-            let candidates = (0..len as u32).collect::<Vec<_>>();
+            let candidates = (from..len as u32).collect::<Vec<_>>();
             let span = |node: u32| tape.transducer_span(node);
             let nodes = crate::code_rule_dsl::text::scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span };
             return crate::code_rule_dsl::text::scan::bits(&lowered, &nodes);
         }
-        let candidates = (0..len as u32).filter(|&node| kind.is_none_or(|kind| tape.transducer_kind(node) == kind));
+        let candidates = (from..len as u32).filter(|&node| kind.is_none_or(|kind| tape.transducer_kind(node) == kind));
         let mut bits = vec![0_u64; len.div_ceil(64)];
         let value_program = &program.value_programs[usize::from(value)];
         for node in candidates {
