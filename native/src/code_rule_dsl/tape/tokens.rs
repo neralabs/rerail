@@ -57,6 +57,8 @@ pub(in crate::code_rule_dsl) struct TokenGrammar {
     token_id: FxHashMap<Sym, u16>,
     /// Per field symbol: its tree-sitter field id.
     field_id: FxHashMap<Sym, u16>,
+    /// Hidden text recognition can read (see `Builder::hidden_edge`).
+    hidden_text: FxHashMap<Sym, regex::bytes::Regex>,
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
 }
 
@@ -120,6 +122,56 @@ struct Builder<'g> {
     names: FxHashMap<String, Sym>,
     texts: Vec<String>,
     recursive: bool,
+    /// Hidden text (a pattern or hidden token that makes no node), by its label's symbol.
+    hidden_text: FxHashMap<Sym, regex::bytes::Regex>,
+}
+
+/// A token rule as a regex (Rust dialect), anchored at the start; `None` where it has a part this
+/// does not translate.
+fn token_regex(rule: &Value, rules: &serde_json::Map<String, Value>, depth: usize) -> Option<String> {
+    if depth > 16 {
+        return None;
+    }
+    let rule = unwrap_prec(rule);
+    let members = |sep: &str| -> Option<String> {
+        let parts = rule["members"].as_array()?.iter().map(|m| token_regex(m, rules, depth + 1)).collect::<Option<Vec<_>>>()?;
+        Some(format!("(?:{})", parts.join(sep)))
+    };
+    Some(match rule["type"].as_str()? {
+        "STRING" => regex::escape(rule["value"].as_str()?),
+        "PATTERN" => {
+            let value = rule["value"].as_str()?;
+            // JavaScript's `\uXXXX` and `\u{X}` are Rust's `\x{X}`.
+            let mut out = String::with_capacity(value.len());
+            let mut chars = value.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '\\' && chars.peek() == Some(&'u') {
+                    chars.next();
+                    if chars.peek() == Some(&'{') {
+                        out.push_str("\\x");
+                    } else {
+                        let hex: String = (0..4).filter_map(|_| chars.next()).collect();
+                        out.push_str(&format!("\\x{{{hex}}}"));
+                    }
+                } else if c == '\\' {
+                    out.push(c);
+                    out.extend(chars.next());
+                } else {
+                    out.push(c);
+                }
+            }
+            let flags = rule["flags"].as_str().unwrap_or("");
+            format!("(?{}:{out})", if flags.contains('i') { "i" } else { "" })
+        }
+        "SEQ" => members("")?,
+        "CHOICE" => members("|")?,
+        "BLANK" => String::new(),
+        "REPEAT" => format!("(?:{})*", token_regex(&rule["content"], rules, depth + 1)?),
+        "REPEAT1" => format!("(?:{})+", token_regex(&rule["content"], rules, depth + 1)?),
+        "TOKEN" | "IMMEDIATE_TOKEN" | "FIELD" | "ALIAS" | "RESERVED" => token_regex(&rule["content"], rules, depth + 1)?,
+        "SYMBOL" => token_regex(rules.get(rule["name"].as_str()?)?, rules, depth + 1)?,
+        _ => return None,
+    })
 }
 
 const PREC: [&str; 4] = ["PREC", "PREC_LEFT", "PREC_RIGHT", "PREC_DYNAMIC"];
@@ -153,10 +205,34 @@ impl<'g> Builder<'g> {
         }
     }
 
+    /// Beside the epsilon edge of hidden text (no node), an edge recognition can take to read
+    /// that text from the source.
+    fn hidden_edge(&mut self, rule: &Value, nfa: &mut Nfa, from: u32, to: u32) {
+        let Some(pattern) = token_regex(rule, self.rules, 0) else { return };
+        let key = format!("\u{0}hidden:{pattern}");
+        let known = self.names.contains_key(&key);
+        let name = self.sym(&key);
+        if !known {
+            match regex::bytes::Regex::new(&format!("^(?:{pattern})")) {
+                Ok(regex) => {
+                    self.hidden_text.insert(name, regex);
+                }
+                Err(_) => return,
+            }
+        } else if !self.hidden_text.contains_key(&name) {
+            return;
+        }
+        nfa.edge(from, Some(Label { token: true, name, field: 0 }), to);
+    }
+
     fn build(&mut self, rule: &Value, nfa: &mut Nfa, from: u32, to: u32, field: Sym, stack: &mut Vec<String>) {
         let kind = rule["type"].as_str().unwrap_or("");
         match kind {
-            "BLANK" | "PATTERN" => nfa.edge(from, None, to),
+            "BLANK" => nfa.edge(from, None, to),
+            "PATTERN" => {
+                nfa.edge(from, None, to);
+                self.hidden_edge(rule, nfa, from, to);
+            }
             "STRING" => {
                 let name = self.sym(rule["value"].as_str().unwrap_or(""));
                 nfa.edge(from, Some(Label { token: true, name, field }), to);
@@ -169,6 +245,7 @@ impl<'g> Builder<'g> {
                 } else {
                     // An auxiliary token: hidden, no node.
                     nfa.edge(from, None, to);
+                    self.hidden_edge(rule, nfa, from, to);
                 }
             }
             "SEQ" => {
@@ -219,6 +296,9 @@ impl<'g> Builder<'g> {
                     stack.pop();
                 } else if hidden {
                     nfa.edge(from, None, to);
+                    if let Some(rule) = self.rules.get(name) {
+                        self.hidden_edge(rule, nfa, from, to);
+                    }
                 } else {
                     let name = self.sym(name);
                     nfa.edge(from, Some(Label { token: false, name, field }), to);
@@ -307,7 +387,7 @@ impl TokenGrammar {
             grammar[key].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned).or_else(|| v["name"].as_str().map(str::to_owned))).collect()
         };
         let hidden: BTreeSet<String> = listed("supertypes").into_iter().chain(listed("inline")).collect();
-        let mut builder = Builder { rules, hidden, names: FxHashMap::default(), texts: Vec::new(), recursive: false };
+        let mut builder = Builder { rules, hidden, names: FxHashMap::default(), texts: Vec::new(), recursive: false, hidden_text: FxHashMap::default() };
         builder.sym("");
         // Each visible kind's productions: its own rule, and the rules aliased to its name.
         let mut productions: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
@@ -363,18 +443,23 @@ impl TokenGrammar {
                 continue;
             };
             let texts = &builder.texts;
+            let hidden_text = &builder.hidden_text;
             let tokens = moves
                 .iter()
                 .map(|out| {
                     let mut tokens: Vec<(Label, u32)> = out.iter().filter(|(l, _)| l.token).map(|(l, &t)| (*l, t)).collect();
-                    tokens.sort_by_key(|&(label, _)| (std::cmp::Reverse(texts[label.name as usize].len()), label));
+                    tokens.sort_by_key(|&(label, _)| {
+                        // Hidden text last: it is read only where no token spells the source.
+                        let length = if hidden_text.contains_key(&label.name) { 0 } else { texts[label.name as usize].len() };
+                        (std::cmp::Reverse(length), label)
+                    });
                     tokens
                 })
                 .collect();
             let sym = builder.sym(name);
             kinds.insert(sym, Automaton { moves, accepting, tokens });
         }
-        let Builder { names, texts, .. } = builder;
+        let Builder { names, texts, hidden_text, .. } = builder;
         let kind_sym = (0..language.node_kind_count() as u16)
             .map(|id| language.node_kind_for_id(id).and_then(|name| names.get(name).copied()))
             .collect();
@@ -391,7 +476,7 @@ impl TokenGrammar {
         let field_id = (1..=language.field_count() as u16)
             .filter_map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).map(|&sym| (sym, id))))
             .collect();
-        Ok(Self { names, texts, kinds, kind_sym, field_sym, token_id, field_id, unsupported })
+        Ok(Self { names, texts, kinds, kind_sym, field_sym, token_id, field_id, hidden_text, unsupported })
     }
 
     pub(in crate::code_rule_dsl) fn kind_count(&self) -> usize {
@@ -551,6 +636,16 @@ fn recognize(
             return fits.then_some(state);
         }
         for &(label, to) in &automaton.tokens[state as usize] {
+            if let Some(regex) = grammar.hidden_text.get(&label.name) {
+                // Hidden text: read, but no token of its own.
+                if let Some(found) = regex.find(&source[at..limit])
+                    && !found.is_empty()
+                    && let Some(end) = walk(grammar, automaton, source, to, at + found.end(), limit, next, out, steps)
+                {
+                    return Some(end);
+                }
+                continue;
+            }
             let text = grammar.text(label.name).as_bytes();
             if text.is_empty() || at + text.len() > limit || !spells(source, at, text) {
                 continue;
