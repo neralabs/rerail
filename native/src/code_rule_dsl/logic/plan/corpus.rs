@@ -2956,13 +2956,18 @@ fn run_observed(
         crate::code_rule_dsl::logic::native::component::forget_derived(&db);
         if memoised && attributable {
             let _remember = crate::code_rule_dsl::logic::profile::span(|| "memo remember".into());
+            // The chunk's entries are written as one wave, not one transaction per document.
+            let mut publish: Vec<(memo::Content, &str, i64, &memo::Entry)> = Vec::with_capacity(chunk_docs.len());
             for (d, path, source_id, _) in &chunk_docs {
                 // Counted in before it is remembered: the content it replaces is the memo's still.
                 if let (Some(k), Some(entry), Some(memo)) = (keeper.as_mut(), entries.get(d), memo) {
                     k.file(path, *source_id, *d, entry, &|c, key| memo.lookup(c, world::store_path(path), key, &memo_program).ok().flatten());
                 }
-                let (Some(id), Some(entry), Some(memo)) = (source_id, entries.get(d), memo) else { continue };
-                memo.remember(*id, world::store_path(path), *d, &memo_program, entry).map_err(|e| Error::Plan(format!("{path}: memo publication for source {id:?}: {e}")))?;
+                let (Some(id), Some(entry)) = (source_id, entries.get(d)) else { continue };
+                publish.push((*id, world::store_path(path), *d, entry));
+            }
+            if let Some(memo) = memo {
+                memo.remember_all(&memo_program, &publish).map_err(|e| Error::Plan(format!("memo publication of {} documents: {e}", publish.len())))?;
             }
         } else if memoised {
             memo_unattributed += 1;
