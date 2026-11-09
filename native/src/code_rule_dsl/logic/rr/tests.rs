@@ -754,6 +754,18 @@ fn check_rr_finds_problems() {
     assert_eq!(check::declarations(&twice).len(), 2);
 }
 
+#[test]
+fn positional_match_all_binds_outputs_only_after_its_subject_is_bound() {
+    let statements = |src: &str| syntax::Parser::new(src).unwrap().statements().unwrap();
+    let declarations = ".decl source(s: symbol)\n.decl hit(i: number, a: number, b: number, part: symbol)\n";
+    let positive = statements(&format!("{declarations}hit(i,a,b,part) :- source(s), match_all(\"(?<part>[^/]+)\",s,i,a,b).\n"));
+    assert!(check::grounded(&positive, &BTreeSet::new()).is_empty());
+    let missing_subject = statements(&format!("{declarations}hit(i,a,b,part) :- match_all(\"(?<part>[^/]+)\",s,i,a,b).\n"));
+    assert_eq!(check::grounded(&missing_subject, &BTreeSet::new()), vec![(3, vec!["s".to_owned()])]);
+    let negated = statements(&format!("{declarations}hit(i,a,b,part) :- source(s), !match_all(\"(?<part>[^/]+)\",s,i,a,b).\n"));
+    assert_eq!(check::grounded(&negated, &BTreeSet::new()), vec![(3, vec!["a".to_owned(), "b".to_owned(), "i".to_owned(), "part".to_owned()])]);
+}
+
 fn cmp(l: Term, op: &'static str, r: Term) -> Literal {
     Literal::Cmp { l, op, r }
 }
