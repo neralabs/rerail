@@ -150,6 +150,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         nslots: j.nslots,
         multi: Vec::new(),
         counts: (0..rest.len()).map(|_| Default::default()).collect(),
+        forms: (0..rest.len()).map(|_| Default::default()).collect(),
     };
     Some(Closure { col, rest, y })
 }

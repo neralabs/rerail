@@ -304,3 +304,40 @@ fn a_walk_along_an_edge_runs_as_its_closure() {
         super::setfix::close(&db, &name).unwrap();
     }
 }
+
+/// A count step that many bindings reach is answered from a count table (decision 0096 §1), exactly as walking counts:
+/// per row of the join's first scan when the key comes from it, else from the relation's histogram by its key.
+#[test]
+fn a_count_many_bindings_reach_reads_its_count_table() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let db = connection();
+    db.execute_batch(
+        "CREATE TABLE l(c0, c1); CREATE TABLE b(c0, c1, c2); CREATE TABLE k(c0);
+         WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 19999) INSERT INTO l SELECT i % 100, i % 7 FROM n;
+         WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 29999) INSERT INTO b SELECT (i * 3) % 100, i % 7, i FROM n; CREATE INDEX b_key ON b(c0, c1);
+         INSERT INTO k SELECT DISTINCT c0 FROM l;
+         CREATE TABLE r1(c0, c1, c2); CREATE TABLE r2(c0, c1, c2);",
+    )
+    .unwrap();
+    let src = |t: &str, cols: &str, types: &str| format!("t:b:{}:{}:{types}", hex(t), hex(cols));
+    let (l, b, k) = (src("l", "c0, c1", "ii"), src("b", "c0, c1, c2", "iii"), src("k", "c0", "i"));
+    let before = super::setfix::tables_built();
+    // The key from the first step, a scan: counts per row.
+    let per_row = format!("pos {l} v0 v1\ncount {b} v0 v1 _ v2\nhead v0 v1 v2");
+    // The key from two steps: the histogram.
+    let histogram = format!("pos {k} v0\npos {l} v0 v1\ncount {b} v0 v1 _ v2\nhead v0 v1 v2");
+    for (name, rel, join) in [("per_row", "r1", &per_row), ("histogram", "r2", &histogram)] {
+        super::setfix::open(&db, &format!("name {name}\nrel {rel} iii empty\nseed 0 {}", hex(join))).unwrap();
+        let report = super::setfix::run(&db, name, 0).unwrap();
+        assert!(report.ends_with(" 1"), "{report}");
+        super::setfix::close(&db, name).unwrap();
+        let rows = |sql: &str| db.prepare(sql).unwrap().query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))).unwrap().map(Result::unwrap).collect::<Vec<_>>();
+        let got = rows(&format!("SELECT c0, c1, c2 FROM {rel} ORDER BY 1, 2"));
+        let want = rows("SELECT DISTINCT l.c0, l.c1, (SELECT count(*) FROM b WHERE b.c0 = l.c0 AND b.c1 = l.c1) FROM l ORDER BY 1, 2");
+        assert_eq!(got.len(), want.len(), "{name}");
+        assert!(got == want, "{name}: the counts differ from walking's");
+    }
+    let after = super::setfix::tables_built();
+    assert!(after.1 > before.1, "counts per row were built");
+    assert!(after.0 > before.0, "a histogram was built");
+}

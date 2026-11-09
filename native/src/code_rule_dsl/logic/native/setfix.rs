@@ -52,6 +52,7 @@ use std::time::Instant;
 /// Strata captured and run again on their own (decision 0095, step 0).
 pub(in crate::code_rule_dsl) mod lab;
 mod closure;
+mod table;
 
 fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()) }
 
@@ -589,7 +590,9 @@ pub fn close(conn: &Connection, name: &str) -> Result<()> {
         let rels = std::mem::take(&mut comp.store.write().unwrap().rels);
         let mut derived = DERIVED.lock().unwrap();
         for rel in rels {
-            derived.insert((at_scope, rel.table.clone()), Arc::new(InRel::moved(rel)));
+            let moved = InRel::moved(rel);
+            let table = moved.name.get().cloned().unwrap_or_default();
+            derived.insert((at_scope, table), Arc::new(moved));
         }
     }
     Ok(())
@@ -640,11 +643,15 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         match ran {
             Some(r) => {
                 visits += r.nodes as u64 + r.rows as u64;
+                crate::code_rule_dsl::logic::profile::decision("closure (decision 0096 §1)", || format!("a walk along an edge run as its closure, by {}", r.how));
                 if wave_trace { eprintln!("      {name}: closure over {} nodes by {}, {} rows, {:.1} ms", r.nodes, r.how, r.rows, tp.elapsed().as_secs_f64() * 1e3); }
                 store.rels[0].set_delta(n, n);
                 done = true;
             }
-            None => store.rels[0].set_delta(0, n),
+            None => {
+                crate::code_rule_dsl::logic::profile::decision("closure (decision 0096 §1)", || "a walk's reach too large for bit rows: semi-naive from its seeds".into());
+                store.rels[0].set_delta(0, n)
+            }
         }
         drop(syms);
         drop(guard);
@@ -1126,7 +1133,12 @@ pub struct InRel { k: usize, n: usize, rows: Vec<i64>, view: Option<View>, base:
                    set: HashTable<u32>, dead: Vec<u64>, ndead: usize,
                    /// Each column's statistics (`syntax::measured`), measured when first asked: a kept relation's rows
                    /// do not change, so a session's later runs read them, not measure them again (0094 §4).
-                   measured: std::sync::OnceLock<Vec<[i64; 4]>> }
+                   measured: std::sync::OnceLock<Vec<[i64; 4]>>,
+                   /// Its count tables by key columns (decision 0096 §1, `table`), built when a count step's walks have
+                   /// cost as much, or ahead in a level's device wave; shared by every step that counts it so.
+                   tables: Mutex<HashMap<Vec<usize>, Arc<table::Table>>>,
+                   /// The relation's table, once the run holds it by name (`r:` sources).
+                   name: std::sync::OnceLock<String> }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
 pub struct View { src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
@@ -1301,6 +1313,7 @@ pub fn held(conn: &Connection, table: &str) -> Option<Arc<InRel>> {
 /// names (`adopted`).
 pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
     let at = scope(conn);
+    let _ = rel.name.set(table.to_owned());
     DERIVED.lock().unwrap().insert((at, table.to_owned()), rel);
     ADOPTED.lock().unwrap().insert((at, table.to_owned()));
 }
@@ -1321,7 +1334,7 @@ impl InRel {
         let k = types.len();
         let n = rows.len();
         let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
-        Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default() })
+        Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default(), tables: Default::default(), name: Default::default() })
     }
     /// Its rows, as a source of columns `names`.
     pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
@@ -1334,6 +1347,20 @@ impl InRel {
     pub fn rows(&self) -> usize {
         self.len() - self.ndead
     }
+}
+
+/// A level's device wave (decision 0095 §5, 0096 §6): the count tables its strata read (`wants`, by relation and key
+/// columns) that an earlier chunk found worth building and that this run holds, built now as one batch. Returns the
+/// launches and the relations they read.
+pub fn prefetch_tables(conn: &Connection, wants: &std::collections::BTreeSet<(String, Vec<usize>)>) -> Result<(usize, usize)> {
+    let at = scope(conn);
+    table::prefetch(wants, |name| DERIVED.lock().unwrap().get(&(at, name.to_owned())).cloned()).map_err(err)
+}
+
+/// The count tables built so far in this process: histograms, counts per row, and the rows they read.
+pub fn tables_built() -> (u64, u64, u64) {
+    let b = table::built();
+    (b.histograms, b.per_row, b.rows)
 }
 
 /// The relations of components run with `nowrite`, by table, until they are materialized.
@@ -1440,7 +1467,7 @@ impl InRel {
     /// A component's relation at its fixpoint, its rows and indexes moved.
     fn moved(rel: Rel) -> InRel {
         InRel { k: rel.k, n: rel.n, rows: rel.data, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx,
-                set: rel.set, dead: rel.dead, ndead: rel.ndead, measured: Default::default() }
+                set: rel.set, dead: rel.dead, ndead: rel.ndead, measured: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table) }
     }
     /// A whole view's rows are its source's, counted when first asked: a source that makes its rows on lookup
     /// (`syntax::within`) makes them all only for a scan.
@@ -1563,7 +1590,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(0, Vec::len);
-            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default() });
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default(), tables: Default::default(), name: Default::default() });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if std::env::var_os("RDL_PROFILE").is_some() {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
@@ -1579,7 +1606,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default() });
+    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, measured: Default::default(), tables: Default::default(), name: Default::default() });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;
@@ -1826,7 +1853,9 @@ enum Step {
 /// `multi`: the composite indexes (relation, key columns) its steps read, which the component maintains. `counts`:
 /// per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read them: the
 /// observed fanout of each step, which replanning uses in place of the estimate.
-pub struct JoinRule { steps: Vec<Step>, out: Vec<Term>, nslots: usize, multi: Vec<(usize, Vec<usize>)>, counts: Vec<[std::cell::Cell<u64>; 2]> }
+/// `forms`: per step, its count-table form's state (`table`).
+pub struct JoinRule { steps: Vec<Step>, out: Vec<Term>, nslots: usize, multi: Vec<(usize, Vec<usize>)>, counts: Vec<[std::cell::Cell<u64>; 2]>,
+                      forms: Vec<table::StepForm> }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
     let mut bound: Vec<bool> = Vec::new();
@@ -2023,7 +2052,8 @@ fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Join
         return Err(err(format!("a head reads a slot its body does not bind: {spec}")));
     }
     let counts = steps.iter().map(|_| Default::default()).collect();
-    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts })
+    let forms = (0..steps.len()).map(|_| table::StepForm::default()).collect();
+    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, forms })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
@@ -2038,7 +2068,9 @@ fn run_join_collect(j: &JoinRule, store: &Store, syms: &mut Interner, preset: &[
 
 fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>) -> u64 {
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
-                     key: Vec<i64>, row: Vec<i64>, collect: Option<&'c mut Vec<i64>> }
+                     key: Vec<i64>, row: Vec<i64>, collect: Option<&'c mut Vec<i64>>,
+                     /// The row the first step is at (a count table's counts per row are by it).
+                     at0: u32 }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -2114,6 +2146,7 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
                     if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                     if exists { return true; }
                     for &(c, s) in binds { slots[s] = row.at(c); }
+                    if i == 0 { cx.at0 = id; }
                     go(cx, i + 1, slots);
                     false
                 });
@@ -2122,14 +2155,23 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
             Step::Count { src, keys, tests, out, bind } => {
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
-                let (rows, cands) = candidates(src, store, &cx.key, keys);
-                let mut n = 0i64;
-                cands.any(|id| {
-                    if rows.dead(id) { return false; }
-                    let row = rows.row(id);
-                    if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { n += 1 }
-                    false
-                });
+                let form = &j.forms[i];
+                let n = match table::count(form, src, keys, tests, &cx.key, cx.at0) {
+                    Some(n) => n,
+                    None => {
+                        let (rows, cands) = candidates(src, store, &cx.key, keys);
+                        let (mut n, mut walked) = (0i64, 0u64);
+                        cands.any(|id| {
+                            walked += 1;
+                            if rows.dead(id) { return false; }
+                            let row = rows.row(id);
+                            if keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { n += 1 }
+                            false
+                        });
+                        table::spent(form, &j.steps, i, walked);
+                        n
+                    }
+                };
                 if *bind { slots[*out] = n } else if slots[*out] != n { return }
                 go(cx, i + 1, slots);
             }
@@ -2240,7 +2282,7 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
             Step::In { a, set, want } => if set.contains(&val(slots, *a)) == *want { go(cx, i + 1, slots) },
         }
     }
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), collect };
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), collect, at0: 0 };
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
     go(&mut cx, 0, &mut slots);
