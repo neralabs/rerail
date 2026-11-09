@@ -197,11 +197,33 @@ export function gitInstalled(path: string, platform: NodeJS.Platform = process.p
   return developerDir !== undefined && probe.exists(posix.join(developerDir, "usr", "bin", "git"));
 }
 
-/** The system Git, probed once per process; throws {@link GitUnavailableError} when none is installed. */
+/** The folders Git for Windows keeps its own git.exe in: x64, ARM64 and 32-bit builds. */
+const GIT_FOR_WINDOWS_BUILDS = ["mingw64", "clangarm64", "mingw32"];
+
+/**
+ * The Git program behind Git for Windows' launcher at `path`, or `path` itself. `<Git>\cmd\git.exe` and
+ * `<Git>\bin\git.exe` set up the environment and run `<Git>\mingw64\bin\git.exe` (`clangarm64` on ARM64, `mingw32` on
+ * 32-bit) as their own child. A timeout kills only the process Rerail started, and on Windows killing a process leaves
+ * its children running, so the real Git ran on in the repository after Rerail gave up on it. The real one runs the
+ * commands Rerail gives it without the launcher: it finds its own DLLs, helpers and system configuration from its folder.
+ */
+export function gitBehindLauncher(path: string, exists: (path: string) => boolean = existsSync): string {
+  const folder = win32.dirname(path);
+  const launcherFolder = win32.basename(folder).toLowerCase();
+  if (win32.basename(path).toLowerCase() !== "git.exe" || (launcherFolder !== "cmd" && launcherFolder !== "bin")) return path;
+  const root = win32.dirname(folder);
+  return GIT_FOR_WINDOWS_BUILDS.map(build => win32.join(root, build, "bin", "git.exe")).find(exists) ?? path;
+}
+
+/**
+ * The system Git, probed once per process; throws {@link GitUnavailableError} when none is installed. On Windows it is
+ * the Git behind Git for Windows' launcher ({@link gitBehindLauncher}).
+ */
 export function gitExecutable(): string {
   if (probed === undefined) {
     const looked = gitCandidates();
-    probed = { path: looked.find(path => gitInstalled(path)), looked };
+    const found = looked.find(path => gitInstalled(path));
+    probed = { path: found === undefined || process.platform !== "win32" ? found : gitBehindLauncher(found), looked };
   }
   if (probed.path === undefined) throw new GitUnavailableError(probed.looked);
   return probed.path;

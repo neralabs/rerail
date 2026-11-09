@@ -4,7 +4,8 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitHead, gitHome, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
+  gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome, gitInstalled,
+  headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
   runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -208,6 +209,26 @@ describe("gitExcludeFiles", () => {
       const drive = share.slice(0, 2);
       expect((await gitConfigFiles(root, { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, "win32")).slice(2)).toEqual(globals);
     }
+  });
+});
+
+describe("gitBehindLauncher", () => {
+  it("runs Git for Windows' own git.exe, not the launcher that starts it as a child a timeout would leave running", () => {
+    const installed = (...paths: string[]) => (path: string) => paths.includes(path);
+    const git = String.raw`C:\Program Files\Git`;
+    const real = String.raw`${git}\mingw64\bin\git.exe`;
+    expect(gitBehindLauncher(String.raw`${git}\cmd\git.exe`, installed(real))).toBe(real);
+    expect(gitBehindLauncher(String.raw`${git}\bin\git.exe`, installed(real))).toBe(real);
+    expect(gitBehindLauncher(String.raw`${git}\cmd\git.exe`, installed(String.raw`${git}\clangarm64\bin\git.exe`))).toBe(String.raw`${git}\clangarm64\bin\git.exe`);
+    // The real one is itself, and a Git laid out otherwise (a scoop shim, a launcher without its Git) is run as found.
+    expect(gitBehindLauncher(real, installed(real))).toBe(real);
+    expect(gitBehindLauncher(String.raw`D:\scoop\shims\git.exe`, installed(real))).toBe(String.raw`D:\scoop\shims\git.exe`);
+    expect(gitBehindLauncher(String.raw`${git}\cmd\git.exe`, installed())).toBe(String.raw`${git}\cmd\git.exe`);
+  });
+
+  it.runIf(process.platform === "win32")("is what Rerail runs on this Windows machine", () => {
+    expect(gitExecutable()).toBe(gitBehindLauncher(gitExecutable()));
+    expect(gitExecutable().toLowerCase()).not.toMatch(/\\cmd\\git\.exe$/u);
   });
 });
 
