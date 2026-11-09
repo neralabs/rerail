@@ -3299,6 +3299,18 @@ batch workers and the cross part, and 1,184 MB in the local part, against the 1 
 (`/usr/bin/time -l`'s "peak memory footprint", 1,245,496, is the same in every run, the smallest included: it is
 the wrapper's, in bytes, not the engine's.)
 
+**Spikes (2026-11-09) toward reading the enums' documents.**
+- A, the whole workspace (no scope): stopped at 20 min, 527 s user + 11 s sys at load 108–150, unfinished.
+- B, loads along import chains (`load` inside the fixpoint): the cone of requests may read per-file exports only
+  ("reads base relation node"), so the node-level demand cannot drive loads. A per-file, symbol-keyed demand
+  (the names a document's decorators import, chained over `ifrom`) loaded 76 documents for the four enum files
+  and counted all four exactly; each loaded document ran the whole per-file part (22.7 s over 285 files).
+- `struct` (P1) costs about 3 ms per file on the 133-file sample against 72–80 ms for `pytest-collect`; over the
+  whole workspace it did not finish in 115 s at load 80.
+- Direction (to decide): module- and class-level values as written in P1, evaluated across files after P2
+  (`len`, `int`, enum members, by symbol); `pytest-collect` reads them for imported names, and runs on the
+  checked files only.
+
 **Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.
 
