@@ -247,7 +247,8 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
     let (mut next, mut taken, mut start, mut end, mut limit, mut last_end, mut at_end) = (0usize, 0usize, 0u32, 0u32, 0u32, 0u32, false);
     // `need`: the token's bytes were taken (`SPAN`), so `TOKEN` takes the next; an arm of a mark
     // takes none, and the next state switches on the same token. `live`: the marks not yet
-    // taken or passed at this token. `pending`: the deferred extras' leaves at the table's end.
+    // taken at this token (a level that ends at it leaves the rest to its caller, which tests
+    // them again). `pending`: the deferred extras' leaves at the table's end.
     // `keep`: while leaves are pending, the end of the token before them, where a node closed
     // then ends.
     let (mut need, mut live, mut pending, mut keep) = (true, 0u32, 0usize, 0u32);
@@ -319,7 +320,6 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 need = true;
             }
             SWITCH => {
-                live = 0;
                 let s = &program.switches[usize::from(operand)];
                 let t = if at_end {
                     s.end

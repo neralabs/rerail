@@ -38,6 +38,35 @@ pub struct Node {
     pub size: usize,
 }
 
+/// The token kinds a grammar may start with: names, and with `any`, every kind but some.
+#[derive(Clone, Default, PartialEq)]
+struct Starts {
+    kinds: std::collections::BTreeSet<String>,
+    /// `any`: every kind but these.
+    any: Option<std::collections::BTreeSet<String>>,
+}
+
+impl Starts {
+    fn of(kind: &str) -> Self {
+        Starts { kinds: [kind.to_owned()].into(), any: None }
+    }
+
+    /// Token `t` (its kind, or the soft keyword it may be) starts it.
+    fn has(&self, t: &Token) -> bool {
+        let k = |k: &str| self.kinds.contains(k) || self.any.as_ref().is_some_and(|ex| !ex.contains(k));
+        k(&t.kind) || t.soft.as_deref().is_some_and(k)
+    }
+
+    fn add(&mut self, o: &Starts) {
+        self.kinds.extend(o.kinds.iter().cloned());
+        self.any = match (self.any.take(), &o.any) {
+            (None, x) => x.clone(),
+            (Some(a), None) => Some(a),
+            (Some(a), Some(b)) => Some(a.intersection(b).cloned().collect()),
+        };
+    }
+}
+
 struct Parser<'a> {
     decl: &'a TreeDecl,
     tokens: &'a [Token],
@@ -48,6 +77,8 @@ struct Parser<'a> {
     hidden: u64,
     /// Each rule's and choice's first looks and whether it may be empty (`first_of`).
     named: HashMap<&'a str, (u64, bool)>,
+    /// Each rule's and choice's first token kinds and whether it may be empty (`first_of`).
+    named_starts: HashMap<&'a str, (Starts, bool)>,
     /// The rules' nodes open, innermost last (`retag` changes the last's kind).
     open: Vec<usize>,
     /// Each extra's first byte.
@@ -81,7 +112,43 @@ impl<'a> Parser<'a> {
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
+            Gram::Any(_) => (0, false),
         }
+    }
+
+    /// The token kinds `g` may start with, and whether it may match nothing.
+    fn starts(&self, g: &Gram) -> (Starts, bool) {
+        match g {
+            Gram::Lit(k) => (Starts::of(k), false),
+            Gram::Sym(name) => self.named_starts.get(name.as_str()).cloned().unwrap_or_else(|| (Starts::of(name), false)),
+            Gram::Seq(items) => {
+                let mut s = Starts::default();
+                for i in items {
+                    let (b, empty) = self.starts(i);
+                    s.add(&b);
+                    if !empty {
+                        return (s, false);
+                    }
+                }
+                (s, true)
+            }
+            Gram::Alt(alts) => alts.iter().fold((Starts::default(), false), |(mut s, e), a| {
+                let (x, y) = self.starts(a);
+                s.add(&x);
+                (s, e || y)
+            }),
+            Gram::Opt(a) | Gram::Star(a) => (self.starts(a).0, true),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.starts(a),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.starts(body),
+            Gram::Balanced { open, .. } => (Starts::of(open), false),
+            Gram::Any(except) => (Starts { kinds: Default::default(), any: Some(except.iter().cloned().collect()) }, false),
+        }
+    }
+
+    /// The grammar token at `at` (no mark) starts `g`: the machine, which decides by the token,
+    /// takes `g` there and does not go back.
+    fn predicts(&self, g: &Gram, at: usize) -> bool {
+        self.tokens.get(at).is_some_and(|t| !t.mark && self.starts(g).0.has(t))
     }
 
     fn first_seq(&self, items: &[Gram]) -> (u64, bool) {
@@ -103,6 +170,20 @@ impl<'a> Parser<'a> {
             Gram::Lit(k) => self.token(k, at, follow),
             Gram::Sym(name) => {
                 let decl = self.decl;
+                // A nested level is a machine's level of its own: it ends where none of its arms
+                // takes the token, whatever its caller takes next. In it, only the marks and soft
+                // keywords it takes count (`follow` is none); where it ends, the marks after its
+                // last token are its caller's (`rewound`).
+                let nested = decl.rules.iter().any(|r| &r.0 == name && r.1) || decl.nested.contains(name);
+                let outer = follow;
+                let follow = if nested { 0 } else { follow };
+                let rewound = |p: &Self, next: usize| -> Option<usize> {
+                    if !nested {
+                        return Some(next);
+                    }
+                    let back = (at..next).rev().find(|&i| !p.tokens[i].mark).map_or(next, |i| i + 1);
+                    p.past_marks(back, outer)
+                };
                 if let Some((kind, _, body)) = decl.rules.iter().find(|r| &r.0 == name) {
                     let me = self.out.len();
                     self.out.push(Node { kind: kind.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0 });
@@ -116,6 +197,7 @@ impl<'a> Parser<'a> {
                     if self.refused(name, first, last) {
                         return None;
                     }
+                    let next = rewound(self, next)?;
                     let n = self.out.len();
                     let node = &mut self.out[me];
                     node.start = self.tokens[first].start;
@@ -132,6 +214,7 @@ impl<'a> Parser<'a> {
                             return None;
                         }
                     }
+                    let next = rewound(self, next)?;
                     if let (Some(s), true) = (supertype, me < self.out.len()) {
                         self.out[me].supertypes.insert(0, s.clone());
                     }
@@ -160,7 +243,11 @@ impl<'a> Parser<'a> {
                 // A soft keyword: the alternatives that can start with it, where there are any.
                 let soft = self.soft_bit(at);
                 let keyword = soft != 0 && alts.iter().any(|a| self.first(a).0 & soft != 0);
-                let ways: Vec<&Gram> = alts.iter().filter(|a| !keyword || self.first(a).0 & soft != 0).collect();
+                let mut ways: Vec<&Gram> = alts.iter().filter(|a| !keyword || self.first(a).0 & soft != 0).collect();
+                // The ways the token starts, where there are any: the machine takes one of them.
+                if ways.iter().any(|a| self.predicts(a, at)) {
+                    ways.retain(|a| self.predicts(a, at));
+                }
                 for a in ways {
                     if let Some(p) = self.matches(a, at, follow) {
                         return Some(p);
@@ -177,8 +264,8 @@ impl<'a> Parser<'a> {
                     return Some(at);
                 }
                 // One that starts it is its keyword: taken, as the machine takes it (no going back
-                // to the word).
-                if soft != 0 && self.first(a).0 & soft != 0 {
+                // to the word). So is any token that starts it.
+                if (soft != 0 && self.first(a).0 & soft != 0) || self.predicts(a, at) {
                     return self.matches(a, at, follow);
                 }
                 match self.matches(a, at, follow) {
@@ -198,9 +285,13 @@ impl<'a> Parser<'a> {
                     if soft != 0 && self.first(a).0 & soft == 0 && follow & soft != 0 {
                         return Some(p);
                     }
-                    // One that starts another: its keyword, taken.
-                    if soft != 0 && self.first(a).0 & soft != 0 {
-                        p = self.matches(a, p, again)?;
+                    // One that starts another: its keyword, taken; so is any token that starts it.
+                    if (soft != 0 && self.first(a).0 & soft != 0) || self.predicts(a, p) {
+                        let q = self.matches(a, p, again)?;
+                        if q == p {
+                            return Some(p);
+                        }
+                        p = q;
                         continue;
                     }
                     let mark = self.out.len();
@@ -235,6 +326,13 @@ impl<'a> Parser<'a> {
                 }
                 self.out[me].kind = kind.clone();
                 Some(next)
+            }
+            Gram::Any(except) => {
+                let t = self.tokens.get(at).filter(|t| !t.mark && !except.contains(&t.kind))?;
+                let extra = self.decl.extra.contains(&t.kind);
+                let (kind, start, end) = (t.kind.clone(), t.start, t.end);
+                self.out.push(Node { kind, field: None, supertypes: vec![], extra, start, end, size: 1 });
+                self.past_marks(at + 1, follow)
             }
             Gram::Balanced { kind, open, close } => {
                 // The opener's leaf, then every token to its matching closer, marks skipped:
@@ -434,12 +532,20 @@ fn first_of<'a>(p: &mut Parser<'a>) {
     for (n, _) in &names {
         p.named.insert(n, (0, false));
     }
+    for (n, _) in &names {
+        p.named_starts.insert(n, (Starts::default(), false));
+    }
     loop {
         let mut changed = false;
         for &(n, g) in &names {
             let f = p.first(g);
             if p.named[n] != f {
                 p.named.insert(n, f);
+                changed = true;
+            }
+            let s = p.starts(g);
+            if p.named_starts[n] != s {
+                p.named_starts.insert(n, s);
                 changed = true;
             }
         }
@@ -476,7 +582,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         return Err("more than 64 marks and soft keywords".into());
     }
     let extra_at = extras.iter().map(|e| e.1.start).collect();
-    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), open: Vec::new(), extras: extra_at, fatal: None };
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, fatal: None };
     first_of(&mut p);
     // A whole root is opened at byte 0 and matched by its content, which may be empty. Marks
     // before the first token are kept where the root can start with them.

@@ -204,8 +204,13 @@ const BALANCED: char = '\0';
 /// `g` with each `balanced K O C` as its opener (a leaf of kind `K`) and a call of a nested level
 /// that merges every token into that leaf through the matching closer; each such level's `(K, O,
 /// C)` goes to `levels` once.
-fn desugar(g: &Gram, levels: &mut Vec<(String, String, String)>) -> Gram {
-    let mut d = |g: &Gram| desugar(g, levels);
+fn desugar(g: &Gram, levels: &mut Vec<(String, String, String)>, tokens: &[String]) -> Gram {
+    let mut d = |g: &Gram| desugar(g, levels, tokens);
+    // `as K` and `merge K` over `any`: one alternative per token kind.
+    let each = |a: Gram, f: &dyn Fn(Gram) -> Gram| match a {
+        Gram::Alt(xs) => Gram::Alt(xs.into_iter().map(f).collect()),
+        a => f(a),
+    };
     match g {
         Gram::Lit(_) | Gram::Sym(_) => g.clone(),
         Gram::Seq(gs) => Gram::Seq(gs.iter().map(&mut d).collect()),
@@ -215,8 +220,11 @@ fn desugar(g: &Gram, levels: &mut Vec<(String, String, String)>) -> Gram {
         Gram::Plus(a) => Gram::Plus(Box::new(d(a))),
         Gram::Field(f, a) => Gram::Field(f.clone(), Box::new(d(a))),
         Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a))),
+        Gram::Merge(k, a) if matches!(**a, Gram::Any(_)) => each(d(a), &|x| Gram::Merge(k.clone(), Box::new(x))),
+        Gram::As(k, a) if matches!(**a, Gram::Any(_)) => each(d(a), &|x| Gram::As(k.clone(), Box::new(x))),
         Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a))),
         Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a))),
+        Gram::Any(except) => Gram::Alt(tokens.iter().filter(|t| !except.contains(t)).map(|t| Gram::Sym(t.clone())).collect()),
         Gram::Wrap { kind, field, moved, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), body: Box::new(d(body)) },
         Gram::Relabel { field, moved, inner, body } => Gram::Relabel { field: field.clone(), moved: moved.clone(), inner: inner.clone(), body: Box::new(d(body)) },
         Gram::Fold { kind, body } => Gram::Fold { kind: kind.clone(), body: Box::new(d(body)) },
@@ -329,6 +337,7 @@ impl Builder<'_> {
                 E::Tok(p)
             }
             Gram::Balanced { kind, .. } => return Err(format!("balanced {kind}: not desugared")),
+            Gram::Any(_) => return Err("any: not desugared".into()),
             Gram::Merge(k, a) => {
                 let name = match &**a {
                     Gram::Lit(n) | Gram::Sym(n) if (self.ids.is_token)(n) => n,
@@ -500,9 +509,9 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
     let mut balanced = Vec::new();
     for s in stmts {
         match s {
-            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced), own: true, supertype: None }),
-            Stmt::Choice { name, supertype, nested: true, body } => nested_choices.push(Rule { kind: name.clone(), nested: true, whole: false, body: desugar(body, &mut balanced), own: false, supertype: supertype.clone() }),
-            Stmt::Choice { name, supertype, body, .. } => choices.push((name.clone(), supertype.clone(), desugar(body, &mut balanced))),
+            Stmt::Node { kind, nested, whole, body } => rules.push(Rule { kind: kind.clone(), nested: *nested, whole: *whole, body: desugar(body, &mut balanced, ids.tokens), own: true, supertype: None }),
+            Stmt::Choice { name, supertype, nested: true, body } => nested_choices.push(Rule { kind: name.clone(), nested: true, whole: false, body: desugar(body, &mut balanced, ids.tokens), own: false, supertype: supertype.clone() }),
+            Stmt::Choice { name, supertype, body, .. } => choices.push((name.clone(), supertype.clone(), desugar(body, &mut balanced, ids.tokens))),
             _ => {}
         }
     }
@@ -657,7 +666,9 @@ pub(super) fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec
         };
         for (i, a) in arms.iter().enumerate() {
             if arms[..i].iter().any(|b| b.0 == a.0) {
-                return Err(format!("the grammar is not LL(1): two ways on token kind {} at one place", a.0));
+                let name = ids.tokens.iter().find(|t| (ids.kind)(t).ok() == Some(a.0)).cloned().unwrap_or_else(|| format!("kind {}", a.0));
+                let rule = &b.rules[level_rules[level]].kind;
+                return Err(format!("the grammar is not LL(1): two ways on {name} at one place in {rule}'s level"));
             }
         }
         // A nested level that may end here and has arms takes a token an arm takes, and ends
@@ -948,7 +959,7 @@ pub(super) fn byte_check(g: &Gram, classes: &HashMap<String, Vec<(u32, u32)>>) -
             Gram::Opt(a) => E::Opt(Box::new(expand(a, classes, sets)?)),
             Gram::Star(a) => E::Star(Box::new(expand(a, classes, sets)?)),
             Gram::Plus(a) => E::Seq(vec![expand(a, classes, sets)?, E::Star(Box::new(expand(a, classes, sets)?))]),
-            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Balanced { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
+            Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
         })
     }
     let mut sets = Vec::new();

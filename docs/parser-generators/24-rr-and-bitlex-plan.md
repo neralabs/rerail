@@ -301,7 +301,7 @@ reference on the corpus.
 | rr-08 | aggregates: `count`, `min`, `max`, `sum`, `mean`, `join … by … sep`; their words soft, a value with no named argument; `min (…) : {…}` (told from a call after its `)`) goes to the engine | A10 |
 | rr-09 | `.violation` (code, tag, fix, suppress, options), `=>` edits, JSON objects; a `fix` clause right after a `.violation` goes to the engine | A8, A10 |
 | rr-10 | `.policy {…}`, its JSON checked as the engine checks it (`fold`, `refuse`); a document nested deeper than the JSON reader's limit goes to the engine | A8 |
-| rr-11 | `.input`/`.output`, `.type`, `.lattice`, `.pragma`, `.functor`, `.edit`: all of `.rr` | A8 |
+| rr-11 | `.input`/`.output`, `.type`, `.lattice`, `.pragma`, `.functor`, `.edit`: all of `.rr`; what the engine refuses by the token after a directive's word or a functor's name goes to it | A8 |
 
 At rr-11:
 - every corpus file is parsed by both parsers;

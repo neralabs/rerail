@@ -172,6 +172,27 @@ const CASES: &[(&str, &str)] = &[
     (".policy {\"a\" 1}", "never"),
     (".policy {\"a\": tru}", "never"),
     (".policy /* c */ {\"a\": 1}", "never"),
+    // The other directives: all of `.rr`.
+    (".type t = /* c */ a\n.input r(IO=x /* d */, f=\"y\")\n.functor f(x: number): symbol stateful // e\n.edit e(a: node)\n.pragma \"a\" \"b\"\n.lattice l<> { A -> @f, B -> 1 + x }\n.input a, b(x)\n.output c", "11"),
+    // An empty raw text: no leaf, and its field on the node made last.
+    (".type t\n.input r()\n.decl x(a: t)", "11"),
+    (".output\n.decl a(x: t)\n.input must(x), b\n.input r((a), b(c)), s(())", "11"),
+    (".type a = \"x\ny\"\nr(x).\n.type s <: number // c\n.pragma\n.pragma \"a\"", "11"),
+    // The rest of a `.type`'s line is the line its name ends on: a token after a string over
+    // two lines starts the next statement.
+    (".type a = \"x\ny\" z\nr(x).", "never"),
+    (".lattice l<b> { }\n.lattice m<> { A -> @f(x) + 1, B -> -2 * x, C -> count : { s(_) } }", "11"),
+    (".functor f(x: number): t<u> stateful\n.functor g(): t<> x `y`\n.decl r(x: t) `lit` 1", "11"),
+    // A line's end met in a nested level that ends there (a return type): its caller's.
+    (".functor dot(a: symbol): symbol    // c\n.functor e(a: symbol): t<u> // d\nr(x).", "11"),
+    // What the engine refuses by the token after it: an I/O directive with no relation and no
+    // `.` after it; a functor named, not called, but before a `,` or a `}`; a `<` after a
+    // return type that is not its own.
+    (".output", "never"),
+    (".input\n#include \"x\"", "never"),
+    (".lattice l<> { A -> @f + 1 }", "never"),
+    ("r(x) :- s(@f, x).", "never"),
+    (".functor g(): t < 3", "never"),
     // The same bytes outside JSON: no refusal.
     ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
 ];
@@ -304,7 +325,20 @@ fn rr_look() {
             eprintln!("  {:>4}..{:<4} {}{} {:?}", t.start, t.end, if t.mark { "mark " } else { "" }, t.kind, &doc[t.start..t.end]);
         }
         eprintln!("  reference: {:?}", super::bitlex_ladder_tests::refusal(&c, doc.as_bytes()));
-        eprintln!("  compiled: {:?}", c.parser.parse(doc.as_bytes()).map(|n| n.len()));
+        let compiled = c.parser.parse(doc.as_bytes());
+        eprintln!("  compiled: {:?}", compiled.as_ref().map(|n| n.len()));
+        // Where the compiled tree leaves the reference's: the nodes around it.
+        if let (Ok(nodes), Some(want)) = (&compiled, super::bitlex_ladder_tests::reference(&c, doc.as_bytes())) {
+            let (ours, theirs) = (named(&c, &super::bitlex_ladder_tests::as_ids(nodes.clone())), named(&c, &want));
+            // By kind, field and span: a size differs first at the nodes around the place.
+            let spans = |n: &Named| (n.0.clone(), n.1.clone(), n.2, n.3);
+            if let Some(at) = ours.iter().zip(&theirs).position(|(a, b)| spans(a) != spans(b)) {
+                let from = at.saturating_sub(3);
+                eprintln!("  compiled leaves the reference at node {at}:\n    compiled {:?}\n    reference {:?}", &ours[from..(at + 4).min(ours.len())], &theirs[from..(at + 4).min(theirs.len())]);
+                let n = &theirs[at];
+                eprintln!("  text: {:?}", &doc[n.2.saturating_sub(60)..(n.3 + 60).min(doc.len())]);
+            }
+        }
         if let Some(nodes) = super::bitlex_ladder_tests::reference(&c, doc.as_bytes()) {
             eprintln!("  reference tree: {:?}", named(&c, &nodes));
         }

@@ -83,6 +83,9 @@ pub enum Gram {
     /// `balanced K OPEN CLOSE`: one leaf of kind `K` from an `OPEN` token through its matching
     /// `CLOSE` (pairs inside counted), every token between part of its text.
     Balanced { kind: String, open: String, close: String },
+    /// `any [except 'A' …]`: a token of any kind the grammar may see but those listed (marks
+    /// and extras aside); with `merge K` or `as K`, a raw text's.
+    Any(Vec<String>),
     /// `relabel F [as M] [inner G] REST`: the node just made at this level takes field `F`
     /// (`_`: keeps its own) and kind `M`, and the node its wrap holds first takes field `G`;
     /// `REST` follows; no node around it.
@@ -477,6 +480,18 @@ impl P {
             "merge" => {
                 let kind = self.kind()?;
                 Ok(Gram::Merge(kind, Box::new(self.gram_atom()?)))
+            }
+            "any" => {
+                let mut except = vec![];
+                if self.eat_kw("except") {
+                    while matches!(self.peek(), Some(Tok::Str(_))) {
+                        except.push(self.kind()?);
+                    }
+                    if except.is_empty() {
+                        return self.err("any except 'A' …");
+                    }
+                }
+                Ok(Gram::Any(except))
             }
             "balanced" => {
                 let kind = self.kind()?;

@@ -652,7 +652,6 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                 }
                 Op::Switch { table } => {
                     let s = &native.switches[usize::from(table)];
-                    f.def_var(v.live, zero);
                     let at_end = f.use_var(v.at_end);
                     let (ended, taking) = (f.create_block(), f.create_block());
                     f.ins().brif(at_end, ended, &[], taking, &[]);
