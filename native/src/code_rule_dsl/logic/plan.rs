@@ -723,7 +723,12 @@ impl Model {
             }
         }
         let atom_rows_ = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
-            if let Some(seen) = stats.obs.get(&atom_sig(a, bound))
+            // An atom that shares no bound variable, read after bindings exist, is a cross product: its fanout
+            // observed in one wave or chunk is the relation's size then (none before a guest round makes the rows),
+            // not a property of the join, so it is priced from the relation's own estimate (below).
+            let crossed = !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v)));
+            if !crossed
+                && let Some(seen) = stats.obs.get(&atom_sig(a, bound))
                 && seen[0] >= OBS_MIN
             {
                 return (seen[1] as f64 / seen[0] as f64).max(0.01);
@@ -802,6 +807,13 @@ impl Model {
         };
         let atom_rows = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
             let mut rows = atom_rows_(a, bound);
+            // A cross product never filters a binding: each one reads every matching row, and a relation empty
+            // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
+            // atom of fanout one is never ordered after it.
+            let delta_atom = first.is_some_and(|f| matches!(&body[f], Literal::Atom(d) if std::ptr::eq(d, a)));
+            if !delta_atom && !a.neg && !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
+                rows = rows.max(1.0);
+            }
             // No variable bound on a relation of the component being solved: a scan of it per binding, priced as a
             // pass over the corpus (shared among its constants' values) at least.
             // The delta atom of a probe is not such a scan: it reads the last wave's rows, priced by the relation's
