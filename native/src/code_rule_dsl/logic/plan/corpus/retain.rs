@@ -57,6 +57,8 @@ pub(in crate::code_rule_dsl) struct Retained {
     input_srcs: HashMap<String, Arc<dyn Source>>,
     /// Each input's statistics as the run planned it (`Stats::of_relation`): next run's `rel__old`'s, not measured.
     input_stats: HashMap<String, InputStats>,
+    /// The documents the run read, and the file-local program their memo entries are under (`input_delta`).
+    docs: (super::input_delta::Docs, [u8; 32]),
 }
 
 /// A relation's statistics by column, and its exact postings by (column, value).
@@ -208,6 +210,7 @@ pub(in crate::code_rule_dsl) fn after(
     outputs: &BTreeMap<String, (Vec<String>, Vec<usize>)>,
     sources: &[(String, Arc<dyn Source>)],
     input_stats: HashMap<String, InputStats>,
+    docs: (super::input_delta::Docs, [u8; 32]),
 ) -> Retained {
     let mut rels: HashMap<String, Kept> = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
@@ -228,7 +231,7 @@ pub(in crate::code_rule_dsl) fn after(
         rels.insert(rel, k);
     }
     let input_srcs = sources.iter().filter(|(_, s)| !s.columns().is_empty()).map(|(rel, s)| (rel.clone(), Arc::clone(s))).collect();
-    Retained { key, inputs, rels, input_srcs, input_stats }
+    Retained { key, inputs, rels, input_srcs, input_stats, docs }
 }
 
 /// `source` (input `rel`), or the last run's source of the same rows: same name, columns and digest, in any kept
@@ -272,6 +275,10 @@ impl Retained {
     /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
     /// engine's relation for a derived one (to adopt, read in place).
     /// An input's statistics as the last run planned it.
+    /// The documents the last run read, if under the file-local program `program`.
+    pub(in crate::code_rule_dsl) fn docs(&self, program: &[u8; 32]) -> Option<&super::input_delta::Docs> {
+        (self.docs.1 == *program).then_some(&self.docs.0)
+    }
     pub(in crate::code_rule_dsl) fn input_stats(&self, rel: &str) -> Option<&InputStats> {
         self.input_stats.get(rel)
     }

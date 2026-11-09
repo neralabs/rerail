@@ -3330,13 +3330,20 @@ impl Run<'_, '_> {
             let fillable: BTreeSet<&str> = super::answers::produced(prog).into_iter().flat_map(|(p, r)| [p, r]).collect();
             let mut empty: HashMap<String, bool> = HashMap::new();
             let mut is_empty = |rel: &str| -> bool {
-                if scc.contains(rel) || fillable.contains(rel) || !native_rels.contains(rel) {
+                // An input delta read from the changed documents (`input_delta`) is bound once, before the run; other
+                // inputs may be bound when their first reader runs, so they are not taken as empty.
+                let delta_input = prog.inputs.iter().any(|i| i == rel) && (rel.ends_with("__minus") || rel.ends_with("__plus"));
+                if scc.contains(rel) || fillable.contains(rel) || !(native_rels.contains(rel) || delta_input) {
                     return false;
                 }
                 if let Some(&e) = empty.get(rel) {
                     return e;
                 }
-                let e = super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0);
+                let e = if delta_input {
+                    crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0)
+                } else {
+                    super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0)
+                };
                 empty.insert(rel.to_owned(), e);
                 e
             };

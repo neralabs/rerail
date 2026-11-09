@@ -160,7 +160,9 @@ fn named_heads(rule: &Rule) -> Rule {
 }
 
 /// `part` (the cut's program) with each changed stratum maintained where it can be, and the old rows it reads.
-pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered) -> Result<Maintained> {
+/// `given`: inputs' rows gone and new read from the documents that changed (`input_delta`), bound as `r__minus` and
+/// `r__plus` instead of made by the diff rules.
+pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, given: &std::collections::HashMap<String, (Vec<Vec<i64>>, Vec<Vec<i64>>)>) -> Result<Maintained> {
     let mut part = cut.program(cross);
     let (sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
     let dirty: Vec<&BTreeSet<String>> = sccs.iter().filter(|scc| scc.iter().all(|r| !cut.clean.contains(r))).collect();
@@ -329,6 +331,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         maint.extend(scc.iter().cloned());
         changed.extend(scc.iter().cloned());
     }
+    let mut given_sources = Vec::new();
     for rel in &deltas {
         let v = row(part.program.decls[rel].len());
         let head = |suffix: &str| Atom { rel: named(rel, suffix), args: v.clone(), neg: false, gated: false };
@@ -341,6 +344,15 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             };
             rules.push(Rule { head: head("minus"), body });
             rules.push(Rule { head: head("plus"), body: vec![atom(named(rel, "ins"), v.clone(), false), atom(named(rel, "old"), v.clone(), true)] });
+        } else if let Some((gone, new)) = given.get(rel) {
+            // Read from the changed documents: bound as inputs, the size of the edit.
+            for (suffix, rows) in [("minus", gone), ("plus", new)] {
+                let name = named(rel, suffix);
+                let columns = (0..v.len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&name, c)).collect();
+                let values = (0..v.len()).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+                given_sources.push((name.clone(), crate::code_rule_dsl::logic::native::component::columns_source(columns, values), None));
+                part.program.inputs.push(name);
+            }
         } else {
             rules.push(Rule { head: head("minus"), body: vec![atom(named(rel, "old"), v.clone(), false), atom(rel.clone(), v.clone(), true)] });
             rules.push(Rule { head: head("plus"), body: vec![atom(rel.clone(), v.clone(), false), atom(named(rel, "old"), v.clone(), true)] });
@@ -348,7 +360,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         fresh.push((rel.clone(), named(rel, "minus")));
         fresh.push((rel.clone(), named(rel, "plus")));
     }
-    let mut sources = Vec::new();
+    let mut sources = given_sources;
     for rel in &olds {
         // Named as the planner reads its statistics (`sql_col`).
         let (source, held) = kept.old_source(rel, &named(rel, "old")).expect("a maintained read's old rows");
