@@ -105,6 +105,10 @@ class Suite:
         self.originals.append((module, name, getattr(module, name)))
         setattr(module, name, value)
 
+    def sign_ed25519(self,requests):
+        from replay import sign_native
+        return sign_native(self.engine,requests)
+
     def native(self, check, entry, files, options=None):
         from policy_routes import policy_filename
         rule = self.rule_root / policy_filename(check, entry)

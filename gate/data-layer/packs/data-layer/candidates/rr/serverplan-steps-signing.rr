@@ -1,0 +1,28 @@
+.policy "data-layer-serverplan-steps-signing" revision 1
+.description "Native signing message and exact allowlist source update"
+.language python
+.mode block
+.scope include "**/*.py"
+#include "data-layer/signing.rr"
+
+multi_sig("steps-signing","serverplan_steps","UNSIGNED") :- option("entryPoint","_sign_request").
+multi_name("steps-signing","can_batch_false") :- option("entryPoint","_sign_request").
+multi_name("steps-signing","lifecycle_runtime_state") :- option("entryPoint","_sign_request").
+multi_entry("steps-signing","can_batch_false",value) :- option("entryPoint","_sign_request"), option_item("canBatchAllowlist",_,value).
+multi_entry("steps-signing","lifecycle_runtime_state",value) :- option("entryPoint","_sign_request"), option_item("runtimeStateAllowlist",_,value).
+.violation SSPSignRequest(at: span, request_id: symbol, key_env: symbol, message: symbol) code "SSP_SIGN_REQUEST" "Signing request"
+SSPSignRequest(@place("",0),"serverplan_steps.signing","NERA_SIGNING_KEY",message) :- option("entryPoint","_sign_request"), multi_message("steps-signing",message).
+
+.violation SSPSignResult(at: span, status: number, write_file: number, updated_source: symbol, stdout: symbol, stderr: symbol) code "SSP_SIGN_RESULT" "Signing result"
+SSPSignResult(@place("",0),1,0,"","","ERROR: NERA_SIGNING_KEY environment variable not set.\nOnly the user may have access to NERA_SIGNING_KEY. Ask the user to run the documented `uv run ... --sign-allowlist` command in an environment where the key is already present.\nAI agents must never have access to this proof-of-human key and must never try to obtain it.\n") :- option("entryPoint","_sign_error"), option("signStatus","missing-key").
+SSPSignResult(@place("",0),1,0,"","","ERROR: NERA_SIGNING_KEY must be 32 bytes\n") :- option("entryPoint","_sign_error"), option("signStatus","key-length").
+SSPSignResult(@place("",0),1,0,"","",cat("ERROR: Failed to decode NERA_SIGNING_KEY: ",detail,"\n")) :- option("entryPoint","_sign_error"), option("signStatus","invalid-hex"), option("signDetail",detail).
+
+// CPython's Unicode 15.1 str whitespace includes U+001C..U+001F in addition
+// to Unicode White_Space. Match the source's re.MULTILINE replacement exactly.
+.decl ssps_pattern(pattern: symbol)
+ssps_pattern(cat("(?m)^(ALLOWLIST_SIGNATURE(?:",space,"*:",space,"*str)?",space,"*=",space,"*)(?:\"[^\"]*\"|NEEDS_SIGNING|UNSIGNED)(.*)")) :- space = "[\\t\\n\\v\\f\\r \\x1c-\\x1f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]".
+.decl ssps_matched()
+ssps_matched() :- option("entryPoint","_sign_update"), option("scriptSource",source), ssps_pattern(pattern), match_all(pattern,source,_,_,_).
+SSPSignResult(@place("",0),0,1,@replace_all(source,pattern,cat("${1}\"",signature,"\"${2}")),cat("Updated ALLOWLIST_SIGNATURE in ",path,"\n"),"") :- option("entryPoint","_sign_update"), option("scriptSource",source), option("newSignature",signature), option("scriptPath",path), ssps_pattern(pattern), ssps_matched().
+SSPSignResult(@place("",0),1,0,"","",cat("ERROR: Could not find ALLOWLIST_SIGNATURE in ",path,"\n")) :- option("entryPoint","_sign_update"), option("scriptPath",path), !ssps_matched().

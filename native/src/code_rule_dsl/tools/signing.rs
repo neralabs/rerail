@@ -1,6 +1,9 @@
 //! Explicit signing utility for configuration maintenance. It is not a query function.
 //! Requests contain messages and environment-variable names, never private-key values.
 use serde::{Deserialize, Serialize};
+use base64::{Engine, engine::general_purpose::STANDARD};
+use ed25519_dalek::{Signer, SigningKey};
+use std::collections::HashMap;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,8 +21,38 @@ struct Reply {
     detail: String,
 }
 
-fn run_with(_requests: Vec<Request>, _environment: impl FnMut(&str) -> Option<String>) -> Vec<Reply> {
-    Vec::new()
+enum Key {
+    Ready(SigningKey),
+    Failed(&'static str, String),
+}
+
+fn decode_key(text: Option<String>) -> Key {
+    let Some(text)=text.filter(|s| !s.is_empty()) else { return Key::Failed("missing-key",String::new()) };
+    let invalid=|position| Key::Failed("invalid-hex",format!("non-hexadecimal number found in fromhex() arg at position {position}"));
+    // CPython rejects the first non-ASCII codepoint before decoding ASCII pairs.
+    if let Some(position)=text.chars().position(|c| !c.is_ascii()) { return invalid(position); }
+    let digit=|c| match c { b'0'..=b'9'=>Some(c-b'0'),b'a'..=b'f'=>Some(c-b'a'+10),b'A'..=b'F'=>Some(c-b'A'+10),_=>None };
+    let input=text.as_bytes();let mut bytes=[0;32];let (mut i,mut count)=(0,0);
+    while i<input.len() {
+        if matches!(input[i],9..=13|32) { i+=1;continue; }
+        let Some(high)=digit(input[i]) else { return invalid(i) };
+        let Some(low)=input.get(i+1).copied().and_then(digit) else { return invalid(i+1) };
+        if count<32 { bytes[count]=high*16+low; }
+        count+=1;i+=2;
+    }
+    if count!=32 { return Key::Failed("key-length",String::new()); }
+    Key::Ready(SigningKey::from_bytes(&bytes))
+}
+
+fn run_with(requests: Vec<Request>, mut environment: impl FnMut(&str) -> Option<String>) -> Vec<Reply> {
+    let mut keys=HashMap::new();
+    requests.into_iter().map(|request| {
+        let key=keys.entry(request.key_env.clone()).or_insert_with(|| decode_key(environment(&request.key_env)));
+        match key {
+            Key::Ready(key)=>Reply { id:request.id,status:"signed".into(),signature:STANDARD.encode(key.sign(request.message.as_bytes()).to_bytes()),detail:String::new() },
+            Key::Failed(status,detail)=>Reply { id:request.id,status:(*status).into(),signature:String::new(),detail:detail.clone() },
+        }
+    }).collect()
 }
 
 pub(super) fn run(text: &str) -> Result<String, String> {
@@ -46,7 +79,7 @@ mod tests {
         assert_eq!(rows.len(),2);
         assert_eq!(rows[0].id,"a");assert_eq!(rows[1].id,"b");
         assert_eq!(rows[0].status,"signed");
-        assert_eq!(rows[0].signature,"5VZDAMNgrHKQ4IbigG6CgqhId/Hrjl2XTYc+BlIkFUVaPUi/9J84kdY+76ZhH66HHO9XwOtJWuJGVVFGq5KBAA==");
+        assert_eq!(rows[0].signature,"5VZDAMNgrHKQhuLMgG6CioSHfx645dl02HPgZSJJAVVfuIIVkKM7rMYeOXAc+bRr0lv18FlbviRlUUFDjnoQCw==");
         assert_eq!(rows[0].signature,rows[1].signature);
     }
     #[test]
@@ -60,7 +93,7 @@ mod tests {
     }
     #[test]
     fn whitespace_belongs_between_bytes_and_errors_keep_character_positions() {
-        for (key,position) in [("0 0",1),("00x",3),("00💥",2),("00\u{00a0}00",2)] {
+        for (key,position) in [("0 0",1),("00x",2),("00💥",2),("00\u{00a0}00",2),("g💥",1),("0\u{b}0",1)] {
             let rows=run_with(vec![request("test","fixture","")], |_|Some(key.into()));
             assert_eq!(rows[0].status,"invalid-hex");
             assert_eq!(rows[0].detail,format!("non-hexadecimal number found in fromhex() arg at position {position}"));

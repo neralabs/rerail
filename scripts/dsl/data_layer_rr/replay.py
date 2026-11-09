@@ -63,6 +63,22 @@ def execute_native(engine, rule, files, options, sources=None, workspace_name='c
     return _execute(engine,rule,files,dict(options,inputFiles=[file['path'] for file in files]),sources,workspace_name)
 
 
+def sign_native(engine,requests,environment=None):
+    """Explicit native utility call. Keys never enter rule options or recorded requests."""
+    import migration
+    manifest=migration.read_json(ROOT/migration.MANIFEST)
+    migration.verify_source_cohort(ROOT,manifest['engineSource'])
+    migration.verify_engine_artifact(ROOT,manifest['engineSource'],engine)
+    with tempfile.TemporaryDirectory(prefix='rerail-signing-request-') as temporary:
+        request=Path(temporary)/'request.json';write_json(request,requests)
+        run=subprocess.run([str(engine),'sign-ed25519',str(request)],text=True,capture_output=True,timeout=100,env=environment)
+        if run.returncode:raise RuntimeError(run.stderr)
+        rows=json.loads(run.stdout)
+        if not isinstance(rows,list) or [r['id'] for r in rows]!=[r['id'] for r in requests]:
+            raise ValueError('Native signing batch lost or reordered requests')
+        return rows
+
+
 def execute_workspace(engine, rule, files, options, sources=None, workspace_name='corpus'):
     """Production workspace API: policy scope and native loading select documents."""
     if 'inputFiles' in options:

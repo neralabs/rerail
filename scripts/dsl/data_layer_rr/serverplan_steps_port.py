@@ -153,6 +153,27 @@ def install(suite, module):
             sys.stdout.write(row['text'])
         return exits[0]
 
+    def sign_allowlists():
+        rows=suite.native('serverplan_steps','_sign_request',[],options())
+        if len(rows)!=1 or rows[0]['code']!='SSP_SIGN_REQUEST':
+            raise ValueError('One native signing request required')
+        request=rows[0]['parameters']
+        replies=suite.sign_ed25519([dict(id=request['request_id'],key_env=request['key_env'],message=request['message'])])
+        if len(replies)!=1 or replies[0]['id']!=request['request_id']:
+            raise ValueError('One matching native signing reply required')
+        reply=replies[0];path=Path(module.__file__)
+        if reply['status']=='signed':
+            source=path.read_text(encoding='utf-8')
+            result=suite.native('serverplan_steps','_sign_update',[],dict(scriptSource=source,scriptPath=str(path),newSignature=reply['signature']))
+        else:
+            result=suite.native('serverplan_steps','_sign_error',[],dict(signStatus=reply['status'],signDetail=reply['detail']))
+        if len(result)!=1 or result[0]['code']!='SSP_SIGN_RESULT':
+            raise ValueError('One native signing result required')
+        value=result[0]['parameters']
+        if value['write_file']:path.write_text(value['updated_source'],encoding='utf-8')
+        sys.stdout.write(value['stdout']);sys.stderr.write(value['stderr'])
+        return value['status']
+
     def cli():
         parser = argparse.ArgumentParser(description='Lint ServerPlan step purity rules')
         parser.add_argument('--check',action='store_true',help='Exit non-zero on violations')
@@ -162,7 +183,7 @@ def install(suite, module):
         parser.add_argument('--legacy-postop-ratchet-max',type=int,default=None,help='Fail when the legacy post-op scan reports more than this many findings')
         args = parser.parse_args()
         if args.sign_allowlist:
-            raise NotImplementedError('Native allowlist signing and source updates remain unported')
+            return sign_allowlists()
         if not module._verify_allowlists():
             return cli_report('_cli_signature_failure')
         if args.scan_legacy_postops:

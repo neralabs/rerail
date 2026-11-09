@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check == 'serverplan_steps' and entry in {'_sign_request','_sign_error','_sign_update'}:
+        return 'serverplan-steps-signing.rr'
     if check == 'serverplan_steps' and entry == '_module_settings':
         return 'serverplan-steps-settings.rr'
     if check == 'serverplan_steps' and entry == '_cli_paths':

@@ -64,7 +64,7 @@ gix = { version = "=0.84.0", default-features = false, features = ["status", "pa
 globset = "=0.4.20"
 # Multi-literal search for the text layer (code_rule_dsl/text): already in the tree through `regex`.
 aho-corasick = "=1.1.5"
-# Verifying signed repository artifacts (`@ed25519_ok`); never signs.
+# Queries verify signed artifacts. Explicit configuration signing uses the separate native tool.
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
