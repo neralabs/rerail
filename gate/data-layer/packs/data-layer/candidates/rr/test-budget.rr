@@ -3,6 +3,7 @@
 .language python
 .mode block
 .scope tests true
+.scope include "conform/**", "*.py"
 // Python check: scripts/check_test_budget.py. pytest collects the tests under conform/; their number may not
 // exceed total_tests in .test-budget-baseline.json, whose counts are signed. A drop of more than 10% fails too:
 // it is more likely a broken collection than deleted tests. The script reports one finding, at the baseline.
@@ -17,8 +18,9 @@
 //   4. budget_exceeded: over the ceiling, by the bound or by the count; or dropped by more than 10%.
 //
 // Shows: a count derived by rules where the script runs pytest, a gate, and a metric ratchet written as rules.
-// The modelled count needs no artifact, so every budget_exceeded rule reports on a laptop. The workspace is the
-// scope, not conform/ alone: tests import their cases and fixtures from other packages.
+// The modelled count needs no artifact, so every budget_exceeded rule reports on a laptop. The scope is conform/
+// and the root's files (conftest.py): name resolution costs about 75 ms of CPU per file (debug build), and the
+// whole workspace is 9,010 files. A case list or enum imported from outside conform/ is then open (counted as 1).
 
 #include "python/ast.rr"
 #include "python/pytest-collect.rr"
