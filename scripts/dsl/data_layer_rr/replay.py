@@ -65,6 +65,10 @@ def execute_native(engine, rule, files, options, sources=None, workspace_name='c
 
 def sign_native(engine,requests,environment=None):
     """Explicit native utility call. Keys never enter rule options or recorded requests."""
+    fields={'id','key_env','message'}
+    if not isinstance(requests,list) or any(not isinstance(row,dict) or set(row)!=fields
+            or any(not isinstance(value,str) for value in row.values()) for row in requests):
+        raise ValueError('Signing requests contain only id, key_env, and message strings')
     import migration
     manifest=migration.read_json(ROOT/migration.MANIFEST)
     migration.verify_source_cohort(ROOT,manifest['engineSource'])
