@@ -2119,7 +2119,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "9f8764aee8339041a748419a13bf203e93fba98d0f02707ed49227b950193a94",
+      "sha256": "a4d643ed4167bc69aaa7e4eba2810d592815748b91a1f253adc93e3fce5c0475",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2142,6 +2142,11 @@
           "before": "acdaf6b297c9c71bfbe5043c3a6563c1a4abd0def7905d66ae9e6514001d47d9",
           "after": "9f8764aee8339041a748419a13bf203e93fba98d0f02707ed49227b950193a94",
           "reason": "Name callback candidates before the correlated last-definition aggregate"
+        },
+        {
+          "before": "9f8764aee8339041a748419a13bf203e93fba98d0f02707ed49227b950193a94",
+          "after": "a4d643ed4167bc69aaa7e4eba2810d592815748b91a1f253adc93e3fce5c0475",
+          "reason": "Take Final placement planner; retain the function name at its authority-return producer"
         }
       ]
     }
@@ -2613,7 +2618,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "9f8764aee8339041a748419a13bf203e93fba98d0f02707ed49227b950193a94"
+      "ruleSha256": "a4d643ed4167bc69aaa7e4eba2810d592815748b91a1f253adc93e3fce5c0475"
     },
     {
       "check": "serverplan_state_tripwires",
@@ -3146,7 +3151,7 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "01c58b38ac75c8ed2e79effb1f74a61d50202a43",
+    "upstreamCommit": "4dd2dec744fe523d00682c0e589e899e1a1bcf75",
     "status": "Adopting Final 7d1e40073, including observed filesystem and in-memory load exports; native acceptance pending",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
@@ -3247,11 +3252,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "8278045afeb1d8b7292d9b70ba4517eb7d8f32bb09d92d1cb482a2af65d08d44"
+        "sha256": "1ff003f69c0362ae11959a6eed98d3d82cb512eba0ca8918094e68832f4e8f79"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "3c4aaf6ad8952deeeb673a0a529edd5f36b665d74772311bb7aea9923c9bb65a"
+        "sha256": "76def7e4da0471d02a958fbd5c46984c54395c0db301005649d1881c147ed3b4"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",

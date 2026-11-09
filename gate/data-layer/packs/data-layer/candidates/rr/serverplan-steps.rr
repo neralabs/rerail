@@ -268,7 +268,7 @@ ssp_annotation_name(ann,name) :- ssp_attr(n,_,name), within(n,ann).
 .decl ssp_authority_annotation(ann: node)
 ssp_authority_annotation(ann) :- ssp_annotation_name(ann,name), ssp_authority_type(name).
 .decl ssp_authority_return(d: number, name: symbol)
-ssp_authority_return(d,name) :- ssp_function(d,f,name), field(f,"return_type",ann), ssp_authority_annotation(ann).
+ssp_authority_return(d,@nfkc(name)) :- ssp_doc(d,_), docof(f,d), kind(f,"function_definition"), def_name(f,name), field(f,"return_type",ann), ssp_authority_annotation(ann).
 .decl ssp_nested_def(f: node, name: symbol, p: node)
 .decl ssp_nested_candidate(f: node, name: symbol, p: node)
 ssp_nested_candidate(f,@nfkc(raw),p) :- kind(f,"function_definition"), ssp_under(p,f), p != f, kind(p,"function_definition"), def_name(p,raw).
