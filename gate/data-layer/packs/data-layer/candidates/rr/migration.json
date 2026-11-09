@@ -3726,7 +3726,19 @@
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
     "upstreamMerge": "6d0c08f407be8917c8838ab9bc7db102052e613d",
-    "previousUpstreamCommit": "04e3b5b83cc915926d842a8fe3ba6d94c78b555b"
+    "previousUpstreamCommit": "04e3b5b83cc915926d842a8fe3ba6d94c78b555b",
+    "adoptionAudit": {
+      "format": "rerail.engine-cohort-adoption/v1",
+      "upstreamCommit": "7e77fa2ead6148b651731514be9670e15934a288",
+      "engineCommit": "196db6b0b9036fb4f96a3ba89729d1e2c1708103",
+      "sourceTrees": {
+        "native": "cdbfdfd9f42193f9edc71d78c3e3cc3a55fc8040",
+        "accel": "082f5a84143d8cc8547150d1f617f1cf47ab4887",
+        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+        "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
+        "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
+      }
+    }
   },
   "engineSourceSnapshots": [
     {
