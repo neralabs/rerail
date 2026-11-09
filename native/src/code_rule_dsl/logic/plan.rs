@@ -548,16 +548,35 @@ fn survivors(r: &Rule, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -
         .then_some((old, gone))
 }
 
+/// The variable `l = r` assigns from its right side: `r` an unbound variable and `l` a bound variable or a constant
+/// (`$s = $a` with `$s` bound reads as `$a = $s`). Without it, `p($s), q($a), $s = $a` could only be ordered as a
+/// cross product of `p` and `q` narrowed after by the test (decision 0097 item 4: `fl4317_typing_root`, 14 k rows,
+/// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
+fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) -> Option<&'t String> {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != "=" {
+        return None;
+    }
+    let Term::Var(y) = r else { return None };
+    let ready = match l {
+        Term::Var(x) => bound.contains(x),
+        Term::Int(_) | Term::Str(_) => true,
+        _ => false,
+    };
+    (ready && !bound.contains(y)).then_some(y)
+}
+
 fn is_join(l: &Literal) -> bool {
     matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. })
 }
 
 /// Whether a filter can run: `$x = e` assigns $x if it is unbound when `e`'s variables are bound (SQL and the native
-/// `cat`/`eq` steps bind an unbound left side); otherwise it is a test.
+/// `cat`/`eq` steps bind an unbound left side); otherwise it is a test. An equality of a bound variable or constant
+/// with an unbound variable, `$s = $a`, assigns the right side as `$a = $s` would (`binds_right`).
 fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
     match l {
         Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
-        Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some(),
+        Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some() || binds_right(l, op, r, bound).is_some(),
         Literal::Agg { var, over, atom, op } => {
             let mut need = atom.vars();
             need.remove(var);
@@ -2080,6 +2099,9 @@ impl Model {
                     if *op == "=" && lv.is_some_and(|v| !env.contains_key(v)) {
                         let e = sql_term(r, &env, atoms)?;
                         env.insert(lv.expect("a variable").clone(), e);
+                    } else if let Some(y) = binds_right(l, op, r, &env.keys().cloned().collect()) {
+                        let e = sql_term(l, &env, atoms)?;
+                        env.insert(y.clone(), e);
                     } else if *op == "="
                         && let Some(lv) = lv
                         && r.is_cat()
