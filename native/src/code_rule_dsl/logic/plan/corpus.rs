@@ -275,7 +275,7 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// `Report::cone_inputs`: each document's rows of `per_file` (the exports held in memory, `exports`), by path. A value naming a node of the
+/// `Report::cone_inputs`: each document's held rows of `per_file`, by path. A value naming a node of the
 /// document is its rank among those its rows name; the rest (symbols, document keys, numbers) as they are.
 fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: &BTreeMap<String, Vec<usize>>, program: &front::Program, docs: impl Iterator<Item = &'a (i64, String)>) -> Result<BTreeMap<String, String>> {
     use sha2::{Digest, Sha256};
@@ -283,11 +283,9 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
     for (i, rel) in per_file.iter().enumerate() {
         let Some(at) = locations.get(rel).and_then(|l| l.first().copied()) else { continue };
         let width = program.decls.get(rel).map_or(0, Vec::len);
-        let rows = exports.snapshot(rel, width);
-        for r in 0..rows.len() {
-            let row: Vec<i64> = (0..width).map(|c| rows.value(r, c)).collect();
-            by_doc.entry(memo::document_of(row[at])).or_default().push((i, row));
-        }
+        exports.visit(rel,width,|row| {
+            by_doc.entry(memo::document_of(row[at])).or_default().push((i,row.to_vec()));
+        });
     }
     let mut out = BTreeMap::new();
     for (d, path) in docs {

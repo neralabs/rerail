@@ -101,6 +101,23 @@ impl Exports {
         (0..keys.len()).filter(|&r| documents.contains(&super::memo::document_of(keys[r]))).map(|r| columns.iter().map(|col| col[r]).collect()).collect()
     }
 
+    /// Visits held rows without a scratch SQL table or a second column store.
+    pub(super) fn visit(&self,rel:&str,width:usize,mut row:impl FnMut(&[i64])) {
+        let Some(held)=self.rels.get(rel) else {return;};
+        let mut cells=vec![0;width];
+        if let Some(source)=&held.source {
+            for r in 0..source.len() {
+                for (c,v) in cells.iter_mut().enumerate() {*v=source.value(r,c);}
+                row(&cells);
+            }
+        } else {
+            for r in 0..held.len() {
+                for (c,v) in cells.iter_mut().enumerate() {*v=held.columns[c][r];}
+                row(&cells);
+            }
+        }
+    }
+
     /// Export `rel` as a source of columns `c0…`: its rows, or none when no chunk added any. Made once. The rows
     /// move into it, and the set that kept them distinct is dropped.
     pub(super) fn source(&mut self, rel: &str, width: usize) -> Arc<dyn Source> {

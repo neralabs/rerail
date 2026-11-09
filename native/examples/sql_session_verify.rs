@@ -5,6 +5,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path};
 
+#[path = "sql_session_verify/documents.rs"]
+mod documents;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
@@ -17,6 +20,8 @@ fn snapshot(
     digest: &str,
     check: usize,
 ) -> Result<Value> {
+    let documents = session.verification_files().is_some();
+    let types = session.verification_types();
     let mut tables = BTreeMap::<String, Vec<String>>::new();
     for (name, fact) in facts {
         tables.insert(
@@ -55,6 +60,9 @@ fn snapshot(
             );
         }
     }
+    if documents {
+        tables.extend(session.verification_inputs());
+    }
     let width = tables.values().map(Vec::len).max().unwrap_or(1);
     let mut result = BTreeMap::<String, Value>::new();
     let mut arms = vec![];
@@ -76,8 +84,19 @@ fn snapshot(
             let name = names[usize::try_from(row[0].ok_or("missing relation tag")?)?];
             let cells = row[1..=tables[name].len()]
                 .iter()
-                .map(|v| v.map(|n| n.to_string()))
-                .collect::<Vec<_>>();
+                .enumerate()
+                .map(|(column, v)| {
+                    let ty = types
+                        .get(name)
+                        .and_then(|c| c.get(column))
+                        .map_or("int", String::as_str);
+                    if documents || matches!(ty, "sym" | "symbol") {
+                        session.verification_cell(ty, *v).map_err(|e| e.into())
+                    } else {
+                        Ok(v.map(|n| json!(n.to_string())).unwrap_or(Value::Null))
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
             result.get_mut(name).unwrap()["rows"]
                 .as_array_mut()
                 .unwrap()
@@ -110,6 +129,7 @@ fn error_kind(error: &str) -> &'static str {
 fn fresh(
     path: &Path,
     facts: &BTreeMap<String, Value>,
+    documents: Option<&Value>,
     request: &Value,
     waves: Option<u32>,
     limits: &Value,
@@ -118,6 +138,9 @@ fn fresh(
     let mut session = CodeRuleSqlExecutor::new(path.to_string_lossy().into())?;
     if oracle {
         session.use_cold_oracle();
+    }
+    if let Some(snapshot) = documents {
+        session.bind_snapshot(snapshot.to_string())?;
     }
     for fact in facts.values() {
         session.bind_relation(fact.to_string())?;
@@ -175,6 +198,7 @@ fn main() -> Result<()> {
         "program",
         "dialect",
         "relations",
+        "snapshot",
         "steps",
         "changes",
         "max_waves",
@@ -205,17 +229,20 @@ fn main() -> Result<()> {
         .as_u64()
         .map(|n| u32::try_from(n))
         .transpose()?;
+    let mut documents = request.get("snapshot").cloned();
     let (mut session, execution) = fresh(
         &directory.join("initial.sqlite"),
         &facts,
+        documents.as_ref(),
         &request,
         waves,
         &json!({}),
         oracle,
     )?;
-    let execution = execution.map_err(std::io::Error::other)?;
+    let mut execution = execution.map_err(std::io::Error::other)?;
+    execution["program"]["relations"] = json!(session.verification_relations()?);
     let mut checks = vec![
-        json!({"id":0,"outcome":"ok","state":snapshot(&session,&execution,&facts,&digest,0)?}),
+        json!({"id":0,"outcome":"ok","state":snapshot(&session,&execution,&facts,&digest,0)?,"documents":session.verification_files()}),
     ];
     let steps = request["steps"].as_array().cloned().unwrap_or_else(|| {
         request["changes"]
@@ -230,7 +257,16 @@ fn main() -> Result<()> {
     }
     for (at, step) in steps.iter().enumerate() {
         for name in step.as_object().ok_or("step must be an object")?.keys() {
-            if !["changes", "limits", "max_waves", "expected_error"].contains(&name.as_str()) {
+            if ![
+                "changes",
+                "snapshot",
+                "file_changes",
+                "limits",
+                "max_waves",
+                "expected_error",
+            ]
+            .contains(&name.as_str())
+            {
                 return Err(format!("unsupported verification step: {name}").into());
             }
         }
@@ -241,22 +277,44 @@ fn main() -> Result<()> {
             .map(|n| u32::try_from(n))
             .transpose()?
             .or(waves);
-        let candidate = changed(&facts, &step["changes"])?;
+        if ["changes", "snapshot", "file_changes"]
+            .iter()
+            .filter(|k| step.get(**k).is_some())
+            .count()
+            != 1
+        {
+            return Err("each step requires exactly one publication action".into());
+        }
+        let candidate = if step.get("changes").is_some() {
+            changed(&facts, &step["changes"])?
+        } else {
+            facts.clone()
+        };
+        let candidate_documents = documents::changed(&documents, step)?;
         let (result, new) = if oracle {
-            let (next, result) = fresh(
+            match fresh(
                 &directory.join(format!("step-{id}.sqlite")),
                 &candidate,
+                candidate_documents.as_ref(),
                 &request,
                 limit,
                 &limits,
                 true,
-            )?;
-            (result, Some(next))
+            ) {
+                Ok((next, result)) => (result, Some(next)),
+                Err(e) => (Err(e.to_string()), None),
+            }
         } else {
             session.set_limits(limits.to_string())?;
+            let result = if let Some(snapshot) = step.get("snapshot") {
+                session.apply_snapshot(snapshot.to_string(), limit)
+            } else if let Some(files) = step.get("file_changes") {
+                session.apply_file_changes(files.to_string(), limit)
+            } else {
+                session.apply_changes(step["changes"].to_string(), limit)
+            };
             (
-                session
-                    .apply_changes(step["changes"].to_string(), limit)
+                result
                     .map_err(|e| e.to_string())
                     .and_then(|s| serde_json::from_str(&s).map_err(|e| e.to_string())),
                 None,
@@ -266,6 +324,7 @@ fn main() -> Result<()> {
         let (outcome, message, report) = match result {
             Ok(report) => {
                 facts = candidate;
+                documents = candidate_documents;
                 if let Some(next) = new {
                     session = next;
                 }
@@ -274,7 +333,7 @@ fn main() -> Result<()> {
             Err(error) => (error_kind(&error), Some(error), None),
         };
         session.set_limits("{}".into())?;
-        checks.push(json!({"id":id,"outcome":outcome,"error":message,"report":if oracle {None}else{report},"state":snapshot(&session,&execution,&facts,&digest,id)?}));
+        checks.push(json!({"id":id,"outcome":outcome,"error":message,"report":if oracle {None}else{report},"state":snapshot(&session,&execution,&facts,&digest,id)?,"documents":session.verification_files()}));
     }
     let mut queries = vec![];
     for query in request["queries"].as_array().into_iter().flatten() {
@@ -299,7 +358,7 @@ fn main() -> Result<()> {
     }
     println!(
         "{}",
-        json!({"format":"rerail.sql-session-observation/v1","requestSha256":digest,"mode":args[0],"runnerSha256":format!("{:x}",Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"relations":execution["program"]["relations"],"outputs":execution["outputs"],"checks":checks,"queries":queries})
+        json!({"format":"rerail.sql-session-observation/v1","requestSha256":digest,"mode":args[0],"runnerSha256":format!("{:x}",Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"inputs":session.verification_inputs(),"relations":execution["program"]["relations"],"outputs":execution["outputs"],"checks":checks,"queries":queries})
     );
     Ok(())
 }

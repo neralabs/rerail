@@ -13,7 +13,7 @@ impl Reducer {
         rule: &Rule,
     ) -> E {
         let mut expression = self.lookup(rule);
-        if self.combined.is_none() {
+        if self.combined.is_none() || self.dynamic() {
             return expression;
         }
         expression.visit_mut(&mut |e| {
@@ -53,7 +53,7 @@ impl Reducer {
         let Some(shared) = &self.combined else {
             return;
         };
-        if !shared.owner {
+        if !shared.owner || self.dynamic() {
             return;
         }
         let alias = format!("rr_summary_{}", shared.members[0]);
@@ -74,7 +74,7 @@ impl Reducer {
         *from += &format!(" LEFT JOIN {} {alias} ON {on}", quote(&self.groups));
     }
     pub(in crate::code_rule_dsl::sql_executor::reductions) fn storage_explain(&self) -> Value {
-        json!({"group":self.groups,"value_index":self.values,"context_consumers":self.pool_consumers,"lookup_members":self.combined.as_ref().map(|s|&s.members)})
+        json!({"group":self.groups,"value_index":self.values,"context_consumers":self.pool_consumers,"cross_gate_projection_proven":self.transition_key.is_some(),"lookup_members":self.combined.as_ref().map(|s|&s.members)})
     }
     pub(in crate::code_rule_dsl::sql_executor::reductions) fn shared_lookup_owner(&self) -> bool {
         self.combined.as_ref().is_some_and(|s| s.owner)

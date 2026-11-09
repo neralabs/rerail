@@ -126,12 +126,14 @@ impl CodeRuleSqlExecutor {
             .filter(|p| !p.plus.is_empty() || !p.minus.is_empty())
             .map(|p| p.name.clone())
             .collect();
+        let previous_counts = prepared.iter().map(|p| (p.name.clone(),self.inputs[&p.name].estimated_len())).collect::<BTreeMap<_,_>>();
         let affected = self.affected(&changed);
         let mut executions = self.executions.clone();
         let mut work = Work::new(&self.db, &self.scratch);
         work.versions = Some(&self.versions);
         work.profiler = self.db.profiler();
         let mut touched = Vec::new();
+        let previous_statistics=self.statistics.snapshot();
         let limits = self.limits.clone();
         self.db
             .execute_batch("SAVEPOINT sql_fact_changes")
@@ -191,6 +193,9 @@ impl CodeRuleSqlExecutor {
                 let mut rows = Vec::new();
                 for run in &executions {
                     for (name, count) in &run.counts {
+                        if self.stats_ready.get() && self.executions.iter().rev().find_map(|e| e.counts.get(name)) == Some(count) {
+                            continue;
+                        }
                         rows.push(vec![
                             SqlValue::Text(name.clone()),
                             SqlValue::Integer(*count as i64),
@@ -198,24 +203,28 @@ impl CodeRuleSqlExecutor {
                     }
                 }
                 for p in &prepared {
+                    if self.stats_ready.get() && previous_counts.get(&p.name) == Some(&p.source.estimated_len()) {
+                        continue;
+                    }
                     rows.push(vec![
                         SqlValue::Text(p.name.clone()),
                         SqlValue::Integer(p.source.estimated_len() as i64),
                     ]);
                 }
-                plan::insert_many(
-                    &self.db,
-                    "INSERT OR REPLACE INTO wave_stats(tbl,rows)",
-                    rows,
-                )
-                .map_err(error)?;
+                if previous_statistics.is_some() {
+                    let operation=work.profiler.map(|p|p.operation("native row-count publication",("sql-extension",0),0,vec![("rows".into(),rows.len() as i64)]));
+                    self.statistics.patch(&self.db,&rows)?;
+                    if let Some(operation)=operation {operation.finish(rows.len());}
+                } else {
+                    plan::insert_many(&self.db,"INSERT OR REPLACE INTO wave_stats(tbl,rows)",rows).map_err(error)?;
+                }
             }
             work.cleanup()?;
             self.db
                 .execute_batch("RELEASE sql_fact_changes")
                 .map_err(error)?;
             Ok(
-                json!({"inserted_facts":prepared.iter().map(|p|p.plus.len()).sum::<usize>(),"deleted_facts":prepared.iter().map(|p|p.minus.len()).sum::<usize>(),"programs":reports,"initializations":[],"scratch_tables_created":work.created,"version_nodes":work.version_nodes,"migrated_inputs":prepared.iter().filter(|p|p.migrated).map(|p|p.name.clone()).collect::<Vec<_>>()}),
+                json!({"inserted_facts":prepared.iter().map(|p|p.plus.len()).sum::<usize>(),"deleted_facts":prepared.iter().map(|p|p.minus.len()).sum::<usize>(),"programs":reports,"initializations":[],"scratch_tables_created":work.created,"version_nodes":work.version_nodes,"summary_transition_reuses":work.summary_reuses,"migrated_inputs":prepared.iter().filter(|p|p.migrated).map(|p|p.name.clone()).collect::<Vec<_>>()}),
             )
         })();
         match result {
@@ -256,6 +265,7 @@ impl CodeRuleSqlExecutor {
                 let _ = self
                     .db
                     .execute_batch("ROLLBACK TO sql_fact_changes; RELEASE sql_fact_changes");
+                self.statistics.restore(&self.db,previous_statistics)?;
                 for p in touched.into_iter().rev() {
                     if let Some(live) = &p.live {
                         live.apply(&p.minus, &p.plus);
