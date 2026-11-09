@@ -154,6 +154,12 @@ const CASES: &[(&str, &str)] = &[
     (".violation v(at: loc) code {at.code} tag { } \"m\"", "16"),
     (".violation v(at: loc) code { /* c */ at } tag {a {b} c} \"m\" suppress t \"r\" over {x y}\n.violation w(at: loc) code {at} \"m\" suppress t \"r\" over { at }", "16"),
     (".violation v(at: loc) code {at \"m\"", "never"),
+    // A `` `` `` with none after it in the file's bytes: the empty literal, read on after it.
+    ("r(x) :- x = replace(c, ``).", "17"),
+    ("r(x) :- y = ``a``, z = `b`, x = replace(c, ``). // c", "17"),
+    // One after it, in a comment or a string: the literal runs to it, as the engine reads it.
+    ("r(x) :- x = ``. // `` later", "never"),
+    ("r(x) :- x = ``, y = \"``\".", "never"),
     // JSON objects: terms, setting arguments; edits.
     ("r({\"a\": {\"b\": [1, 2]}}) :- s(x, {}), {\"c\": 1} = x => e(x, \"y\"), f({}).", "09"),
     (".budget * by code { \"A\": 3, \"B\": 4 }\n.budget * {\n  \"total\": 0\n}\nr(x).", "09"),

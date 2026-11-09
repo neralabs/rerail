@@ -309,6 +309,7 @@ reference on the corpus.
 | rr-14 | `\u` escapes: `\u212a`, `\u{1F600}`; the forms that are code points by their bytes (no surrogate, at most `10FFFF`), tested by masks over a window; any other `\u` goes to the engine; in JSON, a `\u` with no four hex digits is refused | A2 |
 | rr-15 | a `.violation`'s `fix`, `suppress`, `options` and a `suppress` line's `over`, read only before what the engine reads after them (a name; a name and a string; a `{`), past blanks and comments; elsewhere the word starts the next statement | A21 |
 | rr-16 | a column in braces that is no single name, `code {at.code}`, `tag { }`: one `raw_text` leaf through the matching `}`; `{c}` the name, told by a hidden mark where a name and a `}` follow the `{` | A8, A21 |
+| rr-17 | a `` `` `` with none after it in the file's bytes (a comment's and a string's too): the empty literal, the bytes after it read on; known by a `back_fill` with no end, before the fixed point over the regions | A2, A21 |
 
 At rr-11:
 - every corpus file is parsed by both parsers;
