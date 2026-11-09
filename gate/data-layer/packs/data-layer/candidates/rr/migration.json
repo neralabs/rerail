@@ -3573,7 +3573,7 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "07bba2f69102a09a7a66e0c0119905d7807d0af9",
+    "upstreamCommit": "bc83f6ae8cf7bf363f9e27f33dfac90a4250726b",
     "status": "Final 7e77 root debug CLI rebuilt; private Boolean regression passes 24 variants, and both existing demand tests pass. Ratchet contract revalidation is in progress.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
@@ -3610,7 +3610,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "fc937951846c979e8768963662dfaf6eaa31f27128f9b38f81372a6ce3a90bee"
+        "sha256": "d1266bcaa02860634c3a55b58f075c60157b6aab81c77256a0d2315eaf1bec42"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
@@ -3670,15 +3670,15 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "e27d6c4342b104e0a47deb8eab41d884d9214ce56c5220881e12de143675cf84"
+        "sha256": "884a4c1a47b3cd23b979c0cf2ad0179762d14b3c8a56b658f88806ef7b4dfb6b"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "7b8af43f243d9258ddc3cacdb764533823a674da5c438a5601c5f7c166ba95d2"
+        "sha256": "99f2cdacd14f42277aea28ceea6327b9fb6468d8b4e7fffec79604ebc37f53a9"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "cf2db09e8778cfd8d4a011e25fd90ade562736853e0f28e68bc4ee923c0fc08c"
+        "sha256": "33cbc95a6c682b8edcfb9a7e826ac7810294c3138c36326588df49838c610a43"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
