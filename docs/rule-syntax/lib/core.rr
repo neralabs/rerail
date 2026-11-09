@@ -457,11 +457,13 @@
 // signed_list("allow/exec.txt", "scripts/build.py"): approved exceptions; the signature check is native so a
 // rule cannot accept an edited list. A list whose signature fails has no rows, and an input_error row instead.
 .decl signed_list(path: symbol, entry: symbol)  // entries of a signed allowlist; refused if the signature fails
-// git_tracked("docs/a.md"): the file is in the Git index. file() is what is on disk in the scanned tree; a check
-// about committed files needs the difference.
-.decl git_tracked(path: symbol)
-// git_rev("head", sha), git_rev("base", sha): the revision under check and the one it is compared against (the
-// merge base of a change).
+// @git_tracked("docs/a.md") = 1 when the file is in the Git index (as `git ls-files` lists it: a staged addition
+// is, a file only on disk is not), else 0. file() is what is on disk in the scanned tree; a check about committed
+// files needs the difference. The index is read once per run; outside a repository there is no value.
+.functor git_tracked(path: symbol): number
+// git_rev("head", sha), git_rev("base", sha): the revision under check, and the one it is compared against: the
+// merge base of HEAD and the run's `--base` reference. Without a repository, or a base that does not resolve, no
+// rows and an input_error("git_rev", …) row.
 .decl git_rev(name: symbol, sha: symbol)
 // @git_commit(sha) = 1 when sha (full, or abbreviated to at least 4 digits) names a commit of the repository,
 // else 0, so a check can verify a commit a document cites. @git_has(sha, path) = 1 when that commit's tree has
@@ -484,7 +486,7 @@
 .decl str_part_start(lit: node, i: number, l: number, c: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
-.input signed_list, git_tracked, git_rev, str_part, str_part_word, str_part_start
+.input signed_list, git_rev, str_part, str_part_word, str_part_start
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
 // format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no

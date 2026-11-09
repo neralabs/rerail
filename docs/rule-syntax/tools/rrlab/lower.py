@@ -1115,7 +1115,7 @@ class Ctx:
                 p.outputs.update(rels)
             return [("atom", f"rr_dfs{k}", [self.expr(x, pre) for x in args[:3]])]
         if name in ("dfs_first", "dfs_first_memo", "match_all", "string_annotation", "signed_list",
-                    "git_tracked", "git_rev", "tsconfig", "tsconfig_for", "tsconfig_path",
+                    "git_rev", "tsconfig", "tsconfig_for", "tsconfig_path",
                     "package_export"):
             p.warn(f"{name} is not modelled: it has no rows")
             if name in ("dfs_first", "dfs_first_memo", "match_all"):

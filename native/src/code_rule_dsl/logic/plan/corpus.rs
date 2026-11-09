@@ -251,7 +251,7 @@ pub(crate) fn unchanged(programs: &[&str], root: &Path, typing: &Typing, options
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1 || world::bytes_digest(&root.join(f)) != d.2) {
         return Ok(false);
     }
-    const READERS: [&str; 4] = ["input", "input_dir", "artifact", "base"];
+    const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
     Ok(inputs::still(&prog, root, &read) && world::World::new(root, &prog).still(&requests))
 }
@@ -1212,7 +1212,6 @@ pub(crate) fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    crate::code_rule_dsl::logic::strings::git::set_root(root);
     let before = observe(|o| {
         o.begin();
         o.counts
@@ -1316,6 +1315,8 @@ fn run_observed(
         }
     };
     add_bridged(&mut prog);
+    // The Git functors answer from the repository holding this run's root (`strings::git`), for this run only.
+    let _git = crate::code_rule_dsl::logic::strings::git::scope(root);
     // Plans are kept across this run's chunks (decision 0038), and a session's across its runs (decision 0090 step 5).
     let across = session::generation();
     let _plans = super::KeepPlans::start(across);
@@ -2660,27 +2661,13 @@ fn run_observed(
             if !drain(process)? {
                 return Err(Error::Plan("the chunk builder ended before a load's documents".to_owned()));
             }
-            // The new documents' rows of the per-file relations the cone reads, from `x`, by their first location:
-            // one statement per relation for the whole batch, a range join on the key when that column leads it.
+            // The new documents' rows of the per-file relations the cone reads, from the exports the chunks added
+            // (`exports`, held in memory), by their first location column.
             let new: std::collections::HashSet<i64> = keys.iter().copied().collect();
-            db.execute_batch("CREATE TEMP TABLE IF NOT EXISTS rr_load_new(lo INTEGER, hi INTEGER); DELETE FROM temp.rr_load_new;")?;
-            super::insert_many(&db, "INSERT INTO temp.rr_load_new", keys.iter().map(|d| vec![SqlValue::Integer(d << 32), SqlValue::Integer((d << 32) | 0xffff_ffff)]).collect())?;
             for rel in &per_file {
                 let at = split.locations.get(rel).and_then(|l| l.first().copied()).ok_or_else(|| Error::Plan(format!("{rel}: no location column")))?;
                 let width = lowered.program.decls[rel].len();
-                let table = crate::code_rule_dsl::logic::sql::ident(rel);
-                let row = |r: &rusqlite::Row| (0..width).map(|c| r.get::<_, i64>(c)).collect::<rusqlite::Result<Vec<_>>>();
-                let rows: Vec<Vec<i64>> = if at == 0 {
-                    let cols = (0..width).map(|c| format!("t.c{c}")).collect::<Vec<_>>().join(", ");
-                    db.prepare(&format!("SELECT {cols} FROM temp.rr_load_new n JOIN x.{table} t ON t.c0 BETWEEN n.lo AND n.hi"))?
-                        .query_map([], row)?
-                        .collect::<rusqlite::Result<_>>()?
-                } else {
-                    let cols = (0..width).map(|c| format!("c{c}")).collect::<Vec<_>>().join(", ");
-                    let all: Vec<Vec<i64>> = db.prepare(&format!("SELECT {cols} FROM x.{table}"))?.query_map([], row)?.collect::<rusqlite::Result<_>>()?;
-                    all.into_iter().filter(|r| new.contains(&memo::document_of(r[at]))).collect()
-                };
-                out.push((rel.clone(), rows));
+                out.push((rel.clone(), exports.borrow().rows_of(rel, width, at, &new)));
             }
             Ok(out)
         };
@@ -3517,6 +3504,10 @@ fn run_observed(
         let lines: usize = programs.iter().map(|p| p.lines().filter(|l| !l.trim().is_empty()).count()).sum();
         header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
+    }
+    // The index, when `@git_tracked` read it: it moves between runs (`strings::git`).
+    if t.is_none() {
+        consulted.extend(crate::code_rule_dsl::logic::strings::git::consulted(root));
     }
     Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), cross: cross_counts, prepared: origin, cross_strata, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_changed, cross_again, cross_delta_counts, consulted, files_observed: Default::default() })
 }

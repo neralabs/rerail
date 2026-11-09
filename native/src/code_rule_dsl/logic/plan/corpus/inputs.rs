@@ -166,9 +166,8 @@ pub(in crate::code_rule_dsl) fn require_facts() {
     REQUIRE_FACTS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// The revision `git_rev("base", …)` names, which `at="base"` inputs are read at: `logic --base REV`, a commit id
-/// or a reference name (`origin/main`). The merge base of a change is the caller's to compute until the git
-/// provider gives `git_rev` (decision 0094, order of work).
+/// The reference a change is compared against: `logic --base REV`, any revision spec (`origin/main`, an id).
+/// `git_rev("base", …)`, which `at="base"` inputs are read at, is the merge base of HEAD and it.
 static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 pub(in crate::code_rule_dsl) fn set_base(rev: String) -> std::result::Result<(), String> {
@@ -180,11 +179,11 @@ fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unre
 /// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
 fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
     let repo = gix::discover(root).map_err(|e| unreadable(format!("no repository holds {}: {e}", root.display())))?;
+    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rr defines it.
+    let (revs, _) = crate::code_rule_dsl::logic::strings::git::revisions(root, Some(rev)).map_err(unreadable)?;
+    let base = revs.iter().find(|(n, _)| n == "base").map(|(_, id)| id.clone()).unwrap_or_default();
     let resolve = || -> std::result::Result<gix::ObjectId, Box<dyn std::error::Error + Send + Sync>> {
-        let commit = match gix::ObjectId::from_hex(rev.as_bytes()) {
-            Ok(id) => id,
-            Err(_) => repo.find_reference(rev)?.peel_to_id()?.detach(),
-        };
+        let commit = gix::ObjectId::from_hex(base.as_bytes())?;
         Ok(repo.find_object(commit)?.peel_to_tree()?.id)
     };
     let tree = resolve().map_err(|e| unreadable(format!("base revision {rev}: {e}")))?;
@@ -453,11 +452,46 @@ pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> 
         &mut consulted,
     )?;
     consulted.extend(seen.into_inner());
+    git_revisions(program, root, base, &mut consulted);
     CONSULTED.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
     if REQUIRE_FACTS.load(std::sync::atomic::Ordering::Relaxed) {
         required(program)?;
     }
     Ok(())
+}
+
+/// `git_rev`'s rows, for a program with a rule that reads it: HEAD, and the merge base with `--base`. Without a
+/// repository, or a base that does not resolve, an `input_error("git_rev", …)` row, and the readers under `!` are
+/// withheld.
+fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, consulted: &mut Vec<(String, String, String)>) {
+    let reads = program.rules.iter().any(|r| r.body.iter().any(|l| match l {
+        front::Literal::Atom(a) => a.rel == "git_rev",
+        front::Literal::Agg { atom, .. } => atom.rel == "git_rev",
+        _ => false,
+    }));
+    if !reads {
+        return;
+    }
+    program.inputs.retain(|n| n != "git_rev");
+    let key = format!("{}\t{}", root.display(), base.unwrap_or(""));
+    match crate::code_rule_dsl::logic::strings::git::revisions(root, base) {
+        Ok((rows, _)) => {
+            consulted.push(("git_rev".to_owned(), key, rows.iter().map(|(n, id)| format!("{n}={id}")).collect::<Vec<_>>().join(",")));
+            program.facts.entry("git_rev".to_owned()).or_default().extend(rows.into_iter().map(|(n, id)| vec![Value::Str(n), Value::Str(id)]));
+            if base.is_none() {
+                return;
+            }
+        }
+        Err(detail) => {
+            consulted.push(("git_rev".to_owned(), key, String::new()));
+            program.inputs.retain(|n| n != "input_error");
+            program.facts.entry("input_error".to_owned()).or_default().push(vec![Value::Str("git_rev".into()), Value::Str("unreadable".into()), Value::Str(detail.clone())]);
+            let withheld = withhold(program, &BTreeMap::from([("git_rev".to_owned(), "git_rev unreadable".to_owned())]));
+            for (output, why) in withheld.unknown {
+                eprintln!("unknown: {} ({why}): rows may be missing", output.strip_prefix("rr_place_").unwrap_or(&output));
+            }
+        }
+    }
 }
 
 /// Whether the reads `populate` recorded (`take_consulted`) would read the same now, for `program`'s artifact
@@ -472,6 +506,7 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
                 let (text, inputs) = read_artifact(root, &declared, path);
                 artifact_entry(&text, &inputs)
             }
+            "git_rev" | "git_index" => return crate::code_rule_dsl::logic::strings::git::still(what, path, digest),
             "base" => {
                 let Some((rev, file)) = path.split_once('\t') else { return false };
                 of_result(&base_reader(root, (!rev.is_empty()).then_some(rev))(file))
