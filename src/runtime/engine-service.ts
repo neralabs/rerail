@@ -24,6 +24,8 @@ export interface EngineService {
     event: AdapterEvent,
     configuration?: EngineRuntimeConfiguration,
   ): Promise<readonly AdapterDelivery[]>;
+  /** How many runtimes are open: one per checkout some live session uses. */
+  openRuntimes(): number;
 }
 
 const ConfigurationSchema = z
@@ -234,7 +236,8 @@ async function routeEngineEvent(
       runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true });
       state.runtimes.set(runtimeKey, runtime);
     }
-    if (event.kind === "session-start") {
+    // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
+    if (event.kind !== "session-end") {
       const keys = state.runtimeKeysBySession.get(sessionId) ?? new Set<string>();
       keys.add(runtimeKey);
       state.runtimeKeysBySession.set(sessionId, keys);
@@ -251,8 +254,29 @@ async function routeEngineEvent(
     const keys = state.runtimeKeysBySession.get(sessionId);
     keys?.delete(runtimeKey);
     if (keys?.size === 0) state.runtimeKeysBySession.delete(sessionId);
+    retireUnusedRuntime(state, runtimeKey);
   }
   return deliveries;
+}
+
+/**
+ * Disposes the runtime at `runtimeKey` once no session uses it. A runtime holds its checkout's whole source walk (one
+ * observation for every file of the working tree, ignored ones included, about 100,000 in a large repository), so a
+ * daemon that kept the runtime of every checkout and worktree it ever served grew until its heap ran out. The next
+ * event for that checkout makes a new runtime, as the first one did.
+ */
+function retireUnusedRuntime(state: EngineRoutingState, runtimeKey: string): void {
+  for (const keys of state.runtimeKeysBySession.values()) if (keys.has(runtimeKey)) return;
+  const runtime = state.runtimes.get(runtimeKey);
+  if (runtime === undefined) return;
+  state.runtimes.delete(runtimeKey);
+  for (const [configuration, key] of state.runtimeKeysByConfiguration) if (key === runtimeKey) state.runtimeKeysByConfiguration.delete(configuration);
+  const disposal = runtime.dispose().then(() => [] as const, (error: unknown) => {
+    process.stderr.write(`rerail: closing an idle runtime failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    return [] as const;
+  });
+  state.pending.add(disposal);
+  void disposal.then(() => state.pending.delete(disposal));
 }
 
 function listen(server: Server, socketPath: string): Promise<void> {
@@ -409,6 +433,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       return socketPath;
     },
     ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
+    openRuntimes: () => routing.runtimes.size,
     async close() {
       const closed = Promise.withResolvers<void>();
       server.close((error) => (error ? closed.reject(error) : closed.resolve()));
