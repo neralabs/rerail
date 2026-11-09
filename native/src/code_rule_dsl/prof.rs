@@ -1,10 +1,14 @@
-//! Wall time by stage, for profiling the wave (O28): with `RERAIL_PROF` set, `time` adds each
-//! call's wall time to its stage and `report` prints and clears them; without it, `time` only
-//! calls. Stages may nest and run on several threads, so their times overlap and need not sum.
+//! CPU time by stage, for profiling the wave (O28): with `RERAIL_PROF` set, `time` adds each
+//! call's CPU time (user + sys of the thread that runs it, `thread_cpu`) to its stage and `report`
+//! prints and clears them; without it, `time` only calls. CPU, not wall time: it does not grow
+//! with the machine's load. A stage called on several threads sums their CPU; work a stage hands
+//! to other threads is theirs (a parallel stage's own calls inside it count it). A top-level
+//! stage also records the process's CPU (`cpu_ms.<stage>`, as its calls), which counts every
+//! thread. Stages may nest, so their times overlap and need not sum.
 
 use std::collections::BTreeMap;
 use std::sync::{LazyLock, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROF").is_some());
 static STAGES: Mutex<BTreeMap<String, (Duration, usize)>> = Mutex::new(BTreeMap::new());
@@ -13,12 +17,12 @@ pub(in crate::code_rule_dsl) fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T
     if !*ON {
         return f();
     }
-    let start = Instant::now();
+    let start = thread_cpu();
     // A top-level stage's process CPU (user + sys) as well: its own where nothing overlaps it.
     let top = stage.starts_with("slice.") || stage.starts_with("demand.") || stage.starts_with("labels.");
     let cpu = top.then(process_cpu);
     let out = f();
-    let elapsed = start.elapsed();
+    let elapsed = thread_cpu().saturating_sub(start);
     let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(cpu) = cpu {
         let entry = stages.entry(format!("cpu_ms.{stage}")).or_default();
@@ -41,6 +45,20 @@ pub(crate) fn single_thread_cpu() -> Duration {
 /// The process's CPU time so far (user + sys).
 #[cfg(target_family = "wasm")]
 fn process_cpu() -> Duration {
+    single_thread_cpu()
+}
+
+/// The calling thread's CPU time so far (user + sys).
+#[cfg(not(target_family = "wasm"))]
+fn thread_cpu() -> Duration {
+    let mut time = unsafe { std::mem::zeroed::<libc::timespec>() };
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) };
+    Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
+}
+
+/// The calling thread's CPU time on wasm32: its one thread's (`single_thread_cpu`).
+#[cfg(target_family = "wasm")]
+fn thread_cpu() -> Duration {
     single_thread_cpu()
 }
 
@@ -67,11 +85,11 @@ pub(in crate::code_rule_dsl) fn report(title: &str) {
 }
 
 /// A stage timed until it drops.
-pub(in crate::code_rule_dsl) struct Stage(Option<(&'static str, Instant, Option<Duration>)>);
+pub(in crate::code_rule_dsl) struct Stage(Option<(&'static str, Duration, Option<Duration>)>);
 
 impl Stage {
     pub(in crate::code_rule_dsl) fn start(stage: &'static str) -> Self {
-        Self(ON.then(|| (stage, Instant::now(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
+        Self(ON.then(|| (stage, thread_cpu(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
     }
 }
 
@@ -83,7 +101,7 @@ impl Drop for Stage {
                 stages.entry(format!("cpu_ms.{stage}")).or_default().1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
             }
             let entry = stages.entry(stage.to_owned()).or_default();
-            entry.0 += start.elapsed();
+            entry.0 += thread_cpu().saturating_sub(start);
             entry.1 += 1;
         }
     }
