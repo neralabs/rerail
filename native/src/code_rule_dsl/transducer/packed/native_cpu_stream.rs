@@ -34,8 +34,8 @@ pub(super) struct Ctx {
     /// The extract `TOKEN` names, and its count; two readable slots past the count.
     starts: *const u32,
     nstarts: u64,
-    /// The extract `SPAN m=1` names, and its count.
-    lasts: *const u32,
+    /// The mask `SPAN m=1` names: its first word, and its number of words (one a 64 bytes).
+    lasts: *const u64,
     nlasts: u64,
     totals: *const u64,
     kind: *mut u32,
@@ -49,6 +49,8 @@ pub(super) struct Ctx {
     returns: *mut u32,
     /// Written at `ACCEPT`: the node count, the supertype count.
     counts: *mut u64,
+    /// The bytes from one of the mask's words to the next.
+    lasts_stride: u64,
 }
 
 /// The field offsets of `Ctx`.
@@ -69,6 +71,7 @@ const SUPER_KIND: i32 = 104;
 const OPEN: i32 = 112;
 const RETURNS: i32 = 120;
 const COUNTS: i32 = 128;
+const LASTS_STRIDE: i32 = 136;
 
 /// Returns 0 when the words accept, else one more than the refusing word's place.
 type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
@@ -86,7 +89,7 @@ pub(super) struct CompiledStream {
     _module: JITModule,
     entry: Entry,
     bounds: Bounds,
-    /// The extracts `TOKEN` and `SPAN m=1` read.
+    /// The extract `TOKEN` reads, and the output of the mask `SPAN m=1` reads.
     starts: Option<usize>,
     lasts: Option<usize>,
     pub(super) clif: String,
@@ -177,7 +180,9 @@ fn push_targets(native: &NativeModule) -> Vec<u16> {
 /// The machine's state, as variables.
 struct Vars {
     next: Variable,
+    /// The mask's word `lw`'s bits not yet taken; before the first word, `lw` is -1 (no bits).
     taken: Variable,
+    lw: Variable,
     start: Variable,
     end: Variable,
     limit: Variable,
@@ -205,6 +210,59 @@ fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)]) {
     dispatch(f, x, &runs[mid..]);
 }
 
+/// A mask tier 1 wrote (`block::BlockProgram::masks`): its first word, the bytes from one word
+/// to the next, and its number of words.
+#[derive(Clone, Copy)]
+struct Mask {
+    first: Value,
+    stride: Value,
+    words: Value,
+}
+
+/// Word `w` of a mask (`w` below its count).
+fn mask_word(f: &mut FunctionBuilder<'_>, first: Value, stride: Value, w: Value) -> Value {
+    let off = f.ins().imul(w, stride);
+    let at = f.ins().iadd(first, off);
+    f.ins().load(types::I64, MemFlags::trusted().with_readonly(), at, 0)
+}
+
+/// The first set bit of `m` from `bits`, word `w`'s bits not yet passed, on: a loop of a word
+/// (64 bytes) a turn, its head given second. With `want`, a bit is found (the builder is left in
+/// a block with parameters the bit's word and its bits) and the mask's end refuses at `pc`;
+/// without, a bit refuses and the builder is left after the mask's end.
+fn mask_scan(f: &mut FunctionBuilder<'_>, m: Mask, w: Value, bits: Value, refuse: Block, pc: usize, want: bool) -> (Block, Block) {
+    let (scan, next, found, end) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    for b in [scan, found] {
+        f.append_block_param(b, types::I64);
+        f.append_block_param(b, types::I64);
+    }
+    let at = f.ins().iconst(types::I64, pc as i64 + 1);
+    f.ins().jump(scan, &[w.into(), bits.into()]);
+    f.switch_to_block(scan);
+    let (w, bits) = (f.block_params(scan)[0], f.block_params(scan)[1]);
+    let none = f.ins().icmp_imm(IntCC::Equal, bits, 0);
+    f.ins().brif(none, next, &[], found, &[w.into(), bits.into()]);
+    f.switch_to_block(next);
+    let w1 = f.ins().iadd_imm(w, 1);
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, w1, m.words);
+    let more = f.create_block();
+    f.ins().brif(past, end, &[], more, &[]);
+    f.switch_to_block(more);
+    let word = mask_word(f, m.first, m.stride, w1);
+    f.ins().jump(scan, &[w1.into(), word.into()]);
+    if want {
+        f.switch_to_block(end);
+        f.ins().jump(refuse, &[at.into()]);
+        f.switch_to_block(found);
+        (found, scan)
+    } else {
+        f.switch_to_block(found);
+        f.ins().jump(refuse, &[at.into()]);
+        f.switch_to_block(end);
+        (end, scan)
+    }
+}
+
 /// A switch's runs: each maximal range of bytes with one target, as (first byte, block).
 fn runs(s: &ByteSwitch, word: &dyn Fn(u16) -> Block) -> Vec<(u32, Block)> {
     let mut out: Vec<(u32, u16)> = Vec::new();
@@ -222,7 +280,8 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
     let pushes = push_targets(native);
     let named = |op: fn(&Op) -> Option<u16>| words.iter().find_map(|b| op(&b.operation)).map(usize::from);
     let starts = named(|o| if let Op::Token { extract } = *o { Some(extract) } else { None });
-    let lasts = named(|o| if let Op::Span { last: true, len } = *o { Some(len) } else { None });
+    // The mask `SPAN m=1` names, as its output's index.
+    let lasts = named(|o| if let Op::Span { last: true, len } = *o { Some(len) } else { None }).and_then(|m| native.block_programs.first().and_then(|b| b.masks.get(m).copied()));
 
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
@@ -250,6 +309,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         let v = Vars {
             next: f.declare_var(types::I64),
             taken: f.declare_var(types::I64),
+            lw: f.declare_var(types::I64),
             start: f.declare_var(types::I64),
             end: f.declare_var(types::I64),
             limit: f.declare_var(types::I64),
@@ -271,6 +331,7 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         let nstarts = load(&mut f, NSTARTS);
         let lasts_p = load(&mut f, LASTS);
         let nlasts = load(&mut f, NLASTS);
+        let lasts_stride = load(&mut f, LASTS_STRIDE);
         let totals_p = load(&mut f, TOTALS);
         let cols: Vec<Value> = [KIND, FIELD, START, END, SIZE, SUPER_NODE, SUPER_KIND, OPEN, RETURNS, COUNTS].iter().map(|&at| load(&mut f, at)).collect();
         let (kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c) =
@@ -279,6 +340,8 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         for var in [v.next, v.taken, v.start, v.end, v.limit, v.last_end, v.at_end, v.nodes, v.supers, v.open, v.ret] {
             f.def_var(var, zero);
         }
+        let before_first = f.ins().iconst(types::I64, -1);
+        f.def_var(v.lw, before_first);
         match wb.first() {
             Some(&b) => f.ins().jump(b, &[]),
             None => f.ins().jump(off_end, &[]),
@@ -380,15 +443,19 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     f.ins().jump(fall, &[]);
                 }
                 Op::Span { last: true, .. } => {
-                    let taken = f.use_var(v.taken);
-                    let none = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, taken, nlasts);
-                    guard(&mut f, none, pc);
-                    let l = {
-                        let at = slot(&mut f, lasts_p, taken);
-                        f.ins().uload32(flags, at, 0)
-                    };
-                    let taken = f.ins().iadd_imm(taken, 1);
-                    f.def_var(v.taken, taken);
+                    // The next of the mask's bits after the last one taken: the bits of word
+                    // `lw` not yet taken (`taken`), then a word (64 bytes) at a time.
+                    let (w, bits) = (f.use_var(v.lw), f.use_var(v.taken));
+                    let (found, scan) = mask_scan(&mut f, Mask { first: lasts_p, stride: lasts_stride, words: nlasts }, w, bits, refuse, pc, true);
+                    heads.push((scan, Step::Block));
+                    let (w, bits) = (f.block_params(found)[0], f.block_params(found)[1]);
+                    let tz = f.ins().ctz(bits);
+                    let at = f.ins().ishl_imm(w, 6);
+                    let l = f.ins().iadd(at, tz);
+                    let less = f.ins().iadd_imm(bits, -1);
+                    let rest = f.ins().band(bits, less);
+                    f.def_var(v.taken, rest);
+                    f.def_var(v.lw, w);
                     let start = f.use_var(v.start);
                     let before = f.ins().icmp(IntCC::UnsignedLessThan, l, start);
                     guard(&mut f, before, pc);
@@ -510,14 +577,16 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     }
                 }
                 Op::Accept => {
-                    let (at_end, open, ret, taken) = (f.use_var(v.at_end), f.use_var(v.open), f.use_var(v.ret), f.use_var(v.taken));
+                    // No bit of the mask is left after the last one taken.
+                    let (w, bits) = (f.use_var(v.lw), f.use_var(v.taken));
+                    let (_, scan) = mask_scan(&mut f, Mask { first: lasts_p, stride: lasts_stride, words: nlasts }, w, bits, refuse, pc, false);
+                    heads.push((scan, Step::Block));
+                    let (at_end, open, ret) = (f.use_var(v.at_end), f.use_var(v.open), f.use_var(v.ret));
                     let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
                     let not_one = f.ins().icmp_imm(IntCC::NotEqual, open, 1);
                     let returns = f.ins().icmp_imm(IntCC::NotEqual, ret, 0);
-                    let unread = f.ins().icmp(IntCC::NotEqual, taken, nlasts);
                     let bad = f.ins().bor(not_end, not_one);
                     let bad = f.ins().bor(bad, returns);
-                    let bad = f.ins().bor(bad, unread);
                     guard(&mut f, bad, pc);
                     let root = f.ins().uload32(flags, open_c, 0);
                     put(&mut f, end_c, root, len);
@@ -568,6 +637,13 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
     Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, clif, disassembly, heads })
 }
 
+/// A mask's words for `CompiledStream::call`: word `i` is `words[i * stride]`, `count` of them.
+pub(super) struct MaskWords<'a> {
+    pub(super) words: &'a [u64],
+    pub(super) stride: usize,
+    pub(super) count: usize,
+}
+
 /// The buffers one call writes, sized from the stream and the program's `Bounds`.
 pub(super) struct Tape {
     pub(super) kind: Vec<u32>,
@@ -604,18 +680,20 @@ impl CompiledStream {
     }
 
     /// One call over a file. `padded` is the file with one byte before it and 64 zero bytes after
-    /// (`len` its length); `starts` and `lasts` have two readable slots past their counts.
+    /// (`len` its length); `starts` has two readable slots past its count; `lasts` holds the
+    /// mask's words, a word every `stride`.
     ///
     /// # Safety
     /// The slices must be as stated, and `tape` from `self.tape(nstarts)`.
-    pub(super) unsafe fn call(&self, padded: *const u8, len: usize, starts: (&[u32], usize), lasts: (&[u32], usize), totals: &[u64], tape: &mut Tape) -> u64 {
+    pub(super) unsafe fn call(&self, padded: *const u8, len: usize, starts: (&[u32], usize), lasts: MaskWords<'_>, totals: &[u64], tape: &mut Tape) -> u64 {
+        assert!(lasts.count == 0 || (lasts.count - 1) * lasts.stride < lasts.words.len(), "the mask's words lie in its slice");
         let ctx = Ctx {
             bytes: padded,
             len: len as u64,
             starts: starts.0.as_ptr(),
             nstarts: starts.1 as u64,
-            lasts: lasts.0.as_ptr(),
-            nlasts: lasts.1 as u64,
+            lasts: lasts.words.as_ptr(),
+            nlasts: lasts.count as u64,
             totals: totals.as_ptr(),
             kind: tape.kind.as_mut_ptr(),
             field: tape.field.as_mut_ptr(),
@@ -627,6 +705,7 @@ impl CompiledStream {
             open: tape.open.as_mut_ptr(),
             returns: tape.returns.as_mut_ptr(),
             counts: tape.counts.as_mut_ptr(),
+            lasts_stride: 8 * lasts.stride as u64,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers.
         unsafe { (self.entry)(&ctx) }
@@ -642,12 +721,14 @@ impl CompiledStream {
             v.extend([0, 0]);
             (v, n)
         };
-        let (starts, lasts) = (stream(self.starts), stream(self.lasts));
+        let starts = stream(self.starts);
+        let none = Vec::new();
+        let words: &[u64] = self.lasts.map_or(&none, |m| &tier1.outputs[m]);
         let mut tape = self.tape(starts.1);
         let totals = if tier1.totals.is_empty() { vec![0] } else { tier1.totals.clone() };
         // SAFETY: `padded` has the byte before and 64 after; each stream two slots past its count;
         // the tape is sized for the stream.
-        let r = unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), (&starts.0, starts.1), (&lasts.0, lasts.1), &totals, &mut tape) };
+        let r = unsafe { self.call(padded.as_ptr().wrapping_add(1), bytes.len(), (&starts.0, starts.1), MaskWords { words, stride: 1, count: words.len() }, &totals, &mut tape) };
         if r != 0 {
             return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
         }
@@ -715,7 +796,13 @@ impl Parser {
     pub(super) fn words(&self, batch: &super::native_cpu_block::Batch, tape: &mut Tape) -> Result<(), Refused> {
         let row = batch.rows[0];
         let extracts = self.tier1.extracts.len();
-        let (starts, lasts) = (self.stream(batch, self.tier2.starts), self.stream(batch, self.tier2.lasts));
+        let starts = self.stream(batch, self.tier2.starts);
+        let lasts = match self.tier2.lasts {
+            Some(m) => {
+                MaskWords { words: &batch.out[row.out as usize + m..], stride: self.tier1.outputs, count: row.blocks as usize }
+            }
+            None => MaskWords { words: &[], stride: 1, count: 0 },
+        };
         let none = [0u64];
         let totals = match batch.counts.get(row.counts as usize + extracts..) {
             Some(t) if !t.is_empty() => t,
