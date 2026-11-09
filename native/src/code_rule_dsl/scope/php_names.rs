@@ -914,7 +914,7 @@ fn is_string_part<D: Doc>(part: &Node<'_, D>) -> bool {
 /// Whether an interpolation is the complex (`{$a[KEY]}`) form, whose key is an expression; in
 /// the simple form (`$a[KEY]`) a bare key is a string.
 fn follows_brace<D: Doc>(part: &Node<'_, D>) -> bool {
-    part.prev().is_some_and(|previous| previous.kind() == "{")
+    part.token_before().is_some_and(|previous| previous.kind() == "{")
 }
 
 fn is_construct<D: Doc>(node: &Node<'_, D>) -> bool {

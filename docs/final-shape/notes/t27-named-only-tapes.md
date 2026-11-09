@@ -432,3 +432,91 @@ included. So there are two shapes:
 A is a format bump plus the device's map. It can ship on its own and
 answers the storage cost now. B is the memory step, taken reader by
 reader on top of A.
+
+## 10. Format v12 and the tree API
+
+### v12 (commit 7deb10859)
+
+- Every tree-sitter tape is stored named-only and restored whole
+  (option A of §9). The in-memory tree, and so every index keyed by
+  preorder (prefilter, positional index, labels, memo frames), is the
+  same as before. Only readers of stored bytes changed:
+  - the SQL fallback's structure unfolds the image first;
+  - the device reads stored bytes in place only for full images. A
+    document restored from a named-only image is admitted from its
+    restored image (`admit_docs`).
+- The source's SHA-256 is no longer stored in the frame. It saves
+  32 B per tape, about 7% of compressed tapes on the Python store
+  (t28). The store already pairs a tape with its source; restore
+  computes the digest the document carries.
+- The `grammar.json` files are built into the engine. Rust's and PHP's
+  are byte-identical copies of the crates' files, with a test that
+  checks they stay so. Those files and `tape/tokens.rs` are inputs of
+  the grammar build identity, so a grammar change re-encodes stored
+  tapes.
+- The header's field offsets are named in one place (`tape::header`).
+- The full library suite ran once at this gate. The only failures
+  caused by v12 were tests that read the stored layout (node counts,
+  in-place spans, header offsets, the golden digest), and those are
+  updated. The other failures were already there:
+  - "no such table x.p0_declares_doc" (78);
+  - the atoms commit refusal (32);
+  - missing pack fixtures (5);
+  - the transducer verifier's opcode, launch-guard and widened-walk
+    checks.
+- S7: 519 keys, unchanged.
+
+### The tree API (`code_rule_dsl::tree`, commits b3a812e3b, 8b9bf2a67)
+
+Readers ask a node's shape through one trait, `Tree`, implemented on
+ast-grep's `Node`:
+
+| Query | Replaces |
+| -- | -- |
+| `named()`, `named_code()`, `first_named()`, `last_named()`, `first_code()` | `children().filter(is_named …)`, 14 private helper copies |
+| `tokens()`, `has_token()`, `has_any_token()`, `count_tokens()`, `first_token()` | `!c.is_named() && c.kind() == …` |
+| `operator()`, `operator_token()` | `field("operator")` |
+| `token_before()`, `token_after()`, `count_tokens_before()` | `prev()` landing on a token, comma counting |
+| `parts()` (named nodes and tokens in source order) | layout walkers over all children |
+| `is_comment()`, `is_punctuation()` | per-file comment and punctuation tests |
+
+Notes on the API:
+
+- A `Token` is a value with a kind, text and span. Code that edits a
+  token edits its span.
+- The method names avoid ast-grep's own inherent methods
+  (`named_children`), which would otherwise shadow the trait silently.
+- A test checks that every query gives the same answer on tree-sitter's
+  tree and on a restored named-only tape.
+
+Moved onto the API:
+
+- the 14 helper copies, which have about 230 callers;
+- 71 inline chains;
+- 30 files that used ast-grep's `named_children`;
+- 12 operator sites;
+- the PHP string walker;
+- the comma index and the keyword tests.
+
+What stays outside, and why:
+
+- **Walks that ask `node.is_named()` about the node they stand on**
+  (about 45). They read correctly under either format.
+- **ast-grep's sibling relations** (`matcher/relation`, `count`,
+  `layout`, the anchors). These follow ast-grep's semantics, which
+  include tokens. They move together with ast-grep pattern matching.
+- **The facts layer** (`facts/vtab/syntax.rs`, `core_rr.rs`). `op`,
+  `op_at` and the token relations are already built in one place,
+  from the tape.
+- **The device and transducer** (`transducer_*`, `next_any`). These
+  read `TapeDoc`'s preorder index API, which lives with the tape.
+
+For option B (tokens out of memory), the work is therefore:
+
+- this module, with `parts()` and `tokens()` recognizing tokens from
+  the source, as `tape::tokens::unfold` does;
+- the facts builders;
+- `TapeDoc`'s preorder API and the device;
+- ast-grep pattern matching.
+
+The ~300 reader sites don't change.
