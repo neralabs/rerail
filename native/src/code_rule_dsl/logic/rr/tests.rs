@@ -2845,3 +2845,27 @@ fn python_set_rows_rejects_malformed_columns() {
         std::fs::remove_file(path).unwrap();
     }
 }
+
+#[test]
+fn mixed_fact_and_rule_pattern_domains_do_not_drop_literal_triggers() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("mixed-pattern-domain");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"),"_fetchone()\n").unwrap();
+    let rule = root.join("mixed.rr");
+    std::fs::write(&rule,r#"
+.language python
+.scope given
+.decl methods(value: symbol)
+methods("_execute_raw_sql").
+.decl triggers(value: symbol)
+triggers("_fetchone").
+triggers(value) :- methods(value).
+.violation Hit(at: span, value: symbol) code "HIT" "{value}"
+Hit(span,value) :- source(_,span),text(span,source),triggers(value),contains(value,source).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule,&root,&root.join("out"),&serde_json::json!({"inputFiles":["a.py"]})).unwrap();
+    let actual: Vec<_> = report["diagnostics"].as_array().unwrap().iter()
+        .map(|r| r["parameters"]["value"].as_str().unwrap()).collect();
+    assert_eq!(actual,vec!["_fetchone"],"{report}");
+    std::fs::remove_dir_all(root).unwrap();
+}

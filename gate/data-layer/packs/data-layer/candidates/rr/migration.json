@@ -3030,8 +3030,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "24d05da80ea43c1043184b24abfab59f77e4992b",
-    "status": "Root Final through 24d05da80, including stored combined programs and prepared splits; reviewed generic compatibility extensions",
+    "upstreamCommit": "d8fad367bc743e40b78e9b8b7ddcaa9e163a25df",
+    "status": "Current Final through d8fad367b; generic compatibility extensions with a real text-domain regression under repair",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3163,7 +3163,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "6cfdc613e80bdee5e698624879712130f38c20076d2f46c62735da81a3cba100"
+        "sha256": "bea7723a5d39098756b5f9e768662b48b18d60b75c6898932bd2f510e66b2c3a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -3171,7 +3171,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "b8f9b413df663a6e86595ac0978272ce60ca63d41482745e1d830c2680984d35"
+        "sha256": "2bba4a1c99787af591177420ce0d562aeae34dfeeaf71af30fc4f265ea397eb8"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
@@ -3191,30 +3191,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "85aa8251cd758a13cb55c5d8fde2273220b0d1d0",
-    "cliArtifact": {
-      "engineCommit": "13c897df59ff0fead6e54c60f178f079cfaab589",
-      "upstreamCommit": "24d05da80ea43c1043184b24abfab59f77e4992b",
-      "sourceTrees": {
-        "native": "ed17ee97a93cadab820d49bc2e5904d211bfe398",
-        "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "da7438cb5a1700a6c0b730b245f453a344ae8b9c"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-4a7116f41da595e2",
-      "sha256": "4a7116f41da595e20a00495ca0c4e5887041a6f34346727401b06188b21d7882",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine"
-      ],
-      "seconds": 36.588
-    }
+    "upstreamMerge": "50a4b75ece5dc142555177a1aca4c4a05e2f7096"
   },
   "engineSourceSnapshots": [
     {

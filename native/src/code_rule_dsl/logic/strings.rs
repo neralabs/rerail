@@ -509,3 +509,20 @@ mod signatures;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn constant_pattern_domains_include_facts_and_rules_and_reject_external_inputs() {
+    let mut program = super::rr::parse(r#"
+.decl copied(value: symbol)
+copied("direct").
+.decl trigger(value: symbol)
+trigger("fetch").
+trigger(value) :- copied(value).
+"#).unwrap();
+    assert_eq!(constant_domain(&program,"trigger",0,&mut Vec::new()),
+        Some(std::collections::BTreeSet::from(["direct".to_owned(),"fetch".to_owned()])));
+    program.inputs.push("trigger".to_owned());
+    assert_eq!(constant_domain(&program,"trigger",0,&mut Vec::new()),None,
+        "external input may add values beyond the known facts and rules");
+}
