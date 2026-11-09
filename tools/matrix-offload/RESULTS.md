@@ -140,13 +140,17 @@ What limits it, in practice:
 - **Missing operations:** gather, sort and `select` all fall back to the CPU.
 - **It competes with the GPU for bandwidth:** a busy GPU slows the ANE 1.1–2.6×.
 
-Where it could fit: a relation that stays fixed across many runs, baked in as a 1-bit constant, against a batched
-per-run input. Candidates are library facts held once (0089), rule vocabularies, and the documents of a long-lived
-session.
-- W1 with the documents as the constant took 0.25 ms (3.2× the GPU), but each document set costs about 0.7 s to
-  compile, and the compile limit is about 119 models per process.
-- A second fit is offloading from a loaded CPU, or saving energy (reported 2–14× better than the GPU).
-- On raw speed and bytes, it loses to the GPU on every workload here.
+Where it fits:
+
+- **Near parity is a win.** The ANE runs W1 at SME's speed (0.71 ms against 0.69 ms) and W5 within 2.2× of it. Work
+  it takes moves to a lower-power unit (reported 2–14× better energy than the GPU) and leaves the CPU and GPU free for
+  other work. So it is a third concurrent lane, chosen when its price is within a band of the best lane's, not only
+  when it is the fastest (decision 0096 §2).
+- **Fixed relations become 1-bit constants**, against a batched per-run input. Candidates are a pack's rule
+  vocabularies, library facts held once (0089), and the documents of a long-lived session. W1 with the documents as
+  the constant took 0.25 ms (3.2× the GPU). Each constant costs about 0.7 s to compile, and the limit is about 119
+  compiled models per process.
+- **On raw speed and bytes alone, it loses to the GPU** on every workload here.
 
 ### 5. Where the bandwidth goes
 
@@ -176,7 +180,7 @@ Mapped onto draft 0095's plan ("Relational work on Metal": device waves, physica
 | Bit-product form | SME on the CPU (one worker per cluster); popcount on GPU threads | W1, W5, set overlap, semi-join batches |
 | DAG closure | SCC condensation + bit-row DP: CPU NEON, or GPU level by level | W3 |
 | Direct group-by | GPU atomics; CPU sub-histograms | W4 |
-| Fixed relations as compressed constants | ANE | Open; not shown to win on this machine |
+| Bit products against fixed relations, as compressed constants | ANE, as a concurrent low-power lane | W1 at SME's speed, W5 within 2.2× |
 
 - **The planner's choice of form gains more than the choice of hardware.**
 - **Dense matmul is rarely the right relational form.** The matrix units (ANE, GPU tensors) pay only where the work is
