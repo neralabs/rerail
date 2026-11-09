@@ -2918,3 +2918,29 @@ fn a_nested_aggregate_keeps_the_rules_variables_it_reads() {
     let hit = shown.iter().find(|r| r.starts_with("hit(")).unwrap();
     assert!(hit.contains("($f, _)"), "the outer count groups by f: {hit}");
 }
+
+#[test]
+fn literal_facts_survive_when_every_derivation_reads_an_empty_relation() {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("literal-facts-empty-derivations");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("input.py"), "pass\n").unwrap();
+    let rule = root.join("mixed.rr");
+    std::fs::write(&rule, r#"
+.language python
+.decl missing(value: symbol)
+missing(value) :- doc(_,value,_), value = "does-not-exist".
+missing(value) :- missing(value).
+.decl mixed(value: symbol)
+mixed("static").
+mixed(value) :- missing(value).
+.violation Found(at: span, value: symbol) code "MIXED" "{value}"
+Found(@place("",0),cat(value," explanation")) :- mixed(value).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"),
+        &serde_json::json!({"inputFiles": ["input.py"]})).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "literal facts must survive empty derived producers: {report}");
+    assert_eq!(rows[0]["code"], "MIXED");
+    assert_eq!(rows[0]["parameters"]["value"], "static explanation");
+    std::fs::remove_dir_all(root).unwrap();
+}
