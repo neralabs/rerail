@@ -610,7 +610,6 @@ impl CodeRuleSqlExecutor {
         Ok(())
     }
 
-
     fn run_program(
         &mut self,
         program: front::Program,

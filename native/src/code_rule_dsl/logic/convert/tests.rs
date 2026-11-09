@@ -1249,7 +1249,6 @@ fn converted_rules_give_the_recorded_findings() {
                     now.misses.insert(id.clone(), "miss".to_owned());
                 }
             }
-
         }
     }
     let _ = std::fs::remove_dir_all(&root);

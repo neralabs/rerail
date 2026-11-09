@@ -172,7 +172,7 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
             format!("{} :- {call}.", atom(head, prog)?)
         }
         Native::Components { edge, own } => {
-            format!("{} :- components({}, {}, {}).", atom(head, kindsets)?, terms(&head.args)?, relation(edge), relation(own))
+            format!("{} :- components({}, {}, {}).", atom(head, prog)?, terms(&head.args)?, relation(edge), relation(own))
         }
         Native::MatchAll { input, pattern, groups, positions } => {
             let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
