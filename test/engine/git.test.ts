@@ -214,16 +214,21 @@ describe("gitExcludeFiles", () => {
 
 describe("gitBehindLauncher", () => {
   it("runs Git for Windows' own git.exe, not the launcher that starts it as a child a timeout would leave running", () => {
-    const installed = (...paths: string[]) => (path: string) => paths.includes(path);
     const git = String.raw`C:\Program Files\Git`;
+    const launcher = String.raw`${git}\cmd\git.exe`;
+    const search = { platform: "win32" as const, home: String.raw`C:\Users\me`, path: undefined, cwd: undefined };
+    const installed = (...paths: string[]) => {
+      const files = [launcher, String.raw`${git}\etc\gitconfig`, ...paths];
+      return { exists: (path: string) => files.includes(path), runnable: (path: string) => files.includes(path), realpath: (path: string) => path, developerDir: () => undefined };
+    };
     const real = String.raw`${git}\mingw64\bin\git.exe`;
-    expect(gitBehindLauncher(String.raw`${git}\cmd\git.exe`, installed(real))).toBe(real);
-    expect(gitBehindLauncher(String.raw`${git}\bin\git.exe`, installed(real))).toBe(real);
-    expect(gitBehindLauncher(String.raw`${git}\cmd\git.exe`, installed(String.raw`${git}\clangarm64\bin\git.exe`))).toBe(String.raw`${git}\clangarm64\bin\git.exe`);
+    expect(gitBehindLauncher(launcher, search, installed(real))).toBe(real);
+    expect(gitBehindLauncher(String.raw`${git}\bin\git.exe`, search, installed(real))).toBe(real);
+    expect(gitBehindLauncher(launcher, search, installed(String.raw`${git}\clangarm64\bin\git.exe`))).toBe(String.raw`${git}\clangarm64\bin\git.exe`);
     // The real one is itself, and a Git laid out otherwise (a scoop shim, a launcher without its Git) is run as found.
-    expect(gitBehindLauncher(real, installed(real))).toBe(real);
-    expect(gitBehindLauncher(String.raw`D:\scoop\shims\git.exe`, installed(real))).toBe(String.raw`D:\scoop\shims\git.exe`);
-    expect(gitBehindLauncher(String.raw`${git}\cmd\git.exe`, installed())).toBe(String.raw`${git}\cmd\git.exe`);
+    expect(gitBehindLauncher(real, search, installed(real))).toBe(real);
+    expect(gitBehindLauncher(String.raw`D:\scoop\shims\git.exe`, search, installed(real))).toBe(String.raw`D:\scoop\shims\git.exe`);
+    expect(gitBehindLauncher(launcher, search, installed())).toBe(launcher);
   });
 
   it.runIf(process.platform === "win32")("is what Rerail runs on this Windows machine", () => {
@@ -399,6 +404,26 @@ describe("findGit", () => {
     const outside = counted(["/opt/git/bin/git"]);
     expect(findGit({ ...search, cwd: "/home/me" }, outside).path).toBe("/opt/git/bin/git");
     expect(outside.realpaths).toEqual([]);
+  });
+
+  it("on Windows goes behind a launcher only into a Git for Windows install, by the checks every PATH entry gets", () => {
+    const repository = String.raw`C:\code\app`;
+    const search = { platform: "win32" as const, home: String.raw`C:\Users\me`, cwd: repository };
+    const layout = (root: string, ...more: string[]) => [String.raw`${root}\cmd\git.exe`, String.raw`${root}\mingw64\bin\git.exe`, ...more];
+    const found = (path: string, files: readonly string[], links: Record<string, string> = {}) => findGit({ ...search, path }, {
+      ...counted([String.raw`${repository}\.git`, ...files]),
+      realpath: (folder: string) => Object.entries(links).reduce((real, [link, target]) => real.startsWith(link) ? target + real.slice(link.length) : real, folder),
+    }).path;
+    const installed = String.raw`C:\Program Files\Git`;
+    expect(found(String.raw`${installed}\cmd`, layout(installed, String.raw`${installed}\etc\gitconfig`))).toBe(String.raw`${installed}\mingw64\bin\git.exe`);
+    expect(found(String.raw`${installed}\cmd`, layout(installed, String.raw`${installed}\mingw64\share\git`))).toBe(String.raw`${installed}\mingw64\bin\git.exe`);
+    // A launcher someone put on PATH beside a git.exe of their choosing, with nothing of Git for Windows around it.
+    const planted = String.raw`D:\tools\planted`;
+    expect(found(String.raw`${planted}\cmd`, layout(planted))).toBe(String.raw`${planted}\cmd\git.exe`);
+    // A real install whose mingw64 folder is a junction into the repository Rerail runs in.
+    const linked = String.raw`D:\portable\Git`;
+    const junction = { [String.raw`${linked}\mingw64`]: String.raw`${repository}\vendor\mingw64` };
+    expect(found(String.raw`${linked}\cmd`, layout(linked, String.raw`${linked}\etc\gitconfig`), junction)).toBe(String.raw`${linked}\cmd\git.exe`);
   });
 
   it("lists every place it looked, in gitCandidates' order, when no Git runs", () => {

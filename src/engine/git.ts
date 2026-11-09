@@ -242,13 +242,27 @@ const GIT_FOR_WINDOWS_BUILDS = ["mingw64", "clangarm64", "mingw32"];
  * 32-bit) as their own child. A timeout kills only the process Rerail started, and on Windows killing a process leaves
  * its children running, so the real Git ran on in the repository after Rerail gave up on it. The real one runs the
  * commands Rerail gives it without the launcher: it finds its own DLLs, helpers and system configuration from its folder.
+ *
+ * A launcher is only a `git.exe` in a `cmd` or `bin` folder, which anyone can put on PATH beside a git.exe of their own,
+ * so Rerail goes behind it only into a Git for Windows install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or
+ * the build's `share\git` is there. The git.exe it then runs must pass what every PATH entry passes (`trustedFolder`):
+ * outside `node_modules`, and outside the repository Rerail runs in by its path and its real path, which a junction
+ * from `<Git>\mingw64` into the repository would reach.
  */
-export function gitBehindLauncher(path: string, exists: (path: string) => boolean = existsSync): string {
+export function gitBehindLauncher(path: string, search: GitSearch = currentSearch(), probe: GitProbe & GitPathProbe = machine): string {
+  return behindLauncher(path, gitTrust(search, probe), probe);
+}
+
+function behindLauncher(path: string, trust: GitTrust, probe: GitProbe): string {
   const folder = win32.dirname(path);
   const launcherFolder = win32.basename(folder).toLowerCase();
   if (win32.basename(path).toLowerCase() !== "git.exe" || (launcherFolder !== "cmd" && launcherFolder !== "bin")) return path;
   const root = win32.dirname(folder);
-  return GIT_FOR_WINDOWS_BUILDS.map(build => win32.join(root, build, "bin", "git.exe")).find(exists) ?? path;
+  if (!probe.runnable(win32.join(root, "cmd", "git.exe"))) return path;
+  const real = GIT_FOR_WINDOWS_BUILDS.find(build => probe.runnable(win32.join(root, build, "bin", "git.exe"))
+    && (probe.exists(win32.join(root, "etc", "gitconfig")) || probe.exists(win32.join(root, build, "share", "git")))
+    && trustedFolder(win32.join(root, build, "bin"), trust));
+  return real === undefined ? path : win32.join(root, real, "bin", "git.exe");
 }
 
 /** The Git a search found, undefined when none runs, and every place it looked, in order. */
@@ -268,7 +282,7 @@ export function findGit(search: GitSearch = currentSearch(), probe: GitProbe & G
   for (const candidate of candidateOrder(search, trust)) {
     looked.push(candidate);
     if (gitInstalled(candidate, search.platform, probe)) {
-      return { path: search.platform === "win32" ? gitBehindLauncher(candidate, probe.exists) : candidate, looked };
+      return { path: search.platform === "win32" ? behindLauncher(candidate, trust, probe) : candidate, looked };
     }
   }
   return { path: undefined, looked };
