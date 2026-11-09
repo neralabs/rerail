@@ -3404,7 +3404,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "49f791af10b888b722784a713c911fa1f68c2e6e",
-    "status": "Final 49f791af1 with generic facts-only corpus output and positional-regex validator repairs; 151 focused engine checks pass, two existing helpers ignored. Optimized build and rule revalidation pending.",
+    "status": "Final 49f791af1 plus generic facts-only output and positional-regex validation repairs; optimized root CLI rebuilt. 151 focused engine checks and 196 tooling tests pass; native data-layer cohort acceptance in progress.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3605,7 +3605,7 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "8692d349a4f2172c812e975f0270a64d1e21267a",
+      "engineCommit": "d16c4d68e960cae7aaff7896d4eb9a72d64d9b22",
       "upstreamCommit": "49f791af10b888b722784a713c911fa1f68c2e6e",
       "sourceTrees": {
         "native": "248ec60c5c1ee2cd8cb66ef18952b9ffbd1af60a",
@@ -3613,8 +3613,8 @@
         "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
         "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-aa5e81ef07a4e5f2",
-      "sha256": "aa5e81ef07a4e5f25f72e6f763bbaeb43c70f3856f98ec7cfca055baab61f3bd",
+      "path": ".rerail/modern-engine-alignment/cli-35871cc256e516f4",
+      "sha256": "35871cc256e516f4aca1569fc102361f5b69a4725d942a843da32785df76ba5e",
       "command": [
         "cargo",
         "build",
@@ -3623,9 +3623,10 @@
         "--features",
         "headless",
         "--bin",
-        "rerail-engine"
+        "rerail-engine",
+        "--release"
       ],
-      "seconds": 17.856
+      "seconds": 704.738
     },
     "previousUpstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a"
   },
