@@ -132,8 +132,10 @@ pub(super) enum StructuralOperation {
     /// A node of `kind` around the node last made at this level, open: it takes that node's
     /// field and start (docs/parser-generators/24-rr-and-bitlex-plan.md §2.5).
     Wrap { kind: u16 },
-    /// The token's leaf joins the grammar's leaf before it, as one leaf of `kind`.
-    Merge { kind: u16 },
+    /// The token's leaf joins the grammar's leaf before it, as one leaf of `kind`; `fold`: the
+    /// innermost open node's two leaves, all it holds, become one of `kind` (the token's leaf is
+    /// not touched).
+    Merge { kind: u16, fold: bool },
     /// A node's field: the last node's, or another's (`On`).
     NodeField { field: u16, on: On },
     NodeSuper { kind: u16 },
@@ -190,7 +192,7 @@ impl StructuralOperation {
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Wrap { kind } => (WRAP, 0, kind),
-            Self::Merge { kind } => (MERGE, 0, kind),
+            Self::Merge { kind, fold } => (MERGE, u8::from(fold), kind),
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
             Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
             Self::Push { target } => (PUSH, 0, target),
@@ -420,7 +422,7 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
             ROW => StructuralOperation::Row { mask: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
             WRAP => StructuralOperation::Wrap { kind: operand },
-            MERGE => StructuralOperation::Merge { kind: operand },
+            MERGE => StructuralOperation::Merge { kind: operand, fold: mode == 1 },
             NODE_FIELD => StructuralOperation::NodeField { field: operand, on: On::of(mode) },
             NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
             PUSH => StructuralOperation::Push { target: operand },

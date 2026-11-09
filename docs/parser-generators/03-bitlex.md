@@ -101,9 +101,11 @@ directed acyclic graph of mask operations.
 | `retag K A`, `merge 'K' A` | In a grammar: entering `A`, the innermost open node becomes a `K`; the token `A`'s leaf and the leaf before it become one leaf of kind `K` (extras between them are its text). |
 | `wrap K F [as M] REST`, `A as K` | In a grammar: a `K` around the last node made at this level, holding it and then `REST`; `K` takes that node's place and field, and the node takes field `F` (`_`: none) and kind `M`. The leaf of token `A` is a `K` (`24-rr-and-bitlex-plan.md` §2.1). |
 | `relabel F [as M] [inner G] REST` | In a grammar: at the token `REST` starts with, the last node made at this level takes field `F` (`_`: keeps its own) and kind `M`; with `inner`, the node it holds first (it must be a wrap's) takes field `G`. No node around it: `(wrap atom … ) [relabel _ as call inner function …]` turns an atom back into a call. |
+| `fold K REST` | In a grammar: at the token `REST` starts with, the node open at this level holds two leaves and nothing else; they become one leaf of kind `K`. A token decides what the two before it were: `.policy {` folds the setting's `.` and `policy` into one `.policy` leaf. With an extra between them, the file is refused. |
 | `balanced K OPEN CLOSE` | In a grammar: one leaf of kind `K`, from an `OPEN` token through its matching `CLOSE`, pairs inside counted; every token between is its text. `balanced json_object '{' '}'` reads `{"a": {"b": 1}}` as one leaf. The compiler lowers it to a level of its own that merges each token into the leaf. |
 | `extra KIND …` | Nodes of these kinds carry the extra flag. |
 | `mark K = E [, end]`, `hidden K …` | A token of no width before the first grammar token at or after each bit of `E` (and after the last token, with `end`); a hidden mark is skipped where the grammar does not take it (`24-rr-and-bitlex-plan.md` §2.3). |
+| `refuse K in L …` | A hidden mark `K` between the first token of a nested level `L` and its last refuses the file. A JSON document's levels refuse what JSON refuses inside a token, such as a raw line break in a string, and elsewhere the same bytes are fine. The compiler checks that `L` ends at its last token and calls only levels that refuse `K` too. |
 
 ### 2.2 Mask expressions
 

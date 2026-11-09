@@ -690,6 +690,13 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     f.ins().jump(fall, &[]);
                 }
                 Op::Span { last: true, .. } => {
+                    // Found once per token: a token spanned already (its end past its start: a
+                    // level that ended at it left it to its caller) keeps its end.
+                    let (start, end) = (f.use_var(v.start), f.use_var(v.end));
+                    let known = f.ins().icmp(IntCC::UnsignedGreaterThan, end, start);
+                    let find = f.create_block();
+                    f.ins().brif(known, fall, &[], find, &[]);
+                    f.switch_to_block(find);
                     // The next of the mask's bits after the last one taken: the bits of word
                     // `lw` not yet taken (`taken`), then a word (64 bytes) at a time.
                     let (w, bits) = (f.use_var(v.lw), f.use_var(v.taken));
@@ -1000,7 +1007,48 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                     put(&mut f, kind_c, at, k);
                     f.ins().jump(fall, &[]);
                 }
-                Op::Merge { kind } => {
+                Op::Merge { kind, fold: true } => {
+                    // The innermost open node holds two leaves and nothing else, no extra
+                    // pending: the first becomes one leaf through the second's end.
+                    let (nodes, pending, open) = (f.use_var(v.nodes), f.use_var(v.pending), f.use_var(v.open));
+                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+                    guard(&mut f, none, pc);
+                    let top = f.ins().iadd_imm(open, -1);
+                    let o = {
+                        let a = slot(&mut f, open_c, top);
+                        f.ins().uload32(flags, a, 0)
+                    };
+                    let want = f.ins().iadd_imm(o, 3);
+                    let count = f.ins().icmp(IntCC::NotEqual, nodes, want);
+                    let waiting = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
+                    let bad = f.ins().bor(count, waiting);
+                    guard(&mut f, bad, pc);
+                    let (a, b) = (f.ins().iadd_imm(o, 1), f.ins().iadd_imm(o, 2));
+                    let (sa, sb) = {
+                        let x = slot(&mut f, size_c, a);
+                        let y = slot(&mut f, size_c, b);
+                        (f.ins().uload32(flags, x, 0), f.ins().uload32(flags, y, 0))
+                    };
+                    let na = f.ins().icmp_imm(IntCC::NotEqual, sa, 1);
+                    let nb = f.ins().icmp_imm(IntCC::NotEqual, sb, 1);
+                    let bad = f.ins().bor(na, nb);
+                    guard(&mut f, bad, pc);
+                    let end = {
+                        let x = slot(&mut f, end_c, b);
+                        f.ins().uload32(flags, x, 0)
+                    };
+                    let k = f.ins().iconst(types::I64, i64::from(kind));
+                    put(&mut f, kind_c, a, k);
+                    put(&mut f, end_c, a, end);
+                    f.def_var(v.nodes, b);
+                    if wrapping {
+                        // The first is the last node made at this level now.
+                        put(&mut f, wc(flast_c), open, b);
+                        put(&mut f, wc(flbase_c), open, a);
+                    }
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Merge { kind, fold: false } => {
                     // The grammar's leaf before the pending extras: a leaf, inside the innermost
                     // open node. The extras are its text: dropped.
                     let (nodes, pending, open) = (f.use_var(v.nodes), f.use_var(v.pending), f.use_var(v.open));

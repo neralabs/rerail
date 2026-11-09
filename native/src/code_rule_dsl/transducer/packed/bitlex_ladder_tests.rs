@@ -140,7 +140,7 @@ impl Lang {
             Gram::Alt(gs) => gs.iter().map(|g| self.cost(g)).min().unwrap_or(FAR),
             Gram::Opt(_) | Gram::Star(_) => 0,
             Gram::Plus(g) | Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.cost(g),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } => self.cost(body),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.cost(body),
             Gram::Balanced { .. } => 2,
         }
     }
@@ -172,7 +172,7 @@ impl Lang {
                 }
             }
             Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.derive(rng, g, depth, out),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } => self.derive(rng, body, depth, out),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.derive(rng, body, depth, out),
             // The opener, maybe a few tokens and a nested pair, the closer.
             Gram::Balanced { open, close, .. } => {
                 out.push(self.keyword(rng, open));
@@ -253,7 +253,7 @@ impl Lang {
                 }
             }
             Gram::Field(_, g) | Gram::Retag(_, g) | Gram::Merge(_, g) | Gram::As(_, g) => self.bytes(rng, g, long, out),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } => self.bytes(rng, body, long, out),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.bytes(rng, body, long, out),
             Gram::Balanced { .. } => {}
         }
     }
@@ -430,6 +430,16 @@ pub(super) fn compile_step(name: &str, source: &str) -> Compiled {
     let native = native_ir::lower(&program).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
     let parser = native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
     Compiled { stmts, ids, program, native, parser }
+}
+
+/// Why the compiler refuses `source`; `None` where it compiles.
+pub(super) fn compile_error(source: &str) -> Option<String> {
+    let stmts = parse(source).unwrap_or_else(|e| panic!("parses: {e}"));
+    let ids = Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
+    bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).err()
 }
 
 /// Why the reference sends `bytes` to tree-sitter: its first error, or why the tree does not

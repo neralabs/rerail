@@ -87,6 +87,9 @@ pub enum Gram {
     /// (`_`: keeps its own) and kind `M`, and the node its wrap holds first takes field `G`;
     /// `REST` follows; no node around it.
     Relabel { field: Option<String>, moved: Option<String>, inner: Option<String>, body: Box<Gram> },
+    /// `fold K REST`: at the token `REST` starts with, the node open at this level holds two
+    /// leaves and nothing else; they become one leaf of kind `K`, with the first one's field.
+    Fold { kind: String, body: Box<Gram> },
     /// `A as K`, `A` a token: its leaf has kind `K` (`identifier as variable`).
     As(String, Box<Gram>),
 }
@@ -152,6 +155,9 @@ pub enum Stmt {
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
     Hidden(Vec<String>),
+    /// `refuse MARK in LEVEL …` (in a tree): a hidden mark that refuses the file between a
+    /// nested level's first token and its last (`json_bad` in a JSON document's levels).
+    Refuse { mark: String, levels: Vec<String> },
 }
 
 impl Stmt {
@@ -414,6 +420,14 @@ impl P {
                 let inner = if self.eat_kw("inner") { Some(self.ident()?) } else { None };
                 let body = Box::new(self.gram_seq()?);
                 items.push(Gram::Relabel { field, moved, inner, body });
+                break;
+            }
+            // `fold K`: the rest of the sequence is its body.
+            if matches!(self.peek(), Some(Tok::Ident(w)) if w == "fold") {
+                self.i += 1;
+                let kind = self.kind()?;
+                let body = Box::new(self.gram_seq()?);
+                items.push(Gram::Fold { kind, body });
                 break;
             }
             let mut item = self.gram_atom()?;
@@ -778,6 +792,20 @@ impl P {
                 let kind = self.kind()?;
                 self.want_p("=")?;
                 Stmt::Check { kind, body: self.gram()? }
+            }
+            "refuse" => {
+                let mark = self.kind()?;
+                if !self.eat_kw("in") {
+                    return self.err("refuse MARK in LEVEL …");
+                }
+                let mut levels = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    levels.push(self.ident()?);
+                }
+                if levels.is_empty() {
+                    return self.err("refuse MARK in LEVEL …");
+                }
+                Stmt::Refuse { mark, levels }
             }
             "extra" | "hidden" => {
                 let mut kinds = vec![];

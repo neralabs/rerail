@@ -15,7 +15,7 @@
 #
 # Not in this step yet: `min (…) : { … }`, which the engine tells from a call only after its
 # `)`, goes to the engine, as does an aggregate as another's value. A parenthesized term at a
-# literal's start; edits (`=>`), the other directives, floats, `{ … }` arguments. A `` `` ``
+# literal's start; edits (`=>`), the other directives, floats, a setting's `{ … }`. A `` `` ``
 # with no closing pair and a run of four backticks or more go to the engine.
 
 lexer rr
@@ -167,7 +167,7 @@ mark newline     = lf & ~after_comma, end
 tree rr {
   node source_file whole = (include | setting | clause)*
   node include          = '#include' path: string
-  node setting          = '.' (declaration_tail | line (declaration_tail | name: identifier) | name: identifier (argument: value | punctuation)* newline)
+  node setting          = '.' (declaration_tail | line (declaration_tail | name: identifier) | name: identifier (argument: value | setting_punctuation)* newline)
   # A `.decl`: the node opened as a setting at the `.` is a declaration.
   choice declaration_tail = retag declaration merge '.decl' 'decl' name: identifier columns: column_list (modifier: value | punctuation)* line
   node column_list      = '(' [column: column (',' column: column)*] ')'
@@ -287,6 +287,8 @@ tree rr {
   node functor_nn       = retag functor_call '@' function: identifier arguments: argument_list_nn
   node argument_list_nn nested = retag argument_list '(' [argument: term_nn (',' argument: term_nn)*] ')'
   choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '{' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
+  # A setting's: every punctuation but `{`, which opens a JSON object (a later step's).
+  choice setting_punctuation = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
   hidden line newline
   extra comment
 }

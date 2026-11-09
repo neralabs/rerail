@@ -50,6 +50,11 @@ struct Parser<'a> {
     named: HashMap<&'a str, (u64, bool)>,
     /// The rules' nodes open, innermost last (`retag` changes the last's kind).
     open: Vec<usize>,
+    /// Each extra's first byte.
+    extras: Vec<usize>,
+    /// Why the file is refused, whatever else could match: as the machine, which has gone this
+    /// way, refuses it (a mark a level refuses; a fold of no two leaves).
+    fatal: Option<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -74,7 +79,7 @@ impl<'a> Parser<'a> {
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.first(a).0, true),
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a),
-            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } => self.first(body),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
         }
     }
@@ -108,6 +113,9 @@ impl<'a> Parser<'a> {
                     // Its span is its tokens', marks left out: a rule of marks alone has none.
                     let first = (at..next).find(|&i| !self.tokens[i].mark)?;
                     let last = (at..next).rev().find(|&i| !self.tokens[i].mark)?;
+                    if self.refused(name, first, last) {
+                        return None;
+                    }
                     let n = self.out.len();
                     let node = &mut self.out[me];
                     node.start = self.tokens[first].start;
@@ -117,6 +125,13 @@ impl<'a> Parser<'a> {
                 } else if let Some((_, supertype, body)) = decl.choices.iter().find(|c| &c.0 == name) {
                     let me = self.out.len();
                     let next = self.matches(body, at, follow)?;
+                    let first = (at..next).find(|&i| !self.tokens[i].mark);
+                    let last = (at..next).rev().find(|&i| !self.tokens[i].mark);
+                    if let (Some(first), Some(last)) = (first, last) {
+                        if self.refused(name, first, last) {
+                            return None;
+                        }
+                    }
                     if let (Some(s), true) = (supertype, me < self.out.len()) {
                         self.out[me].supertypes.insert(0, s.clone());
                     }
@@ -245,6 +260,36 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            Gram::Fold { kind, body } => {
+                // The open node's two leaves, and no extra from its start to this token.
+                let o = *self.open.last()?;
+                let (a, b) = (o + 1, o + 2);
+                let here = self.tokens.get(at)?.start;
+                let two = self.out.len() == o + 3 && self.out[a].size == 1 && self.out[b].size == 1;
+                if !two || self.extras.iter().any(|&e| e >= self.out[a].start && e < here) {
+                    // Where its body matches, the machine has taken this way, and refuses.
+                    let len = self.out.len();
+                    if self.matches(body, at, follow).is_some() {
+                        self.fatal.get_or_insert_with(|| format!("a fold of no two leaves at byte {here}"));
+                    }
+                    self.out.truncate(len);
+                    return None;
+                }
+                let second = self.out.pop().expect("two leaves");
+                let was = (self.out[a].kind.clone(), self.out[a].end);
+                self.out[a].kind = kind.clone();
+                self.out[a].end = second.end;
+                let len = self.out.len();
+                match self.matches(body, at, follow) {
+                    Some(next) => Some(next),
+                    None => {
+                        self.out.truncate(len);
+                        (self.out[a].kind, self.out[a].end) = was;
+                        self.out.push(second);
+                        None
+                    }
+                }
+            }
             Gram::Relabel { field, moved, inner, body } => {
                 // The node just made at this level, as a wrap finds it; relabelled, then `body`.
                 let o = *self.open.last()?;
@@ -342,6 +387,16 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A mark that level `name` refuses (`refuse M in name`) between its first token and its last.
+    fn refused(&mut self, name: &str, first: usize, last: usize) -> bool {
+        let marks: Vec<&String> = self.decl.refuse.iter().filter(|r| r.1.iter().any(|l| l == name)).map(|r| &r.0).collect();
+        let t = self.tokens[(first + 1).min(last)..last].iter().find(|t| t.mark && marks.contains(&&t.kind));
+        if let Some(t) = t {
+            self.fatal.get_or_insert_with(|| format!("mark {} in {name} at byte {}", t.kind, t.start));
+        }
+        t.is_some()
+    }
+
     /// A token of `kind` at `at`: its leaf (a mark has none), then past the marks that `follow`
     /// does not hold. A hidden one is skipped; one not hidden fails the parse.
     fn token(&mut self, kind: &str, at: usize, follow: u64) -> Option<usize> {
@@ -420,7 +475,8 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     if looks.len() > 64 {
         return Err("more than 64 marks and soft keywords".into());
     }
-    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), open: Vec::new() };
+    let extra_at = extras.iter().map(|e| e.1.start).collect();
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), open: Vec::new(), extras: extra_at, fatal: None };
     first_of(&mut p);
     // A whole root is opened at byte 0 and matched by its content, which may be empty. Marks
     // before the first token are kept where the root can start with them.
@@ -437,6 +493,9 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
             None => None,
         }
     };
+    if let Some(why) = p.fatal.take() {
+        return Err(why);
+    }
     let mut out = match matched {
         Some(next) if next == plain.len() => p.out,
         Some(next) => return Err(format!("the token at byte {} is past the grammar's end", plain[next].start)),

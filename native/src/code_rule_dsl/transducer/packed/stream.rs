@@ -59,7 +59,9 @@ pub(super) fn validate_word(program: &Program, pc: usize, opcode: u8, mode: u8, 
         // `m=3` (a field): the node that one, a wrap, holds first.
         RETAG => mode <= 2,
         NODE_FIELD => mode <= 3 && operand != 0,
-        MERGE | WRAP => mode == 0,
+        // `m=1`: the open node's two leaves, one (`fold`).
+        MERGE => mode <= 1,
+        WRAP => mode == 0,
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
@@ -296,9 +298,12 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
             }
             SPAN => {
                 // The token's end: a length (a one-byte token, a keyword), or its last byte, the
-                // next of the stream's last bytes.
+                // next of the stream's last bytes; found once per token (a level that ends at it
+                // leaves it to its caller, which spans it again).
                 let e = if mode == 0 {
                     start + u32::from(operand)
+                } else if end > start {
+                    end
                 } else {
                     let Some(l) = next_bit(lasts, taken) else { return refuse(pc - 1, "a token with no last byte") };
                     taken = l as usize + 1;
@@ -388,6 +393,19 @@ pub(in crate::code_rule_dsl) fn run(program: &Program, bytes: &[u8], tier1: &sup
                 open.push(w);
                 bases.push(base);
                 lasts_made.push(Some((r, base)));
+            }
+            MERGE if mode == 1 => {
+                // The innermost open node holds two leaves and nothing else, no extra pending.
+                let Some(&o) = open.last() else { return refuse(pc - 1, "a fold with no open node") };
+                if nodes.len() != o + 3 || pending != 0 || nodes[o + 1].size != 1 || nodes[o + 2].size != 1 {
+                    return refuse(pc - 1, "a fold of no two leaves");
+                }
+                let second = nodes.pop().expect("two leaves");
+                nodes[o + 1].kind = operand;
+                nodes[o + 1].end = second.end;
+                if let Some(l) = lasts_made.last_mut() {
+                    *l = Some((o + 1, o + 1));
+                }
             }
             MERGE => {
                 // The grammar's leaf before the pending extras, which are its text.

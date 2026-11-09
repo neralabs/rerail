@@ -121,6 +121,9 @@ struct Emit<'a> {
     entry: Vec<u16>,
     /// Each arm's code, once per test before it.
     arm_code: HashMap<(usize, Span, Pre), u16>,
+    /// Where the state being lowered goes on a token none of its arms takes: its level's end
+    /// (the caller then switches on the token), or `REFUSE`.
+    default: u16,
 }
 
 /// One candidate of a byte: an arm, the row its token comes from, and the keyword it is (none:
@@ -206,6 +209,11 @@ impl Emit<'_> {
                 }
                 Act::Merge { kind } => {
                     self.push("MERGE", 0, Arg::Kind(kind));
+                    continue;
+                }
+                // Mode 1: the open node's two leaves, one.
+                Act::Fold { kind } => {
+                    self.push("MERGE", 1, Arg::Kind(kind));
                     continue;
                 }
                 Act::Relabel { field, moved, inner } => {
@@ -305,7 +313,7 @@ impl Emit<'_> {
                 jumps.push((self.pc(), Some(c.arm)));
                 self.push("GOTO", 0, Arg::Pc(0));
             }
-            // A keyword no arm here takes refuses the file.
+            // A keyword no arm here takes: the state's end, or a refusal.
             for w in &missing {
                 let w = self.string(w);
                 self.push("WORD", 1, Arg::Str(w));
@@ -313,7 +321,7 @@ impl Emit<'_> {
                 self.push("GOTO", 0, Arg::Pc(0));
             }
             self.body(plain[0].arm);
-            let mut stop = None;
+            let mut stop = (self.default != REFUSE).then_some(self.default);
             for (jump, arm) in jumps {
                 let to = match arm {
                     Some(arm) => self.body(arm),
@@ -333,8 +341,25 @@ impl Emit<'_> {
             // word is compared with all of it.
             let span = if row.takes_last() { Span::Last } else { Span::Len(w.len() as u16) };
             // The switches have read every byte of the word, and its length is its row's: no `WORD`.
-            let pre = if depth + 1 >= w.len() && !row.takes_last() { Pre::None } else { Pre::Word(w) };
-            return Ok(self.arm(words[0].arm, span, pre));
+            let pre = if depth + 1 >= w.len() && !row.takes_last() { Pre::None } else { Pre::Word(w.clone()) };
+            if pre == Pre::None || self.default == REFUSE {
+                return Ok(self.arm(words[0].arm, span, pre));
+            }
+            // Where the state may end, a token that is not the word is its caller's: a test, the
+            // arm where the token is the word, else the end.
+            let at = self.pc();
+            match span {
+                Span::Len(n) => self.push("SPAN", 0, Arg::Num(n)),
+                Span::Last => self.push("SPAN", 1, Arg::Num(LASTS)),
+            }
+            let s = self.string(&w);
+            self.push("WORD", 1, Arg::Str(s));
+            let jump = self.pc();
+            self.push("GOTO", 0, Arg::Pc(0));
+            self.push("GOTO", 0, Arg::Pc(self.default));
+            let to = self.body(words[0].arm);
+            self.words[usize::from(jump)].2 = Arg::Pc(to);
+            return Ok(at);
         }
         // Keywords sharing their bytes up to `depth`: a switch on the next.
         let next = depth + 1;
@@ -367,10 +392,16 @@ impl Emit<'_> {
                 jumps.push((self.pc(), None));
                 self.push("GOTO", 0, Arg::Pc(0));
             }
+            // No word and no plain arm: the state's end, or a refusal.
             let stop = match plain.first() {
                 Some(p) => {
                     self.body(p.arm);
-                    None
+                    (self.default != REFUSE).then_some(self.default)
+                }
+                None if self.default != REFUSE => {
+                    let pc = self.pc();
+                    self.push("GOTO", 0, Arg::Pc(self.default));
+                    Some(pc)
                 }
                 None => {
                     let pc = self.pc();
@@ -402,6 +433,10 @@ impl Emit<'_> {
                 None => by.push((x, vec![c.clone()])),
             }
         }
+        // A byte no word here has: the state's end, or a refusal.
+        if self.default != REFUSE {
+            self.switches[t].targets = vec![self.default; 256];
+        }
         for (x, cs) in by {
             let pc = self.target(x, next, cs)?;
             self.switches[t].targets[usize::from(x)] = pc;
@@ -427,11 +462,11 @@ impl Emit<'_> {
         }
         self.push("TOKEN", 0, Arg::Num(STARTS));
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
-        // hidden that it does not take, a test that refuses.
+        // hidden that it does not take, and each its level refuses, a test that refuses.
         let mut mark_arms = Vec::new();
         for (k, m) in self.marks.iter().enumerate() {
             let arm = mine.iter().copied().find(|&a| self.arms[a].token == m.kind);
-            if arm.is_none() && m.hidden {
+            if arm.is_none() && m.hidden && !st.refuses.contains(&m.kind) {
                 continue;
             }
             // Its order, and 32 when the end has it.
@@ -462,6 +497,7 @@ impl Emit<'_> {
         };
         self.switches[t].end = end;
         let default = if nested { end } else { REFUSE };
+        self.default = default;
         // Each byte's candidates: the arms whose token can begin with it.
         let mut cands: Vec<Vec<Cand>> = vec![Vec::new(); 256];
         for &a in &mine {
@@ -559,6 +595,7 @@ pub(super) fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &
         meets,
         survey,
         tested: Default::default(),
+        default: REFUSE,
         root: states.first().ok_or("no states")?.level,
         words: Vec::new(),
         switches: Vec::new(),

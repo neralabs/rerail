@@ -227,6 +227,14 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         if let Some(h) = low.hidden.iter().find(|h| !low.marks.iter().any(|m| &m.0 == *h)) {
             return Err(format!("hidden {h}: no mark of that kind"));
         }
+        // A refused mark is a hidden one: skipped elsewhere.
+        for s in &low.tree {
+            if let Stmt::Refuse { mark, .. } = s
+                && !low.hidden.contains(mark)
+            {
+                return Err(format!("refuse {mark}: no hidden mark of that kind"));
+            }
+        }
         let (states, mut arms, whole) = {
             let is_token = |name: &str| {
                 token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0))
@@ -487,7 +495,7 @@ impl Lowering {
                 }
                 Stmt::Tree { body, .. } => self.stmts(body)?,
                 // The grammar's rules: the state machine is built once the token rows are known.
-                Stmt::Node { .. } | Stmt::Choice { .. } => self.tree.push(stmt.clone()),
+                Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } => self.tree.push(stmt.clone()),
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),

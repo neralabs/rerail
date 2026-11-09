@@ -149,6 +149,31 @@ const CASES: &[(&str, &str)] = &[
     ("r(n) :- n = sum {\"a\": 1} : { s(_) }, !{} ~ `x`.", "09"),
     // A JSON object over lines ends its setting's line: the engine reads lines from its `{`.
     (".s {\n} x\nr(x).", "never"),
+    // An atom before `=>`: the atom's level takes `=` (a call's comparison), not `=>`, which
+    // its caller takes when the level ends.
+    ("m(s) :- f(s) => r(a, `$sp`).\nm(s) :- f(s), g(s) => r(a) , q(b).", "09"),
+    // A comment after a setting's JSON object, before its line's end.
+    (".budget * { \"total\": 0 }    // c\n.mode block", "09"),
+    // Policy documents: JSON, as the engine's reader takes it; else `.policy` is a setting.
+    (".policy {\"format\": \"v1\", \"id\": \"p\", \"revision\": 2, \"rules\": [{\"a\": -1, \"b\": [true, false, null, 0, -0]}, []], \"e\": {}}\n.policy \"id\" revision 1\nr(x).", "10"),
+    (".policy {\n  \"a\": \"x\\\\y \\/ \\b\\f\\n\\r\\t\\\"\"\n} // c\n.\npolicy {} r(x).", "10"),
+    (".policy\n.policy x {\"a\": 1}\n.policy [1]", "10"),
+    // What JSON refuses: the engine makes the document an error; to it.
+    (".policy {{POLICY}}", "never"),
+    (".policy {\"a\": 01}", "never"),
+    (".policy {\"a\": - 1}", "never"),
+    (".policy {\"a\": \"x\\q\"}", "never"),
+    (".policy {\"a\": \"two\nlines\"}", "never"),
+    (".policy {\"a\": 1 // c\n}", "never"),
+    (".policy {\"a\": [1, {\"b\": /* c */ 2}]}", "never"),
+    (".policy {\"a\": 1e5}", "never"),
+    (".policy {\"a\": [1,]}", "never"),
+    (".policy {\"a\": 1, }", "never"),
+    (".policy {\"a\" 1}", "never"),
+    (".policy {\"a\": tru}", "never"),
+    (".policy /* c */ {\"a\": 1}", "never"),
+    // The same bytes outside JSON: no refusal.
+    ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.
@@ -234,6 +259,27 @@ fn rr_cases_parse_from_their_steps() {
     assert!(missing.is_empty(), "cases a step refuses:\n{}", missing.join("\n"));
 }
 
+/// `refuse M in L`: the compiler takes it only where a refused mark is refused between the
+/// level's first token and its last, as the reference refuses it: a hidden mark, nested levels,
+/// each level they call refusing it too, no level that may end and go on.
+#[test]
+fn a_refused_mark_is_checked() {
+    let source = std::fs::read_to_string(format!("{DIR}/10-policy.bitlex")).expect("step 10");
+    assert_eq!(super::bitlex_ladder_tests::compile_error(&source), None);
+    let refuse = "refuse json_bad in json_document json_inner_object json_inner_array";
+    for (from, to, why) in [
+        (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
+        (refuse, "refuse json_bad in json_document json_member json_inner_object json_inner_array", "no nested level"),
+        (refuse, "refuse json_bad in source_file json_document json_inner_object json_inner_array", "the root"),
+        ("hidden line newline json_bad", "hidden line newline", "no hidden mark"),
+        ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
+    ] {
+        assert_eq!(source.matches(from).count(), 1, "{from}");
+        let e = super::bitlex_ladder_tests::compile_error(&source.replace(from, to));
+        assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
+    }
+}
+
 /// A document's tokens and parse at a step, for a look by hand: `RERAIL_RR_STEP` (a step's name,
 /// or part of it) and `RERAIL_RR_DOC` (the document, with `\n` for a line break).
 #[test]
@@ -258,6 +304,7 @@ fn rr_look() {
             eprintln!("  {:>4}..{:<4} {}{} {:?}", t.start, t.end, if t.mark { "mark " } else { "" }, t.kind, &doc[t.start..t.end]);
         }
         eprintln!("  reference: {:?}", super::bitlex_ladder_tests::refusal(&c, doc.as_bytes()));
+        eprintln!("  compiled: {:?}", c.parser.parse(doc.as_bytes()).map(|n| n.len()));
         if let Some(nodes) = super::bitlex_ladder_tests::reference(&c, doc.as_bytes()) {
             eprintln!("  reference tree: {:?}", named(&c, &nodes));
         }

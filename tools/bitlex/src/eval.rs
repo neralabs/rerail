@@ -56,6 +56,9 @@ pub struct TreeDecl {
     pub marks: Vec<String>,
     /// The soft keywords' kinds (`keywords K { … } soft { … }`).
     pub soft: Vec<String>,
+    /// Each `refuse MARK in LEVEL …`: a hidden mark between a level's first token and its last
+    /// refuses the file.
+    pub refuse: Vec<(String, Vec<String>)>,
 }
 
 pub struct Output {
@@ -372,6 +375,7 @@ impl<'a> Ev<'a> {
             Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
             Stmt::Hidden(kinds) => self.tree.get_or_insert_with(TreeDecl::default).hidden.extend(kinds.iter().cloned()),
+            Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
             Stmt::Mark { kind, at, end } => {
                 let m = self.mask(at)?;
                 self.marks.push((kind.clone(), m, *end));
@@ -1175,7 +1179,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Balanced { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Balanced { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
     })
 }
 

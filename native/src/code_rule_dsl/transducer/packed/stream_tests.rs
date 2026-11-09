@@ -181,6 +181,72 @@ fn a_relabel_acts_on_the_node_made_last() {
     assert!(compiled.run(b"a(", &t1).is_err());
 }
 
+/// `ab(`: the root's two leaves, `a` and `b`, become one at `(` (`MERGE m=1`, `fold`).
+const FOLDED: &str = "program -
+  mode set=0 query=0
+  block 0 %0 = eq 0x61
+  block 0 output %0
+  block 0 extract %0
+  block 0 mask %0
+  switch 0 at 0 end refuse
+  switch 0 0x61-0x61 @0002
+  switch 1 at 0 end refuse
+  switch 1 0x62-0x62 @0007
+  switch 2 at 0 end refuse
+  switch 2 0x28-0x28 @0011
+  switch 3 at 0 end @0017
+  0000 TOKEN 0
+  0001 SWITCH T0
+  0002 OPEN #1
+  0003 SPAN 1
+  0004 LEAF #2
+  0005 TOKEN 0
+  0006 SWITCH T1
+  0007 SPAN 1
+  0008 LEAF #3
+  0009 TOKEN 0
+  0010 SWITCH T2
+  0011 SPAN 1
+  0012 MERGE m=1 #4
+  0013 LEAF #6
+  0014 TOKEN 0
+  0015 SWITCH T3
+  0016 STOP 0
+  0017 ACCEPT 0
+";
+
+/// The folded leaf, from the interpreter and from Cranelift, framed or not; with a third node
+/// in the root, or a pending extra, refused by both.
+#[test]
+fn a_fold_makes_the_open_nodes_two_leaves_one() {
+    let p = rir::assemble(FOLDED).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(rir::assemble(&rir::disassemble(&p, None)).expect("round trips").plain_digest(), p.plain_digest());
+    let t1 = tier1(&[0, 1, 2], &[]);
+    let nodes = run(&p, b"ab(", &t1).expect("parses");
+    let got: Vec<(u16, u16, u32, u32, u32)> = nodes.iter().map(|n| (n.kind, n.field, n.start, n.end, n.size)).collect();
+    // The root; `ab`, one leaf of kind 4; the `(`.
+    assert_eq!(got, [(1, 0, 0, 3, 3), (4, 0, 0, 2, 1), (6, 0, 2, 3, 1)]);
+    let compiled = native_cpu_stream::compile(&native_ir::lower(&p).expect("lowers")).expect("compiles");
+    assert!(!compiled.wraps);
+    assert_eq!(compiled.run(b"ab(", &t1).expect("parses"), nodes);
+    // Framed (a relabel elsewhere keeps the frames): the same nodes.
+    let framed = FOLDED.replace("  0016 STOP 0\n", "  0016 RETAG m=2 #4\n");
+    let framed = rir::assemble(&framed).expect("assembles");
+    let compiled = native_cpu_stream::compile(&native_ir::lower(&framed).expect("lowers")).expect("compiles");
+    assert!(compiled.wraps, "the tape has the frames");
+    assert_eq!(compiled.run(b"ab(", &t1).expect("parses"), nodes);
+    for bad in [
+        FOLDED.replace("  0004 LEAF #2\n", "  0004 OPEN #2\n"),
+        FOLDED.replace("  0008 LEAF #3\n", "  0008 LEAF m=1 #3\n"),
+        FOLDED.replace("  0012 MERGE m=1 #4\n", "  0012 LEAF #5\n").replace("  0013 LEAF #6\n", "  0013 MERGE m=1 #4\n"),
+    ] {
+        let bad = rir::assemble(&bad).expect("assembles");
+        assert!(run(&bad, b"ab(", &t1).is_err());
+        let compiled = native_cpu_stream::compile(&native_ir::lower(&bad).expect("lowers")).expect("compiles");
+        assert!(compiled.run(b"ab(", &t1).is_err());
+    }
+}
+
 /// `a(b`: a wrap around `a` at `(`, closed at `b`; then `b` relabels it (`RETAG m=2`) and the
 /// node it holds first (`NODE_FIELD m=3`): an atom whose word turns out a call's.
 const RELABELLED_INNER: &str = "program -
