@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   codeRuleSchema,
+  languageFor,
   NativeCodeRuleEnforcer,
   SqliteAuditControlStore,
   type AdapterDelivery,
@@ -44,6 +45,7 @@ async function strategySession(options: {
   host: RerailHost;
   files?: Readonly<Record<string, string>>;
   createAuditor?: RerailRuntimeOptions["createAuditor"];
+  deliverBackground?: RerailRuntimeOptions["deliverBackground"];
   experimental?: boolean;
 }) {
   vi.stubEnv("RERAIL_EXPERIMENTAL_STEER_STRATEGIES", options.experimental === false ? "" : "1");
@@ -62,6 +64,7 @@ async function strategySession(options: {
   const runtime = new RerailRuntime({
     storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
     createAuditor: options.createAuditor ?? (auditorOptions => new NativeCodeRuleEnforcer(needleCatalog(), auditorOptions)),
+    ...(options.deliverBackground === undefined ? {} : { deliverBackground: options.deliverBackground }),
   });
   const sessionId = "strategy";
   await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: options.host, sessionId, cwd: root } });
@@ -108,7 +111,7 @@ describe("The rewind steer strategy", () => {
           toolCallId: "w1",
           rewound: ["created.py"],
           ruleIds: ["test:needle"],
-          content: expect.stringMatching(/^Rerail rolled back these files because the edit breaks the rule below: `created\.py`, which the edit created, is deleted\. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the user in one line why\.\n\nRerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.$/u),
+          content: expect.stringMatching(/^Rerail rolled back these files because the edit breaks the rule below: `created\.py`, which the edit created, is deleted\. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the user in one line why\.\n\nRerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't and run `rerail feedback test:needle '<that line>'`\.$/u),
         })]);
         await expect(readFile(join(session.root, "created.py"))).rejects.toThrow(/ENOENT/u);
         expect(await session.turnEnd()).toEqual([]);
@@ -179,6 +182,42 @@ describe("The rewind steer strategy", () => {
     }
   });
 
+  it("keeps no copy of a secret-like file's text, so it leaves that file as the edit left it and steers as a message", async () => {
+    const before = "TOKEN = 'sk-live-0123456789'\n";
+    const session = await strategySession({ strategy: "rewind", host: "omp", files: { "secrets.py": before } });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const deliveries = await session.edit("w1", "secrets.py", `${before}NEEDLE = 1\n`);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(join(session.root, "secrets.py"), "utf8")).toBe(`${before}NEEDLE = 1\n`);
+      expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/secrets\.py .*no copy/u));
+      const directory = createHash("sha256").update("strategy").digest("hex");
+      expect(await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8")).not.toContain("sk-live-0123456789");
+    } finally {
+      stderr.mockRestore();
+      await session.runtime.dispose();
+    }
+  });
+
+  it("puts back a file whose text holds a secret, while its session ledger keeps only the file's digest", async () => {
+    // Assembled from parts so no key-shaped literal sits in the file for secret scanners to refuse.
+    const key = ["sk-", "proj-", "Q7f2LmZ9xV4pR8tK1wN6bH3cJ5dS0gYa"].join("");
+    const before = `API_KEY = "${key}"\n`;
+    const session = await strategySession({ strategy: "rewind", host: "omp", files: { "config.py": before } });
+    try {
+      const deliveries = await session.edit("w1", "config.py", `${before}NEEDLE = 1\n`);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["config.py"] })]);
+      expect(await readFile(join(session.root, "config.py"), "utf8")).toBe(before);
+      const directory = createHash("sha256").update("strategy").digest("hex");
+      const ledger = await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8");
+      expect(ledger).not.toContain(key);
+      expect(ledger).toContain(createHash("sha256").update(before).digest("hex"));
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
   it("still steers in the edit's result with what was rolled back when auditing the rollback fails", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const session = await strategySession({
@@ -222,7 +261,8 @@ describe("The rewind steer strategy", () => {
           let revision = 0;
           const auditor: CodeRuleAuditor = {
             openWorkspace: async () => undefined,
-            acceptsPath: () => true,
+            // As rules without a text clause: the session's own files under `sessions/` are no sources.
+            acceptsPath: path => languageFor(path) !== undefined,
             auditGeneratedEdits: async (_sessionId, batch) => {
               // Rerail's own rollback is the only batch audited in log mode.
               if (batch.mode === undefined) revision = batch.revision;
@@ -287,6 +327,37 @@ describe("The rewind steer strategy", () => {
       }
     });
   });
+
+  it("delivers the steer in the background, not in a result's reply, when the rollback outlasts the edit check's cap", async () => {
+    const background: AdapterDelivery[] = [];
+    const delivered = Promise.withResolvers<void>();
+    const session = await strategySession({
+      strategy: "rewind",
+      host: "claude-code",
+      deliverBackground: delivery => {
+        background.push(delivery);
+        delivered.resolve();
+      },
+      createAuditor: auditorOptions => {
+        const auditor = new NativeCodeRuleEnforcer(needleCatalog(), auditorOptions);
+        const audit = auditor.auditGeneratedEdits.bind(auditor);
+        // The rollback's own audit (`log` mode) runs past a hook host's one-second cap on the edit's check, so the
+        // result is already waiting for the steer when the rollback ends.
+        auditor.auditGeneratedEdits = async (sessionId, batch) => {
+          if (batch.mode === "log") await new Promise(resolve => setTimeout(resolve, 1_300));
+          return await audit(sessionId, batch);
+        };
+        return auditor;
+      },
+    });
+    try {
+      expect(await session.edit("w1", "created.py", "NEEDLE = 1\n")).toEqual([]);
+      await delivered.promise;
+      expect(background).toEqual([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["created.py"] })]);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
 });
 
 describe("The message steer strategy", () => {
@@ -297,7 +368,7 @@ describe("The message steer strategy", () => {
       expect(deliveries).toEqual([{
         sessionId: "strategy", requested: "steer", mechanism: "native-queue", ruleIds: ["test:needle"], strategy: "message", toolCallId: "w1",
         rules: [{ id: "test:needle", state: "steered", origin: "From your rule library." }],
-        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.$/u),
+        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't and run `rerail feedback test:needle '<that line>'`\.$/u),
       }]);
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");
     } finally {
@@ -326,7 +397,7 @@ describe("The subagent steer strategy", () => {
       expect(deliveries).toEqual([expect.objectContaining({
         strategy: "subagent",
         toolCallId: "w1",
-        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't\.\n\nThis note comes from Rerail, not the user, and your task is unchanged\. Hand the fix to a subagent with the `rerail_fix` tool/u),
+        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't and run `rerail feedback test:needle '<that line>'`\.\n\nThis note comes from Rerail, not the user, and your task is unchanged\. Hand the fix to a subagent with the `rerail_fix` tool/u),
       })]);
       expect(deliveries[0]).not.toHaveProperty("rewound");
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");

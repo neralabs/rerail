@@ -40,7 +40,7 @@ import {
 const ANSI = /\u001b\[/;
 const stripAnsi = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, "");
 
-const CLAUDE: CodingAgent = { id: "claude", name: "Claude Code" };
+const CLAUDE: CodingAgent = { id: "claude-code", name: "Claude Code" };
 const CURSOR: CodingAgent = { id: "cursor", name: "Cursor" };
 const CODEX: CodingAgent = { id: "codex", name: "Codex" };
 const WORKS_WITH: readonly CodingAgent[] = [{ id: "omp", name: "OMP" }, { id: "pi", name: "Pi" }, CLAUDE, CODEX, CURSOR];
@@ -56,9 +56,9 @@ const PACKS: RecommendedPacksInput = {
     { id: "acme-api", name: "acme-api", ruleCount: 92, reason: "matches the acme_api package", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", installed: "1.2.0" },
   ],
   available: [
-    { id: "typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
-    { id: "acme-api", version: "1.2.0", name: "acme-api", reason: "matches the acme_api package" },
-    { id: "python", version: "0.1.2", name: "Python" },
+    { id: "typescript", packageName: "@neralabs/rerail-pack-typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
+    { id: "acme-api", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", name: "acme-api", reason: "matches the acme_api package" },
+    { id: "python", packageName: "@neralabs/rerail-pack-python", version: "0.1.2", name: "Python" },
   ],
   agentsFound: [CLAUDE, CURSOR],
 };
@@ -82,7 +82,7 @@ function everyScreen(lane: SetupLane): Record<string, string> {
     T2x: renderSessionsDeclined(lane),
     T3: renderReadRepoQuestion({ repoName: "acme-web", repoPath: "/Users/me/code/acme-web" }, lane),
     T4: renderRecommendedPacks(PACKS, lane),
-    T5: renderNotNow(lane),
+    T5: renderNotNow([CLAUDE, CURSOR], lane),
     T6: renderSummary(SUMMARY, lane),
     C6b: renderTips(lane),
     E1: renderCannotInstall({ installCommand: "npx rerail" }, lane),
@@ -146,6 +146,18 @@ describe("T1 banner", () => {
 });
 
 describe("T2b may Rerail read sessions", () => {
+  it("never says nothing is sent while a remote is set up: it names each remote's host and how to stop", () => {
+    const sent = renderQuestion(sessionsQuestion({ carriedArgs: [], remoteHosts: ["ingest.example.com"] }), "agent");
+    expect(sent).not.toContain("Nothing is sent anywhere");
+    expect(sent).toContain("  ! Sent to the remote set up on this computer: ingest.example.com.");
+    expect(sent).toContain("rerail remote remove <name>");
+    const two = renderQuestion(sessionsQuestion({ carriedArgs: [], remoteHosts: ["a.example.com", "b.example.com"] }), "agent");
+    expect(two).toContain("Sent to the remotes set up on this computer: a.example.com, b.example.com.");
+    const unknown = renderQuestion(sessionsQuestion({ carriedArgs: [], remoteHosts: null }), "agent");
+    expect(unknown).not.toContain("Nothing is sent anywhere");
+    expect(renderQuestion(sessionsQuestion({ carriedArgs: [], remoteHosts: [] }), "agent")).toContain("  ✓ Stays on this computer. Nothing is sent anywhere.");
+  });
+
   it("says what it sees and why, and its yes carries the folder the run was named", () => {
     const form = sessionsQuestion({ carriedArgs: ["--repo", "/Users/me/code/acme-web"] });
     const text = renderQuestion(form, "agent");
@@ -296,6 +308,15 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(text).toContain("  △ @neralabs/rerail-pack-acme-api@1.2.0 replaces 1.1.0, which every repo on this computer uses.");
   });
 
+  it("names a third party's pack with its publisher, and says before a yes that Rerail has not reviewed it", () => {
+    const acme = { ...PACKS.packs[0]!, id: "@acme/rerail-pack-sql", name: "Acme SQL", packageName: "@acme/rerail-pack-sql", thirdParty: "@acme" };
+    const text = stripAnsi(renderRecommendedPacks({ ...PACKS, packs: [acme, PACKS.packs[1]!] }, "terminal"));
+
+    expect(text).toMatch(/^ {2}Acme SQL \(by @acme\)\s+\d+/mu);
+    expect(text).toContain("  △ @acme/rerail-pack-sql is by @acme, not Rerail. Rerail has not reviewed it: its rules run in Log until you approve them (rerail rules approve @acme/rerail-pack-sql), then their steer text reaches the coding agent.");
+    expect(text.match(/not Rerail/gu)).toHaveLength(1);
+  });
+
   it("aligns the table columns for long rule pack names", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: [{ ...PACKS.packs[0]!, name: "A very long rule pack name", ruleCount: 12, reason: "the reason" }] }, "agent");
     const header = text.split("\n").find(line => line.includes("Rule pack")) ?? "";
@@ -343,9 +364,20 @@ describe("T4 / C4 recommended rule packs", () => {
 
 describe("T5 not now", () => {
   it.each(LANES)("says nothing was installed or turned on, and how to start later (%s)", lane => {
-    const text = stripAnsi(renderNotNow(lane));
+    const text = stripAnsi(renderNotNow([CLAUDE, CURSOR], lane));
     expect(text).toContain("● Set-up stopped. No rule packs were installed and nothing was turned on.");
     expect(text).toContain(`Start Rerail in this repo whenever you’re ready with ${lane === "terminal" ? "rerail start" : "/rerail-start"}.`);
+  });
+
+  it("writes the start command as Codex types it when Codex is the only coding agent", () => {
+    const text = renderNotNow([CODEX], "agent");
+    expect(text).toContain("Start Rerail in this repo whenever you’re ready with $rerail-start.");
+    expect(text).not.toContain("/rerail-start");
+  });
+
+  it("gives Codex's form too when Codex is one of several coding agents", () => {
+    const text = renderNotNow([CLAUDE, CODEX], "agent");
+    expect(text).toContain("whenever you’re ready with /rerail-start.\n  In Codex, type $rerail-start.");
   });
 });
 

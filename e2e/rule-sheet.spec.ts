@@ -7,6 +7,8 @@ test.use({ timezoneId: "UTC" });
 const PACK_RULE = "eslint-no-console";
 const STEER_LIBRARY_RULE = "storefront-no-raw-fetch";
 const BLOCK_LIBRARY_RULE = "storefront-money-as-cents";
+/** A rule of the Python pack, installed in `mature` but not added there. */
+const UNADDED_PACK_RULE = "ruff-async100-cancel-scope-no-checkpoint";
 
 const sheet = (page: Page) => page.locator("#panel");
 const ruleRow = (page: Page, id: string) => page.locator(`#content [data-act="detail"][data-i="${id}"]`);
@@ -23,6 +25,16 @@ test("a rule opens from Overview without moving the top bar's status", async ({ 
   await expect(sheet(page)).toContainText(PACK_RULE);
   await expect(page).toHaveURL(new RegExp(`#rule/${PACK_RULE}$`));
   expect(await status.boundingBox()).toEqual(before);
+});
+
+test("a link to a rule whose pack is not added says so, and opens the pack", async ({ page, rerail }) => {
+  await page.goto(await rerail.dashboard("mature", { hash: `rule/${UNADDED_PACK_RULE}` }));
+  const toast = page.locator("#toast");
+  await expect(toast).toContainText("Python pack is not added.");
+
+  await toast.locator('[data-act="viewpack"]').click();
+
+  await expect(sheet(page)).toContainText("Python");
 });
 
 test("a rule opens from its pack's page, and a pack rule has no Delete", async ({ page, rerail }) => {
@@ -139,6 +151,10 @@ test("a rule created by you is deleted from the repository after a confirm, and 
   await other.goto(url);
   await expect(ruleRow(other, STEER_LIBRARY_RULE).first()).toBeVisible();
   await expect(ruleRow(other, BLOCK_LIBRARY_RULE)).toHaveCount(0);
+  // Its violations stay: History by rule still lists it.
+  await other.goto(new URL("#history", url).href);
+  await other.locator('#content [data-act="range"][data-i="9999"]').first().click();
+  await expect(other.locator("#content")).toContainText("No longer in this repo");
   await other.close();
 
   await page.locator('#toast [data-act="ruleundo"]').click();

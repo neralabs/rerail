@@ -141,6 +141,22 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2014 Max Brunsfeld", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# tree-sitter/tree-sitter-typescript 0.23.2, vendored with Rerail's patches
+# (native/grammars/tree-sitter-typescript/PATCHES.md); tree_sitter/*.h as tree-sitter-cli 0.27.0 writes them.
+[[annotations]]
+path = "native/grammars/tree-sitter-typescript/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2017 Max Brunsfeld", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+# tree-sitter/tree-sitter-python 0.25.0, vendored with Rerail's patches
+# (native/grammars/tree-sitter-python/PATCHES.md); tree_sitter/*.h as tree-sitter-cli 0.27.0 writes them.
+[[annotations]]
+path = "native/grammars/tree-sitter-python/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2016 Max Brunsfeld", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
 # node-semver 7.8.5, ported to Rust (semver/mod.rs, provenance in semver/UPSTREAM.md); its subset() and new Range() answers recorded by
 # scripts/generate/semver/semver-subset-cases.mjs.
 [[annotations]]
@@ -551,10 +567,10 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2019 typescript-eslint and other contributors", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"
 
-# Candidate rule documents: Rerail's re-implementations of @vitest/eslint-plugin 1.6.27's rules (MIT), annotated with
-# the pack's licence expression like the documents above.
+# Rule documents: Rerail's re-implementations of @vitest/eslint-plugin 1.6.27's rules (MIT), annotated with the
+# pack's licence expression like the documents above.
 [[annotations]]
-path = "packs/typescript/candidates/rules/vitest-*.json"
+path = "packs/typescript/rules/vitest-*.json"
 precedence = "override"
 SPDX-FileCopyrightText = ["2022 - PRESENT Verité Mugabo Makuza", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0 AND MIT"

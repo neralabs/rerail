@@ -91,6 +91,16 @@ pub(crate) trait Adapter: 'static {
     /// text its rules read (ESLint's `SourceCode`), so a `file.content` regex reads a file from
     /// past it.
     const STRIPS_BOM: bool;
+    /// The kinds of the family's comment nodes, where `rerail-ignore` directives are read
+    /// (`suppress::rerail`).
+    const COMMENT_KINDS: &'static [&'static str];
+    /// The leaf kinds that may stand before a file's first code without being code (a shebang
+    /// line, PHP's `<?php`): a `rerail-ignore` comment before them all covers the whole file.
+    const PREAMBLE_KINDS: &'static [&'static str];
+    /// The kinds of a body that starts at its first statement, a comment before that statement
+    /// standing beside it rather than in it (Python's `block`): a leading `rerail-ignore` comment
+    /// there covers that statement, not the whole body.
+    const BODY_KINDS: &'static [&'static str];
     type Scope: ScopeRules;
     type Value: ValueRules;
     type Arguments: ArgumentRules;
@@ -136,6 +146,9 @@ impl Adapter for Python {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
     const STRIPS_BOM: bool = false;
+    const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &["block"];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -187,6 +200,10 @@ impl Adapter for Ecma {
     const JSX_RUNTIMES: bool = true;
     const DECLARATION_FILES: bool = true;
     const STRIPS_BOM: bool = true;
+    /// `html_comment`: a script's `<!--` and line-leading `-->` comments.
+    const COMMENT_KINDS: &'static [&'static str] = &["comment", "html_comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &["hash_bang_line"];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -260,6 +277,9 @@ impl Adapter for Php {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
     const STRIPS_BOM: bool = false;
+    const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &["php_tag"];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -313,6 +333,12 @@ impl Adapter for Blade {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
     const STRIPS_BOM: bool = false;
+    /// A template's `<!-- -->` (`comment`) and `{{-- --}}` (`blade_comment`); its embedded PHP's
+    /// are read with PHP's family.
+    const COMMENT_KINDS: &'static [&'static str] = &["comment", "blade_comment"];
+    /// A template's `php_tag` is a whole `<?php … ?>` region, code rather than a preamble.
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Php;
     type Value = Php;
     type Arguments = Php;

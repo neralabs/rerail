@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 const routing = vi.hoisted(() => ({
   isMainRerailBuild: vi.fn<() => boolean>(),
-  daemonEngineSocket: vi.fn<(replaceOtherPackage: boolean) => Promise<string>>(),
+  daemonEngineEndpoint: vi.fn<(replaceOtherPackage: boolean) => Promise<{ socketPath: string; accessToken?: string }>>(),
 }));
 vi.mock("../../src/engine/native/rerail-build.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/engine/native/rerail-build.js"),
@@ -9,7 +9,7 @@ vi.mock("../../src/engine/native/rerail-build.js", async () => ({
 }));
 vi.mock("../../src/runtime/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
-  daemonEngineSocket: routing.daemonEngineSocket,
+  daemonEngineEndpoint: routing.daemonEngineEndpoint,
 }));
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
@@ -27,7 +27,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
   routing.isMainRerailBuild.mockReset();
-  routing.daemonEngineSocket.mockReset();
+  routing.daemonEngineEndpoint.mockReset();
 });
 
 async function runStream(lines: readonly string[], eventLoop: RerailEventLoop, workspaceRoot?: string): Promise<readonly Record<string, unknown>[]> {
@@ -114,6 +114,8 @@ describe("Rerail event stream", () => {
 interface EngineRequestBody {
   event: { eventId: string };
   configuration: Record<string, string>;
+  /** The `x-rerail-access` header the request carried. */
+  access: string | undefined;
 }
 
 /** Stands in for the main daemon's engine service socket, answering every event with a delivery only it produces. */
@@ -122,8 +124,9 @@ async function fakeEngineService(socketPath: string): Promise<EngineRequestBody[
   const server: Server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += String(chunk);
-    const parsed = JSON.parse(body) as EngineRequestBody;
-    received.push(parsed);
+    const parsed = JSON.parse(body) as Omit<EngineRequestBody, "access">;
+    const access = request.headers["x-rerail-access"];
+    received.push({ ...parsed, access: typeof access === "string" ? access : undefined });
     response.end(encodeRerailEventResult({
       eventId: parsed.event.eventId,
       deliveries: [{ sessionId: "s", requested: "steer", mechanism: "native-queue", content: "from the daemon", ruleIds: [], rules: [] }],
@@ -141,7 +144,7 @@ describe("rerail events in a main build", () => {
     const socketPath = join(root, "engine.sock");
     const received = await fakeEngineService(socketPath);
     routing.isMainRerailBuild.mockReturnValue(true);
-    routing.daemonEngineSocket.mockResolvedValue(socketPath);
+    routing.daemonEngineEndpoint.mockResolvedValue({ socketPath, accessToken: "daemon-capability" });
     startTestRepository(root, join(root, "rerail.sqlite"));
     const output = new PassThrough();
     let written = "";
@@ -166,13 +169,15 @@ describe("rerail events in a main build", () => {
       ["prompt", ["from the daemon"]],
     ]);
     expect(received.map(request => request.event.eventId)).toEqual(["start", "prompt"]);
+    // The daemon's engine socket refuses a request without its capability.
+    expect(received.map(request => request.access)).toEqual(["daemon-capability", "daemon-capability"]);
     expect(received[0]?.configuration).toEqual(expect.objectContaining({
       storageRoot: join(root, "sessions"),
       databasePath: join(root, "rerail.sqlite"),
     }));
     // Only the first event may replace a daemon from another package; a stream that outlives an update must
     // keep using the newer daemon rather than bring its own version back.
-    expect(routing.daemonEngineSocket.mock.calls).toEqual([[true], [false]]);
+    expect(routing.daemonEngineEndpoint.mock.calls).toEqual([[true], [false]]);
   });
 
   it("never asks for the daemon, which would autostart it, while Rerail is off in the checkout", async () => {
@@ -196,7 +201,7 @@ describe("rerail events in a main build", () => {
     });
 
     expect(JSON.parse(written.trim())).toEqual({ eventId: "start", deliveries: [] });
-    expect(routing.daemonEngineSocket).not.toHaveBeenCalled();
+    expect(routing.daemonEngineEndpoint).not.toHaveBeenCalled();
   });
 });
 

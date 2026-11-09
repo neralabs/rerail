@@ -5,6 +5,8 @@
  * everywhere.
  */
 
+import type { CommandSigil, ObservedFileWrite } from "../engine/adapter-contract.js";
+
 export type RerailCommandName =
   | "rerail"
   | "rerail-manage"
@@ -14,7 +16,8 @@ export type RerailCommandName =
   | "rerail-update"
   | "rerail-uninstall"
   | "rerail-help"
-  | "rerail-show-me";
+  | "rerail-show-me"
+  | "rerail-bug-report";
 
 export interface RerailCommand {
   name: RerailCommandName;
@@ -35,10 +38,8 @@ export const RERAIL_COMMANDS: readonly RerailCommand[] = [
   // An alias of `/rerail`: the same summary and command list.
   { name: "rerail-help", description: "Show a list of Rerail commands", summary: "show a list of commands" },
   { name: "rerail-show-me", description: "See Rerail catch a broken rule in this repo and steer the fix, then clean up", summary: "see Rerail catch and fix a broken rule" },
+  { name: "rerail-bug-report", description: "Work out what went wrong with Rerail, then fix your own rule or report a Rerail bug in an issue", summary: "diagnose a bug, then fix or report it" },
 ];
-
-/** How a coding agent invokes a command: Codex runs skills as `$name`, every other agent as `/name`. */
-export type CommandSigil = "/" | "$";
 
 /** The `rerail` commands a terminal answers, named at the end of `/rerail` so no one goes looking for them. */
 export const TERMINAL_COMMANDS_LINE = "In a terminal: rerail status · rerail version · rerail update · rerail daemon stop";
@@ -96,9 +97,12 @@ export function createRuleInstructions({ cli, packageRoot, request }: CreateRule
     `${cli} rules export --output <tmp>/rules.json`,
     `${cli} rules test <draft.json> --json`,
     `${cli} rules add <draft.json>`,
+    `${cli} rules approve`,
+    `${cli} rules approve <id>`,
     "```",
     "",
     "Test every draft before showing it, read it back with \"Add this rule?\", and run `rules add` only after the person says yes.",
+    "An added rule runs in Log, steering no one, until the person approves it. Audit any rule you did not write before asking (the skill's Approve), and run `rules approve <id>` only after they say yes to it.",
     "Never add a rule the person has not confirmed. The rule belongs to this repo only: never offer \"every repo\". Never write instruction files.",
   ].join("\n");
 }
@@ -163,11 +167,8 @@ export interface ShowMeInstructionsInput {
   /** The shell-quoted launcher the agent runs. */
   cli: string;
   sigil: CommandSigil;
-  /**
-   * How the agent writes the demo file. Codex's hooks see a write made through its shell tool, not through
-   * apply_patch, so Codex writes with one shell command; every other agent uses its own edit tool.
-   */
-  write: "edit-tool" | "shell";
+  /** How the agent writes the demo file so the hooks see it: its capability profile's `observedFileWrite`. */
+  write: ObservedFileWrite;
 }
 
 /**
@@ -225,5 +226,49 @@ export function showMeInstructions({ cli, sigil, write }: ShowMeInstructionsInpu
     "   If the cleanup failed, the Cleaned up row shows its error instead.",
     "",
     "Never edit any file but the demo file. Never write instruction files.",
+  ].join("\n");
+}
+
+export interface BugReportInstructionsInput {
+  /** The shell-quoted launcher the agent runs, e.g. `'/usr/bin/node' '/home/me/.rerail/current/dist/cli/cli.js'`. */
+  cli: string;
+  /** Where the installed package keeps the rerail-bug-report skill (`skills/rerail-bug-report/`). */
+  packageRoot: string;
+  /** The person's words; a placeholder such as `$ARGUMENTS` when the coding agent substitutes it. */
+  request: string;
+}
+
+/** The skill `/rerail-bug-report` follows, inside the installed package. */
+export function bugReportSkillPath(packageRoot: string): string {
+  return `${packageRoot}/skills/rerail-bug-report/SKILL.md`;
+}
+
+/**
+ * `/rerail-bug-report`: work out whether a problem is an engine bug, a shipped rule's or the person's own rule's. The skill
+ * in the package holds the steps; this keeps the commands and the promise that matters in the command itself: an issue is
+ * public, so sending anything is the person's to decide.
+ */
+export function bugReportInstructions({ cli, packageRoot, request }: BugReportInstructionsInput): string {
+  return [
+    `Work out what went wrong with Rerail, then fix it or report it. The person's words: ${request}`,
+    "",
+    `Read ${bugReportSkillPath(packageRoot)} and follow it.`,
+    `Wherever it says \`rerail\`, run \`${cli}\`.`,
+    "",
+    "- An engine bug, or a bug in a rule that ships with Rerail: offer to report it in an issue on neralabs/rerail.",
+    "- A bug in the person's own rule: help them fix it.",
+    "",
+    "The commands it uses:",
+    "",
+    "```sh",
+    `${cli} support-bundle --json`,
+    `${cli} support-bundle --json --session <id>`,
+    `${cli} update check`,
+    `${cli} rules test <draft.json> --json`,
+    "```",
+    "",
+    "If this is a security vulnerability, it does not go in an issue: tell the person to follow SECURITY.md instead.",
+    "Never upload, post, send or paste the support bundle or its contents anywhere, and never open the issue yourself, unless the person asks you to in this session.",
+    "Never put in the bundle anything the command did not write.",
   ].join("\n");
 }

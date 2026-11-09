@@ -27,6 +27,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { matrixChanges } from "../../release/core-paths.mjs";
+import { PACKS, publishedPacks } from "../../release/packs.mjs";
 
 const run = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -120,14 +121,13 @@ async function storage() {
   };
 }
 
-// The package under test and every rule pack from this checkout, in one tar the VM unpacks: the guest serves them
-// from a local registry, as npmjs will.
+// The package under test and every published rule pack from this checkout, in one tar the VM unpacks: the guest serves
+// them from a local registry, as npmjs will. A private pack is left out: npm refuses to publish it to any registry.
 async function makeBundle(tarball) {
   const directory = mkdtempSync(join(tmpdir(), "rerail-env-bundle-"));
   writeFileSync(join(directory, basename(tarball)), readFileSync(tarball));
-  const packs = join(REPO_ROOT, "packs");
-  for (const pack of readdirSync(packs).filter((name) => existsSync(join(packs, name, "package.json")))) {
-    await run("npm", ["pack", join(packs, pack), "--pack-destination", directory, "--ignore-scripts", "--silent"]);
+  for (const { id } of publishedPacks()) {
+    await run("npm", ["pack", join(PACKS, id), "--pack-destination", directory, "--ignore-scripts", "--silent"]);
   }
   const bundle = join(tmpdir(), `rerail-env-bundle-${Date.now()}.tar`);
   // COPYFILE_DISABLE: macOS tar would otherwise add a `._<name>` AppleDouble file beside every tarball.
@@ -333,8 +333,8 @@ function checkRunId(runId) {
   return runId;
 }
 
-// Bundles a tarball (and every rule pack in packs/) into the run's container, where each environment's VM fetches
-// it. Done once per run: CI's environment jobs all run --staged against it.
+// Bundles a tarball (and every published rule pack in packs/) into the run's container, where each environment's VM
+// fetches it. Done once per run: CI's environment jobs all run --staged against it.
 async function stage(store, container, tarball) {
   if (!existsSync(tarball)) throw new Error(`No tarball at ${tarball}`);
   const { bundle, contents } = await makeBundle(tarball);

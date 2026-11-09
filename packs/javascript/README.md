@@ -1,4 +1,4 @@
-# Rerail rule pack: JavaScript and TypeScript (ESLint core and eslint-plugin-unicorn)
+# Rerail rule pack: JavaScript
 
 121 code rules for JavaScript and TypeScript source, with their default options: 118 ported from ESLint 10.11.0's core
 rules and 3 from eslint-plugin-unicorn 76.0.0, which run on `.js`, `.jsx`, `.mjs` and `.cjs` files only, as unicorn
@@ -353,7 +353,7 @@ Relational operators (<, >, <=, >=) are only checked when enforceForOrderingRela
 
 ### `eslint-no-unsafe-optional-chaining`
 
-Short-circuit propagates through parentheses, await, ||/??/&& operands, the last sequence element and ternary branches. Unsafe positions: callee, member object, tagged template, new, destructuring source, extends, for-of, non-object spread, in/instanceof, with. Arithmetic on optional chains only with disallowArithmeticOperators (off by default).
+Short-circuit propagates through parentheses, await, ||/??/&& operands, the last sequence element and ternary branches. Unsafe positions: callee, member object, tagged template, new, destructuring source, extends, for-of, spread outside an object literal or JSX spread attribute, in/instanceof, with. Arithmetic on optional chains only with disallowArithmeticOperators (off by default).
 
 ### `eslint-no-unused-expressions`
 

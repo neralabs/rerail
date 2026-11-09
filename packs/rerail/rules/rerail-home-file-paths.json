@@ -1,0 +1,75 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-home-file-paths",
+  "revision": 1,
+  "mode": "log",
+  "description": "Take the Rerail home's active-version link, versions folder, update record and launcher paths from the updater instead of joining their names onto the home again.",
+  "scope": {
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "src/**/updater.ts",
+      "**/*.test.ts",
+      "src/**/*.generated.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "current-link",
+      "forbid": {
+        "regex": {
+          "pattern": "(?:\\b(?:join|resolve)\\(\\s*(?:(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*,\\s*(?:[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)?|(?:os\\.)?homedir\\(\\)\\s*,\\s*[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)[\\\"'`]current[\\\"'`]|\\$\\{\\s*(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*\\}[/\\\\]+current\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "HOME_CURRENT_PATH",
+        "anchor": "witness.span",
+        "message": "Use ManagedUpdater's currentLink where an updater is at hand, instead of joining \"current\" onto the home; elsewhere, and in src/engine, keep it until the name has a constant."
+      }
+    },
+    {
+      "id": "versions-root",
+      "forbid": {
+        "regex": {
+          "pattern": "(?:\\b(?:join|resolve)\\(\\s*(?:(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*,\\s*(?:[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)?|(?:os\\.)?homedir\\(\\)\\s*,\\s*[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)[\\\"'`]versions[\\\"'`]|\\$\\{\\s*(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*\\}[/\\\\]+versions\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "HOME_VERSIONS_PATH",
+        "anchor": "witness.span",
+        "message": "Use ManagedUpdater's versionsRoot where an updater is at hand, instead of joining \"versions\" onto the home; elsewhere, and in src/engine, keep it until the name has a constant."
+      }
+    },
+    {
+      "id": "update-state",
+      "forbid": {
+        "regex": {
+          "pattern": "(?:\\b(?:join|resolve)\\(\\s*(?:(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*,\\s*(?:[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)?|(?:os\\.)?homedir\\(\\)\\s*,\\s*[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)[\\\"'`]update-state\\.json[\\\"'`]|\\$\\{\\s*(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*\\}[/\\\\]+update-state\\.json\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "HOME_UPDATE_STATE_PATH",
+        "anchor": "witness.span",
+        "message": "Use ManagedUpdater's statePath where an updater is at hand, instead of joining \"update-state.json\" onto the home; elsewhere keep it until the name has a constant."
+      }
+    },
+    {
+      "id": "launcher",
+      "forbid": {
+        "regex": {
+          "pattern": "(?:\\b(?:join|resolve)\\(\\s*(?:(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*,\\s*(?:[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)?|(?:os\\.)?homedir\\(\\)\\s*,\\s*[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)[\\\"'`]bin[\\\"'`]|\\$\\{\\s*(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*\\}[/\\\\]+bin\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "HOME_LAUNCHER_PATH",
+        "anchor": "witness.span",
+        "message": "Use ManagedUpdater's launcherPath (dirname for its folder) where an updater is at hand, instead of joining \"bin\" onto the home; elsewhere keep it until the name has a constant."
+      }
+    }
+  ]
+}

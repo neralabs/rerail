@@ -33,12 +33,24 @@ pub(in crate::code_rule_dsl) fn regex_haystack<'a>(
 
 /// A regex clause's matches in `haystack`, in order, at most `limit`; and whether the scan finished.
 /// It stops unfinished at a match past `limit`, or once this thread's match deadline is exhausted
-/// (polled before each match is kept).
+/// (polled before each match is kept). A `file.path` regex keeps its first match alone: the path
+/// names one file, which matches once or not at all.
 pub(in crate::code_rule_dsl) fn regex_matches(
     regex: &Regex,
+    source: &RegexSource,
     haystack: &str,
     limit: usize,
 ) -> (Vec<Range<usize>>, bool) {
+    if let RegexSource::Path = source {
+        return (
+            regex
+                .find(haystack)
+                .map(|found| found.range())
+                .into_iter()
+                .collect(),
+            true,
+        );
+    }
     let mut matches = Vec::new();
     for found in regex.find_iter(haystack) {
         if crate::code_rule_dsl::budget::matcher_budget_exhausted() || matches.len() >= limit {

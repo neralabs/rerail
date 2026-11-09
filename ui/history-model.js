@@ -3,7 +3,7 @@
  * when there is nothing to list. `poll.js` reads `historyRuleId` to fetch that rule's violations in range.
  */
 import { data, ui, sinceFor, titleOf, attachedPackOf, packOfRule } from "./state.js";
-import { isByRerail } from "./derive.js";
+import { isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN } from "./derive.js";
 
 /** History by rule's chips: the `ui.histOutcome` value and its label. */
 export const OUTCOME_CHIPS = [["all", "All"], ["steered", "Steered"], ["logged", "Logged"]];
@@ -26,12 +26,13 @@ export const historyTitle = id => {
   return stored ? titleOf(stored) : id;
 };
 
-/** Where a rule comes from, as its list row and heading read: its rule pack, else who made it. */
+/** Where a rule comes from, as its list row and heading read: its rule pack (with a third party's publisher), else who made it. */
 export function historyOrigin(id) {
   const stored = data.rules.get(id);
   if (!stored) return "No longer in this repo";
-  if (!isByRerail(stored)) return "Created by you";
-  return (attachedPackOf(stored) ?? packOfRule(stored))?.name ?? "By Rerail";
+  if (!isFromPack(stored)) return "Created by you";
+  const pack = attachedPackOf(stored) ?? packOfRule(stored);
+  return pack === undefined ? UNKNOWN_PACK_ORIGIN : packOriginName(pack);
 }
 
 /** The listed rules the search box lets through: `query` (trimmed, any case) in the title, the id or the pack. */
@@ -67,17 +68,17 @@ function sessionsSinceInstall() {
 
 /**
  * What History shows when no rule has a violation in the range (whatever the chip), or `null` when some does:
+ * - `nothingInRange`: violations exist, none in the range, whether or not any rule is on now;
  * - `noRules`: no rule is on, so nothing can be logged;
  * - `noSessions`: rules are on, but no coding agent session ran yet;
- * - `noViolations` (`sessions`: the audited sessions): sessions ran and no rule ever logged one;
- * - `nothingInRange`: violations exist, none in the range.
+ * - `noViolations` (`sessions`: the sessions started): sessions ran and no rule ever logged one.
  */
 export function historyEmpty(ranked = rankedRules("all")) {
   if (ranked.length > 0) return null;
+  const everLogged = (sessionsSinceInstall()?.withViolations ?? 0) > 0
+    || Object.values(sinceFor() === 0 ? data.activity : data.activityAll).some(a => a.measured !== false && a.distinctViolations > 0);
+  if (everLogged) return { kind: "nothingInRange" };
   if (![...data.rules.values()].some(stored => stored.enabled)) return { kind: "noRules" };
   const sessions = sessionsSinceInstall()?.started ?? 0;
-  if (sessions === 0) return { kind: "noSessions" };
-  const everLogged = Object.values(sinceFor() === 0 ? data.activity : data.activityAll)
-    .some(a => a.measured !== false && a.distinctViolations > 0);
-  return everLogged ? { kind: "nothingInRange" } : { kind: "noViolations", sessions };
+  return sessions === 0 ? { kind: "noSessions" } : { kind: "noViolations", sessions };
 }

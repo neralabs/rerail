@@ -29,6 +29,7 @@ import type {
 import { fixturesPath } from "../../support/oracles.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
+import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
 import * as native from "../../../src/engine/native/native.js";
 
 
@@ -1035,7 +1036,7 @@ describe("mechanical code rule regressions", () => {
         "Rerail found 1 problem in your last edit:",
         "- web/App.tsx:2:15 — Log user through the logger [test:logger]",
         "  Suggested fix: replace 2:3–2:20 with `logger.info(user)`",
-        "Fix it, or tell the user in one line why you won't.",
+        "Fix it, or tell the user in one line why you won't and run `rerail feedback test:logger '<that line>'`.",
       ].join("\n"));
       // Where the rule comes from is for the person's line, never the agent's text.
       expect(requestSteer.mock.calls[0]![3]).toMatchObject({
@@ -1422,6 +1423,25 @@ describe("mechanical code rule regressions", () => {
     }
   });
 
+  it("attaches the content store with the secret-like names it must never hold", async () => {
+    const { enforcer } = await fixture();
+    const passed: unknown[] = [];
+    const workspace = Object.assign(pagingWorkspace((cursor) => openPage(cursor, 1)), {
+      enableStorageAsync: async (_root: string, _storePath: string, secretNames: unknown) => {
+        passed.push(secretNames);
+        return { attached: true, discoveryMilliseconds: 0, publicationMilliseconds: 0 };
+      },
+    });
+    const binding = nativeWorkspaces(workspace);
+    try {
+      await enforcer.openWorkspace("secret-names");
+      expect(passed).toEqual([{ files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES }]);
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
   it("writes one line per repository audit with its phase times, files, violations, failures and status", async () => {
     const { recorder } = recordingAudits();
     const lines: string[] = [];
@@ -1512,7 +1532,7 @@ const completedApply = JSON.stringify({
 /** A native workspace double that serves result pages from `page` and reports each apply to `onApply`. */
 function pagingWorkspace(page: (cursor: number) => string, onApply: () => void = () => undefined): NativeCodeRuleDslWorkspace {
   return {
-    enableStorageAsync: async () => ({ attached: true, discoveryMilliseconds: 0, publicationMilliseconds: 0 }), addCodeRule: () => undefined, acceptsPath: () => true, readsServerGraph: () => false, readsPackageManifests: () => false,
+    enableStorageAsync: async () => ({ attached: true, discoveryMilliseconds: 0, publicationMilliseconds: 0 }), addCodeRule: () => undefined, acceptsPath: () => true, acceptsTextPath: () => false, readsServerGraph: () => false, readsPackageManifests: () => false,
     tryApply: () => null,
     applyAsync: async () => { onApply(); return completedApply; },
     applyBufferAsync: async () => { onApply(); return completedApply; },

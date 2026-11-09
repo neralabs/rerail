@@ -2,9 +2,10 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, r
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { BLOCK_STEERS_NOTE } from "../engine/catalog/rule-mode.js";
 import type { UpdateResult } from "../setup/updater.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, eraseFreedPages, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { listRepositories, lookupCheckout, repositoryHistoryIds } from "../engine/catalog/repository-registry.js";
 import { defaultRulesDumpPath, exportRulesDump, importRulesDump } from "../engine/catalog/rule-bootstrap.js";
@@ -104,8 +105,12 @@ export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath:
   return result;
 }
 
-/** `rerail rules export|import`: the library and every repository's configuration, as a rules dump. */
-export function runRulesCommand(args: readonly string[], usage: () => string): number {
+/**
+ * `rerail rules export|import`: the library and every repository's configuration, as a rules dump. `import --approve`
+ * approves each imported rule as it is imported (`rule-approval.ts`): the person's own dump, so never pre-approved.
+ */
+export function runRulesCommand(args: readonly string[], usage: () => string, io: { stdout?: { write(text: string): unknown } } = {}): number {
+  const stdout = io.stdout ?? process.stdout;
   const action = args[0];
   const database = defaultRerailDatabasePath();
   if (action === "export") {
@@ -131,19 +136,25 @@ export function runRulesCommand(args: readonly string[], usage: () => string): n
     } finally {
       rmSync(staging, { force: true });
     }
-    process.stdout.write(`Exported ${dump.library.length} rules created by you and ${dump.repositories.length} repositories from ${database} to ${output}\n`);
+    stdout.write(`Exported ${dump.library.length} rules created by you and ${dump.repositories.length} repositories from ${database} to ${output}\n`);
     return 0;
   }
   if (action === "import") {
     const file = args[1];
     if (file === undefined || file.startsWith("--")) throw new Error(`rules import needs a dump file\n\n${usage()}`);
-    parseArguments(args.slice(2), { flags: [], options: [] }, argument => `Unknown rules import option: ${argument}\n\n${usage()}`);
+    const { flags } = parseArguments(args.slice(2), { flags: ["--approve"], options: [] }, argument => `Unknown rules import option: ${argument}\n\n${usage()}`);
     const source = resolve(file);
     const value = parseJsonWithoutDuplicateKeys(readFileSync(source, "utf8"), source);
     const db = openRerailDatabase(database);
     try {
-      const report = importRulesDump(db, loadRuleCatalog(), value);
-      process.stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
+      const report = importRulesDump(db, loadRuleCatalog(), value, { approve: flags.has("--approve") });
+      stdout.write(`Imported ${report.library} rules created by you and ${report.repositories} repositories from ${source} into ${database}\n`);
+      if (report.onBlock.length > 0) stdout.write(`On Block: ${report.onBlock.join(", ")}. ${BLOCK_STEERS_NOTE}\n`);
+      for (const id of report.approved) stdout.write(`● Approved ${id}: it runs in the mode it is set to from the next edit.\n`);
+      const waiting = report.waiting.length;
+      if (waiting > 0) {
+        stdout.write(`${waiting} imported ${plural(waiting, "rule")} ${waiting === 1 ? "runs" : "run"} in Log until a person approves ${waiting === 1 ? "it" : "them"}: rerail rules approve\n`);
+      }
     } finally {
       db.$client.close();
     }
@@ -159,7 +170,9 @@ function plural(count: number, noun: string): string {
 /**
  * Delete this repository's execution history, across all its checkouts, from the Rerail database: sessions recorded
  * under its key or aliases, and older ones under its checkouts' clone ids. Rules, other repositories, and settings
- * stay; live sessions never observe a rule reset.
+ * stay; live sessions never observe a rule reset. The file is then rewritten (`eraseFreedPages`) so the deleted
+ * history cannot be read back from its bytes or its WAL. When that rewrite fails or another reader keeps the WAL, the
+ * history is still deleted; the command says what may remain and exits 1, and running it again finishes the rewrite.
  */
 export function runResetCommand(args: readonly string[], usage: () => string): number {
   parseArguments(args, { flags: [], options: [] }, argument => `Unknown reset option: ${argument}\n\n${usage()}`);
@@ -172,6 +185,8 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
   let repositoryKey: string;
   let sessions: number;
   let openSessions: number;
+  let erased = false;
+  let eraseFailure: string | undefined;
   try {
     const checkout = lookupCheckout(db, process.cwd());
     if (checkout === undefined) {
@@ -181,6 +196,11 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     repositoryKey = checkout.repositoryKey;
     const repository = listRepositories(db).find(candidate => candidate.repositoryKey === repositoryKey);
     ({ sessions, openSessions } = resetRepositoryHistoryIn(db, repository === undefined ? [repositoryKey] : repositoryHistoryIds(repository)));
+    try {
+      erased = eraseFreedPages(db);
+    } catch (error) {
+      eraseFailure = error instanceof Error ? error.message : String(error);
+    }
   } finally {
     db.$client.close();
   }
@@ -191,5 +211,17 @@ export function runResetCommand(args: readonly string[], usage: () => string): n
     + kept
     + ". Rules and other repositories are unchanged.\n",
   );
+  if (eraseFailure !== undefined) {
+    process.stdout.write(
+      `Could not rewrite ${database} to erase the deleted history (${eraseFailure}). The history is deleted, but its `
+      + `text may remain in ${database}-wal or the file's free pages. Run rerail reset again when Rerail is idle, with `
+      + "free disk space for a second copy of the database.\n",
+    );
+    return 1;
+  }
+  if (!erased) {
+    process.stdout.write(`Another Rerail process was reading the database, so the deleted history may remain in ${database}-wal until it stops; run rerail reset again then.\n`);
+    return 1;
+  }
   return 0;
 }

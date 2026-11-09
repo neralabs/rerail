@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
@@ -11,18 +12,19 @@ import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
-import { setCheckoutStarted, RerailRuntime } from "../../../src/runtime/index.js";
+import { setCheckoutStarted, setRepositoryStarted, RerailRuntime } from "../../../src/runtime/index.js";
 import { setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
 import type { RuleMode } from "../../../src/engine/catalog/rule-mode.js";
-import { repositoryAudits } from "../../../src/engine/storage/schema.js";
+import { checkouts, repositoryAudits } from "../../../src/engine/storage/schema.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { stopTestRepository } from "../../support/started-repository.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
@@ -95,7 +97,14 @@ function violations(audits: readonly RecordedRun[]) {
   })));
 }
 
-function router(sessionRoot: string, databasePath: string, recorder: AuditRecorder, ruleCatalog?: RuleCatalog): CheckoutCodeRuleRouter {
+function router(
+  sessionRoot: string,
+  databasePath: string,
+  recorder: AuditRecorder,
+  ruleCatalog?: RuleCatalog,
+  followGitignore = false,
+  requestSteer: () => Promise<undefined> = async () => undefined,
+): CheckoutCodeRuleRouter {
   const owners = new CheckoutOwners();
   const catalogs = new CheckoutCatalogs(databasePath, ruleCatalog === undefined ? {} : { ruleCatalog });
   const auditor = new CheckoutCodeRuleRouter({
@@ -103,8 +112,9 @@ function router(sessionRoot: string, databasePath: string, recorder: AuditRecord
     startingCheckout: startingCheckout(owners, sessionRoot).checkoutRoot,
     owners,
     catalogs,
-    steerDelivery: { requestSteer: async () => undefined },
+    steerDelivery: { requestSteer },
     audits: recorder,
+    followGitignore,
   });
   cleanups.push(async () => {
     await auditor.close();
@@ -360,6 +370,243 @@ describe("CheckoutCodeRuleRouter", () => {
   });
 });
 
+/** Whether this filesystem matches names case-insensitively, as macOS does by default. */
+function caseInsensitiveFilesystem(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), "rerail-case-"));
+  try {
+    return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+}
+
+describe("CheckoutCodeRuleRouter and linked worktrees", () => {
+  function recordedCheckouts(databasePath: string): string[] {
+    const database = openRerailDatabase(databasePath);
+    try {
+      return database.select({ path: checkouts.checkoutPath }).from(checkouts).all().map(row => row.path).toSorted();
+    } finally {
+      database.$client.close();
+    }
+  }
+
+  /** A set-up, started repository with a linked worktree; the worktree is not recorded, as no session started there. */
+  async function repositoryWithWorktree(place: (root: string, session: string) => string) {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    git(session, "worktree", "add", "--quiet", "-b", "linked", place(root, session));
+    return { root, databasePath, session, worktree: await realpath(place(root, session)) };
+  }
+
+  const nested = (_root: string, session: string) => join(session, ".claude", "worktrees", "w");
+  const outside = (root: string) => join(root, "elsewhere", "w");
+
+  it("judges a worktree inside the checkout by its own lane, though the checkout around it ignores the folder", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(nested);
+    await writeFile(join(session, ".git", "info", "exclude"), ".claude/worktrees/\n");
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+
+    await auditor.openWorkspace("nested-worktree");
+    expect(auditor.acceptsPath(".claude/worktrees/w/api/x.py")).toBe(true);
+    await edit(auditor, "nested-worktree", 1, ".claude/worktrees/w/api/x.py");
+
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+    expect(recordedCheckouts(databasePath)).toEqual([session, worktree]);
+  });
+
+  it("judges a worktree outside the checkout by its own lane", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("outside-worktree");
+    const absolute = join(worktree, "api", "x.py");
+    expect(auditor.acceptsPath(absolute)).toBe(true);
+    await edit(auditor, "outside-worktree", 1, absolute);
+
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+  });
+
+  it("judges a sibling worktree from a session that started in a worktree", async () => {
+    const { databasePath, session, worktree, root } = await repositoryWithWorktree(outside);
+    const sibling = join(root, "elsewhere", "sibling");
+    git(session, "worktree", "add", "--quiet", "-b", "sibling", sibling);
+    const database = openRerailDatabase(databasePath);
+    try {
+      recordCheckout(database, worktree);
+    } finally {
+      database.$client.close();
+    }
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(worktree, databasePath, recorder);
+
+    await auditor.openWorkspace("from-worktree");
+    await edit(auditor, "from-worktree", 1, join(sibling, "api", "x.py"));
+
+    expect(violations(audits)).toEqual([{ checkout: await realpath(sibling), path: "api/x.py", code: "SESSION", mode: "block" }]);
+  });
+
+  it("judges the main checkout from a session in a worktree, when only the worktree was recorded", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "w"));
+    const worktree = await realpath(join(root, "w"));
+    setUpTestRepository(worktree, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(worktree, databasePath, recorder);
+
+    await auditor.openWorkspace("main-from-worktree");
+    await edit(auditor, "main-from-worktree", 1, join(main, "api", "x.py"));
+
+    expect(violations(audits)).toEqual([{ checkout: main, path: "api/x.py", code: "SESSION", mode: "block" }]);
+  });
+
+  it("records a worktree's findings from a Log batch, as another worktree's walk sends them, and steers on none", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder, audits } = recordingAudits();
+    const requestSteer = vi.fn(async () => undefined);
+    const auditor = router(session, databasePath, recorder, undefined, false, requestSteer);
+    await auditor.openWorkspace("log-batch");
+    const edits = [{ path: join(worktree, "api", "x.py"), language: "python" as const, generatedText: "NEEDLE\n" }];
+
+    await auditor.auditGeneratedEdits("log-batch", { revision: 1, checkpoints: ["edit"], mode: "log", edits });
+    await auditor.settleGeneratedEdits();
+    expect(audits.map(audit => [audit.workspaceRoot, audit.mode])).toEqual([[worktree, "log"]]);
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+    expect(requestSteer).not.toHaveBeenCalled();
+
+    // The same edit as the session's own steers it.
+    await auditor.auditGeneratedEdits("log-batch", { revision: 2, checkpoints: ["edit"], edits });
+    await auditor.settleGeneratedEdits();
+    expect(requestSteer).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the stopped value a worktree outside the checkout has of its own", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const database = openRerailDatabase(databasePath);
+    try {
+      setCheckoutStarted(database, recordCheckout(database, worktree), false);
+    } finally {
+      database.$client.close();
+    }
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("stopped-worktree");
+    const absolute = join(worktree, "api", "x.py");
+    expect(auditor.acceptsPath(absolute)).toBe(false);
+    await edit(auditor, "stopped-worktree", 1, absolute);
+
+    expect(violations(audits)).toEqual([]);
+  });
+
+  it("records nothing for a worktree of a repository that is stopped", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+    await auditor.openWorkspace("stopped-repository");
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRepositoryStarted(database, recordCheckout(database, session).repositoryKey, false);
+    } finally {
+      database.$client.close();
+    }
+    auditor.refreshCodeRules();
+
+    expect(auditor.acceptsPath(join(worktree, "api", "x.py"))).toBe(false);
+    expect(violations(audits)).toEqual([]);
+    expect(recordedCheckouts(databasePath)).toEqual([session]);
+  });
+
+  it("never lets a .git file that names the repository's Git folder take files from the checkout's rules", async () => {
+    const { databasePath, session } = await repositoryWithWorktree(outside);
+    // Git confirms each as a top level sharing the session's common directory; only `git worktree add` registers one.
+    await mkdir(join(session, "forged-main"));
+    await writeFile(join(session, "forged-main", ".git"), `gitdir: ${join(session, ".git")}\n`);
+    await mkdir(join(session, "forged-linked"));
+    await writeFile(join(session, "forged-linked", ".git"), `gitdir: ${join(session, ".git", "worktrees", "w")}\n`);
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("forged");
+    await edit(auditor, "forged", 1, "forged-main/x.py", "forged-linked/y.py");
+
+    expect(violations(audits).toSorted((a, b) => a.path!.localeCompare(b.path!))).toEqual([
+      { checkout: session, path: "forged-linked/y.py", code: "SESSION", mode: "block" },
+      { checkout: session, path: "forged-main/x.py", code: "SESSION", mode: "block" },
+    ]);
+    expect(recordedCheckouts(databasePath)).toEqual([session]);
+  });
+
+  it("names the repository's other worktrees that may run rules for the session's walk, and no other folder", async () => {
+    const { root, databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const stopped = join(root, "elsewhere", "stopped");
+    git(session, "worktree", "add", "--quiet", "-b", "stopped", stopped);
+    const removed = join(root, "elsewhere", "removed");
+    git(session, "worktree", "add", "--quiet", "-b", "removed", removed);
+    await rm(removed, { recursive: true });
+    await mkdir(join(session, "forged"));
+    await writeFile(join(session, "forged", ".git"), `gitdir: ${join(session, ".git")}\n`);
+    const database = openRerailDatabase(databasePath);
+    try {
+      setCheckoutStarted(database, recordCheckout(database, stopped), false);
+    } finally {
+      database.$client.close();
+    }
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("roots");
+
+    expect(auditor.worktreeRoots()).toEqual([worktree]);
+  });
+
+  it.skipIf(!caseInsensitiveFilesystem())("names a worktree Git registered under a path typed in another case than the folder has", async () => {
+    const { root, databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const typed = join(root, "Elsewhere", "typed");
+    git(session, "worktree", "add", "--quiet", "-b", "typed", typed);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("typed-case");
+
+    expect(auditor.worktreeRoots().toSorted()).toEqual([join(root, "elsewhere", "typed"), worktree].toSorted());
+  });
+
+  it("gives no lane to a .git file outside the checkout that names the repository's Git folder", async () => {
+    const { root, databasePath, session } = await repositoryWithWorktree(outside);
+    const forged = join(root, "forged");
+    await mkdir(forged);
+    await writeFile(join(forged, ".git"), `gitdir: ${join(session, ".git")}\n`);
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("forged-outside");
+    await edit(auditor, "forged-outside", 1, join(forged, "x.py"));
+
+    expect(violations(audits)).toEqual([]);
+    expect(recordedCheckouts(databasePath)).toEqual([session]);
+  });
+
+  it("leaves another clone of the repository, which shares no Git folder, unrecorded", async () => {
+    const { root, databasePath, session } = await repositoryWithWorktree(outside);
+    const clone = join(root, "clone");
+    git(root, "clone", "--quiet", session, clone);
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("clone");
+    await edit(auditor, "clone", 1, join(clone, "api", "x.py"));
+
+    expect(violations(audits)).toEqual([]);
+    expect(recordedCheckouts(databasePath)).toEqual([session]);
+  });
+});
+
 describe("repository settings that reach evaluation", () => {
   const RULE = "typescript-eslint-consistent-type-definitions";
   const CODE = "@typescript-eslint/consistent-type-definitions";
@@ -440,6 +687,7 @@ describe("repository settings that reach evaluation", () => {
 
 describe("repository audit through the runtime", () => {
   it("records one repository audit per checkout that owns its files; a nested repository nobody set up, or a stray .git, is audited with the checkout around it", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
     const { parent, sub } = await withSubmodule(root);
@@ -532,5 +780,26 @@ describe("CheckoutCodeRuleRouter lanes after review", () => {
       { checkout: service, path: "api/inner.py", code: "SERVICE", mode: "block" },
       { checkout: session, path: "packages/outer.py", code: "SESSION", mode: "block" },
     ]);
+  });
+
+  it("names the checkouts whose ignore rules the session follows: its own and, each level down, the nested ones that run rules", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    const service = await repository(join(session, "packages", "service"));
+    const inner = await repository(join(service, "vendor", "inner"));
+    // Recorded inside the checkout, started but never set up: it runs no rules, so its ignore rules decide nothing.
+    const vendored = await repository(join(session, "vendored"));
+    for (const checkout of [session, service, inner]) setUpTestRepository(checkout, { library: [file(needle("test:x", "X"))] }, databasePath);
+    const database = openRerailDatabase(databasePath);
+    try {
+      recordCheckout(database, vendored);
+    } finally {
+      database.$client.close();
+    }
+    const auditor = router(session, databasePath, recordingAudits().recorder);
+
+    await auditor.openWorkspace("ignore-roots");
+    expect(auditor.ignoreRuleRoots()).toEqual([session, service, inner]);
   });
 });

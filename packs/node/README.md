@@ -15,16 +15,19 @@ template with an invalid escape), against:
   Apache-2.0 or BSD-3-Clause licence its repository gave it at that commit, whose text the archive's `LICENSES.md`
   holds.
 
-32 ports ship, 6 of them on (the ones the plugin's recommended configurations turn on: `n-hashbang`,
-`n-no-deprecated-api`, `n-no-exports-assign`, `n-no-process-exit`, `n-no-unsupported-features-es-builtins`,
-`n-no-unsupported-features-node-builtins`) and the other 26 off until a repository turns them on. The 10 candidates:
-`n-no-unsupported-features-es-syntax` matches the plugin on both sources but fails the compact gate's
+37 ports ship, 11 of them on (the ones the plugin's recommended configurations turn on: `n-hashbang`,
+`n-no-deprecated-api`, `n-no-exports-assign`, `n-no-extraneous-require`, `n-no-missing-import`, `n-no-missing-require`,
+`n-no-process-exit`, `n-no-unpublished-import`, `n-no-unpublished-require`, `n-no-unsupported-features-es-builtins`,
+`n-no-unsupported-features-node-builtins`) and the other 26 off until a repository turns them on. The five rules that
+read where a specifier resolves and ship (`n-no-missing-import`/`-require`, `n-no-unpublished-import`/`-require`,
+`n-no-extraneous-require`) are judged by the plugin's tests and their rename variants; no sample judges them yet: a
+sample carries its file and its package.json, not the files and installed packages its imports resolve to. The 5
+candidates: `n-no-unsupported-features-es-syntax` matches the plugin on both sources but fails the compact gate's
 no-written-out-repetition (a member chain over the global object reaches one node kind three times along a nesting
 path through its trace-map utilities); `n-no-restricted-import` and `n-no-restricted-require` report nothing at
-upstream's default options, so neither source shows them catching anything; the seven rules that read where a
-specifier resolves (`n-no-missing-import`/`-require`, `n-file-extension-in-import`, `n-no-unpublished-import`/`-require`,
-`n-no-extraneous-import`/`-require`) pass the plugin's tests, and no sample judges them yet: a sample carries its file
-and its package.json, not the files and installed packages its imports resolve to.
+upstream's default options, so neither source shows them catching anything; `n-file-extension-in-import` and
+`n-no-extraneous-import` pass the plugin's tests, but the renaming takes every finding of each from its rename
+variants, so `holds-under-rename` fails as vacuous.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.
@@ -201,6 +204,18 @@ eslint-plugin-n 18.4.1 n/prefer-process-get-builtin-module, where the configured
 ### `n-no-unsupported-features-node-builtins` / `n-no-unsupported-features-es-builtins`
 
 eslint-plugin-n 18.4.1 n/no-unsupported-features/node-builtins and es-builtins (default options: no `ignores`, `allowExperimental` off). Every reference eslint-utils' ReferenceTracker finds in legacy mode (require, `process.getBuiltinModule`, import and export, globals, `import.meta` for node-builtins) to an entry of the rule's trace map whose `supported` versions do not cover the configured Node range (the range is a subset of `^v` for each supported version or `>=` the latest), one clause per supported-version list, gated on `file.package.nodeVersion.notSubsetOf`; an entry with no supported version is reported everywhere. node-builtins' map lists each module with and without `node:`, whose own versions differ: the members are traced once for both names and each name's module read apart. A global is traced only where globals.node declares it. node-builtins is 933 clauses (about 2.4 MB), which takes the engine about 3 s to compile.
+
+### `n-no-missing-import` / `n-no-missing-require`
+
+eslint-plugin-n 18.4.1 n/no-missing-import and n/no-missing-require (default options). Reports each target of the plugin's visitImport (an import or export declaration's source, the literal argument of `import()`: a string, number, boolean, null or regular expression, read as its `String()`) or visitRequire (the first argument of a call of the global `require` or `require.resolve`, whatever constant it folds to) that is no Node.js built-in module and whose resolution fails (`importTarget: { failed: true }`). The message cannot repeat the resolver's error, which upstream's does. Not ported: the `allowModules`, `resolvePaths`, `resolverConfig`, `tryExtensions`, `tsconfigPath`, `typescriptExtensionMap` and `ignoreTypeImport` options and their settings.
+
+### `n-no-unpublished-import` / `n-no-unpublished-require`
+
+eslint-plugin-n 18.4.1 n/no-unpublished-import and n/no-unpublished-require (default options: `ignorePrivate` true). In a file npm publishes (`file.package.published: true`) of a package that is not private (`private: false`), reports a path target npm does not publish (`importTarget: { published: false }`: outside the package, or left out by its `files`, `.npmignore` or `.gitignore`) and a package target only `devDependencies` lists (`devDependency: true`). A target that resolves to no file is read at the workspace root, which stands for the plugin's working directory. Not ported: the `allowModules`, `convertPath`, `resolvePaths`, `resolverConfig`, `tryExtensions` and `ignoreTypeImport` options and their settings.
+
+### `n-no-extraneous-require`
+
+eslint-plugin-n 18.4.1 n/no-extraneous-require (default options). Reports a package target of the global `require` or `require.resolve` that resolves (`resolved: true`) but that neither the importing file's package.json (its own name and its `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies`) nor the workspace root that claims it (`workspaces`, or `pnpm-workspace.yaml`) lists (`declared: false`), and that no tsconfig `paths` key names (`aliased: false`). Without a package.json nothing is checked. Not ported: the `allowModules`, `convertPath`, `resolvePaths`, `resolverConfig` and `tryExtensions` options and their settings.
 
 ## Not ported
 

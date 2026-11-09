@@ -1,3 +1,4 @@
+import { ADAPTER_CAPABILITIES, type CommandSigil, type RerailHost } from "../engine/adapter-contract.js";
 import type { SetupOption, SetupOptionInput, SetupQuestion, SetupQuestionId } from "./setup-step.js";
 import { RERAIL_BRAND_FOREGROUND } from "../presentation/terminal-brand.generated.js";
 import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
@@ -16,14 +17,14 @@ import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
 export type SetupLane = "terminal" | "agent" | "json";
 
 export interface CodingAgent {
-  /** The value `--agents` takes, e.g. `claude`. */
-  readonly id: string;
+  /** The value `--agents` takes, e.g. `claude-code`. */
+  readonly id: RerailHost;
   /** The name people see, e.g. `Claude Code`. */
   readonly name: string;
 }
 
 export interface RecommendedPack {
-  /** The pack's id, which `--packs` names it by. */
+  /** How `--packs` names the pack: its id for one of Rerail's own, else its npm package name. */
   readonly id: string;
   readonly name: string;
   readonly ruleCount: number;
@@ -33,11 +34,18 @@ export interface RecommendedPack {
   readonly version: string;
   /** The version installed now, if any. Every repository on this computer runs it, so installing another replaces it there too. */
   readonly installed: string | null;
+  /** Who publishes it when that is not Rerail (`@acme`): a pack Rerail has not reviewed. */
+  readonly thirdParty?: string;
+  /** Set when the installed pack came from a folder or tarball, not npm: whatever its package.json says, unreviewed. */
+  readonly installedFrom?: "folder" | "tarball";
 }
 
-/** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not. */
+/** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not, and every one installed. */
 export interface AvailablePack {
+  /** How `--packs` names the pack: its id for one of Rerail's own, else its npm package name. */
   readonly id: string;
+  /** The npm package set-up installs. */
+  readonly packageName: string;
   readonly version: string;
   readonly name: string;
   /** Why it fits the repository; undefined for a pack that does not. */
@@ -320,6 +328,22 @@ export interface SessionsInput {
   /** What every answer carries on, so the run picks up where it was: `--repo <folder>` when one was named. */
   readonly carriedArgs: readonly string[];
   readonly setupCommand?: string;
+  /**
+   * Internal testing: the hosts of the remotes this computer sends Rerail's data to (`rerail remote`), so the screen
+   * never says nothing is sent when something is; null when the remote configuration could not be read.
+   */
+  readonly remoteHosts?: readonly string[] | null;
+}
+
+/** What the sessions question says about where sessions go: nowhere, or each remote by its host, and how to stop. */
+function sessionsDestination(remoteHosts: readonly string[] | null | undefined): string[] {
+  if (remoteHosts === null) return ["  ! Rerail could not read its remote settings; run rerail remote list to see what it sends where."];
+  if (remoteHosts === undefined || remoteHosts.length === 0) return ["  ✓ Stays on this computer. Nothing is sent anywhere."];
+  const where = remoteHosts.join(", ");
+  return [
+    `  ! Sent to ${remoteHosts.length === 1 ? "the remote" : "the remotes"} set up on this computer: ${where}.`,
+    "    Stop it with rerail remote remove <name> (rerail remote list names them).",
+  ];
 }
 
 /** T2b: asked once on this computer, before set-up connects anything, so the person agrees to what Rerail reads. */
@@ -332,7 +356,7 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
       "Rerail sees what you ask your agent, what it does, and the files it edits,",
       "so it can check the work against your rules.",
       "",
-      "  ✓ Stays on this computer. Nothing is sent anywhere.",
+      ...sessionsDestination(input.remoteHosts),
       "  ✓ You’re asked once, for every repo you start Rerail in.",
     ],
     choices: [
@@ -458,14 +482,39 @@ function lintConfigLines(input: RecommendedPacksInput, style: Style): string[] {
   ];
 }
 
+/** A pack's row name: its name, with its publisher when a third party's and where it came from when not npm. */
+function packRowName(pack: RecommendedPack): string {
+  const notes = [
+    ...(pack.thirdParty === undefined ? [] : [`by ${clean(pack.thirdParty)}`]),
+    ...(pack.installedFrom === undefined ? [] : [`from a ${pack.installedFrom}`]),
+  ];
+  return notes.length === 0 ? clean(pack.name) : `${clean(pack.name)} (${notes.join(", ")})`;
+}
+
+/** The packs that fit, one row each; a third party's pack is named with its publisher, and one from a folder says so. */
 function packTable(packs: readonly RecommendedPack[], style: Style): string[] {
-  const names = packs.map(pack => clean(pack.name));
+  const names = packs.map(packRowName);
   const nameWidth = Math.max(TABLE_MIN_PACK_WIDTH, ...names.map(name => name.length + 2));
   const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why it fits`);
   const rows = packs.map(
     (pack, index) => `  ${(names[index] ?? "").padEnd(nameWidth)}${String(pack.ruleCount).padEnd(TABLE_RULES_WIDTH)}${clean(pack.reason)}`,
   );
   return [header, ...rows];
+}
+
+/**
+ * The packs "Yes" would add that Rerail has not reviewed, a third party's or one installed from a folder or tarball:
+ * they run in Log until a person approves them, and then their steer text reaches the coding agent, so the person sees
+ * that before saying yes.
+ */
+function unreviewedLines(packs: readonly RecommendedPack[], style: Style): string[] {
+  return packs.flatMap(pack => {
+    const what = pack.installedFrom !== undefined ? `was installed from a ${pack.installedFrom}, not from npm`
+      : pack.thirdParty !== undefined ? `is by ${clean(pack.thirdParty)}, not Rerail`
+      : undefined;
+    if (what === undefined) return [];
+    return [`  ${style.yellow("△")} ${clean(pack.packageName)} ${what}. Rerail has not reviewed it: its rules run in Log until you approve them (rerail rules approve ${clean(pack.packageName)}), then their steer text reaches the coding agent.`];
+  });
 }
 
 /**
@@ -509,11 +558,12 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
     : `Scanned ${repo}. ${count === 1 ? "1 rule pack fits" : `${count} rule packs fit`}:`;
   const connecting = input.agentsFound.length === 0
     ? ["  Will connect to: no coding agents found"]
-    : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, "  Adds /rerail commands and a status line to each. Connecting is free."];
+    : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`];
   return [
     lane === "terminal" ? bullet(scanned, style) : scanned,
     ...(count === 0 ? [] : ["", ...packTable(input.packs, style)]),
     ...replaceLines(input.packs, style),
+    ...unreviewedLines(input.packs, style),
     ...withoutRulesLines(input.withoutRules, true),
     ...lintConfigLines(input, style),
     ...unavailableLines(input.unavailable, style),
@@ -615,14 +665,18 @@ export function packsNotDownloadedQuestion(input: PacksNotDownloadedInput, lane:
 
 // ── T5 · Not now ───────────────────────────────────────────────────────────
 
-/** After "Not now": no rule pack installed, nothing connected or turned on. Set-up may have installed Rerail itself. */
-export function renderNotNow(lane: SetupLane): string {
+/**
+ * After "Not now": no rule pack installed, nothing connected or turned on. Set-up may have installed Rerail itself.
+ * `agents`: the coding agents the person would type the start command in.
+ */
+export function renderNotNow(agents: readonly CodingAgent[], lane: SetupLane): string {
   const style = styleFor(lane);
-  const start = lane === "terminal" ? "rerail start" : "/rerail-start";
+  const start = lane === "terminal" ? "rerail start" : commandIn(agents, "rerail-start");
   return lines([
     ...(lane === "terminal" ? [""] : []),
     bullet("Set-up stopped. No rule packs were installed and nothing was turned on.", style),
     `  ${style.dim(`Start Rerail in this repo whenever you’re ready with ${start}.`)}`,
+    ...(lane === "terminal" ? [] : otherFormLines(agents, "rerail-start").map(line => `  ${line}`)),
   ]);
 }
 
@@ -639,7 +693,7 @@ export interface AgentProblem {
 
 /** What connecting the coding agents left, which the summary's commands and notes follow. */
 export interface AgentsConnection {
-  /** Every coding agent Rerail is connected to now. Codex types Rerail's commands as `$rerail…`, the others as `/rerail…`. */
+  /** Every coding agent Rerail is connected to now. Each types Rerail's commands with its own sigil (`commandSigil`). */
   readonly connected: readonly CodingAgent[];
   /** Connected by set-up run again where it was set up: the coding agents found since. */
   readonly added?: readonly CodingAgent[];
@@ -665,17 +719,24 @@ export interface SummaryInput {
   readonly agents: AgentsConnection;
 }
 
-const CODEX_ID = "codex";
+const sigilOf = (agent: CodingAgent): CommandSigil => ADAPTER_CAPABILITIES[agent.id].commandSigil;
 
-/** How a screen writes Rerail's command `name`: Codex's `$name` when Codex is the only coding agent connected. */
-function commandIn(agents: readonly CodingAgent[], name: string): string {
-  return agents.length > 0 && agents.every(agent => agent.id === CODEX_ID) ? `$${name}` : `/${name}`;
+/** The sigil a screen writes Rerail's commands with: the one every coding agent in `agents` shares, else `/`. */
+function sigilIn(agents: readonly CodingAgent[]): CommandSigil {
+  const shared = new Set(agents.map(sigilOf));
+  return shared.size === 1 ? [...shared][0]! : "/";
 }
 
-/** With Codex and another coding agent connected, the line that gives Codex's form of a command shown as `/name`. */
-function codexFormLines(agents: readonly CodingAgent[], name: string): string[] {
-  const codex = agents.some(agent => agent.id === CODEX_ID);
-  return codex && agents.some(agent => agent.id !== CODEX_ID) ? [`In Codex, type $${name}.`] : [];
+/** How a screen writes Rerail's command `name` for the coding agents connected. */
+function commandIn(agents: readonly CodingAgent[], name: string): string {
+  return `${sigilIn(agents)}${name}`;
+}
+
+/** With coding agents that type commands differently (Codex and another), the line for those `commandIn` does not fit. */
+function otherFormLines(agents: readonly CodingAgent[], name: string): string[] {
+  const shown = sigilIn(agents);
+  const others = agents.filter(agent => sigilOf(agent) !== shown);
+  return others.length === 0 ? [] : [`In ${andList(agentNames(others))}, type ${sigilOf(others[0]!)}${name}.`];
 }
 
 /** The coding agents connected by this run, and each one that could not be, with the file and what to do. */
@@ -751,7 +812,7 @@ function summaryLines(input: SummaryInput, style: Style): string[] {
   const tryIt = connected.length === 0 ? [] : summaryRow("Try it", [
     `Open a new agent session and type ${commandIn(connected, "rerail-show-me")}`,
     "to watch Rerail catch and fix a broken rule.",
-    ...codexFormLines(connected, "rerail-show-me"),
+    ...otherFormLines(connected, "rerail-show-me"),
   ]);
   return [
     bullet(`Rerail is on in ${repo} · ${packsOn}`, style),
@@ -801,7 +862,7 @@ function tipLines(agents: readonly CodingAgent[]): string[] {
     "",
     `  ${commandIn(agents, "rerail-create").padEnd(COMMAND_WIDTH)}write your own rule, in plain words`,
     `  ${commandIn(agents, "rerail-stop").padEnd(COMMAND_WIDTH)}stop Rerail in this repo`,
-    ...codexFormLines(agents, "rerail-create").map(line => `  ${line}`),
+    ...otherFormLines(agents, "rerail-create").map(line => `  ${line}`),
   ];
 }
 
@@ -1028,7 +1089,7 @@ export function renderSkipped(agents: AgentsConnection, lane: SetupLane): string
   const { connected } = agents;
   const start = connected.length === 0
     ? summaryRow("Start", ["Run rerail start in one of your repos.", "Rerail asks, suggests rule packs that fit, and starts there."])
-    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs that fit, and starts there.", ...codexFormLines(connected, "rerail-start")]);
+    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs that fit, and starts there.", ...otherFormLines(connected, "rerail-start")]);
   const summary = [
     bullet("Rerail is installed · not on in any repo yet", style),
     ...connectionNotes(agents, style),

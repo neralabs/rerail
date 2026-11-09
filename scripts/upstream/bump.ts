@@ -449,30 +449,30 @@ async function resolveGatedRelease(root: string, pack: string, tool: string, ver
   return { repository, from, to: { version, tag: toTag, commit: toCommit }, notes: [] };
 }
 
-/** Plan the bump of a gated tool-pack to `version`; null when it already pins it. */
-export async function planGatedBump(root: string, pack: string, tool: string, version: string, sources: Sources): Promise<Bump | null> {
-  const toolPack = `${pack}/${tool}`;
-  const manifest = readGatesManifest(root, pack, tool);
-  const pin = gatedPin(root, pack, tool);
-  if (pin.disagreements.length > 0) throw new Error(`${toolPack}: the pins disagree before the bump (${pin.disagreements.join("; ")}); line them up by hand first`);
-  if (pin.ecosystem === "rust") throw new Error(`${toolPack} is not pinned on a package registry`);
-  const ecosystem = pin.ecosystem;
-  if (!isNewer(pin.version, version, toolPack)) return null;
+/** What a gated bump works from once it knows the releases. */
+interface GatedBump {
+  readonly root: string;
+  readonly pack: string;
+  readonly tool: string;
+  readonly version: string;
+  readonly manifest: ReturnType<typeof readGatesManifest>;
+  readonly from: Release;
+  readonly to: Release;
+  readonly edits: Edits;
+  readonly gatesPath: string;
+  readonly oldRuntime: string;
+  readonly newRuntime: string;
+}
 
-  const { repository, from, to } = await resolveGatedRelease(root, pack, tool, version, sources);
-  const notes: string[] = [];
-
-  const edits = new Edits(root);
-  const renames: { from: string; to: string }[] = [];
-  const oldRuntime = manifest.upstream.runtime;
+/** The runtime's name once a name ending in the old version takes the new one. */
+function bumpedRuntimeName(root: string, oldRuntime: string, from: Release, version: string): string {
   const newRuntime = oldRuntime.endsWith(`-${from.version}`) ? `${oldRuntime.slice(0, -from.version.length)}${version}` : oldRuntime;
-  if (newRuntime !== oldRuntime) {
-    if (existsSync(join(root, RUNTIMES_DIRECTORY, newRuntime))) throw new Error(`${RUNTIMES_DIRECTORY}/${newRuntime} already exists`);
-    renames.push({ from: `${RUNTIMES_DIRECTORY}/${oldRuntime}`, to: `${RUNTIMES_DIRECTORY}/${newRuntime}` });
-  }
+  if (newRuntime !== oldRuntime && existsSync(join(root, RUNTIMES_DIRECTORY, newRuntime))) throw new Error(`${RUNTIMES_DIRECTORY}/${newRuntime} already exists`);
+  return newRuntime;
+}
 
-  // gates.yaml: the upstream block's pins, the ESLint release tag, and every gates.yaml's name for a renamed runtime.
-  const gatesPath = `packs/${pack}/upstream/${tool}/gates.yaml`;
+/** gates.yaml: the upstream block's pins and the ESLint release tag. Returns the new release tag, if it has one. */
+function bumpGatesFile({ manifest, from, to, version, edits, gatesPath }: GatedBump): string | undefined {
   let gates = withUpstreamBlock(edits.read(gatesPath), gatesPath, (block) => {
     let edited = replaceCounted(block, yamlScalar("  ", "commit", from.commit), (_, head, quote) => `${head}${quote}${to.commit}${quote}`, `${gatesPath} upstream.commit`, 1);
     edited = replaceCounted(edited, yamlScalar("  ", "version", from.version), (_, head, quote) => `${head}${quote}${version}${quote}`, `${gatesPath} upstream.version`, 1);
@@ -486,12 +486,21 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
     gates = replaceCounted(gates, yamlScalar("    ", "tag", releaseTag), (_, head, quote) => `${head}${quote}${newReleaseTag!}${quote}`, `${gatesPath} eslint.release.tag`, 1);
   }
   edits.write(gatesPath, gates);
+  return newReleaseTag;
+}
+
+/** What gates.yaml should parse to after the bump. */
+function expectedGatesManifest({ manifest, to, version, oldRuntime, newRuntime }: GatedBump, newReleaseTag: string | undefined): GatesManifest {
   const { id: _id, ...pinned } = manifest;
-  const expected = renamedRuntime({
+  return renamedRuntime({
     ...pinned,
     upstream: { ...pinned.upstream, commit: to.commit, version },
     ...(pinned.eslint === undefined || newReleaseTag === undefined ? {} : { eslint: { ...pinned.eslint, release: { ...pinned.eslint.release, tag: newReleaseTag } } }),
   }, oldRuntime, newRuntime);
+}
+
+/** Every gates.yaml's name for a renamed runtime, each checked against what it should now say; returns them all parsed. */
+function bumpEveryGatesFile({ root, edits, gatesPath, oldRuntime, newRuntime }: GatedBump, expected: GatesManifest): Map<string, GatesManifest> {
   const manifests = new Map<string, GatesManifest>();
   for (const other of gatedToolPacks(root)) {
     const path = `packs/${other.pack}/upstream/${other.tool}/gates.yaml`;
@@ -501,46 +510,100 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
     verify(path, after, path === gatesPath ? expected : renamedRuntime(original, oldRuntime, newRuntime));
     manifests.set(`${other.pack}/${other.tool}`, after);
   }
+  return manifests;
+}
+
+/** npm's `gitHead` of both releases, when the generators or UPSTREAM.md pin the old one. */
+async function bumpedGitHead(
+  sources: Sources, edits: Edits, { ecosystem, from, version, packageName }: { ecosystem: string; from: Release; version: string; packageName: string }, pinHolders: readonly string[],
+): Promise<{ old: string; fresh: string; note: string } | null> {
+  if (ecosystem !== "npm") return null;
+  const old = await npmGitHead(sources, packageName, from.version);
+  if (old === null || old === from.commit || !pinHolders.some((path) => edits.read(path).includes(old))) return null;
+  const fresh = await npmGitHead(sources, packageName, version);
+  if (fresh === null) throw new Error(`a generator pins npm's gitHead of ${packageName} ${from.version} (${old}), and npm records none for ${version}`);
+  return { old, fresh, note: `The generators or UPSTREAM.md pin npm's \`gitHead\` of ${packageName}: ${old} for ${from.version}, ${fresh} for ${version}.` };
+}
+
+function movedCommits(from: Release, to: Release, gitHead: { old: string; fresh: string } | null): [string, string][] {
+  return gitHead === null ? [[from.commit, to.commit]] : [[from.commit, to.commit], [gitHead.old, gitHead.fresh]];
+}
+
+/** A hand pin's tag sits beside its commit, in the same `{…}` (fixtures/sql/common.py's CORPORA). */
+function bumpHandPinTags(text: string, from: Release, to: Release): string {
+  return text.replace(/\{[^{}]*\}/gu, (block) => (block.includes(from.commit) ? block.replace(new RegExp(`(["']tag["']\\s*:\\s*)(["'])${literal(from.tag)}\\2`, "gu"), (_, head: string, quote: string) => `${head}${quote}${to.tag}${quote}`) : block));
+}
+
+/** A line naming the pinned commit (or gitHead) describes the pin: its release moves with it (`at v10.11.0 (<commit>)`). */
+function bumpCommitLines(text: string, commits: readonly (readonly [string, string])[], release: RegExp, version: string): string {
+  return text.split("\n").map((line) => (commits.some(([old]) => line.includes(old))
+    ? commits.reduce((moved, [old, fresh]) => moved.replaceAll(old, fresh), line).replace(release, (_, v: string) => `${v}${version}`)
+    : line)).join("\n");
+}
+
+/** A generator's own VERSION and TAG constants. */
+function bumpOwnConstants(text: string, path: string, from: Release, to: Release, version: string): string {
+  const moved = replaceCounted(text, new RegExp(`^((?:export\\s+)?(?:const\\s+)?(?:[A-Z][A-Z0-9_]*_)?VERSION\\s*=\\s*)(["'])${literal(from.version)}\\2`, "gmu"), (_, head, quote) => `${head}${quote}${version}${quote}`, path);
+  return replaceCounted(moved, new RegExp(`^((?:export\\s+)?(?:const\\s+)?(?:[A-Z][A-Z0-9_]*_)?TAG\\s*=\\s*)(["'])${literal(from.tag)}\\2`, "gmu"), (_, head, quote) => `${head}${quote}${to.tag}${quote}`, path);
+}
+
+/** The generators' pins, and the reference tools the pack pins by hand. */
+function bumpGeneratorPins(
+  { edits, from, to, version }: GatedBump, scripts: { own: readonly string[]; shared: readonly string[] }, handPins: readonly string[],
+  commits: readonly (readonly [string, string])[], runtimePackages: readonly string[],
+): void {
+  const release = versionToken(from.version, "gu");
+  for (const path of [...scripts.own, ...scripts.shared, ...handPins]) {
+    let text = edits.read(path);
+    if (handPins.includes(path)) text = bumpHandPinTags(text, from, to);
+    text = bumpCommitLines(text, commits, release, version);
+    if (scripts.own.includes(path)) text = bumpOwnConstants(text, path, from, to, version);
+    for (const name of runtimePackages) text = replaceCounted(text, packageEntry(name, from.version), (_, head, quote) => `${head}${quote}${version}${quote}`, path);
+    edits.write(path, text);
+  }
+}
+
+/** Plan the bump of a gated tool-pack to `version`; null when it already pins it. */
+export async function planGatedBump(root: string, pack: string, tool: string, version: string, sources: Sources): Promise<Bump | null> {
+  const toolPack = `${pack}/${tool}`;
+  const manifest = readGatesManifest(root, pack, tool);
+  const pin = gatedPin(root, pack, tool);
+  if (pin.disagreements.length > 0) throw new Error(`${toolPack}: the pins disagree before the bump (${pin.disagreements.join("; ")}); line them up by hand first`);
+  if (pin.ecosystem === "rust") throw new Error(`${toolPack} is not pinned on a package registry`);
+  if (!isNewer(pin.version, version, toolPack)) return null;
+  const { repository, from, to } = await resolveGatedRelease(root, pack, tool, version, sources);
+  return await writeGatedBump({ toolPack, ecosystem: pin.ecosystem, packageName: pin.package, repository, sources }, {
+    root, pack, tool, version, manifest, from, to, edits: new Edits(root), gatesPath: `packs/${pack}/upstream/${tool}/gates.yaml`,
+    oldRuntime: manifest.upstream.runtime, newRuntime: bumpedRuntimeName(root, manifest.upstream.runtime, from, version),
+  });
+}
+
+/** Every file the gated bump changes, and what is left for a person to look at. */
+async function writeGatedBump(
+  { toolPack, ecosystem, packageName, repository, sources }: { toolPack: string; ecosystem: keyof typeof PIN_FILES; packageName: string; repository: string; sources: Sources },
+  bump: GatedBump,
+): Promise<Bump> {
+  const { root, pack, tool, version, manifest, from, to, edits, gatesPath, oldRuntime, newRuntime } = bump;
+  const renames = newRuntime === oldRuntime ? [] : [{ from: `${RUNTIMES_DIRECTORY}/${oldRuntime}`, to: `${RUNTIMES_DIRECTORY}/${newRuntime}` }];
+  const manifests = bumpEveryGatesFile(bump, expectedGatesManifest(bump, bumpGatesFile(bump)));
 
   // The runtime's pin file.
   const pinFile = `${RUNTIMES_DIRECTORY}/${oldRuntime}/${PIN_FILES[ecosystem]}`;
-  const runtime = bumpRuntimePin(ecosystem, pinFile, edits.read(pinFile), pin.package, from.version, version);
+  const runtime = bumpRuntimePin(ecosystem, pinFile, edits.read(pinFile), packageName, from.version, version);
   edits.write(pinFile, runtime.text);
 
   // conformance.json.
   const conformancePath = `packs/${pack}/conformance.json`;
   edits.write(conformancePath, bumpConformanceTool(conformancePath, edits.read(conformancePath), tool, from.version, version));
 
-  // The generators' pins, and the reference tools the pack pins by hand.
   const scripts = generatorScripts(root, pack, tool);
   const handPins = referenceToolPins(root, pack);
   const record = upstreamRecordPath(root, pack, manifest.rerail.project);
-  const gitHeads = ecosystem === "npm" ? await (async () => {
-    const old = await npmGitHead(sources, pin.package, from.version);
-    if (old === null || old === from.commit || ![...scripts.own, ...scripts.shared, ...handPins, ...(record === undefined ? [] : [record])].some((path) => edits.read(path).includes(old))) return null;
-    const fresh = await npmGitHead(sources, pin.package, version);
-    if (fresh === null) throw new Error(`a generator pins npm's gitHead of ${pin.package} ${from.version} (${old}), and npm records none for ${version}`);
-    notes.push(`The generators or UPSTREAM.md pin npm's \`gitHead\` of ${pin.package}: ${old} for ${from.version}, ${fresh} for ${version}.`);
-    return { old, fresh };
-  })() : null;
-  // A line naming the pinned commit (or gitHead) describes the pin: its release moves with it (`at v10.11.0 (<commit>)`).
-  const commits: [string, string][] = [[from.commit, to.commit]];
-  if (gitHeads !== null) commits.push([gitHeads.old, gitHeads.fresh]);
-  const release = versionToken(from.version, "gu");
-  for (const path of [...scripts.own, ...scripts.shared, ...handPins]) {
-    let text = edits.read(path);
-    // A hand pin's tag sits beside its commit, in the same `{…}` (fixtures/sql/common.py's CORPORA).
-    if (handPins.includes(path)) text = text.replace(/\{[^{}]*\}/gu, (block) => (block.includes(from.commit) ? block.replace(new RegExp(`(["']tag["']\\s*:\\s*)(["'])${literal(from.tag)}\\2`, "gu"), (_, head: string, quote: string) => `${head}${quote}${to.tag}${quote}`) : block));
-    text = text.split("\n").map((line) => (commits.some(([old]) => line.includes(old))
-      ? commits.reduce((moved, [old, fresh]) => moved.replaceAll(old, fresh), line).replace(release, (_, v: string) => `${v}${version}`)
-      : line)).join("\n");
-    if (scripts.own.includes(path)) {
-      text = replaceCounted(text, new RegExp(`^((?:export\\s+)?(?:const\\s+)?(?:[A-Z][A-Z0-9_]*_)?VERSION\\s*=\\s*)(["'])${literal(from.version)}\\2`, "gmu"), (_, head, quote) => `${head}${quote}${version}${quote}`, path);
-      text = replaceCounted(text, new RegExp(`^((?:export\\s+)?(?:const\\s+)?(?:[A-Z][A-Z0-9_]*_)?TAG\\s*=\\s*)(["'])${literal(from.tag)}\\2`, "gmu"), (_, head, quote) => `${head}${quote}${to.tag}${quote}`, path);
-    }
-    for (const name of runtime.packages) text = replaceCounted(text, packageEntry(name, from.version), (_, head, quote) => `${head}${quote}${version}${quote}`, path);
-    edits.write(path, text);
-  }
+  const recordFiles = record === undefined ? [] : [record];
+  const gitHead = await bumpedGitHead(sources, edits, { ecosystem, from, version, packageName }, [...scripts.own, ...scripts.shared, ...handPins, ...recordFiles]);
+  const notes = gitHead === null ? [] : [gitHead.note];
+  const commits = movedCommits(from, to, gitHead);
+  bumpGeneratorPins(bump, scripts, handPins, commits, runtime.packages);
 
   // UPSTREAM.md's Source row and heading, when the pack takes anything from upstream.
   if (record !== undefined) edits.write(record, bumpUpstreamRecord(record, edits.read(record), { commits, tag: [from.tag, to.tag], version: [from.version, version] }));
@@ -556,12 +619,12 @@ export async function planGatedBump(root: string, pack: string, tool: string, ve
     conformancePath,
     `packs/${pack}/README.md`,
     `packs/${pack}/candidates/README.md`,
-    ...(record === undefined ? [] : [record]),
+    ...recordFiles,
     ...filesUnder(root, RECIPES_DIRECTORY),
     ...filesIn(root, `${RUNTIMES_DIRECTORY}/${oldRuntime}`),
   ], from.version, renames);
 
-  return { toolPack, pack, tool, ecosystem, package: pin.package, repository, from, to, files: edits.changed(renames), renames, derive, leftovers, notes };
+  return { toolPack, pack, tool, ecosystem, package: packageName, repository, from, to, files: edits.changed(renames), renames, derive, leftovers, notes };
 }
 
 const channelSchema = z.object({

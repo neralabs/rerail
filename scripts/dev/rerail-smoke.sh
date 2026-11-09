@@ -223,12 +223,12 @@ case "$status_output" in *"running at http://127.0.0.1:$DAEMON_PORT"*) ;; *) fai
 case "$status_output" in *"Engine: ok"*) ;; *) fail "the daemon has no working native kernel" ;; esac
 case "$status_output" in *"Database: "*"${SMOKE##*/}/home/.rerail/rerail.sqlite"*) ;; *) fail "the daemon reads a database outside the sandbox Rerail home" ;; esac
 
-info "Rerail is off until started: the hook does nothing and the HUD says not on here"
+info "Rerail is off until started: the hook does nothing and the HUD draws no Rerail line"
 sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({hook_event_name:"SessionStart",session_id:"installer-smoke-off",cwd:process.cwd(),source:"startup"}))' \
   | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-hook.js" >/dev/null
 status_output="$(sandbox "$NODE" -e 'process.stdout.write(JSON.stringify({session_id:"installer-smoke-off",cwd:process.cwd()}))' \
   | sandbox "$NODE" "$RERAIL_DIR/current/dist/hosts/claude/claude-status.js")"
-case "$status_output" in *"not on here"*) ;; *) fail "the HUD in a repository that was never started does not say not on here" ;; esac
+[ -z "$status_output" ] || fail "the HUD in a repository that was never started draws a Rerail line: $status_output"
 
 info "rerail start (the set-up's start answer, as a coding agent relays it)"
 start_output="$(sandbox "$LAUNCHER" start --answer start)"

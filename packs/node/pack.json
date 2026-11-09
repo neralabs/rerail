@@ -274,6 +274,36 @@
       "title": "eslint-plugin-n no-unpublished-bin: disallow `bin` files that npm ignores",
       "group": "eslint-plugin-n",
       "on": false
+    },
+    {
+      "id": "n-no-extraneous-require",
+      "document": "rules/n-no-extraneous-require.json",
+      "title": "eslint-plugin-n no-extraneous-require: disallow `require()` expressions which import extraneous modules",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-missing-import",
+      "document": "rules/n-no-missing-import.json",
+      "title": "eslint-plugin-n no-missing-import: disallow `import` declarations which import missing modules",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-missing-require",
+      "document": "rules/n-no-missing-require.json",
+      "title": "eslint-plugin-n no-missing-require: disallow `require()` expressions which import missing modules",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-unpublished-import",
+      "document": "rules/n-no-unpublished-import.json",
+      "title": "eslint-plugin-n no-unpublished-import: disallow `import` declarations which import private modules",
+      "group": "eslint-plugin-n"
+    },
+    {
+      "id": "n-no-unpublished-require",
+      "document": "rules/n-no-unpublished-require.json",
+      "title": "eslint-plugin-n no-unpublished-require: disallow `require()` expressions which import private modules",
+      "group": "eslint-plugin-n"
     }
   ]
 }

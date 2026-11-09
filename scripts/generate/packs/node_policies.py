@@ -58,7 +58,8 @@ SHIPPED = {"n-callback-return", "n-exports-style", "n-no-path-concat", "n-prefer
            "n-prefer-global-url", "n-prefer-global-url-search-params", "n-prefer-node-protocol", "n-prefer-promises-dns",
            "n-prefer-promises-fs", "n-prefer-global-crypto", "n-prefer-global-timers", "n-prefer-import-assert-strict",
            "n-prefer-process-get-builtin-module", "n-no-unsupported-features-node-builtins", "n-no-unsupported-features-es-builtins",
-           "n-no-top-level-await", "n-no-unpublished-bin"}
+           "n-no-top-level-await", "n-no-unpublished-bin", "n-no-missing-import", "n-no-missing-require",
+           "n-no-unpublished-import", "n-no-unpublished-require", "n-no-extraneous-require"}
 
 INCLUDE = ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"]
 

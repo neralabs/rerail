@@ -21,7 +21,7 @@ ast-grep-language = { version = "=0.51.0", default-features = false, features = 
 foldhash = "=0.2.0"
 gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
 globset = "=0.4.21"
-model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
+model2vec-rs = { version = "0.4.0", default-features = false, features = ["fancy-regex", "local-only"] }
 napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-symbols"] }
 napi-derive = "3.0"
 indexmap = "=2.14.2"

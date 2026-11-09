@@ -4,7 +4,7 @@
 // Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release or a re-snapshot):
 //   node generate.mjs --tools <dir> --eslint <checkout>
 // <dir> holds node_modules with exactly eslint@10.11.0, @typescript-eslint/parser@8.70.1 and typescript@6.0.3 (the
-// runtime nera-rule-validation pins for ESLint 10.11.0, validation/upstream/eslint-10.11.0). The checkout is
+// runtime scripts/pack-data/runtimes/eslint-10.11.0 pins for ESLint 10.11.0). The checkout is
 // github.com/eslint/eslint at v10.11.0 (3c0b7c6e1fe2dec778b97a996018126f22d437ae).
 //
 // Each rule's test file is loaded with a stub RuleTester that records its cases instead of linting. Every case's code

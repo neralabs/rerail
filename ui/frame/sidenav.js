@@ -47,7 +47,7 @@ export function renderSidenav(root) {
   const items = setUp ? repositoryItems() : [];
   const note = !scoped ? null
     : !setUp ? `${repoName()} is not set up.`
-      : items.length === 0 && data.loaded ? "No rules added yet. Add a pack or create a rule." : null;
+      : items.length === 0 && data.loaded ? "No rule packs yet." : null;
   const signature = JSON.stringify([ui.view, ui.pack, setUp, note, items.map(i => [i.hash, i.label, i.n?.short, i.current])]);
   setContent(root, signature, () => [
     item("overview", "Overview", icon("overview", 14)),

@@ -18,6 +18,12 @@ export interface ModelFingerprint {
   kernelFormatVersion: number;
 }
 
+/** What `verifyModelFiles` found: `problem` and `file` are absent where every file matches `manifest.json`. */
+export interface NativeModelCheck {
+  problem?: "missing" | "unreadable" | "invalid-manifest" | "checksum-mismatch" | null;
+  file?: string | null;
+}
+
 export interface NativeRuleInput {
   id: string;
   /** Similarity rules only: the text samples are compared against. */
@@ -91,6 +97,8 @@ export interface NativeCompiledCodeRuleDsl {
   openEditor(snapshotJson: string): NativeCodeRuleDslEditor;
   /** Whether the code rule reads `file.package.serverGraph`, so hosts send `package.serverGraph`. */
   readsServerGraph(): boolean;
+  /** Whether the code rule reads text: some clause, however nested, is a `regex` or `file` query, so files no language lists are read for it. */
+  readsText(): boolean;
 }
 
 export interface NativeCodeRuleDslEditor {
@@ -112,6 +120,16 @@ export interface NativeStorageAttachment {
 }
 
 /**
+ * The names `enableStorageAsync` keeps out of the content store (`SENSITIVE_FILE_NAMES` and `SENSITIVE_FOLDER_NAMES`
+ * in path-boundary.ts): `files` match a path's last segment and `folders` any segment on the way, as `sensitiveByName`
+ * reads them.
+ */
+export interface NativeSecretNames {
+  files: readonly string[];
+  folders: readonly string[];
+}
+
+/**
  * The bytes of violations a host reads a whole result in per `resultPageAsync` page. Small, since a page is held three
  * times while it is read (the JSON, its parse, its validated copy) and V8 keeps what it grew to: 256 KiB pages read
  * django's 15.5k violations (6.8 MB) with 40 MiB less peak RSS than one 8 MiB page.
@@ -121,9 +139,10 @@ export const RESULT_PAGE_BYTES = 256 * 1024;
 export interface NativeCodeRuleDslWorkspace {
   /**
    * Attaches the content store at `storePath` (see `contentStorePath`) to the repository containing `root`; the
-   * binding never chooses a store itself and refuses an empty path.
+   * binding never chooses a store itself and refuses an empty path. A file `secretNames` names is evaluated but never
+   * written to the store (not its source, syntax trees or results): it stays in the workspace's memory instead.
    */
-  enableStorageAsync(root: string, storePath: string): Promise<NativeStorageAttachment>;
+  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames): Promise<NativeStorageAttachment>;
   /**
    * `placement`, when given, is a JSON `CodeRulePlacement` (repository-model.ts): this workspace runs the code rule per folder
    * at the entry's mode (`null` is off there), and a linter's suppression comment silences its violations there unless the
@@ -132,6 +151,8 @@ export interface NativeCodeRuleDslWorkspace {
    */
   addCodeRule(compiled: NativeCompiledCodeRuleDsl, placement?: string): void;
   acceptsPath(path: string): boolean;
+  /** Whether `path` is in the scope of a code rule that reads text (as `acceptsPath`, over those rules only): an unlisted file is read only then. */
+  acceptsTextPath(path: string): boolean;
   /** Whether a code rule reads `file.package.serverGraph`, so hosts send `package.serverGraph`. */
   readsServerGraph(): boolean;
   /**
@@ -188,6 +209,19 @@ export interface NativeGitIgnoreMatcher {
    * the worktree are never ignored. Throws when an ignore file on the way cannot be read.
    */
   ignored(relativePath: string, isDirectory: boolean): boolean;
+  /**
+   * The pattern that makes Git ignore `relativePath` (as for `ignored`), as `git check-ignore -v` names it: the file it
+   * was read from (absolute; absent when it came from no file), its line there, and the pattern. A path under an
+   * ignored folder names the folder's pattern. Null when Git does not ignore it; throws as `ignored` does.
+   */
+  ignoredBy(relativePath: string, isDirectory: boolean): NativeGitIgnoreMatch | null;
+}
+
+/** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */
+export interface NativeGitIgnoreMatch {
+  source?: string | null;
+  line: number;
+  pattern: string;
 }
 
 /**
@@ -268,6 +302,8 @@ export interface NativeExclusiveFileLock {
 
 export interface NativeBinding {
   health(): NativeHealth;
+  /** Checks the model directory against its `manifest.json` (each file's SHA-256) without loading the model. */
+  verifyModelFiles(modelPath: string): NativeModelCheck;
   nativeMemoryProfile(): string;
   processSessionId(pid: number): number | null;
   /** The module a file of dialect `label` carries as `module`, from the package markers on disk; null where its family names no modules or the file is outside a package. */

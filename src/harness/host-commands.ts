@@ -4,7 +4,7 @@ import { ENTRY_POINTS } from "../engine/package-root.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { nodeExecutable, openDashboard, type PageOpening } from "../runtime/daemon-control.js";
-import { createRuleInstructions, RERAIL_COMMANDS, showMeInstructions, type RerailCommandName } from "./rerail-commands.js";
+import { bugReportInstructions, createRuleInstructions, RERAIL_COMMANDS, showMeInstructions, type RerailCommandName } from "./rerail-commands.js";
 import { renderRerailSummary } from "./rerail-summary.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
 import { pickSetup, type SetupStepRunner } from "./setup-picker.js";
@@ -188,6 +188,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       presentation,
       repositoryState,
       ruleCount: null,
+      awaitingApproval: null,
       rulesUrl: (await readRulesDashboard({ cwd })).url,
       repositoryName: repositoryName(cwd),
       sigil: "/",
@@ -203,7 +204,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
     ctx.ui.notify(openingNotice(page.url, await openDashboard(page.url)), "info");
   });
 
-  // The launcher, as the coding agent runs it from `/rerail-create` and `/rerail-show-me`.
+  // The launcher, as the coding agent runs it from `/rerail-create`, `/rerail-show-me` and `/rerail-bug-report`.
   const cli = `${shellWord(nodeExecutable())} ${shellWord(join(options.packageRoot, ENTRY_POINTS.cli))}`;
 
   register("rerail-create", async (_ctx, request) => {
@@ -214,8 +215,12 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
     pi.sendUserMessage(showMeInstructions({ cli, sigil: "/", write: "edit-tool" }));
   });
 
+  register("rerail-bug-report", async (_ctx, request) => {
+    pi.sendUserMessage(bugReportInstructions({ cli, packageRoot: options.packageRoot, request: request === "" ? "(none given)" : `"${request}"` }));
+  }, true);
+
   // Start and stop run the launcher, so the CLI owns the wording; without a terminal it addresses the coding agent's user.
-  // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
+  // Re-attaching attaches the runtime where Rerail is started, and leaves no footer where it is not.
   register("rerail-start", async ctx => {
     if (await startFromCommand(options, ctx)) await options.reattach?.();
   });

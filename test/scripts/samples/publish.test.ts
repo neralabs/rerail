@@ -1,18 +1,19 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { delimiter, join, relative, sep } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { samplesArchiveCachePath, samplesTree, samplesTreeDirectory } from "../../../scripts/s3/pack-fixtures.mjs";
 import { buildArchive, compressArchive, lockText } from "../../../scripts/s3/test-data-archive.mjs";
 import { publishSamplesDirectory, writeSampleSet } from "../../../scripts/samples/pack.js";
 import { recordedLicences } from "../../../scripts/samples/licences.js";
-import { publishedSamples } from "../../../scripts/samples/publish.js";
-import { writeSamplesTree } from "../../support/samples.js";
+import { checkLicenceTexts, licenceCache, publishedSamples } from "../../../scripts/samples/publish.js";
+import { cacheLicence, writeSamplesTree } from "../../support/samples.js";
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -77,15 +78,19 @@ describe("publishedSamples", () => {
   });
 });
 
-/** `ONE` staged with its labels' `source` changed by `edit`; the error publishedSamples throws, or "" when it passes. */
-function refusalWith(edit: Record<string, string>): string {
-  const entries = sampleEntries([ONE]).map(entry => {
+/** `ONE`'s entries with its labels' `source` changed by `edit`. */
+function sampleWith(edit: Record<string, string>, sample = ONE): { path: string; bytes: Buffer }[] {
+  return sampleEntries([sample]).map(entry => {
     if (!entry.path.endsWith(".expected.json")) return entry;
     const labels = JSON.parse(entry.bytes.toString("utf8"));
     return { ...entry, bytes: Buffer.from(JSON.stringify({ ...labels, source: { ...labels.source, ...edit } })) };
   });
+}
+
+/** `ONE` staged with its labels' `source` changed by `edit`; the error publishedSamples throws, or "" when it passes. */
+function refusalWith(edit: Record<string, string>): string {
   try {
-    publishedSamples(entries);
+    publishedSamples(sampleWith(edit));
     return "";
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
@@ -131,10 +136,70 @@ describe("publishedSamples on the source licence", () => {
   });
 });
 
+describe("checkLicenceTexts", () => {
+  const BSD = "BSD License\n\nRedistribution and use in source and binary forms ... Neither the name Facebook\n";
+  // jest at 242fb35: BSD-3-Clause with a patent grant (LICENSE and PATENTS).
+  const JEST_BSD = "242fb35459b387e360f52394b0e30f42101cc51d";
+  // sequelize in September 2010, which nothing at the commit gives a licence.
+  const SEQUELIZE_NONE = "155381bd5ddfc8d4b7a6f1cd8385bfca60921ada";
+
+  /** checkLicenceTexts's error over `entries` with the cache under `root`, or "" when it passes. */
+  function failure(root: string, entries: readonly { path: string; bytes: Buffer }[]): string {
+    try {
+      checkLicenceTexts(entries, licenceCache(root));
+      return "";
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  it("passes samples whose licence files read, at each sample's commit, as the licence recorded for it", () => {
+    const root = tempRoot();
+    cacheLicence(root);
+    cacheLicence(root, { repo: "jestjs/jest", commit: JEST_BSD, text: BSD });
+    cacheLicence(root, { repo: "jestjs/jest", commit: JEST_BSD, file: "PATENTS", text: "Additional Grant of Patent Rights Version 2\n" });
+    const jest = sampleWith({ repo: "jestjs/jest", commit: JEST_BSD, license: "BSD-3-Clause" }, { ...ONE, name: "jest" });
+    expect(failure(root, [...sampleEntries([ONE]), ...jest])).toBe("");
+  });
+
+  it("names each commit whose licence does not hold, with one of its samples: a mismatch, a copyleft text, no licence, an unrecorded repository", () => {
+    const root = tempRoot();
+    // A 2017 jest commit the table gives no entry of its own, so it is held to jest's MIT, whose LICENSE reads BSD.
+    const eslintJest = "27b53ca4fe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e";
+    cacheLicence(root, { repo: "jestjs/jest", commit: eslintJest, text: BSD });
+    cacheLicence(root, { repo: "django/django", text: "GNU GENERAL PUBLIC LICENSE\nVersion 2\n" });
+    const entries = [
+      ...sampleWith({ repo: "jestjs/jest", commit: eslintJest }, { ...ONE, name: "jest" }),
+      ...sampleWith({ repo: "django/django", license: "BSD-3-Clause" }, { ...ONE, name: "django" }),
+      ...sampleWith({ repo: "sequelize/sequelize", commit: SEQUELIZE_NONE, license: "NONE" }, { ...ONE, name: "sequelize" }),
+      ...sampleWith({ repo: "someone/unknown" }, { ...ONE, name: "unknown" }),
+    ];
+    const message = failure(root, entries);
+    expect(message).toContain("publish/samples/ holds samples whose licence does not hold at their commit:");
+    expect(message).toMatch(new RegExp(`jestjs/jest at ${eslintJest}: LICENSE do not read as MIT \\(1 sample\\(s\\), such as jest-src-a-js-[0-9a-f]{12}/src/a\\.js\\)`, "u"));
+    expect(message).toContain(`django/django at ${"0".repeat(40)}: its licence files name a copyleft licence`);
+    expect(message).toContain(`sequelize/sequelize at ${SEQUELIZE_NONE}: nothing at the commit states a licence, so no file of it may be copied`);
+    expect(message).toContain("someone/unknown: scripts/samples/licences.ts records no licence files for it");
+  });
+
+  it("says which recorded licence file GitHub does not have at the commit", () => {
+    const root = tempRoot();
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "gh"), "#!/bin/sh\necho 'gh: Not Found (HTTP 404)' >&2\nexit 1\n");
+    chmodSync(join(bin, "gh"), 0o755);
+    vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
+    expect(failure(root, sampleEntries([ONE]))).toContain(
+      `fastify/fastify at ${"0".repeat(40)}: LICENSE, which scripts/samples/licences.ts records for this commit, could not be read from GitHub (gh: Not Found (HTTP 404))`,
+    );
+  });
+});
+
 describe("writeSampleSet", () => {
   it("stages the set under publish/samples/ with a REUSE.toml licensing each sample under its source's licence", () => {
     const root = tempRoot();
     const entries = sampleEntries([ONE]);
+    cacheLicence(root);
     writeSampleSet(root, TOOL_PACK, entries);
     const staged = filesIn(join(root, publishSamplesDirectory(TOOL_PACK)));
     const id = entries.find(entry => entry.path.endsWith("a.js"))!.path.split("/")[0]!;
@@ -150,6 +215,15 @@ describe("writeSampleSet", () => {
   });
 });
 
+describe("writeSampleSet on the licence at each sample's commit", () => {
+  it("refuses a set whose repository's licence file does not read as recorded at a sample's commit, and stages nothing", () => {
+    const root = tempRoot();
+    cacheLicence(root, { text: "Apache License, Version 2.0\n" });
+    expect(() => writeSampleSet(root, TOOL_PACK, sampleEntries([ONE]))).toThrow(/fastify\/fastify at 0{40}: LICENSE do not read as MIT/u);
+    expect(existsSync(join(root, publishSamplesDirectory(TOOL_PACK)))).toBe(false);
+  });
+});
+
 describe("samplesTree with staged samples", () => {
   const noAws = (): never => {
     throw new Error("aws called");
@@ -158,6 +232,7 @@ describe("samplesTree with staged samples", () => {
   it("serves the staged set alone when the tool-pack has no samples.lock", () => {
     const root = tempRoot();
     const entries = sampleEntries([ONE]);
+    cacheLicence(root);
     writeSampleSet(root, TOOL_PACK, entries);
     const tree = samplesTree({ root, pack: "p", tool: "t", aws: noAws })!;
     expect(tree).toContain(join(".rerail", "pack-data", "samples", "p", "t", "publish-"));
@@ -176,6 +251,7 @@ describe("samplesTree with staged samples", () => {
     mkdirSync(join(cached, ".."), { recursive: true });
     writeFileSync(cached, compressArchive(archive.tar));
     const staged = sampleEntries([{ ...ONE, expected: { "p-no-null": [] } }]).filter(entry => entry.path !== "LICENSES.md");
+    cacheLicence(root);
     writeSampleSet(root, TOOL_PACK, staged);
 
     const tree = samplesTree({ root, pack: "p", tool: "t", aws: noAws })!;

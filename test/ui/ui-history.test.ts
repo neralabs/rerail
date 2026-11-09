@@ -101,6 +101,13 @@ describe("what History says with no rule to list", () => {
     expect(historyEmpty()).toEqual({ kind: "noRules" });
   });
 
+  it("says nothing is in range, not that there is no history, while every rule is off", () => {
+    data.rules = new Map([["a", storedRule("a", "Alpha", false)]]);
+    data.activityAllSessions = { started: 4, withViolations: 2 };
+
+    expect(historyEmpty()).toEqual({ kind: "nothingInRange" });
+  });
+
   it("waits for a session while rules are on and none ran since install", () => {
     data.rules = new Map([["a", storedRule("a", "Alpha")]]);
     data.activityAllSessions = { started: 0, withViolations: 0 };
@@ -108,7 +115,7 @@ describe("what History says with no rule to list", () => {
     expect(historyEmpty()).toEqual({ kind: "noSessions" });
   });
 
-  it("counts the audited sessions since install when none logged a violation", () => {
+  it("counts the sessions since install when none logged a violation", () => {
     data.rules = new Map([["a", storedRule("a", "Alpha")]]);
     data.activitySessions = { started: 1, withViolations: 0 };
     data.activityAllSessions = { started: 6, withViolations: 0 };

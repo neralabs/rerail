@@ -29,7 +29,7 @@ function addedRulesText(id) {
 }
 
 /** After a switch in the review. */
-const keptMessage = (id, keep) => `${packName(id)} ${keep ? "on" : "off"}.`;
+const keptMessage = (id, keep) => `${packName(id)} ${keep ? "kept" : "left out"}.`;
 
 /**
  * After a pack is removed: its rules that stay are the ones added to the repository on their own. No view lists them
@@ -55,6 +55,21 @@ async function setRepository(key, verb) {
         : `Rerail started in ${repository.name}. Add rule packs to run rules here.`);
   } catch (error) {
     toast(failed(`Couldn’t ${verb} Rerail in ${name}`, error));
+  }
+  await refreshNow();
+}
+
+/**
+ * Approve `subject` (the rule by its id, or the pack by package name, at the digest this page read), for this worktree
+ * when the page names one, where its own rules are read. Content that changed since is refused, and the page reloads.
+ */
+async function approveContent(subject) {
+  const checkout = ui.scope?.checkout;
+  try {
+    await send("POST", "/api/rule-approvals", { ...subject, ...(checkout === undefined ? {} : { checkout }) });
+    toast(`${subject.id} is approved: it runs in the mode it is set to from the coding agent’s next turn.`);
+  } catch (error) {
+    toast(failed(`Couldn’t approve ${subject.id}`, error));
   }
   await refreshNow();
 }
@@ -85,4 +100,6 @@ export const commonActions = {
   repostop: key => setRepository(key, "stop"),
   /** The Undo on a deleted rule's toast. */
   ruleundo: id => restoreRule(id),
+  /** Approve a rule's or pack's content as this page read it (`data-kind`, `data-digest`): it then runs in its mode. */
+  approve: (id, element) => approveContent({ kind: element.dataset.kind, id, digest: element.dataset.digest }),
 };

@@ -1,0 +1,146 @@
+{
+  "caught": [
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { spawn } from \"node:child_process\";\n\nexport async function readGitBlobs(cwd: string, revisions: readonly string[], options: { maxBytes: number; timeout?: number }): Promise<Map<string, Buffer>> {\n  const blobs = new Map<string, Buffer>();\n  let executable: string;\n  try {\n    executable = gitExecutable();\n  } catch {\n    return blobs;\n  }\n  const child = spawn(executable, [...SAFE_CONFIG, \"-C\", cwd, \"cat-file\", \"--batch\"], {\n    env: { ...process.env, GIT_OPTIONAL_LOCKS: \"0\" },\n    stdio: [\"pipe\", \"pipe\", \"ignore\"],\n    timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,\n  });\n  return blobs;\n}\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\n\nexport function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {\n  const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, ...args], {\n    encoding: \"utf8\",\n    timeout: DEFAULT_TIMEOUT_MS,\n    ...options,\n    env: { ...process.env, GIT_OPTIONAL_LOCKS: \"0\" },\n  });\n  return { status: result.status, stdout: result.stdout ?? \"\", stderr: result.stderr ?? \"\" };\n}\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { execFileSync } from \"node:child_process\";\n\nexport function headCommit(cwd: string): string {\n  return execFileSync(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, \"rev-parse\", \"HEAD\"], { encoding: \"utf8\" }).trim();\n}\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\n\nconst SAFE_CONFIG: readonly string[] = [\"--no-lazy-fetch\", \"-c\", \"core.fsmonitor=false\", \"-c\", \"core.hooksPath=/dev/null\"];\n\nexport function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {\n  const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, ...args], {\n    encoding: \"utf8\",\n    ...options,\n    env: { ...process.env, GIT_OPTIONAL_LOCKS: \"0\" },\n  });\n  return { status: result.status, stdout: result.stdout ?? \"\", stderr: result.stderr ?? \"\" };\n}\n"
+    },
+    {
+      "path": "src/setup/harness-registration.ts",
+      "content": "import { execFile } from \"node:child_process\";\nimport { promisify } from \"node:util\";\n\nconst execGit = promisify(execFile);\n\nasync function claudeLocalDirectory(workspaceDir: string, context: Context): Promise<string> {\n  try {\n    // rev-parse rejects non-repositories/bare repositories; Git also enforces safe.directory.\n    await execGit(\"git\", [\"rev-parse\", \"--show-toplevel\"], { cwd: workspaceDir });\n    const { stdout } = await execGit(\"git\", [\"worktree\", \"list\", \"--porcelain\", \"-z\"], { cwd: workspaceDir });\n    return stdout;\n  } catch {\n    return workspaceDir;\n  }\n}\n"
+    },
+    {
+      "path": "src/audit-control.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\nimport { existsSync } from \"node:fs\";\n\nconst GIT_OUTPUT_LIMIT = 10 * 1024 * 1024;\nconst GIT_EXECUTABLE = (\n  process.platform === \"win32\"\n    ? [String.raw`C:\\Program Files\\Git\\cmd\\git.exe`, String.raw`C:\\Program Files (x86)\\Git\\cmd\\git.exe`]\n    : [\"/usr/bin/git\", \"/usr/local/bin/git\", \"/opt/homebrew/bin/git\"]\n).find(existsSync);\n\nfunction gitPaths(workspaceRoot: string, args: readonly string[]): string[] {\n  if (GIT_EXECUTABLE === undefined) throw new Error(\"Git is not installed in a supported system location\");\n  const result = spawnSync(GIT_EXECUTABLE, [\"-C\", workspaceRoot, ...args], {\n    encoding: \"utf8\",\n    maxBuffer: GIT_OUTPUT_LIMIT,\n  });\n  return result.stdout.split(\"\\0\").filter(Boolean);\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/checkout-owner.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\nimport { gitExecutable } from \"../git.js\";\n\nexport function sparseCheckout(root: string): boolean {\n  const result = spawnSync(gitExecutable(), [\"-C\", root, \"config\", \"--bool\", \"core.sparseCheckout\"], { encoding: \"utf8\" });\n  return result.stdout.trim() === \"true\";\n}\n"
+    },
+    {
+      "path": "src/runtime/daemon-info.ts",
+      "content": "import { execSync } from \"node:child_process\";\n\nexport function daemonBuild(root: string): string {\n  return execSync(\"git rev-parse --short HEAD\", { cwd: root, encoding: \"utf8\" }).trim();\n}\n"
+    },
+    {
+      "path": "src/cli/rule-evidence.ts",
+      "content": "import { execFile } from \"node:child_process\";\nimport { promisify } from \"node:util\";\nimport { gitExecutable } from \"../engine/git.js\";\n\nconst run = promisify(execFile);\n\nexport async function recentCommits(root: string): Promise<string[]> {\n  const git = gitExecutable();\n  const { stdout } = await run(git, [\"-C\", root, \"log\", \"--format=%H\", \"-20\"]);\n  return stdout.split(\"\\n\").filter(Boolean);\n}\n"
+    },
+    {
+      "path": "src/setup/updater.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\n\nexport function installedFrom(root: string): string {\n  return spawnSync(\"/usr/bin/git\", [\"-C\", root, \"remote\", \"get-url\", \"origin\"], { encoding: \"utf8\" }).stdout.trim();\n}\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\n\nexport function gitStatus(cwd: string): string {\n  return spawnSync(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, \"status\"], { encoding: \"utf8\", env: process.env }).stdout;\n}\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { execFile } from \"node:child_process\";\nimport { promisify } from \"node:util\";\n\nconst execGit = promisify(execFile);\n\nexport async function gitTextAsync(cwd: string, args: readonly string[]): Promise<string> {\n  const { stdout } = await execGit(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, ...args], { encoding: \"utf8\" });\n  return stdout.trim();\n}\n"
+    },
+    {
+      "path": "src/runtime/build-info.ts",
+      "content": "import { exec } from \"node:child_process\";\nimport { promisify } from \"node:util\";\n\nconst sh = promisify(exec);\n\nexport async function daemonBuild(root: string): Promise<string> {\n  const { stdout } = await sh(`git -C ${root} rev-parse --short HEAD`);\n  return stdout.trim();\n}\n"
+    },
+    {
+      "path": "src/setup/install-source.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\n\nexport function installedFrom(root: string): string {\n  return spawnSync(\"/bin/sh\", [\"-c\", `git -C \"${root}\" remote get-url origin`], { encoding: \"utf8\" }).stdout.trim();\n}\n"
+    },
+    {
+      "path": "src/setup/windows-install.ts",
+      "content": "import { execFileSync } from \"node:child_process\";\n\nexport function installedFrom(root: string): string {\n  return execFileSync(String.raw`C:\\Program Files\\Git\\cmd\\git.exe`, [\"-C\", root, \"remote\", \"get-url\", \"origin\"], { encoding: \"utf8\" }).trim();\n}\n"
+    },
+    {
+      "path": "src/cli/headless-scan.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nexport function changed(root: string, against: string): string {\n  return runGit(root, [\"diff\", \"--name-only\", \"--relative\", \"--diff-filter=ACMRTUXB\", \"-z\", against, \"--\"]).stdout;\n}\n"
+    },
+    {
+      "path": "src/engine/audit/audit-control.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nconst staged = (root: string) => runGit(root, ['--literal-pathspecs', 'diff', '--cached', '--name-only', '-z', '--']);\n"
+    },
+    {
+      "path": "src/cli/status.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nconst STATUS_ARGS = [\"status\", \"--porcelain=v1\", \"-z\"];\n\nexport const dirty = (root: string): boolean => runGit(root, STATUS_ARGS).stdout !== \"\";\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { spawn } from \"node:child_process\";\n\nexport async function readGitBlobs(cwd: string, revisions: readonly string[], options: { maxBlobBytes: number; timeout?: number }): Promise<Map<string, Buffer>> {\n  const blobs = new Map<string, Buffer>();\n  let executable: string;\n  try {\n    executable = gitExecutable();\n  } catch {\n    return blobs;\n  }\n  const child = spawn(executable, [...SAFE_CONFIG, \"-C\", cwd, \"cat-file\", \"--batch\"], {\n    env: { ...process.env, GIT_OPTIONAL_LOCKS: \"0\", GIT_NO_LAZY_FETCH: \"1\", GIT_TERMINAL_PROMPT: \"0\" },\n    stdio: [\"pipe\", \"pipe\", \"ignore\"],\n    timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,\n  });\n  return blobs;\n}\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\nimport { existsSync } from \"node:fs\";\n\nconst machine: GitProbe = {\n  exists: existsSync,\n  developerDir() {\n    // Without DEVELOPER_DIR, which overrides the answer and which a repository's environment could set.\n    const selected = spawnSync(\"/usr/bin/xcode-select\", [\"-p\"], { encoding: \"utf8\", env: { PATH: \"/usr/bin:/bin\" } });\n    return selected.status === 0 ? selected.stdout.trim() : undefined;\n  },\n};\n\nexport function gitInstalled(path: string, platform: NodeJS.Platform = process.platform, probe: GitProbe = machine): boolean {\n  if (!probe.exists(path)) return false;\n  if (platform !== \"darwin\" || path !== \"/usr/bin/git\") return true;\n  return probe.exists(\"/Library/Developer/CommandLineTools/usr/bin/git\");\n}\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\n\n/** Every Git process Rerail starts: no optional locks, no lazy fetch of a partial clone's missing objects, no prompts. */\nconst GIT_ENVIRONMENT = { GIT_OPTIONAL_LOCKS: \"0\", GIT_NO_LAZY_FETCH: \"1\", GIT_TERMINAL_PROMPT: \"0\" } as const;\n\nexport function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {\n  const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, ...args], {\n    encoding: \"utf8\",\n    timeout: DEFAULT_TIMEOUT_MS,\n    ...options,\n    env: { ...process.env, ...GIT_ENVIRONMENT },\n  });\n  return { status: result.status, stdout: result.stdout ?? \"\", stderr: result.stderr ?? \"\" };\n}\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { spawn, spawnSync } from \"node:child_process\";\n\nexport function gitProcess(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv) {\n  return spawn(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, ...args], { env, stdio: [\"ignore\", \"pipe\", \"pipe\"] });\n}\n\nexport function gitSync(cwd: string, args: readonly string[], environment: NodeJS.ProcessEnv) {\n  return spawnSync(gitExecutable(), [...SAFE_CONFIG, \"-C\", cwd, ...args], { encoding: \"utf8\", env: environment });\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/repository-registry.ts",
+      "content": "import { gitExecutable, GitUnavailableError, gitText, runGit } from \"../git.js\";\n\nexport function lookupCheckout(workspace: string): CheckoutContext | undefined {\n  try {\n    gitExecutable();\n  } catch (error) {\n    if (error instanceof GitUnavailableError) return undefined;\n    throw error;\n  }\n  const top = gitText(workspace, [\"rev-parse\", \"--show-toplevel\"]);\n  const list = runGit(workspace, [\"worktree\", \"list\", \"--porcelain\", \"-z\"]);\n  return top === undefined ? undefined : { top, worktrees: list.stdout };\n}\n"
+    },
+    {
+      "path": "src/setup/harness-registration.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nasync function claudeLocalDirectory(workspaceDir: string, context: Context): Promise<string> {\n  // rev-parse rejects non-repositories/bare repositories; Git also enforces safe.directory.\n  if (runGit(workspaceDir, [\"rev-parse\", \"--show-toplevel\"]).status !== 0) return workspaceDir;\n  const { stdout } = runGit(workspaceDir, [\"worktree\", \"list\", \"--porcelain\", \"-z\"]);\n  return stdout;\n}\n"
+    },
+    {
+      "path": "src/cli/rule-evidence.ts",
+      "content": "export const RISKY_COMMANDS: ReadonlyArray<{ label: string; commands: readonly string[]; test: RegExp }> = [\n  { label: \"force push\", commands: [\"git\"], test: /^git\\s+push\\b.*\\s(?:--force(?:\\s|=|$))/u },\n  { label: \"hard reset\", commands: [\"git\"], test: /^git\\s+reset\\b.*\\s--hard(?:\\s|$)/u },\n];\n\nexport function risky(command: string, words: readonly string[]): boolean {\n  return words.includes(\"git\") && RISKY_COMMANDS.some(entry => entry.test.test(command));\n}\n"
+    },
+    {
+      "path": "src/cli/cli.ts",
+      "content": "import { spawn } from \"node:child_process\";\nimport { existsSync } from \"node:fs\";\nimport { gitExecutable, GitUnavailableError } from \"../engine/git.js\";\n\nfunction gitStatus(): { found: boolean; looked?: readonly string[] } {\n  try {\n    gitExecutable();\n    return { found: true };\n  } catch (error) {\n    if (error instanceof GitUnavailableError) return { found: false, looked: error.looked };\n    throw error;\n  }\n}\n\nexport function digitsOnly(command: string, digits: string): void {\n  spawn(command, [digits], { stdio: \"inherit\" });\n  existsSync(\"/usr/local/bin/git\");\n}\n"
+    },
+    {
+      "path": "test/engine/git.test.ts",
+      "content": "import { execFileSync } from \"node:child_process\";\n\nexecFileSync(\"git\", [\"clone\", \"-q\", \"--filter=blob:none\", \"--no-checkout\", origin, clone]);\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\n\nconst WORKTREE_LINE = /^worktree (.+)$/u;\n\nexport function firstWorktree(listing: string): string | undefined {\n  return WORKTREE_LINE.exec(listing)?.[1];\n}\n\nexport function xcrunGit(developerDir: string): string {\n  return spawnSync(`${developerDir}/usr/bin/xcrun`, [\"--find\", \"git\"], { encoding: \"utf8\", env: { PATH: \"/usr/bin:/bin\" } }).stdout.trim();\n}\n"
+    },
+    {
+      "path": "src/cli/pr-status.ts",
+      "content": "import { spawnSync } from \"node:child_process\";\n\nconst GITHUB_CLI = \"/opt/homebrew/bin/gh\";\n\nexport function pullRequestUrl(root: string): string {\n  return spawnSync(GITHUB_CLI, [\"pr\", \"view\", \"--json\", \"url\"], { cwd: root, encoding: \"utf8\" }).stdout.trim();\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/repository-identity.ts",
+      "content": "const HEAD_LINE = /^([0-9a-f]{40}) (.+)$/u;\n\nexport function headOf(gitOutput: string): string | undefined {\n  return HEAD_LINE.exec(gitOutput)?.[1];\n}\n"
+    },
+    {
+      "path": "src/setup/shell-path.ts",
+      "content": "import { existsSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\nfunction findExecutable(name: string, path: string): string | undefined {\n  return path.split(\":\").map(dir => join(dir, name)).find(existsSync);\n}\n\nexport function gitShadowedOnPath(path: string): boolean {\n  return findExecutable(\"git\", path) !== undefined;\n}\n"
+    },
+    {
+      "path": "src/cli/doctor.ts",
+      "content": "import { gitExecutable, GitUnavailableError } from \"../engine/git.js\";\n\nexport function gitLine(): string {\n  try {\n    const path = gitExecutable();\n    return `Git: ${path}`;\n  } catch (error) {\n    if (error instanceof GitUnavailableError) return \"Git: not found\";\n    throw error;\n  }\n}\n"
+    },
+    {
+      "path": "src/cli/headless-scan.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nexport function changed(root: string, against: string): string {\n  return runGit(root, [\"diff\", \"--name-only\", \"--no-renames\", \"--relative\", \"--diff-filter=ACMRTUXB\", \"-z\", against, \"--\"]).stdout;\n}\n"
+    },
+    {
+      "path": "src/cli/status.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nexport const dirty = (root: string): boolean => runGit(root, [\"status\", \"--porcelain=v1\", \"--no-renames\", \"-z\"]).stdout !== \"\";\n"
+    },
+    {
+      "path": "src/engine/catalog/repository-registry.ts",
+      "content": "import { runGit } from \"../engine/git.js\";\n\nexport const head = (root: string) => runGit(root, [\"log\", \"-1\", \"--format=%H\"]).stdout.trim();\nexport const files = (root: string) => runGit(root, [\"ls-files\", \"-z\", \"--\", \"diff\"]).stdout;\nexport const ACTIONS = [\"setup\", \"status\", \"diff\"] as const;\n"
+    }
+  ]
+}

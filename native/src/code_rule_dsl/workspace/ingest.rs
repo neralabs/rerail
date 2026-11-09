@@ -151,7 +151,7 @@ impl WireFile {
 pub(super) fn is_file_local(clause: &CompiledClause) -> bool {
     matches!(
         clause.kind,
-        ClauseKind::Forbid(Query::Regex { .. } | Query::Ast { .. })
+        ClauseKind::Forbid(Query::Regex { .. } | Query::Ast { .. } | Query::File)
     )
 }
 
@@ -171,7 +171,7 @@ pub(super) fn make_file(
         for (clause_index, clause) in code_rule.clauses.iter().enumerate() {
             let id = (code_rule_index, clause_index);
             match &clause.kind {
-                ClauseKind::Forbid(Query::Regex { .. }) => regex.push(id),
+                ClauseKind::Forbid(Query::Regex { .. } | Query::File) => regex.push(id),
                 ClauseKind::Forbid(Query::Ast { matchers, .. })
                     if grammar_matcher(matchers, &input).is_some() =>
                 {
@@ -233,6 +233,7 @@ pub(super) fn make_file(
         transient_failure: false,
         unpublished: false,
         results_only: false,
+        withheld: false,
         unstored: HashSet::new(),
         candidates,
         witnesses: Default::default(),
@@ -252,7 +253,7 @@ pub(super) fn candidate_dispatch(
     let mut candidates = Candidates::default();
     for id in selected {
         match &code_rules[id.0].clauses[id.1].kind {
-            ClauseKind::Forbid(Query::Regex { .. }) => candidates.regex.push(id),
+            ClauseKind::Forbid(Query::Regex { .. } | Query::File) => candidates.regex.push(id),
             ClauseKind::Forbid(Query::Ast { .. }) => candidates.ast.push(id),
             _ => {}
         }
@@ -1106,14 +1107,35 @@ pub(super) fn inline_input(state: &mut WorkspaceState, file: WireFile) -> Result
 }
 
 pub(super) fn is_cheap(state: &WorkspaceState, request: &Request) -> bool {
-    state.storage.is_none() && !request.defer_global && !request.quiet && request.removed.is_empty()
-        && request.files.len() == 1 && state.dirty_files.is_empty() && state.globals.is_empty()
-        && state.files.len() <= 4 && request.files[0].source.len() <= 1024
+    state.storage.is_none()
+        && !request.defer_global
+        && !request.quiet
+        && request.removed.is_empty()
+        && request.files.len() == 1
+        && state.dirty_files.is_empty()
+        && state.globals.is_empty()
+        && state.files.len() <= 4
+        && request.files[0].source.len() <= 1024
         && !adds_package_marker(state, &request.files[0])
         && manifest_directory(&request.files[0].path).is_none()
         && ignore_file_directory(&request.files[0].path).is_none()
-        && state.files.values().map(|file| file.input.source.len()).sum::<usize>() <= 4096
-        && state.code_rules.iter().map(|code_rule| code_rule.clauses.len()).sum::<usize>() <= 4
-        && state.code_rules.iter().all(|code_rule| code_rule.clauses.iter().all(|clause|
-            matches!(&clause.kind, ClauseKind::Forbid(Query::Regex { regex, .. }) if regex.as_str().len() <= 128)))
+        && state
+            .files
+            .values()
+            .map(|file| file.input.source.len())
+            .sum::<usize>()
+            <= 4096
+        && state
+            .code_rules
+            .iter()
+            .map(|code_rule| code_rule.clauses.len())
+            .sum::<usize>()
+            <= 4
+        && state.code_rules.iter().all(|code_rule| {
+            code_rule.clauses.iter().all(|clause| match &clause.kind {
+                ClauseKind::Forbid(Query::Regex { regex, .. }) => regex.as_str().len() <= 128,
+                ClauseKind::Forbid(Query::File) => true,
+                _ => false,
+            })
+        })
 }

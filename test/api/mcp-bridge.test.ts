@@ -6,6 +6,7 @@ import { PassThrough, Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
+import { otherUserPid } from "../support/other-user-pid.js";
 
 /** The Rerail home and which daemon pid answers on each local port; a step may change either to stage a restart. */
 interface Machine {
@@ -214,6 +215,15 @@ describe("Rerail MCP bridge", () => {
     expect(run.probes).toEqual([]);
     expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 4, error: { code: -32000, message: NOT_RUNNING } })]);
     expect(run.stderr).toEqual([expect.stringContaining(NOT_RUNNING)]);
+  });
+
+  const foreignPid = otherUserPid();
+  it.runIf(foreignPid !== undefined)("never probes a recorded pid that another OS user runs, even when its port answers as that pid", async () => {
+    const request = JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list" });
+    const run = await runBridge([request], [], { daemon: { pid: foreignPid!, port: 51_234 } });
+    expect(run.probes).toEqual([]);
+    expect(run.requests).toEqual([]);
+    expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 4, error: { code: -32000, message: NOT_RUNNING } })]);
   });
 
   it("reads the home again after a failed request and follows a daemon that moved", async () => {

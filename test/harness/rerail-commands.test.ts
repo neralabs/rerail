@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rerailCommandList } from "../../src/harness/rerail-commands.js";
+import { RERAIL_COMMANDS, rerailCommandList } from "../../src/harness/rerail-commands.js";
 
 const TERMINAL_LINE = "In a terminal: rerail status · rerail version · rerail update · rerail daemon stop";
 
@@ -12,5 +12,13 @@ describe("the /rerail command list", () => {
     const list = rerailCommandList("$");
     expect(list).toContain("$rerail-manage");
     expect(list.split("\n").at(-1)).toBe(TERMINAL_LINE);
+  });
+});
+
+describe("the command catalog", () => {
+  // A Codex skill and a Claude Code command carry the description as a plain YAML value, where ": " starts a mapping.
+  it.each(RERAIL_COMMANDS.map(command => [command.name, command.description]))("keeps %s's description valid in front matter", (_name, description) => {
+    expect(description).not.toContain(": ");
+    expect(description).not.toContain(" #");
   });
 });

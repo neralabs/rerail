@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents } from "../../src/setup/coding-agents.js";
+import {
+  codingAgentStates, connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents, type DataAccessOptions,
+} from "../../src/setup/coding-agents.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
-import { CODEX_HOOK_EVENTS, registerHarnesses } from "../../src/setup/harness-registration.js";
+import { CODEX_HOOK_EVENTS, registerHarnesses, type Harness } from "../../src/setup/harness-registration.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -197,6 +199,69 @@ describe("connectCodingAgents", () => {
 
     expect((await connectCodingAgents(root, home, [])).ompPlugin).toBe(true);
     expect((await connectCodingAgents(root, home, ["omp"])).ompPlugin).toBe(true);
+  });
+});
+
+describe("whether a coding agent can read Rerail's data", () => {
+  /** A package root and a coding-agent home with `agents` connected to it; `before` runs ahead of connecting. */
+  async function connected(agents: Harness[], before: (home: string) => Promise<void> = async () => {}) {
+    const base = await mkdtemp(join(tmpdir(), "rerail-data-access-"));
+    temporaryDirectories.push(base);
+    const root = join(base, "rerail-home", "current");
+    await mkdir(join(root, "dist"), { recursive: true });
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+    const home = join(base, "home");
+    await mkdir(home);
+    await before(home);
+    await registerHarnesses({ root, home, harnesses: agents });
+    return { root, home, managed: join(base, "managed-settings.json") };
+  }
+
+  async function stateOf(root: string, home: string, id: Harness, options: DataAccessOptions) {
+    const state = (await codingAgentStates(root, home, options)).find(agent => agent.id === id)!;
+    return { connected: state.connected, access: state.rerailData.access };
+  }
+
+  it("counts Claude Code as kept out only while its sandbox is on, in its user or managed settings", async () => {
+    const { root, home, managed } = await connected(["claude-code"]);
+    const settings = join(home, ".claude", "settings.json");
+    const registered = JSON.parse(await readFile(settings, "utf8")) as { sandbox?: Record<string, unknown> };
+    const withSandbox = (enabled: boolean) => JSON.stringify({ ...registered, sandbox: { ...registered.sandbox, enabled } });
+    const claude = (platform: NodeJS.Platform = "linux") => stateOf(root, home, "claude-code", { platform, claudeManagedSettings: managed });
+
+    expect(await claude()).toEqual({ connected: true, access: "file-tools" });
+
+    await writeFile(settings, withSandbox(true));
+    expect(await claude()).toEqual({ connected: true, access: "kept-out" });
+    // Native Windows has no Claude Code sandbox, whatever the setting says.
+    expect(await claude("win32")).toEqual({ connected: true, access: "file-tools" });
+    // Managed settings win over the user's.
+    await writeFile(managed, JSON.stringify({ sandbox: { enabled: false } }));
+    expect(await claude()).toEqual({ connected: true, access: "file-tools" });
+
+    await writeFile(settings, JSON.stringify(registered));
+    await writeFile(managed, JSON.stringify({ sandbox: { enabled: true } }));
+    expect(await claude()).toEqual({ connected: true, access: "kept-out" });
+
+    await writeFile(managed, "{ \"sandbox\": { \"enabled\": true }, }");
+    expect(await claude()).toEqual({ connected: true, access: "file-tools" });
+
+    // A user settings file that is not valid JSON: the connection cannot be checked, so nothing is known to keep it out.
+    await writeFile(settings, "{ \"sandbox\": { \"enabled\": true }, }");
+    await rm(managed);
+    expect(await claude()).toEqual({ connected: false, access: "open" });
+  });
+
+  it("counts the Cursor CLI's file tools as kept out only where its cli-config.json held Rerail's denies", async () => {
+    const withConfig = await connected(["cursor"], async home => {
+      await mkdir(join(home, ".cursor"));
+      await writeFile(join(home, ".cursor", "cli-config.json"), "{}\n");
+    });
+    expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "file-tools" });
+    expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "win32" })).toEqual({ connected: true, access: "open" });
+
+    const without = await connected(["cursor"]);
+    expect(await stateOf(without.root, without.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "open" });
   });
 });
 

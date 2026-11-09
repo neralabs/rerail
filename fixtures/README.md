@@ -22,13 +22,16 @@ never do.
 `<family>/<feature>/`: one directory per language family, then the engine module the data tests, named exactly as
 the module under `native/src/code_rule_dsl/` (`scope/`, `value/`, `compile/`, …). Below the feature, directories are
 kebab-case and name the part of the module that reads them (`php/compile/format-args/` is the oracle of
-`compile/format_args/php.rs`). Three groups are not engine modules:
+`compile/format_args/php.rs`). Four groups are not engine modules:
 
 - `<family>/licenses/<project>/`: third-party records (below).
 - `<family>/upstream/<tool>/`: a language's upstream linter tests and expected findings, made ahead of its pack (below).
 - `host/<area>/` and `packs/<pack>/`: not language families. `host/` holds the TypeScript host tests' data, one
   directory per area; `packs/` holds pack-shaped test inputs: the pack validator's and the conformance runner's
   ([README](packs/README.md)).
+- `rerail/`: the private `rerail` pack's own rule cases, one `<rule id>.cases.json` per rule of `packs/rerail/` (the
+  `caught` and `passed` cases the rule was drafted with, as `rerail rules test` reads a draft's `cases`), with no
+  feature directory. `test/cli/rerail-pack.test.ts` runs them.
 
 `node scripts/check-structure/fixtures.mjs` prints the table below from the tree and fails on a feature directory that
 names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/upstream/`.
@@ -69,7 +72,7 @@ names no engine module, and on fixture data outside `fixtures/` and `packs/<id>/
 | `sql/` | SQLFluff 4.4.0, PostgreSQL 18 parser (pglast 8.5), SQLite 3.50.4, MySQL 8.4.11 |
 
 `ecma` is shared by JavaScript and TypeScript. The rule packs (python, php, blade, typescript, react, node, next, vue,
-complexity, sql, rust) live in `packs/<id>/` ([pack format](../docs/pack-format.md#moving-to-this-layout)): their
+complexity, sql, rust) live in `packs/<id>/` ([pack format](../docs/pack-format.md#layout)): their
 upstream tools' copied tests and expected findings, their candidates and their licence records.
 `../scripts/pack-data/eslint-expected.mjs` is the expected-findings helper the ESLint-based generators share.
 

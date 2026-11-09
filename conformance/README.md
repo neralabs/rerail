@@ -19,15 +19,17 @@ The generators that write the expected findings are outside this directory, on t
 the renamer `scripts/pack-data/rename/`). How the data is snapshotted and published is
 [docs/upstream.md](../docs/upstream.md).
 
-Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack).
+Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack); the contributor's steps for
+a rule, written for Rerail or ported, and a port's way from candidate to shipped, are
+[docs/adding-rules-to-a-pack.md](../docs/adding-rules-to-a-pack.md).
 
 ## The gate
 
 `npm run test:conformance` (`conformance/languages/cli.ts --check`) is the one gate a ported rule passes to ship. It
 sits on top of the [pack validation contract](../docs/pack-format.md#the-validation-contract) and reads only pinned
 data: the test data (`test-data.lock`) and the samples (`samples.lock`), with any `publish/` laid over them. It never
-runs upstream. It descends from the V1 validation gates nera-rule-validation ran by hand (its ADR 0006), adapted to
-rerail's layout.
+runs upstream. It descends from the V1 validation gates maintainers ran by hand before Rerail, adapted to rerail's
+layout.
 
 It first scores every pack's fixtures and samples, then judges every rule of each gated tool-pack (one with a
 `packs/<id>/upstream/<tool>/gates.yaml`), shipped (`packs/<id>/rules/`) or candidate (`packs/<id>/candidates/`). A
@@ -43,9 +45,14 @@ To run it locally, pull the data first (`npm run fixtures:pull`), then `npm run 
 
 ### What runs on a pull request
 
-The `tools` job of `ci.yml` runs `npm run conformance:languages:check -- --base <base> --out <dir>` on every push and
-every same-repository pull request, with the data the locks name and any `publish/` laid over it. What blocks and what
-is reported:
+On every push to `main`, and on every same-repository pull request that changes what the check reads, with the data
+the locks name and any `publish/` laid over it, the `conformance` jobs of `ci.yml`, a matrix of shards, each score a
+share of every pack
+(`npm run conformance:languages:check -- --shard <k>/<n> --results-out <dir>`), and the `tools` job makes the reports
+from all their results and judges them (`npm run conformance:languages:check -- --results <dir> --base <base> --out
+<dir>`). The reports are the ones one run scoring everything writes: each pack's scoring is a list of evaluations that
+any process can run, put back together in order (`conformance/languages/shards.ts`). On one machine, `--check` spreads
+the same evaluations over a worker process per core and per 5 GiB of memory. What blocks and what is reported:
 
 | Blocks the job | Reported only |
 | --- | --- |
@@ -57,6 +64,16 @@ The job writes `summary.md`, `gates.json` and the pull request comment (`comment
 artifact, and the `conformance-report` job posts the comment ([The pull request comment](#the-pull-request-comment)).
 A fork's pull request runs no CI, and Dependabot's has no OIDC token to fetch the data, so the job and its comment do
 not run for either ([docs/upstream.md](../docs/upstream.md#ci)).
+
+A pull request runs the check when it changes a file the `conformance` filter of `ci.yml`'s `changes` job matches:
+this directory, any pack, the engine (`native/`, `languages/`, `src/engine/`), the test data and samples readers
+(`scripts/s3/`, `scripts/samples/`), `tsconfig.json`, and what every job shares (`ci.yml`, `.github/actions/`, the npm
+and Cargo manifests and locks, `rust-toolchain.toml`, `.cargo/`, `.gitattributes`, `.npmrc`). One that changes none,
+such as a docs-only change, skips the shards, the `tools` job's conformance steps (its script tests and reference
+examples still run) and the comment; a comment an earlier run posted stays, naming the commit it judged. The filter
+compares the pull request's whole diff with its base, so once it matched, every later push runs the check.
+`npm run check:ci-paths` fails when the runner imports a file the filter misses; a file read at runtime rather than
+imported needs adding to the filter by hand (`scripts/check/check-ci-paths.mjs`).
 
 ### Per-rule checks
 
@@ -210,3 +227,8 @@ A pack whose shipped rules have no upstream adapter is listed in `conformance/la
 today; a tool-pack still validated elsewhere would be listed in `conformance/languages/pending.json`. Both lists may only
 shrink against the base (`--base`); a new shipped rule in such a pack fails, so keep it in `candidates/` until its
 tool-pack is gated.
+
+A private pack (`"private": true` in its `package.json`, as `packs/rerail`) is left out of both checks: it is never
+published, so its rules never reach a user through the gates, and they are written for this repository, not ported, so
+they have no upstream tool to gate them. Its `pack.json` examples (the pack validation's checks 2 and 3) and its own
+tests prove them instead. The frozen list must not name a private pack's rules: a listed one is reported stale.

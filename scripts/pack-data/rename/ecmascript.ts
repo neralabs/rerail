@@ -52,7 +52,7 @@ import { dirname, join } from "node:path";
 import ts from "typescript";
 
 /** The test runners' globals. */
-const TEST_GLOBALS = ["describe", "it", "test", "expect", "suite", "bench", "vi", "jest", "xit", "xtest", "xdescribe", "fit", "fdescribe"];
+const TEST_GLOBALS = ["describe", "it", "test", "expect", "suite", "bench", "vi", "jest", "xit", "xtest", "xdescribe", "fit", "fdescribe", "pending"];
 
 /** Host objects whose members are their API: kept themselves (`HOST_NAMES`), and their members (`MEMBER_ROOTS`). */
 const HOST_OBJECTS = ["process", "console", "React", "ReactDOM", "window", "document", "navigator", "location", "globalThis", "self", "global", "Buffer", "module", "exports", "require", "Intl", "crypto", "URL",
@@ -87,43 +87,69 @@ function requiredPackage(node: ts.Node | undefined): string | undefined {
   return loads && argument !== undefined && ts.isStringLiteralLike(argument) && isPackage(argument.text) ? argument.text : undefined;
 }
 
+/** What a file's imports and requires take from a package, and the local bindings of a package's module or default export. */
+interface PackageNames {
+  readonly exported: Set<string>;
+  readonly bindings: Set<string>;
+}
+
+function addImportClause(clause: ts.ImportClause, { exported, bindings }: PackageNames): void {
+  if (clause.name !== undefined) bindings.add(clause.name.text);
+  const named = clause.namedBindings;
+  if (named === undefined) return;
+  if (ts.isNamespaceImport(named)) bindings.add(named.name.text);
+  else for (const element of named.elements) exported.add((element.propertyName ?? element.name).text);
+}
+
+/**
+ * Destructuring a host object or a package's binding takes its API: `let { env: { NODE_REPL_HISTORY_FILE } } = process`,
+ * `const { printDOM } = ReactPerf` after `import ReactPerf from "react-addons-perf"`.
+ */
+function addDestructuredApi(node: ts.VariableDeclaration, { exported, bindings }: PackageNames): void {
+  if (!ts.isObjectBindingPattern(node.name) || node.initializer === undefined) return;
+  if (!isApiRoot(chainRoot(node.initializer), bindings)) return;
+  for (const name of patternKeys(node.name)) exported.add(name);
+}
+
+const isApiRoot = (root: ts.Identifier | undefined, bindings: ReadonlySet<string>): boolean =>
+  root !== undefined && (MEMBER_ROOTS.has(root.text) || bindings.has(root.text));
+
+function addRequiredPattern(pattern: ts.ObjectBindingPattern, { exported, bindings }: PackageNames): void {
+  for (const element of pattern.elements) {
+    const name = element.propertyName ?? element.name;
+    if (ts.isIdentifier(name)) exported.add(name.text);
+    // An export's local name reads the package's API too: `const { Buffer: b } = require("buffer"); b.alloc`.
+    if (ts.isIdentifier(element.name)) bindings.add(element.name.text);
+  }
+}
+
+function addRequiredNames(node: ts.VariableDeclaration, names: PackageNames): void {
+  if (requiredPackage(node.initializer) === undefined) return;
+  if (ts.isIdentifier(node.name)) names.bindings.add(node.name.text);
+  else if (ts.isObjectBindingPattern(node.name)) addRequiredPattern(node.name, names);
+}
+
+function addImportedNames(node: ts.ImportDeclaration, names: PackageNames): void {
+  if (ts.isStringLiteralLike(node.moduleSpecifier) && isPackage(node.moduleSpecifier.text) && node.importClause !== undefined) addImportClause(node.importClause, names);
+}
+
 /**
  * The names a package defines in `file`: what its imports and destructuring requires take from a package (kept), and
  * the local bindings of a package's module or default export (`import fs from "fs"`, `const fs = require("fs")`,
  * `import * as React from "react"`), whose members and component props are the package's.
  */
-function packageNames(file: ts.SourceFile): { exported: Set<string>; bindings: Set<string> } {
-  const exported = new Set<string>();
-  const bindings = new Set<string>();
+function packageNames(file: ts.SourceFile): PackageNames {
+  const names: PackageNames = { exported: new Set<string>(), bindings: new Set<string>() };
   const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier) && isPackage(node.moduleSpecifier.text) && node.importClause !== undefined) {
-      const clause = node.importClause;
-      if (clause.name !== undefined) bindings.add(clause.name.text);
-      const named = clause.namedBindings;
-      if (named !== undefined && ts.isNamespaceImport(named)) bindings.add(named.name.text);
-      if (named !== undefined && ts.isNamedImports(named)) for (const element of named.elements) exported.add((element.propertyName ?? element.name).text);
-    }
-    // Destructuring a host object or a package's binding takes its API: `let { env: { NODE_REPL_HISTORY_FILE } } = process`,
-    // `const { printDOM } = ReactPerf` after `import ReactPerf from "react-addons-perf"`.
-    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer !== undefined) {
-      const root = chainRoot(node.initializer);
-      if (root !== undefined && (MEMBER_ROOTS.has(root.text) || bindings.has(root.text))) for (const name of patternKeys(node.name)) exported.add(name);
-    }
-    if (ts.isVariableDeclaration(node) && requiredPackage(node.initializer) !== undefined) {
-      if (ts.isIdentifier(node.name)) bindings.add(node.name.text);
-      else if (ts.isObjectBindingPattern(node.name)) {
-        for (const element of node.name.elements) {
-          const name = element.propertyName ?? element.name;
-          if (ts.isIdentifier(name)) exported.add(name.text);
-          // An export's local name reads the package's API too: `const { Buffer: b } = require("buffer"); b.alloc`.
-          if (ts.isIdentifier(element.name)) bindings.add(element.name.text);
-        }
-      }
+    if (ts.isImportDeclaration(node)) addImportedNames(node, names);
+    if (ts.isVariableDeclaration(node)) {
+      addDestructuredApi(node, names);
+      addRequiredNames(node, names);
     }
     ts.forEachChild(node, visit);
   };
   visit(file);
-  return { exported, bindings };
+  return names;
 }
 
 /** The property names an object binding pattern reads, nested patterns' included (`env` and `X` of `{ env: { X } }`). */
@@ -381,21 +407,76 @@ function scriptKind(fileName: string): ts.ScriptKind {
 /** Relabellings tried before a name whose every image is unusable is kept as it is. */
 const ATTEMPTS = 16;
 
-/** Renames `source`'s identifiers (see module doc). `fileName` picks how it is parsed. */
-export function renameSource(source: string, fileName: string): RenameResult {
-  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true, scriptKind(fileName));
-  const occurrences = new Map<string, Occurrence[]>();
-  const pinned = new Set<string>();
-  const literalWords = new Set<string>();
+/** A file's names as the parser finds them: each name's occurrences, those that must stay, and the words in its literals. */
+interface NameScan {
+  readonly source: string;
+  readonly file: ts.SourceFile;
+  readonly bindings: ReadonlySet<string>;
+  readonly occurrences: Map<string, Occurrence[]>;
+  readonly pinned: Set<string>;
+  readonly literalWords: Set<string>;
+}
+
+function addOccurrence(occurrences: Map<string, Occurrence[]>, text: string, occurrence: Occurrence): void {
+  const bucket = occurrences.get(text) ?? [];
+  bucket.push(occurrence);
+  occurrences.set(text, bucket);
+}
+
+type NameNode = ts.Identifier | ts.PrivateIdentifier;
+
+function isIntrinsicTagName(node: NameNode): boolean {
+  const parent = node.parent;
+  return (ts.isJsxOpeningElement(parent) || ts.isJsxSelfClosingElement(parent) || ts.isJsxClosingElement(parent)) && parent.tagName === node && isIntrinsicTag(parent.tagName);
+}
+
+function isIntrinsicAttributeName(node: NameNode): boolean {
+  const parent = node.parent;
+  return ts.isJsxAttribute(parent) && parent.name === node && isIntrinsicTag(parent.parent.parent.tagName);
+}
+
+const isKeywordLike = (node: NameNode): boolean => ts.isIdentifier(node) && ts.identifierToKeywordKind(node) !== undefined;
+
+const isMetaPropertyName = (node: NameNode): boolean => ts.isMetaProperty(node.parent) && node.parent.name === node;
+
+const isJsxPlatformName = (node: NameNode): boolean => isIntrinsicTagName(node) || isIntrinsicAttributeName(node) || ts.isJsxNamespacedName(node.parent);
+
+/** An occurrence that fixes its name wherever else the name occurs: the JSX, grammar or API meaning of its position. */
+function pinsItsName(node: NameNode, bindings: ReadonlySet<string>): boolean {
+  return isJsxPlatformName(node) || isKeywordLike(node) || isMetaPropertyName(node) || isDivisionFlags(node) || isApiName(node, bindings);
+}
+
+const isDivisionFlags = (node: NameNode): boolean => ts.isIdentifier(node) && isFlagsAfterDivision(node);
+
+function addNameOccurrence(scan: NameScan, node: NameNode): void {
+  const text = node.text;
+  if (text === "") return;
+  const start = node.getStart(scan.file);
+  if (scan.source.slice(start, node.end) !== text || pinsItsName(node, scan.bindings)) scan.pinned.add(text);
+  addOccurrence(scan.occurrences, text, { start, offset: ts.isPrivateIdentifier(node) ? 1 : 0 });
+}
+
+/** Every identifier's occurrence and every word inside a string or template literal. */
+function scanNames(scan: NameScan, node: ts.Node): void {
+  if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) {
+    addNameOccurrence(scan, node);
+    return;
+  }
+  const content = literalContent(node, scan.file);
+  if (content !== undefined) {
+    for (const word of scan.source.slice(...content).match(WORD) ?? []) scan.literalWords.add(word);
+    return;
+  }
+  ts.forEachChild(node, child => scanNames(scan, child));
+}
+
+/**
+ * Every comment in the file: the trivia before and after every token, punctuation included, so a comment no node starts
+ * or ends at (`{ /* global a *\/ }`) is found too. JSX text is no trivia, and a JSDoc node's children sit inside its
+ * comment.
+ */
+function fileComments(source: string, file: ts.SourceFile): Map<number, ts.CommentRange> {
   const comments = new Map<number, ts.CommentRange>();
-  const occur = (text: string, occurrence: Occurrence): void => {
-    const bucket = occurrences.get(text) ?? [];
-    bucket.push(occurrence);
-    occurrences.set(text, bucket);
-  };
-  // Every comment in the file: the trivia before and after every token, punctuation included, so a comment no node
-  // starts or ends at (`{ /* global a */ }`) is found too. JSX text is no trivia, and a JSDoc node's children sit inside
-  // its comment.
   const jsxText: Array<[number, number]> = [];
   const collectComments = (node: ts.Node): void => {
     if (node.kind >= ts.SyntaxKind.FirstJSDocNode && node.kind <= ts.SyntaxKind.LastJSDocNode) return;
@@ -406,81 +487,75 @@ export function renameSource(source: string, fileName: string): RenameResult {
     for (const range of [...(ts.getLeadingCommentRanges(source, node.pos) ?? []), ...(ts.getTrailingCommentRanges(source, node.end) ?? [])]) comments.set(range.pos, range);
     for (const child of node.getChildren(file)) collectComments(child);
   };
-  const packages = packageNames(file);
-  for (const name of packages.exported) pinned.add(name);
-  // A JSX pragma names the factory in a comment (`/** @jsx Foo */ Foo.renderComponent()`): its root stays, so the two agree.
-  for (const match of source.matchAll(/@jsx(?:Frag)?\s+([A-Za-z_$][\w$]*)/gu)) pinned.add(match[1]!);
-  const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) {
-      const text = node.text;
-      if (text === "") return;
-      const start = node.getStart(file);
-      const parent = node.parent;
-      const intrinsicTag = (ts.isJsxOpeningElement(parent) || ts.isJsxSelfClosingElement(parent) || ts.isJsxClosingElement(parent)) && parent.tagName === node && isIntrinsicTag(parent.tagName);
-      const intrinsicAttribute = ts.isJsxAttribute(parent) && parent.name === node && isIntrinsicTag(parent.parent.parent.tagName);
-      const namespaced = ts.isJsxNamespacedName(parent);
-      const keywordLike = ts.isIdentifier(node) && ts.identifierToKeywordKind(node) !== undefined;
-      const metaProperty = ts.isMetaProperty(parent) && parent.name === node;
-      const flags = ts.isIdentifier(node) && isFlagsAfterDivision(node);
-      const fixed = intrinsicTag || intrinsicAttribute || namespaced || keywordLike || metaProperty || flags || isApiName(node, packages.bindings);
-      if (source.slice(start, node.end) !== text || fixed) pinned.add(text);
-      occur(text, { start, offset: ts.isPrivateIdentifier(node) ? 1 : 0 });
-      return;
-    }
-    const content = literalContent(node, file);
-    if (content !== undefined) {
-      for (const word of source.slice(...content).match(WORD) ?? []) literalWords.add(word);
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  // A non-ASCII identifier anywhere leaves the file as it is (see module doc).
-  if ([...occurrences.keys()].some(name => /[^\x00-\x7f]/u.test(name))) return { source, renames: new Map() };
   collectComments(file);
   for (const [start, end] of jsxText) for (const position of [...comments.keys()]) if (position >= start && position < end) comments.delete(position);
+  return comments;
+}
 
-  // Names a `/* global */`-style comment lists are occurrences too; every other comment word is only avoided.
+/** The names a `/* global *\/`-style comment lists are occurrences too. */
+function addListedNames(source: string, range: ts.CommentRange, directive: string, occurrences: Map<string, Occurrence[]>): void {
+  const bodyStart = range.pos + 2 + directive.length;
+  const body = source.slice(bodyStart, range.end - 2).split(/\s--\s/u)[0]!;
+  // ESLint's parseStringConfig: `name` or `name:value` items, separated by commas or whitespace.
+  for (const item of body.matchAll(/([^\s,:]+)(?:\s*:\s*[^\s,]*)?/gu)) {
+    const name = item[1]!;
+    if (/^[A-Za-z_$][\w$]*$/u.test(name)) addOccurrence(occurrences, name, { start: bodyStart + item.index!, offset: 0 });
+  }
+}
+
+/** The words of the file's comments, which are only avoided; the names a directive lists go to `occurrences` instead. */
+function readCommentWords(source: string, comments: ReadonlyMap<number, ts.CommentRange>, occurrences: Map<string, Occurrence[]>): Set<string> {
   const commentWords = new Set<string>();
   for (const range of comments.values()) {
     const text = source.slice(range.pos, range.end);
     const directive = range.kind === ts.SyntaxKind.MultiLineCommentTrivia ? NAME_LIST_DIRECTIVE.exec(text.slice(2, -2)) : null;
-    if (directive === null) {
-      for (const word of text.match(WORD) ?? []) commentWords.add(word);
+    if (directive !== null) {
+      addListedNames(source, range, directive[0], occurrences);
       continue;
     }
-    const bodyStart = range.pos + 2 + directive[0].length;
-    const body = source.slice(bodyStart, range.end - 2).split(/\s--\s/u)[0]!;
-    // ESLint's parseStringConfig: `name` or `name:value` items, separated by commas or whitespace.
-    for (const item of body.matchAll(/([^\s,:]+)(?:\s*:\s*[^\s,]*)?/gu)) {
-      const name = item[1]!;
-      if (/^[A-Za-z_$][\w$]*$/u.test(name)) occur(name, { start: bodyStart + item.index!, offset: 0 });
-    }
+    for (const word of text.match(WORD) ?? []) commentWords.add(word);
   }
+  return commentWords;
+}
 
-  const bareName = (name: string): string => (name.startsWith("#") ? name.slice(1) : name);
-  const hungarian = (name: string): boolean => /^I[A-Z]/.test(name);
-  const staying = new Set<string>(literalWords);
+const bareName = (name: string): string => (name.startsWith("#") ? name.slice(1) : name);
+const isHungarian = (name: string): boolean => /^I[A-Z]/.test(name);
+const hasRenamableLetter = (bare: string): boolean => /[A-Za-z]/.test(bare.slice(isHungarian(bare) ? 1 : 0));
+
+const staysAsItIs = (scan: NameScan, name: string, bare: string): boolean =>
+  scan.pinned.has(name) || scan.literalWords.has(bare) || isProtected(bare) || !hasRenamableLetter(bare);
+
+/** The bare names that stay and those to rename. */
+function partitionNames(scan: NameScan): { staying: Set<string>; renamable: Set<string> } {
+  const staying = new Set<string>(scan.literalWords);
   const renamable = new Set<string>();
-  for (const name of occurrences.keys()) {
+  for (const name of scan.occurrences.keys()) {
     const bare = bareName(name);
-    if (pinned.has(name) || literalWords.has(bare) || isProtected(bare) || !/[A-Za-z]/.test(bare.slice(hungarian(bare) ? 1 : 0))) staying.add(bare);
+    if (staysAsItIs(scan, name, bare)) staying.add(bare);
     else renamable.add(bare);
   }
   // A name kept for one reason (`#a` beside a pinned `a`) is kept everywhere: the trie is keyed by the bare name.
   for (const name of staying) renamable.delete(name);
+  return { staying, renamable };
+}
 
+/** One relabelling of the trie of the file's names: each renamable name's image. */
+function relabelNames(source: string, attempt: number, staying: ReadonlySet<string>, renamable: ReadonlySet<string>): Map<string, string> {
+  const root = trieNode();
+  for (const name of staying) insert(root, name, name.length);
+  for (const name of renamable) insert(root, name, isHungarian(name) ? 1 : 0);
+  label(root, xorshift(fnv1a(`${source}\u0000${attempt}`)));
+  return new Map([...renamable].map(name => [name, relabel(root, name)]));
+}
+
+/** The first relabelling whose images are all usable; `staying` and `renamable` change once the attempts run out. */
+function chooseImages(source: string, staying: Set<string>, renamable: Set<string>, commentWords: ReadonlySet<string>): Map<string, string> {
   // The trie keeps every image apart from the file's other names; only names the file does not hold need checking.
   const unusable = (from: string, to: string): boolean => to !== from && (isProtected(to) || (to.length > 2 && commentWords.has(to)));
-  let images = new Map<string, string>();
   for (let attempt = 0; ; attempt += 1) {
-    const root = trieNode();
-    for (const name of staying) insert(root, name, name.length);
-    for (const name of renamable) insert(root, name, hungarian(name) ? 1 : 0);
-    label(root, xorshift(fnv1a(`${source}\u0000${attempt}`)));
-    images = new Map([...renamable].map(name => [name, relabel(root, name)]));
+    const images = relabelNames(source, attempt, staying, renamable);
     const clashes = [...images].filter(([from, to]) => unusable(from, to)).map(([from]) => from);
-    if (clashes.length === 0) break;
+    if (clashes.length === 0) return images;
     // After ATTEMPTS relabellings, the names that still clash stay as they are, and the rest are relabelled around them.
     if (attempt >= ATTEMPTS) {
       for (const name of clashes) {
@@ -489,25 +564,44 @@ export function renameSource(source: string, fileName: string): RenameResult {
       }
     }
   }
+}
 
-  const renames = new Map<string, string>();
-  const edits: Array<{ start: number; text: string }> = [];
-  for (const [name, list] of occurrences) {
-    const bare = bareName(name);
-    const image = images.get(bare);
-    if (image === undefined || image === bare) continue;
-    renames.set(name, name.startsWith("#") ? `#${image}` : image);
-    for (const { start, offset } of list) edits.push({ start: start + offset, text: image });
-  }
-  edits.sort((left, right) => left.start - right.start);
+function spliceEdits(source: string, edits: readonly { start: number; text: string }[]): string {
   let result = "";
   let cursor = 0;
-  for (const edit of edits) {
+  for (const edit of [...edits].sort((left, right) => left.start - right.start)) {
     result += source.slice(cursor, edit.start) + edit.text;
     cursor = edit.start + edit.text.length;
   }
-  result += source.slice(cursor);
-  return { source: result, renames };
+  return result + source.slice(cursor);
+}
+
+/** `source` with each name's occurrences replaced by its image, and the map of what changed. */
+function applyImages(source: string, occurrences: ReadonlyMap<string, readonly Occurrence[]>, images: ReadonlyMap<string, string>): RenameResult {
+  const renames = new Map<string, string>();
+  const edits: Array<{ start: number; text: string }> = [];
+  for (const [name, list] of occurrences) {
+    const image = images.get(bareName(name));
+    if (image === undefined || image === bareName(name)) continue;
+    renames.set(name, name.startsWith("#") ? `#${image}` : image);
+    for (const { start, offset } of list) edits.push({ start: start + offset, text: image });
+  }
+  return { source: spliceEdits(source, edits), renames };
+}
+
+/** Renames `source`'s identifiers (see module doc). `fileName` picks how it is parsed. */
+export function renameSource(source: string, fileName: string): RenameResult {
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true, scriptKind(fileName));
+  const packages = packageNames(file);
+  // A JSX pragma names the factory in a comment (`/** @jsx Foo */ Foo.renderComponent()`): its root stays, so the two agree.
+  const jsxFactories = [...source.matchAll(/@jsx(?:Frag)?\s+([A-Za-z_$][\w$]*)/gu)].map(match => match[1]!);
+  const scan: NameScan = { source, file, bindings: packages.bindings, occurrences: new Map(), pinned: new Set([...packages.exported, ...jsxFactories]), literalWords: new Set() };
+  scanNames(scan, file);
+  // A non-ASCII identifier anywhere leaves the file as it is (see module doc).
+  if ([...scan.occurrences.keys()].some(name => /[^\x00-\x7f]/u.test(name))) return { source, renames: new Map() };
+  const commentWords = readCommentWords(source, fileComments(source, file), scan.occurrences);
+  const { staying, renamable } = partitionNames(scan);
+  return applyImages(source, scan.occurrences, chooseImages(source, staying, renamable, commentWords));
 }
 
 /** TypeScript's syntax diagnostics for `source` (offset and code), to check a rename did not change how it parses. */

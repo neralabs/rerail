@@ -97,8 +97,8 @@ fn local_result_round_trips_negative_results_and_failures() {
 
 #[test]
 fn a_stored_local_result_decodes_to_typed_witnesses_and_re_encodes_to_its_bytes() {
-    // A version 3 frame as engines before the typed witness span and captures wrote it: spans and
-    // captures were JSON objects, serialized in key order.
+    // A version 4 frame: spans and captures are JSON objects, serialized in key order; a witness
+    // without a span omits the key.
     let span = |start: usize, end: usize, line: usize, column: usize| {
         format!(
             r#"{{"endByte":{end},"endColumn":{},"endLine":{line},"startByte":{start},"startColumn":{column},"startLine":{line}}}"#,
@@ -107,10 +107,11 @@ fn a_stored_local_result_decodes_to_typed_witnesses_and_re_encodes_to_its_bytes(
     };
     let stored = format!(
         concat!(
-            r#"{{"failure":null,"syntax":null,"version":3,"witnesses":["#,
+            r#"{{"failure":null,"syntax":null,"version":4,"witnesses":["#,
             r#"{{"captures":{{"$project":{{"package":"pkg"}},"A":[{a}],"ARGS":[{first},{last}]}},"#,
             r#""fix":{{"span":{whole},"text":"log(1, 2)"}},"message":"print 1","span":{whole}}},"#,
-            r#"{{"captures":{{}},"fix":null,"message":null,"span":{other}}}]}}"#,
+            r#"{{"captures":{{}},"fix":null,"message":null,"span":{other}}},"#,
+            r#"{{"captures":{{}},"fix":null,"message":"pkg"}}]}}"#,
         ),
         a = span(14, 19, 2, 4),
         first = span(20, 21, 2, 10),
@@ -121,8 +122,8 @@ fn a_stored_local_result_decodes_to_typed_witnesses_and_re_encodes_to_its_bytes(
 
     let (witnesses, failure, syntax) = decode_local_result(stored.as_bytes(), "pkg/a.py").unwrap();
     assert!(failure.is_none() && syntax.is_none());
-    let [printed, plain] = witnesses.as_slice() else {
-        panic!("two witnesses");
+    let [printed, plain, spanless] = witnesses.as_slice() else {
+        panic!("three witnesses");
     };
     let expected =
         |start_byte, end_byte, start_column, end_column| crate::code_rule_dsl::violations::Span {
@@ -134,7 +135,7 @@ fn a_stored_local_result_decodes_to_typed_witnesses_and_re_encodes_to_its_bytes(
             end_column,
         };
     assert_eq!(printed.path, "pkg/a.py");
-    assert_eq!(printed.span, expected(14, 25, 4, 15));
+    assert_eq!(printed.span, Some(expected(14, 25, 4, 15)));
     assert_eq!(
         printed.captures.get("A"),
         Some(&[expected(14, 19, 4, 9)][..])
@@ -151,7 +152,9 @@ fn a_stored_local_result_decodes_to_typed_witnesses_and_re_encodes_to_its_bytes(
     assert_eq!(printed.message.as_deref(), Some("print 1"));
     assert_eq!(printed.fix.as_ref().unwrap()["text"], "log(1, 2)");
     assert_eq!(plain.captures, Default::default());
-    assert_eq!(plain.span.end_byte, 6);
+    assert_eq!(plain.span.map(|span| span.end_byte), Some(6));
+    assert_eq!(spanless.span, None);
+    assert_eq!(spanless.message.as_deref(), Some("pkg"));
 
     let rewritten = encode_local_result(&witnesses, None, None).unwrap();
     assert_eq!(String::from_utf8(rewritten).unwrap(), stored);
@@ -175,12 +178,13 @@ fn close_releases_idle_workspace_files() {
     let memory: Value = serde_json::from_str(&workspace.memory_profile().unwrap()).unwrap();
     assert_eq!(memory["files"], 1);
     assert!(memory["fileStateBytesEstimate"].as_u64().unwrap() > 0);
-    workspace.scopes.lock().unwrap().push(
+    workspace.scopes.lock().unwrap().push((
         compile_scope(Some(&json!({
             "include": ["**/*"], "exclude": []
         })))
         .unwrap(),
-    );
+        false,
+    ));
     assert!(workspace.accepts_path("example.py".into()));
     workspace.close();
     assert!(workspace.state.lock().unwrap().files.is_empty());
@@ -195,7 +199,7 @@ fn close_clears_poisoned_scope_metadata() {
         "include": ["**/*"], "exclude": []
     })))
     .unwrap();
-    workspace.scopes.lock().unwrap().push(scope);
+    workspace.scopes.lock().unwrap().push((scope, false));
     let owner = Arc::clone(&workspace);
     assert!(
         std::thread::spawn(move || {
@@ -277,10 +281,24 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
             .is_err()
         );
 
+        // The first call to meet the poisoned state closes the workspace, which releases its
+        // sources at once; it and every later call fail as closed, which no host retries.
         assert_eq!(
             workspace.add_code_rule(&compiled, None).unwrap_err().reason,
-            "policy workspace is evaluating"
+            "policy workspace is closed"
         );
+        assert!(
+            retained.upgrade().is_none(),
+            "a poisoned workspace retained a source"
+        );
+        assert!(!workspace.accepts_path("resident.py".into()));
+        for rejected in [
+            workspace.set_root("/".into()).unwrap_err(),
+            workspace.evict_inactive().unwrap_err(),
+            workspace.set_document_residency_limit(1024).unwrap_err(),
+        ] {
+            assert_eq!(rejected.reason, "policy workspace is closed");
+        }
         assert!(workspace.try_apply(request.clone()).unwrap().is_none());
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
@@ -291,7 +309,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
         };
         assert_eq!(
             task.compute().unwrap_err().reason,
-            "policy workspace is unavailable"
+            "policy workspace is closed"
         );
         let workspace = Arc::new(workspace);
         let barrier = Arc::new(std::sync::Barrier::new(3));
@@ -316,6 +334,41 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
             "closed poisoned workspace retained a source"
         );
     }
+}
+
+#[test]
+fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let panicked = crate::panic_boundary::contain_panic::<()>("apply", || {
+        let _held = super::api::cpu_slot().lock();
+        panic!("apply panicked holding the CPU slot");
+    });
+    assert!(panicked.is_err());
+    let workspace = CodeRuleDslWorkspace::new();
+    let mut task = WorkspaceApplyTask {
+        state: Arc::clone(&workspace.state),
+        closed: Arc::clone(&workspace.closed),
+        request_json: json!({ "revision": 1, "files": [], "removed": [] }).to_string(),
+        request_buffer: None,
+        request_direct: None,
+    };
+    // Retried as the host retries a busy slot: another test's apply may hold it for a moment, but
+    // a slot the panic left held would answer busy until the deadline.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let outcome = loop {
+        match task.compute() {
+            Err(error)
+                if error.reason == "WORKSPACE_BUSY" && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            outcome => break outcome,
+        }
+    };
+    assert!(
+        outcome.is_ok(),
+        "the apply after a panic failed: {outcome:?}"
+    );
 }
 
 #[test]
@@ -733,6 +786,7 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         workspace_id,
         snapshot_id: snapshot,
         owner: owner.to_owned(),
+        secret_names: Default::default(),
         _maintenance: None,
     });
 
@@ -3415,6 +3469,69 @@ fn a_file_start_anchor_is_byte_zero_on_both_paths() {
             );
         }
     }
+}
+
+/// A `file` query and a `file.path` regex stand for the whole file, on both paths: their
+/// violations carry no span and no captures (a path regex's groups still fill its message), a
+/// path regex reports its first match alone, and `file.start` still anchors at byte 0. A `file`
+/// leaf of a `select_when` is one such witness per file.
+#[test]
+fn file_queries_and_path_regexes_report_violations_without_a_span() {
+    let clauses = || {
+        let message = |code: &str, message: &str| json!({ "anchor": "witness.span", "code": code, "message": message });
+        vec![
+            reported_clause("file", json!({ "file": {} }), message("F", "no lock files")),
+            reported_clause(
+                "path",
+                json!({ "regex": { "source": "file.path", "pattern": "(?<C>[a-z])" } }),
+                message("P", "starts with $C"),
+            ),
+            reported_clause(
+                "start",
+                json!({ "regex": { "source": "file.path", "pattern": "\\.lock$" } }),
+                json!({ "anchor": "file.start", "code": "S", "message": "s" }),
+            ),
+            reported_clause(
+                "when",
+                json!({ "select_when": {
+                    "select": { "file": {} },
+                    "exists": { "regex": { "source": "file.content", "pattern": "x" } },
+                } }),
+                message("W", "w"),
+            ),
+        ]
+    };
+    let files = json!([{ "language": "text", "path": "yarn.lock", "source": "x\nx\n" }]);
+    let incremental = apply_clauses(clauses(), files.clone());
+    assert_eq!(
+        incremental["violations"],
+        stateless(clauses(), files)["violations"]
+    );
+    let mut reported = incremental["violations"]
+        .as_array()
+        .expect("findings")
+        .iter()
+        .map(|violation| {
+            assert_eq!(violation["path"], "yarn.lock");
+            assert_eq!(violation["captures"], json!({}));
+            (
+                violation["code"].as_str().unwrap().to_owned(),
+                violation["message"].as_str().unwrap().to_owned(),
+                violation.get("span").cloned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    reported.sort_by(|left, right| left.0.cmp(&right.0));
+    let zero = json!({ "startByte": 0, "endByte": 0, "startLine": 0, "startColumn": 0, "endLine": 0, "endColumn": 0 });
+    assert_eq!(
+        reported,
+        vec![
+            ("F".to_owned(), "no lock files".to_owned(), None),
+            ("P".to_owned(), "starts with y".to_owned(), None),
+            ("S".to_owned(), "s".to_owned(), Some(zero)),
+            ("W".to_owned(), "w".to_owned(), None),
+        ]
+    );
 }
 
 /// `host` inside a directive's item, with `each`: every item a declaration of the file names,

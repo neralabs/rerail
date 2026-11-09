@@ -1,13 +1,19 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { Readable, type Duplex } from "node:stream";
+import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
+import type { ModelStatus } from "../engine/native/model-status.js";
 
 /** What `rerail status` and the launcher need to find a running daemon. */
 export interface DaemonState {
@@ -37,6 +43,12 @@ export interface DaemonState {
    * health/API responses.
    */
   accessToken?: string;
+  /**
+   * The SHA-256 fingerprint (`AA:BB:…`, as `X509Certificate.fingerprint256` writes it) of the certificate a daemon
+   * started with `--tls-cert` presents; present exactly when `url` is `https:`. Rerail's own clients accept that
+   * certificate and no other (see {@link daemonFetch}), so a self-signed one needs no CA.
+   */
+  tlsFingerprint256?: string;
 }
 
 /** Header a Rerail process, and the dashboard page, send the daemon's {@link DaemonState.accessToken} in. */
@@ -51,14 +63,131 @@ export function daemonAccessHeaders(state: Pick<DaemonState, "accessToken">): Re
   return state.accessToken === undefined ? {} : { [DAEMON_ACCESS_HEADER]: state.accessToken };
 }
 
-/** Where a Rerail process sends requests to a daemon, and the headers that admit them. */
+/** Whether `presented` is `token`, in time independent of where they differ. */
+export function sameSecret(presented: string | undefined, token: string): boolean {
+  if (presented === undefined) return false;
+  const digest = (text: string) => createHash("sha256").update(text).digest();
+  return timingSafeEqual(digest(presented), digest(token));
+}
+
+/** Where a hook sends events: the daemon's engine socket and the capability that socket requires. */
+export interface EngineEndpoint {
+  socketPath: string;
+  accessToken?: string;
+}
+
+function engineEndpointOf(state: Pick<DaemonState, "kernelSocketPath" | "accessToken">): EngineEndpoint {
+  return state.accessToken === undefined ? { socketPath: state.kernelSocketPath } : { socketPath: state.kernelSocketPath, accessToken: state.accessToken };
+}
+
+/**
+ * The endpoint for an engine socket named outright (`RERAIL_ENGINE_SOCKET`, or a test's path): with the capability of
+ * the home's daemon when its state names that same socket, and none otherwise, which only a standalone engine service
+ * (one no daemon started) accepts.
+ */
+export async function engineEndpointAt(socketPath: string, home: string = defaultRerailHome()): Promise<EngineEndpoint> {
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE)).catch(() => undefined);
+  return state !== undefined && resolve(state.kernelSocketPath) === resolve(socketPath) ? engineEndpointOf(state) : { socketPath };
+}
+
+/** How a Rerail process sends one request to the daemon: `fetch`'s shape, over the transport the daemon serves. */
+export type DaemonFetch = (endpoint: URL, init: RequestInit) => Promise<Response>;
+
+/** Where a Rerail process sends requests to a daemon, the headers that admit them, and the transport that reaches it. */
 export interface DaemonEndpoint {
   url: URL;
   headers: Record<string, string>;
+  fetch: DaemonFetch;
 }
 
-export function daemonEndpoint(state: Pick<DaemonState, "url" | "accessToken">, path = "/"): DaemonEndpoint {
-  return { url: new URL(path, state.url), headers: daemonAccessHeaders(state) };
+export function daemonEndpoint(state: Pick<DaemonState, "url" | "accessToken" | "tlsFingerprint256">, path = "/"): DaemonEndpoint {
+  return { url: new URL(path, state.url), headers: daemonAccessHeaders(state), fetch: daemonFetch(state) };
+}
+
+/**
+ * An https agent that hands the request a TLS connection only once the daemon has presented the certificate whose
+ * fingerprint is pinned: the CA chain and the name are not checked (a self-signed certificate for `0.0.0.0` is the
+ * usual case), the exact certificate is. Nothing, the capability included, is written before the check passes.
+ */
+class PinnedDaemonAgent extends HttpsAgent {
+  readonly #fingerprint256: string;
+
+  constructor(fingerprint256: string) {
+    super({ keepAlive: false });
+    this.#fingerprint256 = fingerprint256;
+  }
+
+  override createConnection(options: HttpsRequestOptions, callback?: (error: Error | null, stream: Duplex) => void): undefined {
+    const socket = tlsConnect({ ...options, rejectUnauthorized: false } as ConnectionOptions);
+    const fail = (error: Error): void => {
+      socket.destroy();
+      callback?.(error, socket);
+    };
+    socket.once("error", fail);
+    socket.once("secureConnect", () => {
+      socket.off("error", fail);
+      const presented = socket.getPeerCertificate().fingerprint256;
+      if (presented !== this.#fingerprint256) {
+        fail(new Error(`Rerail daemon presented TLS certificate ${presented}, not the ${this.#fingerprint256} daemon.json pins; nothing was sent`));
+        return;
+      }
+      callback?.(null, socket);
+    });
+    return undefined;
+  }
+}
+
+/** Statuses whose response has no body, which `Response` refuses one for. */
+const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([101, 103, 204, 205, 304]);
+
+function requestBody(body: RequestInit["body"]): string | Uint8Array | undefined {
+  if (body === undefined || body === null || typeof body === "string" || body instanceof Uint8Array) return body ?? undefined;
+  throw new TypeError("A request to an https Rerail daemon carries a string or bytes body");
+}
+
+/** `fetch` over `agent`, for the request shapes Rerail's own clients send. Redirects are never followed. */
+function pinnedFetch(agent: PinnedDaemonAgent): DaemonFetch {
+  return async (endpoint, init) => {
+    const method = (init.method ?? "GET").toUpperCase();
+    const body = requestBody(init.body);
+    const { promise, resolve: answer, reject } = Promise.withResolvers<Response>();
+    const request = httpsRequest(endpoint, {
+      method,
+      headers: Object.fromEntries(new Headers(init.headers)),
+      agent,
+      ...(init.signal === undefined || init.signal === null ? {} : { signal: init.signal }),
+    }, (response) => {
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(response.headers)) {
+        for (const item of Array.isArray(value) ? value : [value]) if (item !== undefined) headers.append(name, item);
+      }
+      const status = response.statusCode ?? 502;
+      const empty = method === "HEAD" || NULL_BODY_STATUSES.has(status);
+      if (empty) response.resume();
+      answer(new Response(empty ? null : Readable.toWeb(response) as unknown as ReadableStream, {
+        status, statusText: response.statusMessage ?? "", headers,
+      }));
+    });
+    request.once("error", reject);
+    request.end(body);
+    return await promise;
+  };
+}
+
+/**
+ * How a Rerail process reaches the daemon `state` records: plain `fetch` for an `http:` daemon; for an `https:` one, a
+ * client that pins the certificate fingerprint the daemon recorded. An `https:` state without a fingerprint is refused
+ * rather than trusted.
+ */
+export function daemonFetch(state: Pick<DaemonState, "url" | "tlsFingerprint256">): DaemonFetch {
+  if (new URL(state.url).protocol !== "https:") return fetch;
+  const fingerprint = state.tlsFingerprint256;
+  if (fingerprint === undefined) {
+    return async () => {
+      throw new Error("daemon.json names an https Rerail daemon without the certificate fingerprint to pin");
+    };
+  }
+  return pinnedFetch(new PinnedDaemonAgent(fingerprint));
 }
 
 /** `url` on the origin a browser on this machine reaches: an unspecified bind address (`0.0.0.0`, `::`) is loopback. */
@@ -96,6 +225,10 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   uptimeMs: number;
   database: { path: string; exists: boolean };
   native: NativeStatus;
+  /** The bundled model against `model/manifest.json` (`engine/native/model-status.ts`). */
+  model: ModelStatus;
+  /** Whether the engine and the model can serve sessions (`native.ok && model.ok`); `status` says only that the daemon answers. */
+  healthy: boolean;
   /** Absolute checkout path native sessions address. */
   workspaceRoot: string;
   /** When Rerail was installed on this machine (epoch ms); null before the database exists. */
@@ -112,7 +245,8 @@ export function nodeExecutable(): string {
 
 export const DAEMON_STATE_FILE = "daemon.json";
 export const DAEMON_LOG_FILE = "daemon.log";
-const START_LOCK_DIR = "start.lock";
+/** In the Rerail home: the lock a daemon start holds. */
+export const START_LOCK_DIR = "start.lock";
 
 const START_TIMEOUT_MS = 15_000;
 const STOP_TIMEOUT_MS = 10_000;
@@ -162,9 +296,19 @@ export interface DaemonLaunchOptions {
   allowRemote?: boolean;
   /** Extra hostnames the daemon answers to; passed through as `--public-host`. */
   publicHosts?: readonly string[];
+  /** PEM files the daemon serves https with; passed through as `--tls-cert` / `--tls-key`. */
+  tls?: DaemonTlsFiles;
+  /** Serve plain http off loopback anyway; passed through as `--insecure-http`. See `parseDaemonTransport`. */
+  insecureHttp?: boolean;
   port?: number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+}
+
+/** The certificate (chain) and private key a daemon serves https with, as absolute paths to PEM files. */
+export interface DaemonTlsFiles {
+  certFile: string;
+  keyFile: string;
 }
 
 export interface StartDaemonResult {
@@ -173,14 +317,31 @@ export interface StartDaemonResult {
   daemon: RunningDaemon;
 }
 
+/** Whether `pid` is a live process of any user: a process another user runs still holds its pid (`EPERM`). */
 export function processAlive(pid: number): boolean {
+  return processLiveness(pid) !== "dead";
+}
+
+/**
+ * Whether `pid` is a live process this OS user runs, the only kind that can be this user's daemon. A state file whose
+ * pid belongs to another user is left over from a daemon that is gone, its pid since reused; probing the URL it records
+ * would send the capability to whoever listens there now. On Windows `EPERM` also answers for this user's elevated
+ * processes, so there it still counts as this user's.
+ */
+export function ownProcessAlive(pid: number): boolean {
+  return processLiveness(pid) === "own";
+}
+
+function processLiveness(pid: number): "own" | "other-user" | "dead" {
+  let owner: "own" | "other-user" = "own";
   try {
     process.kill(pid, 0);
   } catch (error) {
-    // EPERM means the process exists but belongs to another user; it is still alive.
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
+    // EPERM means the process exists but this user may not signal it: on POSIX, another user's.
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") return "dead";
+    if (process.platform !== "win32") owner = "other-user";
   }
-  return !isZombie(pid);
+  return isZombie(pid) ? "dead" : owner;
 }
 
 /**
@@ -211,6 +372,7 @@ function hasDaemonStateFields(value: unknown): value is Record<string, unknown> 
     && (record.ui === "bundled" || record.ui === "dev")
     && (record.nativeToken === undefined || typeof record.nativeToken === "string")
     && (record.accessToken === undefined || typeof record.accessToken === "string")
+    && (record.tlsFingerprint256 === undefined || typeof record.tlsFingerprint256 === "string")
     && typeof record.startedAt === "number"
     && typeof record.packageRoot === "string"
     && (record.workspaceRoot === undefined || typeof record.workspaceRoot === "string");
@@ -247,17 +409,17 @@ export async function readDaemonState(stateFile: string): Promise<DaemonState | 
 }
 
 /**
- * What the daemon `state` records answers on `/healthz`, with the capability it records; `fetchImpl` lets a client with
- * its own transport, such as the MCP bridge, probe through it. A `401` is a refusal, kept apart from silence: the
- * daemon is up, and "not answering" would send the person after the wrong cause.
+ * What the daemon `state` records answers on `/healthz`, with the capability it records, over its own transport
+ * (`daemonFetch`) unless `fetchImpl` names another, as the MCP bridge's tests do. A `401` is a refusal, kept apart from
+ * silence: the daemon is up, and "not answering" would send the person after the wrong cause.
  */
 export async function probeDaemon(
-  state: Pick<DaemonState, "url" | "accessToken">,
-  fetchImpl: (endpoint: URL, init: RequestInit) => Promise<Response> = fetch,
+  state: Pick<DaemonState, "url" | "accessToken" | "tlsFingerprint256">,
+  fetchImpl?: DaemonFetch,
 ): Promise<DaemonProbe> {
   try {
-    const { url, headers } = daemonEndpoint(state, "/healthz");
-    const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    const endpoint = daemonEndpoint(state, "/healthz");
+    const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
     if (response.status === 401) return { status: "refused" };
     if (!response.ok) return { status: "unreachable" };
     const body = await response.json() as DaemonHealth;
@@ -271,7 +433,8 @@ export async function lookupDaemon(home: string): Promise<DaemonLookup> {
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile);
   if (state === undefined) return { status: "absent" };
-  if (!processAlive(state.pid)) {
+  // Another user's process cannot be this user's daemon: the state is stale, and its URL is never probed.
+  if (!ownProcessAlive(state.pid)) {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
@@ -395,7 +558,7 @@ async function repairSqlite(control: DaemonControl): Promise<void> {
 }
 
 export async function startDaemon(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
-  await mkdir(control.home, { recursive: true, mode: 0o700 });
+  makeRerailHome(control.home);
   return await withStartLock(control.home, async () => {
     const lookup = await lookupDaemon(control.home);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
@@ -410,7 +573,7 @@ export async function startDaemon(control: DaemonControl, options: DaemonLaunchO
  * an older daemon cannot safely accept fields introduced by the active hook.
  */
 export async function startDaemonForPackage(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
-  await mkdir(control.home, { recursive: true, mode: 0o700 });
+  makeRerailHome(control.home);
   return await withStartLock(control.home, async () => {
     const lookup = await lookupDaemon(control.home);
     if (lookup.status === "running") {
@@ -433,13 +596,13 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
 }
 
 /**
- * The engine service socket main host clients send events to; only the daemon evaluates them, since it alone opens
+ * The engine endpoint main host clients send events to; only the daemon evaluates them, since it alone opens
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
  * another package, which is how a hook keeps an older daemon from receiving fields it predates; a client that
  * outlives an update passes false after its first event so it keeps using the newer daemon instead of displacing
  * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon.
  */
-export async function daemonEngineSocket(replaceOtherPackage: boolean): Promise<string> {
+export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promise<EngineEndpoint> {
   const home = defaultRerailHome();
   const packageRoot = PACKAGE_ROOT;
   const control = { home, packageRoot };
@@ -451,19 +614,19 @@ export async function daemonEngineSocket(replaceOtherPackage: boolean): Promise<
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, packageRoot))) {
     throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
   }
-  return daemon.state.kernelSocketPath;
+  return engineEndpointOf(daemon.state);
 }
 
 /**
- * The engine service socket for a hook after a session's start, or undefined when no daemon answers. A daemon that is
+ * The engine endpoint for a hook after a session's start, or undefined when no daemon answers. A daemon that is
  * down is not started: each tool call then costs one failed probe instead of an autostart that can outlast the coding
  * agent's hook timeout (design N11). A healthy daemon from another package (an update installed mid-session) is
- * replaced as `daemonEngineSocket(true)` replaces it, so steering carries on with this package's engine.
+ * replaced as `daemonEngineEndpoint(true)` replaces it, so steering carries on with this package's engine.
  */
-export async function runningDaemonEngineSocket(): Promise<string | undefined> {
+export async function runningDaemonEngineEndpoint(): Promise<EngineEndpoint | undefined> {
   const daemon = await findRunningDaemon(defaultRerailHome());
   if (daemon === undefined) return undefined;
-  return await daemonUsesPackageRoot(daemon.state, PACKAGE_ROOT) ? daemon.state.kernelSocketPath : await daemonEngineSocket(true);
+  return await daemonUsesPackageRoot(daemon.state, PACKAGE_ROOT) ? engineEndpointOf(daemon.state) : await daemonEngineEndpoint(true);
 }
 
 interface LaunchedDaemon {
@@ -481,6 +644,8 @@ function daemonArguments(control: DaemonControl, options: DaemonLaunchOptions, s
   if (options.host !== undefined) args.push("--host", options.host);
   if (options.allowRemote) args.push("--allow-remote");
   if (options.publicHosts !== undefined && options.publicHosts.length > 0) args.push("--public-host", options.publicHosts.join(","));
+  if (options.tls !== undefined) args.push("--tls-cert", options.tls.certFile, "--tls-key", options.tls.keyFile);
+  if (options.insecureHttp === true) args.push("--insecure-http");
   if (options.port !== undefined) args.push("--port", String(options.port));
   return args;
 }
@@ -562,7 +727,7 @@ export function autostartDaemon(): void {
   const home = defaultRerailHome();
   const packageRoot = PACKAGE_ROOT;
   try {
-    mkdirSync(home, { recursive: true, mode: 0o700 });
+    makeRerailHome(home);
     const log = openSync(join(home, DAEMON_LOG_FILE), "a", 0o600);
     try {
       const child = spawn(

@@ -19,9 +19,11 @@ import {
   ruleSettings,
   schemaMigrations,
   libraryRules,
+  ruleApprovals,
   ruleCatalogIdentities,
   rules,
   sessions,
+  steerFeedback,
   workLinks,
   AUDIT_HISTORY_TRIGGER_STATEMENTS,
   auditRuleSetRules,
@@ -46,6 +48,7 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   events,
   rules,
   workLinks,
+  steerFeedback,
   audits: audits,
   auditResultPages: auditResultPages,
   auditViolations,
@@ -67,6 +70,7 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   ruleAttachments,
   ruleSettings,
   libraryRules,
+  ruleApprovals,
   schemaMigrations,
   });
   const statements = await generateSQLiteMigration(empty, current);

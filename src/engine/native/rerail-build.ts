@@ -70,6 +70,12 @@ export function mainContentStoreDirectory(): string {
   return join(homedir(), ".cache", "rerail");
 }
 
+/** The content store `RERAIL_CONTENT_STORE_PATH` names, absolute, or undefined when it names none. */
+export function contentStoreOverride(): string | undefined {
+  const override = process.env.RERAIL_CONTENT_STORE_PATH;
+  return override === undefined || override === "" ? undefined : resolve(override);
+}
+
 /**
  * The content store `build` (default: this process's) opens: the machine-wide one for main, `<checkout>/.rerail/`
  * for dev, so no two checkouts and no checkout and the managed installation share a store. The file name is the
@@ -77,8 +83,8 @@ export function mainContentStoreDirectory(): string {
  * `RERAIL_CONTENT_STORE_PATH` overrides both (tests give each run its own file), and then no build is resolved.
  */
 export function contentStorePath(build?: RerailBuild): string {
-  const override = process.env.RERAIL_CONTENT_STORE_PATH;
-  if (override !== undefined && override !== "") return resolve(override);
+  const override = contentStoreOverride();
+  if (override !== undefined) return override;
   const resolved = build ?? currentRerailBuild();
   const directory = resolved.kind === "main" ? mainContentStoreDirectory() : join(resolved.checkout, ".rerail");
   return join(directory, loadNativeBinding().contentStoreFileName());
