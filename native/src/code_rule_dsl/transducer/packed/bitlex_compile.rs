@@ -13,6 +13,8 @@
 //! - **Masks** over `~ & | ^`, `empty`, `prev`, `next`, `starts`, `lasts`, `after`, `span`,
 //!   `aligned`, `toggle`, `after_odd_run` and `fill`.
 //! - **Counts** as bit-planes, and `C.frame(a)` (below).
+//! - **Numbers** (`number`) as bit-planes too: `NUMBER_BITS` of them, a byte's value mod 2^32
+//!   (below).
 //! - **Tokens**, `keywords` and `skip`: each token kind's start and last-byte masks, and the
 //!   coverage and overlap checks.
 //! - **The tree section** (`docs/parser-generators/18-tree-as-grammar.md`): the grammar's state
@@ -37,6 +39,20 @@
 //! openers at level `L` in `a` to the next opener at level `L` not in `a`, kept where the count
 //! before the byte is `L`.
 //!
+//! # Numbers
+//!
+//! A number is `NUMBER_BITS` planes, plane `k` the bytes whose value has bit `k`. A file is
+//! shorter than 2^32 bytes, so a place in it, or a distance, is exact.
+//!
+//! - `position`: plane `k` a pattern of the word below bit 6 (`const`), the block's place
+//!   from bit 6 on (`position k`, a new leaf with no carry).
+//! - `fill(s, e, v)`: plane `k` is `fill(s & v_k, e | s)`, a fill that restarts at every byte
+//!   of `s` and runs where `v` had bit `k` there; `back_fill` likewise.
+//! - `a - b`: a ripple of borrows over the planes, three operations a plane.
+//! - `at_least(a, b)`: no borrow out of `a - b`; `above(a, b)` is `~at_least(b, a)`.
+//!
+//! No new operation but `position`: every plane is a mask, every step a word operation.
+//!
 //! # Delays: `next` without lookahead
 //!
 //! Every value is computed some bytes late: its bit `p` is byte `p - d`'s, for its delay `d`.
@@ -56,8 +72,11 @@
 
 use super::block::{BlockOp, BlockProgram, ClassTable};
 use super::{bitlex_prove, bitlex_tier2, grammar};
-use ::bitlex::syntax::{Arg, Expr, Stmt};
+use ::bitlex::syntax::{Arg, Expr, NExpr, Stmt};
 use std::collections::HashMap;
+
+/// A number's planes: a byte's value mod 2^32, exact for a place in a file or a distance.
+const NUMBER_BITS: u8 = 32;
 
 /// A compiled program: its `rir` rows (`block 0 …`), whose outputs are the requested masks in
 /// order.
@@ -134,6 +153,8 @@ struct Lowering {
     /// The masks any of whose bits sends the file to tree-sitter: errors and escapes.
     fallbacks: Vec<Val>,
     counts: HashMap<String, Count>,
+    /// Each number's planes, bit 0 first (`NUMBER_BITS`).
+    numbers: HashMap<String, Vec<Val>>,
     tokens: Vec<(String, Val, Option<TokenEnd>)>,
     keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
@@ -189,6 +210,7 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
         names: HashMap::new(),
         fallbacks: Vec::new(),
         counts: HashMap::new(),
+        numbers: HashMap::new(),
         tokens: Vec::new(),
         keywords: Vec::new(),
         skip: None,
@@ -525,6 +547,10 @@ impl Lowering {
                 Stmt::Error(_, expr) | Stmt::Escape(_, expr) => {
                     let value = self.expr(expr)?;
                     self.fallbacks.push(value);
+                }
+                Stmt::Number(name, e) => {
+                    let planes = self.number(e)?;
+                    self.numbers.insert(name.clone(), planes);
                 }
                 Stmt::Count { name, up, down, reset, max } => {
                     if reset.is_some() {
@@ -1029,8 +1055,87 @@ impl Lowering {
                 let (start, end) = (mask(self, 0)?, mask(self, 1)?);
                 self.back_fill(start, end)
             }
+            "at_least" | "above" => {
+                let mut operand = |me: &mut Self, i: usize| -> Result<Vec<Val>, String> {
+                    match args.get(i) {
+                        Some(Arg::E(Expr::Name(n))) if n == "position" => me.number(&NExpr::Position),
+                        Some(Arg::E(Expr::Name(n))) => me.numbers.get(n).cloned().ok_or_else(|| format!("{f}: {n} is not a number")),
+                        Some(Arg::N(k)) if *k <= u64::from(u32::MAX) => Ok(me.constant(*k as u32)),
+                        _ => Err(format!("{f}: argument {i} must be a number's name or a constant below 2^32")),
+                    }
+                };
+                let (a, b) = (operand(self, 0)?, operand(self, 1)?);
+                if f == "at_least" {
+                    self.at_least(&a, &b)
+                } else {
+                    let ge = self.at_least(&b, &a)?;
+                    self.not(ge)
+                }
+            }
             _ => Err(format!("not compiled yet: {f}")),
         }
+    }
+
+    /// A number's planes (the module's notes).
+    fn number(&mut self, e: &NExpr) -> Result<Vec<Val>, String> {
+        match e {
+            NExpr::Position => Ok((0..NUMBER_BITS)
+                .map(|j| if j < 6 { self.pattern(super::block::position(0, j)) } else { self.leaf(BlockOp::Position(j), true) })
+                .collect()),
+            NExpr::Name(n) => self.numbers.get(n).cloned().ok_or_else(|| format!("{n} is not a number")),
+            NExpr::Fill { s, e, v, back } => {
+                let (s, e, v) = (self.expr(s)?, self.expr(e)?, self.number(v)?);
+                let stop = self.or(e, s)?;
+                let mut out = Vec::new();
+                for p in v {
+                    let from = self.and(s, p)?;
+                    out.push(match () {
+                        _ if self.is_zero(from) => from,
+                        _ if *back => self.back_fill(from, stop)?,
+                        _ => self.fill(from, stop)?,
+                    });
+                }
+                Ok(out)
+            }
+            NExpr::Sub(a, b) => {
+                let (a, b) = (self.number(a)?, self.number(b)?);
+                let mut borrow: Option<Val> = None;
+                let mut out = Vec::new();
+                for (&x, &y) in a.iter().zip(&b) {
+                    let differ = self.xor(x, y)?;
+                    let under = self.andnot(y, x)?;
+                    match borrow {
+                        None => {
+                            out.push(differ);
+                            borrow = Some(under);
+                        }
+                        Some(br) => {
+                            out.push(self.xor(differ, br)?);
+                            let kept = self.andnot(br, differ)?;
+                            borrow = Some(self.or(under, kept)?);
+                        }
+                    }
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    /// A constant's planes: `within` where its bit is 1.
+    fn constant(&mut self, k: u32) -> Vec<Val> {
+        (0..NUMBER_BITS).map(|j| if k >> j & 1 == 1 { self.within_val(0).expect("delay 0") } else { self.leaf(BlockOp::Const(0), false) }).collect()
+    }
+
+    /// The bytes where `a >= b`: no borrow out of `a - b`, the borrows alone.
+    fn at_least(&mut self, a: &[Val], b: &[Val]) -> Result<Val, String> {
+        let mut borrow = self.leaf(BlockOp::Const(0), false);
+        for (&x, &y) in a.iter().zip(b) {
+            let under = self.andnot(y, x)?;
+            let differ = self.xor(x, y)?;
+            let kept = self.andnot(borrow, differ)?;
+            borrow = self.or(under, kept)?;
+        }
+        self.not(borrow)
     }
 
     /// A count's planes (see the module's notes), and its range check as a fallback.

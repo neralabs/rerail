@@ -6,7 +6,7 @@
 //! with it.
 
 use crate::mask::Mask;
-use crate::syntax::{Arg, Expr, Gram, MachineDef, Stmt, UClass};
+use crate::syntax::{Arg, Expr, Gram, MachineDef, NExpr, Stmt, UClass};
 use std::collections::HashMap;
 
 /// A state per byte: after the events at bytes `<= i` (`st`), before the event at `i` (`pre`),
@@ -26,6 +26,8 @@ pub enum Val {
     M(Mask),
     S(Scan),
     C(Vec<i32>),
+    /// A number: each byte's value (`number`).
+    N(Vec<u32>),
 }
 
 #[derive(Clone, Debug)]
@@ -211,6 +213,10 @@ impl<'a> Ev<'a> {
     fn stmt(&mut self, s: &Stmt) -> R<()> {
         match s {
             Stmt::Lexer(_) => {}
+            Stmt::Number(name, e) => {
+                let v = self.number(e)?;
+                self.vars.insert(name.clone(), Val::N(v));
+            }
             Stmt::Class(name, items) => {
                 self.byte_classes.insert(name.clone(), items.clone());
                 let m = Mask::from_fn(self.n, |i| {
@@ -598,6 +604,7 @@ impl<'a> Ev<'a> {
                     Val::M(out)
                 }
                 Val::C(_) => Val::C((0..n).map(|i| if let Val::C(c) = vs[lane_of[i] as usize] { c[i] } else { 0 }).collect()),
+                Val::N(_) => Val::N((0..n).map(|i| if let Val::N(c) = vs[lane_of[i] as usize] { c[i] } else { 0 }).collect()),
                 Val::S(s0) => {
                     let mut s = s0.clone();
                     for i in 0..n {
@@ -691,6 +698,37 @@ impl<'a> Ev<'a> {
             }
         }
         Ok(v)
+    }
+
+    /// A number's values, one per byte, directly: the reference the planes are checked by.
+    fn number(&self, e: &NExpr) -> R<Vec<u32>> {
+        let n = self.n;
+        Ok(match e {
+            NExpr::Position => (0..n).map(|i| i as u32).collect(),
+            NExpr::Name(nm) => match self.lookup(nm)?.as_slice() {
+                [Val::N(v)] => v.clone(),
+                _ => return Err(format!("{nm} is not a number")),
+            },
+            NExpr::Sub(a, b) => self.number(a)?.iter().zip(&self.number(b)?).map(|(x, y)| x.wrapping_sub(*y)).collect(),
+            NExpr::Fill { s, e, v, back } => {
+                if self.seg.is_some() {
+                    return Err("a number in hypotheses".into());
+                }
+                let (s, e, v) = (self.mask(s)?, self.mask(e)?, self.number(v)?);
+                let mut out = vec![0u32; n];
+                let mut from: Option<u32> = None;
+                let order: Box<dyn Iterator<Item = usize>> = if *back { Box::new((0..n).rev()) } else { Box::new(0..n) };
+                for i in order {
+                    if s.get(i) {
+                        from = Some(v[i]);
+                    } else if e.get(i) {
+                        from = None;
+                    }
+                    out[i] = from.unwrap_or(0);
+                }
+                out
+            }
+        })
     }
 
     fn lookup(&self, name: &str) -> R<Vec<&Val>> {
@@ -838,7 +876,21 @@ impl<'a> Ev<'a> {
                         _ => Err(format!("{f}: argument {i} must be a number")),
                     }
                 };
+                let num = |i: usize| -> R<Vec<u32>> {
+                    match args.get(i) {
+                        Some(Arg::E(Expr::Name(nm))) if nm == "position" => self.number(&NExpr::Position),
+                        Some(Arg::E(Expr::Name(nm))) => self.number(&NExpr::Name(nm.clone())),
+                        Some(Arg::N(k)) if *k <= u64::from(u32::MAX) => Ok(vec![*k as u32; n]),
+                        _ => Err(format!("{f}: argument {i} must be a number's name or a constant below 2^32")),
+                    }
+                };
                 match f.as_str() {
+                    // A number's compares: `a >= b`, `a > b`, unsigned.
+                    "at_least" | "above" => {
+                        let (a, b) = (num(0)?, num(1)?);
+                        let strict = f == "above";
+                        Mask::from_fn(n, |i| if strict { a[i] > b[i] } else { a[i] >= b[i] })
+                    }
                     "prev" => self.seg_prev(&ea(0)?, na(1, 1)?),
                     "next" => self.seg_next(&ea(0)?, na(1, 1)?),
                     "starts" => {
