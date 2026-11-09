@@ -1934,6 +1934,11 @@
       "origin": "authored",
       "sha256": "e8f424016f69c4e1eaaede4418cd8441451c35485e7026bb42713752a12deb02",
       "importedSha256": "e8f424016f69c4e1eaaede4418cd8441451c35485e7026bb42713752a12deb02"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
+      "origin": "authored",
+      "sha256": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730"
     }
   ],
   "rules": [
@@ -2383,8 +2388,9 @@
       "batch": 5,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-imperative-private-functions.json",
       "legacySha256": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/imperative-private-functions.rr",
+      "ruleSha256": "02206389b9fb6b2d3fdb055e74a8e819bdb36ab6bd4ceb9591e474b82bbd0730"
     },
     {
       "check": "serverplan_bypass",

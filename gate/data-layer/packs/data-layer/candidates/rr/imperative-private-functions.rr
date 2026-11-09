@@ -1,0 +1,56 @@
+.policy "data-layer-imperative-private-functions" revision 1
+.description "Imperative private-function taint survey"
+.language python
+.mode metric
+.scope given
+// Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_imperative_private_functions.py
+#include "core.rr"
+.decl ipf_hint(family: symbol, ordinal: number, value: symbol)
+.violation IPFConfig(at: span, family: symbol, ordinal: number, value: symbol) code "IPF_CONFIG" "configuration"
+IPFConfig(@place("",0),family,i,value) :- option("entryPoint","configuration"), ipf_hint(family,i,value).
+.decl ipf_layer(root: number, name: symbol)
+ipf_layer(0,name) :- env("ipf.root",root), dir_entry(root,name,1), match_all("\\Al\\d{4}_[^\\n](?s:.*)\\z",name).
+.violation IPFDirectory(at: span, ordinal: number, value: symbol) code "IPF_DIRECTORY" "directory"
+IPFDirectory(@place("",0),0,"api") :- option("entryPoint","_default_dirs").
+IPFDirectory(@place("",0),1,"impl") :- option("entryPoint","_default_dirs"), env("ipf.root",root), dir_entry(root,"impl",1).
+IPFDirectory(@place("",0),2,"data_layer") :- option("entryPoint","_default_dirs"), env("ipf.root",root), dir_entry(root,"data_layer",1).
+IPFDirectory(@place("",0),3,"_internal") :- option("entryPoint","_default_dirs"), env("ipf.root",root), dir_entry(root,"_internal",1).
+IPFDirectory(@place("",0),i+4,name) :- option("entryPoint","_default_dirs"), ordered_rows(_,name,i,ipf_layer).
+IPFDirectory(@place("",0),i,name) :- option("entryPoint","_cli_directories"), option_item("cliDirectories",i,name).
+.violation IPFBool(at: span, value: number) code "IPF_BOOL" "boolean"
+IPFBool(@place("",0),0) :- option("entryPoint",entry), (entry = "_should_seed_signature" ; entry = "_is_architectural_scope").
+.violation IPFFinding(at: span, sid: symbol, ordinal: number, reason: symbol, detail: symbol) code "IPF_FINDING" "finding"
+IPFFinding(@place("",0),"",0,"","") :- 1 = 0.
+.violation IPFCount(at: span, ordinal: number, path: symbol, count: number) code "IPF_COUNT" "file count"
+IPFCount(@place("",0),0,"",0) :- 1 = 0.
+.violation IPFOutput(at: span, stage: number, ordinal: number, text: symbol) code "IPF_OUTPUT" "output"
+IPFOutput(@place("",0),0,0,"") :- 1 = 0.
+.violation IPFExit(at: span, status: number) code "IPF_EXIT" "CLI status"
+IPFExit(@place("",0),0) :- option("entryPoint","_cli_exit").
+
+ipf_hint("path",0,"/connection").
+ipf_hint("path",1,"/graph_query").
+ipf_hint("path",2,"/query").
+ipf_hint("path",3,"/server_plan").
+ipf_hint("path",4,"/transaction").
+ipf_hint("path",5,"/versioned").
+ipf_hint("name",0,"branch").
+ipf_hint("name",1,"commit").
+ipf_hint("name",2,"connection").
+ipf_hint("name",3,"delete").
+ipf_hint("name",4,"execute").
+ipf_hint("name",5,"fetch").
+ipf_hint("name",6,"graph").
+ipf_hint("name",7,"insert").
+ipf_hint("name",8,"lazy").
+ipf_hint("name",9,"merge").
+ipf_hint("name",10,"plan").
+ipf_hint("name",11,"query").
+ipf_hint("name",12,"read").
+ipf_hint("name",13,"revision").
+ipf_hint("name",14,"select").
+ipf_hint("name",15,"server").
+ipf_hint("name",16,"transaction").
+ipf_hint("name",17,"update").
+ipf_hint("name",18,"versioned").
+ipf_hint("name",19,"write").
