@@ -1687,7 +1687,7 @@ impl InRel {
                 Csr::build(self, cols)
             };
             if std::env::var_os("RERAIL_SPIKE_INDEX").is_some() {
-                eprintln!("O125 index base={} took {:.3} ms rows={} cols={cols:?} chain={} source={} sorted={} lead={} view={}", self.base, (thread_cpu() - c0) * 1e3, self.len(), m.chain.is_some(), m.source, m.sorted, m.lead, self.view.is_some());
+                eprintln!("O125 index base={} took {:.3} ms rows={} cols={cols:?} chain={} source={} sorted={} lead={} view={} of {:?}", self.base, (thread_cpu() - c0) * 1e3, self.len(), m.chain.is_some(), m.source, m.sorted, m.lead, self.view.is_some(), self.view.as_ref().map(|v| (v.src.columns(), v.cols.clone())));
             }
             let l = &mut LOADS.lock().unwrap()[usize::from(!self.base)];
             l.0 += thread_cpu() - c0;
@@ -1956,6 +1956,19 @@ struct Sorted { ids: Vec<u32>, keys: Vec<i64>, starts: Vec<u32> }
 impl Sorted {
     fn of(col: &[i64]) -> Sorted {
         charge(Unit::IndexEntry, col.len() as u64);
+        // A column already in order (a node column of a relation in node order: `line`, `docof`, `node`): its rows
+        // are the ids, read in one pass. Sorting them was most of the cross part's opening, once per base column.
+        if col.windows(2).all(|w| w[0] <= w[1]) {
+            let (mut keys, mut starts) = (Vec::new(), Vec::new());
+            for (i, &v) in col.iter().enumerate() {
+                if keys.last() != Some(&v) {
+                    keys.push(v);
+                    starts.push(i as u32);
+                }
+            }
+            starts.push(col.len() as u32);
+            return Sorted { ids: (0..col.len() as u32).collect(), keys, starts };
+        }
         // Sorted as (value, row) pairs in place: the same order as rows sorted stably by value, without reading a
         // value through its row id at each comparison.
         let mut pairs: Vec<(i64, u32)> = col.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
@@ -2654,6 +2667,34 @@ mod posted_tests {
         fn clone_rows(&self) -> InRel {
             InRel { k: self.k, n: self.n, rows: self.rows.clone(), view: None, base: false, types: self.types.clone(), stored: self.stored, idx: Mutex::new(HashMap::default()), chains: self.chains.clone(),
                     set: self.set.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default() }
+        }
+    }
+}
+
+#[cfg(test)]
+mod sorted_tests {
+    use super::Sorted;
+
+    /// What the sort gives: (value, row) pairs in order.
+    fn by_sort(col: &[i64]) -> (Vec<u32>, Vec<i64>, Vec<u32>) {
+        let mut pairs: Vec<(i64, u32)> = col.iter().enumerate().map(|(r, &v)| (v, r as u32)).collect();
+        pairs.sort_unstable();
+        let (mut keys, mut starts) = (Vec::new(), Vec::new());
+        for (i, &(v, _)) in pairs.iter().enumerate() {
+            if keys.last() != Some(&v) {
+                keys.push(v);
+                starts.push(i as u32);
+            }
+        }
+        starts.push(pairs.len() as u32);
+        (pairs.into_iter().map(|(_, r)| r).collect(), keys, starts)
+    }
+
+    #[test]
+    fn a_column_in_order_is_indexed_as_the_sort_would() {
+        for col in [vec![], vec![5], vec![1, 1, 2, 3, 3, 3, 9], vec![-4, 0, 0, 7], vec![3, 1, 2, 2, 0]] {
+            let s = Sorted::of(&col);
+            assert_eq!((s.ids, s.keys, s.starts), by_sort(&col), "{col:?}");
         }
     }
 }
