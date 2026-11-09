@@ -24,7 +24,7 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
-import { PROCESS_TOOL_CALL_WINDOWS, type SessionToolCalls } from "./tool-call-windows.js";
+import { ToolCallWindows } from "./tool-call-windows.js";
 
 
 /** The name of the ignore files a walk observes whatever Git says of them. */
@@ -357,8 +357,8 @@ interface SourceDiscovery {
   readonly reported: Map<string, string>;
   /** Each checkout's `HEAD` when the last walk that finished began, by its root: what the next walk's changes followed. */
   readonly heads: Map<string, string>;
-  /** When this session's tool calls ran, against the other sessions' in `PROCESS_TOOL_CALL_WINDOWS`. */
-  readonly toolCalls: SessionToolCalls;
+  /** When the session's tool calls ran: a change the session folder's walk finds is its own only when one ran then. */
+  readonly toolCalls: ToolCallWindows;
 }
 
 /**
@@ -532,6 +532,17 @@ async function writtenThisSession(discovery: SourceDiscovery, walk: WalkStart, p
     return false;
   }
 }
+/** The stamp of the nearest folder under `root` that holds, or held, `path`, on the filesystem's clock; undefined when none can be read. */
+async function folderStamp(root: string, path: string): Promise<number | undefined> {
+  for (let folder = dirname(path); ; folder = dirname(folder)) {
+    try {
+      const info = await lstat(resolve(root, folder));
+      return Math.max(info.mtimeMs, info.ctimeMs);
+    } catch {
+      if (folder === dirname(folder)) return undefined;
+    }
+  }
+}
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -649,6 +660,8 @@ export class CodeRuleBridge {
    */
   readonly #texts = new Map<string, { text: string; bytes: number }>();
   #textBytes = 0;
+  /** The calls the runtime answered while the evaluator opened (`unwatchedCall`), until the workspace opens and takes them. */
+  #unwatched = new ToolCallWindows();
   #lastResponse = emptyResponse(0);
   #sessionId: string | undefined;
   #revision = 0;
@@ -700,10 +713,7 @@ export class CodeRuleBridge {
   async openWorkspace(sessionId: string): Promise<void> {
     await this.#enqueue(async () => {
       const startedAt = await filesystemClock();
-      if (this.#discovery !== undefined) {
-        this.#discovery.cancelled = true;
-        PROCESS_TOOL_CALL_WINDOWS.close(this.#discovery.toolCalls, startedAt);
-      }
+      if (this.#discovery !== undefined) this.#discovery.cancelled = true;
       if (this.#sessionId !== undefined) {
         this.#sessionId = undefined;
         await this.#auditor.close();
@@ -725,8 +735,9 @@ export class CodeRuleBridge {
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
-        heads: new Map(), toolCalls: PROCESS_TOOL_CALL_WINDOWS.open(root, startedAt),
+        heads: new Map(), toolCalls: this.#unwatched,
       };
+      this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
       void this.#requestDiscovery(discovery, "edit");
@@ -740,7 +751,7 @@ export class CodeRuleBridge {
     restoredPreimages?: Readonly<Record<string, Preimage>>,
   ): Promise<Readonly<Record<string, Preimage>>> {
     const discovery = this.#requireDiscovery();
-    PROCESS_TOOL_CALL_WINDOWS.begin(discovery.toolCalls, toolCallId, await filesystemClock());
+    discovery.toolCalls.begin(toolCallId, await filesystemClock());
     this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
     // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
@@ -761,12 +772,26 @@ export class CodeRuleBridge {
   }
 
   /**
+   * A call the runtime answered without code rules while the evaluator was still opening: never begun, so nothing of it
+   * is captured, but what it writes is the session's own. Its window is taken by the workspace as it opens, so the walk
+   * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's.
+   */
+  async unwatchedCall(toolCallId: string): Promise<void> {
+    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await filesystemClock());
+  }
+
+  /** Ends the window `unwatchedCall` opened for the call, at its result. */
+  async unwatchedResult(toolCallId: string): Promise<void> {
+    (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, await filesystemClock());
+  }
+
+  /**
    * A failed command may still have written files, so command results reconcile regardless of `failed`. With
    * `rewindable` the edit's preimages are kept for `rewind` until `release`.
    */
   async finish(toolCallId: string, failed = false, options: { rewindable?: boolean } = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
-    PROCESS_TOOL_CALL_WINDOWS.finish(discovery.toolCalls, toolCallId, await filesystemClock());
+    discovery.toolCalls.finish(toolCallId, await filesystemClock());
     if (this.#commands.delete(toolCallId)) {
       const responses = await this.#reconcile(discovery);
       await this.#noteIgnoreRules([]);
@@ -988,7 +1013,7 @@ export class CodeRuleBridge {
    */
   async checkpoint(checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">): Promise<CodeRuleResponse> {
     const discovery = this.#requireDiscovery();
-    PROCESS_TOOL_CALL_WINDOWS.finishAll(discovery.toolCalls, await filesystemClock());
+    discovery.toolCalls.finishAll(await filesystemClock());
     await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
     await this.#noteIgnoreRules([]);
     this.#assertDiscovery(discovery);
@@ -1048,9 +1073,6 @@ export class CodeRuleBridge {
     // Cancel before reporting and before joining the operation queue: neither the report nor a blocked filesystem read
     // may keep the walk going.
     discovery.cancelled = true;
-    // File stamps lag `Date.now()` or fall within its millisecond, so a millisecond past it ends the calls still running
-    // after every write they made, with no wait on a read.
-    PROCESS_TOOL_CALL_WINDOWS.close(discovery.toolCalls, Date.now() + 1);
     // A walk a boundary already gave up on is abandoned here: what it had not reached is never checked. No boundary waits
     // for the worktree walk, so one still due is always such a walk.
     if (sessionWalkAbandoned(discovery) || worktreeWalkAbandoned(discovery)) this.#reportDiscoveryPending("close");
@@ -1401,7 +1423,7 @@ export class CodeRuleBridge {
     discovery.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
     discovery.unread = scan.unread;
     // A subtree it could not read may still hold writes made since the session opened, which its next walk judges.
-    if (scan.failedRoots.size === 0) PROCESS_TOOL_CALL_WINDOWS.walked(discovery.toolCalls, walk.observedAt);
+    if (scan.failedRoots.size === 0) discovery.toolCalls.answered(walk.observedAt);
   }
 
   #finishWorktreeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
@@ -1455,11 +1477,11 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Splits a walk's changes into the session's own and those it did not write: another session's (`#withoutOthersWrites`)
-   * and Git's (`#gitVerdicts`), whoever ran the Git command. Neither kind is reported as this session's edit. Of those,
-   * only a source this session had changed is still audited, as the source it now is with no generated lines and in `log`
-   * mode: the evaluator holds its older text, and steers queued for that text are out of date. Any other is the same to
-   * the evaluator as the files it never saw.
+   * Splits a walk's changes into the session's own and those it did not write: Git's (`#gitVerdicts`), whoever ran the
+   * Git command, and, in the session folder, any other writer's (`#claimOwnWrites`). Neither kind is reported as this
+   * session's edit. Of those, only a source this session had changed is still audited, as the source it now is with no
+   * generated lines and in `log` mode: the evaluator holds its older text, and steers queued for that text are out of
+   * date. Any other is the same to the evaluator as the files it never saw.
    */
   async #separateOwnWrites(
     discovery: SourceDiscovery,
@@ -1467,44 +1489,65 @@ export class CodeRuleBridge {
     edits: readonly CodeRuleEdit[],
     uncaptured: Map<string, string>,
   ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[] }> {
-    const own: CodeRuleEdit[] = [];
+    const unwritten: CodeRuleEdit[] = [];
     const notOwn: CodeRuleEdit[] = [];
-    const maybeOwn = walk.inSession ? this.#withoutOthersWrites(discovery, edits, uncaptured, notOwn) : edits;
-    const { owned, unowned } = this.#byOwningCheckout(discovery.root, maybeOwn, edit => edit.path);
-    own.push(...unowned);
+    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
+    unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
       for (const edit of group) {
         const verdict = verdicts.get(edit.path);
-        if (verdict === undefined) own.push(edit);
+        if (verdict === undefined) unwritten.push(edit);
         else if (verdict.previousText === undefined) this.#sortUnownedWrite(edit, verdict.keepText === true, notOwn);
         else {
           uncaptured.delete(edit.path);
-          own.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
+          unwritten.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
         }
       }
     }
+    const own = walk.inSession ? await this.#claimOwnWrites(discovery, walk, unwritten, uncaptured, notOwn) : unwritten;
     return { own, notOwn };
   }
 
   /**
-   * The session folder's changes but those another session wrote: each was stamped while a tool call of that session ran
-   * and none of this one's (`ToolCallWindows.byAnother`). Their text is kept, so this session's next shell edit of one is
-   * measured from what the other session left. The other worktrees' walk records what it finds in `log` mode anyway.
+   * Of the session folder's changes Git did not write, the session's own: those stamped while one of its tool calls ran
+   * (`ToolCallWindows`), whatever the tool. The rest are another writer's (another session, an editor, a process a
+   * command left running): their text is kept, so the session's next shell edit of one is measured from what that writer
+   * left. The other worktrees' walk records what it finds in `log` mode anyway.
    */
-  #withoutOthersWrites(discovery: SourceDiscovery, edits: readonly CodeRuleEdit[], uncaptured: Map<string, string>, notOwn: CodeRuleEdit[]): CodeRuleEdit[] {
-    return edits.filter(edit => {
-      const modifiedAt = this.#observed.get(edit.path)?.modifiedAt;
-      if (modifiedAt === undefined || !PROCESS_TOOL_CALL_WINDOWS.byAnother(discovery.toolCalls, modifiedAt)) return true;
+  async #claimOwnWrites(
+    discovery: SourceDiscovery,
+    walk: WalkStart,
+    edits: readonly CodeRuleEdit[],
+    uncaptured: Map<string, string>,
+    notOwn: CodeRuleEdit[],
+  ): Promise<CodeRuleEdit[]> {
+    const own: CodeRuleEdit[] = [];
+    for (const edit of edits) {
+      if (await this.#writtenByCall(discovery, walk, edit)) {
+        own.push(edit);
+        continue;
+      }
       uncaptured.delete(edit.path);
       this.#sortUnownedWrite(edit, true, notOwn);
-      return false;
-    });
+    }
+    return own;
   }
 
   /**
-   * A write the session did not make is audited only for a source it had changed. With `keepText` (another session's
-   * write, Git's text neither the index nor `HEAD` holds) its text is kept for the session's next edit of the source.
+   * Whether one of the session's tool calls ran as `edit`'s file was stamped or, for a file now gone, as its folder was
+   * (removing an entry stamps the folder; a later change there moves the stamp on). With no stamp to go by, at some point
+   * since the walk that last saw the file began.
+   */
+  async #writtenByCall(discovery: SourceDiscovery, walk: WalkStart, edit: CodeRuleEdit): Promise<boolean> {
+    const stamp = this.#observed.get(edit.path)?.modifiedAt ?? (edit.deleted === true ? await folderStamp(discovery.root, edit.path) : undefined);
+    if (stamp !== undefined) return discovery.toolCalls.ranDuring(stamp, stamp);
+    return discovery.toolCalls.ranDuring(walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt, walk.observedAt);
+  }
+
+  /**
+   * A write the session did not make is audited only for a source it had changed. With `keepText` (another writer's,
+   * Git's text neither the index nor `HEAD` holds) its text is kept for the session's next edit of the source.
    */
   #sortUnownedWrite(edit: CodeRuleEdit, keepText: boolean, notOwn: CodeRuleEdit[]): void {
     if (this.#texts.has(edit.path))

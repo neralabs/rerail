@@ -1,1 +1,1 @@
-Rerail no longer steers a session on a file another session in the same checkout changed. A file one agent changed from the shell or an edit tool was counted as an edit in every session open there, so an agent that ran only a read-only command was told about code it never wrote.
+Rerail steers a session only on files changed while one of its own tool calls ran. A file another session, your editor or a background process changed was counted as an edit in every session open in that checkout, so an agent that ran only a read-only command was told about code it never wrote.

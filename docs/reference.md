@@ -679,7 +679,7 @@ With `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` set for the runtime's proces
 
 #### How AI-output scope finds changed lines
 
-AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command, and neither is one another session wrote.
+AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command, and neither is one changed while none of the session's tool calls ran.
 
 <details>
 <summary>Fallbacks when no pre-edit source was captured</summary>
@@ -704,9 +704,9 @@ A file written and committed in one command stays an edit, measured from the tre
 </details>
 
 <details>
-<summary>What counts as another session's write</summary>
+<summary>What counts as the session's own write</summary>
 
-A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp. Each session notes when each of its tool calls ran, for every other session in the same process to see: the daemon, for every coding agent but a Pi running Rerail in process. A change stamped while a call ran of another session working on the same files (its folder is this session's, holds it or lies in it), and none of this session's, is the other session's: it steers only that session, and once this one's walk has seen it, its next shell edit of the file is measured from what the other left. A change stamped while no such call ran (a background job, your editor, a session in another folder) is still taken as the walking session's. When two sessions' calls ran at once, both take the change; a file removed has no stamp, and its removal is taken as the walking session's.
+A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then. A call whose result never comes (one you interrupted) counts as running until the turn ends.
 
 </details>
 

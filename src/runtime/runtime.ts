@@ -849,7 +849,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     bridge?.refreshCodeRules();
     if (event.kind === "call") {
       const id = event.toolCallId;
-      const preimages = await bridge?.begin(id, event.toolName, event.input);
+      const preimages = await this.#beginCall(state, bridge, event);
       await this.#append(state, {
         type: "policy-call", toolCallId: id, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
         ...(preimages === undefined ? {} : { preimages }),
@@ -868,7 +868,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         try {
           // From the finish on, which may check the edit before it returns, to the end of the wait.
           await this.#waitingForEditChecks(state, false, async () => {
-            await bridge?.finish(call!.id, event.failed === true, { rewindable: true });
+            await this.#finishCall(state, bridge, call!.id, event.failed === true);
             await this.#append(state, { type: "policy-result", toolCallId: call!.id });
             await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
           });
@@ -942,6 +942,26 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const milliseconds = performance.now() - startedAt;
     if (milliseconds <= SLOW_TURN_END_WAIT_MS) return;
     this.#timingLog?.(`rerail: turn end of session ${sessionId} waited ${Math.round(milliseconds)} ms for ${waitedOn}\n`);
+  }
+
+  /**
+   * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
+   * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`).
+   */
+  async #beginCall(
+    state: RuntimeSessionState,
+    bridge: CodeRuleBridge | undefined,
+    event: Extract<AdapterEvent, { kind: "call" }>,
+  ): Promise<Readonly<Record<string, Preimage>> | undefined> {
+    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
+    return undefined;
+  }
+
+  /** Finishes a tool call on the open evaluator; one answered while it opened only ends its window (`unwatchedResult`). */
+  async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, toolCallId: string, failed: boolean): Promise<void> {
+    if (bridge !== undefined) await bridge.finish(toolCallId, failed, { rewindable: true });
+    else await state.codeRuleBridge?.unwatchedResult(toolCallId);
   }
 
   /**

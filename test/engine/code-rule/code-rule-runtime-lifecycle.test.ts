@@ -151,6 +151,11 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "user-prompt", eventId: "poll", sessionId: session.sessionId, text: "continue",
       })).toEqual([]);
+      // A command the turn's end finds still running: what it wrote while the baseline was pending is the session's own.
+      await runtime.ingest({
+        kind: "call", eventId: "shell-call", sessionId: session.sessionId,
+        toolCallId: "shell", toolName: "bash", input: { command: "./write.sh &" },
+      });
       await writeFile(join(root, "shell.py"), "safe()\n");
       gate.resolve();
       await enforcer!.settle();
@@ -786,7 +791,7 @@ describe("source-scoped steers", () => {
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual([]);
         test.attachments.workspaces[0]!.release();
         // Opened: the call it answered is not begun or finished late. The evaluator's first walk still sees the file
-        // changed while it ran, as it sees any change it did not watch being made, and checks it.
+        // changed while it ran, and the call's window, opened as it was answered, makes the change the session's own.
         expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
 
       } finally { await test.close(); }
