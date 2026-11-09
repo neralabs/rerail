@@ -490,7 +490,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "fe1c8674ce5fd25ae15449a8470ce5bfba83439338eee5dd379cd3d1a387ea77",
+      "sha256": "db901ce9619d20bcc6389aafc3d199044fbba337bbd5c4a066da07caa55c3632",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -609,6 +609,11 @@
           "before": "00a895299f837ee055114268cdaa4cfe02919e0cb571b6bcc03d3ec1c2723166",
           "after": "fe1c8674ce5fd25ae15449a8470ce5bfba83439338eee5dd379cd3d1a387ea77",
           "reason": "Adopt Final core declarations and truthful policy scopes for combined execution"
+        },
+        {
+          "before": "fe1c8674ce5fd25ae15449a8470ce5bfba83439338eee5dd379cd3d1a387ea77",
+          "after": "db901ce9619d20bcc6389aafc3d199044fbba337bbd5c4a066da07caa55c3632",
+          "reason": "Document exact generic batched legacy string-set ordering; no runtime Python"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"

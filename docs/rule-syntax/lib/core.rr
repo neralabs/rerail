@@ -285,6 +285,12 @@
 // sort by their typed values (symbols as text), with one zero-based global rank.
 // One SQL window sorts the whole batch. Empty input produces no rows.
 .decl ordered_rows(a: node, b: node, ordinal: number, rows: relation)
+// python_set_rows(task, value, ordinal, rows): rows(task, string, insertion).
+// Reproduce monotone CPython 3.13 set.add iteration on 64-bit little-endian
+// Unicode strings with PYTHONHASHSEED=0. Duplicate strings keep their first
+// insertion. Equal insertion ordinals sort by string text. No deletion or set
+// update/literal preallocation is implied. One read and bulk write for all tasks.
+.decl python_set_rows(task: node, value: symbol, ordinal: number, rows: relation)
 // balanced_rows(task, row, bin, ordinal, rows, limits): rows(task, occurrence,
 // key, weight), limits(task, bins). Per task, sort by decreasing nonnegative
 // weight then key text then occurrence. Assign to the least-loaded bin, ties
