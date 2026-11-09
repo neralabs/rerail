@@ -333,6 +333,24 @@ impl Stats {
         self.col.keys().any(|(r, _)| r == rel)
     }
 
+    /// `rel`'s statistics by column (`width` of them), and its exact postings of integer values (`measured`'s
+    /// `vals`, by column), when every column is known: what a session's next run gives `rel__old`, whose rows are
+    /// these (decision 0094 §4: statistics kept like data, not measured again).
+    pub(in crate::code_rule_dsl) fn of_relation(&self, rel: &str, width: usize) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
+        let names: Vec<String> = (0..width).map(|c| sql_col(rel, c)).collect();
+        let cols = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
+        let vals = self
+            .memo
+            .iter()
+            .filter(|((r, _, _), _)| r == rel)
+            .filter_map(|((_, c, v), n)| match v {
+                Constant::Int(v) => Some((names.iter().position(|x| x == c)?, *v, *n)),
+                _ => None,
+            })
+            .collect();
+        Some((cols, vals))
+    }
+
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
     pub(in crate::code_rule_dsl) fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
@@ -3389,8 +3407,46 @@ impl Run<'_, '_> {
             rules.iter().filter_map(|r| survivors(r, scc, native_rels).map(|od| (r.head.rel.clone(), od))).collect()
         };
         let rules: Vec<&Rule> = rules.into_iter().filter(|r| !(based.contains_key(&r.head.rel) && survivors(r, scc, native_rels).is_some())).collect();
+        // A rule that joins a relation of a lower stratum holding no rows derives nothing, so it is neither planned
+        // nor given to the engine. In a maintained run most delta rules read a delta that is empty this time, and
+        // planning, keying and specifying them was work in the program's size, not the delta's (0090 step 5,
+        // 0094 §4). Only a positive atom counts: a negation of it holds, and an aggregate over no rows is a row.
+        // A relation a request may fill during the stratum is never taken as empty. `RERAIL_KEEP_EMPTY_JOINS` runs
+        // them all (to measure what leaving them out saves).
+        let rules: Vec<&Rule> = if std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_some() { rules } else {
+            let fillable: BTreeSet<&str> = super::answers::produced(prog).into_iter().flat_map(|(p, r)| [p, r]).collect();
+            let mut empty: HashMap<String, bool> = HashMap::new();
+            let mut is_empty = |rel: &str| -> bool {
+                if scc.contains(rel) || fillable.contains(rel) || !native_rels.contains(rel) {
+                    return false;
+                }
+                if let Some(&e) = empty.get(rel) {
+                    return e;
+                }
+                let e = super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0);
+                empty.insert(rel.to_owned(), e);
+                e
+            };
+            let before = rules.len();
+            let kept: Vec<&Rule> = rules.into_iter().filter(|r| !r.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && is_empty(&a.rel)))).collect();
+            if before > kept.len() {
+                super::profile::decision("rules over empty relations", || format!("{} of {before} rules not run: each joins a relation of a lower stratum that has no rows", before - kept.len()));
+            }
+            kept
+        };
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
         let types = |r: &str| typed[r].clone();
+        // Nothing left to run (every rule joined an empty relation): the stratum's relations are held with no rows,
+        // and no component is specified or opened. `RERAIL_KEEP_EMPTY_JOINS` opens it as before.
+        let asks = scc.iter().any(|r| prog.answers.contains_key(r) || super::answers::produced(prog).contains_key(r.as_str()));
+        if rules.is_empty() && based.is_empty() && gates.is_empty() && !asks && std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_none() {
+            for r in &rels {
+                super::native::component::hold_empty(self.db, r, types(r).into_bytes());
+            }
+            super::profile::stratum(&stratum_key(scc), "native set engine", || "every rule joins an empty relation: held empty, no component opened".to_owned());
+            self.native_rels.extend(scc.iter().cloned());
+            return Ok(true);
+        }
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
         let spec_span = super::profile::span(|| "spec".into());

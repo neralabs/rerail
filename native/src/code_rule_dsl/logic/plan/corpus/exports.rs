@@ -87,6 +87,17 @@ impl Exports {
         crate::code_rule_dsl::logic::native::component::columns_source(names, values)
     }
 
+    /// Each of export `rel`'s rows held so far, read where it is held (`width` columns).
+    pub(super) fn each_row(&self, rel: &str, width: usize, mut f: impl FnMut(Vec<i64>)) {
+        match self.rels.get(rel) {
+            Some(Held { source: Some(s), .. }) => (0..s.len()).for_each(|r| f((0..width).map(|c| s.value(r, c)).collect())),
+            Some(Held { source: None, columns, .. }) if columns.len() >= width => {
+                (0..columns.first().map_or(0, Vec::len)).for_each(|r| f(columns[..width].iter().map(|col| col[r]).collect()))
+            }
+            _ => {}
+        }
+    }
+
     /// Export `rel`'s rows held so far whose column `at` is a node of one of `documents` (`memo::document_of`):
     /// a load's new documents' rows, for the cone of requests that asked for them.
     pub(super) fn rows_of(&self, rel: &str, width: usize, at: usize, documents: &std::collections::HashSet<i64>) -> Vec<Vec<i64>> {
