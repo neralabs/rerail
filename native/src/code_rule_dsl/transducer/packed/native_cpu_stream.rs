@@ -403,7 +403,7 @@ fn runs(s: &ByteSwitch, word: &dyn Fn(u16) -> Block) -> Vec<(u32, Block)> {
 
 /// Compile a program's tier-2 words.
 /// The columns `reorder` reads and writes.
-struct Reorder<'a> {
+struct Reorder {
     nodes: Value,
     supers: Value,
     wraps: Value,
@@ -419,10 +419,9 @@ struct Reorder<'a> {
     before: Option<Value>,
     /// Where the count of records placed goes.
     counts: Value,
-    /// The final pass's (`table`): its stack, its columns and the extras' kinds.
-    stack: Value,
-    last: [Value; 2],
-    extras: &'a [u16],
+    /// The table's final pass (`table`), one for every `ACCEPT`: the kind and size columns and
+    /// the records.
+    fin: Block,
 }
 
 /// At `ACCEPT` with wraps: the node table in preorder. Each record in the order made, a wrap's
@@ -431,7 +430,7 @@ struct Reorder<'a> {
 /// node's size less those in its range (from its base, `size` records), counted first. Loops
 /// over the table and one over the supertypes, each step a record (`Step::Node`). Writes the
 /// count placed; returns 0.
-fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder<'_>, heads: &mut Vec<(Block, Step)>) {
+fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step)>) {
     let flags = MemFlags::trusted();
     let at = |f: &mut FunctionBuilder<'_>, c: Value, i: Value| {
         let off = f.ins().ishl_imm(i, 2);
@@ -585,7 +584,7 @@ fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder<'_>, heads: &mut Vec<(Block, 
     let placed = f.ins().load(types::I64, flags, r.counts, 0);
     let kind = f.ins().select(r.wraps, r.out[0], r.cols[0]);
     let size = f.ins().select(r.wraps, r.out[4], r.cols[4]);
-    table(f, [kind, size], placed, r.stack, r.last, r.extras, heads);
+    f.ins().jump(r.fin, &[BlockArg::from(kind), BlockArg::from(size), BlockArg::from(placed)]);
 }
 
 /// The table's final pass, once it is in preorder: each node's parent and its extra flag, into
@@ -742,6 +741,12 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
         let (kind_c, field_c, start_c, end_c, size_c, snode_c, skind_c, open_c, ret_c, counts_c) =
             (cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], cols[6], cols[7], cols[8], cols[9]);
         let (parent_c, extra_c) = (load(&mut f, PARENT), load(&mut f, EXTRA));
+        // The table's final pass, shared by every `ACCEPT`: (kind column, size column, records).
+        let fin = f.create_block();
+        for _ in 0..3 {
+            f.append_block_param(fin, types::I64);
+        }
+        let mut fin_used = false;
         let w: Vec<Value> = if wrapping {
             [FRAME_BASE, FRAME_LAST, FRAME_LAST_BASE, HEAD, LINK, PLACE, OUT_KIND, OUT_FIELD, OUT_START, OUT_END, OUT_SIZE].iter().map(|&at| load(&mut f, at)).collect()
         } else {
@@ -1491,10 +1496,11 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                         let wraps = f.ins().iadd(wraps, dead);
                         f.ins().store(flags, wraps, counts_c, 16);
                         let rereads = words.iter().any(|b| matches!(b.operation, Op::Reread { .. }));
-                        reorder(&mut f, Reorder { nodes, supers, wraps, cols: [kind_c, field_c, start_c, end_c, size_c], out: [wc(6), wc(7), wc(8), wc(9), wc(10)], head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c, before: rereads.then(|| wc(fbase_c)), counts: counts_c, stack: open_c, last: [parent_c, extra_c], extras: &native.readings.extras }, &mut heads);
+                        reorder(&mut f, Reorder { nodes, supers, wraps, cols: [kind_c, field_c, start_c, end_c, size_c], out: [wc(6), wc(7), wc(8), wc(9), wc(10)], head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c, before: rereads.then(|| wc(fbase_c)), counts: counts_c, fin }, &mut heads);
                     } else {
-                        table(&mut f, [kind_c, size_c], nodes, open_c, [parent_c, extra_c], &native.readings.extras, &mut heads);
+                        f.ins().jump(fin, &[BlockArg::from(kind_c), BlockArg::from(size_c), BlockArg::from(nodes)]);
                     }
+                    fin_used = true;
                 }
                 Op::Empty { total } => {
                     let t = f.ins().load(types::I64, flags, totals_p, 8 * i32::from(total));
@@ -1511,6 +1517,11 @@ pub(super) fn compile(native: &NativeModule) -> Result<CompiledStream, Error> {
                 }
                 _ => return Err(Error::UnsupportedBackend),
             }
+        }
+        if fin_used {
+            f.switch_to_block(fin);
+            let p = f.block_params(fin).to_vec();
+            table(&mut f, [p[0], p[1]], p[2], open_c, [parent_c, extra_c], &native.readings.extras, &mut heads);
         }
         f.switch_to_block(off_end);
         let past = f.ins().iconst(types::I64, words.len() as i64 + 1);
