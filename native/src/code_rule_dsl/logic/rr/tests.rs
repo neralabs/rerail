@@ -323,16 +323,17 @@ Joined(@place("a.py", 1), value) :- value = join name by rank sep "," : { event(
     // A table input projects its filtered columns away. Exercise that boundary
     // explicitly and require a native join, so SQL fallback cannot hide it.
     let facts = root.join("facts.sqlite");
+    let store = crate::content_store::ContentStore::open(&facts).unwrap();
     let db = rusqlite::Connection::open(&facts).unwrap();
     let dump = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/plan/golden/facts.sql.zst");
     let sql = zstd::decode_all(std::fs::File::open(dump).unwrap()).unwrap();
     db.execute_batch(std::str::from_utf8(&sql).unwrap()).unwrap();
-    db.execute_batch("CREATE TABLE item(c0 INTEGER, c1 TEXT, c2 TEXT, c3 INTEGER);
-        INSERT INTO item VALUES (1,'x9','keep',9),(1,'x4','keep',4),(1,'skip','skip',100);
+    db.execute_batch("CREATE TABLE item(c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER);
         INSERT INTO stat_meta VALUES ('rows.item',3);
         INSERT INTO stat_col VALUES ('item','c0',3,1,9,9),('item','c1',3,3,3,3),
             ('item','c2',3,2,5,5),('item','c3',3,3,3,3);").unwrap();
-    drop(db);
+    let symbols = store.intern_atoms(&["x9".into(),"x4".into(),"skip".into(),"keep".into()]).unwrap();
+    db.execute("INSERT INTO item VALUES (1,?1,?4,9),(1,?2,?4,4),(1,?3,?3,100)",rusqlite::params![symbols[0],symbols[1],symbols[2],symbols[3]]).unwrap();
     let program = parse(r#"
 .decl item(owner: number, name: symbol, label: symbol, rank: number)
 .input item
@@ -340,13 +341,13 @@ Joined(@place("a.py", 1), value) :- value = join name by rank sep "," : { event(
 joined(value) :- value = join name by rank sep "," : { item(1, name, "keep", rank) }.
 .output joined
 "#).unwrap();
-    let outcome = crate::code_rule_dsl::logic::plan::run_sql_native(&program,&facts,"program",|db| {
-        let rc = unsafe { crate::code_rule_dsl::logic::native::extension::sqlite3_extension_init(db.handle(),std::ptr::null_mut(),std::ptr::null_mut()) };
-        assert_eq!(rc,rusqlite::ffi::SQLITE_OK);
-        Ok(())
-    }).unwrap();
+    let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+    let lowered = crate::code_rule_dsl::logic::plan::lower::lower(&program,python,&mut |texts| store.intern_atoms(texts).map_err(|e| crate::code_rule_dsl::logic::Error::Plan(e.to_string()))).unwrap();
+    let outcome = crate::code_rule_dsl::logic::plan::run_atoms_native(&lowered,&db,"main","program").unwrap();
     assert!(outcome.native.contains(&"joined".to_owned()),"{:?}",outcome.native);
     assert_eq!(outcome.outputs["joined"],["x4,x9"]);
+    drop(db);
+    drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
 
