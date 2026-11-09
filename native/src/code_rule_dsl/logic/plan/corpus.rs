@@ -1473,6 +1473,8 @@ fn run_observed(
     if cross_declared.is_some() || reads_components {
         cross_memo::add(&mut prog)?;
     }
+    let mut section: Option<crate::code_rule_dsl::logic::profile::Span> = None;
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the program's key".into()));
     let prepared_key: [u8; 32] = {
         use sha2::Digest as _;
         let mut hash = sha2::Sha256::new();
@@ -1487,6 +1489,7 @@ fn run_observed(
             store.intern_atoms(&strings).is_ok_and(|got| got.iter().map(|a| u32::from(*a)).eq(atoms.iter().copied()))
         })
     };
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the prepared program, kept or stored".into()));
     let kept = prepared_cache().lock().expect("the prepared programs").get(&prepared_key).cloned().filter(holds);
     // Kept across processes in the persistent store, under the programs' text (decision 0073); a session's or T's run
     // keeps it in memory only.
@@ -1512,6 +1515,7 @@ fn run_observed(
         }
         (None, None) => (None, ""),
     };
+    drop(section.take());
     let reused = kept.is_some();
     let prepared = match kept {
         Some(p) => {
@@ -1620,6 +1624,7 @@ fn run_observed(
     }
     let unlocated: Vec<&String> = split.exports.iter().chain(split.local.outputs.iter()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     // A file-local part reading the run's options (`file_local::option_input`) is memoised under them too.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the memo's program and the components' plan".into()));
     let memo_program = {
         let digest = memo::program_digest(&split.local);
         let reads_options = split.local.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(&a.rel));
@@ -1679,6 +1684,7 @@ fn run_observed(
     // Requests answered inside the fixpoint (decision 0065 §2a): the cross-file part's cone of requests runs first,
     // pausing for answers. A load's answer is the loaded document's rows of every per-file relation the cone reads,
     // made by the chunk path as any file's are; the rest of the cross-file part reads the cone's rows as inputs.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the cone of requests".into()));
     let loading: Option<(front::Program, BTreeSet<String>)> = if loading_run {
         let mut whole = split.cross.clone();
         whole.answers = world::answers(&whole);
@@ -1713,6 +1719,7 @@ fn run_observed(
         None
     };
     let (local, mut cross) = (part(split.local), part(split.cross));
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "guests and the tree's projection".into()));
     let slice = embed_slice(&lowered.program).map(part);
     let slice_reads: BTreeSet<String> = slice.iter().flat_map(|s| &s.program.rules).flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect();
     crate::code_rule_dsl::logic::profile::decision("guests", || match &slice {
@@ -1725,6 +1732,7 @@ fn run_observed(
     crate::code_rule_dsl::logic::profile::decision("base relations", || format!("{:?} shape (decision 0046)", projection.shape));
     // T's corpus statistics, read once: each chunk plans with them and its sources' own, measured in memory, and the
     // cross-file part with them and the chunks' totals. Without T, every chunk measures its own (`Own`).
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "statistics read or measured".into()));
     let t_stats = match &t {
         Some(t) => {
             atomized_statistics(t, &db, &store, &first, dialect)?;
@@ -1848,6 +1856,7 @@ fn run_observed(
     }
     tables.push_str("COMMIT;");
     db.execute_batch(&tables)?;
+    drop(section.take());
     phase("stats", statements.count());
     statements.enter("parse");
     let modules = Modules::default();
@@ -2788,6 +2797,7 @@ fn run_observed(
     // A memoised run's base relations, as the cross-file part reads them: every file's rows, read from the memo or
     // evaluated, measured once (a file read from the memo has no chunk to measure them in).
     if memoised {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "measure the base rows held".into());
         // A relation no file had rows of (none evaluated, or none with rows) is held empty: the cross-file part binds it.
         for (rel, names) in &stored {
             if !base_rows.contains_key(rel) {
@@ -2797,10 +2807,9 @@ fn run_observed(
             }
         }
         for (rel, (columns, values)) in &base_rows {
-            let (names, held): (Vec<String>, Vec<Option<Vec<i64>>>) = columns.iter().zip(values).filter(|(_, v)| v.is_some()).map(|(c, v)| (c.clone(), v.clone())).unzip();
-            let rows = held.first().and_then(Option::as_ref).map_or(0, Vec::len);
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(names, held);
-            let mut measured = syntax::statistics(source.as_ref());
+            let held: Vec<(&str, &[i64])> = columns.iter().zip(values).filter_map(|(c, v)| v.as_deref().map(|v| (c.as_str(), v))).collect();
+            let rows = held.first().map_or(0, |(_, v)| v.len());
+            let mut measured = syntax::measured_columns(&held);
             // A column no cross-file rule names is not held: the planner still asks for it, so it is stated as keys.
             let n = rows as i64;
             measured.extend(columns.iter().zip(values).filter(|(_, v)| v.is_none()).map(|(c, _)| (c.clone(), n, n, n, n)));
@@ -2808,6 +2817,7 @@ fn run_observed(
         }
     }
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
+    let applying = crate::code_rule_dsl::logic::profile::span(|| "apply the chunks' totals".into());
     let mut cross_stats = t_stats;
     if own {
         own_totals.apply(&mut cross_stats);
@@ -2821,6 +2831,7 @@ fn run_observed(
     // Applied: the chunks' per-value counts are not read again.
     totals.vals = BTreeMap::new();
     repository_stats(&mut cross_stats);
+    drop(applying);
     // RERAIL_DUMP_STATS=a,b: what the cross-file part plans with for those relations (a debugging aid).
     if let Ok(rels) = std::env::var("RERAIL_DUMP_STATS") {
         for rel in rels.split(',') {
@@ -2859,6 +2870,7 @@ fn run_observed(
         let top: Vec<String> = held.iter().take(12).map(|(n, r)| format!("{r} {:.1} MB", *n as f64 * 8.0 / 1e6)).collect();
         format!("{} base relations, {:.1} MB of values in memory: {}", held.len(), total as f64 * 8.0 / 1e6, top.join("; "))
     });
+    let binding_base = crate::code_rule_dsl::logic::profile::span(|| "bind the base rows held".into());
     for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
         // A base relation the cross-file part reads that T's statistics do not cover (a simplified rule moved its read
         // there, `parsed` after a filter was inlined): measured from the rows held. A column not held is read by no
@@ -2890,6 +2902,8 @@ fn run_observed(
     // One fixpoint (no bounded rounds) reads each export from `x` when its first reader runs and drops it, and each
     // base relation held for it, after its last; rounds read them all, every round. A session's run keeps its
     // cross-file inputs for the next (`retain`, decision 0077), so it binds them all.
+    drop(binding_base);
+    let binding_exports = crate::code_rule_dsl::logic::profile::span(|| "bind the exports".into());
     let one_fixpoint = !cross.program.rules.is_empty() && session.is_none() && {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
         bounded.hops.is_empty() || cross_rounds::declared(&prog).is_none()
@@ -2918,8 +2932,9 @@ fn run_observed(
             modules.bind(&db, &rel, source)?;
         }
     }
+    drop(binding_exports);
     // The chunks' freed pages go back before the cross part builds its own.
-    crate::code_rule_dsl::prof::release();
+    { let _s = crate::code_rule_dsl::logic::profile::span(|| "release the chunks' pages".into()); crate::code_rule_dsl::prof::release(); }
     phase("stats", statements.count());
     statements.enter("cross");
     let mut rounds = cross_rounds::Rounds::default();

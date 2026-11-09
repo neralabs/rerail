@@ -689,10 +689,10 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
 /// these lookups there too.
 pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
     let original = prog.clone();
-    let made = push_with(prog, false);
-    if cross_reads_base(prog) {
+    let (made, local) = push_with(prog, false);
+    if cross_reads_base(prog, &local) {
         *prog = original;
-        return push_with(prog, true);
+        return push_with(prog, true).0;
     }
     made
 }
@@ -806,9 +806,8 @@ pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program
     Some(semi)
 }
 
-/// Whether a rule outside the chunks reads a base relation.
-fn cross_reads_base(prog: &crate::code_rule_dsl::logic::front::Program) -> bool {
-    let local = split(prog);
+/// Whether a rule outside the chunks (`local`: `split(prog)`) reads a base relation.
+fn cross_reads_base(prog: &crate::code_rule_dsl::logic::front::Program, local: &std::collections::BTreeSet<String>) -> bool {
     prog.rules.iter().filter(|r| !local.contains(&r.head.rel)).any(|r| {
         r.body.iter().any(|l| l.atom().is_some_and(|a| prog.inputs.iter().any(|i| *i == a.rel)))
     })
@@ -827,7 +826,8 @@ fn unrestricted(prog: &crate::code_rule_dsl::logic::front::Program, atoms: &[&cr
         && atoms.iter().all(|a| (attribute(&a.rel) && plain(a)) || (!attribute(&a.rel) && !prog.decls.get(&a.rel).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span")))))
 }
 
-fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrestricted: bool) -> Vec<String> {
+/// The relations made, and the split of the program as it is left (`split(prog)`).
+fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrestricted: bool) -> (Vec<String>, std::collections::BTreeSet<String>) {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
     // An atom such as field(parent, name, child) connects its node columns. Document equality
@@ -874,8 +874,9 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
     // Per rule, how much it takes: 0 negated base and file-local reads, 1 negated base reads only, 2 nothing (the
     // split did not find the join file-local: a negation read through no location column, say).
     let mut level: BTreeMap<usize, u8> = BTreeMap::new();
+    // The program is changed only when a round succeeds, so its split is found once.
+    let local = split(prog);
     loop {
-        let local = split(prog);
         let mut next = prog.clone();
         let mut made: Vec<(usize, String)> = Vec::new();
         let mut helpers: Vec<Rule> = Vec::new();
@@ -1012,14 +1013,14 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             next.rules[i].body = out;
         }
         if made.is_empty() {
-            return Vec::new();
+            return (Vec::new(), local);
         }
         next.rules.extend(helpers);
         let now = split(&next);
         let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
         if failed.is_empty() {
             *prog = next;
-            return made.into_iter().map(|(_, n)| n).collect();
+            return (made.into_iter().map(|(_, n)| n).collect(), now);
         }
         for i in failed {
             *level.entry(i).or_default() += 1;
