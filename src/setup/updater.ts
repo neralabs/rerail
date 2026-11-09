@@ -25,7 +25,7 @@ import { execFile, spawn } from "../engine/child-process.js";
 import { removeScratch, renameWithRetry } from "../engine/file-replace.js";
 import { DAEMON_STATE_FILE, daemonUsesPackageRoot, readDaemonState, stopDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
-import { auditSignatures, checkRegistry, outsideAnyProject, runNpm, type NpmRunner } from "../runtime/npm.js";
+import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
@@ -184,7 +184,11 @@ async function installedFromRegistry(prefix: string): Promise<string | undefined
 }
 
 export class NpmPackageRegistry implements PackageRegistry {
-  constructor(private readonly npm: NpmRunner = runNpm) {}
+  private readonly npm: NpmRunner;
+
+  constructor(npm: NpmRunner = runNpm) {
+    this.npm = prefixInstallNpm(npm);
+  }
 
   /** Asked from a scratch folder: `rerail update` runs inside repositories, and one's `.npmrc` must not pick the answer. */
   async resolveVersion(channel: string): Promise<string> {

@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, win32 } from "node:path";
 import { spawn } from "../engine/child-process.js";
 import { removeScratch } from "../engine/file-replace.js";
@@ -235,4 +235,38 @@ export async function auditSignatures(prefix: string, npm: NpmRunner = runNpm): 
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`npm could not verify the registry signatures of the packages in ${prefix}: ${detail}`, { cause: error });
   }
+}
+
+/** An npm setting line that makes npm 11 refuse an install into `--prefix`, as `allow-scripts=…` or `allow-scripts[]=…`. */
+const PREFIX_INSTALL_REFUSED_LINE = /^\s*allow-scripts\s*(?:\[\])?\s*=/iu;
+/** The same setting given in the environment. */
+const PREFIX_INSTALL_REFUSED_VARIABLE = /^npm_config_allow[-_]scripts$/iu;
+const USERCONFIG_VARIABLE = /^npm_config_userconfig$/iu;
+
+/**
+ * The environment for one of Rerail's own `--prefix` installs, run from `directory`: the person's npm user config
+ * (registry, proxy, credentials) copied into `directory` without its allow-scripts lines, and no allow-scripts variable.
+ */
+export async function prefixInstallEnvironment(directory: string, env: NodeJS.ProcessEnv = process.env): Promise<NodeJS.ProcessEnv> {
+  const configured = Object.entries(env).find(([name]) => USERCONFIG_VARIABLE.test(name))?.[1];
+  const userconfig = configured === undefined || configured === "" ? join(homedir(), ".npmrc") : configured;
+  const text = await readFile(userconfig, "utf8").catch(() => "");
+  const copy = join(directory, "npmrc");
+  await writeFile(copy, text.split(/\r?\n/u).filter(line => !PREFIX_INSTALL_REFUSED_LINE.test(line)).join("\n"), { mode: 0o600 });
+  const kept = Object.entries(env).filter(([name]) => !PREFIX_INSTALL_REFUSED_VARIABLE.test(name) && !USERCONFIG_VARIABLE.test(name));
+  return { ...Object.fromEntries(kept), npm_config_userconfig: copy };
+}
+
+/**
+ * `npm` for Rerail's own installs into a `--prefix`: run from an empty folder of its own, with the person's npm config
+ * minus allow-scripts (`prefixInstallEnvironment`). npm 11 refuses any `--prefix` install while allow-scripts is set
+ * ("--allow-scripts is not allowed in project-scoped installs"), whether ~/.npmrc, the environment or a project .npmrc
+ * in the folder Rerail runs from sets it. These installs pass --ignore-scripts, so the setting changes nothing they need.
+ */
+export function prefixInstallNpm(npm: NpmRunner): NpmRunner {
+  return async (args, options = {}) => {
+    if (!args.includes("--prefix")) return await npm(args, options);
+    return await outsideAnyProject(async directory =>
+      await npm(args, { ...options, cwd: directory, env: await prefixInstallEnvironment(directory, options.env ?? process.env) }));
+  };
 }

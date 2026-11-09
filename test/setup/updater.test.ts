@@ -554,7 +554,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
 });
 
 describe("NpmPackageRegistry", () => {
-  interface NpmCall { args: readonly string[]; cwd: string | undefined; projectConfig: boolean }
+  interface NpmCall { args: readonly string[]; cwd: string | undefined; projectConfig: boolean; env: NodeJS.ProcessEnv | undefined; userconfig: string | undefined }
 
   /**
    * An npm whose registry has `@neralabs/rerail@1.1.0` at https://mirror.example/npm and whose `audit signatures`
@@ -564,7 +564,11 @@ describe("NpmPackageRegistry", () => {
     const calls: NpmCall[] = [];
     const npm: NpmRunner = async (args, options = {}) => {
       const cwd = options.cwd ?? process.cwd();
-      calls.push({ args, cwd: options.cwd, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")) });
+      const userconfigPath = options.env?.npm_config_userconfig;
+      calls.push({
+        args, cwd: options.cwd, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")), env: options.env,
+        userconfig: userconfigPath === undefined ? undefined : await readFile(userconfigPath, "utf8"),
+      });
       if (args[0] === "view") return { stdout: JSON.stringify("1.1.0"), stderr: "" };
       if (args[0] === "audit") {
         await audit();
@@ -605,6 +609,33 @@ describe("NpmPackageRegistry", () => {
       expect(view.cwd).toBeDefined();
       expect(view.cwd).not.toBe(process.cwd());
       expect(view.projectConfig).toBe(false);
+    }
+  });
+
+  it("installs with the person's npm settings but not allow-scripts, which npm 11 refuses for a --prefix install", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const scratch = await mkdtemp(join(tmpdir(), "rerail-npmrc-"));
+    temporaryDirectories.push(scratch);
+    const npmrc = join(scratch, "npmrc");
+    await writeFile(npmrc, "registry=https://mirror.example/npm/\nallow-scripts=@anthropic-ai/claude-code\n//mirror.example/npm/:_authToken=secret\nallow-scripts[]=esbuild\n");
+    // npm, as `npx` runs Rerail, sets the lower-case name for its child; a person sets either.
+    vi.stubEnv("NPM_CONFIG_USERCONFIG", npmrc);
+    vi.stubEnv("npm_config_userconfig", npmrc);
+    vi.stubEnv("npm_config_allow_scripts", "esbuild");
+    try {
+      const { npm, calls } = fakeNpm(async () => {});
+      const updater = await updaterWith(npm, async () => {});
+      await expect(updater.update()).resolves.toMatchObject({ changed: true, current: { version: "1.1.0" } });
+
+      const prefixCalls = calls.filter(call => call.args.includes("--prefix"));
+      expect(prefixCalls.map(call => call.args[0])).toEqual(["install", "audit"]);
+      for (const call of prefixCalls) {
+        expect(call.projectConfig).toBe(false);
+        expect(call.userconfig).toBe("registry=https://mirror.example/npm/\n//mirror.example/npm/:_authToken=secret\n");
+        expect(Object.keys(call.env ?? {}).filter(name => /allow[-_]scripts|^npm_config_userconfig$/iu.test(name))).toEqual(["npm_config_userconfig"]);
+      }
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 
