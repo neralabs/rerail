@@ -3152,7 +3152,30 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "85aa8251cd758a13cb55c5d8fde2273220b0d1d0"
+    "upstreamMerge": "85aa8251cd758a13cb55c5d8fde2273220b0d1d0",
+    "cliArtifact": {
+      "engineCommit": "13c897df59ff0fead6e54c60f178f079cfaab589",
+      "upstreamCommit": "24d05da80ea43c1043184b24abfab59f77e4992b",
+      "sourceTrees": {
+        "native": "ed17ee97a93cadab820d49bc2e5904d211bfe398",
+        "tools/bitlex": "e76bfeb8afe238f92ac1c103113afe67fdf2c4a5",
+        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
+        "Cargo.lock": "da7438cb5a1700a6c0b730b245f453a344ae8b9c"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-4a7116f41da595e2",
+      "sha256": "4a7116f41da595e20a00495ca0c4e5887041a6f34346727401b06188b21d7882",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "rerail-engine",
+        "--features",
+        "headless",
+        "--bin",
+        "rerail-engine"
+      ],
+      "seconds": 36.588
+    }
   },
   "engineSourceSnapshots": [
     {
