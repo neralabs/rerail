@@ -13,7 +13,7 @@ const RULES: [&str; 4] = [
 ];
 
 fn run(root: &Path, out: &Path) -> (Value, Keys) {
-    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let base = std::env::var_os("RERAIL_RR_RULE_DIR").map(PathBuf::from).unwrap_or_else(||Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python"));
     let began = cpu_ns();
     let wall = Instant::now();
     let programs: Vec<String> = RULES.iter().map(|r| tools::flatten(&base.join(r)).unwrap()).collect();
@@ -109,4 +109,67 @@ fn authored_rr_batched_positive_documents_preserve_all_four_labels() {
     }
     assert_eq!(expected.len(),120);
     assert_eq!(actual,expected,"authored .rr positive comparison: {report}");
+}
+
+/// The async family must not build the general name-analysis universe before target filtering.
+#[test]
+fn async_demand_uses_semantic_batches_without_global_name_derivations() {
+    use crate::code_rule_dsl::logic::{front, rr};
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    for rule in RULES {
+        let p = rr::parse(&tools::flatten(&base.join(rule)).unwrap()).unwrap();
+        let mut facts=std::collections::BTreeMap::new();
+        crate::code_rule_dsl::logic::program_facts::write(&mut facts,"p",&p);
+        let restored=crate::code_rule_dsl::logic::program_facts::program(&facts,"p").unwrap();
+        assert_eq!(p.natives,restored.natives,"semantic producer metadata lost in prepared program");
+        let needed = front::needed(&p, p.outputs.clone());
+        let local=crate::code_rule_dsl::typing::file_local::split(&p);
+        for name in p.natives.keys().filter(|n|needed.contains(*n)) {
+            assert!(local.contains(name),"{rule}: demanded operator escaped its syntax batch: {name}");
+        }
+        assert!(!needed.contains("unbound_ref"), "{rule} still derives every unbound reference");
+        assert!(p.natives.iter().any(|(name,_)| needed.contains(name) && name.contains("python_qualified")), "{rule} has no demanded semantic producer");
+    }
+}
+
+
+#[test]
+fn semantic_operators_do_not_claim_document_locality_for_cross_file_demands() {
+    use crate::code_rule_dsl::logic::{front,rr};
+    let p=rr::parse(r#"
+#include "core.rr"
+.decl wanted(n:node)
+.decl targets(q:symbol)
+.decl out(n:node,q:symbol)
+.output out
+wanted(n) :- node(_,n,_,_,_).
+targets(q) :- text(_,q).
+out(n,q) :- python_qualified(n,q,wanted,targets).
+"#).unwrap();
+    let local=crate::code_rule_dsl::typing::file_local::split(&p);
+    assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::Python{..})).all(|(name,_)|!local.contains(name)));
+}
+
+
+#[test]
+fn semantic_helpers_share_exact_contracts_without_relation_name_collisions() {
+    use crate::code_rule_dsl::logic::{front::Native,rr};
+    let p=rr::parse(r#"
+#include "core.rr"
+.decl a_b(n:node)
+.decl a(n:node)
+.decl c(q:symbol)
+.decl b_c(q:symbol)
+.input a_b,a,c,b_c
+.decl out(n:node,q:symbol)
+.output out
+out(n,q) :- python_qualified(n,q,a_b,c).
+out(n,q) :- python_qualified(n,q,a,b_c).
+out(n,q) :- python_qualified(n,q,a_b,c).
+"#).unwrap();
+    let contracts:BTreeSet<_>=p.natives.values().filter_map(|n|match n {
+        Native::Python{input,targets,..}=>Some((input.as_str(),targets.as_deref().unwrap())), _=>None,
+    }).collect();
+    assert_eq!(contracts,BTreeSet::from([("a_b","c"),("a","b_c")]));
+    assert_eq!(p.natives.len(),2,"identical contracts should still share one producer");
 }

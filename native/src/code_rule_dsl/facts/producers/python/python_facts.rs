@@ -19,6 +19,9 @@ use crate::code_rule_dsl::{
 use ast_grep_core::{Doc, Node};
 use std::collections::{BTreeMap, HashSet};
 
+mod value_origins;
+pub(crate) use value_origins::value_origins;
+
 pub(crate) type NodeRange = (usize, usize);
 
 pub(crate) struct Config<'a> {

@@ -438,6 +438,7 @@ pub(in crate::code_rule_dsl) enum Native {
     /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
     /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
     Components { edge: String, own: String },
+    Python { kind: String, input: String, targets: Option<String> },
 }
 
 impl Native {
@@ -450,6 +451,7 @@ impl Native {
                 if let Some(roots) = roots { *roots = rename(roots); }
             }
             Native::MatchAll { input, .. } => *input = rename(input),
+            Native::Python {input,targets,..} => { *input=rename(input); if let Some(t)=targets {*t=rename(t);} },
             Native::Components { edge, own } => {
                 *edge = rename(edge);
                 *own = rename(own);
@@ -461,6 +463,7 @@ impl Native {
         match self {
             Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
             Native::MatchAll { input, .. } => vec![input.as_str()],
+            Native::Python {input,targets,..} => std::iter::once(input.as_str()).chain(targets.as_deref()).collect(),
             Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],
         }
     }

@@ -11,16 +11,19 @@ p = argparse.ArgumentParser()
 p.add_argument('--binary', required=True, type=Path)
 p.add_argument('--corpus', required=True, type=Path)
 p.add_argument('--out', required=True, type=Path)
-p.add_argument('--stage', choices=['reference', 'rr-positive', 'rr', 'rr-profile', 'edges', 'producers'], required=True)
+p.add_argument('--rules', type=Path, help='Alternate directory containing the four authored rule files')
+p.add_argument('--stage', choices=['reference', 'rr-positive', 'rr', 'rr-profile', 'edges', 'producers', 'demand-tests'], required=True)
 a = p.parse_args()
 a.out.mkdir(parents=True, exist_ok=True)
 env = os.environ.copy()
 # Each process has a declared cache boundary, independent of the developer's cache.
-for name in ('RERAIL_PROFILE', 'RERAIL_SHARED_LIMIT', 'RERAIL_SAMPLE_EVERY', 'RERAIL_SCOPE_GUARDS', 'RERAIL_LIBRARIES', 'RERAIL_REQUESTS'):
+for name in ('RERAIL_PROFILE', 'RERAIL_SHARED_LIMIT', 'RERAIL_SAMPLE_EVERY', 'RERAIL_SCOPE_GUARDS', 'RERAIL_LIBRARIES', 'RERAIL_REQUESTS', 'RERAIL_RR_RULE_DIR'):
     env.pop(name, None)
 env.update(RUST_MIN_STACK='67108864', RERAIL_SHARED_CORPUS=str(a.corpus.resolve()),
            RERAIL_TAPE_CACHE=str((a.out / 'tape-cache.sqlite').resolve()),
            RERAIL_CORPUS_MEMO='off', RERAIL_CROSS_MEMO='off')
+if a.rules is not None:
+    env['RERAIL_RR_RULE_DIR'] = str(a.rules.resolve())
 results = []
 
 def run(name, test, extra=None, ignored=False):
@@ -38,7 +41,19 @@ def run(name, test, extra=None, ignored=False):
     print(f'{name}: exit {result.returncode}, {row["wall_seconds"]:.2f}s', flush=True)
     return result.returncode
 
-if a.stage == 'reference':
+if a.stage == 'demand-tests':
+    for name, test in [
+        ('aggregate-demand', 'logic::rr::aggregate_demand::tests'),
+        ('posting-parity', 'facts::producers::python::families::tests::py_families_equal_s_producers'),
+        ('import-screen', 'facts::producers::python::import_screen::tests'),
+        ('semantic-cache', 'python_demand::tests'),
+        ('async-shape', 'async_demand_uses_semantic_batches'),
+        ('semantic-locality', 'semantic_operators_do_not_claim_document_locality'),
+        ('semantic-contracts', 'semantic_helpers_share_exact_contracts'),
+        ('async-positive', 'authored_rr_batched_positive_documents_preserve_all_four_labels'),
+    ]:
+        run(name, test)
+elif a.stage == 'reference':
     run('admission', 'catalog_async_compiler_admission_is_accounted_for',
         {'RERAIL_ASYNC_ADMISSION_REPORT': str(a.out / 'admission.json')})
     run('reference-positive', 'async_reference::tests::',

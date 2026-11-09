@@ -79,3 +79,22 @@ The final reference uses binary v2. Production, producer, and edge measurements 
 The difference is confined to test-oracle plan lifetime and measurement metadata; production code is identical.
 The final reference run includes both native oracles in the same binary and asserts raw finding parity.
 A passing reference gate does not qualify the authored compiler or its separate JSON admission path.
+
+## Demand repair
+
+The [repair report](../../docs/comparisons/aggregate-demand-results.md) explains the implementation and its measured effect.
+`demand-repair/` contains both new-policy results and the original-policy diagnostic.
+Run `--stage demand-tests` for the targeted correctness and native work-growth gates.
+Use `--rules <directory>` to run the same four filenames from the original policies.
+
+After the job and edge stages, compare complete result directories:
+
+```sh
+python3 benchmark/async-family-integration/compare-demand.py \
+  --baseline /path/to/baseline-results --after /path/to/new-results \
+  --legacy /path/to/original-policy-results --output /path/to/comparison.json
+```
+
+The command checks corpus sizes, findings, all Ruff edge fixtures, and unchanged legacy-policy edge results.
+The older reference-only edge gate still reports four known reference misses.
+It is preserved separately from Ruff parity. The 100-execution budget remains failed.

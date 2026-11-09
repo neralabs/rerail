@@ -11,7 +11,7 @@
 //   async def f(): subprocess.run(cmd)                ← ASYNC221
 //   async def f(): os.spawnl(os.P_WAIT, "x")          ← ASYNC221
 //   async def f(): os.spawnl(os.P_NOWAIT, "x")        not reported: ASYNC220
-#include "python/misc2-async.rr"
+#include "python/async-demand.rr"
 
 .violation ASYNC221(at: node) code "ASYNC221"
     "Async functions should not run processes with blocking methods"
@@ -26,13 +26,25 @@ async_runs(cat("subprocess.", x)) :-
 .decl async_spawn(q: symbol)
 async_spawn(cat("os.spawn", x)) :-
     (x = "l" ; x = "le" ; x = "lp" ; x = "lpe" ; x = "v" ; x = "ve" ; x = "vp" ; x = "vpe").
-// The mode: keyword `mode`, else the first positional argument.
-.decl async_mode_arg(c: node, a: node)
-async_mode_arg(c, a) :- async_blocking(c, _, q), async_spawn(q), call_kwarg(c, "mode", a).
-async_mode_arg(c, a) :- async_blocking(c, _, q), async_spawn(q), !call_kwarg(c, "mode", _), ruff_arg(c, 0, a).
-// `os.P_WAIT`, or a name whose binding in effect has that value (Ruff's find_assigned_value): `m = os.P_WAIT`,
-// `with os.P_WAIT as m`.
+// Argument extraction starts only after the API qualifies as a spawn call.
+async_api_target(q) :- async_runs(q).
+async_api_target(q) :- async_spawn(q).
+.decl async_argument_demand(c: node)
+async_argument_demand(c) :- async_blocking(c,_,q), async_spawn(q).
+.decl async_argument(c: node,i: number,k: symbol,spread: symbol,v: node)
+async_argument(c,i,k,s,v) :- python_arguments(c,i,k,s,v,async_argument_demand).
+.decl async_mode_arg(c: node,a: node)
+async_mode_arg(c,a) :- async_argument(c,_,"mode","none",a).
+async_mode_arg(c,a) :- async_argument(c,0,"","none",a), !async_argument(c,_,"mode",_,_).
+.decl async_mode_demand(n: node)
+async_mode_demand(n) :- async_mode_arg(_,n).
+.decl async_mode_value(n: node,v: node)
+async_mode_value(n,v) :- python_assigned(n,v,async_mode_demand).
+.decl async_mode_value_demand(v: node)
+async_mode_value_demand(v) :- async_mode_value(_,v).
+.decl async_mode_target(q: symbol)
+async_mode_target("os.P_WAIT").
+.decl async_mode_qualified(n: node,q: symbol)
+async_mode_qualified(n,q) :- python_qualified(n,q,async_mode_value_demand,async_mode_target).
 .decl async_p_wait(a: node)
-async_p_wait(a) :- async_mode_arg(_, a), ruff_qual(a, "os.P_WAIT").
-async_p_wait(a) :- async_mode_arg(_, a), unparen(a, n), !ruff_qual(n, _), async_name_value(n, v),
-    ruff_qual(v, "os.P_WAIT").
+async_p_wait(a) :- async_mode_value(a,v), async_mode_qualified(v,"os.P_WAIT").

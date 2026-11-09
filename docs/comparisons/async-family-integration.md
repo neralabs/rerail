@@ -1,5 +1,7 @@
 # Async family: reference versus integration
 
+This is the baseline comparison. The subsequent [demand repair and measured results](aggregate-demand-results.md) implement its recommendations.
+
 Keep the integration compiler. Connect it to the reference's demand-driven semantic facts, and fix aggregate demand propagation before further scheduling work.
 The reference is a useful executable specification and performance gate. It is not yet the generic compiler's output.
 

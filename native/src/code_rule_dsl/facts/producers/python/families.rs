@@ -125,7 +125,7 @@ fn field(f: &Facts, id: u32, field: u16) -> Option<u32> {
 
 /// `node` less transparent parens: a parenthesized expression's first named child that is not a comment
 /// or line continuation, repeatedly.
-fn unparen(g: &Grammar, f: &Facts, mut node: u32) -> u32 {
+pub(crate) fn unparen(g: &Grammar, f: &Facts, mut node: u32) -> u32 {
     while g.role(f, node) == Role::Parens {
         match f.children(node).iter().copied().find(|&c| f.named(c) && !matches!(g.role(f, c), Role::Comment | Role::Continuation)) {
             Some(child) => node = child,
@@ -165,7 +165,9 @@ fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
 }
 
 /// The rows of one document's facts, from its calls' postings.
-pub(crate) fn rows(g: &Grammar, f: &Facts) -> Rows {
+pub(crate) fn rows(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,true) }
+pub(crate) fn structure(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,false) }
+fn collect_rows(g: &Grammar, f: &Facts, with_arguments: bool) -> Rows {
     let mut calls: Vec<u32> = g.calls.iter().flat_map(|&atom| f.of_kind(atom).iter().copied()).collect();
     calls.sort_unstable();
     let mut out = Rows::default();
@@ -182,28 +184,7 @@ pub(crate) fn rows(g: &Grammar, f: &Facts) -> Rows {
                 out.attribute.push([report, object, name]);
             }
         }
-        let Some(arguments) = field(f, call, g.arguments) else { continue };
-        if g.role(f, arguments) == Role::Generator {
-            out.arg.push([call, arguments, 0, NONE, 0, arguments]);
-            continue;
-        }
-        let listed = f.children(arguments).iter().copied().filter(|&a| named(g, f, a));
-        for (ordinal, argument) in listed.enumerate() {
-            let role = g.role(f, argument);
-            let spread = match role {
-                Role::Splat => 1,
-                Role::DictionarySplat => 2,
-                _ => 0,
-            };
-            let (keyword, value) = if role == Role::Keyword {
-                (field(f, argument, g.name).unwrap_or(NONE), field(f, argument, g.value).unwrap_or(argument))
-            } else if spread != 0 {
-                (NONE, f.children(argument).iter().copied().find(|&c| named(g, f, c)).unwrap_or(argument))
-            } else {
-                (NONE, argument)
-            };
-            out.arg.push([call, argument, ordinal as u32, keyword, spread, value]);
-        }
+        if with_arguments { append_arguments(g,f,call,&mut out); }
     }
     out
 }
@@ -228,3 +209,46 @@ pub(crate) fn digest(rows: &Rows) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests;
+
+/// Extract only calls requested by the consumer; no all-call scan or context calculation.
+pub(crate) fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
+    let mut out=Rows::default();
+    for &call in calls { if g.role(f,call)==Role::Call { append_arguments(g,f,call,&mut out); } }
+    out.arg
+}
+fn append_arguments(g:&Grammar,f:&Facts,call:u32,out:&mut Rows) {
+        let Some(arguments) = field(f, call, g.arguments) else { return };
+        if g.role(f, arguments) == Role::Generator {
+            out.arg.push([call, arguments, 0, NONE, 0, arguments]);
+            return;
+        }
+        let listed = f.children(arguments).iter().copied().filter(|&a| named(g, f, a));
+        for (ordinal, argument) in listed.enumerate() {
+            let role = g.role(f, argument);
+            let spread = match role {
+                Role::Splat => 1,
+                Role::DictionarySplat => 2,
+                _ => 0,
+            };
+            let (keyword, value) = if role == Role::Keyword {
+                (field(f, argument, g.name).unwrap_or(NONE), field(f, argument, g.value).unwrap_or(argument))
+            } else if spread != 0 {
+                (NONE, f.children(argument).iter().copied().find(|&c| named(g, f, c)).unwrap_or(argument))
+            } else {
+                (NONE, argument)
+            };
+            out.arg.push([call, argument, ordinal as u32, keyword, spread, value]);
+        }
+}
+
+pub(crate) fn qualification_chain(g:&Grammar,f:&Facts,n:u32)->Option<(String,Vec<String>)> {
+    let mut n=unparen(g,f,n); let mut tail=Vec::new();
+    while g.role(f,n)==Role::Attribute {
+        let a=field(f,n,g.attribute)?;
+        tail.push(crate::code_rule_dsl::identifier::python_name(f.text(a).into()).into_owned());
+        n=unparen(g,f,field(f,n,g.object)?);
+    }
+    if g.role(f,n)!=Role::Name {return None;}
+    tail.reverse();
+    Some((crate::code_rule_dsl::identifier::python_name(f.text(n).into()).into_owned(),tail))
+}

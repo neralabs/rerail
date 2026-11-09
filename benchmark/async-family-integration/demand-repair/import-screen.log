@@ -1,0 +1,9 @@
+
+running 4 tests
+test code_rule_dsl::facts::producers::python::import_screen::tests::every_matching_native_alias_submodule_relative_global_and_definition_is_admitted ... ok
+test code_rule_dsl::facts::producers::python::import_screen::tests::impossible_primary_qualifications_do_not_demand_scopes_or_remove_receiver_shapes ... ok
+test code_rule_dsl::facts::producers::python::import_screen::tests::negative_screen_and_deduplicated_prefixes_do_not_resolve_shadowing_or_order ... ok
+test code_rule_dsl::facts::producers::python::import_screen::tests::stars_missing_module_and_unsupported_callees_stay_conservative ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3148 filtered out; finished in 0.01s
+

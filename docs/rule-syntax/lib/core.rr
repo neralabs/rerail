@@ -608,3 +608,10 @@
 //                                              ends unknown on any file. Members run as usual.
 // .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
 //                                              skip .git, .venv, venv, __pycache__ and tmp.
+
+// Batched Python facts. Requests is a unary node relation; targets is a unary symbol relation.
+// These operators do not evaluate rules. Unknown semantic facts produce no known result.
+.decl python_qualified(n: node, q: symbol, requests: relation, targets: relation)
+.decl python_origins(n: node, value: node, requests: relation)
+.decl python_assigned(n: node, value: node, requests: relation)
+.decl python_arguments(call: node, position: number, keyword: symbol, spread: symbol, value: node, requests: relation)

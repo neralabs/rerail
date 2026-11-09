@@ -706,6 +706,10 @@ impl Model {
         fixed: Option<&[Step]>,
         explain: bool,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        // A demand-restricted aggregate enumerates witnesses from its requested keys. Statistics
+        // must not reorder that boundary into a scan of the global witness universe. A recursive
+        // delta, when supplied, remains the driver. The prefix is reserved by RR lowering.
+        let first = first.or_else(|| body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel.contains("rr_demand_agg_"))));
         let stats = &self.stats;
         // var → constant kind, from kind($v, "k") atoms.
         let mut kinds: HashMap<&str, String> = HashMap::new();
@@ -2270,6 +2274,7 @@ impl Run<'_, '_> {
             Native::DfsFirst { edge, target, roots } => (edge, target, roots),
             Native::MatchAll { input, pattern, groups, positions } => return self.match_all(rel, input, pattern, groups, *positions),
             Native::Components { edge, own } => return self.components(rel, edge, own),
+            Native::Python {kind,input,targets} => return self.python_relation(rel,kind,input,targets),
         };
         let cols = |r: &str, n: usize| (0..n).map(|c| self.model.col(r, c)).collect::<Vec<_>>();
         let read = |sql: &str, width: usize| -> Result<Vec<Vec<i64>>> {
@@ -2297,6 +2302,33 @@ impl Run<'_, '_> {
         let n = rows.len();
         insert_many(self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), rows.into_iter().map(|(a, b, c)| vec![SqlValue::Integer(a), SqlValue::Integer(b), SqlValue::Integer(c)]).collect())?;
         Ok(n)
+    }
+
+    /// One producer invocation for the whole relation of demands; no per-row matcher driver.
+    fn python_relation(&mut self, rel: &str, kind: &str, input: &str, targets: &Option<String>) -> Result<usize> {
+        let ident=crate::code_rule_dsl::logic::sql::ident;
+        let col=self.model.col(input,0);
+        let requests:Vec<i64>={let mut s=self.db.prepare(&format!("SELECT DISTINCT {col} FROM {}",ident(input)))?;s.query_map([],|r|r.get(0))?.collect::<rusqlite::Result<_>>()?};
+        let mut wanted=BTreeSet::new();
+        if let Some(targets)=targets {
+            let col=self.model.col(targets,0);
+            let col=if self.model.inputs.atoms.is_some(){format!("sym_text({col})")}else{col};
+            let mut s=self.db.prepare(&format!("SELECT {col} FROM {}",ident(targets)))?;
+            wanted=s.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<_>>()?;
+        }
+        if requests.is_empty(){return Ok(0);}
+        let source=crate::code_rule_dsl::facts::vtab::bound_source(self.db,"node").ok_or_else(||Error::Plan("Python producer requires bound syntax facts".into()))?;
+        let batch=source.python_batch().ok_or_else(||Error::Plan("Python producer requires a syntax batch".into()))?;
+        let mut rows=batch.python_project(kind,&requests,&wanted).map_err(Error::Plan)?;
+        if self.model.inputs.atoms.is_some() {
+            let strings:Vec<_>=rows.iter().flatten().filter_map(|v|match v {SqlValue::Text(s)=>Some(s.as_str()),_=>None}).collect();
+            let ids=super::native::intern_batch(self.db,strings.into_iter())?;
+            let mut ids=ids.into_iter();
+            for value in rows.iter_mut().flatten(){if matches!(value,SqlValue::Text(_)){*value=SqlValue::Integer(ids.next().unwrap());}}
+        }
+        let before=self.db.total_changes();
+        insert_many(self.db,&format!("INSERT OR IGNORE INTO {}",ident(rel)),rows)?;
+        Ok((self.db.total_changes()-before) as usize)
     }
 
     /// `components` (`front::Native::Components`): each document's component and key from `edge`'s and `own`'s
@@ -3109,8 +3141,8 @@ impl Run<'_, '_> {
             return Ok(false);
         }
         if scc.iter().any(|r| prog.natives.contains_key(r)) {
-            self.why_not = Some("a relation made natively from its inputs' tables (`dfs_first`)".into());
-            self.why_class = Some("read of a dfs_first relation".into());
+            self.why_not = Some("a native fact operator over input relations".into());
+            self.why_class = Some("native fact operator".into());
             return Ok(false);
         }
         let rels: Vec<&String> = scc.iter().collect();
@@ -4301,7 +4333,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
             && let Some(native) = prog.natives.get(*rel)
         {
-            super::profile::stratum(&skey, "native operator over its inputs' tables (dfs_first, match_all)", || why.clone());
+            super::profile::stratum(&skey, "native fact operator over demanded input relations", || why.clone());
             let n = run.native_relation(rel, native)?;
             super::profile::note(format!("{rel} rows"), || n.to_string());
             run.refresh(rel, false)?;

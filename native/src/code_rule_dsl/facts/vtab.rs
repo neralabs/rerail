@@ -48,6 +48,7 @@ pub(crate) trait RowCells: Send+Sync {
 pub(crate) struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub(crate) trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
 pub(crate) trait Source: Send + Sync {
+    fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
     fn direct_all(&self,_equal:&[(usize,i64)])->Option<Vec<ReadRow>> {None}
     fn direct_one(&self,_column:usize,_values:&[i64])->Option<Vec<ReadRow>> {None}

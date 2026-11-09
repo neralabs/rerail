@@ -137,6 +137,10 @@ fn native_rule(head: &Atom, native: &Native, kindsets: &BTreeSet<&String>) -> Re
             };
             format!("{} :- {call}.", atom(head, kindsets)?)
         }
+        Native::Python {kind,input,targets} => {
+            let tail=targets.as_ref().map(|t|format!(", {}",relation(t))).unwrap_or_default();
+            format!("{} :- python_{}({}, {}{}).",atom(head,kindsets)?,kind,terms(&head.args)?,relation(input),tail)
+        }
         Native::Components { edge, own } => {
             format!("{} :- components({}, {}, {}).", atom(head, kindsets)?, terms(&head.args)?, relation(edge), relation(own))
         }

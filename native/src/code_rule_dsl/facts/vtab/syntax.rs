@@ -46,6 +46,7 @@ mod core_rr;
 pub(crate) mod normalized;
 mod python_order;
 mod python_syntax;
+mod python_demand;
 mod python_parts;
 use core_rr::Family;
 mod guests;
@@ -490,6 +491,9 @@ impl Dialect {
 /// A document's nodes, numbered in preorder: its named nodes other than comments (T's), or every named node
 /// (`core.rr`'s).
 struct Projected {
+    module: Option<crate::code_rule_dsl::module_path::ModulePath>,
+    python_imports: std::sync::OnceLock<crate::code_rule_dsl::facts::producers::python::import_screen::Imports>,
+    python_semantics: std::sync::Mutex<Option<python_demand::Semantics>>,
     key: u32,
     tag: u8,
     facts: Arc<Facts>,
@@ -637,6 +641,7 @@ impl Projected {
     fn new(key: u32, facts: Arc<Facts>, dialect: &Dialect, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
         let f = &*facts;
         let mut p = Projected {
+            module:None, python_imports:Default::default(), python_semantics:Default::default(),
             key,
             tag: dialect.tag,
             core: Vec::new(),
@@ -782,6 +787,7 @@ struct Py {
     contexts: [i64; 5],
     spreads: [i64; 3],
     rows: std::sync::OnceLock<Vec<Relation>>,
+    argument_rows: std::sync::OnceLock<Relation>,
 }
 
 /// The `py.*` families' tables and columns (all integers; `-1` is none), as `PY_COLUMNS[i]` is `PY[i]`'s.
@@ -974,6 +980,7 @@ impl Batch {
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
+            p.module=crate::code_rule_dsl::module_path::ModulePath::dotted(d.module.as_deref().unwrap_or(&module(&d.path)));
             if !rx_spans.is_empty() && guest.is_none() && !withheld {
                 c.matches(&mut p, dialect, &rx_spans, &span_ends[j], &mut string);
             }
@@ -1125,6 +1132,7 @@ impl Batch {
             grammar: py::Grammar::new(tag, &dialects[&tag].catalog),
             contexts: contexts.map(atom),
             spreads: spreads.map(atom),
+            argument_rows: Default::default(),
             rows: Default::default(),
         });
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
@@ -1279,6 +1287,7 @@ impl Viewed {
     }
 }
 impl Source for Viewed {
+    fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
     fn columns(&self) -> Vec<String> {
         Self::columns(self.view).iter().map(|c| (*c).to_owned()).collect()
     }
@@ -1519,7 +1528,7 @@ impl Batch {
             let mut out: Vec<Relation> = PY_COLUMNS.iter().map(|columns| Relation::new(columns)).collect();
             let mut skipped = 0;
             for p in self.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
-                let rows = py::rows(&py.grammar, &p.facts);
+                let rows = py::structure(&py.grammar, &p.facts);
                 let d = i64::from(p.key);
                 // A node id, `-1` for none; `None` for a node the projection leaves out.
                 let id = |core: u32| -> Option<i64> {
@@ -1564,7 +1573,19 @@ struct PyFamily {
 }
 impl PyFamily {
     fn rows(&self) -> &Relation {
-        &self.batch.py()[self.family]
+        if self.family!=3 {return &self.batch.py()[self.family];}
+        let Some(py)=&self.batch.py else {return &self.batch.py()[3];};
+        py.argument_rows.get_or_init(|| {
+            let mut out=Relation::new(PY_COLUMNS[3]);
+            for p in self.batch.docs.iter().filter(|p|p.tag==py.grammar.tag()) {
+                let rows=py::rows(&py.grammar,&p.facts);
+                let id=|n:u32| if n==NONE {Some(-1)}else{p.local.get(n as usize).copied().filter(|&l|l!=NONE).map(|l|p.global(l))};
+                for [c,a,i,k,s,v] in rows.arg {
+                    if let (Some(c),Some(a),Some(k),Some(v))=(id(c),id(a),id(k),id(v)) {out.push(&[p.key as i64,c,a,i as i64,k,py.spreads[s as usize],v]);}
+                }
+            }
+            out
+        })
     }
 }
 impl Source for PyFamily {

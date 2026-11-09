@@ -256,3 +256,88 @@ Its 8.7-second warm and 61.3-second cold Python-pack results cover 534 programs 
 Those measurements have a different workload and memo boundary from this 5,725-file comparison.
 The O143 annotation join-order fix, `5e335eb4d`, is already an ancestor of our measured base.
 The final report distinguishes that repaired issue from the aggregate-demand expansion found here.
+
+## 2026-11-09: aggregate and semantic demand repair, TDD
+
+The first three aggregate tests failed against the unchanged lowering, as required.
+They expose an unrestricted count/sum helper, a retained zero-count scalar, and the absence of a safe demand for a recursive consumer.
+The red build took 11m26s on the shared host. The tests themselves completed immediately.
+The design is in `aggregate-demand-design.md`; statement reuse remains a separate follow-up.
+The implementation now restricts private helpers by consumer keys and converts scalar zero-count tests into anti-joins.
+An execution test checks exact counts, sums, empty groups, world isolation, and helper row counts.
+A second red gate requires the actual async policies to use demanded semantic producers instead of global `unbound_ref` derivation.
+
+The four aggregate tests now pass, including actual SQL execution and exactly three helper rows per aggregate.
+The next gate fails as intended: ASYNC210 still depends on global `unbound_ref`.
+The next change adds reusable Python qualification, value-origin, and argument producers with explicit request relations.
+The posting-based call producer remains the structural source. Its argument rows are now separate.
+The core import screen shares admission logic with the reference screen and avoids scope construction for rejected requests.
+
+The production code now passes `cargo check --tests --profile profiling`.
+The semantic adapter uses the production tape-restore API, not a test-only restore helper.
+New tests check selective scope creation, shadowing across documents, cached facts, and demanded arguments.
+The aggregate execution test now also checks intermediate native join outputs.
+Multiple-consumer and recursive-only demand tests cover the pass's union and refusal rules.
+A separate result directory preserves the old measurements and fixtures.
+Its tape cache starts from a consistent SQLite backup of the baseline cache; result memos remain disabled.
+
+The first semantic build passes posting-producer parity, all import-screen tests, and the selective cache test.
+The production positive test caught a real integration failure: native operators were all classified as cross-file.
+Their requests reached a stage with no syntax batch. Python fact operators now enter the ordinary document-local proof.
+Their inputs must still pass dependency and location checks; a cross-file target relation cannot be treated as local.
+The split now exports native inputs only for operators that actually run cross-file.
+
+The native aggregate trace exposed another gap. The planner scanned 201 bindings before applying three requested keys.
+It did not create the full ancestor cross-product, but it did not follow the required demand-first shape either.
+Aggregate demand relations now drive witness enumeration. Explicit recursive deltas retain priority.
+The growth test also had a TSV-column error; it now inspects the plan column and checks every intermediate output.
+A new gate checks the actual pyflakes outer-binding helper for load and nearest-scope demand guards.
+
+The repaired build passes all targeted gates: seven aggregate tests, posting parity, four import-screen tests,
+selective semantic caching, actual policy shape, native locality, and all 120 positive findings.
+The native work-growth gate now passes with at most three intermediate rows per helper step.
+The original pyflakes helper retains both load and nearest-scope guards.
+
+All four edge fixture jobs complete. They match all 178 recorded Ruff 0.15.7 findings, with no missing or extra keys.
+The old reference comparison still flags four additional findings; those are the reference's documented misses.
+The old expected files remain unchanged so this distinction remains visible.
+
+The RR regression run passes 73 tests with two ignored tests.
+One memo test failed because the benchmark environment disabled result memos. It passes with normal memo settings.
+All eight file-local regression tests pass; one device-dependent test is ignored.
+
+The complete updated four-rule job takes 13.071 CPU seconds and 13.725 wall seconds over 5,725 files and 19,007,630 nodes.
+It runs 72 chunks and 10,272 SQL statements. The prepared program comes from the store.
+The baseline takes 1,058.754 CPU seconds, 2,053.364 wall seconds, and 88,545 statements in 234 chunks.
+Both jobs report zero findings. The peak RSS falls to about 648 MB.
+Detailed profiling and the unchanged legacy-policy measurement are still pending at this point.
+
+The unchanged original policies complete their diagnostic run in 301.200 CPU seconds and 600.802 wall seconds.
+This run includes cold preparation and 291 chunks; it is not the primary warm-program timing comparison.
+Each former 1,342,302,187-row outer-binding join now follows 19,820 demand keys to 54 ancestors and one witness.
+Their combined exclusive join CPU falls from 430.055 seconds to 0.0057 seconds.
+The consumer's input loading and indexing falls from 181.202 seconds to 0.0151 seconds.
+All four legacy edge outputs remain exactly unchanged, and its 120-positive gate passes.
+
+The updated-policy profile records 15.356 CPU seconds, 14.044 wall seconds, and 2,283,088 SQL VM instructions.
+It builds five scope tables and projects ten semantic nodes. Secondary constructor queries also pass through the target screen.
+The existing posting producer remains in use, and no argument rows are requested on the full corpus.
+Publishing and repeatedly reading `async_reference` accounts for 77.4% of remaining VM instructions.
+The result report identifies this boundary and the remaining table lifecycle work without claiming the 100-execution gate has passed.
+
+Final review found a separate correctness bug in generated native helper names.
+The contracts `(a_b, c)` and `(a, b_c)` generated the same concatenated name.
+An adversarial runtime fixture returned only one of two expected findings, confirming the failure before the fix.
+The allocator now compares the complete native contract and disambiguates name collisions.
+Identical contracts still share their helper. Ordinary async helper names remain unchanged.
+A permanent regression checks both distinct contracts and exact-contract reuse; the final build and runtime check are pending here.
+
+The final optimized build and all 17 targeted tests pass.
+The adversarial helper-collision fixture now returns both expected findings, with exact-contract sharing retained.
+The final unprofiled job takes 14.315 CPU seconds and 37.055 wall seconds in 73 chunks, with 10,414 executions.
+The earlier 13.071 CPU-second sample remains in the evidence archive. Both use stored prepared programs and disabled result memos.
+The final detailed profile takes 15.753 CPU seconds and 18.802 wall seconds in 72 chunks, with 10,272 executions.
+It reproduces exactly 2,283,088 VM instructions, ten semantic projections, and five scope tables.
+All full-workload and edge comparison gates pass. The 100-execution gate remains explicitly unmet.
+The legacy diagnostic used the preceding binary; its exact source hashes and the two later-changed source files are preserved separately.
+The final allocator correction does not affect that diagnostic's aggregate plans or legacy rules.
