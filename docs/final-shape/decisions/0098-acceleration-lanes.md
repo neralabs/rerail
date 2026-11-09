@@ -374,10 +374,64 @@ All of it was checked exactly against the CPU reference. Times are from release 
   - **Model facts:** the content store's `accel_models`.
   - **The lanes per binding:** `logic::lanes`.
 
+### Where the time goes: planning, launching and execution (2026-11-09)
+
+The profile's `== Acceleration (decision 0098)` section shows each form's time, phase by phase:
+- **Host phases**, timed on the engine's thread (wall, and that thread's CPU):
+  - plan: recognizing the form;
+  - encode: the kernel's inputs (a closure's edge search, a table's key codes, the prefilter's bit rows);
+  - decode: the kernel's output into the engine's rows or tables.
+- **Per lane**, from the executor's report:
+  - launches and submissions;
+  - the submission's wall, and the lane thread's CPU;
+  - the backend's own encode, device and decode times (`Backend::submit_timed`, `Phases`): GPU device time
+    from the command buffers, SME's streaming workers, the Neural Engine's predictions;
+  - workers' CPU (the rayon pool for a CPU launch, SME's spawned workers, the Neural Engine's predictor thread).
+- **The executor's own:** placing, and spawning and joining lane threads. A batch on one lane now runs on the
+  caller's thread, without a spawn.
+- **Counts:** nodes searched, rows made, and the rows walked before a table paid for itself.
+
+The whole Python pack (534 programs, 486 files, CPU binding, load 100 to 120), CPU as user + sys:
+
+| | CPU |
+|---|---|
+| the run, every span | 293 s |
+| joins, file-local part | 110 s |
+| moving rows to the cross-file part | 39 s |
+| statistics phase | 24 s |
+| parsing | 23 s |
+| planning strata | 22 s |
+| opening inputs, building indexes | 16 s |
+| **every form's host phases** | **6.3 s** |
+| closure: encode (its edges, 3.0 M nodes searched in 159 closures) | 5.2 s |
+| closure: decode (680 k rows made) | 1.1 s |
+| count tables: encode and decode (6 histograms) | 0.02 s |
+| **every kernel** (4 closures by bit rows, 6 histograms; wall) | **0.3 s** |
+| the executor's placing and threads | 0.2 ms |
+
+What it shows:
+- **The bottleneck is not in the kernels.** It is not in launching them either. The host work around the
+  kernels costs 20 times what the kernels do, and the closure's edge search is most of it.
+- **Most closures launch nothing.** 140 of 144 are chains (tree climbs), which the host walks, and 6 more fall
+  back to semi-naive past 16,384 nodes (`prog_ast_parent`, `prog_ast_up`). So only 4 used a kernel.
+- **The closure's real cost is its expansion.** It makes 680 k rows, which its readers then join. That is
+  decision 0097's case for not materializing: keep (row, start node) and look the reach up in the reader.
+- **The forms are 2% of the run under the CPU binding.** In that binding every launch stays on the CPU, since
+  closures and histograms have only CPU and GPU kernels.
+- **The larger prize is the strata.** The placement planner (0095) finds 553 strata whose work would be cheaper
+  on the GPU: 84 s of CPU against an estimated 0.4 s on the device. That needs the Metal binding (`--metal`), and
+  their forms on the device.
+- **Fixed on the way:**
+  - The closure searches its edges in one join context for every node, not one per node: its encode fell from
+    1,055 to 467 ms CPU on the 8-program slice.
+  - Its rows are pushed once, with no fresh-row buffer hashed first.
+
 **Not built yet:**
 
 - **Device waves for every kernel.** Count tables are built ahead. A closure's launch is known only once its walk
-  has searched its nodes, so it is still submitted alone.
+  has searched its nodes, so it is still submitted alone. Batching it needs a level's strata to run in two phases:
+  search, then one batch, then the rows. On the pack that would batch 4 launches (194 ms of kernel wall) and save
+  at most 4 submissions' fixed cost, so it waits behind the closure's expansion and the Metal binding (above).
 - **The Neural Engine's overlap at large tiles, measured quietly.** At W5's tile size, under heavy load, the overlapped
   decode is descheduled. Its median gain is unproved until a run at low load. The plain-array path, for shapes past
   IOSurface's limits, is not pipelined.
