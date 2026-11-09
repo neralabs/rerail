@@ -116,24 +116,26 @@ async function lint(cwd, files, rules, languages) {
   const wanted = new Set(rules);
   for (const result of await eslint.lintFiles(files)) {
     const path = relative(cwd, result.filePath).split(sep).join("/");
-    if (result.messages.some(message => message.fatal)) {
-      unparsed.push(path);
-      continue;
-    }
-    const reported = result.messages.filter(message => wanted.has(message.ruleId));
-    if (reported.length === 0) continue;
-    // ESLint reads the text without a leading byte order mark; the file's first line, as the runner counts it, has it.
-    const text = readFileSync(result.filePath, "utf8");
-    const bom = text.startsWith("\uFEFF") ? 1 : 0;
-    const body = text.slice(bom);
-    for (const message of reported) {
-      const column = codePointColumn(body, message.line, message.column) + (message.line === 1 ? bom : 0);
-      findings.push({ rule: message.ruleId, path, line: message.line, column });
-    }
+    if (result.messages.some(message => message.fatal)) unparsed.push(path);
+    else findings.push(...resultFindings(result, path, wanted));
   }
   const order = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
   findings.sort((left, right) => order(left.path, right.path) || left.line - right.line || left.column - right.column || order(left.rule, right.rule));
   return { findings, unparsed: unparsed.sort(order) };
+}
+
+/** The findings of the `wanted` rules in ESLint's `result` for the file at `path`. */
+function resultFindings(result, path, wanted) {
+  const reported = result.messages.filter(message => wanted.has(message.ruleId));
+  if (reported.length === 0) return [];
+  // ESLint reads the text without a leading byte order mark; the file's first line, as the runner counts it, has it.
+  const text = readFileSync(result.filePath, "utf8");
+  const bom = text.startsWith("\uFEFF") ? 1 : 0;
+  const body = text.slice(bom);
+  return reported.map(message => {
+    const column = codePointColumn(body, message.line, message.column) + (message.line === 1 ? bom : 0);
+    return { rule: message.ruleId, path, line: message.line, column };
+  });
 }
 
 function writeJson(path, value) {

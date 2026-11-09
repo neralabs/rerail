@@ -264,37 +264,57 @@ function gitLookup(): { found: true } | { found: false; looked: readonly string[
 
 async function runStatusCommand(home: string): Promise<number> {
   const lookup = await lookupDaemon(home);
-  // No managed install, no database and no daemon: Rerail was never set up here, so it is not merely stopped.
-  if (lookup.status === "absent" && !existsSync(join(home, CURRENT_LINK)) && !existsSync(join(home, RERAIL_DATABASE_FILE))) {
+  if (neverSetUp(home, lookup)) {
     process.stdout.write("Rerail is not installed on this computer. Install it with npx @neralabs/rerail setup.\n");
     return 3;
   }
-  const workspace = process.cwd();
+  process.stdout.write(workspaceStatus(process.cwd()));
+  const code = printDaemonStatus(lookup);
+  printRemoteStatus(home);
+  await printCodingAgentDataAccess(home);
+  return code;
+}
+
+/** No managed install, no database and no daemon: Rerail was never set up here, so it is not merely stopped. */
+function neverSetUp(home: string, lookup: DaemonLookup): boolean {
+  return lookup.status === "absent" && !existsSync(join(home, CURRENT_LINK)) && !existsSync(join(home, RERAIL_DATABASE_FILE));
+}
+
+/** What `rerail status` says of Rerail in `workspace`. */
+function workspaceStatus(workspace: string): string {
   const state = workspaceStartState(workspace);
   const location = repositoryIdentityLocation(workspace);
   const name = repositoryFolderName(location);
-  if (!location.git && state === "stopped") {
-    // Without a Git Rerail can run, every folder reads as no repo; say what is actually missing.
-    const git = gitLookup();
-    process.stdout.write(git.found
-      ? `No repo found here (${workspace}). Run rerail status inside your project.\n`
-      : `Rerail needs Git to tell whether this is a repo, and found none where it looks: ${git.looked.join(", ")}. Install Git, then run rerail status again.\n`);
-  } else if (state === "stopped") process.stdout.write(`Rerail is stopped in ${name}. Start it with rerail start.\n`);
-  else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
-  else process.stdout.write(`Rerail is on in ${name}.\n`);
-  const code = printDaemonStatus(lookup);
-  // Internal testing: the remote sink, only when a remote is added.
+  // Without a Git Rerail can run, every folder reads as no repo; say what is actually missing.
+  if (!location.git && state === "stopped") return noRepoStatus(workspace);
+  if (state === "stopped") return `Rerail is stopped in ${name}. Start it with rerail start.\n`;
+  if (state === "not-set-up") return `Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`;
+  return `Rerail is on in ${name}.\n`;
+}
+
+/** What `rerail status` says outside a repo: that there is none, or that it found no Git to tell. */
+function noRepoStatus(workspace: string): string {
+  const git = gitLookup();
+  return git.found
+    ? `No repo found here (${workspace}). Run rerail status inside your project.\n`
+    : `Rerail needs Git to tell whether this is a repo, and found none where it looks: ${git.looked.join(", ")}. Install Git, then run rerail status again.\n`;
+}
+
+/** Internal testing: the remote sink, only when a remote is added. */
+function printRemoteStatus(home: string): void {
   try {
     for (const remote of new RemoteOutbox({ home }).status()) process.stdout.write(`${describeRemoteStatus(remote)}\n`);
   } catch (error) {
     process.stdout.write(`Remote sink: status unreadable (${error instanceof Error ? error.message : String(error)})\n`);
   }
-  // Last, for each connected coding agent, whether its tools can read Rerail's data on this computer.
+}
+
+/** For each connected coding agent, whether its tools can read Rerail's data on this computer. */
+async function printCodingAgentDataAccess(home: string): Promise<void> {
   for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
     // Each sentence names its coding agent.
     if (agent.connected) process.stdout.write(`${agent.rerailData.why}\n`);
   }
-  return code;
 }
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */

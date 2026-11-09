@@ -11,13 +11,19 @@ pub(crate) fn path_module(path: &str) -> Option<String> {
     if segments.len() > 1 && segments.last() == Some(&"__init__") {
         segments.pop();
     }
-    let identifier = |segment: &&str| {
-        let mut chars = segment.chars();
-        chars
-            .next()
-            .is_some_and(|first| first == '_' || first.is_alphabetic())
-            && chars.all(|c| c == '_' || c.is_alphanumeric())
-    };
-    let valid = segments.iter().rev().take_while(|s| identifier(s)).count();
+    let valid = segments
+        .iter()
+        .rev()
+        .take_while(|s| is_identifier(s))
+        .count();
     (valid > 0).then(|| segments[segments.len() - valid..].join("."))
+}
+
+/// Whether `segment` is a Python identifier: a letter or `_`, then letters, digits or `_`.
+fn is_identifier(segment: &str) -> bool {
+    let mut chars = segment.chars();
+    chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_alphabetic())
+        && chars.all(|c| c == '_' || c.is_alphanumeric())
 }

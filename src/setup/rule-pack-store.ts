@@ -192,13 +192,18 @@ export function npmPackStore(home: string = defaultRerailHome(), npm: NpmRunner 
 export function updateChannel(home: string = defaultRerailHome()): string {
   const path = join(home, UPDATE_STATE_FILE);
   if (!existsSync(path)) return "latest";
+  return readChannel(path) ?? "latest";
+}
+
+/** The channel the update state file at `path` names; undefined when it names none or cannot be read. */
+function readChannel(path: string): string | undefined {
   try {
     const state = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (typeof state === "object" && state !== null && "channel" in state && typeof state.channel === "string") return state.channel;
   } catch {
     // An unreadable state file is the updater's to report; discovery falls back to latest.
   }
-  return "latest";
+  return undefined;
 }
 
 /** The version a pack directory's `package.json` names; null when it names none or cannot be read. */

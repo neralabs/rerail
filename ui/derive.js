@@ -186,42 +186,48 @@ export function toStoredRules(entries) {
   for (const entry of entries) {
     const id = entry.rule.id;
     const known = rules.get(id);
-    if (known !== undefined) {
-      if (!known.folders.includes(entry.folder)) {
-        known.folders.push(entry.folder);
-        known.folderStates.push(folderState(entry));
-        known.enabled = known.enabled && entry.on;
-        known.configError ??= entry.configError ?? null;
-        known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
-        known.addedAt = earliest(known.addedAt, entry.addedAt ?? null);
-        known.updatedAt = latest(known.updatedAt, entry.updatedAt ?? null);
-      }
-      continue;
-    }
-    rules.set(id, {
-      kind: entry.kind,
-      rule: { ...entry.rule, mode: entry.mode },
-      enabled: entry.on,
-      origin: entry.source.kind === "library_rule" ? "user" : "pack",
-      source: entry.source,
-      folders: [entry.folder],
-      folderStates: [folderState(entry)],
-      mixed: false,
-      onSource: entry.onSource,
-      modeSource: entry.modeSource,
-      suppressions: entry.suppressions,
-      suppressionsSource: entry.suppressionsSource,
-      config: entry.config,
-      configSource: entry.configSource,
-      configError: entry.configError ?? null,
-      revision: entry.revision,
-      addedAt: entry.addedAt ?? null,
-      // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
-      approval: entry.approval ?? null,
-      updatedAt: entry.updatedAt ?? null,
-    });
+    if (known === undefined) rules.set(id, storedRule(entry));
+    else addFolder(known, entry);
   }
   return rules;
+}
+
+/** Adds `entry`'s folder to `known`, the row of the same rule from an earlier folder; once per folder. */
+function addFolder(known, entry) {
+  if (known.folders.includes(entry.folder)) return;
+  known.folders.push(entry.folder);
+  known.folderStates.push(folderState(entry));
+  known.enabled = known.enabled && entry.on;
+  known.configError ??= entry.configError ?? null;
+  known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
+  known.addedAt = earliest(known.addedAt, entry.addedAt ?? null);
+  known.updatedAt = latest(known.updatedAt, entry.updatedAt ?? null);
+}
+
+/** The row of a rule from the first folder `entry` adds it at. */
+function storedRule(entry) {
+  return {
+    kind: entry.kind,
+    rule: { ...entry.rule, mode: entry.mode },
+    enabled: entry.on,
+    origin: entry.source.kind === "library_rule" ? "user" : "pack",
+    source: entry.source,
+    folders: [entry.folder],
+    folderStates: [folderState(entry)],
+    mixed: false,
+    onSource: entry.onSource,
+    modeSource: entry.modeSource,
+    suppressions: entry.suppressions,
+    suppressionsSource: entry.suppressionsSource,
+    config: entry.config,
+    configSource: entry.configSource,
+    configError: entry.configError ?? null,
+    revision: entry.revision,
+    addedAt: entry.addedAt ?? null,
+    // Present for a rule Rerail did not publish: until `approved`, it runs in Log (`mode` says so).
+    approval: entry.approval ?? null,
+    updatedAt: entry.updatedAt ?? null,
+  };
 }
 
 /** When a rule present in several folders was first added: the earliest folder's; `null` where none says. */
