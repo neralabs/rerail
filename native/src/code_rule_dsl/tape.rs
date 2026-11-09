@@ -53,6 +53,12 @@ pub(super) mod header {
     pub(in crate::code_rule_dsl) const ALIASES: usize = 48;
     pub(in crate::code_rule_dsl) const ALIAS_BYTES: usize = 56;
 }
+/// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
+/// starts like one (any format version): the store picks a frame's dictionary by it.
+pub(crate) fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
+    (bytes.len() > header::LANGUAGE && bytes.starts_with(&TAPE_MAGIC[..6])).then(|| bytes[header::LANGUAGE])
+}
+
 /// Each column starts at this alignment from the image's start (format 11), so a reader of the
 /// image in place, as the device reads a resident tape (PIAT §20.2.3), reads aligned columns.
 pub(super) const COLUMN_ALIGN: usize = 16;

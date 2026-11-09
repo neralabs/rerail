@@ -34,7 +34,6 @@ use crate::code_rule_dsl::transducer::packed::metal_backend::MappedBuffer;
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
-use std::io::Read as _;
 use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -308,21 +307,14 @@ impl Plan {
 }
 
 fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
-    let mut header = [0u8; resident::HEADER_LEN];
-    zstd::stream::read::Decoder::new(&frames.tape_frame[..])
-        .and_then(|mut decoder| decoder.read_exact(&mut header))
+    let header = crate::content_store::decompress_head(&frames.tape_frame, resident::HEADER_LEN)
         .map_err(|error| invalid(format!("tape frame header: {error}")))?;
     let (nodes, codes) = resident::header_counts(&header).map_err(invalid)?;
-    let mut decoder = zstd::stream::read::Decoder::new(&frames.source_frame[..]).map_err(|error| invalid(format!("source frame: {error}")))?;
     let mut lines = 1usize;
-    let mut chunk = [0u8; 1 << 16];
-    loop {
-        let read = decoder.read(&mut chunk).map_err(|error| invalid(format!("source frame: {error}")))?;
-        if read == 0 {
-            break;
-        }
-        lines += chunk[..read].iter().filter(|&&byte| byte == b'\n').count();
-    }
+    crate::content_store::decompress_chunks(&frames.source_frame, |chunk| {
+        lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
+    })
+    .map_err(|error| invalid(format!("source frame: {error}")))?;
     Ok(Plan { tape: frames.tape_length, source: frames.source_length, nodes, codes, lines })
 }
 
@@ -565,12 +557,8 @@ fn place(
     match parts {
         // Decompressed straight into the slab, to the frames' raw lengths exactly.
         Parts::Frames(frames) => {
-            if zstd::bulk::decompress_to_buffer(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))? != plan.tape {
-                return Err(invalid("tape frame length"));
-            }
-            if zstd::bulk::decompress_to_buffer(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))? != plan.source {
-                return Err(invalid("source frame length"));
-            }
+            crate::content_store::decompress_into(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
+            crate::content_store::decompress_into(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))?;
             if <[u8; 32]>::from(Sha256::digest(&*source)) != frames.source_sha256 {
                 return Err(invalid("a resident source's digest"));
             }

@@ -69,7 +69,7 @@ impl StoreTapes {
         if codec != CODEC_ZSTD {
             return Err(invalid(format!("unsupported tape codec {codec}")));
         }
-        let bytes = zstd::stream::decode_all(&frame[..]).map_err(|error| invalid(format!("tape frame: {error}")))?;
+        let bytes = crate::content_store::decompress(&frame, 0).map_err(|error| invalid(format!("tape frame: {error}")))?;
         let grammar = match self.grammars.get(&grammar_id) {
             Some(grammar) => Arc::clone(grammar),
             None => {
@@ -90,7 +90,7 @@ impl StoreTapes {
             if codec != CODEC_ZSTD {
                 return Err(invalid(format!("unsupported source codec {codec}")));
             }
-            let source = zstd::stream::decode_all(&frame[..]).map_err(|error| invalid(format!("source frame: {error}")))?;
+            let source = crate::content_store::decompress(&frame, 0).map_err(|error| invalid(format!("source frame: {error}")))?;
             let source = String::from_utf8(source).map_err(|_| invalid("a source that is not UTF-8"))?;
             image = image.unfolded(&grammar, &source).map_err(invalid)?;
         }

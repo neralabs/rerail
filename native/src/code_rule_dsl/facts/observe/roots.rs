@@ -153,7 +153,7 @@ pub(crate) fn git_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey
         let blob = repository
             .find_object(id)
             .map_err(|error| StoreError::Invalid(format!("cannot read a committed blob: {error}")))?;
-        store.put_source(&blob.data, &[file.blob])?;
+        store.put_source_at(&blob.data, &[file.blob], &file.path)?;
     }
     Ok(workspace.root_tree)
 }

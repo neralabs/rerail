@@ -637,8 +637,6 @@ fn traversal_polls_closing_nodes_before_another_preorder_batch() {
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    // The tree\'s nodes: a stored image is named-only (RER-131).
-    let tree_nodes = tape.transducer_len();
     let matcher = compile_rule(
         &json!({"kind": "call_expression"}),
         GrammarDialect::TypeScript,
@@ -970,8 +968,6 @@ fn stop_rule_relations_plan_as_unbounded_supersets() {
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-    // The tree\'s nodes: a stored image is named-only (RER-131).
-    let tree_nodes = tape.transducer_len();
     assert_stop_rule_supersets(&AstGrep::doc(native), &rules);
     assert_stop_rule_supersets(&AstGrep::doc(tape), &rules);
 }

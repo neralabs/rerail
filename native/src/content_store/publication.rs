@@ -1,6 +1,7 @@
 //! Bulk overlay publication: object preparation, identity resolution, and the publish transaction.
 
 use super::connection::retry_busy;
+use super::compression::{compress_source, compress_tape, file_tag};
 use super::objects::{compress_documents, validate_tape_payload};
 use super::relationships::{
     execute_relationship_pass, prepare_relationship_pass, relationship_references_current,
@@ -9,7 +10,7 @@ use super::rows::{hash_params, validate_relative_path};
 use super::{
     BusyRetries, CODEC_ZSTD, CandidateClause, ContentStore, HashKey, MAX_PUBLICATION_BATCH,
     OverlayFilePublication, PublicationResult, STRING_CLAUSE_KEY, STRING_PATH, SourceId,
-    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId, compress,
+    StoreError, StoreResult, StoredFile, TapeId, TapePayload, WorkspaceId,
 };
 use crate::WORK_POOL;
 use rayon::prelude::*;
@@ -165,12 +166,12 @@ impl ContentStore {
                     |((publication, source_hash, tape_hash), (source_id, tape_id))| {
                         let source_frame = source_id
                             .is_none()
-                            .then(|| compress(publication.source, self.compression_level))
+                            .then(|| compress_source(publication.source, self.compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes))))
                             .transpose()?;
                         let tape_frame = publication
                             .tape
                             .filter(|_| tape_id.is_none())
-                            .map(|payload| compress(payload.bytes, self.compression_level))
+                            .map(|payload| compress_tape(payload.bytes, self.compression_level))
                             .transpose()?;
                         // A stored tape's documents are stored with it: only a new tape's are
                         // written.
@@ -534,13 +535,13 @@ fn prepare_missing_object_frames(
     ) in prepared.iter_mut().zip(stored_objects)
     {
         if source_id.is_none() && source_frame.is_none() {
-            *source_frame = Some(compress(publication.source, compression_level)?);
+            *source_frame = Some(compress_source(publication.source, compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes)))?);
         }
         if let Some(tape) = publication.tape
             && tape_id.is_none()
         {
             if tape_frame.is_none() {
-                *tape_frame = Some(compress(tape.bytes, compression_level)?);
+                *tape_frame = Some(compress_tape(tape.bytes, compression_level)?);
             }
             if document_frames.is_none() && !tape.documents.is_empty() {
                 *document_frames = Some(compress_documents(tape.documents, compression_level)?);

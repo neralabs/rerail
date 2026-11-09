@@ -121,7 +121,14 @@ fn run(lang: GrammarDialect, files: &[PathBuf], verbose: bool) -> Totals {
             let t = cpu();
             let image = TapeImage::finish(list, classes, &grammar, &source, &|| false).unwrap();
             totals.time_pack[side] += cpu() - t;
-            let bytes = image.to_bytes().unwrap();
+            let bytes = if side == 1 {
+                // As v12 stores it.
+                let mut stored = image.clone();
+                stored.widths[0] |= NAMED_ONLY;
+                stored.to_bytes().unwrap()
+            } else {
+                image.to_bytes().unwrap()
+            };
             // RERAIL_DUMP_TAPES=<dir>: each file's full (0) and named-only (1) image bytes, for
             // compression studies; files are numbered in list order.
             if let Some(dir) = std::env::var_os("RERAIL_DUMP_TAPES") {

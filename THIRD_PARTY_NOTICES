@@ -584,3 +584,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+----------------------------------------------------------------------
+
+Derived data: zstd dictionaries trained on the CPython 3.13 standard library
+Files: native/dictionaries/python-source.zdict, native/dictionaries/python-tape.zdict
+  (compiled into the engine; see native/dictionaries/README.md)
+Source: https://github.com/python/cpython (Lib/, release 3.13.12)
+License: PSF-2.0 (the licence text is in LICENSES/PSF-2.0.txt)
+
+Copyright (c) 2001-2026 Python Software Foundation; All Rights Reserved.
+
+The dictionaries hold fragments of the standard library's sources, chosen by
+`zstd --train`, and fragments of tapes parsed from them.

@@ -61,6 +61,17 @@ mod soundness;
 mod suppress;
 mod tape;
 pub(crate) mod tree;
+
+/// The language tag a stored tape image names (`tape::stored_tape_tag`): the store picks a
+/// frame's dictionary by it.
+pub(crate) fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
+    tape::stored_tape_tag(bytes)
+}
+
+/// The language tag of the dialect a file at `path` is parsed as.
+pub(crate) fn path_tape_tag(path: &str) -> Option<u8> {
+    language::tape_tag(language::dialect_by_label(language::label_of_path(path)?)?)
+}
 pub(crate) mod text;
 #[cfg(test)]
 mod test_support;

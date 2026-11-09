@@ -5,12 +5,12 @@ use super::rows::{generation, hash_params, intern_hash};
 use super::{
     CODEC_ZSTD, CachedBytes, ContentStore, DocumentPayload, HASH_SHA256, HashKey, SourceId,
     StoreError, StoreResult, StoredDocument, StoredPathObjects, StoredSourceObjects, TapeId,
-    TapePayload, compress,
+    TapePayload,
+    compression::{compress_source, compress_tape, path_tag, tape_tag},
 };
 use rusqlite::Connection;
 use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeSet, HashMap};
-use std::io::Cursor;
 use std::sync::Arc;
 
 /// A stored tape's frames as residency admits them (PIAT §20.3): the tape's and its source's zstd
@@ -89,8 +89,23 @@ impl ContentStore {
     /// [`Self::put_source`] for a caller that already holds the source's SHA-256 (`canonical`): the bytes are not
     /// hashed again.
     pub fn put_source_hashed(&self, source: &[u8], canonical: HashKey, aliases: &[HashKey]) -> StoreResult<SourceId> {
+        self.put_source_tagged(source, canonical, aliases, None)
+    }
+
+    /// [`Self::put_source`] for a file at `path`: its frame may use its language's dictionary.
+    pub fn put_source_at(&self, source: &[u8], aliases: &[HashKey], path: &str) -> StoreResult<SourceId> {
+        self.put_source_tagged(source, HashKey::sha256(source), aliases, path_tag(path))
+    }
+
+    fn put_source_tagged(
+        &self,
+        source: &[u8],
+        canonical: HashKey,
+        aliases: &[HashKey],
+        tag: Option<u8>,
+    ) -> StoreResult<SourceId> {
         self.require_write_capacity()?;
-        let frame = compress(source, self.compression_level)?;
+        let frame = compress_source(source, self.compression_level, tag)?;
         let raw_length = i64::try_from(source.len())
             .map_err(|_| StoreError::Invalid("source length exceeds i64".to_owned()))?;
         // Retried under `retry_busy`: the push writes sources while the overlay's writer holds
@@ -370,7 +385,7 @@ impl ContentStore {
                 "unsupported source codec {codec}"
             )));
         }
-        let source = zstd::stream::decode_all(Cursor::new(frame))?;
+        let source = super::decompress(&frame, 0)?;
         if source.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
             return Err(StoreError::Corrupt(
                 "source length does not match metadata".to_owned(),
@@ -483,7 +498,7 @@ impl ContentStore {
                         if codec != CODEC_ZSTD {
                             return Err(StoreError::Corrupt("unsupported source codec".into()));
                         }
-                        let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+                        let bytes = super::decompress(&frame, 0)?;
                         if bytes.len() != length || HashKey::sha256(&bytes) != hash {
                             return Err(StoreError::Corrupt(
                                 "source length or hash does not match metadata".into(),
@@ -515,7 +530,7 @@ impl ContentStore {
                 "tape identifiers must be nonnegative".to_owned(),
             ));
         }
-        let frame = compress(tape, self.compression_level)?;
+        let frame = compress_tape(tape, self.compression_level)?;
         // Retried under `retry_busy`, as `put_source` is.
         self.immediate_transaction(|transaction| {
             put_tape_tx(
@@ -553,8 +568,8 @@ impl ContentStore {
                 "tape identifiers must be nonnegative".to_owned(),
             ));
         }
-        let source_frame = compress(source, self.compression_level)?;
-        let tape_frame = compress(tape, self.compression_level)?;
+        let source_frame = compress_source(source, self.compression_level, tape_tag(tape))?;
+        let tape_frame = compress_tape(tape, self.compression_level)?;
         self.immediate_transaction(|transaction| {
             let created_generation = generation(transaction)?;
             let source_id = put_source_prepared_tx(
@@ -762,7 +777,7 @@ impl ContentStore {
             if codec != CODEC_ZSTD {
                 return Err(StoreError::Corrupt(format!("unsupported {what} codec")));
             }
-            let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+            let bytes = super::decompress(&frame, 0)?;
             if usize::try_from(length).ok() != Some(bytes.len()) || HashKey::sha256(&bytes) != hash
             {
                 return Err(StoreError::Corrupt(format!(
@@ -840,7 +855,7 @@ impl ContentStore {
         }
         let raw_length = usize::try_from(raw_length)
             .map_err(|_| StoreError::Corrupt("tape length does not fit memory".to_owned()))?;
-        let tape = zstd::stream::decode_all(Cursor::new(frame))?;
+        let tape = super::decompress(&frame, 0)?;
         if tape.len() != raw_length {
             return Err(StoreError::Corrupt(
                 "tape length does not match metadata".to_owned(),
@@ -967,8 +982,8 @@ pub(super) fn compress_documents(
         .iter()
         .map(|document| {
             Ok((
-                compress(document.source, level)?,
-                compress(document.tape, level)?,
+                compress_source(document.source, level, tape_tag(document.tape))?,
+                compress_tape(document.tape, level)?,
             ))
         })
         .collect()

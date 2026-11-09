@@ -132,6 +132,13 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2017 Josh Vera, GitHub", "2019 Max Brunsfeld, Amaan Qureshi, Christian Frøystad, Caleb White"]
 SPDX-License-Identifier = "MIT"
 
+# zstd dictionaries trained on CPython's standard library (native/dictionaries/README.md).
+[[annotations]]
+path = ["native/dictionaries/python-source.zdict", "native/dictionaries/python-tape.zdict"]
+precedence = "override"
+SPDX-FileCopyrightText = "2001-2026 Python Software Foundation"
+SPDX-License-Identifier = "PSF-2.0"
+
 # DerekStride/tree-sitter-sql 0.3.11 with Rerail's patches (native/grammars/tree-sitter-sql/PATCHES.md):
 # grammar.json regenerated from the patched grammar.js, scanner.c patched, rerail.patch the diff.
 [[annotations]]

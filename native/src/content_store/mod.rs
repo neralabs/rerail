@@ -8,6 +8,7 @@ pub(crate) mod atoms;
 #[allow(dead_code)]
 mod bounded_insert;
 mod compression;
+pub(crate) use compression::{decompress, decompress_chunks, decompress_head, decompress_into};
 mod collection_guard;
 pub(crate) use collection_guard::CollectionLease;
 mod connection;
