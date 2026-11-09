@@ -272,19 +272,22 @@ Each step reports:
 
 ## Built (2026-11-09)
 
-All of it was checked exactly against the CPU reference. Times are from debug builds at load 35–140.
+All of it was checked exactly against the CPU reference. Times are from release builds of `rerail-accel` at load
+48–123, except where a debug build is named.
 
 - **`rerail-accel`**, a crate of the workspace:
   - the kernels and their CPU reference;
   - lane detection: SME2 through `sysctl`, one SME unit per cluster;
-  - prices per form and lane, from the lanes' own measurements, and power per lane;
+  - prices per form and lane, from the lanes' own measurements in a release build (`price::bench`), and power per
+    lane;
   - the executor.
 
-  33 tests pass. One of them runs a single wave on all four lanes at once; placed by price, its small launches go to
+  34 tests pass. One of them runs a single wave on all four lanes at once; placed by price, its small launches go to
   SME and the cores.
-- **The SME lane:** the bit product on BMOPA, in C with ACLE, about 8·10⁻¹⁴ s a bit-operation and 3 µs a submission.
-- **The GPU lane:** all four forms, a batch as one command buffer. Each submission costs 0.3–0.7 ms of wall time, of
-  which a few µs are on the device.
+- **The SME lane:** the bit product on BMOPA, in C with ACLE, about 3.7·10⁻¹⁴ s a bit-operation and 1 µs a
+  submission.
+- **The GPU lane:** all four forms, a batch as one command buffer. Each submission costs about 0.2 ms of wall time
+  (80–100 µs of host CPU), of which 8 µs are on the device.
 - **The Neural Engine lane:**
   - **The model writer:** ML Programs written from Rust, byte for byte what coremltools writes for the same graph,
     with the fixed relation as a 1-bit constant.
@@ -292,7 +295,15 @@ All of it was checked exactly against the CPU reference. Times are from debug bu
     `MLComputePlan`. A model not wholly on the engine is refused, with its operation names.
   - **Counts above 2,048:** the shared dimension is split into pieces of at most 16,384 bits and 2,048 ones per
     constant row, so every partial count is exact.
-  - **Speed:** about 1.4–5·10⁻¹³ s a bit-operation. Host conversion costs a few ms a submission in a debug build.
+  - **Speed:** about 1.1–4.4·10⁻¹³ s a bit-operation in the prediction calls, and 2.4·10⁻¹³ for a whole
+    submission at W5's size.
+  - **IOSurface inputs and outputs.** A tile's rows are written in place into IOSurface-backed arrays, and the
+    engine writes its counts into IOSurfaces given as the outputs' backings, so Core ML copies nothing on the host.
+    The surfaces are pooled by shape and reused across submissions. The host's own part (expanding bits to fp16,
+    summing the pieces) runs on the lane's thread. Host CPU a submission, user + sys, same process and model:
+    - W1: 12.0 ms on plain arrays (the old path), 5.3 ms on IOSurfaces; Core ML's share 3.3 ms, then 1.1 ms.
+    - W5: 14.3 ms, then 8.8 ms; Core ML's share 2.5 ms, then 0.35 ms.
+    - A shape past IOSurface's limits keeps the plain arrays.
 - **In the engine:**
   - **`count only`, inferred.** A derived relation's column that no reader reads, positive or negated or in a count
     compared with 0 (the converter's "no such row"), is dropped: the relation's rows are their projection.
@@ -317,8 +328,7 @@ All of it was checked exactly against the CPU reference. Times are from debug bu
   layout.
 - **`bit product` in the prefilter.**
 - **Device waves across strata** (0095 §5).
-- **The Neural Engine's IOSurface inputs**, which cut host CPU about 4× in the spikes.
-- **Release-build prices.**
+- **Overlapping the Neural Engine's host work with its predictions**: the next tile's expansion while a tile runs.
 
 ## Gates
 
