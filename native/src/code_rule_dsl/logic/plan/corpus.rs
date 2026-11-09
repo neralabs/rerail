@@ -1329,10 +1329,11 @@ fn run_observed(
         }
     };
     let mut folded = fold_constants(&mut prog)?;
-    // Plans are kept across this run's chunks only (decision 0038).
-    let _plans = super::KeepPlans::start();
+    // Plans are kept across this run's chunks (decision 0038), and a session's across its runs (decision 0090 step 5).
+    let across = session::generation();
+    let _plans = super::KeepPlans::start(across);
     // And the values derived from them (`logic::derived`): each chunk's join specs.
-    let _derived = crate::code_rule_dsl::logic::derived::Keep::start();
+    let _derived = crate::code_rule_dsl::logic::derived::Keep::start(across);
     // A session's run (`session`, decision 0063): its store and its memo, held for the run.
     let mut held = session::current();
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;

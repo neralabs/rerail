@@ -31,6 +31,15 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) memo: memo::Held,
     /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed.
     pub(super) cross: Mutex<Option<super::retain::Retained>>,
+    /// Which session this is: its runs' kept plans and derived values are taken back only by its own runs.
+    generation: u64,
+}
+
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The generation of the session this thread's next run is a run of (`None`: no session, or a full run).
+pub(super) fn generation() -> Option<u64> {
+    current().as_ref().map(|s| s.generation)
 }
 
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
@@ -49,6 +58,7 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         store,
         memo: Default::default(),
         cross: Mutex::new(None),
+        generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         #[cfg(test)]
         thread: std::thread::current().id(),
     });
