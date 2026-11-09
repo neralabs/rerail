@@ -47,6 +47,7 @@ mod world;
 mod reuse;
 pub(in crate::code_rule_dsl) mod phase0;
 mod cross_memo;
+mod ordered;
 mod typing;
 pub(crate) use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
@@ -2304,8 +2305,8 @@ fn run_observed(
         // without the base rows this run's cross-file part reads is a miss.
         let has_base = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS) && stored.iter().all(|(rel, _)| e.rows.contains_key(&memo::base_key(rel)));
         let mut stats_read = Vec::new();
-        let mut build = |d: &i64, path: &String, module: Option<Arc<str>>| -> Result<(Option<memo::Content>, std::result::Result<memo::Entry, syntax::Document>)> {
-            worker_doing.set("parse");
+        type StatRead = (String, crate::content_store::FileStat, crate::content_store::SourceId);
+        let build_into = |d: &i64, path: &String, module: Option<Arc<str>>, stat_read: &mut Option<StatRead>| -> Result<(Option<memo::Content>, std::result::Result<memo::Entry, syntax::Document>)> {
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
             // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
             // source, and on a memo hit is neither read nor hashed.
@@ -2337,7 +2338,7 @@ fn run_observed(
                 if let (Some(stat), Some(id)) = (stat, content.stored())
                     && known != Some(id)
                 {
-                    stats_read.push((world::store_path(path).to_owned(), stat, id));
+                    *stat_read = Some((world::store_path(path).to_owned(), stat, id));
                 }
             }
             let looked_up = known.is_some() && known == source_id.and_then(memo::Content::stored);
@@ -2379,10 +2380,85 @@ fn run_observed(
             drop(digest_span);
             Ok((source_id, Err(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module })))
         };
+        // A document built, with the stat it was read under when the index had another (for the run's stat index).
+        let build = |d: &i64, path: &String, module: Option<Arc<str>>| {
+            let mut stat_read = None;
+            build_into(d, path, module, &mut stat_read).map(|(content, made)| (content, made, stat_read))
+        };
+        // The documents are built on the run's builders (`threads::document_builders`), and taken here in order.
+        let builders = crate::threads::document_builders();
+        // A chunk on its way to the main thread: handed on in the order cut, once its projection is done.
+        enum Out<M, P> {
+            Ready(M),
+            Projecting(usize, P),
+        }
         'batches: for asked in docs_in {
-        let mut at = asked.iter().peekable();
-        while let Some((d, path, module)) = at.next() {
-            match build(d, path, module.clone()) {
+        let helpers = if asked.len() > 1 { builders.min(asked.len()) } else { 0 };
+        // At most two chunks projected at once beside the one the main thread runs (each is sized to `CHUNK_MB`).
+        let in_flight = helpers.min(2);
+        let ordered = ordered::Ordered::new(asked.len(), helpers * 8);
+        let helper_cpu = parking_lot::Mutex::new((0.0, 0.0));
+        let batch_before = batch;
+        let project = |docs: Vec<syntax::Document>| {
+            let from = thread_usage();
+            let built = {
+                let _batch = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
+                syntax::with_nearest(&store, docs, &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))
+            };
+            let now = thread_usage();
+            (built, (now.0 - from.0, now.1 - from.1))
+        };
+        let stopped = std::thread::scope(|helpers_scope| -> bool {
+        for _ in 0..helpers {
+            helpers_scope.spawn(|| {
+                let from = thread_usage();
+                ordered.help(
+                    |i| {
+                        let (d, path, module) = &asked[i];
+                        build(d, path, module.clone())
+                    },
+                    &project,
+                );
+                add(&mut helper_cpu.lock(), from);
+            });
+        }
+        let _stop = ordered.stopper();
+        let mut out = std::collections::VecDeque::new();
+        // Hands on what is ready at the front, in order; waits for the front's projection while more than `keep`
+        // are projecting. False when the main thread has gone.
+        let flush = |out: &mut std::collections::VecDeque<Out<_, _>>, keep: usize, batch: &mut (f64, f64)| -> bool {
+            loop {
+                let projecting = out.iter().filter(|o| matches!(o, Out::Projecting(..))).count();
+                let hand = match out.front() {
+                    None => return true,
+                    Some(Out::Ready(_)) => match out.pop_front() {
+                        Some(Out::Ready(hand)) => hand,
+                        _ => unreachable!("the front is ready"),
+                    },
+                    Some(Out::Projecting(id, _)) => {
+                        worker_doing.set("wait for a chunk's projection");
+                        let Some((built, (user, sys))) = ordered.result(*id, projecting > keep) else { return true };
+                        batch.0 += user;
+                        batch.1 += sys;
+                        let Some(Out::Projecting(_, (n, docs_of, hits_of, kept_docs))) = out.pop_front() else { unreachable!("the front is projecting") };
+                        built.map(|sources| (n, sources, docs_of, hits_of, kept_docs))
+                    }
+                };
+                worker_doing.set("hand on (a chunk)");
+                if crate::code_rule_dsl::logic::profile::wait("the main thread (a channel of one chunk)", &main_doing, || send.send(hand.map(Some))).is_err() {
+                    return false;
+                }
+            }
+        };
+        let stopped = 'docs: {
+        for (i, (d, path, module)) in asked.iter().enumerate() {
+            let last = i + 1 == asked.len();
+            worker_doing.set("parse");
+            let made = if helpers > 0 { ordered.take(i) } else { build(d, path, module.clone()) };
+            if let Ok((_, _, Some(read))) = &made {
+                stats_read.push(read.clone());
+            }
+            match made.map(|(content, made, _)| (content, made)) {
                 Ok((source_id, Ok(entry))) => {
                     read_sources.extend(source_id.and_then(memo::Content::stored));
                     if let Some(c) = source_id {
@@ -2401,43 +2477,63 @@ fn run_observed(
                 }
                 Err(e) => {
                     let _ = send.send(Err(e));
-                    break 'batches;
+                    break 'docs true;
                 }
             }
             if pending.is_empty() {
                 // Only hits so far: handed on in batches, and at the end.
-                if !hits.is_empty() && (hits.len() >= 1024 || at.peek().is_none()) {
+                if !hits.is_empty() && (hits.len() >= 1024 || last) {
                     // Reading, hashing and looking files up is the worker's parse time.
                     add(&mut parse, t);
                     t = thread_usage();
-                    let hand = Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut hits), Vec::new()));
-                    worker_doing.set("hand on (memo hits)");
-                    if crate::code_rule_dsl::logic::profile::wait("the main thread (a channel of one chunk)", &main_doing, || send.send(hand.map(Some))).is_err() {
-                        break 'batches;
+                    out.push_back(Out::Ready(Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut hits), Vec::new()))));
+                    if !flush(&mut out, in_flight, &mut batch) {
+                        break 'docs true;
                     }
+                    t = thread_usage();
                 }
                 continue;
             }
-            if pending_nodes < worker_target.load(std::sync::atomic::Ordering::Relaxed) && at.peek().is_some() {
+            if pending_nodes < worker_target.load(std::sync::atomic::Ordering::Relaxed) && !last {
+                if !out.is_empty() && !flush(&mut out, in_flight, &mut batch) {
+                    break 'docs true;
+                }
                 continue;
             }
             add(&mut parse, t);
             t = thread_usage();
-            worker_doing.set("batch");
-            let batch_span = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
             // A chunk whose rules ask for guests keeps its documents: the guests are made from them (decision 0055).
             let kept_docs = if slice.is_some() { pending.clone() } else { Vec::new() };
-            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()));
-            drop(batch_span);
-            add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
             let (docs_of, hits_of) = (std::mem::take(&mut pending_docs), std::mem::take(&mut hits));
-            let hand = built.map(|sources| (n, sources, docs_of, hits_of, kept_docs));
-            worker_doing.set("hand on (a chunk)");
-            if crate::code_rule_dsl::logic::profile::wait("the main thread (a channel of one chunk)", &main_doing, || send.send(hand.map(Some))).is_err() {
-                break 'batches;
+            if helpers > 0 {
+                out.push_back(Out::Projecting(ordered.post(std::mem::take(&mut pending)), (n, docs_of, hits_of, kept_docs)));
+            } else {
+                worker_doing.set("batch");
+                let (built, (user, sys)) = project(std::mem::take(&mut pending));
+                batch.0 += user;
+                batch.1 += sys;
+                out.push_back(Out::Ready(built.map(|sources| (n, sources, docs_of, hits_of, kept_docs))));
+            }
+            if !flush(&mut out, in_flight, &mut batch) {
+                break 'docs true;
             }
             t = thread_usage();
+        }
+        ordered.finish();
+        !flush(&mut out, 0, &mut batch)
+        };
+        stopped
+        });
+        // The helpers' time: projecting chunks is batch time (counted as each is handed on), the rest, building
+        // documents, parse time.
+        if helpers > 0 {
+            let (user, sys) = helper_cpu.into_inner();
+            parse.0 += user - (batch.0 - batch_before.0);
+            parse.1 += sys - (batch.1 - batch_before.1);
+        }
+        if stopped {
+            break 'batches;
         }
         // The batch's end: its documents are all handed on.
         if send.send(Ok(None)).is_err() {
