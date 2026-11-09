@@ -252,8 +252,9 @@ pub(crate) fn unchanged(programs: &[&str], root: &Path, typing: &Typing, options
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1 || world::bytes_digest(&root.join(f)) != d.2) {
         return Ok(false);
     }
-    let requests: Vec<(String, String, String)> = consulted.iter().filter(|c| c.0 != "doc").cloned().collect();
-    Ok(world::World::new(root, &prog).still(&requests))
+    const READERS: [&str; 4] = ["input", "input_dir", "artifact", "base"];
+    let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
+    Ok(inputs::still(&prog, root, &read) && world::World::new(root, &prog).still(&requests))
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1212,6 +1213,7 @@ pub(crate) fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    crate::code_rule_dsl::logic::strings::git::set_root(root);
     let before = observe(|o| {
         o.begin();
         o.counts
@@ -1388,6 +1390,11 @@ fn run_observed(
     consulted.extend(folded);
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     external_inputs(&mut prog, root)?;
+    // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`).
+    let read = inputs::take_consulted();
+    if t.is_none() {
+        consulted.extend(read);
+    }
     // Guest requests (decision 0055) and the file system's (decision 0065 §2a) are outputs, so the program keeps the
     // rules that make them.
     let world_requests: Vec<&str> = WORLD.iter().map(|(_, req)| *req).chain([world::LOAD]).collect();

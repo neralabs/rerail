@@ -34,6 +34,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("count_matches", &[Text, Text], Number),
     ("sha256", &[Text], Text),
     ("ed25519_ok", &[Text, Text, Text], Number),
+    // Git objects of the repository holding the run's root (`strings::git`): never stale, so never invalidated.
+    ("git_commit", &[Text], Number),
+    ("git_has", &[Text, Text], Number),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
@@ -175,6 +178,8 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "rx_group" => super::group(t(0), t(1), t(2)),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "ed25519_ok" => return Value::Integer(i64::from(super::signatures::verifies(t(0), t(1), t(2)))),
+        "git_commit" => return super::git::git_commit(t(0)),
+        "git_has" => return super::git::git_has(t(0), t(1)),
         "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
         "rr_add" => return numbers[0].checked_add(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),
