@@ -3308,8 +3308,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "b73d28aabc5dfa6102981782ee03c53f81f7bbb8",
-    "status": "Root Final through b73d28aab, including stored statistics and CPU/Metal row programs; explicit signing remains outside query evaluation",
+    "upstreamCommit": "004df7e75c2a366d790ef1caddc4d603e6348e4a",
+    "status": "Adopted Final 004df7e75 plus generic literal-fact preservation; acceptance pending",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -3405,7 +3405,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "6e7aceb9474f0b71fcc861820285ae64421a31b98dbf6286e1ffa48ed5153a04"
+        "sha256": "757d8af5fb47b76db52249038af992a9649a825da21912c3625eb29ac216be9a"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
@@ -3493,7 +3493,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038"
+    "upstreamMerge": "219657a9a698f5a7198c9f42ee295d169d960aaf"
   },
   "engineSourceSnapshots": [
     {
