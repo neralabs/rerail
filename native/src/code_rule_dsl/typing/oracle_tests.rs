@@ -1440,11 +1440,26 @@ fn spike_o125_replay() {
     if spans_on {
         crate::code_rule_dsl::logic::profile::set(true);
     }
+    // `O125_DECISIONS=<topic text>`: each step's decisions under topics holding the text, with how often.
+    let decided = std::cell::RefCell::new(crate::code_rule_dsl::logic::profile::decisions());
     let show_spans = |step: usize| {
         if !spans_on {
             return;
         }
+        if let Ok(topic) = std::env::var("O125_DECISIONS") {
+            let now = crate::code_rule_dsl::logic::profile::decisions_since(&decided.borrow());
+            for ((t, text), n) in now.iter().filter(|((t, _), _)| t.contains(topic.as_str())) {
+                println!("o125d {step:02} {n:>7} {t}: {text}");
+            }
+            *decided.borrow_mut() = crate::code_rule_dsl::logic::profile::decisions();
+        }
         let spans = crate::code_rule_dsl::logic::profile::spans();
+        // `O125_SPANS_TSV=<dir>`: the step's whole session tree, `<dir>/spans-<step>.tsv` (path, calls, CPU s).
+        if let Some(dir) = std::env::var_os("O125_SPANS_TSV") {
+            let rows: String = spans.iter().filter(|(p, _)| p.contains("session/") || std::env::var_os("O125_SPANS_ALL").is_some()).map(|(p, t)| format!("{p}\t{}\t{:.4}\n", t.calls, t.total)).collect();
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(PathBuf::from(dir).join(format!("spans-{step:02}.tsv")), rows);
+        }
         let mut by: BTreeMap<String, f64> = BTreeMap::new();
         for (path, t) in spans.iter() {
             let Some((_, rest)) = path.split_once("session/") else { continue };

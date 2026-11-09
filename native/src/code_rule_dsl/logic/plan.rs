@@ -70,6 +70,7 @@ pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
 mod demand;
 pub(in crate::code_rule_dsl) mod sketch;
+pub(in crate::code_rule_dsl) mod statkeep;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -333,6 +334,24 @@ impl Stats {
         self.col.keys().any(|(r, _)| r == rel)
     }
 
+    /// `rel`'s statistics by column (`width` of them), and its exact postings of integer values (`measured`'s
+    /// `vals`, by column), when every column is known: what a session's next run gives `rel__old`, whose rows are
+    /// these (decision 0094 §4: statistics kept like data, not measured again).
+    pub(in crate::code_rule_dsl) fn of_relation(&self, rel: &str, width: usize) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
+        let names: Vec<String> = (0..width).map(|c| sql_col(rel, c)).collect();
+        let cols = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
+        let vals = self
+            .memo
+            .iter()
+            .filter(|((r, _, _), _)| r == rel)
+            .filter_map(|((_, c, v), n)| match v {
+                Constant::Int(v) => Some((names.iter().position(|x| x == c)?, *v, *n)),
+                _ => None,
+            })
+            .collect();
+        Some((cols, vals))
+    }
+
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
     pub(in crate::code_rule_dsl) fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
@@ -565,22 +584,6 @@ fn py_set_order(sorted: &[usize]) -> Vec<usize> {
         slots[i] = Some(v);
     }
     slots.into_iter().flatten().collect()
-}
-
-fn combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
-    let mut out = Vec::new();
-    let mut idx: Vec<usize> = (0..k).collect();
-    if k > n {
-        return out;
-    }
-    loop {
-        out.push(idx.clone());
-        let Some(i) = (0..k).rev().find(|&i| idx[i] != i + n - k) else { return out };
-        idx[i] += 1;
-        for j in i + 1..k {
-            idx[j] = idx[j - 1] + 1;
-        }
-    }
 }
 
 /// Above this many join literals a body is ordered greedily, not searched (decision 0038).
@@ -1214,7 +1217,15 @@ impl Model {
         let disconnected = |i: usize, prev: u64, bound: &BTreeSet<String>| {
             !connected(&body[joins[i]], bound) && (0..joins.len()).any(|j| j != i && prev & (1 << j) == 0 && connected(&body[joins[j]], bound))
         };
-        if joins.len() > GREEDY {
+        // The search's variables as bits: a body with more than 128 is ordered greedily, as a long one is.
+        let mut var_ids: BTreeMap<String, usize> = BTreeMap::new();
+        for l in body {
+            for v in l.vars() {
+                let n = var_ids.len();
+                var_ids.entry(v).or_insert(n);
+            }
+        }
+        if joins.len() > GREEDY || var_ids.len() > 128 {
             // Long bodies are ordered greedily (Postgres's `geqo_threshold`): the cheapest connected step next.
             let (mut work, mut rows, mut order, mut bound, mut rest) = best_of.remove(&0).expect("the empty order");
             let mut done: u64 = 0;
@@ -1258,15 +1269,31 @@ impl Model {
         }
         let filters: Vec<usize> = (0..body.len()).filter(|&i| !is_join(&body[i])).collect();
         let halves = |l: &Literal| !(matches!(l, Literal::Cmp { op: "=", .. }) || matches!(l, Literal::Agg { .. }));
+        // Variables as bits (`var_ids`): a subset's bound variables are a mask, and a set of names is made only to
+        // price a join or test a filter the first time its own variables are bound so.
+        let names: Vec<&String> = {
+            let mut n: Vec<(&usize, &String)> = var_ids.iter().map(|(v, k)| (k, v)).collect();
+            n.sort();
+            n.into_iter().map(|(_, v)| v).collect()
+        };
+        let bits_of = |vs: BTreeSet<String>| vs.iter().fold(0u128, |m, v| m | 1u128 << var_ids[v]);
+        let set_of = |b: u128| -> BTreeSet<String> { names.iter().enumerate().filter(|(k, _)| b >> k & 1 == 1).map(|(_, v)| (*v).clone()).collect() };
+        let lit_bits: Vec<u128> = body.iter().map(|l| bits_of(l.vars())).collect();
+        // Whether a filter is ready reads only its own variables (`ready`).
+        let mut readiness: HashMap<(usize, u128), bool> = HashMap::new();
+        let mut ready_at = |f: usize, bound: u128| -> bool {
+            let own = bound & lit_bits[f];
+            *readiness.entry((f, own)).or_insert_with(|| ready(&body[f], &set_of(own)))
+        };
         // A subset's bound variables and how many halving filters it has placed.
-        let closure = |mask: u64| -> (BTreeSet<String>, usize) {
-            let mut bound = BTreeSet::new();
+        let mut closure = |mask: u64| -> (u128, usize) {
+            let mut bound = 0u128;
             if mask == 0 {
                 return (bound, 0);
             }
             for (i, &j) in joins.iter().enumerate() {
                 if mask & (1 << i) != 0 {
-                    bound.extend(body[j].vars());
+                    bound |= lit_bits[j];
                 }
             }
             let mut placed = vec![false; filters.len()];
@@ -1274,9 +1301,9 @@ impl Model {
             while progressed {
                 progressed = false;
                 for (k, &f) in filters.iter().enumerate() {
-                    if !placed[k] && ready(&body[f], &bound) {
+                    if !placed[k] && ready_at(f, bound) {
                         placed[k] = true;
-                        bound.extend(body[f].vars());
+                        bound |= lit_bits[f];
                         progressed = true;
                     }
                 }
@@ -1312,11 +1339,13 @@ impl Model {
                 v.into_iter().collect()
             })
             .collect();
-        let mut prices: HashMap<(usize, u64), Price> = HashMap::new();
-        let mut price = |i: usize, bound: &BTreeSet<String>| -> Price {
-            let vars = &relevant[i];
-            let pattern = vars.iter().enumerate().fold(0u64, |m, (k, v)| if k < 64 && bound.contains(v) { m | 1 << k } else { m });
-            let compute = || match &body[joins[i]] {
+        let relevant: Vec<u128> = relevant.into_iter().map(|v| bits_of(v.into_iter().collect())).collect();
+        let mut prices: HashMap<(usize, u128), Price> = HashMap::new();
+        let mut price = |i: usize, bits: u128| -> Price {
+            let pattern = bits & relevant[i];
+            let compute = || {
+                let bound = &set_of(bits);
+                match &body[joins[i]] {
                 Literal::Atom(a) => Price::Atom(atom_rows(a, bound), doc_range(a, bound).map(|(_, r)| r)),
                 l @ Literal::Nearest { n, a, kindset } => {
                     if !ready(l, bound) {
@@ -1328,10 +1357,8 @@ impl Model {
                     }
                 }
                 _ => Price::No,
+                }
             };
-            if vars.len() > 64 {
-                return compute();
-            }
             *prices.entry((i, pattern)).or_insert_with(compute)
         };
         // `step` (outside a long body's greedy order) from a price.
@@ -1352,18 +1379,27 @@ impl Model {
                 Price::Descend(size) => Some((rows * size, rows * size, Some(Mode::Descend))),
             }
         };
-        let mut cells: HashMap<u64, Cell> = HashMap::new();
-        let mut closed: HashMap<u64, (BTreeSet<String>, usize)> = HashMap::new();
-        cells.insert(0, Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None });
-        closed.insert(0, closure(0));
-        for size in 1..=joins.len() {
-            for subset in combinations(joins.len(), size) {
-                let mask: u64 = subset.iter().map(|&i| 1u64 << i).sum();
+        // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
+        let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
+        let mut closed: Vec<(u128, usize)> = vec![(0, 0); 1 << joins.len()];
+        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None });
+        closed[0] = closure(0);
+        // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
+        // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
+        // joins tried in the same order, so the plan is the same.
+        let mut reached: Vec<u64> = vec![0];
+        for _size in 1..=joins.len() {
+            let mut next: Vec<u64> = reached.iter().flat_map(|&m| (0..joins.len()).filter(move |&j| m & (1 << j) == 0).map(move |j| m | 1 << j)).collect();
+            next.sort_unstable();
+            next.dedup();
+            reached.clear();
+            for mask in next {
+                let subset: Vec<usize> = (0..joins.len()).filter(|&i| mask & (1 << i) != 0).collect();
                 let mut best: Option<Cell> = None;
                 let mine = closure(mask);
                 for i in py_set_order(&subset) {
                     let prev = mask & !(1 << i);
-                    let Some(from) = cells.get(&prev) else { continue };
+                    let Some(from) = cells[prev as usize].as_ref() else { continue };
                     let l = &body[joins[i]];
                     if prev == 0 && !matches!(l, Literal::Atom(_)) {
                         continue; // an anchor is an atom
@@ -1371,8 +1407,8 @@ impl Model {
                     if prev == 0 && first.is_some_and(|f| f != joins[i]) {
                         continue; // semi-naive: the delta first
                     }
-                    let (bound, h_prev) = &closed[&prev];
-                    let Some((w, mut out, mode)) = priced(price(i, bound), from.rows) else { continue };
+                    let (bound, h_prev) = &closed[prev as usize];
+                    let Some((w, mut out, mode)) = priced(price(i, *bound), from.rows) else { continue };
                     candidates += 1;
                     // `close`'s halving filters newly placed by this join.
                     for _ in *h_prev..mine.1 {
@@ -1384,18 +1420,19 @@ impl Model {
                     }
                 }
                 if let Some(b) = best {
-                    cells.insert(mask, b);
-                    closed.insert(mask, mine);
+                    cells[mask as usize] = Some(b);
+                    closed[mask as usize] = mine;
+                    reached.push(mask);
                 }
             }
         }
         // The best orders, rebuilt: the full one, and (for `RDL_EXPLAIN`) the two-join prefixes.
         let rebuild = |mask: u64| -> Option<Best> {
-            let cell = cells.get(&mask)?;
+            let cell = cells[mask as usize].as_ref()?;
             let mut path = Vec::new();
             let mut at = mask;
             while at != 0 {
-                let c = &cells[&at];
+                let c = cells[at as usize].as_ref().expect("a reached subset");
                 path.push((c.last, c.mode));
                 at = c.prev;
             }
@@ -1408,14 +1445,14 @@ impl Model {
             Some((cell.work, cell.rows, order, bound, rest))
         };
         let explain = std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel);
-        for &mask in cells.keys() {
+        for mask in (0..cells.len() as u64).filter(|&m| cells[m as usize].is_some()) {
             if mask == full_mask || (explain && mask.count_ones() == 2) {
                 if let Some(b) = rebuild(mask) {
                     best_of.insert(mask, b);
                 }
             }
         }
-        subsets_reached = cells.len() as u64;
+        subsets_reached = cells.iter().filter(|c| c.is_some()).count() as u64;
         }
         let full: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
         if std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel) {
@@ -1567,6 +1604,7 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
     let analysis = {
         let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
         let analysis = super::analysis::ProgramAnalysis::analyze(prog);
+        let _explain = super::profile::span(|| "explain analysis".into());
         analysis.explain();
         std::sync::Arc::new(analysis)
     };
@@ -2692,7 +2730,11 @@ impl LiveRel {
 /// columns' distinct counts and fanouts, which otherwise start at 1 until the first replan.
 fn prior_stats(model: &mut Model, prog: &Program, r: &str) -> Option<f64> {
     let width = prog.decls.get(r)?.len();
-    let cols: Vec<[i64; 4]> = (0..width).map(|c| model.stats.col.get(&(r.to_owned(), sql_col(r, c))).copied()).collect::<Option<_>>()?;
+    let measured = |of: &str| (0..width).map(|c| model.stats.col.get(&(of.to_owned(), sql_col(of, c))).copied()).collect::<Option<Vec<[i64; 4]>>>();
+    // A maintained relation starts as its old rows (`rel r … base r__old r__del`), which are measured under that
+    // name: without them every column read as one value, so a bound column narrowed nothing (`cfn($c, $e, $f)` with
+    // `$c` bound priced as all 2,139 rows, and the plan took cross products of `rpvar` and `attr_of__plus` instead).
+    let cols = measured(r).or_else(|| measured(&format!("{r}__old")))?;
     let rows = cols.first().map_or(0, |m| m[0]);
     for (c, [n, ndv, sq, _]) in cols.into_iter().enumerate() {
         model.ndv.insert((r.to_owned(), c), ndv.max(1) as f64);
@@ -3389,8 +3431,53 @@ impl Run<'_, '_> {
             rules.iter().filter_map(|r| survivors(r, scc, native_rels).map(|od| (r.head.rel.clone(), od))).collect()
         };
         let rules: Vec<&Rule> = rules.into_iter().filter(|r| !(based.contains_key(&r.head.rel) && survivors(r, scc, native_rels).is_some())).collect();
+        // A rule that joins a relation of a lower stratum holding no rows derives nothing, so it is neither planned
+        // nor given to the engine. In a maintained run most delta rules read a delta that is empty this time, and
+        // planning, keying and specifying them was work in the program's size, not the delta's (0090 step 5,
+        // 0094 §4). Only a positive atom counts: a negation of it holds, and an aggregate over no rows is a row.
+        // A relation a request may fill during the stratum is never taken as empty. `RERAIL_KEEP_EMPTY_JOINS` runs
+        // them all (to measure what leaving them out saves).
+        let rules: Vec<&Rule> = if std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_some() { rules } else {
+            let fillable: BTreeSet<&str> = super::answers::produced(prog).into_iter().flat_map(|(p, r)| [p, r]).collect();
+            let mut empty: HashMap<String, bool> = HashMap::new();
+            let mut is_empty = |rel: &str| -> bool {
+                // An input delta read from the changed documents (`input_delta`) is bound once, before the run; other
+                // inputs may be bound when their first reader runs, so they are not taken as empty.
+                let delta_input = prog.inputs.iter().any(|i| i == rel) && (rel.ends_with("__minus") || rel.ends_with("__plus"));
+                if scc.contains(rel) || fillable.contains(rel) || !(native_rels.contains(rel) || delta_input) {
+                    return false;
+                }
+                if let Some(&e) = empty.get(rel) {
+                    return e;
+                }
+                let e = if delta_input {
+                    crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0)
+                } else {
+                    super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0)
+                };
+                empty.insert(rel.to_owned(), e);
+                e
+            };
+            let before = rules.len();
+            let kept: Vec<&Rule> = rules.into_iter().filter(|r| !r.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && is_empty(&a.rel)))).collect();
+            if before > kept.len() {
+                super::profile::decision("rules over empty relations", || format!("{} of {before} rules not run: each joins a relation of a lower stratum that has no rows", before - kept.len()));
+            }
+            kept
+        };
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
         let types = |r: &str| typed[r].clone();
+        // Nothing left to run (every rule joined an empty relation): the stratum's relations are held with no rows,
+        // and no component is specified or opened. `RERAIL_KEEP_EMPTY_JOINS` opens it as before.
+        let asks = scc.iter().any(|r| prog.answers.contains_key(r) || super::answers::produced(prog).contains_key(r.as_str()));
+        if rules.is_empty() && based.is_empty() && gates.is_empty() && !asks && std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_none() {
+            for r in &rels {
+                super::native::component::hold_empty(self.db, r, types(r).into_bytes());
+            }
+            super::profile::stratum(&stratum_key(scc), "native set engine", || "every rule joins an empty relation: held empty, no component opened".to_owned());
+            self.native_rels.extend(scc.iter().cloned());
+            return Ok(true);
+        }
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
         let spec_span = super::profile::span(|| "spec".into());

@@ -32,7 +32,7 @@ pub(in crate::code_rule_dsl) struct Emitted {
     pub(in crate::code_rule_dsl) setup: Vec<String>,
     /// Each step's checked query, as `program.steps` (`None`: a relation's constant rows).
     pub(in crate::code_rule_dsl) queries: Vec<Option<Query>>,
-    /// The views among `setup`, each as its query.
+    /// Planner-selected projection queries. Session execution can schedule them as retained relations.
     pub(in crate::code_rule_dsl) views: Vec<(String, Query)>,
     /// The program's inputs, which its statements may read.
     pub(in crate::code_rule_dsl) inputs: Vec<String>,
