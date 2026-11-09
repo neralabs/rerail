@@ -357,3 +357,78 @@ cause false positives, not just missed findings.
   - check SQL's `end` and Rust's `let_chain` (no automaton yet).
 - The device path has to read named-only slabs (step 6). Until then
   stage A's host-image detour is the fallback.
+
+## 9. Recognition instead of defaults
+
+§8's fold stored a gap whenever its tokens were not the gap's shortest
+word. That kept explicit `;`, every operator, `async`, trailing commas
+and SQL's quoted identifiers. The decoder has the source, so it now
+reads a gap's tokens from it instead (commits 35f79950f, e87d64741).
+
+How a gap is recognized:
+
+- The search runs over the kind's token moves, starting from the
+  gap's state.
+- Each token must be the next text that is not white space. Longer
+  texts are tried first. ASCII case is a fallback, which covers PHP's
+  and SQL's keywords in any case.
+- Hidden text, such as the body of a SQL `` `name` ``, is read with
+  the grammar's own pattern and makes no node.
+- The search must end exactly where the next named child starts (or
+  where the node ends), in a state that takes that child (or accepts).
+- It is bounded at 4,096 steps per gap, the same on both sides.
+
+What the fold does with it:
+
+- A gap is dropped only when recognition rebuilds exactly its tokens:
+  kinds, fields and spans.
+- The decoder reads a gap it cannot recognize as empty. The fold flags
+  a node whose empty gap would be misread.
+- Correctness is still by construction: no round-trip failures on any
+  corpus, and S7's 519 keys are unchanged under stage A.
+
+| Language | Implied (§8 → now) | Nodes | Bytes | zstd | Restored records |
+| -- | -- | -- | -- | -- | -- |
+| Python | 89.6% → 98.5% | 0.66× | 0.65× | 0.78× | 0.68× |
+| TypeScript | 87.9% → 99.7% | 0.54× | 0.55× | 0.72× | 0.58× |
+| JavaScript | 85.0% → 99.9% | 0.54× | 0.56× | 0.73× | 0.58× |
+| Rust | 87.9% → 98.9% | 0.55× | 0.55× | 0.72× | 0.57× |
+| PHP | 79.8% → 99.8% | 0.56× | 0.57× | 0.72× | 0.59× |
+| SQL | 31.4% → 91.5% | 0.62× | 0.62× | 0.76× | 0.62× |
+| Vue | 85.9% → 100% | 0.57× | 0.63× | 0.80× | 0.57× |
+
+So the "choice, once" class of §3 needs no code bits: the source
+already spells the choice. `op(n, "+")` as an index test is still
+possible later, as a posting built at admission.
+
+What is still kept:
+
+- Python's `is not` and `not in` (4.4k). These are probably alias
+  tokens whose id differs from the name lookup.
+- Rust's `_` patterns and `b"`.
+- SQL's `%` and `list (`, plus symbol-0 nodes in files with parse
+  errors (148k, flagged). Rules never see those files.
+
+All of these are below 1.5% of tokens, except SQL's flagged nodes.
+
+### The token view: a design point
+
+`dfs()`, `transducer_descendants` and most of the ~330 reader sites
+use preorder contiguity: a subtree is `[i, i + size)`, tokens
+included. So there are two shapes:
+
+- **A. Full tree in memory, named-only at rest** (stage A as it stands):
+  - the storage saving is whole (zstd 0.72–0.78×), and no reader
+    changes;
+  - memory is as today;
+  - costs: unfold at restore, and the device needs either the full
+    image or a named → full index map.
+- **B. Named-only in memory, tokens synthesized:**
+  - restored records 0.57–0.68×;
+  - every reader that uses preorder ranges or counts tokens moves to
+    named walks (steps 6 and 8);
+  - S7's token-reading rules (§8) need the view or `op` first.
+
+A is a format bump plus the device's map. It can ship on its own and
+answers the storage cost now. B is the memory step, taken reader by
+reader on top of A.
