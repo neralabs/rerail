@@ -27,6 +27,7 @@ use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
 pub(in crate::code_rule_dsl) mod guests;
 mod hiding;
+mod exports;
 mod scoping;
 pub(in crate::code_rule_dsl) use hiding::qualified;
 pub(in crate::code_rule_dsl) mod memo;
@@ -1687,6 +1688,8 @@ pub(crate) fn run_with_options(
     // types holding a tenth of its nodes or more (`chunk_mix`), so a chunk of TypeScript after chunks of Python is
     // measured again, and a stray file is not a new mix.
     let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
+    // The guest relations' postings per mix, measured after the guest rounds (`guests::READS`).
+    let mut guest_postings_once: HashMap<String, (usize, BTreeMap<(String, String, i64), i64>)> = HashMap::new();
     // The stored tree counts this run read or wrote, for its manifest.
     let mut own_sources: Vec<crate::content_store::SourceId> = Vec::new();
     let mut measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
@@ -1774,15 +1777,9 @@ pub(crate) fn run_with_options(
     if !stored.is_empty() && memoised {
         crate::code_rule_dsl::logic::profile::decision("per-file memo holds base rows", || format!("the cross-file part reads base relations {:?}: each file's entry holds its rows of them", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
     }
-    // One transaction for every export's table, not a commit each.
-    let mut tables = String::from("BEGIN;");
-    for rel in &split.exports {
-        let width = lowered.program.decls[rel].len();
-        let cols: Vec<String> = (0..width).map(|i| format!("c{i}")).collect();
-        tables.push_str(&format!("CREATE TABLE x.{}({}, PRIMARY KEY ({})) WITHOUT ROWID;", crate::code_rule_dsl::logic::sql::ident(rel), cols.iter().map(|c| format!("{c} INTEGER")).collect::<Vec<_>>().join(", "), cols.join(", ")));
-    }
-    tables.push_str("COMMIT;");
-    db.execute_batch(&tables)?;
+    // The exports the chunks hand on, each row once, held in memory for the cross-file part to read in place
+    // (`exports`). Was: a table of `x` per export, filled by SQL and read back.
+    let exports = std::cell::RefCell::new(exports::Exports::default());
     phase("stats", statements.count());
     statements.enter("parse");
     let modules = Modules::default();
@@ -2120,12 +2117,8 @@ pub(crate) fn run_with_options(
                 let types: Vec<&str> = lowered.program.decls[&rel].iter().map(|(_, t)| t.as_str()).collect();
                 let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
                 let rows = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), cols.into_iter().map(Some).collect());
-                let via = format!("rr_memo_w{width}");
-                modules.bind(&db, &via, rows.clone())?;
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {} FROM {via}", crate::code_rule_dsl::logic::sql::ident(&rel), names.join(", ")), [])?;
+                let inserted = exports.borrow_mut().add(&rel, width, rows.as_ref());
                 totals.add_rows(&rel, inserted, rows.as_ref(), &types);
-                // Released: the rows are in `x` now.
-                modules.bind(&db, &via, crate::code_rule_dsl::logic::native::component::columns_source(names, vec![Some(Vec::new()); width]))?;
             }
             db.execute_batch("COMMIT")?;
         }
@@ -2169,6 +2162,7 @@ pub(crate) fn run_with_options(
         let sources = match &slice {
             Some(slice) if !documents.is_empty() => {
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
+                let documents_len = documents.len();
                 let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label));
                 // The slice's planner statistics: what it reads, measured once, in the first round's batch. A later
                 // round adds only the guests' rows, which are few beside the files' (each measurement sorts a column).
@@ -2200,6 +2194,22 @@ pub(crate) fn run_with_options(
                 }
                 host_of = std::mem::take(&mut made.host_of);
                 askers = made.askers();
+                // The guest relations' constant postings, measured above before any guest was made (none then),
+                // again over the batch with them: priced at none, `parsed($s, "annotation", $r)` read after bindings
+                // looked like a filter, and each binding read every annotation guest (O143). Once per mix, scaled.
+                if own && docs.len() > documents_len {
+                    let postings = match guest_postings_once.get(&mix) {
+                        Some((first, p)) if *first > 0 => p.iter().map(|(k, n)| (k.clone(), (*n as f64 * chunk_nodes_built as f64 / *first as f64).round() as i64)).collect(),
+                        _ => {
+                            let p = Own::postings(&sources, &constants, |r| guests::READS.contains(&r));
+                            guest_postings_once.insert(mix.clone(), (chunk_nodes_built, p.clone()));
+                            p
+                        }
+                    };
+                    for ((rel, col, v), n) in postings {
+                        stats.measured(&rel, [], [(col, v, n)]);
+                    }
+                }
                 sources
             }
             _ => sources,
@@ -2292,9 +2302,8 @@ pub(crate) fn run_with_options(
                     return Ok(());
                 }
                 let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
-                let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {cols} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::ident(rel)), [rel])?;
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
+                let inserted = exports.borrow_mut().add(rel, types.len(), rows.as_ref());
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
                 if !deferred.is_empty() {
                     mention(&mut mentioned, rows.as_ref());
@@ -2379,17 +2388,16 @@ pub(crate) fn run_with_options(
             // derived is in its table.
             let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
             if kept.contains(rel) {
-                let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {cols} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::ident(rel)), [rel])?;
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
+                let inserted = exports.borrow_mut().add(rel, types.len(), rows.as_ref());
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
                 attribute(rel, rows.as_ref());
                 if !deferred.is_empty() {
                     mention(&mut mentioned, rows.as_ref());
                 }
             } else {
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{q} SELECT * FROM temp.{q}", q = crate::code_rule_dsl::logic::sql::ident(rel)), [])?;
                 let rows = Rows::read(&db, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
+                let inserted = exports.borrow_mut().add(rel, types.len(), &rows);
                 totals.add_rows(rel, inserted, &rows, &types);
                 attribute(rel, &rows);
                 if !deferred.is_empty() {
@@ -2498,7 +2506,8 @@ pub(crate) fn run_with_options(
         let load_stats = t_stats.clone();
         let (ask_tx, ask_rx) = std::sync::mpsc::channel::<(String, Vec<Vec<i64>>)>();
         let (reply_tx, reply_rx) = std::sync::mpsc::channel::<std::result::Result<Vec<(String, Vec<Vec<i64>>)>, String>>();
-        let (db_path, x_path, per_file_in, kept_in, world_in) = (path.clone(), cross_path.clone(), per_file.clone(), kept.clone(), world_inputs);
+        let per_file_in: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = per_file.iter().map(|r| (r.clone(), exports.borrow().snapshot(r, lowered.program.decls[r].len()))).collect();
+        let (db_path, x_path, kept_in, world_in) = (path.clone(), cross_path.clone(), kept.clone(), world_inputs);
         let decls = load.decls.clone();
         let cone = scope.spawn(move || -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             let db2 = Connection::open(&db_path)?;
@@ -2514,9 +2523,8 @@ pub(crate) fn run_with_options(
                 modules.bind(&db2, rel, source)?;
                 Ok(())
             };
-            for rel in &per_file_in {
-                let source = crate::code_rule_dsl::logic::native::component::table_source(&db2, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
-                bind(rel, source)?;
+            for (rel, source) in per_file_in {
+                bind(&rel, source)?;
             }
             for (rel, width) in &world_in {
                 bind(rel, crate::code_rule_dsl::logic::native::component::columns_source((0..*width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); *width]))?;
@@ -2827,7 +2835,7 @@ pub(crate) fn run_with_options(
             modules.bind(&db, rel, empty)?;
             continue;
         }
-        let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
+        let source = exports.borrow_mut().source(rel, lowered.program.decls[rel].len());
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
         modules.bind(&db, rel, source)?;
     }
@@ -3192,11 +3200,10 @@ pub(crate) fn run_with_options(
                     *cell = Some(next);
                 }
                 None => {
-                    let exports: BTreeSet<&String> = split.exports.iter().collect();
+                    let exported: BTreeSet<&String> = split.exports.iter().collect();
                     let mut load = |rels: &[String]| -> Result<()> {
-                        for rel in rels.iter().filter(|r| exports.contains(r)) {
-                            let source = crate::code_rule_dsl::logic::native::component::table_source(&db, "x", rel).ok_or_else(|| Error::Plan(format!("x.{rel} is not a table of integers")))?;
-                            modules.bind(&db, rel, source)?;
+                        for rel in rels.iter().filter(|r| exported.contains(r)) {
+                            modules.bind(&db, rel, exports.borrow_mut().source(rel, lowered.program.decls[rel].len()))?;
                         }
                         Ok(())
                     };
@@ -3391,7 +3398,8 @@ pub(crate) fn run_with_options(
         rows.insert(rel.clone(), decoded.len());
     }
     if prog.decls.contains_key("declared_ret") {
-        typing::outputs(typing, &db, &store, root, outputs.get("type_of"), &returns, &declared, &mut typed)?;
+        let fn_q = split.exports.iter().any(|e| e == "fn_q").then(|| exports.borrow_mut().source("fn_q", 2));
+        typing::outputs(typing, &db, &store, root, outputs.get("type_of"), &returns, &declared, fn_q.as_deref(), &mut typed)?;
     }
     phase("write", statements.count());
     let rss = usage().2;
@@ -4074,9 +4082,24 @@ impl Own {
         }
         own.kinds = kinds.into_iter().collect();
         own.edges = edges.into_iter().collect();
+        own.postings = Self::postings(sources, constants, |_| true);
+        own
+    }
+
+    /// The program's constants' postings in the relations `of_rel` keeps: rows per (relation, column, value).
+    fn postings(
+        sources: &[(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)],
+        constants: &BTreeMap<(String, String), BTreeSet<i64>>,
+        of_rel: impl Fn(&str) -> bool,
+    ) -> BTreeMap<(String, String, i64), i64> {
+        use rustc_hash::{FxHashMap, FxHashSet};
+        let mut out = BTreeMap::new();
         for ((rel, col), values) in constants {
-            let Some(source) = of(rel) else { continue };
-            let Some(c) = column(source, col) else { continue };
+            if !of_rel(rel) {
+                continue;
+            }
+            let Some(source) = sources.iter().find(|(r, _)| r == rel).map(|(_, s)| s.as_ref()) else { continue };
+            let Some(c) = source.columns().iter().position(|n| n == col) else { continue };
             let wanted: FxHashSet<i64> = values.iter().copied().collect();
             let mut counts: FxHashMap<i64, i64> = FxHashMap::default();
             for r in 0..source.len() {
@@ -4085,9 +4108,9 @@ impl Own {
                     *counts.entry(v).or_default() += 1;
                 }
             }
-            own.postings.extend(counts.into_iter().map(|(v, n)| ((rel.clone(), col.clone(), v), n)));
+            out.extend(counts.into_iter().map(|(v, n)| ((rel.clone(), col.clone(), v), n)));
         }
-        own
+        out
     }
 
     /// These counts for a chunk `r` times this one's size: every count is of nodes, edges, documents or rows, so
