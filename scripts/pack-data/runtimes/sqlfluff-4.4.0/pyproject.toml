@@ -1,5 +1,5 @@
 [project]
-name = "nera-rule-validation-upstream-sqlfluff"
+name = "rerail-validation-upstream-sqlfluff"
 version = "0"
 description = "SQLFluff as the validation gates run it, with libpg_query (pglast) as the independent PostgreSQL parser."
 requires-python = "==3.12.*"

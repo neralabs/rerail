@@ -442,7 +442,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `repository_context_get` | `GET /api/repository?repository=&checkout=` | A repository's clones and checkouts (own and effective state), and the caller's checkout and folder. |
 | `repository_rules_get` | `GET /api/repository/rules?repository=&checkout=` | Rules per attachment folder with on, mode, suppressions, config, what decided each, `addedAt`, and `updatedAt` for your rules; unresolvable ones marked unavailable. |
 | `repository_settings_set` | `PUT /api/repository/settings` | On/off, mode, `suppressions` per repository or checkout (`owner`) and folder; By Rerail code rule `config` (whole repository). Null clears. |
-| `repository_follow_gitignore_set` | `PUT /api/repository/follow-gitignore` | Follow `.gitignore` (default on): ignored files aren't audited (shell writes, direct edits, repository audits); tracked files are. New sessions only; summary field `followGitignore`. Agents may only turn it on, before set-up. |
+| `repository_follow_gitignore_set` | `PUT /api/repository/follow-gitignore` | Follow `.gitignore` (default on): ignored files aren't audited (shell writes, direct edits, repository audits); tracked files are. A tool edit it leaves unchecked, and a change that makes Git's ignore rules ignore more, are recorded on the session (`sessions_get` `gaps`; [what is and isn't](in-session-surfaces.md#files-git-ignores)). New sessions only; summary field `followGitignore`. Agents may only turn it on, before set-up. |
 | `repository_attachments_set` | `PUT /api/repository/attachments` | Add or remove packs, By Rerail rules and library rules per folder, with optional settings. The first addition (or `configure: true`) sets the repository up. |
 | `repository_start` | `POST /api/repository/start` | Start; `scope` is `checkout` (and checkouts inside) or `repository`. |
 | `repository_stop` | `POST /api/repository/stop` | Stop, same scopes; rules and history kept. |
@@ -458,7 +458,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `library_rules_upsert` | `PUT /api/library-rules/{id}` | Create or replace your rule (`attach: true` adds it to the target); a By Rerail id stores an edited copy. |
 | `library_rules_remove` | `DELETE /api/library-rules/{id}` | Delete your rule, its attachments and settings. |
 | `sessions_list` | `GET /api/sessions?since=&limit=&cursor=` | Sessions newest first with counts, `steeredViolations`, `lastEventAt`; `total`, `nextCursor`. |
-| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran. |
+| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes seen that make Git's ignore rules ignore more (`ignoreRuleChanges`). |
 | `session_events` | `GET /api/sessions/{sessionId}/events?after=&before=&limit=` | Ordered events, at most 500 per page, forward from `after` or the page before `before`; `nextAfter` continues. Agents get some payloads withheld ([details](#what-a-coding-agent-may-read)). |
 | `work_links_list` | `GET /api/sessions/{sessionId}/work-links` | A session's external references. |
 | `work_links_add` | `PUT /api/sessions/{sessionId}/work-links` | `{ kind, reference, url? }`; re-linking updates the url. |
@@ -694,11 +694,12 @@ If nothing matches, the edit reports its whole file, as `touched-files` does, un
 <summary>What counts as Git's write</summary>
 
 - a file that now holds exactly its `HEAD` blob after anything but a commit moved `HEAD` (a checkout, switch, pull, merge, rebase, reset), or with `HEAD` where it was (`git restore`, `git stash`);
+- a file that now holds exactly the blob a branch or remote-tracking branch has at its path (`git show origin/main:path > path`, `git checkout main -- path`, `git restore --source main path`), unless that branch's tip is a commit made since Rerail last looked;
 - a file a move removed;
 - the files of a merge or rebase stopped on a conflict;
 - a new linked worktree's files.
 
-A file written and committed in one command stays an edit, measured from the tree before the commit. One written in the command that moved `HEAD` is measured from what Git wrote.
+A file written and committed in one command stays an edit, measured from the tree before the commit. One written in the command that moved `HEAD` is measured from what Git wrote. Rerail goes by bytes: any write that leaves a file exactly as a branch has it counts as a restore, and a restore from a tag, a stash or another commit (`git show HEAD~3:path > path`) is an edit.
 
 </details>
 
@@ -798,7 +799,7 @@ A checkout without its own value inherits from the nearest containing checkout o
 
 In a repository not set up, `/rerail-start` (or `rerail start`) runs set-up first. It recommends packs, adds those you confirm (a language pack at its matched folder, a repository pack for the whole repository) and starts. A started repository that isn't set up records sessions but runs no rules.
 
-With a daemon running, the Claude Code, OMP and Pi footer shows `R E R A I L ○ not on here` in a stopped checkout. It shows `R E R A I L ○ not set up · rerail start` in a started repository that isn't set up. `/rerail` and `rerail status` report the checkout's state.
+The Claude Code, OMP and Pi footer is not shown in a stopped checkout, or one Rerail was never started in. With a daemon running, it shows `R E R A I L ○ not set up · rerail start` in a started repository that isn't set up. `/rerail` and `rerail status` report the checkout's state.
 
 </details>
 

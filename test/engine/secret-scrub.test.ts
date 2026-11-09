@@ -119,8 +119,8 @@ describe("scrubSecrets", () => {
 
   it("leaves identifiers, interpolations and filesystem paths under a secret-like key", () => {
     for (const text of [
-      "PWD=/Users/jeff/orca/workspaces/rerail/review-pr-368",
-      "OLDPWD=/Users/jeff/orca/workspaces/rerail",
+      "PWD=/Users/me/code/rerail/review-pr-368",
+      "OLDPWD=/Users/me/code/rerail",
       "const token = getAuthTokenFromHeader;",
       "auth: authMiddlewareFactory",
       "secret: kubernetes-secret-name",
@@ -258,7 +258,7 @@ describe("scrubValue", () => {
   });
 
   it("returns a payload without secrets as it is, cycles included, and keeps a scrubbed copy's cycles", () => {
-    const clean: Record<string, unknown> = { text: "hello", count: 7n, env: { PWD: "/Users/jeff/orca/workspaces/rerail/review-pr-368" } };
+    const clean: Record<string, unknown> = { text: "hello", count: 7n, env: { PWD: "/Users/me/code/rerail/review-pr-368" } };
     clean.self = clean;
     expect(scrubValue(clean)).toBe(clean);
     const leaky: Record<string, unknown> = { text: GITHUB_PAT_CLASSIC };

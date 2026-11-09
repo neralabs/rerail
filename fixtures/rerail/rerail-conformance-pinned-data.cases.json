@@ -10,7 +10,7 @@
     },
     {
       "path": "conformance/eslint-test-set/cli.ts",
-      "content": "import { execFileSync } from \"node:child_process\";\nconst FIXTURE = { bucket: \"rerail-fixtures\", key: \"eslint.zip\" };\nexport function download(profile: string[], zip: string): void {\n  execFileSync(\"aws\", [...profile, \"s3\", \"cp\", \"--only-show-errors\", `s3://${FIXTURE.bucket}/${FIXTURE.key}`, zip], { stdio: \"inherit\" });\n}\n"
+      "content": "import { execFileSync } from \"node:child_process\";\nconst FIXTURE = { bucket: \"example-fixtures\", key: \"eslint.zip\" };\nexport function download(profile: string[], zip: string): void {\n  execFileSync(\"aws\", [...profile, \"s3\", \"cp\", \"--only-show-errors\", `s3://${FIXTURE.bucket}/${FIXTURE.key}`, zip], { stdio: \"inherit\" });\n}\n"
     },
     {
       "path": "conformance/languages/samples-download.ts",

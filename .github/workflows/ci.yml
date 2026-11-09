@@ -5,6 +5,11 @@ on:
   push:
     branches:
       - main
+  # dependabot-automerge.yml dispatches CI on an approved Dependabot branch as the neralabs-ci app. Dependabot's own
+  # pull_request run skips every job that needs a secret or the OIDC token; this run is not Dependabot's, so it runs
+  # everything, like a push, and its CI result on the same commit is what arms auto-merge. Without a pull request it
+  # has no base, so the conformance check runs without comparing its lists to the base.
+  workflow_dispatch:
 
 permissions:
   contents: read

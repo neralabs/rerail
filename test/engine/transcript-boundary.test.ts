@@ -84,6 +84,10 @@ describe("the transcript boundary for coding agents", () => {
     ] as const) expect(agentTranscriptPayload(kind, payload), kind).toBe(payload);
     expect(agentTranscriptPayload("file-snapshot", { path: "src/a.ts", content: "API_KEY=x" })).toEqual(WITHHELD_PAYLOAD);
     expect(agentTranscriptPayload("constructor", "API_KEY=x")).toEqual(WITHHELD_PAYLOAD);
+    // Rerail's records of what Git's ignore rules left unchecked quote hidden ignore files: never an agent's to read.
+    expect(agentTranscriptPayload("ignored-edit", { path: "scratch/a.ts", source: ".git/info/exclude", line: 7, pattern: "scratch/" }))
+      .toEqual(WITHHELD_PAYLOAD);
+    expect(agentTranscriptPayload("ignore-rules-changed", { path: ".git/info/exclude", via: "observed" })).toEqual(WITHHELD_PAYLOAD);
   });
 
   it("withholds a call that names a file linked to a secret in the session's checkout", () => {

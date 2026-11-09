@@ -84,8 +84,8 @@ export function absoluteLinks(notes, base, tag) {
 
 /**
  * `notes` as a Release can hold them. Past RELEASE_NOTES_LIMIT, which a pack's first release can reach with one entry
- * per rule, they are the section's lead and a link to the changelog at `tag`: this job runs after the publish, so failing it would
- * only leave the version without a Release.
+ * per rule, they are the section's lead and a link to the changelog at `tag`: failing would only leave the version
+ * without a Release.
  */
 export function fittedNotes(notes, section, path, tag) {
   if (notes.length <= RELEASE_NOTES_LIMIT) return notes;

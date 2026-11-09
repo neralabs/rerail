@@ -246,7 +246,8 @@ export function violationCounts(s) {
 }
 
 /** What the session's whole transcript says it missed, from the daemon (`GET /api/sessions/{id}`); zeros until it answers. */
-const gapsOf = s => data.sessionDetail.get(s.sessionId)?.gaps ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0 };
+const gapsOf = s => data.sessionDetail.get(s.sessionId)?.gaps
+  ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
 
 /** Session events its host never delivered, from the `events-dropped` records anywhere in the session. */
 export const droppedEvents = s => gapsOf(s).droppedEvents;
@@ -256,6 +257,12 @@ export const uncheckedBoundaries = s => gapsOf(s).uncheckedBoundaries;
 
 /** Boundaries that answered before the session's code-rule evaluator had opened. */
 export const codeRulesPendingBoundaries = s => gapsOf(s).codeRulesPendingBoundaries;
+
+/** Tool edits of files no rule checked because Git ignores them. */
+export const ignoredEdits = s => gapsOf(s).ignoredEdits;
+
+/** Changes to Git's ignore rules during the session. */
+export const ignoreRuleChanges = s => gapsOf(s).ignoreRuleChanges;
 
 export const isOpen = s => s.endedAt === null;
 /** Open and heard from within STALE_MIN → live; open and silent → "no end recorded". */

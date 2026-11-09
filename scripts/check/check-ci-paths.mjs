@@ -158,12 +158,83 @@ async function importClosure(root, entries) {
   return { importer, empty };
 }
 
+function ciResultProblems(workflow) {
+  const required = [workflow.jobs["ci-result"]?.needs ?? []].flat();
+  return Object.keys(workflow.jobs)
+    .filter((name) => name !== "ci-result" && !required.includes(name))
+    .map((job) => ({ group: "ci-result", message: `ci-result does not need job ${job}, so its failure would not fail CI result` }));
+}
+
+function unknownOutputProblems(workflowText, groups, unguarded) {
+  return [...new Set([...workflowText.matchAll(/needs\.changes\.outputs\.([\w-]+)/gu)].map(([, name]) => name))]
+    .filter((reference) => !(reference in groups) && !(reference in unguarded))
+    .map((reference) => ({ group: reference, message: `${WORKFLOW} gates on changes output ${reference}, which this check does not know: add it to GROUPS` }));
+}
+
+/** What a filter's globs match, or undefined after reporting a glob this check cannot read. */
+function filterMatcher(items, report) {
+  const globs = items.flat(Infinity);
+  const bad = globs.map((glob) => [glob, unsupportedGlob(glob)]).filter(([, reason]) => reason !== undefined);
+  for (const [glob, reason] of bad) report(`filter glob ${JSON.stringify(glob)} ${reason}`);
+  if (bad.length > 0) return undefined;
+  const patterns = globs.map((glob) => globToRegExp(glob));
+  return (path) => patterns.some((pattern) => pattern.test(path));
+}
+
+function reportFilterBasics(changes, name, matches, report) {
+  if (changes.outputs?.[name] !== expectedOutput(name)) report(`changes output ${name} must be ${expectedOutput(name)}, so it fails open`);
+  for (const path of COMMON) if (!matches(path)) report(`the ${name} filter misses a file every job reads`, path);
+}
+
+function reportJobGate(workflow, job, name, report) {
+  const definition = workflow.jobs?.[job];
+  const needs = [definition?.needs ?? []].flat();
+  if (definition === undefined) report(`job ${job} is not in ${WORKFLOW}`);
+  else if (!needs.includes("changes") || !String(definition.if ?? "").includes(`needs.changes.outputs.${name} != 'false'`)) {
+    report(`job ${job} must need changes and be skipped when needs.changes.outputs.${name} is 'false'`);
+  }
+}
+
+function reportRuntimeReads(root, group, name, matches, report) {
+  const reads = typeof group.reads === "function" ? group.reads(root) : group.reads;
+  for (const path of reads) {
+    if (!existsSync(resolve(root, path))) report("a runtime read this check lists no longer exists: update reads", path);
+    else if (!matches(path)) report(`read at runtime by ${group.jobs.join(", ")}, matches no glob of the ${name} filter`, path);
+  }
+}
+
+async function reportImportClosure(root, group, name, matches, report) {
+  const { importer, empty } = await importClosure(root, group.entries);
+  for (const entry of empty) report(`entry point glob matches no file: update entries`, entry);
+  for (const [path, from] of [...importer].sort(([a], [b]) => a.localeCompare(b))) {
+    if (path.split("/").includes("node_modules") || matches(path)) continue;
+    report(`${from === null ? "an entry point" : `imported by ${from}`}, matches no glob of the ${name} filter`, path);
+  }
+}
+
+/** Every way one filter group falls short of what its jobs read. */
+async function groupProblems(root, { workflow, changes, filters }, name, group) {
+  const problems = [];
+  const report = (message, path) => problems.push({ group: name, ...(path === undefined ? {} : { path }), message });
+  const items = filters?.[name];
+  if (!Array.isArray(items)) {
+    report(`${WORKFLOW}: the changes job has no ${name} filter`);
+    return problems;
+  }
+  const matches = filterMatcher(items, report);
+  if (matches === undefined) return problems;
+  reportFilterBasics(changes, name, matches, report);
+  for (const job of group.jobs) reportJobGate(workflow, job, name, report);
+  reportRuntimeReads(root, group, name, matches, report);
+  await reportImportClosure(root, group, name, matches, report);
+  return problems;
+}
+
 /**
  * Every way ci.yml's path filters under `root` fall short of what the jobs they gate read, as `{ group, path?,
  * message }`.
  */
 export async function ciPathProblems(root, groups = GROUPS, unguarded = UNGUARDED) {
-  const problems = [];
   const workflowText = readFileSync(resolve(root, WORKFLOW), "utf8");
   const workflow = parse(workflowText);
   const changes = workflow?.jobs?.changes;
@@ -172,57 +243,8 @@ export async function ciPathProblems(root, groups = GROUPS, unguarded = UNGUARDE
     return [{ group: "changes", message: `${WORKFLOW}: the changes job has no paths-filter step with id filter` }];
   }
   const filters = parse(step.with.filters);
-
-  const required = [workflow.jobs["ci-result"]?.needs ?? []].flat();
-  for (const job of Object.keys(workflow.jobs).filter((name) => name !== "ci-result" && !required.includes(name))) {
-    problems.push({ group: "ci-result", message: `ci-result does not need job ${job}, so its failure would not fail CI result` });
-  }
-
-  for (const reference of new Set([...workflowText.matchAll(/needs\.changes\.outputs\.([\w-]+)/gu)].map(([, name]) => name))) {
-    if (!(reference in groups) && !(reference in unguarded)) {
-      problems.push({ group: reference, message: `${WORKFLOW} gates on changes output ${reference}, which this check does not know: add it to GROUPS` });
-    }
-  }
-
-  for (const [name, group] of Object.entries(groups)) {
-    const report = (message, path) => problems.push({ group: name, ...(path === undefined ? {} : { path }), message });
-    const items = filters?.[name];
-    if (!Array.isArray(items)) {
-      report(`${WORKFLOW}: the changes job has no ${name} filter`);
-      continue;
-    }
-    const globs = items.flat(Infinity);
-    const bad = globs.map((glob) => [glob, unsupportedGlob(glob)]).filter(([, reason]) => reason !== undefined);
-    for (const [glob, reason] of bad) report(`filter glob ${JSON.stringify(glob)} ${reason}`);
-    if (bad.length > 0) continue;
-    const patterns = globs.map((glob) => globToRegExp(glob));
-    const matches = (path) => patterns.some((pattern) => pattern.test(path));
-
-    if (changes.outputs?.[name] !== expectedOutput(name)) report(`changes output ${name} must be ${expectedOutput(name)}, so it fails open`);
-    for (const path of COMMON) if (!matches(path)) report(`the ${name} filter misses a file every job reads`, path);
-
-    for (const job of group.jobs) {
-      const definition = workflow.jobs?.[job];
-      const needs = [definition?.needs ?? []].flat();
-      if (definition === undefined) report(`job ${job} is not in ${WORKFLOW}`);
-      else if (!needs.includes("changes") || !String(definition.if ?? "").includes(`needs.changes.outputs.${name} != 'false'`)) {
-        report(`job ${job} must need changes and be skipped when needs.changes.outputs.${name} is 'false'`);
-      }
-    }
-
-    const reads = typeof group.reads === "function" ? group.reads(root) : group.reads;
-    for (const path of reads) {
-      if (!existsSync(resolve(root, path))) report("a runtime read this check lists no longer exists: update reads", path);
-      else if (!matches(path)) report(`read at runtime by ${group.jobs.join(", ")}, matches no glob of the ${name} filter`, path);
-    }
-
-    const { importer, empty } = await importClosure(root, group.entries);
-    for (const entry of empty) report(`entry point glob matches no file: update entries`, entry);
-    for (const [path, from] of [...importer].sort(([a], [b]) => a.localeCompare(b))) {
-      if (path.split("/").includes("node_modules") || matches(path)) continue;
-      report(`${from === null ? "an entry point" : `imported by ${from}`}, matches no glob of the ${name} filter`, path);
-    }
-  }
+  const problems = [...ciResultProblems(workflow), ...unknownOutputProblems(workflowText, groups, unguarded)];
+  for (const [name, group] of Object.entries(groups)) problems.push(...await groupProblems(root, { workflow, changes, filters }, name, group));
   return problems;
 }
 

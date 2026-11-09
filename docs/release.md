@@ -49,6 +49,35 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
 
 </details>
 
+### Before merging
+
+The Release pull request's description ends with a checklist. Whoever merges it ticks each box first:
+
+- **End-user testing.** One hour using the staged release the way a user does.
+  - **Core:** `gh workflow run release.yml --ref changeset-release/main` builds it from the release branch as the
+    `rerail-package` run artifact, unpublished ([Manual runs and put-back](#manual-runs-and-put-back)).
+  - **Packs:** the pull request's **Release packs** run uploads the tarballs it would publish as the `rule-packs`
+    artifact; `rerail packs add <tarball>` installs one. A pack from a tarball counts as unpublished, so its rules run
+    in Log until approved ([rule packs](rule-packs.md)).
+- **Release notes.** Accurate, complete, and written for the person upgrading ([Release notes](#release-notes)).
+- **Documentation.** `README.md` and `docs/` are accurate for what the release ships.
+- **`context7.json`.** Its folders, exclusions and rules match the docs and commands, so AI tools pull current Rerail
+  docs.
+- **[Internal testing](internal-testing.md).** The page lists exactly the features in internal testing, and marks each
+  one graduated or removed.
+- **Scrub.** No internal name, customer name, internal URL or old product name in the code, the docs, or the commit
+  messages and pull request text since the last release. `npm run check` catches only internal ticket IDs and a few
+  stale paths in tracked files.
+- **npm package pages.** `README.md`, and `keywords` and `repository` in `package.json`, are current for core and
+  every pack.
+
+Each pull request's author confirms the same of their own change
+([CONTRIBUTING.md](../CONTRIBUTING.md#before-you-open-a-pull-request)); this is the check of the release as a whole.
+
+A push to `main` rewrites the description and clears the boxes, because what was checked is no longer what merging
+releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_MERGING` in
+`scripts/release/release-version.mjs`).
+
 ### Installer plugins
 
 The same bump re-pins the installer plugins (`plugins/claude`, `plugins/codex`, `plugins/cursor`) to the version just
@@ -231,8 +260,11 @@ notes.
 <summary>How Releases are made, and which tags backfill skips</summary>
 
 - `scripts/release/github-release.mjs` builds them, so notes are written once.
-- After the dist-tag check, `release.yml`'s **GitHub Release** job makes core's, titled `v<version>`: a pre-release for
-  `next` and `beta`, the repository's latest release for `latest`.
+- `release.yml`'s **GitHub Release** job makes core's, titled `v<version>`: a pre-release for `next` and `beta`, the
+  repository's latest release for `latest`. It runs once the tarball passes the shrinkwrap check and the three managed
+  installs, beside the npm publish, and waits on nothing npm does: a slow publish or a failed dist-tag read-back
+  cannot hold back or skip it. If the publish then fails, the Release stands, and the retry (`publish` input) runs the
+  job again.
 - A version without its own changelog section says no changelog entries were written.
 - Re-runs rewrite an existing Release's notes, pre-release and latest flags. After a put-back, the restored version
   becomes the latest release.

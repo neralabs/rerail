@@ -9,8 +9,9 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `check/`: the checks `npm run check` and `check:*` run, including the layer boundary lint
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
   enough and named so Windows can check it out), the internal reference check (`check-internal-refs.mjs`: no
-  internal ticket ID in a tracked path or text), the CI path filter check (`check-ci-paths.mjs`: every file the jobs
-  `ci.yml`'s path filters skip import, from the entry points it lists, matches their filter) and the licence allowlist.
+  internal ticket ID, and no `nera-` identifier outside its list of public ones, in a tracked path or text), the CI
+  path filter check (`check-ci-paths.mjs`: every file the jobs `ci.yml`'s path filters skip import, from the entry
+  points it lists, matches their filter) and the licence allowlist.
 - `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
   follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
   `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's
@@ -30,8 +31,9 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   call last (`provenance.mjs`); a maintainer's sandbox and the bump workflow run it, never pull request CI.
 - `release/`: the release. The Release pull request (`.github/workflows/release-pr.yml`): every package's version,
   core's when what it ships changed, and core's tag on merge. The rule packs' release
-  (`.github/workflows/release-packs.yml`): which packs to publish, the publish gate and packing, publishing under
-  `latest`, putting a pack back, and the lockfile sync after `changeset version`. The dist-tag check after a publish,
+  (`.github/workflows/release-packs.yml`): which packs to release, the publish gate and packing, tagging each
+  release before it is published, publishing under `latest`, putting a pack back, and the lockfile sync after
+  `changeset version`. The dist-tag check after a publish,
   and the GitHub Release of each released version from its changelog section. The release notes: core's section
   written from the entries pending in `.changelog/` and each pack's from its `pack.json` and pending changesets, both by
   change type, each pack rule by rule, and the check that every pending entry and changeset names its type, that a

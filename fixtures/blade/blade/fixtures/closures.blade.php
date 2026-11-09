@@ -11,7 +11,7 @@
     $static = static function () {
         return $outside;
     };
-    function tempo_helper($a) {
+    function local_helper($a) {
         $b = $a * 2;
         return $b + $c;
     }

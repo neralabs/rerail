@@ -209,6 +209,19 @@ export interface NativeGitIgnoreMatcher {
    * the worktree are never ignored. Throws when an ignore file on the way cannot be read.
    */
   ignored(relativePath: string, isDirectory: boolean): boolean;
+  /**
+   * The pattern that makes Git ignore `relativePath` (as for `ignored`), as `git check-ignore -v` names it: the file it
+   * was read from (absolute; absent when it came from no file), its line there, and the pattern. A path under an
+   * ignored folder names the folder's pattern. Null when Git does not ignore it; throws as `ignored` does.
+   */
+  ignoredBy(relativePath: string, isDirectory: boolean): NativeGitIgnoreMatch | null;
+}
+
+/** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */
+export interface NativeGitIgnoreMatch {
+  source?: string | null;
+  line: number;
+  pattern: string;
 }
 
 /**

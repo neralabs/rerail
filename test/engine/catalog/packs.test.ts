@@ -264,9 +264,9 @@ describe("validatePack", () => {
       "a candidate in an older document format",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "tempo.policy/v1", id: "no-pass", description: "Remove pass statements.", checks: [] });
+        writeJson(join(directory, "candidates", "rules", "no-pass.json"), { format: "earlier.policy/v1", id: "no-pass", description: "Remove pass statements.", checks: [] });
       },
-      { rules: ["candidates/rules/no-pass.json: format is tempo.policy/v1; a rule document is rerail.policy/v1 or a conversation rule"] },
+      { rules: ["candidates/rules/no-pass.json: format is earlier.policy/v1; a rule document is rerail.policy/v1 or a conversation rule"] },
     ],
     [
       "a candidate outside a rules/ directory",

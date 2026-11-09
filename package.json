@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {
@@ -25,6 +25,10 @@
     "./rules": {
       "types": "./dist/engine/rules.d.ts",
       "import": "./dist/engine/rules.js"
+    },
+    "./pi": {
+      "types": "./dist/hosts/pi/index.d.ts",
+      "import": "./dist/hosts/pi/index.js"
     },
     "./schemas": {
       "types": "./dist/engine/schemas.d.ts",
@@ -153,8 +157,15 @@
     "ignore": "7.0.14",
     "semver": "^7.8.5",
     "superjson": "2.2.6",
-    "typebox": "1.4.3",
     "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "typebox": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@ast-grep/cli": "0.51.0",
@@ -180,6 +191,7 @@
     "node-html-markdown": "2.0.0",
     "smol-toml": "1.9.1",
     "tsx": "4.23.15",
+    "typebox": "1.4.3",
     "typescript": "6.0.3",
     "vitest": "5.0.5",
     "yaml": "2.9.1"

@@ -203,6 +203,12 @@ describe("installed session presentation", () => {
     expect(new URL(requested[0]!).searchParams.get("repository")).toBe(await realpath(nested));
   });
 
+  it("says starting, not unavailable, while the daemon has not recorded the session's start yet (#302)", async () => {
+    response.context!.session = null;
+    expect(await read()).toMatchObject({ status: "starting", text: "R E R A I L ● starting", repositoryState: "started", counts: null });
+    expect(await read(true)).toMatchObject({ status: "starting" });
+  });
+
   it("does not fabricate links for a missing session or zero counts for unavailable counters", async () => {
     const session = response.context!.session!;
     response.context!.session = null;
@@ -212,9 +218,11 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("R E R A I L ● rules unavailable · steering unavailable");
   });
 
-  it("reports not on here only where Rerail is stopped, and Not set up with the start command where no rules are configured", async () => {
+  it("draws no footer where Rerail is stopped, says not on here on demand, and Not set up with the start command where no rules are configured", async () => {
     response.repositoryState = "stopped";
-    const stopped = await read();
+    // The ambient footer takes no space in a repository Rerail does not run in (#298).
+    expect(await read()).toMatchObject({ status: "not-on-here", text: "", parts: [], repositoryState: "stopped" });
+    const stopped = await read(true);
     expect(stopped).toMatchObject({ status: "not-on-here", text: "R E R A I L ○ not on here", repositoryState: "stopped" });
     expect(stopped.parts.every(part => part.url === null)).toBe(true);
     response.presence = "silent";
@@ -233,8 +241,10 @@ describe("installed session presentation", () => {
 
   it("with no daemon, follows the caller's start state: not on here, not set up, or not running where started", async () => {
     await rm(join(home, "daemon.json"));
-    const withState = (startState: () => RepositoryStartState) => readPresentation({ sessionId, host: "claude-code", cwd, startState });
-    expect(await withState(() => "stopped")).toMatchObject({ status: "not-on-here", text: "R E R A I L ○ not on here", repositoryState: "stopped" });
+    const withState = (startState: () => RepositoryStartState, onDemand = false) =>
+      readPresentation({ sessionId, host: "claude-code", cwd, startState, onDemand });
+    expect(await withState(() => "stopped")).toMatchObject({ status: "not-on-here", text: "", parts: [], repositoryState: "stopped" });
+    expect(await withState(() => "stopped", true)).toMatchObject({ status: "not-on-here", text: "R E R A I L ○ not on here", repositoryState: "stopped" });
     expect(await withState(() => "not-set-up")).toMatchObject({ status: "not-set-up", text: "R E R A I L ○ not set up · rerail start" });
     expect(await withState(() => "started")).toMatchObject({ status: "not-running", text: "R E R A I L ✕ not running" });
     expect(await withState(() => { throw new Error("database unreadable"); })).toMatchObject({ status: "not-running" });

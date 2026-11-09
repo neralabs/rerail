@@ -644,7 +644,7 @@ conformance check (`npm run test:conformance`), not here.
      object with a `match` and no `format`, `parseConversationRule`) whose every pattern the engine accepts
      (`engineRegexIssues`).
    - Candidates need not compile. Every rule document under `candidates/` (each JSON file in a `rules/` directory
-     there, and any file there whose `format` names a policy, such as the older `tempo.policy/v1`) must be
+     there, and any file there whose `format` names a policy, an older `<name>.policy/v<n>` included) must be
      `rerail.policy/v1` or a conversation rule, sit in a `rules/` directory and be named `<id>.json`
      (`candidates/rules/<id>.json`, `candidates/probes/rules/<id>.json`).
    - Every port in the pack's `conformance.json`, and in each `conformance.json` under `candidates/` (probes), has its
@@ -849,8 +849,8 @@ Core's `v*` release (`release.yml`) is separate.
   Changed), then the changesets' entries in file-name order. A `removed-` changeset opening with a rule replaces that
   rule's generated entry, so the notes say why it left. Sections already released keep the format they went out in. A pending changeset with no
   type fails the run, naming the file: one `changeset version` bumps every pack, so no pack can wait for its rename.
-- Its description lists every package and version it releases, with changelog entries. Review it like any pull
-  request.
+- Its description lists every package and version it releases, with changelog entries, then the checklist to tick
+  before merging ([release.md](release.md#before-merging)). Review it like any pull request.
 - A newer push cancels an older run; with nothing releasable, an open Release pull request is closed.
 - CI runs only licence and lint jobs on it: `release-packs.yml` validates and packs every published pack on it, and
   `main` runs everything after merge.
@@ -866,18 +866,24 @@ The publish gate is:
   contract gates publishing with no workflow change;
 - `npm pack`, and a check that the tarball holds only `package.json` and what `files` publishes, never validation
   material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
-- `npm publish --access public --tag latest` with npm trusted publishing (the `release` environment, so a reviewer
-  approves the run); a check that an anonymous reader gets the version; `next` moved up to it; the tag.
+- the tag, made as soon as the two checks above pass and before anything is published, so a pack's release never
+  waits on npm; then, side by side, its GitHub Release and `npm publish --access public --tag latest` with npm trusted
+  publishing (the `release` environment, so a reviewer approves the run), with `next` moved up to it.
 
 Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is used from
 then on. `next` never trails `latest`: it moves to the version too unless already at a newer one, so the `next`
 channel gets the release. A pack held at an older `latest` (step 3) is published under `next` instead and stays held.
 
-Packs publish one by one, and a failed run can be rerun. A tagged version is skipped. One the registry has without its
-tag (a run that failed after publishing) is checked, has `next` moved up and is tagged, not republished. The
-**Published dist-tags** job lists each published pack's dist-tags in the run summary, and fails if `latest` (`next` for
-a held pack) is not the version just published or `next` is older than `latest`. A pull request touching packs runs
-the gate and packing as a dry run.
+Packs publish one by one, and a failed publish leaves its tags and Releases standing. A version is released once it is
+tagged and on npm: every run's plan reads npm for each tagged version and publishes again one npm doesn't have, with a
+warning naming it. So re-running the run (all jobs or only the failed ones) or the next push to `main` finishes it,
+with no time limit, and a run whose plan can't read npm fails rather than call the version released. One the registry
+already has counts as published, and has `next` moved up. A version older than the pack's `latest` (an old run re-run
+after a newer one shipped) is never published, since that would move `latest` back; the run fails naming it. The
+**Published dist-tags** job lists each published pack's dist-tags in the run summary, read with no npm login. It fails
+if a pack can't be read that way (it isn't public), if `latest` (`next` for a held pack) is not the version just
+published, or if `next` is older than `latest`. It gates nothing. A pull request touching packs runs the gate and
+packing as a dry run.
 
 </details>
 
@@ -910,8 +916,9 @@ summaries.
   hash their entries carry.
 - Notes past GitHub's 125,000 characters go out as the section's lead and a link to the changelog at the tag
   (`fittedNotes`).
-- After **Published dist-tags** passes, the **GitHub Releases** job makes one per published version
-  (`scripts/release/github-release.mjs`). Rerun, it rewrites an existing Release's notes and flags.
+- Once the **Tag each release** job has tagged them, the **GitHub Releases** job makes one per tagged version
+  (`scripts/release/github-release.mjs`), beside the npm publish rather than after it, so npm can neither hold back
+  nor skip a Release. Rerun, it rewrites an existing Release's notes and flags.
 - A pack's Release is never the repository's latest release, which is core's. It is a pre-release only for a held pack
   published under `next`.
 - Releases missing for older tags, or from a run that failed before its Release, are made by hand with the script's

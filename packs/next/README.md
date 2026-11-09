@@ -67,7 +67,7 @@ Matches a `<script>` with a literal `src` containing the Google Analytics or gta
 
 ### `next-no-assign-module-variable`
 
-Matches any variable declaration with a declarator whose identifier is `module`.
+Matches any variable declaration with a declarator whose identifier is `module`, including a `for…of` or `for…in` head such as `for (const module of mods)`, reported at its keyword as upstream does.
 
 ### `next-no-async-client-component`
 

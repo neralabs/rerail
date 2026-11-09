@@ -366,6 +366,10 @@ cargo test --manifest-path Cargo.toml -p rerail-engine anchors::tests
 
 An own rule needs only the first and third commands. A port needs the pulled data.
 
+`check:internal-refs` fails on an internal ticket ID and on a `nera-` name outside its public list, so a fixture,
+sample or comment drawn from private code names no private project
+([Keeping private context out](../CONTRIBUTING.md#keeping-private-context-out)).
+
 <details>
 <summary>Data needs and what the pull request states</summary>
 

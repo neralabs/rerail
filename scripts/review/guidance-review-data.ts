@@ -254,14 +254,27 @@ function ownFixture(upstreamRule: string, path: string): boolean {
   return path.split("/").some(part => part === name || part.replace(/\.[^.]+$/u, "") === name);
 }
 
-async function packData(directory: string): Promise<ReviewPack | undefined> {
-  const packJsonPath = join(directory, "pack.json");
-  if (!existsSync(packJsonPath)) return undefined;
-  const packJson = readJson<{ id: string; name: string; covers?: string; reason?: string; rules: PackJsonRule[] }>(packJsonPath);
-  const loaded: LoadedPack | undefined = existsSync(join(directory, "conformance.json")) ? loadPack(directory) : undefined;
-  const runtime = loadNativeBinding().CodeRuleDslRuntime;
-  const byDocument = new Map(packJson.rules.map(rule => [documentPath(rule.document), rule]));
+/** What a pack's review gathers per rule id while its cases run. */
+interface PackReview {
+  readonly cases: Map<string, ReviewCase[]>;
+  readonly counts: Map<string, ReviewRule["counts"]>;
+  readonly pending: Map<string, PendingCase[]>;
+}
 
+type PageFailure = z.infer<typeof pageSchema>["failures"][number];
+
+function compileText(runtime: ReturnType<typeof loadNativeBinding>["CodeRuleDslRuntime"], text: string): Pick<Compiled, "compiled" | "compileError"> {
+  try {
+    return { compiled: runtime.compile(text, "json", capabilitiesJson()), compileError: null };
+  } catch (error) {
+    return { compiled: undefined, compileError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Every rule document of the pack, compiled once each: conformance.json's rules, pack.json's, then the candidates. */
+function compiledEntries(directory: string, loaded: LoadedPack | undefined, packRules: readonly PackJsonRule[]): Compiled[] {
+  const runtime = loadNativeBinding().CodeRuleDslRuntime;
+  const byDocument = new Map(packRules.map(rule => [documentPath(rule.document), rule]));
   const entries: Compiled[] = [];
   const seen = new Set<string>();
   const add = (rule: PackRule | undefined, path: string): void => {
@@ -269,165 +282,206 @@ async function packData(directory: string): Promise<ReviewPack | undefined> {
     if (seen.has(document)) return;
     seen.add(document);
     const text = readFileSync(join(directory, document), "utf8");
-    let compiled: NativeCompiledCodeRuleDsl | undefined;
-    let compileError: string | null = null;
-    try {
-      compiled = runtime.compile(text, "json", capabilitiesJson());
-    } catch (error) {
-      compileError = error instanceof Error ? error.message : String(error);
-    }
-    entries.push({ rule, packRule: byDocument.get(document), documentPath: document, document: JSON.parse(text) as RuleDocument, text, compiled, compileError });
+    entries.push({ rule, packRule: byDocument.get(document), documentPath: document, document: JSON.parse(text) as RuleDocument, text, ...compileText(runtime, text) });
   };
   for (const rule of loaded?.pack.rules ?? []) add(rule, rule.policy);
-  for (const rule of packJson.rules) add(undefined, rule.document);
+  for (const rule of packRules) add(undefined, rule.document);
   // Candidates not yet recorded in conformance.json (no upstream, no fixture cases) are reviewed too.
   const candidates = join(directory, "candidates", "rules");
   if (existsSync(candidates)) {
     for (const name of readdirSync(candidates).filter(name => name.endsWith(".json")).sort(compareDeterministicStrings)) add(undefined, `candidates/rules/${name}`);
   }
+  return entries;
+}
 
-  const cases = new Map<string, ReviewCase[]>(entries.map(entry => [entry.document.id, []]));
-  const counts = new Map(entries.map(entry => [entry.document.id, { caught: 0, extra: 0, missed: 0, units: 0 }]));
-  const kept = (id: string, kind: ReviewCase["kind"]): number => (cases.get(id) ?? []).filter(item => item.kind === kind).length;
-
-  const caseOf = (id: string, kind: ReviewCase["kind"], file: SourceFile, violations: CodeRuleViolation[], upstream: number[], failures: string[]): ReviewCase => {
-    const flagged = [...new Set(violations.map(violationLine).filter((line): line is number => line !== undefined))].sort((a, b) => a - b);
-    const { firstLine, snippet } = snippetOf(file.source, [...flagged, ...upstream]);
-    return {
-      id: `${id}:${kind}:${file.path}`,
-      kind,
-      path: file.path,
-      language: file.language,
-      firstLine,
-      snippet,
-      flagged,
-      upstream,
-      guidance: violations.length === 0 ? "" : renderSteer(violations, { kind: "edit" }),
-      failures,
-    };
+function caseOf(id: string, kind: ReviewCase["kind"], file: SourceFile, violations: CodeRuleViolation[], upstream: number[], failures: string[]): ReviewCase {
+  const flagged = [...new Set(violations.map(violationLine).filter((line): line is number => line !== undefined))].sort((a, b) => a - b);
+  const { firstLine, snippet } = snippetOf(file.source, [...flagged, ...upstream]);
+  return {
+    id: `${id}:${kind}:${file.path}`,
+    kind,
+    path: file.path,
+    language: file.language,
+    firstLine,
+    snippet,
+    flagged,
+    upstream,
+    guidance: violations.length === 0 ? "" : renderSteer(violations, { kind: "edit" }),
+    failures,
   };
+}
 
-  const pending = new Map<string, PendingCase[]>();
-
-  // pack.json examples: the caught case and the case that passes, each run alone.
-  for (const entry of entries) {
-    const examples = entry.packRule?.examples;
-    if (examples === undefined || entry.compiled === undefined) continue;
-    for (const [kind, example] of [["example", examples.caught], ["passes", examples.passes]] as const) {
-      const path = example.path ?? "example";
-      const language = languageFor(path);
-      if (language === undefined) continue;
-      const file = { path, language, source: example.text };
-      const result = await evaluate([entry.compiled], [file]);
-      const violations = result.violations.filter(item => item.ruleId === entry.document.id) as CodeRuleViolation[];
-      const failures = result.failures.map(item => `${item.code}: ${item.message}`);
-      cases.get(entry.document.id)?.push(caseOf(entry.document.id, kind, file, violations, [], failures));
-    }
+/** pack.json's examples of a rule: the caught case and the case that passes, each run alone. */
+async function addExampleCases(review: PackReview, entry: Compiled): Promise<void> {
+  const examples = entry.packRule?.examples;
+  if (examples === undefined || entry.compiled === undefined) return;
+  for (const [kind, example] of [["example", examples.caught], ["passes", examples.passes]] as const) {
+    const path = example.path ?? "example";
+    const language = languageFor(path);
+    if (language === undefined) continue;
+    const file = { path, language, source: example.text };
+    const result = await evaluate([entry.compiled], [file]);
+    const violations = result.violations.filter(item => item.ruleId === entry.document.id) as CodeRuleViolation[];
+    const failures = result.failures.map(item => `${item.code}: ${item.message}`);
+    review.cases.get(entry.document.id)?.push(caseOf(entry.document.id, kind, file, violations, [], failures));
   }
+}
 
-  // Upstream fixtures: every unit a rule covers, all of the tool's rules at once.
-  if (loaded !== undefined) {
-    const tools = [...new Set(entries.flatMap(entry => (entry.rule === undefined ? [] : [entry.rule.upstream.tool])))].sort(compareDeterministicStrings);
-    for (const tool of tools) {
-      const expectedPath = fixturesExpectedPath(loaded, tool);
-      if (!existsSync(expectedPath)) continue;
-      const toolExpected = loadExpectedFindings(expectedPath) as FixtureExpectedFindings;
-      if (toolExpected.source.kind !== "fixtures") continue;
-      const toolEntries = entries.filter(entry => entry.rule?.upstream.tool === tool && entry.compiled !== undefined);
-      const expected = new Map<string, Map<string, number[]>>();
-      for (const finding of toolExpected.findings) {
-        const perPath = expected.get(finding.rule) ?? new Map<string, number[]>();
-        perPath.set(finding.path, [...(perPath.get(finding.path) ?? []), finding.line]);
-        expected.set(finding.rule, perPath);
-      }
-      for (const unit of toolExpected.source.files) {
-        const paths = typeof unit === "string" ? [unit] : unit;
-        const unitEntries = toolEntries.filter(entry => entry.rule !== undefined && paths.some(path => coversFixture(entry.rule as PackRule, path)));
-        for (const entry of unitEntries) {
-          const total = counts.get(entry.document.id);
-          if (total !== undefined) total.units += 1;
-        }
-        if (unitEntries.length === 0) continue;
-        const files: SourceFile[] = [];
-        for (const path of paths) {
-          const language = languageFor(path);
-          if (language === undefined) continue;
-          files.push({ path, language, source: readFileSync(join(fixturesDirectory(loaded, tool), path), "utf8") });
-        }
-        if (files.length === 0) continue;
-        const shipped = unitEntries.filter(entry => entry.rule !== undefined && !isCandidate(entry.rule));
-        const candidates = unitEntries.filter(entry => entry.rule !== undefined && isCandidate(entry.rule));
-        const violations: CodeRuleViolation[] = [];
-        const failures: z.infer<typeof pageSchema>["failures"] = [];
-        for (const group of [shipped, candidates]) {
-          if (group.length === 0) continue;
-          const result = await evaluate(group.map(entry => entry.compiled as NativeCompiledCodeRuleDsl), files);
-          violations.push(...(result.violations as CodeRuleViolation[]));
-          failures.push(...result.failures);
-        }
-        for (const entry of unitEntries) {
-          const id = entry.document.id;
-          const upstreamRule = entry.rule?.upstream.rule ?? "";
-          const total = counts.get(id);
-          for (const file of files) {
-            const mine = violations.filter(item => item.ruleId === id && item.path === file.path);
-            const theirs = [...new Set(expected.get(upstreamRule)?.get(file.path) ?? [])].sort((a, b) => a - b);
-            const myLines = new Set(mine.map(violationLine));
-            const both = theirs.filter(line => myLines.has(line)).length;
-            const onlyMine = [...myLines].filter(line => line !== undefined && !theirs.includes(line)).length;
-            const onlyTheirs = theirs.length - both;
-            if (total !== undefined) {
-              total.caught += both;
-              total.extra += onlyMine;
-              total.missed += onlyTheirs;
-            }
-            const fileFailures = failures.filter(item => (item.ruleId === undefined || item.ruleId === id) && (item.path === undefined || item.path === file.path)).map(item => `${item.code}: ${item.message}`);
-            const kind: ReviewCase["kind"] | undefined =
-              both > 0 ? "caught" : onlyMine > 0 ? "extra" : onlyTheirs > 0 ? "missed" : mine.length === 0 ? "passes" : undefined;
-            if (kind === undefined) continue;
-            const own = ownFixture(upstreamRule, file.path);
-            const list = pending.get(id) ?? [];
-            if (list.filter(item => item.kind === kind && item.own === own).length < CANDIDATES_KEPT) list.push({ kind, own, file, mine, theirs, failures: fileFailures });
-            pending.set(id, list);
-          }
-        }
-      }
-    }
+/** Upstream rule → fixture path → the lines the tool flagged there. */
+function expectedLines(findings: FixtureExpectedFindings["findings"]): Map<string, Map<string, number[]>> {
+  const expected = new Map<string, Map<string, number[]>>();
+  for (const finding of findings) {
+    const perPath = expected.get(finding.rule) ?? new Map<string, number[]>();
+    perPath.set(finding.path, [...(perPath.get(finding.path) ?? []), finding.line]);
+    expected.set(finding.rule, perPath);
   }
+  return expected;
+}
 
-  // Each rule's cases: its own fixtures (written for this upstream rule) before ones written for another rule.
-  for (const [id, list] of pending) {
+function unitFiles(loaded: LoadedPack, tool: string, paths: readonly string[]): SourceFile[] {
+  const files: SourceFile[] = [];
+  for (const path of paths) {
+    const language = languageFor(path);
+    if (language === undefined) continue;
+    files.push({ path, language, source: readFileSync(join(fixturesDirectory(loaded, tool), path), "utf8") });
+  }
+  return files;
+}
+
+/** The unit's rules run on its files: shipped rules together, then candidates together. */
+async function evaluateUnit(unitEntries: readonly Compiled[], files: readonly SourceFile[]): Promise<{ violations: CodeRuleViolation[]; failures: PageFailure[] }> {
+  const shipped = unitEntries.filter(entry => entry.rule !== undefined && !isCandidate(entry.rule));
+  const candidates = unitEntries.filter(entry => entry.rule !== undefined && isCandidate(entry.rule));
+  const violations: CodeRuleViolation[] = [];
+  const failures: PageFailure[] = [];
+  for (const group of [shipped, candidates]) {
+    if (group.length === 0) continue;
+    const result = await evaluate(group.map(entry => entry.compiled as NativeCompiledCodeRuleDsl), files);
+    violations.push(...(result.violations as CodeRuleViolation[]));
+    failures.push(...result.failures);
+  }
+  return { violations, failures };
+}
+
+function fixtureCaseKind(both: number, onlyMine: number, onlyTheirs: number, mine: number): PendingCase["kind"] | undefined {
+  return both > 0 ? "caught" : onlyMine > 0 ? "extra" : onlyTheirs > 0 ? "missed" : mine === 0 ? "passes" : undefined;
+}
+
+/** One rule on one file of a unit: what it adds to the rule's counts, and the case remembered for picking later. */
+function recordFixtureFile(
+  review: PackReview, id: string, upstreamRule: string, file: SourceFile,
+  run: { readonly violations: readonly CodeRuleViolation[]; readonly failures: readonly PageFailure[]; readonly expected: ReadonlyMap<string, ReadonlyMap<string, number[]>> },
+): void {
+  const mine = run.violations.filter(item => item.ruleId === id && item.path === file.path);
+  const theirs = [...new Set(run.expected.get(upstreamRule)?.get(file.path) ?? [])].sort((a, b) => a - b);
+  const myLines = new Set(mine.map(violationLine));
+  const both = theirs.filter(line => myLines.has(line)).length;
+  const onlyMine = [...myLines].filter(line => line !== undefined && !theirs.includes(line)).length;
+  const onlyTheirs = theirs.length - both;
+  const total = review.counts.get(id);
+  if (total !== undefined) {
+    total.caught += both;
+    total.extra += onlyMine;
+    total.missed += onlyTheirs;
+  }
+  const fileFailures = run.failures.filter(item => (item.ruleId === undefined || item.ruleId === id) && (item.path === undefined || item.path === file.path)).map(item => `${item.code}: ${item.message}`);
+  const kind = fixtureCaseKind(both, onlyMine, onlyTheirs, mine.length);
+  if (kind === undefined) return;
+  const own = ownFixture(upstreamRule, file.path);
+  const list = review.pending.get(id) ?? [];
+  if (list.filter(item => item.kind === kind && item.own === own).length < CANDIDATES_KEPT) list.push({ kind, own, file, mine, theirs, failures: fileFailures });
+  review.pending.set(id, list);
+}
+
+function countUnit(review: PackReview, unitEntries: readonly Compiled[]): void {
+  for (const entry of unitEntries) {
+    const total = review.counts.get(entry.document.id);
+    if (total !== undefined) total.units += 1;
+  }
+}
+
+/** One fixture unit of a tool, run with the rules that cover it. */
+async function addFixtureUnit(review: PackReview, loaded: LoadedPack, tool: string, toolEntries: readonly Compiled[], expected: ReadonlyMap<string, ReadonlyMap<string, number[]>>, paths: readonly string[]): Promise<void> {
+  const unitEntries = toolEntries.filter(entry => entry.rule !== undefined && paths.some(path => coversFixture(entry.rule as PackRule, path)));
+  countUnit(review, unitEntries);
+  if (unitEntries.length === 0) return;
+  const files = unitFiles(loaded, tool, paths);
+  if (files.length === 0) return;
+  const run = { ...await evaluateUnit(unitEntries, files), expected };
+  for (const entry of unitEntries) {
+    for (const file of files) recordFixtureFile(review, entry.document.id, entry.rule?.upstream.rule ?? "", file, run);
+  }
+}
+
+async function addToolFixtures(review: PackReview, entries: readonly Compiled[], loaded: LoadedPack, tool: string): Promise<void> {
+  const expectedPath = fixturesExpectedPath(loaded, tool);
+  if (!existsSync(expectedPath)) return;
+  const toolExpected = loadExpectedFindings(expectedPath) as FixtureExpectedFindings;
+  if (toolExpected.source.kind !== "fixtures") return;
+  const toolEntries = entries.filter(entry => entry.rule?.upstream.tool === tool && entry.compiled !== undefined);
+  const expected = expectedLines(toolExpected.findings);
+  for (const unit of toolExpected.source.files) await addFixtureUnit(review, loaded, tool, toolEntries, expected, typeof unit === "string" ? [unit] : unit);
+}
+
+/** Each rule's cases: its own fixtures (written for this upstream rule) before ones written for another rule. */
+function pickPendingCases(review: PackReview): void {
+  for (const [id, list] of review.pending) {
     for (const kind of ["caught", "extra", "missed", "passes"] as const) {
       const limit = kind === "caught" ? CAUGHT_CASES : OTHER_CASES;
-      const picked = list.filter(item => item.kind === kind).sort((a, b) => Number(b.own) - Number(a.own)).slice(0, Math.max(0, limit - kept(id, kind)));
-      for (const item of picked) cases.get(id)?.push(caseOf(id, kind, item.file, item.mine, item.theirs, item.failures));
+      const kept = (review.cases.get(id) ?? []).filter(item => item.kind === kind).length;
+      const picked = list.filter(item => item.kind === kind).sort((a, b) => Number(b.own) - Number(a.own)).slice(0, Math.max(0, limit - kept));
+      for (const item of picked) review.cases.get(id)?.push(caseOf(id, kind, item.file, item.mine, item.theirs, item.failures));
     }
   }
+}
 
-  const order: Record<ReviewCase["kind"], number> = { example: 0, caught: 1, extra: 2, missed: 3, passes: 4 };
-  const rules: ReviewRule[] = entries.map(entry => {
-    const id = entry.document.id;
-    const packRule = entry.packRule;
-    const candidate = entry.rule === undefined ? entry.documentPath.startsWith("candidates/") : isCandidate(entry.rule);
-    const rule: Omit<ReviewRule, "digest"> = {
-      id,
-      pack: packJson.id,
-      title: packRule?.title ?? (candidateTitle(entry.rule) || id),
-      description: entry.document.description ?? "",
-      candidate,
-      on: packRule?.on ?? !candidate,
-      mode: packRule?.mode ?? entry.document.mode ?? "steer",
-      group: packRule?.group ?? null,
-      document: relative(RERAIL_ROOT, join(directory, entry.documentPath)),
-      upstream: entry.rule === undefined ? null : entry.rule.upstream,
-      scope: { include: entry.document.scope?.include ?? [], exclude: entry.document.scope?.exclude ?? [] },
-      messages: messagesOf(JSON.parse(entry.text)),
-      counts: counts.get(id) ?? { caught: 0, extra: 0, missed: 0, units: 0 },
-      compileError: entry.compileError,
-      cases: (cases.get(id) ?? []).sort((a, b) => order[a.kind] - order[b.kind]),
-    };
-    return { ...rule, digest: digestOf(rule) };
-  });
+const CASE_ORDER: Record<ReviewCase["kind"], number> = { example: 0, caught: 1, extra: 2, missed: 3, passes: 4 };
+
+function reviewRuleOf(review: PackReview, pack: string, directory: string, entry: Compiled): ReviewRule {
+  const id = entry.document.id;
+  const packRule = entry.packRule;
+  const candidate = entry.rule === undefined ? entry.documentPath.startsWith("candidates/") : isCandidate(entry.rule);
+  const rule: Omit<ReviewRule, "digest"> = {
+    id,
+    pack,
+    title: packRule?.title ?? (candidateTitle(entry.rule) || id),
+    description: entry.document.description ?? "",
+    candidate,
+    on: packRule?.on ?? !candidate,
+    mode: packRule?.mode ?? entry.document.mode ?? "steer",
+    group: packRule?.group ?? null,
+    document: relative(RERAIL_ROOT, join(directory, entry.documentPath)),
+    upstream: entry.rule === undefined ? null : entry.rule.upstream,
+    scope: { include: entry.document.scope?.include ?? [], exclude: entry.document.scope?.exclude ?? [] },
+    messages: messagesOf(JSON.parse(entry.text)),
+    counts: review.counts.get(id) ?? { caught: 0, extra: 0, missed: 0, units: 0 },
+    compileError: entry.compileError,
+    cases: (review.cases.get(id) ?? []).sort((a, b) => CASE_ORDER[a.kind] - CASE_ORDER[b.kind]),
+  };
+  return { ...rule, digest: digestOf(rule) };
+}
+
+/** Upstream fixtures: every unit a rule covers, all of the tool's rules at once. */
+async function addFixtureCases(review: PackReview, entries: readonly Compiled[], loaded: LoadedPack): Promise<void> {
+  const tools = [...new Set(entries.flatMap(entry => (entry.rule === undefined ? [] : [entry.rule.upstream.tool])))].sort(compareDeterministicStrings);
+  for (const tool of tools) await addToolFixtures(review, entries, loaded, tool);
+}
+
+async function packData(directory: string): Promise<ReviewPack | undefined> {
+  const packJsonPath = join(directory, "pack.json");
+  if (!existsSync(packJsonPath)) return undefined;
+  const packJson = readJson<{ id: string; name: string; covers?: string; reason?: string; rules: PackJsonRule[] }>(packJsonPath);
+  const loaded: LoadedPack | undefined = existsSync(join(directory, "conformance.json")) ? loadPack(directory) : undefined;
+  const entries = compiledEntries(directory, loaded, packJson.rules);
+  const review: PackReview = {
+    cases: new Map(entries.map(entry => [entry.document.id, []])),
+    counts: new Map(entries.map(entry => [entry.document.id, { caught: 0, extra: 0, missed: 0, units: 0 }])),
+    pending: new Map(),
+  };
+  for (const entry of entries) await addExampleCases(review, entry);
+  if (loaded !== undefined) await addFixtureCases(review, entries, loaded);
+  pickPendingCases(review);
+  const rules = entries.map(entry => reviewRuleOf(review, packJson.id, directory, entry));
   rules.sort((a, b) => Number(a.candidate) - Number(b.candidate) || compareDeterministicStrings(a.id, b.id));
   return { id: packJson.id, name: packJson.name, covers: packJson.covers ?? "", reason: packJson.reason ?? "", rules };
 }

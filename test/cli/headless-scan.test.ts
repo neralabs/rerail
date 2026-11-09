@@ -228,6 +228,24 @@ describe("headless rerail scan", () => {
     expect(report.violations).toHaveLength(1);
   });
 
+  it.each([
+    ["nested in the checkout, in a folder it excludes", (root: string) => join(root, ".claude", "worktrees", "probe")],
+    ["outside the checkout", (root: string) => `${root}-probe`],
+  ])("uses the Rerail home's configuration in a linked worktree %s that no session has recorded", async (_placement, place) => {
+    const root = checkout();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const databasePath = join(home, "rerail.sqlite");
+    setUpTestRepository(root, {}, databasePath);
+    writeFileSync(join(root, ".git", "info", "exclude"), ".claude/worktrees/\n");
+    const worktree = place(root);
+    roots.push(worktree);
+    git(root, "worktree", "add", "--quiet", "--detach", worktree, "main");
+    const report = await scan(realpathSync(worktree), { databasePath });
+    expect({ status: report.status, rulesSource: report.rulesSource, failures: report.failures }).toEqual({ status: "completed", rulesSource: { kind: "home" }, failures: [] });
+    expect(report.violations).toHaveLength(1);
+  });
+
   it("prints JSON and exits 3 on violations only with --fail-on-violations", async () => {
     const root = checkout();
     let output = "";

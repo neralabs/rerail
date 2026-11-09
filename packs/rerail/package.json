@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "Rerail rule pack: steers work in the Rerail repository toward its own architecture and conventions.",
+  "keywords": [
+    "rerail",
+    "rerail-pack",
+    "coding-agent",
+    "rules",
+    "architecture"
+  ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

@@ -99,8 +99,11 @@ pub(crate) struct UtilOrigin {
     pub(crate) digest: [u8; 32],
 }
 
-/// The `utils` of one ast query compiled for one grammar, indexed by `UtilRef::index`. Filled once,
-/// after every utility compiled, so utilities can refer to each other and to themselves.
+/// The `utils` of one ast query, or a document's shared utilities (`define`), compiled for one
+/// grammar, indexed by `UtilRef::index`. Each utility is filled once, after it and every utility it
+/// reaches compiled, so utilities can refer to each other and to themselves: a query's own table
+/// fills them all at once, a document's shared table the ones its queries reach, as they reach
+/// them (`compile::shared`).
 pub(crate) struct UtilTable {
     #[cfg_attr(not(feature = "code-rule-profile"), allow(dead_code))]
     pub(crate) names: Vec<String>,
@@ -113,13 +116,15 @@ pub(crate) struct UtilTable {
     scopes: Vec<OnceLock<Option<Scope>>>,
     /// Each utility's memo identity (`UtilRef::memo_term`), worked out on first use.
     memo_terms: Vec<OnceLock<(usize, usize)>>,
-    pub(crate) rules: OnceLock<Vec<AstMatcher>>,
-    /// A first compilation of the utilities, which compile-time walks read while `rules` is being
-    /// compiled: what a utility binds or exports does not depend on the order of its terms, which is
-    /// all that differs between the two.
-    pub(crate) draft: OnceLock<Vec<AstMatcher>>,
-    /// Whether a compile-time walk reached a utility before either was filled.
-    pub(crate) unfilled: AtomicBool,
+    /// Each utility's compiled rule, once filled.
+    rules: Vec<OnceLock<AstMatcher>>,
+    /// A first compilation of the utilities being compiled, which compile-time walks read while
+    /// their `rules` are being compiled: what a utility binds or exports does not depend on the
+    /// order of its terms, which is all that differs between the two.
+    draft: Vec<OnceLock<AstMatcher>>,
+    /// Whether a compile-time walk reached a utility neither filled nor drafted since the
+    /// compilation began (`begin_compilation`).
+    unfilled: AtomicBool,
     /// The distinct parameterized calls compiled so far.
     instances: Mutex<BTreeSet<(usize, CallArgs)>>,
 }
@@ -133,14 +138,53 @@ impl UtilTable {
         Self {
             scopes: names.iter().map(|_| OnceLock::new()).collect(),
             memo_terms: names.iter().map(|_| OnceLock::new()).collect(),
+            rules: names.iter().map(|_| OnceLock::new()).collect(),
+            draft: names.iter().map(|_| OnceLock::new()).collect(),
             names,
             framed,
             origins,
-            rules: OnceLock::new(),
-            draft: OnceLock::new(),
             unfilled: AtomicBool::new(false),
             instances: Mutex::new(BTreeSet::new()),
         }
+    }
+
+    /// Utility `index`'s compiled rule, once filled.
+    pub(crate) fn rule(&self, index: usize) -> Option<&AstMatcher> {
+        self.rules.get(index)?.get()
+    }
+
+    /// Fills utility `index` with its compiled rule.
+    pub(crate) fn fill(&self, index: usize, rule: AstMatcher) {
+        if self.rules[index].set(rule).is_err() {
+            unreachable!("a utility is filled once");
+        }
+    }
+
+    /// Fills every utility, in index order.
+    pub(crate) fn fill_all(&self, rules: Vec<AstMatcher>) {
+        for (index, rule) in rules.into_iter().enumerate() {
+            self.fill(index, rule);
+        }
+    }
+
+    /// Drafts utility `index` with a first compilation of its rule.
+    pub(crate) fn draft(&self, index: usize, rule: AstMatcher) {
+        if self.draft[index].set(rule).is_err() {
+            unreachable!("a utility is drafted once");
+        }
+    }
+
+    /// Drafts every utility, in index order.
+    pub(crate) fn draft_all(&self, rules: Vec<AstMatcher>) {
+        for (index, rule) in rules.into_iter().enumerate() {
+            self.draft(index, rule);
+        }
+    }
+
+    /// Begins compiling utilities of the table: `was_unfilled` then tells whether this
+    /// compilation's walks met one they could not read yet.
+    pub(crate) fn begin_compilation(&self) {
+        self.unfilled.store(false, Ordering::Relaxed);
     }
 
     /// Whether a walk met a utility it could not read yet.
@@ -148,14 +192,16 @@ impl UtilTable {
         self.unfilled.load(Ordering::Relaxed)
     }
 
-    /// The compiled utilities that run in their caller's environment (no parameters).
-    pub(crate) fn shared_rules(&self) -> impl Iterator<Item = &AstMatcher> {
-        self.rules
-            .get()
-            .into_iter()
-            .flatten()
-            .zip(&self.framed)
-            .filter_map(|(rule, framed)| (!framed).then_some(rule))
+    /// The compiled utilities among `indices` that run in their caller's environment (no
+    /// parameters).
+    pub(crate) fn shared_rules<'t>(
+        &'t self,
+        indices: &'t [usize],
+    ) -> impl Iterator<Item = &'t AstMatcher> {
+        indices
+            .iter()
+            .filter(|&&index| !self.framed[index])
+            .filter_map(|&index| self.rule(index))
     }
 
     /// Records a call; false once more than `MAX_UTIL_INSTANCES` distinct ones were recorded.
@@ -492,26 +538,32 @@ fn context_free(matcher: &AstMatcher, read: &mut BTreeMap<(usize, usize), Option
 }
 
 impl UtilRef {
-    /// The referenced rule, or its draft while the table is being compiled; `None` before the draft
-    /// is filled (which the table records) or after the table is dropped.
+    /// The referenced rule, or its draft while it is being compiled; `None` before it is drafted
+    /// (which the table records) or after the table is dropped.
     pub(crate) fn with_target<T>(&self, visit: impl FnOnce(&AstMatcher) -> T) -> Option<T> {
         let table = self.table.upgrade()?;
-        let Some(rules) = table.rules.get().or_else(|| table.draft.get()) else {
+        let (rule, draft) = (table.rules.get(self.index)?, table.draft.get(self.index)?);
+        let Some(rule) = rule.get().or_else(|| draft.get()) else {
             table.unfilled.store(true, Ordering::Relaxed);
             return None;
         };
-        Some(visit(rules.get(self.index)?))
+        Some(visit(rule))
     }
 
-    /// What `with_target` reads, as a summary key: the table, the utility, and which of the table's
-    /// compilations is filled (none, the draft, the rules). A summary under this key holds in a
-    /// walk that spans the table's compilation steps.
+    /// What `with_target` reads, as a summary key: the table, the utility, and which of its
+    /// compilations is filled (none, the draft, the rule). A summary under this key holds in a
+    /// walk that spans the utility's compilation steps.
     pub(crate) fn summary_key(&self) -> (usize, usize, u8) {
         let filled = self.table.upgrade().map_or(0, |table| {
-            if table.rules.get().is_some() {
+            if table.rule(self.index).is_some() {
                 2
             } else {
-                u8::from(table.draft.get().is_some())
+                u8::from(
+                    table
+                        .draft
+                        .get(self.index)
+                        .is_some_and(|draft| draft.get().is_some()),
+                )
             }
         });
         (self.table.as_ptr() as usize, self.index, filled)

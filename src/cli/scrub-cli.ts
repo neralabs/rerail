@@ -228,75 +228,140 @@ export async function rewriteAppendedFile(
   openFile: (flags: number) => Promise<FileHandle>,
   rewriteLine: (line: string) => string | undefined,
 ): Promise<number | undefined> {
-  let handle: FileHandle;
-  try {
-    handle = await openFile(constants.O_RDWR);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return 0;
-    throw error;
-  }
-  let appender: FileHandle | undefined;
+  const handle = await openForRewrite(openFile);
+  if (handle === undefined) return 0;
+  const appending: Appending = {};
   try {
     const stats = await handle.stat();
     if (!stats.isFile()) return 0;
+    const target = { handle, openFile, rewriteLine, stats, appending };
     for (let attempt = 0; attempt < REWRITE_ATTEMPTS; attempt += 1) {
-      const bytes = await readWhole(handle);
-      const end = bytes.lastIndexOf(0x0a) + 1;
-      const tail = bytes.subarray(end).toString("utf8");
-      const midLine = tail !== "" && rewriteLine(tail) !== undefined;
-      // Lines as bytes: one kept is written back exactly as it was, even where it is not valid UTF-8.
-      const lines: Buffer[] = [];
-      let changed = 0;
-      let lastChanged = -1;
-      let reserves = 0;
-      for (let start = 0; start < end;) {
-        const stop = bytes.indexOf(0x0a, start);
-        const line = bytes.subarray(start, stop);
-        start = stop + 1;
-        const text = line.toString("utf8");
-        if (text.startsWith(RESERVE_LINE_START)) {
-          reserves += 1;
-          continue;
-        }
-        const rewritten = rewriteLine(text);
-        if (rewritten !== undefined) {
-          changed += 1;
-          lastChanged = lines.length;
-        }
-        lines.push(rewritten === undefined ? line : Buffer.from(rewritten, "utf8"));
-      }
-      if (midLine && attempt < REWRITE_ATTEMPTS - 1) {
-        await delay(MID_LINE_WAIT_MS);
-        continue;
-      }
-      // A file of nothing but reserve lines keeps them: dropping them would leave only padding, which is no JSON.
-      if (changed === 0 && (reserves === 0 || lines.length === 0)) return midLine ? undefined : 0;
-      const size = lines.reduce((total, line) => total + line.length + 1, 0);
-      if (size <= end) {
-        const padded = lastChanged === -1 ? lines.length - 1 : lastChanged;
-        const newline = Buffer.from("\n");
-        await writeAt(handle, Buffer.concat(lines.flatMap((line, index) => (
-          index === padded ? [line, Buffer.from(`${" ".repeat(end - size)}\n`)] : [line, newline]
-        ))), 0);
-        return midLine ? undefined : changed;
-      }
-      if (tail !== "") {
-        await delay(MID_LINE_WAIT_MS);
-        continue;
-      }
-      if (appender === undefined) {
-        appender = await openFile(constants.O_WRONLY | constants.O_APPEND);
-        const appended = await appender.stat();
-        if (appended.ino !== stats.ino || appended.dev !== stats.dev) return undefined;
-      }
-      await appender.write(reserveLine(size - end), null, "utf8");
+      const outcome = await rewriteAttempt(target, attempt === REWRITE_ATTEMPTS - 1);
+      if (outcome !== "again") return outcome;
     }
     return undefined;
   } finally {
-    await appender?.close();
+    await appending.handle?.close();
     await handle.close();
   }
 }
+
+/** The file opened to rewrite it; undefined when it is not there. */
+async function openForRewrite(openFile: (flags: number) => Promise<FileHandle>): Promise<FileHandle | undefined> {
+  try {
+    return await openFile(constants.O_RDWR);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/** The appender, opened for the first reserve line and kept for the next. */
+interface Appending {
+  handle?: FileHandle;
+}
+
+interface RewriteTarget {
+  readonly handle: FileHandle;
+  readonly openFile: (flags: number) => Promise<FileHandle>;
+  readonly rewriteLine: (line: string) => string | undefined;
+  readonly stats: Awaited<ReturnType<FileHandle["stat"]>>;
+  readonly appending: Appending;
+}
+
+/** The complete lines of a read of the file, rewritten: the reserve lines dropped and counted. */
+interface RewritePass {
+  /** Where the complete lines end. */
+  readonly end: number;
+  /** What follows the last complete line. */
+  readonly tail: string;
+  /** Whether the line being appended, cut short at the end of the read, would change. */
+  readonly midLine: boolean;
+  readonly lines: readonly Buffer[];
+  readonly changed: number;
+  readonly lastChanged: number;
+  readonly reserves: number;
+}
+
+function rewrittenLines(bytes: Buffer, end: number, rewriteLine: (line: string) => string | undefined): Pick<RewritePass, "lines" | "changed" | "lastChanged" | "reserves"> {
+  // Lines as bytes: one kept is written back exactly as it was, even where it is not valid UTF-8.
+  const lines: Buffer[] = [];
+  let changed = 0;
+  let lastChanged = -1;
+  let reserves = 0;
+  for (let start = 0; start < end;) {
+    const stop = bytes.indexOf(0x0a, start);
+    const line = bytes.subarray(start, stop);
+    start = stop + 1;
+    const text = line.toString("utf8");
+    if (text.startsWith(RESERVE_LINE_START)) {
+      reserves += 1;
+      continue;
+    }
+    const rewritten = rewriteLine(text);
+    if (rewritten !== undefined) {
+      changed += 1;
+      lastChanged = lines.length;
+    }
+    lines.push(rewritten === undefined ? line : Buffer.from(rewritten, "utf8"));
+  }
+  return { lines, changed, lastChanged, reserves };
+}
+
+async function readRewritePass({ handle, rewriteLine }: RewriteTarget): Promise<RewritePass> {
+  const bytes = await readWhole(handle);
+  const end = bytes.lastIndexOf(0x0a) + 1;
+  const tail = bytes.subarray(end).toString("utf8");
+  const midLine = tail !== "" && rewriteLine(tail) !== undefined;
+  return { end, tail, midLine, ...rewrittenLines(bytes, end, rewriteLine) };
+}
+
+/** Writes the pass over the old lines, the last changed one padded, when it fits; false when it needs room first. */
+async function writeInPlace(handle: FileHandle, { lines, lastChanged, end }: RewritePass): Promise<boolean> {
+  const size = rewrittenSize(lines);
+  if (size > end) return false;
+  const padded = lastChanged === -1 ? lines.length - 1 : lastChanged;
+  const newline = Buffer.from("\n");
+  await writeAt(handle, Buffer.concat(lines.flatMap((line, index) => (
+    index === padded ? [line, Buffer.from(`${" ".repeat(end - size)}\n`)] : [line, newline]
+  ))), 0);
+  return true;
+}
+
+const rewrittenSize = (lines: readonly Buffer[]): number => lines.reduce((total, line) => total + line.length + 1, 0);
+
+/** Appends a reserve line for what the pass lacks, or waits for the line being appended to end; undefined when the file was replaced. */
+async function makeRoom({ openFile, stats, appending }: RewriteTarget, { tail, lines, end }: RewritePass): Promise<"again" | undefined> {
+  if (tail !== "") {
+    await delay(MID_LINE_WAIT_MS);
+    return "again";
+  }
+  if (appending.handle === undefined) {
+    appending.handle = await openFile(constants.O_WRONLY | constants.O_APPEND);
+    const appended = await appending.handle.stat();
+    if (appended.ino !== stats.ino || appended.dev !== stats.dev) return undefined;
+  }
+  await appending.handle.write(reserveLine(rewrittenSize(lines) - end), null, "utf8");
+  return "again";
+}
+
+/** A file of nothing but reserve lines keeps them: dropping them would leave only padding, which is no JSON. */
+const leavesUnchanged = ({ changed, reserves, lines }: RewritePass): boolean => changed === 0 && (reserves === 0 || lines.length === 0);
+
+/** One pass over the file: what it comes to, or "again" when it takes another. */
+async function rewriteAttempt(target: RewriteTarget, last: boolean): Promise<number | undefined | "again"> {
+  const pass = await readRewritePass(target);
+  if (pass.midLine && !last) {
+    await delay(MID_LINE_WAIT_MS);
+    return "again";
+  }
+  if (leavesUnchanged(pass)) return settledCount(pass, 0);
+  if (await writeInPlace(target.handle, pass)) return settledCount(pass, pass.changed);
+  return await makeRoom(target, pass);
+}
+
+/** What a finished pass comes to: a file that kept ending mid-line where that line would change was left. */
+const settledCount = ({ midLine }: RewritePass, count: number): number | undefined => (midLine ? undefined : count);
 
 /** One session ledger line as it is now written (`scrubbedLedgerLine`); undefined when it stays. */
 function ledgerLine(line: string): string | undefined {

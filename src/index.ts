@@ -7,7 +7,6 @@ export {
   type ConversationRulesOptions,
 } from "./hosts/omp/extension.js";
 export { bundledModelPath } from "./engine/package-root.js";
-export { createPiConversationRulesExtension, type PiConversationRulesOptions } from "./hosts/pi/pi-extension.js";
 export {
   CustomerActivationManager,
   CustomerProfileStore,

@@ -13,7 +13,7 @@ upstream:
   license: Apache-2.0
   runtime: bandit-1.9.4
   # Bandit has no named configuration; upstream's default is bare `bandit`: no profile, every registered test on,
-  # `# nosec` honoured (ADR 0006, "Bandit's `# nosec`"). bandit:b317 follows `# nosec` with a comment pattern; the other
+  # `# nosec` honoured. bandit:b317 follows `# nosec` with a comment pattern; the other
   # documents do not model it. It explains three disagreements: bandit:B303 (examples/nosec.py:3), bandit:b308
   # (examples/mark_safe_secure.py 38, 39 and 49, each ending `# nosec TODO`) and
   # python-conformance:bandit-b506-yaml-load (the suppressed `yaml.load` lines of examples/new_candidates-all.py:17,
@@ -21,7 +21,7 @@ upstream:
   # suppressed lines.
   recommended_configs:
     - default
-  # Positions are compared exactly as Bandit reports them (ADR 0006, "Bandit's keyword lines"). bandit:B602 differs on
+  # Positions are compared exactly as Bandit reports them. bandit:B602 differs on
   # real code only on such positions: its four real-code cases (iterative-dvc's dvc/stage.py 672, 745 and 784 and
   # dvc/remote/hdfs.py 77) have the port at the call's first line with Bandit's columns. It also
   # differs on its own tests (`# nosec` lines, `shell=[]` and `shell={}`, and line 7 of examples/new_candidates-all.py

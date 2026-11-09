@@ -11,6 +11,8 @@
 //     today: the lead under the unreleased heading and the entries pending in .changelog/ by change type, whose files it
 //     deletes. A version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is
 //     left alone.
+// The description ends with the checklist whoever merges it ticks first (BEFORE_MERGING; docs/release.md, "Before
+// merging"). It is written unticked each time, so a push to main clears it.
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags and the
 // packs' release tags fetched, with the history back to each pack's last release.
 //
@@ -25,11 +27,26 @@ import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT }
 
 /**
  * The most of the description the changelog sections quoted in it may take: a pull request description holds 65,536
- * characters, and the table, the core paths and the warnings fit in the rest. Past it, the longest are linked instead.
+ * characters, and the table, the core paths, the warnings and the checklist fit in the rest. Past it, the longest are
+ * linked instead.
  */
-const QUOTED_NOTES = 60_000;
+const QUOTED_NOTES = 58_000;
 /** How many of the core paths that changed the description lists. */
 const LISTED_CHANGES = 20;
+/**
+ * What whoever merges the Release pull request confirms first, each a box to tick in its description. A pull request's
+ * author confirms the same of their own change (.github/pull_request_template.md); this is the check of the release
+ * as a whole.
+ */
+const BEFORE_MERGING = [
+  "**End-user testing.** One hour using the staged release the way a user does. Core: `gh workflow run release.yml --ref changeset-release/main` builds it from this branch as the `rerail-package` run artifact, unpublished. Packs: this pull request's Release packs run uploads their tarballs as `rule-packs`, and `rerail packs add <tarball>` installs one (docs/release.md, \"Before merging\").",
+  "**Release notes.** The notes above are accurate and complete, and each says what changed for the person upgrading.",
+  "**Documentation.** `README.md` and `docs/` are accurate for what this releases: nothing merged since the last release left them behind.",
+  "**`context7.json`.** Its folders, exclusions and rules match the docs and commands as they are now, so AI tools pull current Rerail docs.",
+  "**`docs/internal-testing.md`.** It lists exactly the features in internal testing, and marks each one graduated or removed.",
+  "**Scrub.** No internal name, customer name, internal URL or old product name (such as \"Tempo\") in the code, the docs, or the commit messages and pull request text since the last release. `npm run check` catches only internal ticket IDs and a few stale paths in tracked files.",
+  "**npm package pages.** `README.md`, and `keywords` and `repository` in `package.json`, are current for core and every pack.",
+];
 
 // A large buffer: the paths changed since the last core tag can run past Node's 1 MiB default (21,265 of them once the
 // pack test data left git), which failed the run with ENOBUFS.
@@ -199,6 +216,14 @@ if (rows.length === 0) {
     }
   }
   for (const note of released) lines.push("", ...notes(note));
+  lines.push(
+    "",
+    "## Before merging",
+    "",
+    "Whoever merges this ticks each box first. A push to `main` rewrites this description and clears them, because what you checked is no longer what merging releases: check again.",
+    "",
+    ...BEFORE_MERGING.map((item) => `- [ ] ${item}`),
+  );
 }
 lines.push("", "This pull request is rewritten from `main` on every push to it (.github/workflows/release-pr.yml).");
 writeFileSync(bodyPath, `${lines.join("\n")}\n`);

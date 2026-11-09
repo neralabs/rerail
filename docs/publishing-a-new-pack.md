@@ -52,7 +52,7 @@ Confirm the pack is ready and your accounts can publish it.
 - **AWS:** `aws sso login`, or any AWS credentials that can read `s3://nera-test-fixtures/rerail/archives/`. The
   publish gate validates the pack on its test data.
 - **npm:** a token that bypasses 2FA cannot set up a trusted publisher.
-- **GitHub:** the publish script creates the release tag.
+- **GitHub:** the tag script creates the release tag.
 
 </details>
 
@@ -72,7 +72,7 @@ npm run fixtures:pull -- --pack <id>   # a ported pack's test data, which the pu
 <details>
 <summary>Why `main` and a clean checkout</summary>
 
-The publish script tags HEAD as `@neralabs/rerail-pack-<id>@<version>`. It refuses a checkout with changes, or a
+The tag script tags HEAD as `@neralabs/rerail-pack-<id>@<version>`. It refuses a checkout with changes, or a
 commit that isn't on GitHub. Don't publish from a feature branch: a squash merge drops the branch's commits, so the
 tag would point at a commit `main` never had.
 
@@ -89,11 +89,12 @@ node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id> [<id>
 It runs the release workflow's validation, then writes each tarball and a `manifest.json` to `/tmp/rule-packs`. On
 failure, fix the pack in a pull request to `main` and restart at step 1.
 
-## 3. Publish
+## 3. Tag and publish
 
-Publish the tarballs to npm and tag each release.
+Tag each release, then publish the tarballs to npm, as the release workflow does.
 
 ```sh
+node scripts/release/packs-tag.mjs /tmp/rule-packs
 node scripts/release/packs-publish.mjs /tmp/rule-packs
 ```
 
@@ -101,12 +102,15 @@ Approve the "Authenticate your account at: <url>" link in the browser. One appro
 Reruns after a failure are safe.
 
 <details>
-<summary>What the script does, and how reruns work</summary>
+<summary>What the scripts do, and how reruns work</summary>
 
-- **Each pack** is published public under the `latest` dist-tag and checked with an anonymous read. Then `next` is
-  pointed at it (`next` never trails `latest`) and the release tag is pushed to GitHub.
-- **On a rerun,** a version that's already tagged is skipped. A version npm already has but with no tag is checked,
-  has its `next` raised and is tagged, not published again.
+- **The tag script** pushes each release tag to GitHub. On a rerun, a version already tagged is skipped.
+- **The publish script** publishes each pack public under the `latest` dist-tag, then points `next` at it (`next`
+  never trails `latest`). It waits on nothing npm does, so it doesn't check the package is public: step 4 does. On a
+  rerun, a version npm already has has its `next` raised, not published again. A version older than the pack's
+  `latest` is never published, since that would move `latest` back.
+- If the publish fails after tagging, run the publish script again. Later versions don't depend on it: the release
+  workflow publishes any version that is tagged but not on npm.
 
 </details>
 
@@ -219,9 +223,10 @@ Find the message you see in the table; the fix is beside it.
 
 | Symptom | Cause and fix |
 |---|---|
-| `the checkout has changes; publish from a clean checkout` | Changed or untracked files in the worktree. Restart at step 1. |
+| `the checkout has changes; tag from a clean checkout of the commit to release` | Changed or untracked files in the worktree. Restart at step 1. |
 | `commit <sha> is not on GitHub, or gh cannot read the repository` | Not on a pushed commit, or `gh` isn't logged in. Use `origin/main` as in step 1; check `gh auth status`. |
-| `<name>@<version> answers an anonymous request with <status> 3 minutes after its publish: it is not public` | npm keeps the package private, or is slower than usual to serve it. Check `npm access get status <name>`; if private, run `npm access set status=public <name>`. Then rerun the script. |
+| `npm access get status` in step 4 prints `private` | npm keeps the package private. Run `npm access set status=public <name>`, then check again. |
+| `<name>@<version> is older than latest <latest>, so it was not published` | A newer version is already `latest` and supersedes this one. Nothing to do; publishing it would move `latest` back. |
 | `EOTP` or an "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
 | The gate fails to load the native engine | Run `npm run build:native` with `~/.cargo/bin` on `PATH`. |
 | The gate says a tool-pack's test data is missing and to run `npm run fixtures:pull` | The worktree has no pack data. Run `npm run fixtures:pull -- --pack <id>` with read access to the bucket, then step 2 again. |

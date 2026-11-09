@@ -123,10 +123,12 @@ is open to others again.
    changes.
 5. Run the checks in [Before you open a pull request](#before-you-open-a-pull-request).
 6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change.
-7. A code owner reviews it; the `neralabs-reviewer` bot may also comment (never on a pull request from a fork), but
-   its review never approves. Push fixes to the same branch. Pack data the pull request stages is published by a
-   maintainer first ([docs/upstream.md, "Publishing pack data"](docs/upstream.md#publishing-pack-data)); once a code
-   owner approves it and CI passes, it is squash-merged.
+7. A code owner reviews it, and the `neralabs-reviewer` bot may too (never on a pull request from a fork). The bot
+   approves when it finds nothing blocking and the pull request touches no high-risk path in
+   [REVIEW.md](REVIEW.md#high-risk-areas); that approval counts as the one main requires. Push fixes to the same
+   branch. Pack data the pull request stages is published by a maintainer first
+   ([docs/upstream.md, "Publishing pack data"](docs/upstream.md#publishing-pack-data)); once it is approved and CI
+   passes, it is squash-merged.
 
 **From a fork** (anyone): steps 1, 4 and 5 as above, on a branch in your fork, then open a pull request from it or link
 the branch in the issue ([Proposing a change from your fork](#proposing-a-change-from-your-fork)).
@@ -303,8 +305,8 @@ and `/healthz` report it as `dev` rather than `bundled`.
 Open a pull request against `main` that links its issue, if it has one. Changes are squash-merged after review.
 
 - `npm run check` passes: the type check, the layer boundaries, the repository structure gate, Windows-safe paths and
-  no internal ticket IDs. While the pull request stages pack data in a `publish/`, structure metric #3 fails for each
-  such tool-pack until the data is published.
+  no internal references (ticket IDs, `nera-` names outside the public list). While the pull request stages pack data
+  in a `publish/`, structure metric #3 fails for each such tool-pack until the data is published.
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).
@@ -317,7 +319,39 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
   changed for the person upgrading, in plain language, in a sentence or two (at most 60 words), and leaves out commit
   hashes, ticket ids, pull request numbers and repository-internal maintenance; CI fails a pull request whose entry or
   summary says otherwise ([release notes](docs/release.md#release)).
-- Tests cover the behavior you changed, and docs that describe it are updated.
+- Tests cover the behavior you changed.
+- Docs are updated in the same pull request, not a later one. A change to commands, coding agents or setup updates
+  `README.md` and the pages under `docs/` that describe it, and `context7.json` where its rules or folders name what
+  changed.
+- A feature that enters, graduates from or leaves internal testing updates
+  [docs/internal-testing.md](docs/internal-testing.md), which lists exactly what is in
+  ([governance](docs/GOVERNANCE.md#internal-testing-features) says who approves a graduation or removal).
+- It carries only approved Rerail context ([Keeping private context out](#keeping-private-context-out)).
+- A change to what a package does keeps its npm page current: its `README.md`, and `keywords` and `repository` in its
+  `package.json`, for core and for a pack.
+
+Whoever merges the Release pull request checks the same of the release as a whole
+([docs/release.md](docs/release.md#before-merging)).
+
+### Keeping private context out
+
+The repository, its pull requests and its CI logs are public. A contribution carries only context approved for Rerail:
+what the change does and the public sources it rests on. Before you publish a branch or a pull request, check its
+fixtures, test data, code comments, commit messages, pull request title, body and comments, and any agent session
+traces or transcripts you attach or paste from, for:
+
+- the names of Nera's private repositories and projects, or text quoted from them;
+- customer names, and old product names (such as "Tempo");
+- internal ticket IDs, internal URLs and links to internal tools: Notion, Slack, Orca shares, signed attachment URLs;
+- personal paths and usernames (`/Users/<you>/…`, a home directory in a stack trace or a scratch path);
+- anything about research participants or the people whose prompts or sessions a study read.
+
+Replace each with a neutral description or a generic example (`/Users/me`, "a private web application"), keeping what
+a test case tests. `npm run check:internal-refs` fails on internal ticket IDs and on any `nera-` identifier outside
+its public list (`PUBLIC_NAMES` in `scripts/check/check-internal-refs.mjs`), in tracked paths and text. It sees only
+that hyphenated form: the same name written with an underscore, a slash or as a scoped package passes, and so do
+pull request text, links and personal details, so those are yours to check. A squash-merged commit message can't be
+changed afterwards.
 
 ## Reporting a bug
 

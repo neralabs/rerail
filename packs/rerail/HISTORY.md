@@ -174,8 +174,9 @@ The modes the rules shipped in:
 ### `rerail-ui-color-tokens`: the dashboard defines no raw colours
 
 - **Rule**: in `ui/**`, every colour is a token, a Nera token where one fits. `ui/tokens.generated.css`, generated from
-  nera-landing's `web/src/index.css`, holds the Nera tokens. A local token may alias a Nera token; a local token whose
-  value is a raw colour, a raw colour in a declaration, and a redefinition of a Nera token's name are breaks.
+  the `web/src/index.css` of Nera's design-system source, holds the Nera tokens. A local token may alias a Nera token;
+  a local token whose value is a raw colour, a raw colour in a declaration, and a redefinition of a Nera token's name
+  are breaks.
 - **Stated in**: nowhere. `scripts/check/check-ui-tokens.mjs` checks only that every `var(--…)` the page uses is
   declared.
 - **History**: #196 (`6c84dada1`) brought 21 raw colours into `ui/css/base.css` as local tokens, two of them in
@@ -423,7 +424,7 @@ proposed](#considered-and-not-proposed). The ones below have history behind them
 - **Stated in**: structure metric 14 means to enforce one root resolver per language, but misses these: it looks for
   a relative `fixtures` literal only on lines with `join(`, `resolve(`, `URL(`, `Path::new(` or `PathBuf::from(`, not
   in `include_str!` or `format!`, and cannot see a direct `env!("RERAIL_ORACLES_DIR")`.
-- **History**: the nera-landing import on #1's branch read fixtures through direct `env!` paths, fixed in `38efea8c4`
+- **History**: a web application's import on #1's branch read fixtures through direct `env!` paths, fixed in `38efea8c4`
   and the merge `7e385006e`. #56 added relative `include_str!` paths that are still on `main`; four unmerged branches
   add 31 more lines, and one had to re-count `../` after a move (`3d260c7a8`).
 - **Today**: fixed in this pull request. The 18 lines in `native/src/code_rule_dsl/scope/rust/tests.rs` and

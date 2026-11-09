@@ -24,9 +24,10 @@ name: Release
 #
 # package.yml restores the cargo cache and never saves it: release-cache.yml builds and saves it on main.
 #
-# Once the dist-tag check passes, the github-release job makes the tag's GitHub Release, with the version's
-# CHANGELOG.md section as its notes. After a put-back, the same job makes the version put back the repository's
-# latest release.
+# Once the tarball passes the shrinkwrap check and the managed installs, the github-release job makes the tag's GitHub
+# Release, with the version's CHANGELOG.md section as its notes, beside the npm publish rather than after it: the
+# Release is this repository's, and npm being slow to publish or to serve the version can neither hold it back nor skip
+# it. After a put-back, the same job makes the version put back the repository's latest release.
 
 on:
   workflow_dispatch:
@@ -376,17 +377,30 @@ jobs:
           RELEASED: "@neralabs/rerail@${{ inputs.latest }}:latest"
         run: node scripts/release/dist-tags-check.mjs
 
-  # The GitHub Release of the tag, once npm has the version under its channel: its notes are the version's section of
-  # the tagged CHANGELOG.md (scripts/release/github-release.mjs), so release notes are written once, in the changelog.
-  # A `next` or `beta` release is a pre-release; a `latest` one becomes the repository's latest release. Run again, it
-  # rewrites the notes and flags of the Release it made. After a put-back it runs for the version put back, whose
-  # Release exists already: that rewrite makes it the latest release again, with its notes from main's CHANGELOG.md,
-  # which keeps every released version's section. This is the one job that writes to the repository, so it alone
-  # holds `contents: write`.
+  # The GitHub Release of the tag, once the tarball has passed the checks every publish needs: its notes are the
+  # version's section of the tagged CHANGELOG.md (scripts/release/github-release.mjs), so release notes are written
+  # once, in the changelog. It runs beside the publish and waits on nothing npm does, so a slow publish or a dist-tag
+  # read-back that fails cannot leave the tag without its Release; should the publish fail, the Release stands and a
+  # retry (the `publish` input) runs this job again. A `next` or `beta` release is a pre-release; a `latest` one
+  # becomes the repository's latest release. Run again, it rewrites the notes and flags of the Release it made. After a
+  # put-back it runs for the version put back, whose Release exists already: that rewrite makes it the latest release
+  # again, with its notes from main's CHANGELOG.md, which keeps every released version's section. This is the one job
+  # that writes to the repository, so it alone holds `contents: write`.
   github-release:
     name: GitHub Release
-    needs: [metadata, dist-tags, put-back]
-    if: ${{ !cancelled() && (needs.dist-tags.result == 'success' || needs.put-back.result == 'success') }}
+    needs: [metadata, shrinkwrap, windows-install, unix-install, put-back]
+    if: >-
+      ${{
+        !cancelled() && (
+          needs.put-back.result == 'success' ||
+          (
+            needs.metadata.outputs.channel != '' &&
+            needs.shrinkwrap.result == 'success' &&
+            needs.windows-install.result == 'success' &&
+            needs.unix-install.result == 'success'
+          )
+        )
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

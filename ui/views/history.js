@@ -234,30 +234,20 @@ function renderUnmatched(a, show) {
     : `Every violation ${rangeLabel()} was steered.`);
 }
 
-export function render(root) {
-  if (pane === null) build();
-  if (pane.parentNode !== root) root.replaceChildren(pane);
-  const a = pane._a;
-  syncRange(a.range);
-  const every = rankedRules("all");
-  const ranked = ui.histOutcome === "all" ? every : rankedRules();
-  const empty = historyEmpty(every);
-  const id = historyRuleId(ranked);
-  const showBody = empty === null || (id !== null && ui.actRule !== null);
-  setText(a.lead, empty === null ? leadText(ranked) : "");
-  // The range only matters once something was logged: before, every range reads the same.
-  setAttr(a.range, "hidden", empty !== null && empty.kind !== "nothingInRange" && !showBody);
-  // Until the activity answers are in (the range's, and since install's for the empty states), nothing is known to be empty.
-  const known = data.activitySessions !== null && (ui.range === ALL_TIME || data.activityAllSessions !== null);
-  setAttr(a.empty, "hidden", showBody || empty === null || !known);
-  if (!showBody && empty !== null && known) {
-    const [title, text] = EMPTY_TEXT[empty.kind];
-    setText(a.empty.querySelector("h3"), title);
-    setText(a.empty.querySelector("p"), text(empty));
-  }
-  setAttr(a.ltrow, "hidden", !showBody);
-  setAttr(a.body, "hidden", !showBody);
-  if (!showBody) return;
+/** Until the activity answers are in (the range's, and since install's for the empty states), nothing is known to be empty. */
+const activityKnown = () => data.activitySessions !== null && (ui.range === ALL_TIME || data.activityAllSessions !== null);
+
+function renderEmptyState(a, empty, showBody) {
+  const shown = !showBody && empty !== null && activityKnown();
+  setAttr(a.empty, "hidden", !shown);
+  if (!shown) return;
+  const [title, text] = EMPTY_TEXT[empty.kind];
+  setText(a.empty.querySelector("h3"), title);
+  setText(a.empty.querySelector("p"), text(empty));
+}
+
+/** The list and, with a rule chosen, what it found. */
+function renderHistoryBody(a, ranked, id) {
   a.body.classList.toggle("nolist", listHidden);
   const label = listHidden ? "Show list" : "Hide list";
   setAttr(a.toggle, "aria-pressed", String(!listHidden));
@@ -271,6 +261,31 @@ export function render(root) {
   const told = toldOf(id);
   renderMeta(a, id, told);
   renderViolations(a, id, inRange(id), told);
+}
+
+function renderLeadAndRange(a, ranked, empty, showBody) {
+  setText(a.lead, empty === null ? leadText(ranked) : "");
+  // The range only matters once something was logged: before, every range reads the same.
+  setAttr(a.range, "hidden", empty !== null && empty.kind !== "nothingInRange" && !showBody);
+}
+
+const bodyShown = (empty, id) => empty === null || (id !== null && ui.actRule !== null);
+
+export function render(root) {
+  if (pane === null) build();
+  if (pane.parentNode !== root) root.replaceChildren(pane);
+  const a = pane._a;
+  syncRange(a.range);
+  const every = rankedRules("all");
+  const ranked = ui.histOutcome === "all" ? every : rankedRules();
+  const empty = historyEmpty(every);
+  const id = historyRuleId(ranked);
+  const showBody = bodyShown(empty, id);
+  renderLeadAndRange(a, ranked, empty, showBody);
+  renderEmptyState(a, empty, showBody);
+  setAttr(a.ltrow, "hidden", !showBody);
+  setAttr(a.body, "hidden", !showBody);
+  if (showBody) renderHistoryBody(a, ranked, id);
 }
 
 /**

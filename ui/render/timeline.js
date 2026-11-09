@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, outputText, describeInput } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, outputText, describeInput } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
@@ -231,6 +231,49 @@ function renderEarlier(earlier) {
   setText(t.earlier.firstChild, ["Load earlier", ...parts].join(" · "));
 }
 
+/** What Rerail did not see of the session, in a sentence's clauses: empty when it saw all of it. */
+function coverageGaps(sess) {
+  const dropped = droppedEvents(sess);
+  const unchecked = uncheckedBoundaries(sess);
+  const rulesPending = codeRulesPendingBoundaries(sess);
+  const ignored = ignoredEdits(sess);
+  const ruleChanges = ignoreRuleChanges(sess);
+  return [
+    ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
+    ...(unchecked === 0 ? [] : [`rules had not yet seen shell edits at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
+    ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
+    ...(ignored === 0 ? [] : [`${fmt(ignored)} ${plural(ignored, "edit")} went unchecked because Git ignores the file`]),
+    ...(ruleChanges === 0 ? [] : [`Git's ignore rules changed ${ruleChanges === 1 ? "once" : `${fmt(ruleChanges)} times`}`]),
+  ].join("; ");
+}
+
+/** The audited-clean note, and what it says of the session's coverage. */
+function renderCleanNote(sess, gaps, loaded, clean) {
+  setAttr(t.empty, "hidden", !(loaded && clean));
+  setText(t.empty.querySelector("p"), gaps === ""
+    ? `Rerail audited the whole session: ${fmt(sess.eventCount)} events.`
+    : `Rerail saw ${fmt(sess.eventCount)} events; ${gaps}.`);
+}
+
+/** The rail, the start and the end, once there is something to place them around. */
+function renderBounds(rail, sess, gaps, { loaded, quietEmpty, earlier }) {
+  const hidden = quietEmpty || !loaded;
+  setAttr(rail, "hidden", hidden);
+  // The start is only reached once the whole session is loaded back to it.
+  setAttr(t.start, "hidden", hidden || earlier !== false);
+  setAttr(t.end, "hidden", hidden);
+  const end = endLabel(openState(sess), sess);
+  setText(t.end, gaps === "" ? end : `${end} · ${gaps}`);
+}
+
+function renderLoading(loaded, quietEmpty, total) {
+  setAttr(t.loading, "hidden", loaded && !(quietEmpty && total === null));
+}
+
+const visibleTurns = (turns, quietEmpty) => (quietEmpty ? [] : turns.filter(turnVisible));
+
+const earlierToOffer = ({ loaded, clean, earlier }) => (loaded && !clean ? earlier : false);
+
 /**
  * `page`: whether the newest transcript page is `loaded`, the session's violation `total` (`null` until known), and
  * `earlier`: `false` once the transcript and violations reach the session's start, else how many of each are loaded.
@@ -241,27 +284,12 @@ export function renderTimeline(tl, rail, sess, turns, cs, page) {
   const quietEmpty = !ui.showAll && cs.length === 0;
   // Audited clean: no violation logged in the whole session, not just none among the loaded events.
   const clean = quietEmpty && total === 0;
-  setAttr(t.empty, "hidden", !(loaded && clean));
-  const dropped = droppedEvents(sess);
-  const unchecked = uncheckedBoundaries(sess);
-  const rulesPending = codeRulesPendingBoundaries(sess);
-  const gaps = [
-    ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
-    ...(unchecked === 0 ? [] : [`rules had not yet seen shell edits at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
-    ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
-  ].join("; ");
-  setText(t.empty.querySelector("p"), gaps === ""
-    ? `Rerail audited the whole session: ${fmt(sess.eventCount)} events.`
-    : `Rerail saw ${fmt(sess.eventCount)} events; ${gaps}.`);
-  setAttr(t.loading, "hidden", loaded && !(quietEmpty && total === null));
-  setAttr(rail, "hidden", quietEmpty || !loaded);
-  // The start is only reached once the whole session is loaded back to it.
-  setAttr(t.start, "hidden", quietEmpty || !loaded || earlier !== false);
-  setAttr(t.end, "hidden", quietEmpty || !loaded);
-  const st = openState(sess);
-  setText(t.end, gaps === "" ? endLabel(st, sess) : `${endLabel(st, sess)} · ${gaps}`);
-  syncChildren(t.turns, quietEmpty ? [] : turns.filter(turnVisible), turn => turn.key, createTurn, (n, turn) => updateTurn(n, turn, sess.sessionId));
-  renderEarlier(loaded && !clean ? earlier : false);
+  const gaps = coverageGaps(sess);
+  renderCleanNote(sess, gaps, loaded, clean);
+  renderLoading(loaded, quietEmpty, total);
+  renderBounds(rail, sess, gaps, { loaded, quietEmpty, earlier });
+  syncChildren(t.turns, visibleTurns(turns, quietEmpty), turn => turn.key, createTurn, (n, turn) => updateTurn(n, turn, sess.sessionId));
+  renderEarlier(earlierToOffer({ loaded, clean, earlier }));
   placeTicks(rail, tl);
 }
 

@@ -183,10 +183,19 @@ controls bind only an agent that reaches Rerail through MCP (see T1).
 - **People-only tools.** `repository_reset`, `repository_link`, `presentation_preferences_*` and
   `audit_settings_update` refuse an `agent`. An agent can turn Follow `.gitignore` on but never off, change
   whole-repository settings only before set-up, and never remove a library rule another repository uses.
+- **Git's ignore rules.** An agent can still widen what Git ignores, and so what Rerail checks, by writing an ignore
+  file or pointing `core.excludesFile` at one. Nothing blocks it. The session records a change that can make the rules
+  ignore more: a `.gitignore` a tool edit wrote or a walk found (including one that ignores itself), and
+  `.git/info/exclude` or the `core.excludesFile` file, which no diff shows, followed when `git config` points it
+  elsewhere. It records what a look saw, not who wrote it, and a change made while no session is open is on no record.
+  Each tool edit left unchecked because Git ignores the file is recorded; a shell write inside an ignored folder is not,
+  nor is an excludes file the system gitconfig or an `include.path` names
+  ([Files Git ignores](in-session-surfaces.md#files-git-ignores)).
 - **Transcript view** (`agentTranscriptPayload`, `src/engine/transcript-boundary.ts`):
   - Tool results lose their `output`.
   - Tool calls whose input names a hidden or secret-like path lose their input.
-  - Unknown event kinds are withheld whole.
+  - Unknown event kinds are withheld whole, and so are the records of what Git's ignore rules left unchecked and of
+    changes to them, which quote hidden ignore files.
   - Inputs too deep or large to read are withheld (fail closed).
 - **Findings in secret-like files** (`sensitiveByName`, `src/engine/path-boundary.ts`) reach the agent as rule and
   place only, without the matched code.
@@ -723,9 +732,14 @@ These are maintainer risks, not user risks. Actions are pinned by commit SHA, an
 - **Pinned references.** Every `uses:` under `.github`, including first-party actions and the reviewer workflow, is
   pinned to a commit SHA with a version comment; Dependabot updates them, composite actions included.
   `npm run check:pins` keeps the reviewer's `reviewer_ref` equal to its `uses:` SHA.
-- **Reviewer cannot approve or see forks.** `reviewer.yml` sets `allow_approve: false`. Its `same-repo` job holds no
-  secrets, has a read-only token, and calls the reviewer only when the pull request's head repository is this one. No
-  trigger, a maintainer's comment command included, gives a fork pull request the model key or the app key.
+- **Reviewer never sees forks.** `reviewer.yml`'s `same-repo` job holds no secrets, has a read-only token, and calls the
+  reviewer only when the pull request's head repository is this one. No trigger, a maintainer's comment command
+  included, gives a fork pull request the model key or the app key.
+- **Reviewer approval is bounded.** `reviewer.yml` sets `allow_approve: true`, and main requires one approval with no
+  code-owner requirement, so the bot's approval is enough to merge. The verdict is the reviewer's own policy, not the
+  model's: it approves only with nothing blocking, CI passed, and no high-risk path from REVIEW.md touched, which keeps
+  `.github/`, packaging, migrations and release scripts in front of a person. Only contributors push branches here, so
+  a prompt injection in a pull request's text needs a contributor to open it.
 - **No branch code beside the write token.** `dependabot-pins.yml` runs branch code in a read-only job that uploads a
   patch; a second job applies only pin-file changes, then mints the write token and pushes.
 
@@ -735,6 +749,8 @@ These are maintainer risks, not user risks. Actions are pinned by commit SHA, an
 <summary>What remains</summary>
 
 - `release.yml` runs on any `v*` tag; the `release` environment approval is the only gate.
+- An approval, the bot's included, survives later pushes: main's ruleset does not dismiss stale approvals, so a
+  contributor can push to a branch after it is approved and merge it unreviewed.
 - `scripts/host/host-auth.ts` (developer smoke runs) copies an access-only OAuth token (no refresh token) into a
   sandbox, 0600 in a 0700 folder, and deletes it and its SQLite journal files when the run ends, failures included.
 - The `.node` binaries ship without a separate signature and rely on provenance.
@@ -766,7 +782,14 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - The enforcer's spool in `tmpdir()` survives a crash.
 - `/native/session` still returns `error.message` in its `400`s.
 - A `.git` gitlink in an archive (not a clone) can point at another repository's common directory and inherit its
-  `rerail-repository-id`, rules and start state.
+  `rerail-repository-id`, rules and start state when a session starts in that folder. A path a tool call names gets no
+  such thing: a checkout is recorded from one only when a recorded checkout of that clone shares its common directory and
+  its `git worktree list` names it (`recordStartedWorktree`), and only in a started repository. That is not a barrier to
+  an agent, which can run `git worktree add` itself, as it can declare a submodule (`declaredSubmodules`). What it gains
+  is another checkout of the same repository, judged by the repository's rules at the same paths within it, its own
+  `.rerail/rules` in Log until approved. A `.git` file it writes without registering a worktree takes no files from the
+  checkout around it. Each session walks and reads the files of every such worktree of its repository and records
+  what it finds there, but another session's work never steers it.
 
 </details>
 

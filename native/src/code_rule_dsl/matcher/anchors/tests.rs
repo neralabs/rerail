@@ -28,6 +28,7 @@ fn compile_rule(
         captures: Default::default(),
         calls: None,
         documents: None,
+        instances: None,
         side: crate::code_rule_dsl::compile::documents::Side::Host,
     };
     crate::code_rule_dsl::compile::compile_ast_rule(rule, language, path, gaps, &utils)
@@ -522,7 +523,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
         (
             "python",
             GrammarDialect::Python,
-            "from data_layer import AbstractData\nclass Example:\n    def run(self, txn):\n        value = txn.execute('select * from users')\n        assert value != None\n        return sorted(value)\n",
+            "from core import AbstractData\nclass Example:\n    def run(self, txn):\n        value = txn.execute('select * from users')\n        assert value != None\n        return sorted(value)\n",
         ),
         (
             "typescript",

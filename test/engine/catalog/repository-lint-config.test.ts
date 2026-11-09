@@ -823,6 +823,10 @@ describe("proposeLintConfigSettings for ESLint's flat config", () => {
     // process.cwd() and import.meta's own functions are still read.
     const allowed = "const root = process.cwd();\nconst here = import.meta.resolve(\"./x.js\");\nexport default [{ settings: { root, here }, rules: { \"no-console\": \"off\" } }];";
     expect((await flat(allowed, ["javascript"], "eslint.config.mjs")).settings).toMatchObject([{ ruleId: "eslint-no-console", on: false }]);
+    // Only the call with no argument: handed one, process.cwd is a global's call like any other.
+    const withArgument = await flat("const root = process.cwd(\"x\");\nexport default [{ settings: { root }, rules: { \"no-console\": \"off\" } }];", ["javascript"], "eslint.config.mjs");
+    expectEslintPortsOff(withArgument.settings);
+    expect(withArgument.notes).toEqual(["eslint.config.mjs is not statically readable: it runs code Rerail does not read as data (line 1: process.cwd(\"x\")). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off."]);
   });
 
   // Self-review round 7: node:vm runs code by design, and a config may require itself; calls into either change the
