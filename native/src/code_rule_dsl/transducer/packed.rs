@@ -279,6 +279,8 @@ mod block_tests;
 mod block_rows_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
+// The `.rr` parser: the Bitlex grammar compiled, the engine's parser for what it refuses.
+pub(in crate::code_rule_dsl) mod rr_parser;
 mod grammar;
 mod bitlex_prove;
 mod bitlex_tier2;

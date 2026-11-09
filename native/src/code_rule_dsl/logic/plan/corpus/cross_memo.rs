@@ -350,6 +350,38 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     Ok(Some(Plan { components, memo, digest }))
 }
 
+/// Drops the guards `split` added (`$rr_xd = @doc(x), !rr_cross_doc($rr_xd)`): for a run that found no component,
+/// whose `rr_cross_doc` is empty, so every guard passes. Each guard was two steps over every row its rule's delta
+/// gave (calls_cx, cold: before the selective join of most rules of its largest stratum). Returns the guards dropped.
+pub(super) fn drop_guards(cross: &mut front::Program) -> usize {
+    use front::{Literal, Term};
+    let mut dropped = 0;
+    for rule in &mut cross.rules {
+        let guards: BTreeSet<String> = rule
+            .body
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Atom(a) if a.rel == DOCS && a.neg => match a.args.as_slice() {
+                    [Term::Var(d)] => Some(d.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        if guards.is_empty() {
+            continue;
+        }
+        let before = rule.body.len();
+        rule.body.retain(|l| match l {
+            Literal::Atom(a) => !(a.rel == DOCS && a.neg),
+            Literal::Cmp { l: Term::Var(d), op: "=", r: Term::Call(f, _) } => !(f == "doc" && guards.contains(d)),
+            _ => true,
+        });
+        dropped += (before - rule.body.len()) / 2;
+    }
+    dropped
+}
+
 /// Drops the memoised relations' rules but their copies from `<rel>__cross`: for a run where every component was
 /// found, whose guards (`!rr_cross_doc`) every other rule's rows fail.
 /// What only those rules read is dropped too (`rr_cx_reach`); `kept` names what the run reads besides its outputs.
@@ -540,10 +572,11 @@ pub(super) fn record(
     let mut checked: HashSet<(i64, i64)> = HashSet::new();
     for (rel, (first, _)) in &plan.memo {
         let nodes = node_columns.get(rel).cloned().unwrap_or_default();
-        // Grouped by component first, then each group sorted and deduplicated (a relation's rows can come from
-        // several parts of the run).
-        let mut groups: HashMap<i64, Vec<&Vec<i64>>> = HashMap::new();
+        // Each row tagged with its component, then sorted and deduplicated (a relation's rows can come from several
+        // parts of the run).
+        let mut tagged: Vec<(i64, &Vec<i64>)> = Vec::new();
         let mut last: Option<(i64, Option<i64>)> = None;
+        let mut seen: Vec<Option<(i64, i64)>> = vec![None; nodes.len()];
         for row in rows.get(rel).into_iter().flatten() {
             let d = doc_of(row[*first]);
             let c = match last {
@@ -559,9 +592,15 @@ pub(super) fn record(
             if mode == Mode::On && found.hits.contains_key(&c) {
                 continue;
             }
-            for &n in &nodes {
-                let Some((e, _)) = components.of.get(&doc_of(row[n])) else { continue };
+            for (k, &n) in nodes.iter().enumerate() {
+                // Consecutive rows mostly name the same document in a column: its component and check are kept.
+                let dn = doc_of(row[n]);
+                if seen[k] == Some((c, dn)) {
+                    continue;
+                }
+                let Some((e, _)) = components.of.get(&dn) else { continue };
                 if *e == c || checked.contains(&(c, *e)) {
+                    seen[k] = Some((c, dn));
                     continue;
                 }
                 if !components.closure(c, &mut closures).contains(e) {
@@ -577,15 +616,17 @@ pub(super) fn record(
                     )));
                 }
                 checked.insert((c, *e));
+                seen[k] = Some((c, dn));
             }
-            groups.entry(c).or_default().push(row);
+            tagged.push((c, row));
         }
-        for (c, mut group) in groups {
-            group.sort_unstable();
-            group.dedup();
-            let out = by.entry(c).or_default().entry(rel.clone()).or_default();
-            out.reserve(group.iter().map(|r| r.len()).sum());
-            for row in group {
+        // One sort by (component, row): each component's rows in order, duplicates adjacent.
+        tagged.sort_unstable();
+        tagged.dedup();
+        for group in tagged.chunk_by(|a, b| a.0 == b.0) {
+            let out = by.entry(group[0].0).or_default().entry(rel.clone()).or_default();
+            out.reserve(group.iter().map(|(_, r)| r.len()).sum());
+            for (_, row) in group {
                 out.extend_from_slice(row);
             }
         }

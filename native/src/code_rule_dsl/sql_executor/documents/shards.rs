@@ -294,6 +294,7 @@ impl Family {
     }
 }
 impl Source for Family {
+    fn revision(&self)->Option<u64> {Some(0)}
     fn columns(&self) -> Vec<String> {
         self.columns.clone()
     }

@@ -1,5 +1,7 @@
 //! Output ownership and transitive invalidation. Persistent user tables are never owned here.
 use super::*;
+mod statistics;
+pub(super) use statistics::Statistics;
 
 #[derive(Clone)]
 pub(super) struct Execution {
@@ -158,6 +160,7 @@ impl CodeRuleSqlExecutor {
         Ok(objects)
     }
     pub(super) fn clear_control(&self) -> Result<()> {
+        self.statistics.clear(&self.db)?;
         self.stats_ready.set(false);
         if !self.control_ready.get() {
             return Ok(());

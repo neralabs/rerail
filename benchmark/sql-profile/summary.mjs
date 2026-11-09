@@ -10,10 +10,14 @@ const setupCreate = query => query.kind === "sql" && /^\s*CREATE\s+(?:TEMP\s+)?T
 
 function expectedSchemaExplanation(query) {
   if (query.kind !== "sql" || !query.plans?.length) return false;
+  const replacedCounter = query.sql.match(/^\s*DROP\s+TABLE\s+temp\."(__sql_changes_\w+)"\s*;?\s*$/i);
   return query.plans.every(plan => {
     const error = plan.plan?.error ?? plan.bytecode?.error ?? "";
     return /^\s*CREATE\b/i.test(query.sql) && /already exists/i.test(error)
       || /^\s*DROP\b/i.test(query.sql) && /no such (?:table|view|index)/i.test(error)
+      || /^\s*DROP\s+TABLE\b/i.test(query.sql) && /use DROP VIEW to delete view/i.test(error)
+      || /^\s*DROP\s+VIEW\b/i.test(query.sql) && /use DROP TABLE to delete table/i.test(error)
+      || replacedCounter && error.toLowerCase() === `table ${replacedCounter[1]} may not be dropped`.toLowerCase()
       || /^\s*ALTER\s+TABLE\b/i.test(query.sql) && /duplicate column name/i.test(error);
   });
 }
