@@ -453,6 +453,7 @@ seeds × both orders.
 - Most conflicts need a person: about two thirds escalate even with the full policy. The useful shape is a decision
   log where the person decides, with the panel's verdict shown as a recommendation when it is unanimous, not a
   resolver that decides alone. Hard checks belong at merge time, when the work is finished, not in flight.
+
 #### 6.3.8 Coordination units from other pull requests, surfaced
 
 The coordination units (hand-offs, positions, contracts, retirements, artefacts extracted from every pull request open
