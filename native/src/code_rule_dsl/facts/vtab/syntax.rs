@@ -606,7 +606,8 @@ struct DefIds {
 const INDEX_BITS: u32 = 18;
 const SLOT_BITS: u32 = 31 - INDEX_BITS;
 const SPANS: u32 = (1 << SLOT_BITS) - 1;
-const _: () = assert!(SPANS << INDEX_BITS | ((1 << INDEX_BITS) - 1) < SPAN);
+// Every slot, with its largest index, stays below `SPAN`.
+const _: () = assert!(SPANS < SPAN >> INDEX_BITS);
 
 /// Why a document keeps preorder ids when the run numbers nodes per definition.
 #[derive(Debug, PartialEq, Eq)]
