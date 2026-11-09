@@ -2823,9 +2823,53 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-execution-authority-bypass.json",
       "legacySha256": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/execution-authority-bypass.rr",
-      "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a"
+      "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
+      "evidence": {
+        "assertions": 7,
+        "positives": 6,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "025a71bda873d153512e315871571654a364b60dbb3cc593b028a90bf11a753a",
+        "engineCommit": "2c6ee3568474fbe77d599a6403f5972350f34741",
+        "corpusSha256": "d6cd54654e9d32fa7beb478f97e0c38aacc67cc0499dd9c693d3a7148d1a4a69",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "3b770a2b3d625130871eac5061b7be21b550b82b38f44271de88eeecc86d6167",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory.json",
+          "sha256": "b5b76fa604931179d976db422044913943860448aa6edb2898f9470d688a4e5b"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-native-snapshot.json",
+            "sha256": "0b406837696314b80251c1a2008a52376998a0a6e7cba22bb412dee68502bc00"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-native-workspace.json",
+            "sha256": "f0ed59d167623d3afacd8f6c66e4a748f7b191d680045d848d256f68ccc12ee3"
+          }
+        ],
+        "acceptanceCheckpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-authority-final004-checkpoint.json.gz",
+          "sha256": "4085b6d56b3cda2a18d13bd503bd9ee4fb4311aecfb367a0dbf2db62fd40d941"
+        },
+        "supplemental": {
+          "apiCases": 81,
+          "failures": 0,
+          "frontendCases": 26,
+          "inputRefusals": 8,
+          "mutationControls": 12,
+          "originalTestsPerAPI": 7,
+          "persistentSteps": 15,
+          "productionCases": 26,
+          "semanticFallbacks": 0,
+          "skipped": 0,
+          "verifiedNativeExecutions": 577
+        },
+        "comparison": "Complete values; only unspecified whole-file completion groups may permute. Registry and per-file order and multiplicity remain exact."
+      }
     },
     {
       "check": "impl_direct_execution",

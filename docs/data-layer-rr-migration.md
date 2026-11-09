@@ -2449,3 +2449,8 @@ Registry order, per-file order, duplicates, production order, messages, and outp
 The checkpoint does not certify the global migration gate. Authority remains a draft until its aggregate evidence is registered there.
 Six rule translations and the previously recorded acceptance gaps remain open.
 The remote Final branch was fetched before continuing; its latest `004df7e75` is already merged.
+
+The authority evidence is now registered in the migration manifest.
+The full assertion gate passes with all seven inventory cases through each native API and six positive original observations.
+Separate reports retain the raw API results; the aggregate receipt retains production, CLI, input-error, control, and update evidence.
+This accepts `execution_authority_bypass` only. It does not accept the other rules or switch the global production path.
