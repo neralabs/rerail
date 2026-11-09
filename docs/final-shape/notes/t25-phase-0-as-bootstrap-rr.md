@@ -160,11 +160,11 @@ CPU of the main thread is the run's report. The process figure is `/usr/bin/time
 
 ## Open items
 
-- O143: a relation the request cone derives is written empty as an output. `bootstrap.rr` outputs copies.
-- O144: a per-file relation with no node column is lost for documents that `load` brings in. `p0_names` carries
+- O144: a relation the request cone derives is written empty as an output. `bootstrap.rr` outputs copies.
+- O145: a per-file relation with no node column is lost for documents that `load` brings in. `p0_names` carries
   its node.
-- O145: tests against the shared default tape cache wait on its atoms lease.
-- O146: each phase-0 run costs about 0.25 s, so callers batch their seeds.
+- O146: tests against the shared default tape cache wait on its atoms lease.
+- O147: each phase-0 run costs about 0.25 s, so callers batch their seeds.
 
 One fault was found and fixed while measuring. A profiled run with the cross-file memo deadlocked: the outer run
 held the profile (`profile::one_run`), and `cross_memo::add` then started a phase-0 run for `components.rr`,

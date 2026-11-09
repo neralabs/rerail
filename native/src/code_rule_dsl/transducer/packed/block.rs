@@ -296,10 +296,15 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// (`docs/parser-generators/10-bit-programs.md` §4.1): simdjson's structural
     /// indexes from its structural mask.
     pub(super) extracts: Vec<u16>,
-    /// Values, each also an output, whose set bits each executor counts over the whole stream:
-    /// a total per file (`BlockRun::totals`). Tier 2 reads them (`EMPTY`): the fallback's
-    /// masks are totals, and a file with any bit goes to tree-sitter.
+    /// Values, each also an output, that each executor tests over the whole stream: a total per
+    /// file (`BlockRun::totals`), 1 when the output has any bit and 0 when it has none. Tier 2
+    /// reads them (`EMPTY`): the fallback's masks are totals, and a file with any bit goes to
+    /// tree-sitter. Only whether there is a bit is wanted, so no executor counts them.
     pub(super) totals: Vec<u16>,
+    /// Values, each also an output, that tier 2 reads as masks, a word of 64 bytes at a time:
+    /// the last byte of each token whose end its row does not know (`SPAN m=1`), found as the
+    /// next set bit. Nothing flattens them.
+    pub(super) masks: Vec<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
@@ -319,7 +324,7 @@ pub(in crate::code_rule_dsl) struct BatchFile<'a> {
 }
 
 /// A run's results: each output's words, each extract's positions (`u32` byte offsets, in
-/// order), and each total's count.
+/// order), and each total: 1 when its output has a bit, else 0.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct BlockRun {
     pub(super) outputs: Vec<Vec<u64>>,
@@ -349,7 +354,7 @@ impl BlockProgram {
             _ => true,
         });
         // The extract pass writes positions from the undelayed outputs.
-        let extracts = self.extracts.iter().chain(&self.totals).all(|v| self.outputs.contains(v));
+        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
@@ -390,6 +395,14 @@ impl BlockProgram {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
+        // Likewise the masks, tagged.
+        if !self.masks.is_empty() {
+            out.extend_from_slice(b"masks");
+            out.extend_from_slice(&(self.masks.len() as u32).to_le_bytes());
+            for v in &self.masks {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
         // Likewise the delay, tagged.
         if self.delay != 0 {
             out.extend_from_slice(b"delay");
@@ -420,6 +433,14 @@ impl BlockProgram {
             .collect()
     }
 
+    /// Each mask's output index.
+    pub(super) fn mask_outputs(&self) -> Vec<usize> {
+        self.masks
+            .iter()
+            .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: a mask is an output"))
+            .collect()
+    }
+
     /// Each total's output index.
     pub(super) fn total_outputs(&self) -> Vec<usize> {
         self.totals
@@ -440,7 +461,7 @@ impl BlockProgram {
         self.interpret_files(files)
             .into_iter()
             .map(|outputs| {
-                let totals = totals.iter().map(|&k| outputs[k].iter().map(|w| u64::from(w.count_ones())).sum()).collect();
+                let totals = totals.iter().map(|&k| u64::from(outputs[k].iter().any(|&w| w != 0))).collect();
                 let positions = extracts
                     .iter()
                     .map(|&k| {

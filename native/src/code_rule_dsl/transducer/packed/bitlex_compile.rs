@@ -297,8 +297,9 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
             vals.push(((*name).to_owned(), x));
         }
     }
-    // The stream tier 2 reads, two extracts, as simdjson's structural indexes: every token's
-    // first byte, and the last byte of each token whose end is not its row's to know (`SPAN`).
+    // The stream tier 2 reads: every token's first byte, an extract, as simdjson's structural
+    // indexes; and the last byte of each token whose end is not its row's to know (`SPAN`), a
+    // mask tier 2 reads a word at a time.
     let mut stream = None;
     if let Some((_, _, takes_last)) = &tier2 {
         let mut starts = token_rows[0].1;
@@ -349,7 +350,8 @@ pub(in crate::code_rule_dsl) fn compile(stmts: &[Stmt], outputs: &[&str], symbol
     let mut machine = String::new();
     if let Some((text, lowered, _)) = tier2 {
         let (s, l) = stream.expect("a tree section's stream");
-        low.program.extracts = vec![at[s], at[l]];
+        low.program.extracts = vec![at[s]];
+        low.program.masks = vec![at[l]];
         // The fallback's totals, in `fallback()`'s order: `EMPTY t` reads total `t`.
         low.program.totals = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK).map(|(_, &v)| v).collect();
         words = lowered;
@@ -1200,6 +1202,7 @@ fn live(program: &BlockProgram) -> BlockProgram {
     out.output_delays = program.output_delays.clone();
     out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
     out.totals = program.totals.iter().map(|&v| n(v)).collect();
+    out.masks = program.masks.iter().map(|&v| n(v)).collect();
     out
 }
 

@@ -43,9 +43,9 @@ type Entry = unsafe extern "C" fn(*const u8, *const Row, u64, *mut u64, *mut u32
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Row {
     pub(super) bytes: u64,
-    blocks: u64,
+    pub(super) blocks: u64,
     pub(super) len: u64,
-    out: u64,
+    pub(super) out: u64,
     pub(super) positions: u64,
     pub(super) capacity: u64,
     pub(super) counts: u64,
@@ -55,7 +55,7 @@ pub(super) struct Row {
 pub(super) struct CompiledBlock {
     _module: JITModule,
     entry: Entry,
-    outputs: usize,
+    pub(super) outputs: usize,
     delay: u8,
     pub(super) extracts: Vec<usize>,
     totals: Vec<usize>,
@@ -102,7 +102,7 @@ impl CompiledBlock {
 pub(super) struct Batch {
     pub(super) bytes: Vec<u8>,
     pub(super) rows: Vec<Row>,
-    out: Vec<u64>,
+    pub(super) out: Vec<u64>,
     pub(super) positions: Vec<u32>,
     pub(super) counts: Vec<u64>,
 }
@@ -243,6 +243,11 @@ pub(super) struct State {
 }
 
 impl State {
+    /// The carried fields, as (instruction, bits, word): what each loop-carried word holds.
+    pub(super) fn fields(&self) -> Vec<(usize, u8, usize)> {
+        self.fields.iter().map(|f| (f.at, f.width, f.word)).collect()
+    }
+
     pub(super) fn of(native: &BlockNative) -> Self {
         let n = native.insts.len();
         let plan = Plan::of(native);
@@ -387,12 +392,12 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
         }
         let ready = (0..regions).find(|&r| {
             let reg = &plan.regions[r];
-            !emitted[r] && done[reg.gate] && reg.members.iter().all(|&m| native.insts[m].operands().iter().all(|&o| done[o] || plan.region_of[o] == Some(r)))
+            !emitted[r] && done[reg.pre.unwrap_or(reg.gate)] && reg.members.iter().all(|&m| native.insts[m].operands().iter().all(|&o| done[o] || plan.region_of[o] == Some(r)))
         });
         match ready {
             Some(r) => {
                 e.region(&mut *f, r);
-                gates += 1;
+                gates += 1 + usize::from(plan.regions[r].pre.is_some());
                 for &m in &plan.regions[r].members {
                     done[m] = true;
                 }
@@ -645,23 +650,48 @@ impl Emit<'_, '_> {
             .filter(|&m| self.native.outputs.contains(&(m as u16)) || (0..self.native.insts.len()).any(|u| state.plan.region_of[u] != Some(r) && self.native.insts[u].operands().contains(&m)))
             .collect();
         let words: Vec<usize> = state.region_fields[r].iter().map(|&(w, _)| w).collect();
-        let gate = plain(&mut *f, &self.syms, &mut self.values, reg.gate);
-        let mut any = gate;
+        // The region's carried bits that came in, ORed.
+        let mut carried: Option<Value> = None;
         for &(w, m) in &state.region_fields[r] {
             let bits = f.ins().band_imm(self.packed_in[w], m as i64);
-            any = f.ins().bor(any, bits);
+            carried = Some(match carried {
+                Some(c) => f.ins().bor(c, bits),
+                None => bits,
+            });
         }
         let (active, skip, after) = (f.create_block(), f.create_block(), f.create_block());
         for _ in 0..outside.len() + words.len() {
             f.append_block_param(after, types::I64);
         }
-        f.ins().brif(any, active, &[], skip, &[]);
+        let test = |e: &mut Self, f: &mut FunctionBuilder<'_>, x: usize| {
+            let v = plain(&mut *f, &e.syms, &mut e.values, x);
+            carried.map_or(v, |c| f.ins().bor(v, c))
+        };
+        let first = test(self, &mut *f, reg.pre.unwrap_or(reg.gate));
         let before = self.clone();
+        let consts = std::mem::replace(&mut self.consts, vec![0; state.words]);
+        // With a test before the gate's: the gate's class and the gate made after it.
+        let early: Vec<usize> = match reg.pre {
+            Some(_) => {
+                let check = f.create_block();
+                f.ins().brif(first, check, &[], skip, &[]);
+                f.switch_to_block(check);
+                let class = reg.members.iter().copied().find(|&m| m != reg.gate && self.native.insts[reg.gate].operands().contains(&m)).expect("the gate's class");
+                self.emit(&mut *f, class);
+                self.emit(&mut *f, reg.gate);
+                let any = test(self, &mut *f, reg.gate);
+                f.ins().brif(any, active, &[], skip, &[]);
+                vec![class, reg.gate]
+            }
+            None => {
+                f.ins().brif(first, active, &[], skip, &[]);
+                Vec::new()
+            }
+        };
         // The region computed. Its carried bits are made plain, not gathered as constants: the
         // two ways must agree.
         f.switch_to_block(active);
-        let consts = std::mem::replace(&mut self.consts, vec![0; state.words]);
-        for &m in &reg.members {
+        for &m in reg.members.iter().filter(|m| !early.contains(m)) {
             self.emit(&mut *f, m);
         }
         let region_consts = std::mem::replace(&mut self.consts, consts);
@@ -885,9 +915,13 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         // The first block's carries and counts are zero, made here: the entry's zero, live across
         // every row, would be spilled and reloaded once per carried word.
         let zero = f.ins().iconst(types::I64, 0);
+        // An extract's running count is carried as where its next position goes: every store of
+        // the flattening is then `[pointer, #offset]`, with no index to add.
         let first: Vec<BlockArg> = [zero.into(), bytes.into(), out.into()]
             .into_iter()
-            .chain(std::iter::repeat_n(zero.into(), params - 3))
+            .chain(std::iter::repeat_n(zero.into(), carried))
+            .chain((0..counted.len()).map(|c| extract_base.get(c).copied().unwrap_or(zero).into()))
+            .chain(std::iter::repeat_n(zero.into(), delayed.len()))
             .collect();
         // Blocks 1 .. len / 64 are full.
         let full_end = f.ins().ushr_imm(len, 6);
@@ -970,19 +1004,18 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             let mut counts_out = Vec::with_capacity(counted.len());
             for (c, &k) in counted.iter().enumerate() {
                 let n = counts_in[c];
-                let cnt = match (c < native.extracts.len()).then_some(c) {
-                    Some(e) => {
-                        let start = f.ins().ishl_imm(i, 6);
-                        let at = f.ins().iadd_imm(start, -i64::from(native.output_delays[k]));
-                        let offset = f.ins().ishl_imm(n, 2);
-                        let ptr = f.ins().iadd(extract_base[e], offset);
-                        let (cnt, more) = flatten(&mut f, words[k], at, ptr);
-                        heads.push((more, Step::Bits));
-                        cnt
-                    }
-                    None => f.ins().popcnt(words[k]),
-                };
-                counts_out.push(f.ins().iadd(n, cnt));
+                if c < native.extracts.len() {
+                    // `n` is where the next position goes.
+                    let start = f.ins().ishl_imm(i, 6);
+                    let at = f.ins().iadd_imm(start, -i64::from(native.output_delays[k]));
+                    let (cnt, more) = flatten(&mut f, words[k], at, n);
+                    heads.push((more, Step::Bits));
+                    let bytes = f.ins().ishl_imm(cnt, 2);
+                    counts_out.push(f.ins().iadd(n, bytes));
+                } else {
+                    // A total only tests for a bit (`BlockProgram::totals`): its words OR-ed.
+                    counts_out.push(f.ins().bor(n, words[k]));
+                }
             }
             let next = f.ins().iadd_imm(i, 1);
             let (next_base, next_dst) = (f.ins().iadd_imm(base, 64), f.ins().iadd_imm(dst, stride));
@@ -1010,7 +1043,15 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             f.ins().store(stores, p[3 + carried + counted.len() + h], dst, 8 * k as i32 - stride as i32);
         }
         for c in 0..counted.len() {
-            f.ins().store(stores, p[3 + carried + c], counts_at, 8 * c as i32);
+            let mut v = p[3 + carried + c];
+            if let Some(&base) = extract_base.get(c) {
+                let written = f.ins().isub(v, base);
+                v = f.ins().ushr_imm(written, 2);
+            } else {
+                let any = f.ins().icmp_imm(IntCC::NotEqual, v, 0);
+                v = f.ins().uextend(types::I64, any);
+            }
+            f.ins().store(stores, v, counts_at, 8 * c as i32);
         }
         f.ins().jump(exit, &[]);
 

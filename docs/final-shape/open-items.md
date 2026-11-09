@@ -2868,6 +2868,18 @@ So per-unit rows would save at most 4 to 7 s of the roughly 100 s a pack edit co
 - `push_local_joins`;
 - preparing the whole program again for one rule.
 
+Decision 0094 places stage 3 after phase 0, which keys the prepared program by the module graph.
+
+**Measured again after the day's merges (2026-11-08, trunk at `32b16e4fe`, with O141's fix).** Whole pack, 534
+programs over the Ruff fixtures, no profile, load 27 to 56:
+
+- rc 0, 6,184 findings, equal to before the merges;
+- 64.6 s CPU (stage 1 alone: 76.7 s), 821G instructions;
+- peak footprint 1,124 MB, still over the 1 GB budget.
+
+Before the fix, the merged trunk took 161.6 s with the profile on (100.1 s before the merges). Quarter 1 went
+from 11.7 s before the merges to 19.6 s, and back to 10.6 s with the fix.
+
 **Closure:** a library is one program unit, parsed, bounded (`hiding`) and merged once, however many pack rules
 include it, so the combined program is the libraries once plus each rule's own; the file-local split measured
 and linear in the rules; the whole pack runs within the cap and the memory budget, measured.
@@ -2948,6 +2960,26 @@ The design is written (`docs/rule-syntax/lib/core.rr`, run artifacts; `data-laye
 **Closure:** both checks lower and run on the sample with no artifact (static findings, withheld rules reported) and
 with a stamped one (their artifact findings), and a stale stamp gives `input_error(…, "stale", …)`.
 
+**Built 2026-11-08 (items 1–6):** `corpus/inputs.rs` reads `artifact=` from `--facts DIR` (default
+`<root>/.rerail/facts`), checks the envelope and the digest (git blob ids over the files the corpus walk sees), and
+gives one `input_error("artifact:NAME", kind, …)` per artifact. `withhold` removes, to a fixpoint, every rule that
+reads an incomplete relation through `!` or an aggregate, and the run prints each finding relation that may be
+missing rows, with how many of its rules read the artifact (`unknown: budget_exceeded (artifact:test_collection
+missing; 2 of its 3 rules)`). `rerail-engine facts-stamp RAW --out DIR --root REPO POLICY…` stamps. On the 133-file
+sample both checks now run, in 0.2 s and 1.0 s of CPU: without artifacts, with a failed producer, and with a fresh
+artifact (no Unknown). Tests: `corpus::inputs` (12).
+
+**Built 2026-11-08 (item 7, `--require-facts`):** `at="base"` reads a `filename=` input from the object store, through
+`gix`, at `logic --base REV` (a commit id or a reference name), under the corpus root's prefix in the repository.
+Without a base, or with a path the base lacks, the input gives `input_error("PATH@base", kind, …)` and its readers
+under `!` are withheld, as an artifact's are: a burn-down comparison never reports every entry as new.
+`--require-facts` fails the run on an artifact that is missing, stale or malformed, and on a failed one unless a rule
+reads `input_error` (RUN-FACTS §5). Tests: `corpus::inputs` (16).
+
+**Still open:** the merge base. `--base` names the revision; computing the merge base of a change and giving
+`git_rev`, `git_has` and `git_commit` as facts is the git provider's (0094's order of work, last). Unknown *places*
+(FINDINGS-LAYER §2's second evaluation), which needs the findings layer.
+
 ## O139. `RERAIL_PROFILE` adds 5–8 s of CPU to every run
 
 Measured 2026-11-08, load 47–110: `data-layer-compat-aliases` over 133 files takes 0.17–0.25 s of user CPU, and 5.0–8.3
@@ -2956,6 +2988,14 @@ per check at that load, lies outside every phase and span: the profile's own rep
 checks taken before this was found are inflated by it.
 
 **Closure:** the report's cost found and made proportional to the program, and the profile states its own CPU.
+
+**Found and fixed 2026-11-08.** The cost was the roofline's calibration (`profile/roofline.rs`): before writing
+each report, about ten micro-benchmarks of 1–64 M iterations, five times over, 7.25 s in a debug build at load 33.
+The report now measures only the kinds of work the run charged, and keeps the roofs per engine binary (its path, size
+and modification time) for a day in `<temp>/rerail-roofs/`. The report says where they came from and how long it
+took ("read from the roof cache in 0.00 s"). data-layer-compat-aliases: 0.25 s with the profile, the same as without;
+the first profiled run of a new binary still pays the calibration once. Test:
+`the_roof_cache_reads_back_what_it_wrote`. Profiled timings taken before this are inflated by 5–9 s each.
 
 ## O140. Engine rules that make per-file facts look global
 
@@ -2974,6 +3014,23 @@ findings layer's stages 2–3.
 **Closure:** the classification rerun with both fixed shows no check global through lowering alone, with findings
 equal on the 65 checks that finish both ways.
 
+**2026-11-08, worked:**
+
+- **Item 2 is not a leak.** In the 39 checks with `x(c) :- x_at(_, c)`, none of the projections' 144 readers binds
+  the projected row's document; the 7 that bind some document read the projection by a value. A projection is a union
+  of per-file rows, a unit fact (0092 §4), and there is nothing to rewrite (0093 §4, corrected).
+- **Item 3 is fixed.** `file_local::push_with` closes each candidate's variables under the rule's `a = b` equalities,
+  both when it groups the atoms and when it counts their independent node groups. `deco_word`'s four cross-file rules
+  are now pushed into the chunks (bootstrap-engine-invariants, graph-lazy-sql-plan, schema-bootstrap-contracts).
+  Test: `an_equality_between_two_pieces_joins_them_in_the_chunks`. Over the 25 checks with variable equalities in
+  their cross part, findings are equal with and without the grouping half of the fix, and CPU is within noise.
+- **Found while checking: a nested aggregate lost the rule's variables.** `count : { bei_identity(x), count : {
+  def_walk(n, f), bei_ref(n, x) } = 0 } > 0` made a helper of x alone, so bootstrap-engine-invariants failed to plan
+  after the final-rerail-shape merge ("unplaced literals … in rr_agg72($x)"). The helper now has every variable the
+  rule shares with its nested aggregates, bound by the context. Test:
+  `a_nested_aggregate_keeps_the_rules_variables_it_reads`.
+- The findings assembly (`rr_diagnostic`, `violation`) is a union too; it moves when the findings layer is built.
+
 ## O141. The 66-rule pack costs 70% more instructions after the merges of 2026-11-08
 
 On s50 (43 files), with the scope guards off, the pack took 380.8G instructions at `329e0b5d1` and 644.5G at
@@ -2987,6 +3044,27 @@ candidates) on each merge of the day.
 **Closure:** the merge that adds the cost is found by bisecting the day's merges, and the cost is explained or
 removed.
 
+**Closed (2026-11-08).** The cause was found by sampling, not bisecting.
+
+- **Where.** `sql_kernel::component` ran `ProgramAnalysis::analyze` over the whole program for every stratum it
+  ran, in every chunk. That analysis is the logical key and scalar analysis from `0edfc6227`, which came in through
+  the Rerail-rule-expressivity merge (`9be591511`).
+- **What it cost.** Each stratum's own time rose from about 1 ms to 0.45 s, with 233 MB allocated, outside every
+  named span. On the Python pack that was hundreds of strata.
+- **The fix.** The planner's model already made the analysis once per plan. It is now held behind an `Arc` and
+  shared. It is made again only when the demand split replaces the program (`plan::run`). `emit` shares it too,
+  where it was deep-copied.
+
+s50, 43 files, the same 32 violations:
+
+| guards | before the merges (`329e0b5d1`) | after (`9be591511`) | with the fix |
+|---|---|---|---|
+| off | 380.8G | 644.5G | 336.3G |
+| on | 390.5G | 681.1G | 343.3G |
+
+The fix leaves the pack slightly cheaper than before the merges. The analysis, planner, corpus and SQL executor
+tests pass, and so does the replay gate (`converted_rules_give_the_recorded_findings`).
+
 ## O142. `calls_cx`'s process peak RSS is above the run's sampled peak and the 1 GB budget
 
 **Seen (2026-11-08, t24).** On the 84 files with typeshed and both memos on, the run's report gives a peak RSS of
@@ -2999,7 +3077,22 @@ whether the per-phase figures the budget is checked against should be the proces
 
 **Closure:** the process peak within the budget, or the phase that exceeds it named, with a figure the report gives.
 
-## O143. A relation the request cone derives is written empty as an output
+## O143. The Python pack's annotation stratum read every annotation guest once per binding
+
+**Status:** fix in progress (2026-11-08); this entry reserves the number.
+
+**What.** On the Python pack (534 programs), the `ann_input/ann_strip/type_app` stratum cost 39 s of about 89 s of
+CPU. The cause was not a collision of guest ids. In every chunk, each `ann_strip` row has its own `t`: the rows equal
+their distinct first columns, about 480 to 800 per chunk. The cause was join order.
+
+- **Stale postings.** The first chunk of a mix measures the program's constants' postings before the guest rounds
+  make any guest. So `parsed($s, "annotation", $r)` was priced at no rows.
+- **Stale observations.** An atom that shares no bound variable kept its fanout observed in one wave or chunk. That
+  number is the relation's size at that moment, not a property of the join.
+- **The result.** Between chunks the replanner moved `parsed` straight after the delta, as a filter. Every delta row
+  then read every annotation guest: 10,857 bindings gave 5.4M rows for RUF013 alone.
+
+## O144. A relation the request cone derives is written empty as an output
 
 **Seen (2026-11-08, t25).** `bootstrap.rr` first declared `p0_resolved` as an output. It is in the cone of `load`
 requests (a load is asked from it), and its output table was written empty, though the run had the rows. The cross
@@ -3010,7 +3103,7 @@ path holds back cone relations that are outputs and expects them to be read from
 
 **Closure:** a cone relation declared `.output` is written with its rows, and `bootstrap.rr` drops the copies.
 
-## O144. A per-file relation with no node column is lost for documents a `load` brings in
+## O145. A per-file relation with no node column is lost for documents a `load` brings in
 
 **Seen (2026-11-08, t25).** A loaded document's rows of the per-file relations the cone reads are found by its
 node range (`corpus.rs`, the `rr_load_new` join on the relation's first location column). A per-file relation
@@ -3022,7 +3115,7 @@ whose columns are all symbols and numbers (`p0_names(f, at, name)`) has no locat
 **Closure:** the per-file rows of a loaded document are found by the document they were derived from (the chunk
 builder knows it), so a relation needs no node column; or the engine refuses such a relation with a message.
 
-## O145. Tests against the shared default tape cache wait on its atoms lease
+## O146. Tests against the shared default tape cache wait on its atoms lease
 
 **Seen (2026-11-08, t25).** `$TMPDIR/rerail-tape-cache.sqlite` (425 MB) is shared with other sessions. Each phase-0
 run takes the atoms lease, and while another process holds it a test waits (`LEASE_WAIT`, 60 s); a run of
@@ -3031,7 +3124,7 @@ no corpus session (a session held across the nested run deadlocked against the l
 
 **Closure:** the lease is held only across the atoms write, not the run; or tests default to a per-process store.
 
-## O146. Each phase-0 run costs about 0.25 s, paid once per seed set
+## O147. Each phase-0 run costs about 0.25 s, paid once per seed set
 
 **Seen (2026-11-08, t25).** A run of `bootstrap.rr` over one text with includes costs about 0.25 s CPU when nothing
 is kept. Callers that resolve programs one at a time pay it each time: `rule_syntax_files_pass_check_rr` took about
