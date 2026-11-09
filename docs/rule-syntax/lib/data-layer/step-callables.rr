@@ -1,0 +1,34 @@
+// Shared exact callable-shape and carrier vocabulary. No name resolution is inferred.
+.decl ssp_compiled(c: node)
+ssp_compiled(c) :- ssp_func(c,f), ssp_name(f,"CompiledStep").
+.decl ssp_arg(c: node, value: node)
+ssp_arg(c,v) :- ssp_pos(c,_,v).
+ssp_arg(c,v) :- ssp_kw(c,_,v).
+ssp_arg(c,v) :- kind(c,"call"), field(c,"arguments",al), child(al,k,_), kind(k,"dictionary_splat"), child(k,raw,0), unparen(raw,v).
+.decl ssp_annotation_name(ann: node, name: symbol)
+ssp_annotation_name(ann,name) :- ssp_name(n,name), within(n,ann).
+ssp_annotation_name(ann,name) :- ssp_attr(n,_,name), within(n,ann).
+.decl ssp_carrier_attr(name: symbol)
+ssp_carrier_attr("txn"). ssp_carrier_attr("_txn"). ssp_carrier_attr("conn"). ssp_carrier_attr("_conn").
+ssp_carrier_attr("sql_conn"). ssp_carrier_attr("_serverplan_runtime_txn"). ssp_carrier_attr("_serverplan_sql_conn").
+.decl ssp_user_token(s: symbol)
+ssp_user_token("callback"). ssp_user_token("callable"). ssp_user_token("decoder"). ssp_user_token("fn").
+ssp_user_token("function"). ssp_user_token("hook"). ssp_user_token("mapper"). ssp_user_token("picker").
+ssp_user_token("processor"). ssp_user_token("projector"). ssp_user_token("row_decoder"). ssp_user_token("transform").
+.decl ssp_user_name(s: symbol)
+ssp_user_name(s) :- ssp_user_token(t), (ssp_name(_,s) ; ssp_attr(_,_,s) ; ssp_kw(_,s,_)), contains(t,@lower(s)).
+.decl ssp_user_shape(n: node)
+ssp_user_shape(n) :- kind(n,"lambda").
+ssp_user_shape(n) :- ssp_name(n,name), ssp_user_name(name).
+ssp_user_shape(n) :- ssp_attr(n,_,name), ssp_user_name(name).
+ssp_user_shape(n) :- ssp_attr(n,v,_), ssp_user_shape(v).
+ssp_user_shape(n) :- ssp_func(n,f), ssp_user_shape(f).
+ssp_user_shape(n) :- ssp_arg(n,v), ssp_user_shape(v).
+ssp_user_shape(n) :- kind(n,"subscript"), field(n,"value",raw), unparen(raw,v), ssp_user_shape(v).
+.decl ssp_legacy_value(call: node, kind: symbol, value: node)
+ssp_legacy_value(call,key,v) :- ssp_compiled(call), ssp_kw(call,key,v), (key = "post_op" ; key = "post_op_with_refs").
+.decl ssp_bare_partial(c: node)
+ssp_bare_partial(c) :- ssp_func(c,f), ssp_name(f,"partial").
+.decl ssp_call_user(c: node)
+ssp_call_user(c) :- ssp_func(c,f), ssp_user_shape(f).
+ssp_call_user(c) :- ssp_arg(c,v), ssp_user_shape(v).

@@ -1,0 +1,14 @@
+.policy "data-layer-serverplan-steps-paths" revision 1
+.description "Native CLI file selection; preserve each root's independent scan"
+.language python
+.mode block
+.scope include "**/*.py"
+.decl ssp_collecting(entry: symbol)
+#include "data-layer/step-discovery.rr"
+ssp_collecting("_cli_paths") :- env("ssp.collector","_cli_paths").
+.decl ssp_extra_path(i: number, path: symbol, physical: symbol)
+ssp_extra_path(to_number(index),path,path) :- env(key,path), match_all("\\Assp\\.extra\\.(?<index>[0-9]+)\\z",key), prefix("/",path).
+ssp_extra_path(to_number(index),path,cat(cwd,"/",path)) :- env(key,path), match_all("\\Assp\\.extra\\.(?<index>[0-9]+)\\z",key), !prefix("/",path), env("ssp.cwd",cwd).
+.violation SSPPath(at: span, phase: number, root_order: number, path_order: symbol, file_path: symbol) code "SSP_PATH" "{file_path}"
+SSPPath(@place("",0),0,i,@replace_all(path,"/","\u0000"),path) :- ssp_file_request(i,path,_).
+SSPPath(@place("",0),1,i,"",path) :- env(key,parent), prefix("ssp.dirExtra",key), dir_entry(parent,name,_), ssp_extra_path(i,path,physical), physical = cat(parent,"/",name).

@@ -1,0 +1,76 @@
+.policy "data-layer-serverplan-steps-legacy" revision 1
+.description "Legacy post-op behavior scan"
+.language python
+.mode block
+.scope include "**/*.py"
+#include "python/ast.rr"
+#include "data-layer/step-core.rr"
+#include "data-layer/step-callables.rr"
+#include "data-layer/step-discovery.rr"
+
+.decl sspl_document(d: number, path: symbol)
+sspl_document(d,path) :- ssp_file_request(_,path,_), loaded(physical,cat("ssp:",path),"python"), doc(d,physical,_), doc_role(d,"primary").
+sspl_document(d,path) :- ssp_file_request(_,path,absolute), env("ssp.workspace",workspace), doc(d,relative,_), !prefix("/",relative), absolute = cat(workspace,"/",relative), doc_role(d,"primary").
+ssp_doc(d,path) :- sspl_document(d,path), !syntax_error(d,_,_).
+.decl sspl_file(path: symbol, root_order: number, path_order: symbol)
+sspl_file(path,i,@replace_all(path,"/","\u0000")) :- ssp_file_request(i,path,_), i = min j : { ssp_file_request(j,path,_) }.
+.decl sspl_fn(d: number, f: node, name: symbol)
+sspl_fn(d,f,@nfkc(name)) :- ssp_doc(d,_), docof(f,d), kind(f,"function_definition"), def_name(f,name).
+.decl sspl_last_fn(d: number, name: symbol, f: node)
+sspl_last_fn(d,@nfkc(name),f) :- ssp_doc(d,_), docof(f,d), kind(f,"function_definition"), def_name(f,name), visit_index(f,i), i = max j : { docof(g,d), kind(g,"function_definition"), def_name(g,other), @nfkc(other) = @nfkc(name), visit_index(g,j) }.
+.decl sspl_callback(call: node, value: node, f: node)
+sspl_callback(call,v,f) :- ssp_legacy_value(call,_,v), ssp_name(v,name), docof(call,d), sspl_last_fn(d,name,f).
+.decl sspl_walk(f: node, n: node)
+sspl_walk(f,f) :- sspl_callback(_,_,f).
+sspl_walk(f,n) :- sspl_callback(_,_,f), within(n,f).
+sspl_walk(f,e) :- sspl_callback(_,_,f), decorator(f,e).
+sspl_walk(f,n) :- sspl_callback(_,_,f), decorator(f,e), within(n,e).
+.decl sspl_positional(f: node, name: symbol, position: number)
+sspl_positional(f,@nfkc(name),position) :- sspl_callback(_,_,f), sig_param(f,_,nm,i,pk,_,_), (pk = "posonly" ; pk = "pos"), text(nm,name), position = count : { sig_param(f,_,_,j,other,_,_), (other = "posonly" ; other = "pos"), j < i }.
+.decl sspl_carrier(f: node, name: symbol)
+sspl_carrier(f,name) :- sspl_positional(f,name,1).
+sspl_carrier(f,@nfkc(name)) :- sspl_callback(_,_,f), sig_param(f,_,nm,_,pk,ann,_), (pk = "posonly" ; pk = "pos"), text(nm,name), ssp_annotation_name(ann,"Hydrator").
+.decl sspl_recovery(f: node, n: node)
+sspl_recovery(f,n) :- sspl_walk(f,n), ssp_attr(n,v,attr), ssp_name(v,name), sspl_carrier(f,name), ssp_carrier_attr(attr).
+sspl_recovery(f,n) :- sspl_walk(f,n), ssp_func(n,func), ssp_name(func,"getattr"), ssp_pos(n,0,v), ssp_name(v,name), sspl_carrier(f,name), ssp_pos(n,1,a), str_const(a,attr), ssp_carrier_attr(attr).
+.decl sspl_import_name(n: node, name: symbol)
+sspl_import_name(n,@nfkc(name)) :- import_stmt(n), field(n,"name",item), dotted(item,name).
+sspl_import_name(n,@nfkc(name)) :- from_module_raw(n,name).
+.decl sspl_heavy_import(n: node)
+sspl_heavy_import(n) :- sspl_import_name(n,name), (contains("convert_row_to_model",name) ; contains("l5200_sql_query",name)).
+.decl sspl_sql(name: symbol)
+sspl_sql("cursor"). sspl_sql("execute"). sspl_sql("executemany"). sspl_sql("fetchone"). sspl_sql("fetchall"). sspl_sql("fetchmany").
+.decl sspl_mutation(name: symbol)
+sspl_mutation("append"). sspl_mutation("clear"). sspl_mutation("extend"). sspl_mutation("pop"). sspl_mutation("remove"). sspl_mutation("setdefault"). sspl_mutation("update").
+.decl sspl_log(name: symbol)
+sspl_log("debug"). sspl_log("info"). sspl_log("warning"). sspl_log("error"). sspl_log("exception"). sspl_log("critical").
+.decl sspl_mutating_assignment(n: node)
+sspl_mutating_assignment(n) :- asgstmt(n,_), assign_target(n,t), (kind(t,"attribute") ; kind(t,"subscript")).
+sspl_mutating_assignment(n) :- kind(n,"augmented_assignment"), field(n,"left",t), (kind(t,"attribute") ; kind(t,"subscript")).
+.decl sspl_safe_return(v: node)
+sspl_safe_return(v) :- kind(v,k), (k = "dictionary" ; k = "list" ; k = "tuple" ; k = "call" ; k = "integer" ; k = "float" ; k = "true" ; k = "false" ; k = "none" ; k = "ellipsis").
+sspl_safe_return(v) :- ssp_name(v,_).
+sspl_safe_return(v) :- kind(v,k), (k = "string" ; k = "concatenated_string"), !fstring(v).
+.decl sspl_body_event(f: node, n: node, priority: number, category: symbol)
+sspl_body_event(f,n,0,"heavy-runtime-hydration-import") :- sspl_walk(f,n), sspl_heavy_import(n).
+sspl_body_event(f,n,0,"hydrator-model-hydration") :- sspl_walk(f,n), ssp_func(n,func), ssp_name(func,name), sspl_carrier(f,name).
+sspl_body_event(f,n,0,"hydrator-model-hydration") :- sspl_walk(f,n), ssp_func(n,func), ssp_attr(func,v,"__call__"), ssp_name(v,name), sspl_carrier(f,name).
+sspl_body_event(f,n,1,"sql-cursor-fetch-execute") :- sspl_walk(f,n), ssp_func(n,func), ssp_attr(func,_,name), sspl_sql(name).
+sspl_body_event(f,n,2,"captured-state-mutation") :- sspl_walk(f,n), ssp_func(n,func), ssp_attr(func,_,name), sspl_mutation(name).
+sspl_body_event(f,n,3,"policy-resolution-call") :- sspl_walk(f,n), ssp_func(n,func), ssp_name(func,name), (name = "resolve" ; name = "resolve_policy" ; name = "resolve_branch_aware_policy").
+sspl_body_event(f,n,4,"permission-engine-call") :- sspl_walk(f,n), ssp_call_name(n,name), prefix("check_permission",name).
+sspl_body_event(f,n,5,"logging-call") :- sspl_walk(f,n), ssp_call_name(n,name), sspl_log(name).
+sspl_body_event(f,n,6,"user-callable-in-legacy-post-op") :- sspl_walk(f,n), ssp_call_user(n).
+sspl_body_event(f,n,7,"runtime-hydrator-authority-access") :- sspl_recovery(f,n).
+sspl_body_event(f,n,8,"captured-state-mutation") :- sspl_walk(f,n), sspl_mutating_assignment(n).
+sspl_body_event(f,n,9,"unknown-return-shape") :- sspl_walk(f,n), ssp_ret(n,v), !sspl_safe_return(v).
+.decl sspl_event(call: node, value: node, phase: number, n: node, priority: number, category: symbol)
+sspl_event(call,v,0,v,0,"partial-legacy-post-op") :- ssp_legacy_value(call,_,v), ssp_bare_partial(v).
+sspl_event(call,v,0,v,1,"user-callable-in-legacy-post-op") :- ssp_legacy_value(call,_,v), ssp_bare_partial(v), ssp_call_user(v).
+sspl_event(call,v,0,v,0,"callable-object-post-op-with-refs") :- ssp_legacy_value(call,"post_op_with_refs",v), kind(v,"call"), !ssp_bare_partial(v).
+sspl_event(call,v,0,v,0,"user-callable-in-legacy-post-op") :- ssp_legacy_value(call,_,v), !kind(v,"call"), ssp_user_shape(v).
+sspl_event(call,v,1,n,priority,category) :- sspl_callback(call,v,f), sspl_body_event(f,n,priority,category).
+.violation SSPLegacy(at: span, file_path: symbol, line_number: number, phase: number, call_order: number, keyword_order: number, node_order: number, priority: number, root_order: number, path_order: symbol, violation_code: symbol, category: symbol) code "SSP_LEGACY" "{category}"
+SSPLegacy(@place("",0),path,l,phase,ci,vi,ni,priority,ri,pi,"LEGACY-POSTOP",category) :- sspl_event(call,v,phase,n,priority,category), docof(call,d), ssp_doc(d,path), sspl_file(path,ri,pi), line(n,l), visit_index(call,ci), visit_index(v,vi), visit_index(n,ni).
+SSPLegacy(@place("",0),path,l,-1,0,0,0,0,ri,pi,"PARSE",cat("SyntaxError: ",detail," (",filename,", line ",to_string(l),")")) :- sspl_document(d,path), syntax_error(d,l,detail), detail != "source code string cannot contain null bytes", filename = @replace_all(path,"(?s)\\A.*/",""), sspl_file(path,ri,pi).
+SSPLegacy(@place("",0),path,1,-1,0,0,0,0,ri,pi,"PARSE","SyntaxError: source code string cannot contain null bytes") :- sspl_document(d,path), syntax_error(d,_,"source code string cannot contain null bytes"), sspl_file(path,ri,pi).

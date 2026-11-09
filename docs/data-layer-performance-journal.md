@@ -9650,3 +9650,29 @@ All twelve combined shards pass within 115 seconds; the slowest takes 97.880 sec
 All 45 detector cases, thirteen scanner cases, 72 signature cases, fifteen collector/path cases, and 177 tooling tests pass.
 The checkpoint retains all 58 positive detector observations and names the 24 original cases outside native acceptance.
 Legacy scanning, CLI reporting, configuration, production acceptance, controls, updates, seven absent translations, and earlier migration gaps remain open.
+
+### 2026-11-09 — Legacy scan and CLI parity
+
+The native legacy scanner now preserves the source's two passes, callback occurrences, and category order.
+It uses the last function definition by simple name, including nested definitions.
+A shared callable library keeps its shape predicates identical to the detector predicates.
+All twenty source-derived cases pass, with 238 complete findings across the corpus.
+The original positive legacy-scanner test also passes.
+
+The CLI now selects files in native rules and submits their contents as one scanner batch.
+The adapter retains each root's independent scan multiplicity after classification.
+Native report rules render the output and decide the status.
+Argument parsing uses the same Python standard-library grammar as the original CLI.
+All seven original CLI tests pass with complete stdout, stderr, and return or exception values.
+All twenty additional CLI cases pass, including overlapping roots, repeated files, links, parse errors, signatures, and ratchet boundaries.
+
+The original verbose test exposes a missing extra-file selection in the first implementation.
+Binding directory observation directly to its environment root repairs that omission.
+The [TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-legacy-cli-tdd.json.gz) retains the failures and passing comparisons on the registered release engine.
+No Python detector or discovery function runs during native acceptance.
+No native engine code changes in this increment.
+
+These are focused API results, not a new combined checkpoint.
+The signing action still raises an explicit unimplemented error.
+Configuration assertions, production acceptance, controls, updates, seven absent translations, and earlier migration gaps remain open.
+A new fetch finds Final `735bc4422`; the next commit merges it before further acceptance.

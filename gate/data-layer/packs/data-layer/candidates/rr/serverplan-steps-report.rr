@@ -1,0 +1,38 @@
+.policy "data-layer-serverplan-steps-report" revision 1
+.description "Exact step CLI text and exit status over ordered native findings"
+.language python
+.mode block
+.scope include "**/*.py"
+.decl sspr_finding(i: number, code: symbol, path: symbol, line: symbol, message: symbol)
+sspr_finding(i,code,path,line,message) :- option_item("reportCodes",i,code), option_item("reportPaths",i,path), option_item("reportLines",i,line), option_item("reportMessages",i,message).
+.decl sspr_path(path: symbol, display: symbol)
+sspr_path(path,".") :- sspr_finding(_,_,path,_,_), option("rootPath",path).
+sspr_path(path,@slice(path,strlen(root)+1,strlen(path))) :- sspr_finding(_,_,path,_,_), option("rootPath",root), prefix(cat(root,"/"),path).
+sspr_path(path,path) :- sspr_finding(_,_,path,_,_), option("rootPath",root), path != root, !prefix(cat(root,"/"),path).
+.decl sspr_total(n: number)
+sspr_total(n) :- n = count : { sspr_finding(_,_,_,_,_) }.
+.decl sspr_category(name: symbol, n: number)
+sspr_category(name,n) :- sspr_finding(_,_,_,_,name), n = count : { sspr_finding(_,_,_,_,name) }.
+.violation SSPOutput(at: span, stage: number, ordinal: number, text: symbol) code "SSP_OUTPUT" "{text}"
+.violation SSPExit(at: span, status: number) code "SSP_EXIT" "CLI status"
+SSPOutput(@place("",0),0,0,"======================================================================\nALLOWLIST SIGNATURE VERIFICATION FAILED\n======================================================================\n\nThe ServerPlan step allowlists have been modified without a valid signature.\nOnly explicitly approved lifecycle exceptions may retain live txn/conn state.\n\nTo update the allowlist:\n  1. Get explicit approval from the project owner\n  2. Ask the user to run the signing command in an environment where NERA_SIGNING_KEY is already present\n  3. Run: uv run python scripts/lint_serverplan_steps.py --sign-allowlist\n") :- option("entryPoint","_cli_signature_failure").
+SSPExit(@place("",0),1) :- option("entryPoint","_cli_signature_failure").
+// Paths are supplied in the source scanner's call order, including repeats.
+.decl sspr_verbose_path(i: number, path: symbol)
+sspr_verbose_path(i,".") :- option_item("verbosePaths",i,path), option("rootPath",path).
+sspr_verbose_path(i,@slice(path,strlen(root)+1,strlen(path))) :- option_item("verbosePaths",i,path), option("rootPath",root), prefix(cat(root,"/"),path).
+sspr_verbose_path(i,path) :- option_item("verbosePaths",i,path), option("rootPath",root), path != root, !prefix(cat(root,"/"),path).
+SSPOutput(@place("",0),0,i,cat("scan ",path,"\n")) :- option("entryPoint","_cli_report"), option("cliVerbose","true"), sspr_verbose_path(i,path).
+SSPOutput(@place("",0),3,i,cat(code,": ",display,":",line,": ",message,"\n")) :- option("entryPoint",entry), (entry = "_cli_report" ; entry = "_cli_legacy_report"), sspr_finding(i,code,path,line,message), sspr_path(path,display).
+SSPOutput(@place("",0),4,0,"No ServerPlan purity violations found.\n") :- option("entryPoint","_cli_report"), sspr_total(0).
+SSPOutput(@place("",0),4,0,cat("\nFound ",to_string(n)," violation(s).\nServerPlan post-op violations are architectural problems, not local style issues. Redesign the calling code using closed post-op specs, explicit hydration steps, executor-owned effects, or API redesign. See docs/design/LEGACY_POSTOP_GUARDRAILS.rst.\n")) :- option("entryPoint","_cli_report"), sspr_total(n), n > 0.
+SSPExit(@place("",0),1) :- option("entryPoint","_cli_report"), option("cliCheck","true"), sspr_total(n), n > 0.
+SSPExit(@place("",0),0) :- option("entryPoint","_cli_report"), (!option("cliCheck","true") ; sspr_total(0)).
+SSPOutput(@place("",0),0,0,cat("Legacy post-op behavior scan\n============================\n\nThese findings are architectural migration work, not local style issues. Legacy post-op code must be redesigned so it only materializes final results or raises approved exceptions.\nRemediation guide: docs/design/LEGACY_POSTOP_GUARDRAILS.rst\n\nTotal findings: ",to_string(n),"\n\n")) :- option("entryPoint","_cli_legacy_report"), sspr_total(n).
+SSPOutput(@place("",0),1,i,cat(name,": ",to_string(n),"\n")) :- option("entryPoint","_cli_legacy_report"), sspr_category(name,n), i = count : { sspr_category(other,_), other < name }.
+SSPOutput(@place("",0),2,0,"\n") :- option("entryPoint","_cli_legacy_report").
+.decl sspr_ratchet()
+sspr_ratchet() :- option("legacyRatchet",limit), sspr_total(n), n > to_number(limit).
+SSPOutput(@place("",0),4,0,cat("\nLegacy post-op findings exceed ratchet: ",to_string(n)," > ",limit,"\n")) :- option("entryPoint","_cli_legacy_report"), sspr_ratchet(), sspr_total(n), option("legacyRatchet",limit).
+SSPExit(@place("",0),1) :- option("entryPoint","_cli_legacy_report"), sspr_ratchet().
+SSPExit(@place("",0),0) :- option("entryPoint","_cli_legacy_report"), !sspr_ratchet().

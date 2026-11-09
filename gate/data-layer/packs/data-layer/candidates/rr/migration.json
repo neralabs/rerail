@@ -2124,7 +2124,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "sha256": "d061302a5c3a2fd0145be9b0ed8e75d9622003d25015f0e04fa6acd36ac6c695",
+      "sha256": "90f409c2ab7ddb192a8e980a9d34593b334eef62597e26695e9f350df82edc48",
       "origin": "authored native translation; partial original-suite coverage",
       "importedSha256": "686d45f6dffe16583bf039ff984aea97eafa9a22b5bb5323b1f97e175538bda5",
       "repairs": [
@@ -2207,13 +2207,25 @@
           "before": "fa4d597624ec48b4b84567e6951ae136ff41cafda1dab222b6fae4301f9f0920",
           "after": "d061302a5c3a2fd0145be9b0ed8e75d9622003d25015f0e04fa6acd36ac6c695",
           "reason": "Share step AST/candidate definitions with a focused collector policy and preserve scoped path errors"
+        },
+        {
+          "before": "d061302a5c3a2fd0145be9b0ed8e75d9622003d25015f0e04fa6acd36ac6c695",
+          "after": "90f409c2ab7ddb192a8e980a9d34593b334eef62597e26695e9f350df82edc48",
+          "reason": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status"
         }
       ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/step-discovery.rr",
-      "sha256": "e2a157bde99ed4b1c045d4e40e40cc76e3667b68a5889071c015ca2f50af08d5",
-      "origin": "authored native filesystem membership for ServerPlan step collectors"
+      "sha256": "cb715fdba9eadcd181a364733ce3f50b70c8bd517fe153b807a79f6044f8fc18",
+      "origin": "authored native filesystem membership for ServerPlan step collectors",
+      "repairs": [
+        {
+          "before": "e2a157bde99ed4b1c045d4e40e40cc76e3667b68a5889071c015ca2f50af08d5",
+          "after": "cb715fdba9eadcd181a364733ce3f50b70c8bd517fe153b807a79f6044f8fc18",
+          "reason": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/step-core.rr",
@@ -2224,6 +2236,26 @@
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-collectors.rr",
       "sha256": "40d96d30034ae524c1d891b4d95a82c146b4f1c66cedc1df94a5cfe7c1e41007",
       "origin": "authored shared step definitions and collector API consumer"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/step-callables.rr",
+      "sha256": "9ce7e169fadae4f2dcb24ce8d11d914b74890a678b1e08d2417d369903cfcaeb",
+      "origin": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-legacy.rr",
+      "sha256": "68b73632eb594ce7dfeee44beef398afb7231804fd491b552d69dc8355e620cb",
+      "origin": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-paths.rr",
+      "sha256": "d95616be68a1cc8f94ad3417db281fcd56a72aa44a633b6b059a303000365a35",
+      "origin": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps-report.rr",
+      "sha256": "a5d9db82242e4361569273db628c88220d54f737c7042fe61748e6151ad4cc70",
+      "origin": "Translate exact legacy callback categories and CLI file selection, batched scans, reports, and status"
     }
   ],
   "rules": [
@@ -2693,7 +2725,7 @@
       "legacySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-steps.rr",
-      "ruleSha256": "d061302a5c3a2fd0145be9b0ed8e75d9622003d25015f0e04fa6acd36ac6c695"
+      "ruleSha256": "90f409c2ab7ddb192a8e980a9d34593b334eef62597e26695e9f350df82edc48"
     },
     {
       "check": "serverplan_state_tripwires",

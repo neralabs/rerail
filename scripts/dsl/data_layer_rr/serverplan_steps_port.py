@@ -1,10 +1,20 @@
 """Transport source arguments to the native ServerPlan step contracts."""
+import argparse
 import ast
 import json
 from pathlib import Path
 import sys
 
 from serverplan_steps_contract import FUNCTIONS
+
+
+def legacy_rows(rows):
+    if any(row['code'] != 'SSP_LEGACY' for row in rows):
+        raise ValueError('Unexpected native legacy scan result')
+    ordered = sorted(rows,key=lambda r:tuple(r['parameters'][k] for k in
+        ['root_order','path_order','phase','call_order','keyword_order','node_order','priority']))
+    return [dict(code=r['parameters']['violation_code'],file=r['parameters']['file_path'],
+                 line=r['parameters']['line_number'],message=r['parameters']['category']) for r in ordered]
 
 
 def scan_rows(rows):
@@ -77,6 +87,14 @@ def install(suite, module):
             raise ValueError('Unexpected native blocker result')
         return {row['parameters']['value'] for row in rows}
 
+    def legacy_scan():
+        directories = [str(path) for path in module.LEGACY_POSTOP_SCAN_DIRS]
+        environment = ['ssp.root='+str(module.ROOT),'ssp.cwd='+str(Path.cwd()),'ssp.collector=scan_legacy_postop_violations']
+        environment += ['ssp.dir'+str(i)+'='+str(Path(path).absolute()) for i,path in enumerate(directories)]
+        environment += ['ssp.step.'+str(i)+'='+path for i,path in enumerate(directories)]
+        rows = suite.native('serverplan_steps','scan_legacy_postop_violations',[],dict(options(),env=environment))
+        return [module.Violation(v['code'],Path(v['file']),v['line'],v['message']) for v in legacy_rows(rows)]
+
     def scan_source(file, source, tree=None):
         settings = dict(options(), argumentPath=str(file), callSource=source,
                         suppliedTree='0' if tree is None else '1')
@@ -90,6 +108,59 @@ def install(suite, module):
                             [dict(path='input.py', source=absolute.read_text(encoding='utf-8'))],
                             dict(options(), argumentPath=str(file), inputName=file.name))
         return [module.Violation(v['code'], Path(v['file']), v['line'], v['message']) for v in scan_rows(rows)]
+
+    def cli_report(entry, values=(), **settings):
+        rows = suite.native('serverplan_steps',entry,[],dict(rootPath=str(module.ROOT),
+            reportCodes=[v['code'] for v in values],reportPaths=[v['file'] for v in values],
+            reportLines=[str(v['line']) for v in values],reportMessages=[v['message'] for v in values],**settings))
+        if any(row['code'] not in {'SSP_OUTPUT','SSP_EXIT'} for row in rows):
+            raise ValueError('Unexpected native CLI result')
+        exits = [row['parameters']['status'] for row in rows if row['code'] == 'SSP_EXIT']
+        if len(exits) != 1:
+            raise ValueError('One native CLI exit status required')
+        for row in sorted((row['parameters'] for row in rows if row['code'] == 'SSP_OUTPUT'),
+                          key=lambda row:(row['stage'],row['ordinal'])):
+            sys.stdout.write(row['text'])
+        return exits[0]
+
+    def cli():
+        parser = argparse.ArgumentParser(description='Lint ServerPlan step purity rules')
+        parser.add_argument('--check',action='store_true',help='Exit non-zero on violations')
+        parser.add_argument('--sign-allowlist',action='store_true',help='Sign the current allowlists (requires NERA_SIGNING_KEY)')
+        parser.add_argument('--verbose',action='store_true',help='Print scanned files')
+        parser.add_argument('--scan-legacy-postops',action='store_true',help='Report legacy post-op behavior categories without failing by default')
+        parser.add_argument('--legacy-postop-ratchet-max',type=int,default=None,help='Fail when the legacy post-op scan reports more than this many findings')
+        args = parser.parse_args()
+        if args.sign_allowlist:
+            raise NotImplementedError('Native allowlist signing and source updates remain unported')
+        if not module._verify_allowlists():
+            return cli_report('_cli_signature_failure')
+        if args.scan_legacy_postops:
+            values = [dict(code=v.code,file=str(v.file),line=v.line,message=v.message)
+                      for v in module.scan_legacy_postop_violations()]
+            ratchet = {} if args.legacy_postop_ratchet_max is None else dict(legacyRatchet=str(args.legacy_postop_ratchet_max))
+            return cli_report('_cli_legacy_report',values,**ratchet)
+        directories = [str(path) for path in module.STEP_DIRS]
+        extras = [str(path) for path in module.SERVERPLAN_EXTRA_SCAN_FILES]
+        environment = ['ssp.root='+str(module.ROOT),'ssp.cwd='+str(Path.cwd()),'ssp.collector=_cli_paths']
+        environment += ['ssp.dir'+str(i)+'='+str(Path(path).absolute()) for i,path in enumerate(directories)]
+        environment += ['ssp.dirExtra'+str(i)+'='+str(Path(path).absolute().parent) for i,path in enumerate(extras)]
+        environment += ['ssp.step.'+str(i)+'='+path for i,path in enumerate(directories)]
+        environment += ['ssp.extra.'+str(i)+'='+path for i,path in enumerate(extras)]
+        rows = suite.native('serverplan_steps','_cli_paths',[],dict(env=environment))
+        if any(row['code'] != 'SSP_PATH' for row in rows):
+            raise ValueError('Unexpected native CLI path result')
+        paths = [row['parameters']['file_path'] for row in sorted(rows,key=lambda row:tuple(
+            row['parameters'][k] for k in ['phase','root_order','path_order']))]
+        # Discovery and classification stay native. This adapter transports raw
+        # bytes as one batch and replays independent scanner-call multiplicity.
+        unique = list(dict.fromkeys(paths))
+        files = [dict(path='input/'+str(i)+'.py',source=(Path(path) if Path(path).is_absolute()
+                    else module.ROOT/path).read_text(encoding='utf-8')) for i,path in enumerate(unique)]
+        rows = suite.native('serverplan_steps','_cli_scan',files,dict(options(),cliPaths=unique))
+        findings = scan_rows(rows)
+        values = [value for path in paths for value in findings if value['file'] == path]
+        return cli_report('_cli_report',values,verbosePaths=paths,cliVerbose=args.verbose,cliCheck=args.check)
 
     def check(entry, file, tree, **kwargs):
         source = tree_source(tree)
@@ -151,6 +222,10 @@ def install(suite, module):
             suite.replace(module, name, scan_source)
         elif name == '_scan_file':
             suite.replace(module, name, scan_file)
+        elif name == 'scan_legacy_postop_violations':
+            suite.replace(module,name,legacy_scan)
+        elif name == 'cli_main':
+            suite.replace(module,name,cli)
         elif name in {'collect_current_step022_blockers', 'collect_current_step023_blockers'}:
             def bind_blockers(entry):
                 return lambda: blockers(entry)

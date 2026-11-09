@@ -2356,3 +2356,9 @@ The collector policy shares its definitions with the full step policy. Its API r
 Logical load requests now retain their answers while sharing one physical document. Target changes invalidate retained observations.
 All 177 tooling tests, seven filesystem tests, and 99 rule-engine tests pass.
 The checkpoint lists all 24 original cases outside native acceptance. Legacy scanning, CLI, configuration, and production acceptance remain unfinished.
+
+The legacy scanner and read-only CLI APIs now have a [focused TDD receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-serverplan-steps-legacy-cli-tdd.json.gz).
+It records the original positive scanner test, seven original CLI tests, twenty legacy cases, and twenty CLI cases.
+The tests compare complete findings and streams, including duplicates and order.
+CLI discovery is native; scanner bytes travel in one batch; reporting and exit decisions are native.
+The signing action remains explicitly unimplemented. This receipt does not replace the 140-test combined checkpoint above.

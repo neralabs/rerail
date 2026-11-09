@@ -7,6 +7,7 @@
 #include "python/ast.rr"
 #include "data-layer/signing.rr"
 #include "data-layer/step-core.rr"
+#include "data-layer/step-callables.rr"
 
 // Verification receives whole signature batches and uses the shared signed-message layout.
 .decl ssp_verification(i: number, name: symbol, sig: symbol)
@@ -33,6 +34,7 @@ SSPValue(@place("",0),cat(code,": ",path,":",line,": ",detail)) :- option("entry
 // use the same relations over selected documents, without a Python callback.
 ssp_doc(d,path) :- option("entryPoint",_), option_item("inputFiles",_,input), doc(d,input,_), doc_role(d,"primary"), option("argumentPath",path), !syntax_error(d,_,_).
 ssp_doc(d,path) :- !option("entryPoint",_), doc(d,path,_), doc_role(d,"primary"), !syntax_error(d,_,_).
+ssp_doc(d,path) :- option("entryPoint","_cli_scan"), option_item("inputFiles",i,input), option_item("cliPaths",i,path), doc(d,input,_), doc_role(d,"primary"), !syntax_error(d,_,_).
 .decl ssp_entry(name: symbol)
 ssp_entry("check_compile_no_data_branching").
 ssp_entry("check_compile_no_object_manipulation").
@@ -47,6 +49,7 @@ ssp_entry("check_zero_io_l0_execution_role_enum_semantics").
 ssp_run(name) :- ssp_entry(name), option("entryPoint",name).
 ssp_run(name) :- ssp_entry(name), option("entryPoint","_scan_source").
 ssp_run(name) :- ssp_entry(name), option("entryPoint","_scan_file").
+ssp_run(name) :- ssp_entry(name), option("entryPoint","_cli_scan").
 ssp_run(name) :- ssp_entry(name), option("entryPoint","_all_checks"), !option_item("requestedChecks",_,_).
 ssp_run(name) :- ssp_entry(name), option("entryPoint","_all_checks"), option_item("requestedChecks",_,name).
 ssp_run(name) :- ssp_entry(name), !option("entryPoint",_).
@@ -88,6 +91,7 @@ ssp_order("check_sql_visible_steps_declare_cte_type_hints",30).
 .decl ssp_scanning()
 ssp_scanning() :- option("entryPoint","_scan_source").
 ssp_scanning() :- option("entryPoint","_scan_file").
+ssp_scanning() :- option("entryPoint","_cli_scan").
 ssp_scanning() :- !option("entryPoint",_).
 .decl ssp_text_gated(entry: symbol)
 ssp_text_gated("check_runtime_ref_closed_post_op_consumption_guardrail").
@@ -176,8 +180,6 @@ ssp_dotted(n,cat(parent,".",name)) :- ssp_attr(n,v,name), ssp_dotted(v,parent).
 ssp_dotted(n,name) :- ssp_attr(n,v,name), !ssp_name(v,_), !ssp_attr(v,_,_).
 .decl ssp_named_call(n: node, name: symbol)
 ssp_named_call(n,name) :- ssp_func(n,f), ssp_dotted(f,name).
-.decl ssp_compiled(c: node)
-ssp_compiled(c) :- ssp_func(c,f), ssp_name(f,"CompiledStep").
 .decl ssp_missing_grammar(c: node)
 ssp_missing_grammar(c) :- ssp_compiled(c), !ssp_last_kw(c,"grammar",_).
 ssp_missing_grammar(c) :- ssp_compiled(c), ssp_last_kw(c,"grammar",v), ssp_none(v).
@@ -258,10 +260,6 @@ ssp_derived_columns(f,n) :- kind(f,"function_definition"), ssp_under(n,f), ssp_n
 ssp_derived_columns(f,n) :- ssp_derived_columns(f,c), ast_parent(c,n), ssp_under(n,f).
 .decl ssp_type_hints(c: node)
 ssp_type_hints(c) :- ssp_named_call(c,name), (name = "SqlColumnTypeHints" ; suffix(".SqlColumnTypeHints",name)).
-.decl ssp_arg(c: node, value: node)
-ssp_arg(c,v) :- ssp_pos(c,_,v).
-ssp_arg(c,v) :- ssp_kw(c,_,v).
-ssp_arg(c,v) :- kind(c,"call"), field(c,"arguments",al), child(al,k,_), kind(k,"dictionary_splat"), child(k,raw,0), unparen(raw,v).
 .decl ssp_hint_derived(f: node, c: node)
 ssp_hint_derived(f,c) :- ssp_under(c,f), ssp_type_hints(c), ssp_arg(c,v), ssp_derived_columns(f,v).
 ssp_problem_hit("check_cte_type_hints_not_inferred_from_column_names",c,f,n,n,0,"STEP-040","SqlColumnTypeHints must be declared from the semantic contract, not inferred from cte_output_columns() or output column names") :- ssp_first(c,f,"cte_column_type_hints"), ssp_hint_derived(f,n).
@@ -280,9 +278,6 @@ ssp_entry("check_compile_callbacks_no_runtime_authority").
 ssp_authority_type("ReadTransaction"). ssp_authority_type("WriteTransaction").
 ssp_authority_type("SqlConnection"). ssp_authority_type("DatabaseConnection").
 ssp_authority_type("SyncSqlConnection"). ssp_authority_type("SyncDatabaseConnection").
-.decl ssp_annotation_name(ann: node, name: symbol)
-ssp_annotation_name(ann,name) :- ssp_name(n,name), within(n,ann).
-ssp_annotation_name(ann,name) :- ssp_attr(n,_,name), within(n,ann).
 .decl ssp_authority_annotation(ann: node)
 ssp_authority_annotation(ann) :- ssp_annotation_name(ann,name), ssp_authority_type(name).
 .decl ssp_authority_return(d: number, name: symbol)
@@ -300,9 +295,6 @@ ssp_cb_positional(cb,nm,index) :- ssp_callback(_,_,_,_,cb), sig_param(cb,_,nm,i,
 ssp_cb_carrier(cb,kind,name) :- ssp_callback(_,_,_,kind,cb), (kind = "post_op" ; kind = "post_op_with_refs"), ssp_cb_positional(cb,nm,1), text(nm,raw), name = @nfkc(raw).
 .decl ssp_cb_authority(cb: node, name: symbol)
 ssp_cb_authority(cb,name) :- ssp_callback(_,_,_,_,cb), sig_param(cb,_,nm,_,pk,ann,_), (pk = "posonly" ; pk = "pos" ; pk = "kwonly"), text(nm,raw), name = @nfkc(raw), ssp_authority_annotation(ann).
-.decl ssp_carrier_attr(name: symbol)
-ssp_carrier_attr("txn"). ssp_carrier_attr("_txn"). ssp_carrier_attr("conn"). ssp_carrier_attr("_conn").
-ssp_carrier_attr("sql_conn"). ssp_carrier_attr("_serverplan_runtime_txn"). ssp_carrier_attr("_serverplan_sql_conn").
 .decl ssp_recover(cb: node, kind: symbol, n: node)
 ssp_recover(cb,kind,n) :- ssp_walk(cb,n), ssp_attr(n,v,attr), ssp_name(v,name), ssp_cb_carrier(cb,kind,name), ssp_carrier_attr(attr).
 ssp_recover(cb,kind,n) :- ssp_walk(cb,n), ssp_func(n,func), ssp_name(func,"getattr"), ssp_pos(n,0,v), ssp_name(v,name), ssp_cb_carrier(cb,kind,name), ssp_pos(n,1,a), str_const(a,attr), ssp_carrier_attr(attr).
@@ -475,10 +467,6 @@ ssp_entry("check_runtime_refs_without_sql_grammar_guardrail").
 ssp_entry("check_compiled_result_builders_do_not_fail_closed").
 ssp_entry("check_legacy_postop_user_callable_escape_hatches").
 
-.decl ssp_user_token(s: symbol)
-ssp_user_token("callback"). ssp_user_token("callable"). ssp_user_token("decoder"). ssp_user_token("fn").
-ssp_user_token("function"). ssp_user_token("hook"). ssp_user_token("mapper"). ssp_user_token("picker").
-ssp_user_token("processor"). ssp_user_token("projector"). ssp_user_token("row_decoder"). ssp_user_token("transform").
 .decl ssp_builder_token(s: symbol)
 ssp_builder_token("callback"). ssp_builder_token("callable"). ssp_builder_token("closure").
 ssp_builder_token("function"). ssp_builder_token("lambda"). ssp_builder_token("partial").
@@ -486,20 +474,10 @@ ssp_builder_token("function"). ssp_builder_token("lambda"). ssp_builder_token("p
 ssp_indirect_token("callback_id"). ssp_indirect_token("callable_id"). ssp_indirect_token("effect_id").
 ssp_indirect_token("function_id"). ssp_indirect_token("hook_id"). ssp_indirect_token("processor_id").
 ssp_indirect_token("registry_id"). ssp_indirect_token("transform_id").
-.decl ssp_user_name(s: symbol)
-ssp_user_name(s) :- ssp_user_token(t), (ssp_name(_,s) ; ssp_attr(_,_,s) ; ssp_kw(_,s,_)), contains(t,@lower(s)).
 .decl ssp_builder_escape(s: symbol)
 ssp_builder_escape(s) :- ssp_builder_token(t), (ssp_dotted(_,s) ; str_const(_,s) ; ssp_name(_,s) ; ssp_kw(_,s,_)), contains(t,@lower(s)).
 .decl ssp_kw_escape(s: symbol)
 ssp_kw_escape(s) :- ssp_kw(_,s,_), (ssp_user_token(t) ; ssp_builder_token(t) ; ssp_indirect_token(t)), contains(t,@lower(s)).
-.decl ssp_user_shape(n: node)
-ssp_user_shape(n) :- kind(n,"lambda").
-ssp_user_shape(n) :- ssp_name(n,name), ssp_user_name(name).
-ssp_user_shape(n) :- ssp_attr(n,_,name), ssp_user_name(name).
-ssp_user_shape(n) :- ssp_attr(n,v,_), ssp_user_shape(v).
-ssp_user_shape(n) :- ssp_func(n,f), ssp_user_shape(f).
-ssp_user_shape(n) :- ssp_arg(n,v), ssp_user_shape(v).
-ssp_user_shape(n) :- kind(n,"subscript"), field(n,"value",raw), unparen(raw,v), ssp_user_shape(v).
 .decl ssp_callable_binding(d: number, name: symbol)
 ssp_callable_binding(d,@nfkc(name)) :- ssp_fn(d,f), def_name(f,name).
 ssp_callable_binding(d,name) :- docof(a,d), assign_target(a,t), ssp_name(t,name), assign_value(a,raw), unparen(raw,v), kind(v,"lambda").
@@ -599,13 +577,6 @@ ssp_problem_hit("check_compiled_result_builders_do_not_fail_closed",m,f,c,v,0,"S
 .decl ssp_legacy_gate(d: number)
 ssp_legacy_gate(d) :- ssp_strict(d).
 ssp_legacy_gate(d) :- ssp_doc(d,_), option("strictModulesOnly","0").
-.decl ssp_legacy_value(call: node, kind: symbol, value: node)
-ssp_legacy_value(call,key,v) :- ssp_compiled(call), ssp_kw(call,key,v), (key = "post_op" ; key = "post_op_with_refs").
-.decl ssp_bare_partial(c: node)
-ssp_bare_partial(c) :- ssp_func(c,f), ssp_name(f,"partial").
-.decl ssp_call_user(c: node)
-ssp_call_user(c) :- ssp_func(c,f), ssp_user_shape(f).
-ssp_call_user(c) :- ssp_arg(c,v), ssp_user_shape(v).
 .decl ssp_last_function(d: number, name: symbol, f: node)
 ssp_last_function(d,@nfkc(name),f) :- ssp_fn(d,f), def_name(f,name), visit_index(f,i), i = max j : { ssp_fn(d,g), def_name(g,other), @nfkc(other) = @nfkc(name), visit_index(g,j) }.
 .decl ssp_legacy_hit(call: node, value: node, phase: number, at: node, problem: symbol)
@@ -623,4 +594,7 @@ SSPRow(@place(path,1),"PARSE","SyntaxError: source code string cannot contain nu
 ssp_error_line(detail,n) :- ssp_key_error(_,_,detail), contains("line ",detail), tail = @replace_all(detail,"(?s)\\A.*line ",""), match_all("\\A(?<digits>[0-9]+)(?s:.*)\\z",tail), n = to_number(digits).
 SSPRow(@place(path,n),"PARSE",cat("ValueError: ",detail),0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_scan_file"), ssp_key_error(_,path,detail), ssp_error_line(detail,n).
 SSPRow(@place(path,1),"PARSE",cat("ValueError: ",detail),0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_scan_file"), ssp_key_error(_,path,detail), !ssp_error_line(detail,_).
-
+SSPRow(@place(path,l),"PARSE",cat("SyntaxError: ",detail," (",filename,", line ",to_string(l),")"),0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_cli_scan"), option_item("cliPaths",i,path), filename = @replace_all(path,"(?s)\\A.*/",""), option_item("inputFiles",i,input), doc(d,input,_), doc_role(d,"primary"), syntax_error(d,l,detail), detail != "source code string cannot contain null bytes".
+SSPRow(@place(path,1),"PARSE","SyntaxError: source code string cannot contain null bytes",0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_cli_scan"), option_item("cliPaths",i,path), option_item("inputFiles",i,input), doc(d,input,_), doc_role(d,"primary"), syntax_error(d,_,"source code string cannot contain null bytes").
+SSPRow(@place(path,n),"PARSE",cat("ValueError: ",detail),0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_cli_scan"), ssp_key_error(_,path,detail), ssp_error_line(detail,n).
+SSPRow(@place(path,1),"PARSE",cat("ValueError: ",detail),0,0,0,0,0,"_scan_file",-1) :- option("entryPoint","_cli_scan"), ssp_key_error(_,path,detail), !ssp_error_line(detail,_).
