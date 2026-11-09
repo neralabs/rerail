@@ -984,9 +984,13 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
     let err = |m: String| Err(format!("authored {rule}: {m}"));
     // The prelude's declarations the file does not use are core.rr's, not the file's (`rr::drop_unread_core`).
     super::rr::drop_unread_core(&mut authored);
-    if !authored.policies.is_empty() || !authored.settings.is_empty() {
+    // `.global library …` is what reading the file wrote of the libraries it includes (decision 0091), not a
+    // directive of its own: it goes with the merged program.
+    let (library, settings): (Vec<_>, Vec<_>) = std::mem::take(&mut authored.settings).into_iter().partition(|(key, _)| key == front::GLOBAL);
+    if !authored.policies.is_empty() || !settings.is_empty() {
         return err("`.policy` and setting directives are the policy's, not the overlay's".into());
     }
+    converted.settings.extend(library);
     if let Some(o) = authored.outputs.iter().find(|o| *o != "violation") {
         return err(format!(".output {o}: the only output is violation"));
     }
