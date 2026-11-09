@@ -381,8 +381,8 @@ impl Vocabulary {
 
 /// The values a relation's column can hold when they come from the program's constants alone: a fact relation's
 /// (rows matching the atom's constants), a constant relation's (`typing::file_local::constant_relations`), or a
-/// derived column every rule fills from such a column or a literal. A superset is enough for its one reader,
-/// `implied_set_tests`. `None` where a value may come from anything else.
+/// derived column every rule fills from such a column or a literal (with its facts' values, where it has facts). A
+/// superset is enough for its one reader, `implied_set_tests`. `None` where a value may come from anything else.
 fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(String, usize)>) -> Option<std::collections::BTreeSet<String>> {
     use std::collections::BTreeSet;
     if visiting.iter().any(|(r, c)| r == rel && *c == col) || visiting.len() > 16 {
@@ -397,7 +397,15 @@ fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(St
         return rows.iter().map(|row| match row.get(col) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
     }
     visiting.push((rel.to_owned(), col));
+    // Its facts' values too: a relation of facts and rules holds both.
     let mut out = BTreeSet::new();
+    for row in prog.facts.get(rel).into_iter().flatten() {
+        let Some(super::front::Value::Str(s)) = row.get(col) else {
+            visiting.pop();
+            return None;
+        };
+        out.insert(s.clone());
+    }
     for rule in rules {
         let got = match rule.head.args.get(col) {
             Some(Term::Str(s)) => Some(BTreeSet::from([s.clone()])),
