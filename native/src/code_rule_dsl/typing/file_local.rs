@@ -464,7 +464,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
         let kept: BTreeSet<String> = filters
             .iter()
             .filter(|rel| {
-                prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
+                rules_of.get(rel.as_str()).map(Vec::as_slice).unwrap_or_default().iter().all(|r| {
                     let mut strings = BTreeSet::new();
                     let reads_only_text = r.body.iter().all(|l| match l {
                         Literal::Atom(a) if test_relation(&a.rel) || filters.contains(&a.rel) => true,
@@ -489,6 +489,17 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
     let mut local: BTreeSet<String> = derived.iter().filter(|r| !prog.natives.contains_key(**r)).map(|r| (*r).to_owned()).collect();
     let constants = constant_relations(prog);
     let mut causes: BTreeMap<String, String> = derived.iter().filter(|r| prog.natives.contains_key(**r)).map(|r| ((*r).to_owned(), "made natively".to_owned())).collect();
+    // The rules to check: every file-local relation's first, then only those reading a relation the last round
+    // found cross-file (no other rule's answer can change).
+    let mut readers: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, r) in prog.rules.iter().enumerate() {
+        for l in &r.body {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l {
+                readers.entry(a.rel.as_str()).or_default().push(i);
+            }
+        }
+    }
+    let mut pending: Vec<usize> = (0..prog.rules.len()).collect();
     loop {
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> Result<(), String> {
             // Each read relation's location variables; the rule's locations must form one component.
@@ -568,13 +579,17 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
                 Err(format!("joins {} documents: {{{}}}", merged.len(), parts.join("} {")))
             }
         };
-        let before = local.len();
-        let failing: Vec<(String, String)> = prog.rules.iter().filter(|r| local.contains(&r.head.rel)).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.clone(), why))).collect();
+        let failing: Vec<(String, String)> = pending.iter().map(|&i| &prog.rules[i]).filter(|r| local.contains(&r.head.rel)).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.clone(), why))).collect();
+        let mut removed: BTreeSet<String> = BTreeSet::new();
         for (rel, why) in failing {
-            local.remove(&rel);
+            if local.remove(&rel) {
+                removed.insert(rel.clone());
+            }
             causes.entry(rel).or_insert(why);
         }
-        if local.len() == before {
+        let next: BTreeSet<usize> = removed.iter().flat_map(|r| readers.get(r.as_str()).into_iter().flatten().copied()).collect();
+        pending = next.into_iter().collect();
+        if removed.is_empty() {
             let mut same: BTreeMap<String, Vec<usize>> =
                 prog.inputs.iter().filter(|i| !derived.contains(i.as_str())).map(|i| (i.clone(), base_locations(i))).collect();
             same.extend(local.iter().map(|rel| (rel.clone(), locations[rel].clone())));

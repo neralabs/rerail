@@ -2424,17 +2424,31 @@ fn run_observed(
                 return;
             };
             let width = rows.columns().len();
+            // The rows by file, gathered here and handed to the entries once: rows come in runs of one document,
+            // so a run's owners are found once.
+            let mut by_file: HashMap<i64, Vec<i64>> = HashMap::new();
+            let mut run: Option<(i64, Vec<i64>)> = None;
+            let mut row = Vec::with_capacity(width);
             for r in 0..rows.len() {
-                let files = owners(rows.value(r, at));
-                if !files.iter().all(|d| entries.contains_key(d)) {
-                    memo_why.insert(format!("export {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
-                    attributable = false;
-                    return;
+                let v = rows.value(r, at);
+                let d = memo::document_of(v);
+                if run.as_ref().is_none_or(|(rd, _)| *rd != d) {
+                    let files = owners(v);
+                    if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
+                        memo_why.insert(format!("export {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
+                        attributable = false;
+                        return;
+                    }
+                    run = Some((d, files));
                 }
-                for d in files {
-                    let held = entries.get_mut(&d).expect("checked").rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new()));
-                    held.1.extend((0..width).map(|c| rows.value(r, c)));
+                row.clear();
+                row.extend((0..width).map(|c| rows.value(r, c)));
+                for f in &run.as_ref().expect("set").1 {
+                    by_file.entry(*f).or_default().extend_from_slice(&row);
                 }
+            }
+            for (f, values) in by_file {
+                entries.get_mut(&f).expect("checked").rows.entry(rel.to_owned()).or_insert_with(|| (width, Vec::new())).1.extend(values);
             }
         };
         db.execute_batch("BEGIN")?;
@@ -2445,18 +2459,18 @@ fn run_observed(
             let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
             if kept.contains(rel) {
                 let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {cols} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::ident(rel)), [rel])?;
+                let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "write to x".into()); db.execute(&format!("INSERT OR IGNORE INTO x.{} SELECT {cols} FROM set_derived WHERE rel = ?1", crate::code_rule_dsl::logic::sql::ident(rel)), [rel])? };
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
-                totals.add_rows(rel, inserted, rows.as_ref(), &types);
-                attribute(rel, rows.as_ref());
+                { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, inserted, rows.as_ref(), &types); }
+                { let _s = crate::code_rule_dsl::logic::profile::span(|| "attribute to files".into()); attribute(rel, rows.as_ref()); }
                 if !deferred.is_empty() {
                     mention(&mut mentioned, rows.as_ref());
                 }
             } else {
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{q} SELECT * FROM temp.{q}", q = crate::code_rule_dsl::logic::sql::ident(rel)), [])?;
+                let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "write to x".into()); db.execute(&format!("INSERT OR IGNORE INTO x.{q} SELECT * FROM temp.{q}", q = crate::code_rule_dsl::logic::sql::ident(rel)), [])? };
                 let rows = Rows::read(&db, &format!("temp.{}", crate::code_rule_dsl::logic::sql::ident(rel)))?;
-                totals.add_rows(rel, inserted, &rows, &types);
-                attribute(rel, &rows);
+                { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, inserted, &rows, &types); }
+                { let _s = crate::code_rule_dsl::logic::profile::span(|| "attribute to files".into()); attribute(rel, &rows); }
                 if !deferred.is_empty() {
                     mention(&mut mentioned, &rows);
                 }
@@ -2475,6 +2489,7 @@ fn run_observed(
         }
         // Each memoised file's base rows, once the exports name the nodes a semi-join keeps.
         if attributable {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "base rows for the memo".into()); 
             for entry in entries.values_mut() {
                 for (rel, _) in &stored {
                     let width = super::super::sql::select::input_columns(rel).map_or(0, <[_]>::len);
@@ -2485,18 +2500,35 @@ fn run_observed(
                 let key = memo::base_key(rel);
                 // A semi-join's relation: the rows of the nodes the chunk's exports hold, as the cross part keeps.
                 let node = semijoin.contains(rel).then(|| source.columns().iter().position(|h| h == "n")).flatten();
+                let Some(&first) = at.first() else {
+                    attributable = false;
+                    break 'base;
+                };
+                // The rows by file, handed to the entries once; a run of one document's rows finds its owners once.
+                let mut by_file: HashMap<i64, Vec<i64>> = HashMap::new();
+                let mut run: Option<(i64, Vec<i64>)> = None;
+                let mut row = Vec::with_capacity(at.len());
                 for r in (0..source.len()).filter(|&r| node.is_none_or(|n| mentioned.contains(&source.value(r, n)))) {
                     // A row is each of its owners' (a guest's is its host's; a value document's, each asking file's):
                     // rows are sets, so a row kept by several files restores as one.
-                    let files = at.first().map_or_else(Vec::new, |c| owners(source.value(r, *c)));
-                    if files.is_empty() || !files.iter().all(|f| entries.contains_key(f)) {
-                        attributable = false;
-                        break 'base;
+                    let v = source.value(r, first);
+                    let d = memo::document_of(v);
+                    if run.as_ref().is_none_or(|(rd, _)| *rd != d) {
+                        let files = owners(v);
+                        if files.is_empty() || !files.iter().all(|f| entries.contains_key(f)) {
+                            attributable = false;
+                            break 'base;
+                        }
+                        run = Some((d, files));
                     }
-                    for f in files {
-                        let held = &mut entries.get_mut(&f).expect("checked").rows.get_mut(&key).expect("every entry has every base key").1;
-                        held.extend(at.iter().map(|c| source.value(r, *c)));
+                    row.clear();
+                    row.extend(at.iter().map(|c| source.value(r, *c)));
+                    for f in &run.as_ref().expect("set").1 {
+                        by_file.entry(*f).or_default().extend_from_slice(&row);
                     }
+                }
+                for (f, values) in by_file {
+                    entries.get_mut(&f).expect("checked").rows.get_mut(&key).expect("every entry has every base key").1.extend(values);
                 }
             }
         }
@@ -2931,6 +2963,11 @@ fn run_observed(
             crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
                 format!("every component found: {} rules of memoised relations not run, their copies only", before - cross.program.rules.len())
             });
+        }
+        // No component found (a new store): `rr_cross_doc` is empty and every guard passes, so none is run.
+        if found.hits.is_empty() && cross_mode != cross_memo::Mode::Verify {
+            let dropped = cross_memo::drop_guards(&mut cross.program);
+            crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || format!("no component found: {dropped} guards on `rr_cross_doc` not run"));
         }
         let read: BTreeSet<&str> = cross.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
         let mut replayed = Totals::default();
