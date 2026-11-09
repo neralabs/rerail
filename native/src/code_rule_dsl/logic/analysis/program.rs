@@ -198,6 +198,7 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
             kind: match op {
                 AggOp::Count => Kind::Count,
                 AggOp::Sum => Kind::Sum,
+                AggOp::Product => Kind::Product,
                 AggOp::Min => Kind::Min,
                 AggOp::Max => Kind::Max,
                 AggOp::Join { .. } => Kind::OrderedJoin,

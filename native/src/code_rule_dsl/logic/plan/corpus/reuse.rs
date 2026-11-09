@@ -218,6 +218,16 @@ mod tests {
         // Each library file a text includes is in the record, with its digest (a flattened text includes none).
         let rules = super::rule_files(&["#include \"core.rr\"\n.decl x(s: symbol)\n".to_owned()]).unwrap();
         assert!(rules.iter().any(|r| r.1.ends_with("core.rr") && !r.2.is_empty()) && rules.iter().any(|r| r.1.ends_with("components.rr")), "{rules:?}");
+        // A policy file the program reads (`.input … filename=`) is consulted: its edit runs it again.
+        std::fs::write(src.join("allow.txt"), "a\n").unwrap();
+        let reads = "#include \"core.rr\"\n.decl entry(n: number, e: symbol)\n.input entry(IO=lines, filename=\"allow.txt\")\n.decl listed(e: symbol)\nlisted(e) :- entry(_, e).\n.output listed\n";
+        let reads = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reads).unwrap()).unwrap();
+        run(&reads);
+        assert!(kept(&run(&reads)));
+        std::fs::write(src.join("allow.txt"), "a\nb\n").unwrap();
+        assert!(!kept(&run(&reads)), "an edited input file");
+        assert_eq!(std::fs::read_to_string(out.join("listed.csv")).unwrap(), "a\nb\n");
+        assert!(kept(&run(&reads)));
         // Off: derived every time.
         let off = serde_json::json!({});
         let r = super::super::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &off).unwrap();

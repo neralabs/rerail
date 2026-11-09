@@ -83,13 +83,16 @@ fn plan(program: &[u8; 32]) -> FactsPlanSet {
     FactsPlanSet::new(vec![plan_digest(program)])
 }
 
-/// A digest of a program part: its rules, declarations, inputs and outputs as lowered, and every fact, those the
-/// engine reads (a guest policy) as well as those its rules read.
+/// A digest of a program part: its rules, declarations, inputs and outputs as lowered, every fact, those the engine
+/// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it.
 pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
     let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-program/v3\0");
     hash.update(format!("{:?}\n{:?}\n{:?}\n{:?}\n{:?}", program.rules, program.decls, facts, program.inputs, program.outputs).as_bytes());
+    // What the batch makes for the part besides its rules' reads: the regex spans and AST patterns it matches
+    // (O-stored-patterns).
+    hash.update(format!("\n{:?}\n{:?}", program.rx_spans, program.ast_patterns).as_bytes());
     hash.finalize().into()
 }
 
@@ -99,6 +102,25 @@ pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8
     hash.update(b"rerail.corpus-local-options/v1\0");
     hash.update(digest);
     hash.update(options.to_string().as_bytes());
+    hash.finalize().into()
+}
+
+/// `digest` with rows folded in, by relation: the key of a file-local part that reads relations whose rows are not in
+/// its text (a phase's exports). The rows' order is not part of it.
+pub(super) fn with_rows<'a>(digest: [u8; 32], rels: impl Iterator<Item = (&'a str, &'a Vec<Vec<crate::code_rule_dsl::logic::front::Value>>)>) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-rows/v1\0");
+    hash.update(digest);
+    for (rel, rows) in rels {
+        let mut lines: Vec<String> = rows.iter().map(|r| format!("{r:?}")).collect();
+        lines.sort_unstable();
+        hash.update(rel.as_bytes());
+        hash.update([0]);
+        for l in &lines {
+            hash.update(l.as_bytes());
+            hash.update([0]);
+        }
+    }
     hash.finalize().into()
 }
 

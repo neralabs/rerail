@@ -60,7 +60,7 @@ cranelift-module = "=0.125.4"
 # The hasher of in-process maps keyed by names, nodes and terms (scope tables, a batch's facts).
 foldhash = "=0.2.0"
 hashbrown = { version = "=0.16.1", default-features = false }
-gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
+gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
 globset = "=0.4.20"
 # Multi-literal search for the text layer (code_rule_dsl/text): already in the tree through `regex`.
 aho-corasick = "=1.1.5"
