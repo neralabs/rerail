@@ -1861,8 +1861,8 @@ export const HAND_WRITTEN = [
 
 /**
  * The pack's own rules: written for Rerail, with no upstream plugin, by hand in packs/react/rules/ and proven by their
- * pack.json examples and their cases in fixtures/react/. Listed as conformance.json's `own`, so no gate
- * treats them as unmapped ports.
+ * pack.json examples and their cases in packs/react/upstream/react-architecture/ (pack test data). Listed as
+ * conformance.json's `own`, so no gate treats them as unmapped ports.
  */
 export const OWN = [
   "react-architecture-callback-for-dom-only",

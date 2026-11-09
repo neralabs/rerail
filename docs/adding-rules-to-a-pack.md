@@ -103,8 +103,9 @@ The pull request says what the examples show and what they leave out.
 <summary>Edge cases</summary>
 
 - The React pack's architecture rules are the model: own rules beside a tool-pack's ports, listed in its
-  `conformance.json` `own`, with their cases in `fixtures/react/` run by
-  `test/cli/react-architecture-rules.test.ts`. A pack with no tool-pack follows
+  `conformance.json` `own`. Their cases are pack test data in an archive of their own,
+  `packs/react/upstream/react-architecture/` (written by Rerail, listed in its `UPSTREAM.md`, no upstream tool or
+  generator), run by `test/cli/react-architecture-rules.test.ts`. A pack with no tool-pack follows
   [language-packs.md, "A pack for a supported language"](language-packs.md#a-pack-for-a-supported-language).
 - Each example sits at a path inside the rule's scope; a conversation rule's examples carry no path.
 - The changeset is needed because the rule changes what the pack publishes.
