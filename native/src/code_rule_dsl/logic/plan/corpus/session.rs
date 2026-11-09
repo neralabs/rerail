@@ -79,24 +79,28 @@ pub(in crate::code_rule_dsl) fn full<T>(run: impl FnOnce() -> T) -> T {
 
 /// The session, held for a run (`None`: none started, or a full run).
 pub(super) fn current() -> Held {
+    // Phase 0's runs (`phase0`) are never a session's, and may run while another thread's run holds it.
+    if super::phase0::active() {
+        return Held(None, true);
+    }
     let held = SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     #[cfg(test)]
     let skip = held.as_ref().is_some_and(|s| s.thread != std::thread::current().id());
     #[cfg(not(test))]
     let skip = false;
-    Held(held, skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
+    Held(Some(held), skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// The session held for a run, unless the run is a full one.
-pub(super) struct Held(MutexGuard<'static, Option<Session>>, bool);
+pub(super) struct Held(Option<MutexGuard<'static, Option<Session>>>, bool);
 
 impl Held {
     pub(super) fn as_ref(&self) -> Option<&Session> {
-        self.0.as_ref().filter(|s| !self.1 && Self::ours(s))
+        self.0.as_ref()?.as_ref().filter(|s| !self.1 && Self::ours(s))
     }
     pub(super) fn as_mut(&mut self) -> Option<&mut Session> {
         let full = self.1;
-        self.0.as_mut().filter(|s| !full && Self::ours(s))
+        self.0.as_mut()?.as_mut().filter(|s| !full && Self::ours(s))
     }
     /// Whether a run on this thread is the session's: always, outside tests.
     fn ours(_session: &Session) -> bool {

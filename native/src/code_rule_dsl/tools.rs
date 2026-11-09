@@ -241,7 +241,7 @@ pub fn run_rr(
         Binding::Cpu,
         1 << 18,
         &Default::default(),
-        options,
+        &with_reuse(options),
     )
     .map_err(|e| e.to_string())?;
     let rows = match std::fs::read_to_string(out.join("rr_diagnostic.csv")) {
@@ -317,41 +317,75 @@ pub fn assemble(text: &str) -> Result<String, String> {
 
 /// A program file's `.rr` text, with what it `#include`s from the library (`docs/rule-syntax/lib`) read in.
 pub fn program_text(path: &std::path::Path) -> Result<String, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    // A policy (`.policy`, `.language`) is read as `run-rr` reads it: its language's base relations are declared by
-    // reading the file (O111), which a policy's text does not do itself.
-    let policy = text.lines().map(str::trim_start).any(|l| l.starts_with(".policy") || l.starts_with(".language"));
-    if !policy && !text.lines().any(|l| l.trim_start().starts_with("#include")) {
-        return Ok(text);
-    }
-    // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a run
-    // however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
-    let mut seen = Vec::new();
-    let own = module_text(path, &text, &mut seen)?;
-    if policy && !own.lines().any(|l| l.trim_start().starts_with("#include")) {
-        return Ok(format!("#include \"core.rr\"\n{own}"));
-    }
-    Ok(own)
+    program_texts(&[path]).map(|mut texts| texts.remove(0))
 }
 
-/// `text` (the file `path`'s) with each `#include` of a file beside it, not in the library, written in, each once.
-fn module_text(path: &std::path::Path, text: &str, seen: &mut Vec<std::path::PathBuf>) -> Result<String, String> {
-    let library = super::logic::rr::library();
+/// [`program_text`] for each of `paths`: phase 0 resolves all their `#include`s in one run of `bootstrap.rr`
+/// (`plan::corpus::phase0`), not one run each.
+pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> {
+    use super::logic::plan::corpus::{observe, phase0};
+    let read = |path: &std::path::Path| -> Result<String, String> {
+        let (bytes, _) = observe(|o| o.read(path)).ok_or_else(|| format!("{}: cannot read the file", path.display()))?;
+        String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
+    };
+    let texts: Vec<String> = paths.iter().map(|p| read(p)).collect::<Result<_, _>>()?;
+    // A policy (`.policy`, `.language`) is read as `run-rr` reads it: its language's base relations are declared by
+    // reading the file (O111), which a policy's text does not do itself.
+    let policy = |text: &str| text.lines().map(str::trim_start).any(|l| l.starts_with(".policy") || l.starts_with(".language"));
+    let includes = |text: &str| text.lines().any(|l| l.trim_start().starts_with("#include"));
+    let mut seeds = Vec::new();
+    for (path, text) in paths.iter().zip(&texts) {
+        if includes(text) {
+            seeds.push(phase0::Seed::File(path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?));
+        }
+    }
+    let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
+    let mut graphs = graphs.into_iter();
+    let mut out = Vec::with_capacity(texts.len());
+    for (path, text) in paths.iter().zip(texts) {
+        if !includes(&text) {
+            out.push(if policy(&text) { format!("#include \"core.rr\"\n{text}") } else { text });
+            continue;
+        }
+        let graph = graphs.next().expect("a graph per seed");
+        // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
+        // run however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
+        let canonical = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+        let own = module_text(&canonical, &text, &graph, &mut Vec::new(), &read)?;
+        out.push(if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own });
+    }
+    Ok(out)
+}
+
+/// `text` (the file `path`'s) with each `#include` phase 0 resolved to a file outside the library written in, each
+/// once.
+fn module_text(
+    path: &std::path::Path,
+    text: &str,
+    graph: &super::logic::plan::corpus::phase0::Graph,
+    seen: &mut Vec<std::path::PathBuf>,
+    read: &dyn Fn(&std::path::Path) -> Result<String, String>,
+) -> Result<String, String> {
+    let library = super::logic::rr::library().canonicalize().map_err(|e| e.to_string())?;
+    let from = path.to_string_lossy().into_owned();
     let mut out = String::with_capacity(text.len());
     for line in text.lines() {
         let name = line.trim_start().strip_prefix("#include").and_then(|rest| rest.split('"').nth(1));
         match name {
-            Some(name) if !library.join(name).exists() => {
-                let beside = path.parent().map(|d| d.join(name)).unwrap_or_default();
-                let canonical = beside.canonicalize().map_err(|e| format!("{}: #include {name:?}: {e}", path.display()))?;
-                if !seen.contains(&canonical) {
-                    seen.push(canonical);
-                    let inner = std::fs::read_to_string(&beside).map_err(|e| format!("{}: {e}", beside.display()))?;
-                    out.push_str(&module_text(&beside, &inner, seen)?);
+            Some(name) => {
+                let found = graph.includes.get(&from).into_iter().flatten().find(|(_, n, _)| n == name).map(|(_, _, p)| p.clone());
+                let Some(found) = found else {
+                    return Err(format!("{}: #include {name:?}: no such file", path.display()));
+                };
+                if found.starts_with(&library) {
+                    out.push_str(line);
+                } else if !seen.contains(&found) {
+                    seen.push(found.clone());
+                    let inner = read(&found)?;
+                    out.push_str(&module_text(&found, &inner, graph, seen, read)?);
                 }
             }
-            _ => out.push_str(line),
+            None => out.push_str(line),
         }
         out.push('\n');
     }
@@ -392,6 +426,15 @@ pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
     format!("{program}\n// The run's settings (--env, rerail.env).\n{facts}")
 }
 
+/// The command line's runs keep their outputs for phase 0's cutoff (`corpus::reuse`), unless the caller said.
+fn with_reuse(options: &serde_json::Value) -> serde_json::Value {
+    let mut options = options.clone();
+    if let Some(map) = options.as_object_mut() {
+        map.entry("reuse").or_insert(serde_json::Value::Bool(true));
+    }
+    options
+}
+
 /// [`program_text`] under the name the wasm build's callers use: a rule as written in the library, its includes
 /// and `core.rr` resolved, as one program's text.
 pub fn flatten(path: &std::path::Path) -> Result<String, String> {
@@ -410,7 +453,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     if programs.len() > 1 && t_facts.is_some() {
         return Err("T facts reproduce one program's run, not several".into());
     }
-    let options = serde_json::json!({ "env": settings });
+    let options = serde_json::json!({ "env": settings, "reuse": true });
     let programs: Vec<&str> = programs.iter().map(String::as_str).collect();
     let report = super::logic::plan::corpus::run_with_options(&programs, root, t_facts, out, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
         .map_err(|error| error.to_string())?;
@@ -586,7 +629,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             })
             .collect();
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
-        files.iter().map(|path| crate::tools::program_text(path)).collect::<Result<Vec<_>, _>>()?
+        crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]
     };
