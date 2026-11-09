@@ -3409,7 +3409,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "154f5dc11c469405a176aeb49a94f7ef36184edf942ddbf73ce970c53156b210"
+        "sha256": "624b59628a04a697a62c636121bfced77e42b827ee103cf60c2df4af8b5ce8bc"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
@@ -3441,7 +3441,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "cb956ec2417591216976e465b7bea46a98d5ba5da0f78ce5b6e75593487c0faa"
+        "sha256": "217780f880fcf1904ef0f83af9ad1db5cda9d78f7a2672e5f11cb24812b9951c"
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
@@ -3493,42 +3493,7 @@
       }
     ],
     "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038",
-    "adoptionAudit": {
-      "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "b73d28aabc5dfa6102981782ee03c53f81f7bbb8",
-      "engineCommit": "d86053948013f13870d9ce6f857caaae7a507e85",
-      "sourceTrees": {
-        "native": "8bd6f17fc37c3c4935fb809a22745c5dd5d2b633",
-        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
-      }
-    },
-    "cliArtifact": {
-      "engineCommit": "062e77d1f87e5dd6c5cbad95bc05146da433bbe1",
-      "upstreamCommit": "b73d28aabc5dfa6102981782ee03c53f81f7bbb8",
-      "sourceTrees": {
-        "native": "8bd6f17fc37c3c4935fb809a22745c5dd5d2b633",
-        "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "414079c5a27048d931741a23518cc15df7dd41ac",
-        "Cargo.lock": "7b7b4737f5bf331f2c93c54d43c3509241d4c1b7"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-97566d3ce4ce79ac",
-      "sha256": "97566d3ce4ce79aca335fe31f0d686a2207181bf6ea793bd86ebdfe2059bd67d",
-      "command": [
-        "cargo",
-        "build",
-        "-p",
-        "rerail-engine",
-        "--features",
-        "headless",
-        "--bin",
-        "rerail-engine",
-        "--release"
-      ],
-      "seconds": 914.474
-    }
+    "upstreamMerge": "852e1c343cdac3b927239ec37d1e778cd840d038"
   },
   "engineSourceSnapshots": [
     {
