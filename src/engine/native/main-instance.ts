@@ -59,6 +59,15 @@ function isMainInstanceHolder(value: unknown): value is MainInstanceHolder {
     && typeof record.packageRoot === "string" && typeof record.startedAt === "string";
 }
 
+/**
+ * Removes the holder record when it names `pid`, a holder the OS ended without its `release`: on Windows a daemon is
+ * always ended that way, and the record would then name whatever process Windows gives that pid next. The lock itself
+ * went with the process.
+ */
+export function forgetMainInstanceHolder(pid: number, directory: string = mainContentStoreDirectory()): void {
+  if (readHolder(directory)?.pid === pid) rmSync(join(directory, MAIN_INSTANCE_HOLDER_FILE), { force: true });
+}
+
 function readHolder(directory: string): MainInstanceHolder | undefined {
   try {
     const value: unknown = JSON.parse(readFileSync(join(directory, MAIN_INSTANCE_HOLDER_FILE), "utf8"));

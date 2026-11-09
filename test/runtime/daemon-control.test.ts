@@ -42,6 +42,7 @@ import {
   browserOpener,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
+  daemonMayHold,
   dashboardAccessLink,
   daemonUsesPackageRoot,
   findRunningDaemon,
@@ -49,6 +50,7 @@ import {
   launchDetached,
   lookupDaemon,
   openDashboard,
+  ownProcessAlive,
   processAlive,
   readDaemonState,
   startDaemon,
@@ -457,6 +459,64 @@ describe("stopping the daemon", () => {
     expect(stillRunningMessage(123, "win32")).toContain(`tasklist /FI "PID eq 123"`);
     expect(stillRunningMessage(123, "win32")).not.toContain("ps -p");
     expect(stillRunningMessage(123, "linux")).toContain("ps -p 123");
+  });
+});
+
+describe("a state file Windows left behind", () => {
+  const PIPE = String.raw`\\.\pipe\rerail-0123456789abcdef01234567`;
+  let home: string;
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "rerail-stale-"));
+  });
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    await rm(home, { recursive: true, force: true });
+  });
+
+  /** A Windows machine where every pid, even one no process can hold, is a live process of this user, with `pipes`. */
+  function windows(pipes: readonly string[], signals: Array<string | number | undefined> = []) {
+    return {
+      platform: "win32" as const,
+      kill: (_pid: number, signal?: string | number) => {
+        signals.push(signal);
+        return true;
+      },
+      pipes: () => pipes,
+    };
+  }
+
+  it("counts an EPERM from a pid as not this user's on Windows, so its URL never gets the capability", () => {
+    const denied = (): boolean => {
+      throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+    };
+    expect(processAlive(4, denied)).toBe(true);
+    expect(ownProcessAlive(4, denied)).toBe(false);
+  });
+
+  it("takes a live pid without the daemon's engine pipe for a reused one: it removes the state and kills nothing", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "secret" })));
+    const probe = vi.fn(async () => Response.json({ status: "ok", pid: DEAD_PID }));
+    vi.stubGlobal("fetch", probe);
+    const signals: Array<string | number | undefined> = [];
+    expect(await stopDaemon(home, windows([], signals))).toBe("not-running");
+    expect(signals.filter(signal => signal !== 0)).toEqual([]);
+    expect(probe).not.toHaveBeenCalled();
+    expect(existsSync(stateFile)).toBe(false);
+
+    // A daemon whose pipe is there but which does not answer is still the daemon, and start refuses to go over it.
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("connect ECONNREFUSED 127.0.0.1:1");
+    }));
+    await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
+    expect(await lookupDaemon(home, windows(["rerail-0123456789abcdef01234567"]))).toMatchObject({ status: "unresponsive" });
+  });
+
+  it("counts a recorded cache holder only while a Rerail engine pipe exists on Windows", () => {
+    expect(daemonMayHold(DEAD_PID, windows([]))).toBe(false);
+    expect(daemonMayHold(DEAD_PID, windows(["other-pipe"]))).toBe(false);
+    expect(daemonMayHold(DEAD_PID, windows(["rerail-0123456789abcdef01234567"]))).toBe(true);
+    expect(daemonMayHold(DEAD_PID, { ...windows([]), platform: "linux" })).toBe(true);
   });
 });
 

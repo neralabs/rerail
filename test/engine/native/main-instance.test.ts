@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ import { startDaemon, stopDaemon } from "../../../src/runtime/index.js";
 import {
   acquireMainInstance,
   assertContentStoreOwner,
+  forgetMainInstanceHolder,
   MAIN_INSTANCE_HOLDER_FILE,
   MainInstanceConflictError,
   type MainInstanceLease,
@@ -150,4 +151,20 @@ describe("the single main instance", () => {
     );
     expect(conflict(mainDirectory).holder?.pid).toBe(holder.pid);
   }, 30_000);
+});
+
+describe("forgetMainInstanceHolder", () => {
+  it("removes the record of a holder the OS ended without its release, and no other holder's", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "rerail-main-instance-record-"));
+    try {
+      const record = join(directory, MAIN_INSTANCE_HOLDER_FILE);
+      await writeFile(record, `${JSON.stringify({ pid: 123, version: "2.0.0", packageRoot: build.packageRoot, startedAt: "2026-11-09T00:00:00.000Z" })}\n`);
+      forgetMainInstanceHolder(456, directory);
+      expect(existsSync(record)).toBe(true);
+      forgetMainInstanceHolder(123, directory);
+      expect(existsSync(record)).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });

@@ -24,6 +24,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn } from "../engine/child-process.js";
 import { removeScratch, renameWithRetry } from "../engine/file-replace.js";
+import { DAEMON_STATE_FILE, daemonUsesPackageRoot, readDaemonState, stopDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
@@ -94,6 +95,8 @@ export interface ManagedUpdaterOptions {
   validateInstallation?: (installation: Installation) => Promise<void>;
   /** Rebuilds the SQLite binding below a package root that fails validation; tests substitute it. */
   repairInstallation?: (packageRoot: string) => Promise<SqliteRepairResult>;
+  /** Stops a daemon running from a package root before its SQLite binding is rebuilt in place; tests substitute it. */
+  stopDaemonUsing?: (packageRoot: string) => Promise<void>;
 }
 
 interface UpdateLockLease {
@@ -324,6 +327,17 @@ function batchPath(path: string, rerailHome: string): string | undefined {
   return `%~dp0..\\${escape(relativePath)}`;
 }
 
+/**
+ * Stops the daemon of `home` when it runs from `packageRoot`, before that package's SQLite binding is rebuilt in place:
+ * Windows refuses to overwrite or remove a loaded DLL, and the daemon has `better_sqlite3.node` loaded. The next
+ * session starts the daemon again. Elsewhere a rebuild replaces the file under a running daemon, so nothing stops.
+ */
+async function stopDaemonFrom(home: string, packageRoot: string, platform: NodeJS.Platform): Promise<void> {
+  if (platform !== "win32") return;
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE));
+  if (state !== undefined && await daemonUsesPackageRoot(state, packageRoot)) await stopDaemon(home);
+}
+
 async function repairManagedInstallation(packageRoot: string): Promise<SqliteRepairResult> {
   const result = await ensureSqlite(packageRoot, { log: line => process.stderr.write(`${line}\n`) });
   if (result.rebuilt) process.stderr.write(`Rebuilt better-sqlite3 in ${result.prefix}\n`);
@@ -497,6 +511,7 @@ export class ManagedUpdater {
   private readonly now: () => Date;
   private readonly validate: (installation: Installation) => Promise<void>;
   private readonly repair: (packageRoot: string) => Promise<SqliteRepairResult>;
+  private readonly stopDaemonUsing: (packageRoot: string) => Promise<void>;
   private readonly platform: NodeJS.Platform;
 
   constructor(options: ManagedUpdaterOptions) {
@@ -511,6 +526,7 @@ export class ManagedUpdater {
     this.platform = options.platform ?? process.platform;
     this.validate = options.validateInstallation ?? validateManagedInstallation;
     this.repair = options.repairInstallation ?? repairManagedInstallation;
+    this.stopDaemonUsing = options.stopDaemonUsing ?? (async packageRoot => await stopDaemonFrom(this.home, packageRoot, this.platform));
   }
 
   /** The version of the package this updater runs from; what `install()` activates by default. */
@@ -519,6 +535,7 @@ export class ManagedUpdater {
   }
 
   async readState(): Promise<UpdateState> {
+    await this.restoreCurrentLink();
     try {
       return parseState(await readFile(this.statePath, "utf8"));
     } catch (error) {
@@ -547,6 +564,23 @@ export class ManagedUpdater {
     await writeFile(temporaryPath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
     await renameWithRetry(temporaryPath, this.statePath, { platform: this.platform });
     await this.syncLauncher(state.current);
+  }
+
+  /**
+   * Puts back a `current` an interrupted swap left out. Windows cannot rename a junction over another, so
+   * `syncCurrentLink` moves the old one aside first; a kill or power loss between its two renames leaves only
+   * `current.<pid>.<uuid>.old`, and every hook and the launcher fail until `current` is back. The newest one wins.
+   */
+  private async restoreCurrentLink(): Promise<void> {
+    if (await pathEntryExists(this.currentLink)) return;
+    const left = (await readdir(this.home).catch(() => [] as string[])).filter(name => name.startsWith(`${CURRENT_LINK}.`) && name.endsWith(".old"));
+    let newest: { path: string; time: number } | undefined;
+    for (const name of left) {
+      const path = join(this.home, name);
+      const time = await lstat(path).then(info => info.mtimeMs, () => undefined);
+      if (time !== undefined && (newest === undefined || time > newest.time)) newest = { path, time };
+    }
+    if (newest !== undefined) await rename(newest.path, this.currentLink).catch(() => undefined);
   }
 
   private async syncCurrentLink(target: string): Promise<void> {
@@ -758,6 +792,7 @@ export class ManagedUpdater {
     try {
       await this.validate(installation);
     } catch (error) {
+      await this.stopDaemonUsing(installation.packageRoot);
       const { rebuilt } = await this.repair(installation.packageRoot);
       if (!rebuilt) throw error;
       await this.validate(installation);

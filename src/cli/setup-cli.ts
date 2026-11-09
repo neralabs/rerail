@@ -25,10 +25,10 @@ import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
+  daemonMayHold,
   daemonUsesPackageRoot,
   lookupDaemon,
   openDashboard,
-  processAlive,
   START_LOCK_DIR,
   startDaemon,
   stopDaemon,
@@ -426,11 +426,14 @@ function pathExists(path: string): boolean {
   }
 }
 
-/** Another Rerail daemon (another `RERAIL_HOME`'s) that still holds the machine-wide cache, by pid. */
+/**
+ * Another Rerail daemon (another `RERAIL_HOME`'s) that still holds the machine-wide cache, by pid. On Windows the
+ * record outlives a daemon ended at logoff, so its pid counts only while a Rerail engine pipe exists (`daemonMayHold`).
+ */
 function cacheHolder(cache: string): number | undefined {
   try {
     const { pid } = JSON.parse(readFileSync(join(cache, MAIN_INSTANCE_HOLDER_FILE), "utf8")) as { pid?: unknown };
-    return typeof pid === "number" && Number.isInteger(pid) && pid !== process.pid && processAlive(pid) ? pid : undefined;
+    return typeof pid === "number" && Number.isInteger(pid) && pid !== process.pid && daemonMayHold(pid) ? pid : undefined;
   } catch {
     return undefined;
   }

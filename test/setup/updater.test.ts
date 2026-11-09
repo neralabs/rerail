@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -228,6 +228,45 @@ describe("ManagedUpdater", () => {
     expect(repaired).toEqual([current.packageRoot]);
     expect(validated.filter(root => root === current.packageRoot)).toHaveLength(2);
     expect(registry.installedVersions).toHaveLength(installsBeforeUpdate);
+  });
+
+  it("stops a daemon running from the installation before rebuilding its SQLite binding in place", async () => {
+    const { home, packageRoot } = await fixture();
+    const steps: string[] = [];
+    let installed = false;
+    const updater = new ManagedUpdater({
+      home,
+      packageRoot,
+      packageVersion: "1.0.0",
+      registry: new FakeRegistry("1.0.0"),
+      validateInstallation: async () => {
+        if (installed && !steps.includes("repair")) throw new Error("NODE_MODULE_VERSION 137");
+      },
+      // Windows cannot overwrite the better_sqlite3.node a running daemon has loaded.
+      stopDaemonUsing: async (root) => {
+        steps.push(`stop ${root}`);
+      },
+      repairInstallation: async (root) => {
+        steps.push("repair");
+        return { prefix: dirname(dirname(dirname(root))), rebuilt: true };
+      },
+    });
+    await updater.install();
+    installed = true;
+    const current = (await updater.status()).current;
+    await updater.update();
+    expect(steps).toEqual([`stop ${current.packageRoot}`, "repair"]);
+  });
+
+  it("puts back a current link an interrupted Windows swap left only as current.*.old", async () => {
+    const { home, packageRoot } = await fixture();
+    const target = join(home, "versions", "1.0.0");
+    await mkdir(target, { recursive: true });
+    await symlink(target, join(home, "current.123.0b9d.old"), "junction");
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0") });
+    await updater.status();
+    expect(await realpath(updater.currentLink)).toBe(await realpath(target));
+    expect(existsSync(join(home, "current.123.0b9d.old"))).toBe(false);
   });
 
   it("surfaces an unrepairable current installation instead of reporting no update", async () => {

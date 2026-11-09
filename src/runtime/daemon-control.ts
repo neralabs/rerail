@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
@@ -11,6 +11,7 @@ import { spawn, spawnShown } from "../engine/child-process.js";
 import { renameWithRetry } from "../engine/file-replace.js";
 import { windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
+import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
@@ -327,28 +328,32 @@ export interface StartDaemonResult {
 }
 
 /** Whether `pid` is a live process of any user: a process another user runs still holds its pid (`EPERM`). */
-export function processAlive(pid: number): boolean {
-  return processLiveness(pid) !== "dead";
+export function processAlive(pid: number, kill: ProcessSignal = process.kill.bind(process)): boolean {
+  return processLiveness(pid, kill) !== "dead";
 }
 
 /**
  * Whether `pid` is a live process this OS user runs, the only kind that can be this user's daemon. A state file whose
  * pid belongs to another user is left over from a daemon that is gone, its pid since reused; probing the URL it records
- * would send the capability to whoever listens there now. On Windows `EPERM` also answers for this user's elevated
- * processes, so there it still counts as this user's.
+ * would send the capability to whoever listens there now. On Windows `EPERM` answers alike for another user's
+ * process, a SYSTEM service and this user's elevated one, so it counts as not this user's there too: a daemon started
+ * from an elevated terminal is not found, and `rerail daemon stop` run elevated stops it.
  */
-export function ownProcessAlive(pid: number): boolean {
-  return processLiveness(pid) === "own";
+export function ownProcessAlive(pid: number, kill: ProcessSignal = process.kill.bind(process)): boolean {
+  return processLiveness(pid, kill) === "own";
 }
 
-function processLiveness(pid: number): "own" | "other-user" | "dead" {
+/** `process.kill`'s shape, which tests replace. */
+export type ProcessSignal = (pid: number, signal?: string | number) => boolean;
+
+function processLiveness(pid: number, kill: ProcessSignal = process.kill.bind(process)): "own" | "other-user" | "dead" {
   let owner: "own" | "other-user" = "own";
   try {
-    process.kill(pid, 0);
+    kill(pid, 0);
   } catch (error) {
-    // EPERM means the process exists but this user may not signal it: on POSIX, another user's.
+    // EPERM means the process exists but this user may not signal it.
     if ((error as NodeJS.ErrnoException).code !== "EPERM") return "dead";
-    if (process.platform !== "win32") owner = "other-user";
+    owner = "other-user";
   }
   return isZombie(pid) ? "dead" : owner;
 }
@@ -396,12 +401,11 @@ export function isUsableEngineSocketPath(
   return isAbsolute(value) && (platform !== "darwin" || Buffer.byteLength(value) <= MAX_MACOS_UNIX_SOCKET_PATH_BYTES);
 }
 
-function isDaemonState(value: unknown): value is DaemonState {
-  return hasDaemonStateFields(value) && isUsableEngineSocketPath(value.kernelSocketPath);
+function isDaemonState(value: unknown, platform: NodeJS.Platform): value is DaemonState {
+  return hasDaemonStateFields(value) && isUsableEngineSocketPath(value.kernelSocketPath, platform);
 }
 
-
-export async function readDaemonState(stateFile: string): Promise<DaemonState | undefined> {
+export async function readDaemonState(stateFile: string, platform: NodeJS.Platform = process.platform): Promise<DaemonState | undefined> {
   let text: string;
   try {
     text = await readFile(stateFile, "utf8");
@@ -411,7 +415,7 @@ export async function readDaemonState(stateFile: string): Promise<DaemonState | 
   }
   try {
     const value: unknown = JSON.parse(text);
-    return isDaemonState(value) ? value : undefined;
+    return isDaemonState(value, platform) ? value : undefined;
   } catch {
     return undefined;
   }
@@ -438,12 +442,61 @@ export async function probeDaemon(
   }
 }
 
-export async function lookupDaemon(home: string): Promise<DaemonLookup> {
+/** What a daemon lookup asks of the machine; tests pass their own. */
+export interface DaemonMachine {
+  platform: NodeJS.Platform;
+  kill: ProcessSignal;
+  /** The named pipes that exist on Windows, read from `\\.\pipe\` without connecting to any. */
+  pipes(): readonly string[];
+}
+
+const WINDOWS_PIPES = String.raw`\\.\pipe` + "\\";
+
+const THIS_MACHINE: DaemonMachine = {
+  platform: process.platform,
+  kill: (pid, signal) => process.kill(pid, signal),
+  pipes: () => readdirSync(WINDOWS_PIPES),
+};
+
+/**
+ * Whether the engine pipe `state` records exists. Windows ends a daemon without its shutdown handler (logoff, reboot,
+ * `rerail daemon stop`), so its state file outlives it, and Windows soon hands its pid to another process; a live
+ * daemon always holds its pipe, so a live pid without one is not the daemon. Unknown counts as there.
+ */
+function enginePipeExists(state: DaemonState, machine: DaemonMachine): boolean {
+  const name = state.kernelSocketPath.slice(WINDOWS_PIPES.length).toLowerCase();
+  try {
+    return machine.pipes().some(pipe => pipe.toLowerCase() === name);
+  } catch {
+    return true;
+  }
+}
+
+/** A Rerail engine pipe, `rerail-<24 hex>` (`defaultEngineSocketPath`), or the random fallback a refused one moves to. */
+const ENGINE_PIPE = /^rerail-[0-9a-f]{24}(?:-[0-9a-f]+)?$/u;
+
+/**
+ * Whether `pid`, recorded by a daemon that may be gone, can still be a Rerail daemon: a live process, and on Windows only
+ * while some Rerail engine pipe exists, since every live daemon holds one. Windows ends a daemon without its cleanup at
+ * logoff or reboot, so a record it wrote can name a pid Windows has given to another process since.
+ */
+export function daemonMayHold(pid: number, machine: DaemonMachine = THIS_MACHINE): boolean {
+  if (!processAlive(pid, machine.kill)) return false;
+  if (machine.platform !== "win32") return true;
+  try {
+    return machine.pipes().some(pipe => ENGINE_PIPE.test(pipe.toLowerCase()));
+  } catch {
+    return true;
+  }
+}
+
+export async function lookupDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<DaemonLookup> {
   const stateFile = join(home, DAEMON_STATE_FILE);
-  const state = await readDaemonState(stateFile);
+  const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
-  // Another user's process cannot be this user's daemon: the state is stale, and its URL is never probed.
-  if (!ownProcessAlive(state.pid)) {
+  // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe: the
+  // state is stale, and its URL is never probed.
+  if (!ownProcessAlive(state.pid, machine.kill) || (machine.platform === "win32" && !enginePipeExists(state, machine))) {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
@@ -788,22 +841,35 @@ export function stillRunningMessage(pid: number, platform: NodeJS.Platform = pro
   return `Rerail daemon pid ${pid} is still running ${KILL_TIMEOUT_MS / 1_000}s after SIGKILL; check it with ${check}, then run rerail daemon stop again.`;
 }
 
-export async function stopDaemon(home: string): Promise<StopDaemonResult> {
-  const lookup = await lookupDaemon(home);
+/** Sends `signal` to the daemon, saying who to ask when this user may not signal it (`EPERM`). */
+function signalDaemon(pid: number, signal: string, machine: DaemonMachine): void {
+  try {
+    machine.kill(pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    throw new Error(`Rerail daemon pid ${pid} runs as another user or elevated, and this user may not stop it; stop it from there.`, { cause: error });
+  }
+}
+
+export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
+  const lookup = await lookupDaemon(home, machine);
   if (lookup.status === "absent") return "not-running";
   const pid = lookup.state.pid;
-  process.kill(pid, "SIGTERM");
+  const alive = (): boolean => processAlive(pid, machine.kill);
+  signalDaemon(pid, "SIGTERM", machine);
   const deadline = Date.now() + STOP_TIMEOUT_MS;
-  while (processAlive(pid) && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
-  if (processAlive(pid)) {
-    process.kill(pid, "SIGKILL");
+  while (alive() && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
+  if (alive()) {
+    signalDaemon(pid, "SIGKILL", machine);
     const killDeadline = Date.now() + KILL_TIMEOUT_MS;
-    while (processAlive(pid) && Date.now() < killDeadline) await sleep(POLL_INTERVAL_MS);
+    while (alive() && Date.now() < killDeadline) await sleep(POLL_INTERVAL_MS);
     // The state file stays, so a later stop can find the process again.
-    if (processAlive(pid)) throw new Error(stillRunningMessage(pid));
+    if (alive()) throw new Error(stillRunningMessage(pid, machine.platform));
   }
-  // The daemon removes its own state file on a clean shutdown; a killed one leaves it behind.
+  // The daemon removes its own state file and main-instance record on a clean shutdown; one killed, as Windows
+  // always does, leaves both behind, and a record naming a pid Windows reuses would keep the uninstall from the cache.
   await rm(join(home, DAEMON_STATE_FILE), { force: true });
+  if (machine.platform === "win32") forgetMainInstanceHolder(pid);
   return "stopped";
 }
 
