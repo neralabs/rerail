@@ -1,0 +1,6 @@
+# Ahead-of-time Neural Engine models (decision 0096 §3): one constant file a line, relative to this directory.
+#
+# Each file is a fixed relation's rows in the RRBITS01 layout (accel/src/ane/package.rs: the magic, rows and words
+# as u64, then the rows' words, little-endian). The build step (accel/build/ane.rs) writes and compiles its bit
+# product model and embeds it in the executable; the lane uses it before compiling one at run time.
+# Empty by default: models compiled at run time are kept as facts in the engine's content store instead.

@@ -216,4 +216,4 @@ pub fn closure(n: u32, off: &[u32], dst: &[u32]) -> Bits {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
