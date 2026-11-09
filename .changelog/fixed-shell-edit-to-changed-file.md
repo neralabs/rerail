@@ -1,0 +1,1 @@
+A shell edit to a file that already had uncommitted changes when the session started, or that Git does not track, is now measured from the text the session first saw, so the agent is steered only on the lines it changed, not on every finding in the file.

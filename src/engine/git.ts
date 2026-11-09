@@ -323,6 +323,15 @@ export async function gitCommitsBetween(cwd: string, from: string, to: string): 
 }
 
 /**
+ * The files of the checkout at `cwd` whose text its index may not hold: modified since staged (or deleted), and untracked
+ * but not ignored; relative to `cwd`. Empty without Git, outside a repository, or past the timeout.
+ */
+export async function gitUncommittedPaths(cwd: string): Promise<string[]> {
+  const listed = await gitOutput(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"]);
+  return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
+}
+
+/**
  * The object id of each of `revisions` (as for {@link readGitBlobs}) that names a blob, by one `git cat-file
  * --batch-check`: no blob is read. A revision Git does not resolve to a blob is absent, and so is every revision
  * without Git, outside a repository, or past the timeout; one containing a newline cannot be asked for and is skipped.

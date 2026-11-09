@@ -293,16 +293,14 @@ describe("CodeRuleBridge", () => {
     await bridge.openWorkspace("session-1");
     await bridge.checkpoint("turn");
 
+    // The session's first sight of a file Git does not hold is kept, so a shell write to it counts only its own lines.
     await bridge.begin("shell-1", "shell", { command: "./rewrite.sh" });
     await writeFile(clean, "one\ntwo\n");
     await writeFile(dirty, "uncommitted\nmore\n");
     await bridge.finish("shell-1");
     expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
       { path: "src/clean.py", language: "python", previousText: "one\n", generatedText: "one\ntwo\n" },
-      {
-        path: "src/dirty.py", language: "python",
-        previousReadError: "Source changed outside a tool with a captured preimage", generatedText: "uncommitted\nmore\n",
-      },
+      { path: "src/dirty.py", language: "python", previousText: "uncommitted\n", generatedText: "uncommitted\nmore\n" },
     ]);
 
     // The session saw what the first write made of the file, so the next write knows its preimage.
@@ -311,6 +309,41 @@ describe("CodeRuleBridge", () => {
     await bridge.finish("shell-2");
     expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
       { path: "src/dirty.py", language: "python", previousText: "uncommitted\nmore\n", generatedText: "uncommitted\nmore\nagain\n" },
+    ]);
+  });
+
+  it("gives a shell write to a file untracked before the session the text the session first saw", async () => {
+    const root = await workspace();
+    const untracked = join(root, "src", "untracked.py");
+    await writeFile(join(root, "src", "kept.py"), "kept\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+    await writeFile(untracked, "draft\n");
+    await awaitClockAfter(untracked);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, () => writeFile(untracked, "draft\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/untracked.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]);
+  });
+
+  it("audits nothing Git wrote over a file changed before the session, and measures the next shell edit from Git's text", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    await writeFile(dirty, "committed\n");
+    execFileSync("git", ["init", "--quiet"], { cwd: root });
+    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
+    await writeFile(dirty, "uncommitted\n");
+    await awaitClockAfter(dirty);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // A Git write the session is not credited with leaves text the session never saw: the next write has no preimage.
+    await shell(bridge, () => git(root, "stash", "--quiet"));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shell(bridge, () => writeFile(dirty, "committed\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/dirty.py", language: "python", previousText: "committed\n", generatedText: "committed\nmine\n" }],
     ]);
   });
 
@@ -864,6 +897,19 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode])).toEqual([
       [[relative(root, join(worktree, "src", "a.py"))], "log"],
       [["src/a.py"], undefined],
+    ]);
+  });
+
+  it("measures a shell edit to a file changed before the session, in a worktree inside its folder, from the text first seen", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(root, "wt"));
+    const path = join(worktree, "src", "a.py");
+    await writeFile(path, "old\nviolation\nlocal\n");
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shellInWorktree(bridge, () => writeFile(path, "old\nviolation\nlocal\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "wt/src/a.py", language: "python", previousText: "old\nviolation\nlocal\n", generatedText: "old\nviolation\nlocal\nmine\n" }],
     ]);
   });
 
