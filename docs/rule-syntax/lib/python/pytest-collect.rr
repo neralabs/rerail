@@ -199,7 +199,15 @@ len_val(e, v) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc
     modname(m, mq), live_asg(m, x, v), !within(e, v).
 len_val(e, v) :- len_want(e), attr_of(e, o, a), pc_sym(o, qc), class_def(c, qc), live_asg(c, a, v), !within(e, v).
 len_of(e, n) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), class_def(c, q),
-    field(c, "body", b), n = count : { body_stmt(b, s, _), asgstmt(a, s), !field(a, "type", _) }, n > 0.
+    field(c, "body", b), n = count : { body_stmt(b, s, _), asgstmt(a, s), !field(a, "type", _), field(a, "left", l),
+    text(l, x), !match("_.*", x) }, n > 0.
+// A name defined in a module this run does not read: its length by symbol, from the `values` phase (module- and
+// class-level constants and Enum-like classes of every document, re-exports followed).
+.decl values__len(q: symbol, n: number)
+len_of(e, k) :- len_want(e), (kind(e, "identifier") ; kind(e, "attribute")), pc_sym(e, q), split_dot(q, mq, y), y != "",
+    !pc_read(mq), values__len(q, k).
+.decl pc_read(mq: symbol)
+pc_read(mq) :- modname(_, mq).
 .decl pc_helper(e: node, g: node)
 pc_helper(e, g) :- len_call(e, _), callee(e, h), kind(h, "identifier"), pc_sym(h, q), qualname(g, q),
     kind(g, "function_definition").
@@ -367,6 +375,7 @@ pc_qdom(mq) :- modname(_, mq).
 pc_qdom(@dot(mq, x)) :- modname(m, mq), live_asg(m, x, _).
 pc_qdom(@dot(cq, x)) :- class_def(c, cq), live_asg(c, x, _).
 pc_qdom(q) :- ibind(_, _, q).
+pc_qdom(q) :- values__len(q, _).
 .decl pc_home(e: node, m: node)
 pc_home(e, m) :- pc_symq(e), nearest(e, m, pc_module_kind).
 .decl pc_module_kind(k: symbol)
