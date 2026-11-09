@@ -149,6 +149,42 @@ The id scheme is part of the per-file memo's plan key, so a change of scheme mis
   each). The input delta that remains comes from `node`'s `start` and `end_` columns. They are positions, so
   every node after an edit changes its row even when its id holds (§1: positions are facts of their own, read
   only by findings).
+- **The fair comparison (same day, later)**. The overhead around both mechanisms was taken out:
+  - the cross part holds no positions: `start` was held only for an old decoder;
+  - a kept plan's price is kept with the sizes it read, and reused while none moved over 2x;
+  - a stratum's replans between waves are kept the same way;
+  - a kept relation measures its statistics once;
+  - four passes that were quadratic in rules or strata are now linear (key analysis, first and last reads, input
+    loading, native releases).
+
+  Both mechanisms give a full run's answers at all 20 steps. CPU, load 13–50:
+
+  | | O125 replay, session per step | its cross part | synthetic closure, one edit |
+  | --- | --- | --- | --- |
+  | DRed | 2.1–4.2 s | 1.2–3.4 s | 0.94 s |
+  | counting | 1.6–2.3 s | 0.9–1.4 s | 4.7 s |
+  | full run (cold) | 1.2–2.1 s | 0.5–0.8 s | 2.2 s |
+
+  Step 15's cross part, split:
+
+  | | DRed | counting |
+  | --- | --- | --- |
+  | joins | 0.41 s | 0.29 s |
+  | planning and specs | 0.35 s | 0.14 s |
+  | opening the engine | 0.15 s | 0.17 s |
+  | binding kept relations | 0.16 s | 0.17 s |
+
+  What is left differs by the mechanisms themselves:
+  - DRed writes 14,800 rules, and their delta relations' sizes move from step to step, so some plans are searched
+    again.
+  - Counting runs 830 strata against DRed's 215, and derives its 21 recursive strata again.
+  - On the closure, counting derives the 9,000,000-row `reach` again and diffs it, so DRed wins 5x.
+  - On real commits, counting wins about 1.5x: it maintains the non-recursive majority with fewer rules and no
+    rederivation.
+
+  Neither beats a cold run's cross part here (0.5–0.8 s). A one-file edit still runs 202–210 of DRed's 215 strata,
+  because the tree relations every stratum reads change. The cutoff of 0090 §3 (a stratum whose net delta is empty
+  stops) is what bounds that, not the mechanism.
 - **Statistics are maintained like data**: stored counts updated by deltas, not measured again on a warm run.
 - **Every keyed read from SQLite has a test of its plan** (`SEARCH … USING PRIMARY KEY`). SQLite falls back to a
   scan without saying so; one such read took 33 s.

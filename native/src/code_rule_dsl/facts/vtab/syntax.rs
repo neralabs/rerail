@@ -1668,6 +1668,11 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
     if let Some(known) = source.statistics() {
         return known;
     }
+    measured(source)
+}
+
+/// `statistics`, measured from the rows (a source that keeps its own calls this once).
+pub(crate) fn measured(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
     let rows = source.len();
     // Each row's document (the first column's high half), read once for every column.
     let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();

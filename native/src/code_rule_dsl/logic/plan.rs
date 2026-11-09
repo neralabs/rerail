@@ -4313,15 +4313,30 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             unloads[(l + 1).min(sccs.len())].push(r.clone());
         }
     }
+    // Each relation by the stratum after its last reader: a native one is released or read out there. A native
+    // relation is one adopted before the first stratum or one a stratum made (`native_stratum`), so a stratum looks at
+    // those of its bucket and the one before's own unread relations, not every native relation (quadratic in strata).
+    let mut after_last: Vec<Vec<String>> = vec![Vec::new(); sccs.len() + 1];
+    for (r, &l) in &last {
+        after_last[(l + 1).min(sccs.len())].push(r.clone());
+    }
     for (at, scc) in sccs.iter().enumerate() {
-        let done: Vec<String> = run.native_rels.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
+        let candidates: Vec<String> = if at == 0 {
+            run.native_rels.iter().cloned().collect()
+        } else {
+            let mut c = std::mem::take(&mut after_last[at]);
+            c.extend(sccs[at - 1].iter().filter(|r| !last.contains_key(*r)).cloned());
+            c.retain(|r| run.native_rels.contains(r));
+            c
+        };
+        let done: Vec<String> = candidates.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
         if !done.is_empty() {
             super::native::component::release(db, &done);
             done.iter().for_each(|r| { run.native_rels.remove(r); });
         }
         // One that stays but that no later stratum reads keeps its rows only; a kept one the caller takes is handed
         // off and dropped.
-        let read_out: Vec<String> = run.native_rels.iter().filter(|r| stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at) && unindexed.insert((*r).clone())).cloned().collect();
+        let read_out: Vec<String> = candidates.iter().filter(|r| run.native_rels.contains(*r) && stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at) && unindexed.insert((*r).clone())).cloned().collect();
         // Inputs: bound before their first reader, dropped after their last; one no rule reads (an output as it
         // came) is bound before the first stratum.
         if let Some(load) = hooks.load.as_deref_mut() {
