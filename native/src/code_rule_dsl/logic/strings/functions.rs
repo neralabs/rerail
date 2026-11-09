@@ -19,6 +19,17 @@ pub(in crate::code_rule_dsl) enum Kind {
 
 use Kind::{Number, Text};
 
+fn decimal(s: &str) -> Option<num_bigint::BigInt> {
+    let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) { return None; }
+    s.parse().ok()
+}
+
+fn decimal_sum(s: &str) -> Option<String> {
+    if s.is_empty() { return Some("0".into()); }
+    s.split('\n').try_fold(num_bigint::BigInt::from(0), |sum, line| Some(sum + decimal(line)?)).map(|n| n.to_string())
+}
+
 #[cfg(test)]
 mod python_integer_tests {
     use super::*;
@@ -43,6 +54,27 @@ mod python_integer_tests {
         assert_eq!(eval("python_int_clamped", &[&"9".repeat(4301)], &[1,51,4300]), Value::Null);
         assert_eq!(eval("python_int_clamped", &[&"9".repeat(4301)], &[1,51,0]), Value::Integer(51));
         assert!(signature("python_int_clamped").is_some());
+    }
+}
+
+#[cfg(test)]
+mod decimal_tests {
+    use super::*;
+    #[test]
+    fn decimal_arithmetic_keeps_exact_values_beyond_machine_integers() {
+        let n = "1208925819614629174706176";
+        assert_eq!(eval("decimal_cmp", &[n,"1"], &[]),Value::Integer(1));
+        assert_eq!(eval("decimal_cmp", &["-1208925819614629174706176","1"], &[]),Value::Integer(-1));
+        assert_eq!(eval("decimal_cmp", &["+0001","1"], &[]),Value::Integer(0));
+        assert_eq!(eval("decimal_sub", &["1","-1208925819614629174706176"], &[]),Value::Text("1208925819614629174706177".into()));
+        assert_eq!(eval("decimal_sub", &["1",n], &[]),Value::Text("-1208925819614629174706175".into()));
+        assert_eq!(eval("decimal_sum", &["1208925819614629174706176\n-1208925819614629174706176\n7"], &[]),Value::Text("7".into()));
+        assert_eq!(eval("decimal_sum", &[""], &[]),Value::Text("0".into()));
+        for bad in [" ","1.5","1e9","١","1_2","--1"] {
+            assert_eq!(eval("decimal_cmp", &[bad,"0"], &[]),Value::Null);
+            assert_eq!(eval("decimal_sub", &["0",bad], &[]),Value::Null);
+            assert_eq!(eval("decimal_sum", &[bad], &[]),Value::Null);
+        }
     }
 }
 
@@ -79,6 +111,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
     ("to_number", &[Text], Number),
     ("python_int_clamped", &[Text, Number, Number, Number], Number),
+    ("decimal_cmp", &[Text, Text], Number),
+    ("decimal_sub", &[Text, Text], Text),
+    ("decimal_sum", &[Text], Text),
     // Soufflé's `%`, with no value for a zero divisor.
     ("mod", &[Number, Number], Number),
     // Soufflé's floats, as keys that order as the floats do (`float_key`): `to_float`, arithmetic, `to_string`.
@@ -238,6 +273,9 @@ pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64])
         "git_tracked" => return super::git::git_tracked(t(0)),
         "to_number" => return t(0).trim().parse::<i64>().map_or(Value::Null, Value::Integer),
         "python_int_clamped" => return super::python_integer::clamped(t(0), numbers[0], numbers[1], numbers[2]).map_or(Value::Null, Value::Integer),
+        "decimal_cmp" => return decimal(t(0)).zip(decimal(t(1))).map_or(Value::Null, |(a,b)| Value::Integer(a.cmp(&b) as i64)),
+        "decimal_sub" => decimal(t(0)).zip(decimal(t(1))).map(|(a,b)| (a-b).to_string()),
+        "decimal_sum" => decimal_sum(t(0)),
         "rr_add" => return numbers[0].checked_add(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_mul" => return numbers[0].checked_mul(numbers[1]).map_or(Value::Null, Value::Integer),

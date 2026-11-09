@@ -107,6 +107,23 @@ fn python_int(value: &Json) -> Vec<Json> {
     [value,kind.to_owned(),detail].into_iter().map(Json::String).collect()
 }
 
+fn python_repr(value: &Json) -> String {
+    use crate::code_rule_dsl::facts::vtab::syntax::python_print::string_repr;
+    match value {
+        Json::Null => "None".into(),
+        Json::Bool(b) => if *b { "True" } else { "False" }.into(),
+        Json::String(s) => string_repr(s),
+        Json::Number(n) => {
+            let raw = n.to_string();
+            if raw.contains(['.', 'e', 'E']) {
+                crate::code_rule_dsl::value::python::float_repr(raw.parse().expect("a JSON number"))
+            } else { raw.parse::<num_bigint::BigInt>().expect("a JSON integer").to_string() }
+        }
+        Json::Array(items) => format!("[{}]",items.iter().map(python_repr).collect::<Vec<_>>().join(", ")),
+        Json::Object(items) => format!("{{{}}}",items.iter().map(|(k,v)| format!("{}: {}",string_repr(k),python_repr(v))).collect::<Vec<_>>().join(", ")),
+    }
+}
+
 fn json_rows(value: &Json, pointer: &str, records: bool, projection: &str, prefix: Vec<Json>, columns: &[(String, String)]) -> ReadResult<Vec<Vec<Value>>> {
     if !pointer.is_empty() && !pointer.starts_with('/') { return Err(malformed("path must be a JSON pointer")); }
     let steps: Vec<_> = if pointer.is_empty() { Vec::new() } else { pointer[1..].split('/').collect() };
@@ -122,6 +139,8 @@ fn json_rows(value: &Json, pointer: &str, records: bool, projection: &str, prefi
             vec![vec![Json::String(kind.to_owned())]]
         } else if projection == "python-int" {
             vec![python_int(value)]
+        } else if projection == "python-str" {
+            vec![vec![Json::String(match value { Json::String(s) => s.clone(), _ => python_repr(value) })]]
         } else if projection == "json" {
             vec![vec![Json::String(value.to_string())]]
         } else if records {
@@ -612,7 +631,7 @@ fn populate_with(
             _ => return Err(Error::Plan(format!("{rel}: records must be true or false"))),
         };
         let projection = params.get("projection").map_or("rows", String::as_str);
-        if !["rows", "type", "json", "python-int"].contains(&projection) || records && projection != "rows"
+        if !["rows", "type", "json", "python-int", "python-str"].contains(&projection) || records && projection != "rows"
             || projection != "rows" && !matches!(io, "json" | "yaml" | "jsonl")
         {
             return Err(Error::Plan(format!("{rel}: invalid input projection {projection}")));
@@ -780,6 +799,26 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn python_string_projection_preserves_nested_values_float_repr_and_one_read() {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
+.decl rendered(k: symbol, value: symbol)
+.input rendered(IO=json, filename="baseline.json", path="/*", projection="python-str")
+.decl kinds(k: symbol, value: symbol)
+.input kinds(IO=json, filename="baseline.json", path="/*", projection="type")
+"#).unwrap();
+        let source = r#"{"null":null,"bool":true,"int":1208925819614629174706176,"float":1.0e0,"infinity":1e999,"text":"☃\n","array":["x",null,false,1.5],"object":{"z":"a'b","a":-0.0}}"#;
+        let mut reads = 0;
+        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.into()) }, &mut |_| panic!("artifact"), &mut |_| panic!("base"), &mut Vec::new()).unwrap();
+        assert_eq!(reads,1);
+        let expected = [
+            ("null","None"),("bool","True"),("int","1208925819614629174706176"),("float","1.0"),("infinity","inf"),
+            ("text","☃\n"),("array","['x', None, False, 1.5]"),("object","{'z': \"a'b\", 'a': -0.0}"),
+        ].into_iter().map(|(k,v)| vec![Value::Str(k.into()),Value::Str(v.into())]).collect::<Vec<_>>();
+        assert_eq!(program.facts["rendered"],expected);
+        assert_eq!(program.facts["kinds"].len(),8);
+    }
+
     #[test]
     fn python_integer_projection_preserves_coercions_errors_and_shared_decode() {
         let mut program = crate::code_rule_dsl::logic::rr::parse(r#"

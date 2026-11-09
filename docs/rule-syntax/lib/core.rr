@@ -452,6 +452,10 @@
 // max_digits counts digits, excluding separators; zero disables the limit.
 // Invalid text, bounds, or a negative limit gives no value. Huge integers need no allocation.
 .functor python_int_clamped(s: symbol, lower: number, upper: number, max_digits: number): number
+// Exact signed ASCII decimal arithmetic. Invalid text gives no value; results are canonical decimal text.
+.functor decimal_cmp(a: symbol, b: symbol): number       // -1, 0, or 1
+.functor decimal_sub(a: symbol, b: symbol): symbol
+.functor decimal_sum(lines: symbol): symbol             // newline-separated decimals; empty text sums to "0"
 // @ed25519_ok(key_hex, message, sig_b64) = 1 when sig (base64) is key's Ed25519 signature of message's UTF-8
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
 // layout, and verifies it: lib/data-layer/signing.rr does this for the data layer's two layouts.
@@ -554,6 +558,8 @@
 //                It uses Python 3.13 int conversion (including binary float truncation and Unicode digits).
 //                Successful values have empty error columns. Failed values retain an empty decimal column.
 //                Wildcard captures precede these columns. No selector reparses the shared document.
+//                projection="python-str" returns one symbol: Python 3.13 str of the selected JSON value.
+//                Nested lists and objects retain insertion order and use Python repr for their members.
 //   IO=jsonl     one JSON value per line (JSON Lines); each line is read as IO=json reads a file, with the line
 //                number as a leading column
 //   IO=yaml      the same shapes as json
