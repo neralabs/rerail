@@ -460,14 +460,14 @@ pub(super) fn check_shape(name: &str, c: &Compiled) {
     let body = super::block_tests::body_of(&c.parser.tier1.clif);
     let branches = body.iter().filter(|l| super::block_tests::opcode(l) == "brif").count();
     let ascii = usize::from(c.parser.tier1.ascii_branch);
-    assert_eq!(branches, 1 + 2 * block.extracts.len() + ascii + c.parser.tier1.gate_branches, "{name}: tier 1 branches beyond its loop, its flattening, its ASCII test and its gates");
+    assert_eq!(branches, 1 + 2 * block.extracts.len() + ascii + c.parser.tier1.gate_branches + c.parser.tier1.round_branches, "{name}: tier 1 branches beyond its loop, its flattening, its ASCII test and its gates");
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
     for (b, step) in heads {
         let ok = match step {
             Step::Token | Step::Block | Step::Return => true,
             Step::Node => c.parser.tier2.wraps,
-            Step::File | Step::Bits => false,
+            Step::File | Step::Bits | Step::Round => false,
         };
         assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }

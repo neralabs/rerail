@@ -283,7 +283,7 @@ fn check_lowering(name: &str, p: &Program) {
     // The loop's branch, and two per extract: more than eight bits in the block, and the loop
     // over them eight at a time, which steps its count by 8 and loops on itself.
     let branches = body.iter().filter(|l| opcode(l) == "brif").count();
-    assert_eq!(branches, 1 + 2 * native.extracts.len() + usize::from(compiled.ascii_branch) + compiled.gate_branches, "{name}: the body's only branches are the loop's, the flattening's, the ASCII test's and the gates'");
+    assert_eq!(branches, 1 + 2 * native.extracts.len() + usize::from(compiled.ascii_branch) + compiled.gate_branches + compiled.round_branches, "{name}: the body's only branches are the loop's, the flattening's, the ASCII test's and the gates'");
     for (block, lines) in hot_loop(&compiled.clif).iter().skip(1) {
         if lines.iter().any(|l| opcode(l) == "brif" && l.contains(&format!("{block}("))) {
             assert!(lines.iter().any(|l| opcode(l) == "iadd_imm" && l.split(" ;").next().is_some_and(|l| l.ends_with(", 8"))), "{name}: {block} loops, not eight bits at a time");
@@ -1401,6 +1401,56 @@ fn lanes_equal_the_interpreter() {
         f[at + 1] = 0xa9;
         files.push(f.clone());
         f[at] = b'a';
+        files.push(f);
+    }
+    for f in &files {
+        assert_eq!(compiled.extract(f), block.run_files(&[f]).remove(0), "{:?}", String::from_utf8_lossy(f));
+    }
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    assert_eq!(compiled.run_files(&refs), block.run_files(&refs), "the batch");
+}
+
+/// A fixed point (`rounds`) compiled equals the interpreter: strings with escapes and `//`
+/// comments, each hiding the other's openers, through one carry, `hidden`, read a byte late.
+/// Each compiled body has one loop for it, a round per pass.
+#[test]
+fn rounds_equal_the_interpreter() {
+    let p = program(concat!(
+        "  block 0 %0 = const 0x0000000000000000\n  block 0 %1 = carry %0\n  block 0 %2 = prev %1, 1\n",
+        "  block 0 %3 = eq 0x22\n  block 0 %4 = eq 0x5c\n  block 0 %5 = escaped %4\n  block 0 %6 = andnot %3, %5\n",
+        "  block 0 %7 = eq 0x2f\n  block 0 %8 = prev %7, 1\n  block 0 %9 = and %7, %8\n  block 0 %10 = eq 0x0a\n",
+        "  block 0 %11 = andnot %9, %2\n  block 0 %12 = fill %11, %10\n  block 0 %13 = andnot %6, %12\n",
+        "  block 0 %14 = toggle %13\n  block 0 %15 = or %12, %14\n",
+        "  block 0 rounds %1 %15\n  block 0 output %15\n  block 0 output %14\n",
+    ));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    assert_eq!(native.groups.len(), 1, "one group");
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    // One loop in each body: the full blocks' and the last block's.
+    assert_eq!(compiled.round_branches, 2, "one loop a body");
+    let block = &p.block_programs()[0];
+    let mut text = String::new();
+    super::rir::block_rows(&mut text, 0, block);
+    assert!(text.contains("  block 0 rounds %1 %15\n"), "the group prints: {text}");
+    // Every short string over the bytes that matter, then long ones that cross blocks.
+    let alphabet = b"\"\\/\na";
+    let mut files: Vec<Vec<u8>> = Vec::new();
+    for len in 1..=5u32 {
+        for code in 0..5usize.pow(len) {
+            files.push((0..len).map(|k| alphabet[code / 5usize.pow(k) % 5]).collect());
+        }
+    }
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    for _ in 0..300 {
+        let len = (seed % 400) as usize;
+        let f: Vec<u8> = (0..len)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                alphabet[(seed % 5) as usize]
+            })
+            .collect();
         files.push(f);
     }
     for f in &files {

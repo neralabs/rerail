@@ -100,8 +100,10 @@ pub enum Stmt {
     Reject(String, Expr),
     Exit(String),
     /// At most `n` rounds. `until settled`: a backend may stop once a round changes no carry;
-    /// without it, every round runs. Either way the values are the same.
-    Rounds { n: usize, settle: bool, body: Vec<Stmt> },
+    /// without it, every round runs. Either way the values are the same. With no `n`
+    /// (`rounds until settled`), the fixed point itself: the body must be strictly causal
+    /// (`strictly_causal`), so it always settles, a byte more each round at least.
+    Rounds { n: Option<usize>, settle: bool, body: Vec<Stmt> },
     Carry(String, Expr),
     Next(String, Expr),
     Ucode { over: Expr, classes: Vec<(String, UClass)> },
@@ -702,12 +704,17 @@ impl P {
                 Stmt::Hyp { name, split, lanes, body: self.block()? }
             }
             "rounds" => {
-                let n = self.int()? as usize;
+                let n = if self.eat_kw("until") {
+                    self.want_kw("settled")?;
+                    return Ok(Stmt::Rounds { n: None, settle: true, body: self.block()? });
+                } else {
+                    self.int()? as usize
+                };
                 let settle = self.eat_kw("until");
                 if settle {
                     self.want_kw("settled")?;
                 }
-                Stmt::Rounds { n, settle, body: self.block()? }
+                Stmt::Rounds { n: Some(n), settle, body: self.block()? }
             }
             "reject" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();
@@ -941,4 +948,92 @@ tree json {
         let errors = |text: &str| crate::eval::Ev::run(&stmts, text.as_bytes(), &tables).expect("runs").errors.len();
         assert_eq!([errors("0 -12 3. 4.50"), errors("01"), errors("-"), errors("1x"), errors("1..2")], [0, 1, 1, 1, 1]);
     }
+}
+
+/// Whether a `rounds` body is strictly causal: each `next X = E` reaches the carries only
+/// through a `prev` (its byte `p` reads them at bytes before `p`), and no `next(…)` reads a
+/// value that a carry reaches. Then a round is right on every byte the round before was, and on
+/// one more: the rounds settle, at most one per byte, and the fixed point is the one value
+/// every byte's left context gives (docs/parser-generators/03-bitlex.md §2.7).
+pub fn strictly_causal(body: &[Stmt]) -> Result<(), String> {
+    use std::collections::{HashMap, HashSet};
+    let carries: HashSet<String> = body.iter().filter_map(|s| if let Stmt::Carry(n, _) = s { Some(n.clone()) } else { None }).collect();
+    // Per name the body defines: the carries it reaches at its own byte or after (`loose`),
+    // and those it reaches at all.
+    let mut loose: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut any: HashMap<String, HashSet<String>> = HashMap::new();
+    fn walk(e: &Expr, carries: &HashSet<String>, loose: &HashMap<String, HashSet<String>>, any: &HashMap<String, HashSet<String>>) -> Result<(HashSet<String>, HashSet<String>), String> {
+        let union = |xs: Vec<(HashSet<String>, HashSet<String>)>| {
+            xs.into_iter().fold((HashSet::new(), HashSet::new()), |(mut l, mut a), (x, y)| {
+                l.extend(x);
+                a.extend(y);
+                (l, a)
+            })
+        };
+        let arg = |a: &Arg| match a {
+            Arg::E(e) => walk(e, carries, loose, any),
+            _ => Ok((HashSet::new(), HashSet::new())),
+        };
+        Ok(match e {
+            Expr::Name(n) if carries.contains(n) => (HashSet::from([n.clone()]), HashSet::from([n.clone()])),
+            Expr::Name(n) => (loose.get(n).cloned().unwrap_or_default(), any.get(n).cloned().unwrap_or_default()),
+            Expr::Empty => (HashSet::new(), HashSet::new()),
+            Expr::Not(a) => walk(a, carries, loose, any)?,
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => union(vec![walk(a, carries, loose, any)?, walk(b, carries, loose, any)?]),
+            Expr::Call(f, args) => {
+                let parts = union(args.iter().map(arg).collect::<Result<_, _>>()?);
+                match f.as_str() {
+                    // `prev(a, k)`, k at least 1: byte `p` reads `a` before `p`.
+                    "prev" => (HashSet::new(), parts.1),
+                    "next" if !parts.1.is_empty() => return Err(format!("`next` of a value a carry reaches ({})", sorted(&parts.1))),
+                    _ => parts,
+                }
+            }
+            Expr::Test { target, arg: a, .. } => {
+                let t = (loose.get(target).cloned().unwrap_or_default(), any.get(target).cloned().unwrap_or_default());
+                let x = match a {
+                    Some(a) => walk(a, carries, loose, any)?,
+                    None => (HashSet::new(), HashSet::new()),
+                };
+                union(vec![t, x])
+            }
+        })
+    }
+    fn sorted(s: &HashSet<String>) -> String {
+        let mut v: Vec<&String> = s.iter().collect();
+        v.sort();
+        v.iter().map(|x| x.as_str()).collect::<Vec<_>>().join(", ")
+    }
+    for s in body {
+        match s {
+            Stmt::Mask(n, e) => {
+                let (l, a) = walk(e, &carries, &loose, &any)?;
+                loose.insert(n.clone(), l);
+                any.insert(n.clone(), a);
+            }
+            Stmt::Reflect { name, a, b, reset, .. } => {
+                let mut l = HashSet::new();
+                let mut all = HashSet::new();
+                for e in [Some(a), Some(b), reset.as_ref()].into_iter().flatten() {
+                    let (x, y) = walk(e, &carries, &loose, &any)?;
+                    l.extend(x);
+                    all.extend(y);
+                }
+                loose.insert(name.clone(), l);
+                any.insert(name.clone(), all);
+            }
+            Stmt::Next(n, e) => {
+                if !carries.contains(n) {
+                    return Err(format!("next {n}: no carry of that name"));
+                }
+                let (l, _) = walk(e, &carries, &loose, &any)?;
+                if !l.is_empty() {
+                    return Err(format!("next {n} reaches {} with no `prev` on the way: the rounds may not settle", sorted(&l)));
+                }
+            }
+            Stmt::Carry(..) => {}
+            other => return Err(format!("in `rounds until settled`, only masks, scans, carries and nexts: {other:?}")),
+        }
+    }
+    Ok(())
 }

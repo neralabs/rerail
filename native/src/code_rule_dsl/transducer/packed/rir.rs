@@ -282,6 +282,11 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     for (value, op) in block.ops.iter().enumerate() {
         let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
     }
+    // `block N rounds %c %n …`: one fixed point's carries, each with its next.
+    for group in &block.rounds {
+        let pairs: Vec<String> = group.iter().map(|(c, x)| format!("%{c} %{x}")).collect();
+        let _ = writeln!(out, "  block {at} rounds {}", pairs.join(" "));
+    }
     for (k, value) in block.outputs.iter().enumerate() {
         match block.output_delay(k) {
             d if d == block.delay => {
@@ -776,6 +781,23 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).
                 let d: u64 = line.number("")?;
                 program.delay = u8::try_from(d).map_err(|_| format!("block {at} delay {d} is more than 63"))?;
+            } else if first == "rounds" {
+                // `block N rounds %c %n …`: a fixed point's carries, each with its next, after
+                // the operations.
+                if !program.outputs.is_empty() {
+                    return Err(format!("block {at} rounds after an output"));
+                }
+                let mut group = Vec::new();
+                while line.peek_word().is_some() {
+                    let c: u64 = line.number("%")?;
+                    let x: u64 = line.number("%")?;
+                    let value = |v: u64| u16::try_from(v).map_err(|_| format!("block {at} rounds value %{v} too large"));
+                    group.push((value(c)?, value(x)?));
+                }
+                if group.is_empty() {
+                    return Err(format!("block {at} rounds with no carry"));
+                }
+                program.rounds.push(group);
             } else if first == "extract" {
                 program.extracts.push(line.number("%")?);
             } else if first == "total" {
@@ -792,7 +814,7 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                 program.tables.push(block::ClassTable { lo, hi });
             } else {
                 let value: usize = first.strip_prefix('%').and_then(|v| v.parse().ok()).ok_or_else(|| format!("a bad value `{first}`"))?;
-                if value != program.ops.len() || !program.outputs.is_empty() {
+                if value != program.ops.len() || !program.outputs.is_empty() || !program.rounds.is_empty() {
                     return Err(format!("block {at} value %{value} out of order (expected %{})", program.ops.len()));
                 }
                 if line.word()? != "=" {

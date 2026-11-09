@@ -65,7 +65,14 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     /// of the position, for a period that does not divide 64 (`Const` holds the others). No
     /// carry: each executor knows the position, as for `within`.
     Phase(u8, u8),
+    /// A carry of a fixed point (`BlockProgram::rounds`): in a block's first round, `init`'s
+    /// word; in each round after, its next's word in the round before.
+    Carry(u16),
 }
+
+/// The bound on a block's rounds: a strictly causal group is right on one more bit each round,
+/// so 64 rounds make a block's 64 bits right and one more confirms it.
+pub(in crate::code_rule_dsl) const MAX_ROUNDS: usize = 65;
 
 /// The carried operations' word functions, shared by the CPU executors' references and the
 /// interpreter: each takes the block's word and the carry in, and gives the result and the carry
@@ -148,6 +155,7 @@ impl BlockOp {
             BlockOp::Within(0) => "within".to_owned(),
             BlockOp::Within(d) => format!("within {d}"),
             BlockOp::Phase(k, r) => format!("phase {k} {r}"),
+            BlockOp::Carry(a) => format!("carry %{a}"),
         }
     }
 
@@ -155,7 +163,7 @@ impl BlockOp {
     pub(super) fn operands(&self) -> Vec<u16> {
         match *self {
             BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) => vec![],
-            BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) => vec![a],
+            BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) => {
                 vec![a, b]
             }
@@ -170,6 +178,7 @@ impl BlockOp {
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
             BlockOp::Toggle(a) => BlockOp::Toggle(f(a)),
             BlockOp::Escaped(a) => BlockOp::Escaped(f(a)),
+            BlockOp::Carry(a) => BlockOp::Carry(f(a)),
             BlockOp::Fill(a, b) => BlockOp::Fill(f(a), f(b)),
             BlockOp::And(a, b) => BlockOp::And(f(a), f(b)),
             BlockOp::Or(a, b) => BlockOp::Or(f(a), f(b)),
@@ -216,6 +225,7 @@ impl BlockOp {
             ["toggle", a] => Ok(BlockOp::Toggle(value(a)?)),
             ["escaped", a] => Ok(BlockOp::Escaped(value(a)?)),
             ["fill", a, b] => Ok(BlockOp::Fill(value(a)?, value(b)?)),
+            ["carry", a] => Ok(BlockOp::Carry(value(a)?)),
             ["within"] => Ok(BlockOp::Within(0)),
             ["within", d] => match d.parse::<u8>() {
                 Ok(d) if (1..=63).contains(&d) => Ok(BlockOp::Within(d)),
@@ -265,6 +275,7 @@ impl BlockOp {
             BlockOp::Within(0) => out.push(13),
             BlockOp::Within(d) => out.extend([14, d]),
             BlockOp::Phase(k, r) => out.extend([15, k, r]),
+            BlockOp::Carry(a) => two(out, 16, a, a),
         }
     }
 }
@@ -313,6 +324,106 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
     /// `delay` late. An output is never brought to the program's delay by a `prev`: the host
     /// shifts each by its own (decision 0069).
     pub(super) output_delays: Vec<u8>,
+    /// The fixed points (Bitlex's `rounds until settled`): each group's carries, each with the
+    /// value that is its next. A block's rounds run its group's members (the values on a way
+    /// from a carry to a next) until no carry changes; every such way passes a `prev`, so they
+    /// settle within `MAX_ROUNDS` (docs/parser-generators/03-bitlex.md §2.7).
+    pub(super) rounds: Vec<Vec<(u16, u16)>>,
+}
+
+/// A rounds group's layout: its members in order (the values on a way from one of its carries
+/// to one of its nexts, carries included), and the last of them, where the group runs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct Group {
+    pub(in crate::code_rule_dsl) members: Vec<usize>,
+    pub(in crate::code_rule_dsl) carries: Vec<(usize, usize)>,
+}
+
+/// Each value's group, of `ops` under `rounds`: the values on a way from a group's carry to
+/// one of its nexts. Refused: a carry in no group or two, a next before its carry, groups that
+/// share a value, a way from a carry to a next that passes no `prev`, or a group reading a value
+/// that waits on a later group.
+pub(in crate::code_rule_dsl) fn groups(ops: &[BlockOp], rounds: &[Vec<(u16, u16)>]) -> Result<Vec<Group>, String> {
+    let n = ops.len();
+    let users = {
+        let mut u: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (at, op) in ops.iter().enumerate() {
+            for o in op.operands() {
+                u[usize::from(o)].push(at);
+            }
+        }
+        u
+    };
+    let mut owner: Vec<Option<usize>> = vec![None; n];
+    let mut out = Vec::new();
+    let carries = ops.iter().filter(|op| matches!(op, BlockOp::Carry(_))).count();
+    if carries != rounds.iter().map(Vec::len).sum::<usize>() {
+        return Err("a carry in no rounds group, or in two".into());
+    }
+    for (g, pairs) in rounds.iter().enumerate() {
+        let pairs: Vec<(usize, usize)> = pairs.iter().map(|&(c, x)| (usize::from(c), usize::from(x))).collect();
+        if pairs.is_empty() || pairs.iter().any(|&(c, x)| c >= n || x >= n || x <= c || !matches!(ops[c], BlockOp::Carry(_))) {
+            return Err(format!("rounds group {g}: a pair that is not a carry and a later value"));
+        }
+        // Forward from the carries, backward from the nexts.
+        let mut ahead = vec![false; n];
+        let mut todo: Vec<usize> = pairs.iter().map(|p| p.0).collect();
+        while let Some(x) = todo.pop() {
+            if !std::mem::replace(&mut ahead[x], true) {
+                todo.extend(users[x].iter().copied());
+            }
+        }
+        let mut behind = vec![false; n];
+        let mut todo: Vec<usize> = pairs.iter().map(|p| p.1).collect();
+        while let Some(x) = todo.pop() {
+            if !std::mem::replace(&mut behind[x], true) && !matches!(ops[x], BlockOp::Carry(_)) {
+                todo.extend(ops[x].operands().into_iter().map(usize::from));
+            }
+        }
+        let members: Vec<usize> = (0..n).filter(|&x| ahead[x] && behind[x]).collect();
+        for &m in &members {
+            if owner[m].replace(g).is_some() {
+                return Err(format!("rounds group {g} shares value %{m} with another"));
+            }
+        }
+        // Strict: from the carries, without passing a `prev`, no next.
+        let mut loose = vec![false; n];
+        let mut todo: Vec<usize> = pairs.iter().map(|p| p.0).collect();
+        while let Some(x) = todo.pop() {
+            if !std::mem::replace(&mut loose[x], true) {
+                todo.extend(users[x].iter().copied().filter(|&u| !matches!(ops[u], BlockOp::Prev(..))));
+            }
+        }
+        if let Some(&(c, x)) = pairs.iter().find(|&&(_, x)| loose[x]) {
+            return Err(format!("rounds group {g}: carry %{c} reaches its next %{x} with no `prev` on the way"));
+        }
+        out.push(Group { members, carries: pairs });
+    }
+    // A group's members read, outside it, only values of earlier groups or none.
+    let mut waits: Vec<Vec<bool>> = vec![vec![false; rounds.len()]; n];
+    for x in 0..n {
+        let mut w = vec![false; rounds.len()];
+        if let Some(g) = owner[x] {
+            w[g] = true;
+        }
+        for o in ops[x].operands() {
+            for (g, &b) in waits[usize::from(o)].iter().enumerate() {
+                w[g] |= b;
+            }
+        }
+        waits[x] = w;
+    }
+    for (g, group) in out.iter().enumerate() {
+        let last = *group.members.last().expect("a carry at least");
+        for &m in &group.members {
+            for o in ops[m].operands().into_iter().map(usize::from).filter(|&o| owner[o] != Some(g)) {
+                if let Some(h) = (0..rounds.len()).find(|&h| waits[o][h] && *out[h].members.last().expect("a member") > last) {
+                    return Err(format!("rounds group {g} reads %{o}, which waits on the later group {h}"));
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// A file of a batch: its bytes, and its program's index in the batch's programs. Every executor
@@ -361,6 +472,7 @@ impl BlockProgram {
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay {
             return Err(Error::InvalidTarget(0));
         }
+        groups(&self.ops, &self.rounds).map_err(|_| Error::InvalidTarget(0))?;
         Ok(())
     }
 
@@ -407,6 +519,18 @@ impl BlockProgram {
         if self.delay != 0 {
             out.extend_from_slice(b"delay");
             out.push(self.delay);
+        }
+        // The rounds groups, tagged, when there are any.
+        if !self.rounds.is_empty() {
+            out.extend_from_slice(b"rounds");
+            out.extend_from_slice(&(self.rounds.len() as u32).to_le_bytes());
+            for g in &self.rounds {
+                out.extend_from_slice(&(g.len() as u32).to_le_bytes());
+                for &(c, x) in g {
+                    out.extend_from_slice(&c.to_le_bytes());
+                    out.extend_from_slice(&x.to_le_bytes());
+                }
+            }
         }
         // And the outputs' own delays, when any is not the program's.
         if (0..self.outputs.len()).any(|k| self.output_delay(k) != self.delay) {
@@ -513,8 +637,53 @@ impl BlockProgram {
             })
             .collect()
         }
-        let mut values: Vec<Vec<u64>> = Vec::with_capacity(self.ops.len());
-        for op in &self.ops {
+        let n = self.ops.len();
+        let groups = groups(&self.ops, &self.rounds).expect("a verified program");
+        let mut owner: Vec<Option<usize>> = vec![None; n];
+        for (g, group) in groups.iter().enumerate() {
+            for &m in &group.members {
+                owner[m] = Some(g);
+            }
+        }
+        // The groups each value waits on: its own, or one a value it reads waits on.
+        let mut waits: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for x in 0..n {
+            let mut w: Vec<usize> = owner[x].into_iter().collect();
+            for o in self.ops[x].operands() {
+                w.extend(waits[usize::from(o)].iter().copied());
+            }
+            w.sort_unstable();
+            w.dedup();
+            waits[x] = w;
+        }
+        let last: Vec<usize> = groups.iter().map(|g| *g.members.last().expect("a member")).collect();
+        let mut values: Vec<Vec<u64>> = vec![Vec::new(); n];
+        let mut ran = vec![false; groups.len()];
+        let mut deferred: Vec<Vec<usize>> = vec![Vec::new(); groups.len()];
+        // Each value in order, op by op over every block; a group's members at its last, block
+        // by block (`rounds`); a value that waits on a group not run yet, after it.
+        let mut order: Vec<usize> = Vec::with_capacity(n);
+        for x in 0..n {
+            if let Some(g) = owner[x] {
+                if x == last[g] {
+                    order.push(usize::MAX - g);
+                    order.extend(std::mem::take(&mut deferred[g]));
+                    ran[g] = true;
+                }
+                continue;
+            }
+            match waits[x].iter().copied().filter(|&g| !ran[g]).max_by_key(|&g| last[g]) {
+                Some(g) => deferred[g].push(x),
+                None => order.push(x),
+            }
+        }
+        for x in order {
+            if x > n {
+                let g = usize::MAX - x;
+                self.rounds_group(&groups[g], &first, &mut values);
+                continue;
+            }
+            let op = &self.ops[x];
             let v = |at: u16| &values[usize::from(at)];
             let two = |a: u16, b: u16, f: fn(u64, u64) -> u64| -> Vec<u64> {
                 v(a).iter().zip(v(b)).map(|(&x, &y)| f(x, y)).collect()
@@ -523,6 +692,7 @@ impl BlockProgram {
             let words: Vec<u64> = match *op {
                 BlockOp::Within(d) => place.iter().map(|&(at, len)| within_at(at, len, d)).collect(),
                 BlockOp::Phase(k, r) => place.iter().map(|&(at, _)| phase(64 * at, k, r)).collect(),
+                BlockOp::Carry(_) => unreachable!("a carry is its group's, run with it"),
                 BlockOp::Eq(byte) => blocks.iter().map(|block| eq(block, byte)).collect(),
                 BlockOp::Class { table, bits } => {
                     let table = &self.tables[usize::from(table)];
@@ -547,7 +717,7 @@ impl BlockProgram {
                     carried(pairs, &first, 0u64, |x, y, c| carry::fill(x, y, c))
                 }
             };
-            values.push(words);
+            values[x] = words;
         }
         spans
             .into_iter()
@@ -560,6 +730,67 @@ impl BlockProgram {
                     .collect()
             })
             .collect()
+    }
+}
+
+impl BlockProgram {
+    /// A rounds group over every block, block by block: from the carries' initial words, its
+    /// members again until no carry changes, each carried member from the settled block before
+    /// (zero at a file's first block). The values the group does not hold are made already.
+    fn rounds_group(&self, group: &Group, first: &[bool], values: &mut [Vec<u64>]) {
+        let blocks = first.len();
+        let mut local = vec![0u64; self.ops.len()];
+        let mut state = vec![0u64; group.members.len()];
+        let mut outs = vec![0u64; group.members.len()];
+        for &m in &group.members {
+            values[m] = vec![0; blocks];
+        }
+        let carry_of = |c: usize| group.carries.iter().position(|p| p.0 == c).expect("a carry of the group");
+        for i in 0..blocks {
+            if first[i] {
+                state.iter_mut().for_each(|x| *x = 0);
+            }
+            let mut cur: Vec<u64> = group
+                .carries
+                .iter()
+                .map(|&(c, _)| match self.ops[c] {
+                    BlockOp::Carry(init) => values[usize::from(init)][i],
+                    _ => unreachable!("verified: a carry"),
+                })
+                .collect();
+            let mut settled = false;
+            for _ in 0..MAX_ROUNDS {
+                for (k, &m) in group.members.iter().enumerate() {
+                    let get = |o: u16| if group.members.binary_search(&usize::from(o)).is_ok() { local[usize::from(o)] } else { values[usize::from(o)][i] };
+                    let (w, c) = match self.ops[m] {
+                        BlockOp::Carry(_) => (cur[carry_of(m)], 0),
+                        BlockOp::Not(a) => (!get(a), 0),
+                        BlockOp::And(a, b) => (get(a) & get(b), 0),
+                        BlockOp::Or(a, b) => (get(a) | get(b), 0),
+                        BlockOp::Xor(a, b) => (get(a) ^ get(b), 0),
+                        BlockOp::AndNot(a, b) => (get(a) & !get(b), 0),
+                        BlockOp::Prev(a, d) => (carry::prev(get(a), state[k], d), get(a)),
+                        BlockOp::Toggle(a) => carry::toggle(get(a), state[k]),
+                        BlockOp::Escaped(a) => carry::escaped(get(a), state[k]),
+                        BlockOp::Fill(a, b) => carry::fill(get(a), get(b), state[k]),
+                        op => unreachable!("a value that reads nothing is no member: {op:?}"),
+                    };
+                    local[m] = w;
+                    outs[k] = c;
+                }
+                let next: Vec<u64> = group.carries.iter().map(|&(_, x)| local[x]).collect();
+                if next == cur {
+                    settled = true;
+                    break;
+                }
+                cur = next;
+            }
+            assert!(settled, "a strictly causal group settles within {MAX_ROUNDS} rounds");
+            for &m in &group.members {
+                values[m][i] = local[m];
+            }
+            state.copy_from_slice(&outs);
+        }
     }
 }
 

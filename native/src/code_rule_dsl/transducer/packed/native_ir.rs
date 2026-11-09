@@ -477,6 +477,9 @@ pub(super) struct BlockNative {
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
     pub output_delays: Vec<u8>,
+    /// The fixed points (`block::BlockProgram::rounds`): each group's members and its carries
+    /// with their nexts.
+    pub groups: Vec<super::block::Group>,
 }
 
 /// An instruction of a block body.
@@ -516,6 +519,9 @@ pub(super) enum BlockInst {
     Within(u8),
     /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
     Phase(u8, u8),
+    /// A fixed point's carry (`block::BlockOp::Carry`): its initial value's word in a block's
+    /// first round, its next's after.
+    Carry(u16),
 }
 
 impl BlockInst {
@@ -527,7 +533,7 @@ impl BlockInst {
     /// The values the instruction reads.
     pub(super) fn operands(&self) -> Vec<usize> {
         match *self {
-            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => vec![usize::from(a)],
+            BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) | BlockInst::Carry(a) => vec![usize::from(a)],
             BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) | BlockInst::Fill(a, b) => {
                 vec![usize::from(a), usize::from(b)]
             }
@@ -558,6 +564,7 @@ impl BlockNative {
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
+                BlockOp::Carry(a) => BlockInst::Carry(a),
             })
             .collect();
         Self {
@@ -569,6 +576,7 @@ impl BlockNative {
             masks: program.mask_outputs(),
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
+            groups: super::block::groups(&program.ops, &program.rounds).expect("a verified program"),
         }
     }
 
@@ -622,10 +630,12 @@ impl BlockNative {
                 BlockInst::Toggle(a) => f.push(BlockInst::Toggle(m(a))),
                 BlockInst::Escaped(a) => f.push(BlockInst::Escaped(m(a))),
                 BlockInst::Fill(a, b) => f.push(BlockInst::Fill(m(a), m(b))),
+                BlockInst::Carry(a) => f.push(BlockInst::Carry(m(a))),
                 other => f.push(other),
             };
             at.push(index);
         }
+        let place = |x: usize| usize::from(at[x]);
         BlockNative {
             tables: self.tables.clone(),
             insts: f.insts,
@@ -635,6 +645,11 @@ impl BlockNative {
             masks: self.masks.clone(),
             delay: self.delay,
             output_delays: self.output_delays.clone(),
+            groups: self
+                .groups
+                .iter()
+                .map(|g| super::block::Group { members: g.members.iter().map(|&x| place(x)).collect(), carries: g.carries.iter().map(|&(c, x)| (place(c), place(x))).collect() })
+                .collect(),
         }
     }
 }

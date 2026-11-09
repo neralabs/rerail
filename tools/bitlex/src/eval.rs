@@ -296,7 +296,13 @@ impl<'a> Ev<'a> {
                 self.lane_rejects.push((msg.clone(), m));
             }
             Stmt::Exit(name) => self.lane_exit = Some(name.clone()),
-            Stmt::Rounds { n, body, .. } => self.rounds(*n, body)?,
+            Stmt::Rounds { n: Some(n), body, .. } => self.rounds(*n, body)?,
+            // The fixed point: a strictly causal body is right on a byte more each round, so it
+            // settles within a round per byte, and one to confirm.
+            Stmt::Rounds { n: None, body, .. } => {
+                crate::syntax::strictly_causal(body)?;
+                self.rounds(self.n + 2, body)?
+            }
             Stmt::Carry(..) | Stmt::Next(..) => return Err("carry or next outside rounds".into()),
             Stmt::Ucode { over, classes } => {
                 let over = self.mask(over)?;
@@ -1171,4 +1177,104 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
         }
         Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
     })
+}
+
+#[cfg(test)]
+mod rounds_tests {
+    use super::*;
+
+    /// Strings `"…"` with `\` escapes and `//` comments, each hiding the other's openers: the
+    /// first opener wins. One carry: the comments' bytes, which hide quotes.
+    const LEXER: &str = r#"
+lexer t
+class quote = '"'
+class backslash = '\\'
+class slash = '/'
+class lf = '\n'
+mask q0 = quote & ~escaped(backslash)
+rounds until settled {
+  carry hidden = empty
+  mask q = q0 & ~hidden
+  mask s = toggle(q)
+  # The second slash of a `//` whose first is in no string.
+  mask open = slash & prev(slash & ~s)
+  mask line = fill(open, lf)
+  next hidden = line
+}
+mask comment = line | (slash & next(open))
+"#;
+
+    /// The engine's way: a byte at a time, the first opener winning. The string's bytes (its
+    /// opening quote to its last byte before the closing one) and the comment's (`//` to the
+    /// line's end).
+    fn oracle(src: &[u8]) -> (Vec<bool>, Vec<bool>) {
+        // A quote after an odd run of backslashes is escaped: inside a string, as the engine's
+        // skip of two; in code, where the engine refuses a backslash, as the lexer's mask.
+        let mut esc = vec![false; src.len()];
+        let mut run = 0;
+        for (i, &b) in src.iter().enumerate() {
+            esc[i] = run % 2 == 1;
+            run = if b == b'\\' { run + 1 } else { 0 };
+        }
+        let (mut s, mut c) = (vec![false; src.len()], vec![false; src.len()]);
+        let mut i = 0;
+        while i < src.len() {
+            if src[i] == b'"' && !esc[i] {
+                s[i] = true;
+                i += 1;
+                while i < src.len() && !(src[i] == b'"' && !esc[i]) {
+                    s[i] = true;
+                    i += 1;
+                }
+                i += 1;
+            } else if src[i] == b'/' && src.get(i + 1) == Some(&b'/') {
+                while i < src.len() && src[i] != b'\n' {
+                    c[i] = true;
+                    i += 1;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        (s, c)
+    }
+
+    #[test]
+    fn the_fixed_point_is_the_first_opener_winning() {
+        let prog = crate::syntax::parse(LEXER).expect("parses");
+        let tables = HashMap::new();
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut most = 0;
+        for len in (0..300).step_by(3) {
+            let src: Vec<u8> = (0..len)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    b"\"//\\\na "[(seed % 7) as usize]
+                })
+                .collect();
+            let out = Ev::run(&prog, &src, &tables).unwrap_or_else(|e| panic!("{e}"));
+            let mask = |n: &str| match out.vars.get(n) {
+                Some(Val::M(m)) => (0..src.len()).map(|i| m.get(i)).collect::<Vec<bool>>(),
+                _ => panic!("{n}"),
+            };
+            let (s, c) = oracle(&src);
+            assert_eq!((mask("s"), mask("comment")), (s, c), "{:?}", String::from_utf8_lossy(&src));
+            most = most.max(out.rounds.iter().map(|r| r.1).max().unwrap_or(0));
+        }
+        assert!(most > 2, "the inputs interleave: some take more than one round and a confirming one");
+    }
+
+    #[test]
+    fn a_body_that_reads_a_carry_at_its_own_byte_is_refused() {
+        let loose = LEXER.replace("next hidden = line", "next hidden = line | q");
+        let prog = crate::syntax::parse(&loose).expect("parses");
+        let e = Ev::run(&prog, b"\"a\"", &HashMap::new()).err().expect("refused");
+        assert!(e.contains("no `prev` on the way"), "{e}");
+        let ahead = LEXER.replace("mask line = fill(open, lf)", "mask line = fill(open, lf) | next(s)");
+        let prog = crate::syntax::parse(&ahead).expect("parses");
+        let e = Ev::run(&prog, b"\"a\"", &HashMap::new()).err().expect("refused");
+        assert!(e.contains("`next` of a value a carry reaches"), "{e}");
+    }
 }

@@ -300,7 +300,8 @@ fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<R
                 cone.insert((at, lag));
                 work.extend([(s, lag), (e, lag)]);
             }
-            BlockOp::Within(_) | BlockOp::Phase(..) => {
+            // A fixed point's carry: free, as a position's pattern is (sound: it may be anything).
+            BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Carry(_) => {
                 cone.insert((at, lag));
             }
         }

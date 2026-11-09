@@ -65,6 +65,9 @@ pub(super) struct CompiledBlock {
     pub(super) ascii_branch: bool,
     /// The gated regions' branches in the function, each body's counted (`native_cpu_lanes::Region`).
     pub(super) gate_branches: usize,
+    /// The fixed points' loops in the function, each body's counted (`block::Group`): one
+    /// branch each, back to the round's head or on.
+    pub(super) round_branches: usize,
     /// The function as Cranelift IR, before code generation.
     pub(super) clif: String,
     /// The machine code, disassembled.
@@ -349,7 +352,10 @@ pub(super) struct At<'a> {
 /// In a full block the plan's gated regions (`native_cpu_lanes::Region`) each run behind one
 /// branch: when the gate has no bit and the region's carried bits came in zero, its values are
 /// zero and none of it is computed. The builder is left in the block after the last region.
-pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c: &Consts, at: At<'_>) -> (Vec<Value>, Vec<Value>, usize) {
+/// A fixed point's group (`block::Group`) is one loop: its round's head takes the carries and a
+/// count, its members are made in it, and it goes on once no carry changed (at most
+/// `block::MAX_ROUNDS` times). The loop's heads are given back for the shape's check.
+pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c: &Consts, at: At<'_>) -> (Vec<Value>, Vec<Value>, usize, Vec<cranelift_codegen::ir::Block>) {
     let plan = &state.plan;
     let n = native.insts.len();
     let lanes = Lanes::new(&mut *f, native, plan, at.base, at.i, !at.full, at.ascii, at.bytes, c.nibble);
@@ -369,8 +375,16 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
         packed_out: vec![None; state.words],
         consts: vec![0; state.words],
         lanes,
+        rounds: Vec::new(),
     };
     (e.live, e.masked) = live(native, state, at.full);
+    let mut grouped: Vec<Option<usize>> = vec![None; n];
+    for (g, group) in native.groups.iter().enumerate() {
+        for &m in &group.members {
+            grouped[m] = Some(g);
+        }
+    }
+    let mut ran = vec![false; native.groups.len()];
     let regions = if at.full { plan.regions.len() } else { 0 };
     let in_region = |x: usize| if regions > 0 { plan.region_of[x] } else { None };
     let mut done = vec![false; n];
@@ -383,9 +397,20 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
         while progress {
             progress = false;
             for x in 0..n {
-                if !done[x] && in_region(x).is_none_or(|r| emitted[r]) && native.insts[x].operands().iter().all(|&o| done[o]) {
+                if !done[x] && grouped[x].is_none() && in_region(x).is_none_or(|r| emitted[r]) && native.insts[x].operands().iter().all(|&o| done[o]) {
                     e.emit(&mut *f, x);
                     done[x] = true;
+                    progress = true;
+                }
+            }
+            // A group whose members read, outside it, only values made.
+            for (g, group) in native.groups.iter().enumerate() {
+                if !ran[g] && group.members.iter().all(|&m| native.insts[m].operands().iter().all(|&o| done[o] || grouped[o] == Some(g))) {
+                    e.rounds(&mut *f, g);
+                    for &m in &group.members {
+                        done[m] = true;
+                    }
+                    ran[g] = true;
                     progress = true;
                 }
             }
@@ -413,8 +438,9 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
             }
         }
     }
+    let rounds = std::mem::take(&mut e.rounds);
     let (outputs, packed) = e.finish(&mut *f);
-    (outputs, packed, gates)
+    (outputs, packed, gates, rounds)
 }
 
 /// The values a body must make: the outputs, the carried ones (a known one's carry is a constant)
@@ -428,6 +454,12 @@ fn live(native: &BlockNative, state: &State, full: bool) -> (Vec<bool>, Vec<bool
         live[usize::from(v)] = true;
     }
     let mut masked = vec![false; n];
+    // A fixed point's members are all made: each carry's next is read by the next round.
+    for group in &native.groups {
+        for &m in &group.members {
+            live[m] = true;
+        }
+    }
     for x in (0..n).rev() {
         live[x] |= state.top[x].is_some() || state.flag[x].is_some();
         masked[x] |= state.plan.mask[x] && (live[x] && (native.outputs.contains(&(x as u16)) || state.top[x].is_some()));
@@ -468,6 +500,8 @@ struct Emit<'a, 'b> {
     /// The byte-local values, on the block's byte vectors (`native_cpu_lanes`): made a mask only
     /// where something else reads them.
     lanes: Lanes<'a>,
+    /// The heads of the fixed points' loops made so far.
+    rounds: Vec<cranelift_codegen::ir::Block>,
 }
 
 impl Emit<'_, '_> {
@@ -575,6 +609,7 @@ impl Emit<'_, '_> {
                 f.ins().ishl(bits, first)
             }
             BlockInst::Within(d) => within_word(&mut *f, i, len, d),
+            BlockInst::Carry(_) => unreachable!("a carry is its round's head's parameter"),
             BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) => unreachable!("on the vectors"),
             BlockInst::Const(_) | BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) => unreachable!("folded"),
             BlockInst::Prev(a, k) => {
@@ -734,6 +769,59 @@ impl Emit<'_, '_> {
         }
     }
 
+    /// Group `g`'s loop. The head takes each carry and the rounds so far; the members are made
+    /// in it, each carried one from the block's carry in, so every round starts from the same
+    /// state; it goes back with the nexts while one differs from its carry and the rounds are
+    /// under `block::MAX_ROUNDS`, else on, where the last round's values (and the carried fields
+    /// it wrote) are the block's: the head dominates the block after.
+    fn rounds(&mut self, f: &mut FunctionBuilder<'_>, g: usize) {
+        let group = &self.native.groups[g];
+        let inits: Vec<Value> = group
+            .carries
+            .iter()
+            .map(|&(c, _)| match self.native.insts[c] {
+                BlockInst::Carry(init) => plain(&mut *f, &self.syms, &mut self.values, usize::from(init)),
+                _ => unreachable!("a carry"),
+            })
+            .collect();
+        let (head, after) = (f.create_block(), f.create_block());
+        for _ in 0..=inits.len() {
+            f.append_block_param(head, types::I64);
+        }
+        let zero = f.ins().iconst(types::I64, 0);
+        let args: Vec<BlockArg> = inits.iter().copied().chain([zero]).map(BlockArg::from).collect();
+        f.ins().jump(head, &args);
+        f.switch_to_block(head);
+        self.rounds.push(head);
+        let params = f.block_params(head).to_vec();
+        for (k, &(c, _)) in group.carries.iter().enumerate() {
+            self.set(c, Sym::Value(params[k], false));
+            // Its top bits, for a `prev` of it in the next block.
+            self.carry(&mut *f, c);
+        }
+        for &m in &group.members {
+            if !matches!(self.native.insts[m], BlockInst::Carry(_)) {
+                self.emit(&mut *f, m);
+            }
+        }
+        let nexts: Vec<Value> = group.carries.iter().map(|&(_, x)| plain(&mut *f, &self.syms, &mut self.values, x)).collect();
+        let mut changed: Option<Value> = None;
+        for (k, &x) in nexts.iter().enumerate() {
+            let d = f.ins().bxor(x, params[k]);
+            changed = Some(match changed {
+                Some(c) => f.ins().bor(c, d),
+                None => d,
+            });
+        }
+        let round = f.ins().iadd_imm(params[inits.len()], 1);
+        let more = f.ins().icmp_imm(IntCC::UnsignedLessThan, round, super::block::MAX_ROUNDS as i64);
+        let changed = f.ins().icmp_imm(IntCC::NotEqual, changed.expect("a carry"), 0);
+        let again = f.ins().band(changed, more);
+        let back: Vec<BlockArg> = nexts.iter().copied().chain([round]).map(BlockArg::from).collect();
+        f.ins().brif(again, head, &back, after, &[]);
+        f.switch_to_block(after);
+    }
+
     fn finish(mut self, f: &mut FunctionBuilder<'_>) -> (Vec<Value>, Vec<Value>) {
         let outputs = self.native.outputs.iter().map(|&v| plain(&mut *f, &self.syms, &mut self.values, usize::from(v))).collect();
         let packed = (0..self.state.words)
@@ -843,6 +931,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let shape;
     let ascii_branch;
     let mut gate_branches = 0;
+    let mut round_branches = 0;
     {
         let mut f = FunctionBuilder::new(&mut context.func, &mut builder_context);
         // entry -> row (one per file) -> head -> full or general (one per block) -> head ...
@@ -964,8 +1053,10 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 f.ins().brif(ascii, fast, &[], slow, &[]);
                 for (blk, ascii) in [(fast, true), (slow, false)] {
                     f.switch_to_block(blk);
-                    let (v, packed, gates) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes) });
+                    let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii, bytes: Some(bytes) });
                     gate_branches += gates;
+                    round_branches += rounds.len();
+                    heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
                     let args: Vec<BlockArg> = v.into_iter().chain(packed).map(BlockArg::from).collect();
                     f.ins().jump(merge, &args);
                 }
@@ -973,8 +1064,10 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 let m = f.block_params(merge).to_vec();
                 (m[..n].to_vec(), m[n..].to_vec())
             } else {
-                let (v, packed, gates) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii: false, bytes: None });
+                let (v, packed, gates, rounds) = body(&mut f, native, &state, &consts, At { i, len, base, packed_in, full, ascii: false, bytes: None });
                 gate_branches += gates;
+                round_branches += rounds.len();
+                heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
                 (v, packed)
             };
             // Each output cut to the stream outside full blocks: the bits `d <= 64 i + j < len + d`.
@@ -1088,6 +1181,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         counted,
         ascii_branch,
         gate_branches,
+        round_branches,
         clif,
         disassembly,
     })
