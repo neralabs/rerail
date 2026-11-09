@@ -17,9 +17,12 @@ export function checkoutRealpath(platform: NodeJS.Platform = process.platform): 
   return platform === "win32" ? realpathSync.native : realpathSync;
 }
 
-/** The canonical location of `path`: its deepest existing ancestor resolved through symlinks, plus the part not yet created. */
-export function physicalPath(path: string): string {
-  return resolvedThrough(path, checkoutRealpath());
+/**
+ * The canonical location of `path`: its deepest existing ancestor resolved through symlinks ({@link checkoutRealpath} on
+ * `platform`), plus the part not yet created.
+ */
+export function physicalPath(path: string, platform: NodeJS.Platform = process.platform): string {
+  return resolvedThrough(path, checkoutRealpath(platform));
 }
 
 /**

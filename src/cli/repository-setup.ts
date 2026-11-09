@@ -365,8 +365,13 @@ function repositoryAt(folder: string): Repository | undefined {
 
 const HOME_FOLDER_REFUSED = "Start Rerail inside a repository, not your home folder.";
 
-// Through the stored spelling: Windows paths ignore case, and a home spelled `c:\users\me` is still the home folder.
-const isHomeFolder = (root: string): boolean => physicalPath(root) === physicalPath(homedir());
+/**
+ * Whether `root` is the home folder, by any path that leads to it: compared as stored, since Windows paths ignore case
+ * and a home spelled `c:\users\me` is still the home folder, and through links.
+ */
+export function isHomeFolder(root: string, home: string = homedir()): boolean {
+  return physicalPath(root) === physicalPath(home);
+}
 
 /** The Git repository set-up ran in, if any. A plain folder, or the home folder, is no repository to offer. */
 function repositoryHere(cwd: string): Repository | undefined {
