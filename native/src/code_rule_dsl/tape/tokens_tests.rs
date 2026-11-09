@@ -1,30 +1,8 @@
 //! Named-only tapes (RER-131): `tokens::fold` and `unfold` round trips, sizes and costs.
 
-use super::tokens::{FoldStats, TokenGrammar, fold, unfold};
+use super::tokens::{FoldStats, TokenGrammar, fold, grammar_json, unfold};
 use super::*;
 use std::path::PathBuf;
-
-/// The `grammar.json` a dialect's parser was generated from: vendored, or in the crate's source.
-fn grammar_json(lang: GrammarDialect) -> String {
-    let vendored = |dir: &str| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("grammars").join(dir).join("src/grammar.json");
-    let registry = |dir: &str| {
-        let home = std::env::var("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap()).join(".cargo"));
-        let src = home.join("registry/src");
-        std::fs::read_dir(&src).unwrap().filter_map(|entry| Some(entry.ok()?.path().join(dir).join("src/grammar.json"))).find(|path| path.exists()).unwrap_or_else(|| panic!("{dir} under {}", src.display()))
-    };
-    let path = match lang {
-        GrammarDialect::Python => vendored("tree-sitter-python"),
-        GrammarDialect::JavaScript => vendored("tree-sitter-javascript"),
-        GrammarDialect::TypeScript => vendored("tree-sitter-typescript/typescript"),
-        GrammarDialect::Tsx => vendored("tree-sitter-typescript/tsx"),
-        GrammarDialect::Sql => vendored("tree-sitter-sql"),
-        GrammarDialect::Vue => vendored("tree-sitter-vue"),
-        GrammarDialect::Rust => registry("tree-sitter-rust-0.24.2"),
-        GrammarDialect::Php => registry("tree-sitter-php-0.24.2/php"),
-        other => panic!("no grammar.json for {other:?}"),
-    };
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
-}
 
 fn dialect(label: &str) -> GrammarDialect {
     match label {
@@ -94,7 +72,7 @@ fn run(lang: GrammarDialect, files: &[PathBuf], verbose: bool) -> Totals {
     let grammar = Grammar::new(lang).unwrap();
     let language = grammar.kinds.grammar().unwrap().clone();
     let start = cpu();
-    let tokens = TokenGrammar::from_json(&grammar_json(lang), &language).unwrap();
+    let tokens = TokenGrammar::from_json(&grammar_json(lang).expect("grammar.json"), &language).unwrap();
     if verbose {
         eprintln!("{lang:?}: {} kinds, built in {:.3}s CPU; unsupported {:?}", tokens.kind_count(), cpu() - start, tokens.unsupported);
     }

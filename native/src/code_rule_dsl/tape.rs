@@ -42,6 +42,8 @@ const fn padded(length: usize) -> usize {
 /// `TapeImage::widths[2]`'s high bit: a tail is measured from the node's own start, not from
 /// its last descendant's (for a tree where a node ends before its last descendant starts).
 pub(in crate::code_rule_dsl) const TAIL_FROM_START: u8 = 0x80;
+/// On the size width: a named-only tape (`tokens::fold`), whose default tokens restore rebuilds.
+const NAMED_ONLY: u8 = 0x80;
 /// A code's flags.
 const CODE_EXTRA: u8 = 1;
 const CODE_ERROR: u8 = 2;
@@ -1072,7 +1074,7 @@ impl TapeImage {
         let language = super::language::from_tape_tag(reader.u8()?)
             .ok_or("unsupported tape image language")?;
         let widths: [u8; 3] = reader.take(3)?.try_into().expect("three widths");
-        if !matches!(widths[0], 2 | 4) || !matches!(widths[1], 2 | 4) || !matches!(widths[2] & !TAIL_FROM_START, 2 | 4) {
+        if !matches!(widths[0] & !NAMED_ONLY, 2 | 4) || !matches!(widths[1], 2 | 4) || !matches!(widths[2] & !TAIL_FROM_START, 2 | 4) {
             return Err("noncanonical tape image header".into());
         }
         if reader.u32()? != TAPE_FORMAT_VERSION {
@@ -1091,7 +1093,7 @@ impl TapeImage {
         // Every count must be backed by the bytes before a table is reserved for it.
         let column = |width: usize| nodes.checked_mul(width).ok_or("tape image length overflow");
         let blocks = nodes.div_ceil(CHECKPOINT_STRIDE).checked_mul(4).ok_or("tape image length overflow")?;
-        let lengths = [column(2)?, column(usize::from(widths[0]))?, blocks, column(usize::from(widths[1]))?, column(usize::from(widths[2] & !TAIL_FROM_START))?];
+        let lengths = [column(2)?, column(usize::from(widths[0] & !NAMED_ONLY))?, blocks, column(usize::from(widths[1]))?, column(usize::from(widths[2] & !TAIL_FROM_START))?];
         let fixed = lengths
             .into_iter()
             .map(padded)
@@ -1283,6 +1285,14 @@ impl TapeImage {
         let mut nodes = Vec::<Pending>::new();
         let mut supertypes = Vec::new();
         encode_tree(&mut nodes, &mut supertypes, root, language, omitted, budget)?;
+        if tokens::named_only()
+            && let Some(automata) = tokens::TokenGrammar::of(grammar.lang, language)
+        {
+            let (folded, classes, _) = tokens::fold(&nodes, &supertypes, &automata, language, source);
+            let mut image = Self::finish(folded, classes, grammar, source, budget)?;
+            image.widths[0] |= NAMED_ONLY;
+            return Ok(image);
+        }
         Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
@@ -1512,7 +1522,7 @@ impl TapeImage {
     }
 
     fn size_width(&self) -> usize {
-        usize::from(self.widths[0])
+        usize::from(self.widths[0] & !NAMED_ONLY)
     }
 
     fn off_width(&self) -> usize {
@@ -1842,6 +1852,19 @@ impl TapeDoc {
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         checked(budget)?;
+        if image.widths[0] & NAMED_ONLY != 0 {
+            // Stage A of RER-131: stored named-only, restored whole, so every reader (and the
+            // device, which reads `image`) sees the full tree.
+            let mut plain = image.clone();
+            plain.widths[0] &= !NAMED_ONLY;
+            let named = Self::restore_tree(Arc::clone(&source), Arc::clone(&grammar), &plain, Arc::clone(&lines), budget)?;
+            let language = grammar.kinds.grammar().ok_or("a named-only tape of a grammar tree-sitter does not parse")?;
+            let automata = tokens::TokenGrammar::of(grammar.lang, language).ok_or("a named-only tape without its grammar's automata")?;
+            let (nodes, classes) = named.pending(&plain);
+            let (full, classes) = tokens::unfold(&nodes, &classes, &automata, language, &source)?;
+            let full = TapeImage::finish(full, classes, &grammar, &source, budget)?;
+            return Self::restore_tree(source, grammar, &full, lines, budget);
+        }
         if image.language != grammar.lang
             || image.source_len != source.len()
             || image.source_digest != source_digest(&source, budget)?
@@ -1849,7 +1872,7 @@ impl TapeDoc {
             return Err("tape grammar or source revision mismatch".into());
         }
         let count = image.node_count();
-        let widths_valid = [image.widths[0], image.widths[1], image.widths[2] & !TAIL_FROM_START].iter().all(|width| matches!(width, 2 | 4));
+        let widths_valid = [image.widths[0] & !NAMED_ONLY, image.widths[1], image.widths[2] & !TAIL_FROM_START].iter().all(|width| matches!(width, 2 | 4));
         if count == 0
             || count > u32::MAX as usize
             || !widths_valid
@@ -2007,6 +2030,35 @@ impl TapeDoc {
             image: Arc::new(image.clone()),
             digest: Arc::default(),
         })
+    }
+
+    /// The encoder's nodes of this document, restored from `image`: what `tokens::unfold` reads.
+    fn pending(&self, image: &TapeImage) -> (Vec<Pending>, Vec<(u32, u16)>) {
+        let nodes = self
+            .data
+            .iter()
+            .enumerate()
+            .map(|(index, rec)| {
+                let alias = self
+                    .kind_overrides
+                    .binary_search_by_key(&(index as u32), |&(at, _)| at)
+                    .ok()
+                    .map(|slot| self.kind_aliases[usize::from(self.kind_overrides[slot].1)].clone());
+                Pending {
+                    kf: if rec.error { ERROR_CODE } else { rec.kind } | (rec.field << 10),
+                    parent: (rec.parent != NONE).then_some(rec.parent),
+                    start: rec.start,
+                    length: rec.end - rec.start,
+                    size: 1,
+                    extra: rec.extra,
+                    error: rec.error,
+                    missing: rec.missing,
+                    kind_alias: alias,
+                    tokens_kept: image.codes[usize::from(image.code_at(index))].flags & CODE_TOKENS != 0,
+                }
+            })
+            .collect();
+        (nodes, self.supertypes.to_vec())
     }
 
     /// Ranges of ERROR nodes and MISSING tokens that no ERROR node contains, as

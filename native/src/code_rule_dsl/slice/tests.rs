@@ -522,6 +522,11 @@ fn the_backends_find_the_same_keys_on_real_files() {
         eprintln!("phase 4 {name}: {} files, {} clauses, {} keys, cpu {:?}", run.paths.len(), rules.clauses(), found.len(), cpu() - start);
         match &reference {
             None => {
+                if let Ok(path) = std::env::var("RERAIL_DUMP_KEYS") {
+                    let lines: String = found.iter().map(|k| format!("{}\t{}\t{}\t{}\n", k.0, k.1, k.2, k.3)).collect();
+                    std::fs::write(&path, lines).unwrap();
+                    eprintln!("phase 4 {name}: footprint {} MB", crate::code_rule_dsl::prof::footprint_mb());
+                }
                 assert!(!found.is_empty(), "the sample finds nothing");
                 reference = Some((found, covered));
             }
