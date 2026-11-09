@@ -8,6 +8,7 @@ description = "Workload extractor for the matrix-offload spikes: per-document na
 [dependencies]
 tree-sitter = "=0.25.10"
 tree-sitter-python = "=0.25.0"
+libc = "0.2"
 
 # A standalone harness, not a member of the repository's workspace.
 [workspace]
