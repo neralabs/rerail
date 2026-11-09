@@ -25,6 +25,7 @@ import {
 import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion, shellQuote } from "../../src/harness/index.js";
 import { runInstallCommand, setupAnswerCommand } from "../../src/cli/index.js";
 import { ManagedUpdater } from "../../src/setup/updater.js";
+import { stubUserHome } from "../support/user-home.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -818,7 +819,7 @@ describe("Claude Code status-line ownership", () => {
     const { options, rootPath: path } = await worktreeFixture();
     const statusLine = { type: "command", command: "printf local" };
     await seed(path, { statusLine });
-    vi.stubEnv("HOME", options.home);
+    stubUserHome(options.home);
     vi.spyOn(process, "cwd").mockReturnValue(options.workspaceDir);
     vi.spyOn(process.stdout, "write").mockReturnValue(true);
     const home = join(options.home, ".rerail");

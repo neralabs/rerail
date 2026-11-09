@@ -1,16 +1,27 @@
 import { afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const priorRerailHome = process.env.RERAIL_HOME;
 const priorContentStorePath = process.env.RERAIL_CONTENT_STORE_PATH;
+const priorUserHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+const priorGitConfig = join(homedir(), ".gitconfig");
 const rerailHome = mkdtempSync(join(tmpdir(), "rerail-vitest-home-"));
 const contentStoreDirectory = mkdtempSync(join(tmpdir(), "rerail-vitest-store-"));
+const userHome = mkdtempSync(join(tmpdir(), "rerail-vitest-user-"));
 
 process.env.RERAIL_HOME = rerailHome;
+// Every test file gets a user home of its own, so code that falls back to os.homedir() (harness registration, the
+// Claude status store, git's global config) never reaches the person's profile. os.homedir() reads HOME on POSIX and
+// USERPROFILE on Windows, so both are set; a test that moves the home uses stubUserHome, which moves both.
+process.env.HOME = userHome;
+process.env.USERPROFILE = userHome;
+// Git still reads the person's global settings (safe.directory, line endings) through a copy, so tests that run git in
+// this checkout behave as before, and a test that writes global settings changes only the copy.
+if (existsSync(priorGitConfig)) copyFileSync(priorGitConfig, join(userHome, ".gitconfig"));
 // A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v1.sqlite`, shared by
 // every test file; each file gets its own (`contentStorePath` honours the override).
 process.env.RERAIL_CONTENT_STORE_PATH = join(contentStoreDirectory, "content.sqlite");
@@ -64,7 +75,12 @@ afterAll(async () => {
     else process.env.RERAIL_HOME = priorRerailHome;
     if (priorContentStorePath === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
     else process.env.RERAIL_CONTENT_STORE_PATH = priorContentStorePath;
+    for (const [name, value] of Object.entries(priorUserHome)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     rmSync(rerailHome, { recursive: true, force: true });
     rmSync(contentStoreDirectory, { recursive: true, force: true });
+    rmSync(userHome, { recursive: true, force: true });
   }
 });
