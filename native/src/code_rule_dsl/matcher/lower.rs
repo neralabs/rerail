@@ -148,11 +148,24 @@ impl Fact {
         file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
         starts: impl Iterator<Item = u32>,
         siblings: &super::nth_child::SiblingPositions,
+        tokens: &super::tokens::TapeTokens,
     ) -> FactFound {
-        match self.nth_bits(file.root().get_doc(), siblings) {
-            Some(bits) => FactFound::Nodes(Arc::unwrap_or_clone(bits)),
-            None => FactFound::Rows(self.rows(file, starts)),
+        if let Some(bits) = self.nth_bits(file.root().get_doc(), siblings) {
+            return FactFound::Nodes(Arc::unwrap_or_clone(bits));
         }
+        // A `tokens` test: the tape's token index answers where it can (`TapeTokens`), the
+        // producer at the rest.
+        if let AstMatcher::Semantic(super::Semantic::Tokens(test)) = &self.producer {
+            let len = file.root().get_doc().transducer_len();
+            let (held, asked) = tokens.split(test, test.is_plain() && self.slots.is_empty(), file.root(), len, starts);
+            crate::code_rule_dsl::prof::count("tokens.held", held.len());
+            crate::code_rule_dsl::prof::count("tokens.asked", asked.len());
+            let mut rows = held.into_iter().map(|node| (node, Vec::new())).collect::<Vec<_>>();
+            rows.extend(self.rows(file, asked.into_iter()));
+            rows.sort_unstable_by_key(|row| row.0);
+            return FactFound::Rows(rows);
+        }
+        FactFound::Rows(self.rows(file, starts))
     }
 
     /// The rows of `file`: every node the producer matches, with its slots' targets. The predicate's
@@ -233,29 +246,6 @@ impl MatchTree {
 }
 
 impl MatchTree {
-    /// Whether the tree may match a token (an anonymous leaf: a keyword, operator or punctuation),
-    /// conservatively: `false` only where it cannot. A token has no children, so `has` never holds
-    /// at one; a kind is tested where it is known (`kinds`), so a kind answers `true` here.
-    pub(in crate::code_rule_dsl) fn may_match_token(&self) -> bool {
-        match self {
-            Self::Supertype(..) | Self::Never => false,
-            Self::Walk { axis: Axis::Has, .. } => false,
-            Self::Count { axis: Axis::Has, min, .. } => *min == 0,
-            Self::All(trees) => trees.iter().all(Self::may_match_token),
-            Self::Any(trees) => trees.iter().any(Self::may_match_token),
-            Self::Recursive(_, tree) => tree.may_match_token(),
-            Self::Kind(_)
-            | Self::Pattern(_)
-            | Self::Constrained(..)
-            | Self::Regex(_)
-            | Self::Not(_)
-            | Self::Walk { .. }
-            | Self::Recur(_)
-            | Self::Count { .. }
-            | Self::Fact(_) => true,
-        }
-    }
-
     /// The kinds a node must have for the tree to match it, where they are known: the anchor a
     /// label pass starts from.
     pub(in crate::code_rule_dsl) fn kinds(&self) -> Option<BTreeSet<u16>> {
@@ -389,6 +379,30 @@ struct Lowering {
     facts: usize,
     /// The kinds an `all`'s `kind` conjuncts allow, while its `nthChild` conjunct is lowered.
     conjunct_kinds: Option<BTreeSet<u16>>,
+    /// The kinds every node the tree being lowered is tested at has: an enclosing `all`'s `kind`
+    /// conjuncts, while the lowering stays on that node (`all`, `any`, `not`, a utility). A
+    /// `tokens` fact's producer starts only there; a walk, a pattern's constraint or a fact's slot
+    /// tests another node, which drops them.
+    node_kinds: Option<BTreeSet<u16>>,
+}
+
+/// The kinds `all`'s `kind` conjuncts allow (`None`: any).
+fn conjunct_kinds(matchers: &[AstMatcher]) -> Option<BTreeSet<u16>> {
+    matchers
+        .iter()
+        .filter_map(|m| match m {
+            AstMatcher::Kind(kind) => kind.potential_kinds().map(|ks| ks.iter().filter_map(|k| u16::try_from(k).ok()).collect::<BTreeSet<u16>>()),
+            _ => None,
+        })
+        .reduce(|a, b| a.intersection(&b).copied().collect())
+}
+
+/// Both bounds on a node's kinds (`None`: any).
+fn narrowed(left: Option<BTreeSet<u16>>, right: Option<&BTreeSet<u16>>) -> Option<BTreeSet<u16>> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.intersection(right).copied().collect()),
+        (left, right) => left.or_else(|| right.cloned()),
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -401,6 +415,17 @@ enum Step {
 impl Lowering {
     /// `shares`: whether the tree reads the caller's environment (a stop rule's does not).
     fn tree(&mut self, matcher: &AstMatcher, shares: bool) -> Result<MatchTree, Unsupported> {
+        let same_node = matches!(matcher, AstMatcher::All(_) | AstMatcher::Any(_) | AstMatcher::Not(_) | AstMatcher::Util(_) | AstMatcher::Semantic(_));
+        let outer = if same_node { self.node_kinds.clone() } else { self.node_kinds.take() };
+        if let AstMatcher::All(matchers) = matcher {
+            self.node_kinds = narrowed(conjunct_kinds(matchers), self.node_kinds.as_ref());
+        }
+        let tree = self.tree_here(matcher, shares);
+        self.node_kinds = outer;
+        tree
+    }
+
+    fn tree_here(&mut self, matcher: &AstMatcher, shares: bool) -> Result<MatchTree, Unsupported> {
         Ok(match matcher {
             AstMatcher::Pattern(pattern) => {
                 self.bind(pattern, shares)?;
@@ -422,13 +447,7 @@ impl Lowering {
             AstMatcher::All(matchers) => {
                 // An `nthChild` beside a `kind` holds only at nodes of that kind: its fact's
                 // producer starts only there (not at every node).
-                let kinds = matchers
-                    .iter()
-                    .filter_map(|m| match m {
-                        AstMatcher::Kind(kind) => kind.potential_kinds().map(|ks| ks.iter().filter_map(|k| u16::try_from(k).ok()).collect::<BTreeSet<u16>>()),
-                        _ => None,
-                    })
-                    .reduce(|a, b| a.intersection(&b).copied().collect());
+                let kinds = conjunct_kinds(matchers);
                 let trees = matchers
                     .iter()
                     .map(|matcher| {
@@ -563,8 +582,15 @@ impl Lowering {
         if !two_valued && self.three_valued && self.path.contains(&Step::Not) {
             return Err(Unsupported("unknown fact under not"));
         }
-        let slots = rules.iter().map(|rule| self.tree(rule, shares)).collect::<Result<Vec<_>, _>>()?;
-        let kinds = candidate_kinds(&producer);
+        // A slot is tested at another node.
+        let here = self.node_kinds.take();
+        let slots = rules.iter().map(|rule| self.tree(rule, shares)).collect::<Result<Vec<_>, _>>();
+        self.node_kinds = here;
+        let slots = slots?;
+        let kinds = match &producer {
+            super::Semantic::Tokens(_) => narrowed(candidate_kinds(&producer), self.node_kinds.as_ref()),
+            _ => candidate_kinds(&producer),
+        };
         let (digest, dialect) = &self.source;
         let key = format!("{}|{dialect:?}|{}", digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>(), self.facts);
         self.facts += 1;

@@ -199,11 +199,17 @@ fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::match
                 let source = Arc::as_ptr(tape.document_source()) as usize;
                 // The tape's sibling positions and `nthChild` answers, shared by its facts.
                 let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();
+                // Its tokens, recognized once for its `tokens` facts.
+                let tokens = crate::code_rule_dsl::matcher::tokens::TapeTokens::default();
                 distinct
                     .iter()
                     .map(|fact| {
                         let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
-                        ((Arc::as_ptr(fact) as usize, source), fact.found(&file, domain(&starts, tape, &[]), &siblings))
+                        ((Arc::as_ptr(fact) as usize, source), {
+                            let found = || fact.found(&file, domain(&starts, tape, &[]), &siblings, &tokens);
+                            // `RERAIL_PROF`: each fact's CPU by name.
+                            if crate::code_rule_dsl::prof::on() { crate::code_rule_dsl::prof::time(&format!("fact.{}{}", fact.name, if fact.kinds.is_some() { "" } else { ".anywhere" }), found) } else { found() }
+                        })
                     })
                     .collect::<Vec<_>>()
             })

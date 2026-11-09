@@ -42,20 +42,6 @@ pub(in crate::code_rule_dsl) enum Place {
 }
 
 impl Place {
-    pub(in crate::code_rule_dsl) fn key(&self) -> &str {
-        match self {
-            Self::Own => "has",
-            Self::Below => "below",
-            Self::Before => "before",
-            Self::After => "after",
-            Self::Earlier => "earlier",
-            Self::Later => "later",
-            Self::BeforeCode => "beforeCode",
-            Self::AfterCode => "afterCode",
-            Self::Field(_) => "field",
-        }
-    }
-
     pub(in crate::code_rule_dsl) fn of_key(key: &str) -> Option<Self> {
         Some(match key {
             "has" => Self::Own,
@@ -212,5 +198,191 @@ fn holds<'r, D: ast_grep_core::Doc>(place: &Place, re: &Regex, node: &ast_grep_c
             near.is_some_and(|near| !near.is_named() && re.is_match(&near.text()))
         }
         Place::Field(name) => node.field(name).is_some_and(|child| !child.is_named() && re.is_match(&child.text())),
+    }
+}
+
+/// A tape's tokens for the facts stage (`Fact::found`): every named node's tokens recognized once,
+/// shared by the tape's `tokens` facts and dropped with the stage. Nothing is kept on the tape.
+///
+/// Token rows are in the preorder of their owners, so a subtree's tokens are one range
+/// (`below`), and a regex is tested once per distinct token text: each test is then a prefix-sum
+/// lookup per node.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct TapeTokens {
+    index: std::sync::OnceLock<TokenIndex>,
+    matched: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u32>>>>,
+}
+
+const NONE: u32 = u32::MAX;
+
+/// A sibling beside a node, among its parent's parts.
+#[derive(Clone, Copy)]
+enum Near {
+    None,
+    Token(u32),
+    Named,
+}
+
+struct Entry {
+    own: (u32, u32),
+    below_end: u32,
+    parent: u32,
+    /// How many of its parent's tokens come before it.
+    before: u32,
+    /// Before, after, before skipping comments, after skipping comments.
+    near: [Near; 4],
+}
+
+struct TokenIndex {
+    entry_of: Vec<u32>,
+    entries: Vec<Entry>,
+    /// Each row's text, as an index into `texts`.
+    rows: Vec<u32>,
+    texts: Vec<String>,
+}
+
+impl TokenIndex {
+    fn build<D: ast_grep_core::Doc>(root: ast_grep_core::Node<'_, D>, len: usize) -> Self {
+        use crate::code_rule_dsl::tree::{Part, is_comment};
+        let mut index = Self { entry_of: vec![NONE; len], entries: Vec::new(), rows: Vec::new(), texts: Vec::new() };
+        let mut texts = std::collections::HashMap::<String, u32>::new();
+        let root_id = root.node_id();
+        if root_id >= len {
+            return index;
+        }
+        index.entry_of[root_id] = 0;
+        index.entries.push(Entry { own: (0, 0), below_end: 0, parent: NONE, before: 0, near: [Near::None; 4] });
+        let mut stack = vec![(root, false)];
+        while let Some((node, exit)) = stack.pop() {
+            let entry = index.entry_of[node.node_id()] as usize;
+            if exit {
+                index.entries[entry].below_end = index.rows.len() as u32;
+                continue;
+            }
+            let start = index.rows.len() as u32;
+            let parts = node.parts().collect::<Vec<_>>();
+            let mut row_of = Vec::with_capacity(parts.len());
+            for part in &parts {
+                row_of.push(match part {
+                    Part::Token(token) => {
+                        let text = token.text();
+                        let next = texts.len() as u32;
+                        let id = *texts.entry(text.into_owned()).or_insert(next);
+                        index.rows.push(id);
+                        Some(index.rows.len() as u32 - 1)
+                    }
+                    Part::Named(_) => None,
+                });
+            }
+            index.entries[entry].own = (start, index.rows.len() as u32);
+            let near = |at: usize| row_of[at].map_or(Near::Named, Near::Token);
+            let code = |at: usize| !matches!(&parts[at], Part::Named(named) if is_comment(&named.kind()));
+            let mut children = Vec::new();
+            let mut tokens_before = 0;
+            for (at, part) in parts.iter().enumerate() {
+                let Part::Named(child) = part else {
+                    tokens_before += 1;
+                    continue;
+                };
+                let id = child.node_id();
+                if id >= len || index.entry_of[id] != NONE {
+                    continue;
+                }
+                let before = at.checked_sub(1).map_or(Near::None, near);
+                let after = if at + 1 < parts.len() { near(at + 1) } else { Near::None };
+                let before_code = (0..at).rev().find(|&i| code(i)).map_or(Near::None, near);
+                let after_code = (at + 1..parts.len()).find(|&i| code(i)).map_or(Near::None, near);
+                index.entry_of[id] = index.entries.len() as u32;
+                index.entries.push(Entry { own: (0, 0), below_end: 0, parent: entry as u32, before: tokens_before, near: [before, after, before_code, after_code] });
+                children.push(child.clone());
+            }
+            stack.push((node, true));
+            stack.extend(children.into_iter().rev().map(|child| (child, false)));
+        }
+        index.texts = {
+            let mut ordered = vec![String::new(); texts.len()];
+            for (text, id) in texts {
+                ordered[id as usize] = text;
+            }
+            ordered
+        };
+        index
+    }
+}
+
+impl TapeTokens {
+    fn index<D: ast_grep_core::Doc>(&self, root: ast_grep_core::Node<'_, D>, len: usize) -> &TokenIndex {
+        self.index.get_or_init(|| TokenIndex::build(root, len))
+    }
+
+    /// The number of matching rows before each row (and in all, last).
+    fn matched(&self, index: &TokenIndex, re: &Regex) -> std::sync::Arc<Vec<u32>> {
+        let mut matched = self.matched.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        std::sync::Arc::clone(matched.entry(re.as_str().to_owned()).or_insert_with(|| {
+            let texts = index.texts.iter().map(|text| re.is_match(text)).collect::<Vec<_>>();
+            let mut prefix = Vec::with_capacity(index.rows.len() + 1);
+            let mut sum = 0;
+            prefix.push(0);
+            for &row in &index.rows {
+                sum += u32::from(texts[row as usize]);
+                prefix.push(sum);
+            }
+            std::sync::Arc::new(prefix)
+        }))
+    }
+
+    /// `test`'s verdicts at `starts`: the nodes it holds at outright, and those the matcher still
+    /// asks (an `as`, `where`, count or slot, or a test the index cannot tell: a field token, a
+    /// node it does not hold).
+    pub(in crate::code_rule_dsl) fn split<D: ast_grep_core::Doc>(
+        &self,
+        test: &TokenTest,
+        plain: bool,
+        root: ast_grep_core::Node<'_, D>,
+        len: usize,
+        starts: impl Iterator<Item = u32>,
+    ) -> (Vec<u32>, Vec<u32>) {
+        let index = self.index(root, len);
+        let tests = test.tests.iter().map(|(place, re)| (place, self.matched(index, re))).collect::<Vec<_>>();
+        let (mut held, mut asked) = (Vec::new(), Vec::new());
+        'starts: for ordinal in starts {
+            let Some(&at) = index.entry_of.get(ordinal as usize).filter(|&&entry| entry != NONE) else {
+                asked.push(ordinal);
+                continue;
+            };
+            let entry = &index.entries[at as usize];
+            let parent = (entry.parent != NONE).then(|| &index.entries[entry.parent as usize]);
+            let mut known = true;
+            for (place, prefix) in &tests {
+                let any = |(start, end): (u32, u32)| prefix[end as usize] > prefix[start as usize];
+                let near = |near: Near| matches!(near, Near::Token(row) if any((row, row + 1)));
+                let holds = match place {
+                    Place::Own => any(entry.own),
+                    Place::Below => any((entry.own.0, entry.below_end)),
+                    Place::Before => near(entry.near[0]),
+                    Place::After => near(entry.near[1]),
+                    Place::BeforeCode => near(entry.near[2]),
+                    Place::AfterCode => near(entry.near[3]),
+                    Place::Earlier => parent.is_some_and(|parent| any((parent.own.0, parent.own.0 + entry.before))),
+                    Place::Later => parent.is_some_and(|parent| any((parent.own.0 + entry.before, parent.own.1))),
+                    Place::Field(_) => {
+                        known = false;
+                        continue;
+                    }
+                };
+                if !holds {
+                    continue 'starts;
+                }
+            }
+            if known && plain { held.push(ordinal) } else { asked.push(ordinal) }
+        }
+        (held, asked)
+    }
+}
+
+impl TokenTest {
+    /// Whether the test is its tests alone: nothing to bind, no rule at the token, no count.
+    pub(in crate::code_rule_dsl) fn is_plain(&self) -> bool {
+        self.capture.is_none() && self.rule.is_none() && self.counts.is_empty()
     }
 }

@@ -486,8 +486,7 @@ impl SqlPlans {
                 "syntaxFailures": syntax_failures,
             }));
             file_paths.push(file.path);
-            // The transducer walks a named-only document's tokens too (RER-131, `walking_tokens`).
-            tapes.push(file.tape.walking_tokens());
+            tapes.push(file.tape);
             anchors.push(file_anchors);
             task_grid.push(file_tasks);
         }

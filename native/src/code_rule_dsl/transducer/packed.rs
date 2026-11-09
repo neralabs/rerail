@@ -1478,9 +1478,11 @@ impl PackedPattern {
     fn bind_multi(
         bindings: &mut PatternBindings,
         name: &str,
-        nodes: Vec<u32>,
+        mut nodes: Vec<u32>,
         tape: &TapeDoc,
     ) -> bool {
+        // A recognized token is no node a binding can hold (`TapeDoc::pattern_children`).
+        nodes.retain(|node| node & crate::code_rule_dsl::tape::RECOGNIZED_TOKEN == 0);
         match bindings.values.get(name) {
             Some(bound) => {
                 let bound = bound
@@ -1514,6 +1516,19 @@ impl PackedPattern {
         bindings: &mut PatternBindings,
         root: bool,
     ) -> PatternVerdict {
+        use crate::code_rule_dsl::tape::RECOGNIZED_TOKEN;
+        // A token a named-only document recognizes (`TapeDoc::pattern_children`): it has a kind,
+        // and is neither named nor extra; a `$$X` matches it but binds nothing.
+        if node & RECOGNIZED_TOKEN != 0 {
+            let token = (node & 0xffff) as u16;
+            return match self {
+                Self::Terminal { named: false, kind, .. } if ast_grep_core::matcher::kind_utils::are_kinds_matching(*kind, token) => PatternVerdict::Matched,
+                Self::Terminal { .. } => PatternVerdict::SkipCandidate,
+                Self::Single { named: false, .. } => PatternVerdict::Matched,
+                Self::Single { .. } | Self::Internal { .. } => PatternVerdict::NoMatch,
+                Self::Ellipsis(_) => PatternVerdict::SkipGoal,
+            };
+        }
         match self {
             Self::Terminal { text, named, kind } => {
                 if ast_grep_core::matcher::kind_utils::are_kinds_matching(
@@ -1564,7 +1579,7 @@ impl PackedPattern {
                 ) {
                     return PatternVerdict::NoMatch;
                 }
-                let candidates = tape.transducer_children(node).collect::<Vec<_>>();
+                let candidates = tape.pattern_children(node);
                 if Self::children(children, &candidates, tape, bindings) {
                     PatternVerdict::Matched
                 } else {
@@ -3566,9 +3581,7 @@ impl Program {
                         }
                         // Without repeats (whose states are deduplicated as they are queued),
                         // the move's other candidates are one lazy cursor.
-                        // A walk over tokens (`TapeDoc::walking_tokens`) has its descendants in two
-                        // ranges, records then tokens: they are listed below.
-                        CHILD | DESCEND if !has_repeats && !(opcode == DESCEND && tape.walks_tokens()) => {
+                        CHILD | DESCEND if !has_repeats => {
                             let named = mode == NAMED;
                             let next_pc = next.ok_or(Error::InvalidTarget(path.pc as usize))?;
                             if opcode == CHILD {
@@ -3603,7 +3616,6 @@ impl Program {
                                     .collect::<Vec<_>>()
                             } else {
                                 tape.transducer_descendants(path.node)
-                                    .chain(tape.transducer_descendant_tokens(path.node))
                                     .filter(|&node| !named || tape.transducer_flags(node) & 1 != 0)
                                     .collect::<Vec<_>>()
                             };

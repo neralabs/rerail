@@ -374,3 +374,74 @@ of the batched scan, took 137 s. Text tests are built for the batch.
 - the layer, about 0.8 s.
 - token candidates, about 0.3 s.
 - label passes over complements, which cover tokens.
+
+## 9. Step 3c: rules range over named nodes; the walk column is gone
+
+§7 and §8 let the transducer walk tokens through a column. That column
+had to be built for every named-only document a wave reads. Step 3c
+removes the need for it: rules no longer walk tokens at all.
+
+- **Roots and relations reach named nodes only**, on the host matcher
+  and on the transducer alike.
+- **Tokens are tested by text** through a new builtin, `tokens`
+  (`matcher::tokens`). Its places are `has`, `below`, `before`,
+  `after`, `earlier`, `later`, `beforeCode`, `afterCode` and a field;
+  `as` binds the token and `where` tests it.
+- **The compiler keeps old rules exact.** A relation to a bare regex
+  reached tokens too, so it now reads as both:
+
+  ```yaml
+  # written:            has: { regex: "^\\($" }
+  # compiled, in effect: any: [ has: { regex: "^\\($" },        # a named child
+  #                             tokens: { has: "^\\($" } ]      # or a token
+  ```
+
+- **Patterns** compare a named-only node's tokens by kind, recognized
+  from the source as the pattern meets them
+  (`TapeDoc::pattern_children`).
+
+### How a `tokens` test runs without a stored column
+
+The facts stage evaluates every `tokens` test of a tape before the label
+passes. It builds a **per-tape token index** once (`TapeTokens`):
+
+- one `parts()` call per named node, so each node's tokens are recognized
+  once;
+- token rows in the preorder of their owners, so a subtree's tokens are
+  one contiguous range;
+- each node's neighbours and its place among its parent's tokens.
+
+A regex is matched once per distinct token text, and each test is then a
+prefix-sum lookup per node. The index is dropped when the stage ends;
+nothing is kept on the tape. A test with `as`, `where`, a count or a
+field place still asks the matcher at the nodes the index cannot decide.
+
+A `tokens` test also starts only at the kinds its enclosing `all`
+requires, while the lowering stays on the same node.
+
+### Removed
+
+`tape::walk` (`TokenColumn`, `walking_tokens`, the merged children), the
+token range in DESCEND (interpreter, micro walks, sets), the stopgap
+token candidates, `Domain::Records` and `may_match_token`.
+
+The facts layer keeps its own token column (§6). The SQL syntax tables
+read it.
+
+### Result
+
+S7, interpreter, process CPU (user + sys). Both shapes ran back to back
+in one window, at load average 27–149:
+
+| Shape | Keys | CPU | Footprint |
+|---|---|---|---|
+| Full documents | 519 | 43.7 s | 208 MB |
+| Named-only (probe) | 519 | 44.1 s | 192 MB |
+
+The JIT agrees on both shapes. Before the token index, the probe took
+266 s: a `below` test walked each subtree with `dfs()`, recognizing
+tokens again at every node, for each of 154 kind-less facts. Narrowing
+the tests to their `all`'s kinds left 113 kind-less facts.
+
+Still open: Metal fails on named-only documents with `BackendFailure`,
+and on the wave with `BackendLaunchLimit` (step 4).

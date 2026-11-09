@@ -361,8 +361,7 @@ impl Wave {
         crate::code_rule_dsl::prof::time("demand.gates", || self.gate(&mut demanded, documents, &tapes));
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("1.tapes");
-        // The transducer walks a named-only document's tokens too (RER-131, `walking_tokens`).
-        let docs = tapes.iter().map(|tape| tape.doc.walking_tokens()).collect::<Vec<_>>();
+        let docs = tapes.iter().map(|tape| tape.doc.clone()).collect::<Vec<_>>();
         // The walks' text tests from the term index (`R[tid]`, list step 17).
         let docs = crate::code_rule_dsl::prof::time("demand.texts", || self.texts(graph.store(), &tapes, docs))?;
         let metal = cfg!(target_os = "macos")
@@ -373,7 +372,7 @@ impl Wave {
             // On Metal the candidates come first (set steps on the device, ~150 ms), then every
             // clause's labels and its roots from those candidates in one run: the roots read the
             // labels in place and come back as match records (decision 0024 §3).
-            let mut candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes, &docs))?;
+            let mut candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
             restrict(&mut candidates, demanded.as_deref());
             crate::code_rule_dsl::prof::peak("2a.candidates");
             // Wave preparation (PIAT §20.3): what the residency lacks of the chunk's tapes is read
@@ -396,7 +395,7 @@ impl Wave {
             })?;
             (candidates, views)
         } else {
-            let mut candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes, &docs))?;
+            let mut candidates = crate::code_rule_dsl::prof::time("demand.candidates", || self.candidates(graph, &tapes))?;
             restrict(&mut candidates, demanded.as_deref());
             crate::code_rule_dsl::prof::release();
             crate::code_rule_dsl::prof::peak("2.candidates");
@@ -460,18 +459,6 @@ impl Wave {
     /// Per clause, per tape: the prefilter's candidates (one statement for every clause's plan over
     /// the tapes) that have the kinds the clause's root program starts from, ascending.
     pub(in crate::code_rule_dsl) fn candidates(
-        &self,
-        graph: &(impl Graph + ?Sized),
-        tapes: &[Arc<Tape>],
-        docs: &[crate::code_rule_dsl::tape::TapeDoc],
-    ) -> StoreResult<Vec<Vec<Vec<u32>>>> {
-        // A rule's roots are named nodes (RER-131): the records' candidates are all of them.
-        let _ = docs;
-        self.record_candidates(graph, tapes)
-    }
-
-    /// [`Self::candidates`] among the records.
-    fn record_candidates(
         &self,
         graph: &(impl Graph + ?Sized),
         tapes: &[Arc<Tape>],
