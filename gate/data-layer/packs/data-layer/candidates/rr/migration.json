@@ -4513,7 +4513,7 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "af8fee707dcc82c644d9b3a78402e9292ef21b36",
+    "upstreamCommit": "ef317e108358b2107336d1dd957ef9856b721b8d",
     "status": "Final af8fee707 merged and CLI rebuilt. Dispatch passes complete recorded contracts and fixed original-inventory admission through both APIs, with 713 validated native executions.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
@@ -4546,7 +4546,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/core.rs",
-        "sha256": "ace03f1a402d77b993592f377f750a461a28237aa1218ae775110c44ac9cb6b8"
+        "sha256": "23d9a6f93387544393be2645bf793da581d7429d1fa818e6cccb0a9157018538"
       },
       {
         "path": "native/src/code_rule_dsl/facts/repository.rs",
@@ -4554,7 +4554,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "a9ad3eea5048b5dd23c51fb92413f4fbfe441d3c49e346d1e50a7e700a600bcd"
+        "sha256": "76154676cb26e79836996fbd0e0efe64f05c0edc49ecd1a0967d2a40b32acdd9"
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
@@ -4598,7 +4598,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/facts/vtab/syntax/tests.rs",
-        "sha256": "8c1842e53648696a790cfb91c651fe101ab43ac886b9712c58b35c865ac936ac"
+        "sha256": "af512a429fa54660a65f01a54d3920d08daf6bae3f9c75f623bcb90d93743278"
       },
       {
         "path": "native/src/code_rule_dsl/logic/front.rs",
@@ -4626,11 +4626,11 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "8830fde0dd2dbb221484a6dae58d8e4379cdb591a522bcaf0ed942f26efd5f5a"
+        "sha256": "c67ea9a27a8dda0dd8fb43d815e26ccc8a25833e5ef266c159ffb94a26c38596"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "4fd1fa753b4c808261f84ef45be713e3957ef9512790c71f8c3f52c298048e39"
+        "sha256": "5644c21906da291bdb411333507f64f785d2f50bff16a5df7740e0d0d1d890c9"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -4670,7 +4670,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "c37454b54202b23e41fc9f109cbf852ca6b64982303cad4f8f333f65ca66aa6d"
+        "sha256": "acb623f20da5f2524bad390f4e2dc54e6545e788b7fd42d82861b27f831247c9"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings.rs",
@@ -4784,10 +4784,10 @@
     },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "af8fee707dcc82c644d9b3a78402e9292ef21b36",
-      "engineCommit": "a2812b53a6250c4bd6809ee77e7a9a0efad14710",
+      "upstreamCommit": "ef317e108358b2107336d1dd957ef9856b721b8d",
+      "engineCommit": "a438d925ff4d913f6cb428133960eadeb825a514",
       "sourceTrees": {
-        "native": "bfc02f7780229e5b483fb5e442d652150998d8cc",
+        "native": "c9461628b06bf7a916a2bae68156ac9ca26c829a",
         "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "bfce2f449c0ee137f9606200433782ccc20e69c0",
