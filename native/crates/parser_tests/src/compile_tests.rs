@@ -158,6 +158,47 @@ fn errors_and_escapes_are_the_fallback_output() {
     assert!(clean > 0 && falls > 0, "{clean} clean, {falls} falling back");
 }
 
+/// The fallback's masks at delays 0, 2 and 5 as totals: one flag per file on every executor
+/// (doc 26 §1.5), set when any mask has a bit, in a batch of files too.
+#[test]
+fn every_total_is_one_flag_on_every_executor() {
+    const DELAYS: &str = "lexer t\nclass a = 'a'\nclass b = 'b'\nclass c = 'c'\nmask ea = a\nmask eb = b & next(a, 2)\nmask ec = c & next(b, 5)\nescape \"a\" when ea\nescape \"b\" when eb\nescape \"c\" when ec\n";
+    let stmts = ::bitlex::syntax::parse(DELAYS).expect("parses");
+    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], None).unwrap_or_else(|e| panic!("compiles: {e}"));
+    let totals: String = compiled.fallbacks.iter().map(|k| format!("  block 0 total %{}\n", compiled.program.outputs[usize::from(*k)])).collect();
+    let text = format!("program -\n  mode set=0 query=0\n{}{totals}  0000 STOP 0\n", compiled.rows);
+    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let block = &p.block_programs[0];
+    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
+    let cranelift = native_cpu_block::compile(&native).expect("compiles");
+    let mut cases: Vec<Vec<u8>> = inputs().into_iter().map(|v| v.into_iter().map(|b| [b'a', b'b', b'c', b'x', b'x', b'x', b'x', b'x'][usize::from(b) % 8]).collect()).collect();
+    cases.extend([b"cxxxxbxx".to_vec(), [vec![b'x'; 61], b"cxxxxb".to_vec()].concat(), b"xbxxa".to_vec(), vec![b'x'; 300]]);
+    let want: Vec<Vec<u64>> = cases
+        .iter()
+        .map(|bytes| {
+            let m = evaluated(&stmts, bytes, &["ea", "eb", "ec"]);
+            vec![u64::from(m.iter().flatten().any(|&w| w != 0))]
+        })
+        .collect();
+    assert!(want.iter().any(|w| w[0] == 0) && want.iter().any(|w| w[0] == 1), "both kinds of file");
+    let files: Vec<&[u8]> = cases.iter().map(Vec::as_slice).collect();
+    let batch: Vec<block::BatchFile<'_>> = files.iter().map(|&bytes| block::BatchFile { bytes, program: 0 }).collect();
+    let mut runs: Vec<(String, Vec<block::BlockRun>)> = vec![("cpu interpreter".into(), block.run_files(&files)), ("cranelift".into(), cranelift.run_files(&files))];
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+        runs.push(("metal generated".into(), run_split(&[&native], &batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files));
+        runs.push(("metal forward carry".into(), run_serial_split(&[&native], &batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files));
+    }
+    let _ = &batch;
+    for (executor, got) in runs {
+        for (k, run) in got.iter().enumerate() {
+            assert_eq!(run.totals, want[k], "{executor}, file {k}: {:?}", String::from_utf8_lossy(&cases[k]));
+        }
+    }
+}
+
 /// Masks that read later bytes, by delays: `next`, `lasts`, the last byte, `next` of a value
 /// the zero padding passes (`eq 0x00`) and of a carried one, `next` inside `prev`, and
 /// `aligned`; JSON's number checks among them.

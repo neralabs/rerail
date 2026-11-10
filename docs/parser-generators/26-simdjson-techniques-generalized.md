@@ -110,9 +110,27 @@ error |= strings.non_quote_inside_string(unescaped);
 - **General rule.** The outputs read only as "any bit in the file" (Bitlex's errors and
   escapes, the fallback) need no alignment and no order. They fold into one accumulated word
   per file, at any delay.
-- **Where it applies.** `.rr` has 4 fallback outputs (one per delay), each its own running
-  word.
-- **Status: partial.** Each total has its own running word.
+- **Where it applies.** `.rr` has 4 fallback outputs, one per delay (2, 3, 4 and 8), and
+  each used to be its own running word, total and tier 2 test.
+- **Status: done.** The totals are one flag per file (`BlockProgram::totals`). Every
+  executor ORs all of them into one running word, the count after the extracts': the CPU
+  interpreter, Cranelift, and Metal's kernels and forward carry. Tier 2 tests it once
+  (`EMPTY 0`). Each fallback mask keeps its own delay and output: the flag needs no
+  alignment.
+
+  Bringing the masks to one delay first, so that they would be one output, was tried and
+  not taken. It needs a `prev` per mask, and on `.rr` that cost 28 carried bits and 73
+  more spills:
+
+  | `.rr` tier 1 | Instructions | Memory | Stack |
+  |---|---|---|---|
+  | A running word per total | 5498 | 485 | 570 |
+  | One output, by `prev`s | 5518 | 449 | 643 |
+  | One flag | 5471 | 482 | 556 |
+
+  CPU time over the repository's `.rr` files was 117.1 against 116.5 ms a pass at the same
+  load (41): no change beyond noise. The tests are `totals_tests` (the decision) and
+  `compile_tests::every_total_is_one_flag_on_every_executor`.
 
 ### 1.6 One stream of structural starts
 
@@ -266,7 +284,7 @@ Each transformation is tested three ways:
 | 1 | Gated regions: an accurate cost (vector work counted), any sparse gate, more regions. Done (§5) | §1.1 |
 | 2 | Values remade in each pass, never stored: constants, `within` (positions measured, not taken) | §1.10 |
 | 3 | Delayed masks not held across the loop. Done (§7) | §1.4 |
-| 4 | The fallback's totals folded into one word | §1.5 |
+| 4 | The fallback's totals folded into one word (done: one flag) | §1.5 |
 | 5 | Sparse outputs as positions | §1.6, §1.7 |
 | 6 | Local values minimized from their truth tables | §1.9 |
 | 7 | Cuts where few values cross | §1.11 |

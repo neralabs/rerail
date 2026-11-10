@@ -130,3 +130,24 @@ fn rr_sparsity() {
         eprintln!("  {:>6.2}%  {name} (%{op}, {:?})", 100.0 * *b as f64 / blocks as f64, p.ops[usize::from(*op)]);
     }
 }
+
+/// Tier 1's outputs and totals on `.rr`, and its passes' machine code: the measurement of
+/// doc 26 §1.5.
+#[test]
+#[ignore = "a measurement: run by hand"]
+fn rr_totals() {
+    let c = super::compiled().expect("compiles");
+    let b = &c.block;
+    let labels: Vec<String> = c.labels.iter().map(|(l, k)| format!("{l}@{k}")).collect();
+    eprintln!("outputs {} delays {:?}\ntotals {:?} extracts {:?} masks {:?} delay {}\nlabels {labels:?}", b.outputs.len(), b.output_delays, b.total_outputs(), b.extract_outputs(), b.mask_outputs(), b.delay);
+    // Tier 1's passes' machine code: instructions, memory loads and stores, stack ones.
+    let compiled = rerail_compiler::native_cpu_block::compile(&c.native).expect("compiles");
+    let code = compiled.loops_disassembly();
+    let lines: Vec<&str> = code.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':')).collect();
+    let memory = |l: &str| ["ldr", "str", "ldp", "stp", "ldur", "stur"].iter().any(|m| l.starts_with(m));
+    let stack = lines.iter().filter(|l| memory(l) && l.contains("[sp")).count();
+    let mem = lines.iter().filter(|l| memory(l)).count() - stack;
+    let bits = rerail_compiler::clif_text::state_bits(b);
+    eprintln!("tier 1: {} ops, {bits} state bits, {} instructions, {mem} memory, {stack} stack", b.ops.len(), lines.len());
+}
+

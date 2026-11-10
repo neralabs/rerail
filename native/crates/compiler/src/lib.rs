@@ -45,6 +45,8 @@ pub mod token_local;
 mod token_local_tests;
 #[cfg(test)]
 mod remade_tests;
+#[cfg(test)]
+mod totals_tests;
 
 pub use error::Error;
 

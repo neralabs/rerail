@@ -443,9 +443,10 @@ pub struct BlockProgram {
     /// (`docs/parser-generators/10-bit-programs.md` §4.1): simdjson's structural
     /// indexes from its structural mask.
     pub extracts: Vec<u16>,
-    /// Values, each also an output, that each executor tests over the whole stream: a total per
-    /// file (`BlockRun::totals`), 1 when the output has any bit and 0 when it has none. Tier 2
-    /// reads them (`EMPTY`): the fallback's masks are totals, and a file with any bit goes to
+    /// Values, each also an output, that each executor tests over the whole stream, all of them
+    /// together: one flag per file (`BlockRun::totals`), 1 when any of them has a bit and 0 when
+    /// none has (simdjson's one accumulated error, doc 26 §1.5). Tier 2 reads it (`EMPTY 0`):
+    /// the fallback's masks, one per delay, are totals, and a file with any bit goes to
     /// tree-sitter. Only whether there is a bit is wanted, so no executor counts them.
     pub totals: Vec<u16>,
     /// Values, each also an output, that tier 2 reads as masks, a word of 64 bytes at a time:
@@ -757,7 +758,8 @@ impl BlockProgram {
         self.interpret_files(files)
             .into_iter()
             .map(|outputs| {
-                let totals = totals.iter().map(|&k| u64::from(outputs[k].iter().any(|&w| w != 0))).collect();
+                let any = totals.iter().any(|&k| outputs[k].iter().any(|&w| w != 0));
+                let totals = if totals.is_empty() { Vec::new() } else { vec![u64::from(any)] };
                 let positions = extracts
                     .iter()
                     .map(|&k| {
