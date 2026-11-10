@@ -909,8 +909,20 @@ impl PartitionData {
     }
 
     /// Trains one tree per set of active features (`featuresActive`): partitioned, on the device in one trainer;
-    /// otherwise each tree on its own copy of the data with only its features active (in parallel).
+    /// otherwise each tree on its own copy of the data with only its features active (in parallel). A tree whose
+    /// features give no split at the root is one leaf, the rows' distribution (upstream: no tree from the
+    /// partitioned trainer, which a committee reads as 0/0, and an error from the recursive one).
     pub fn train_multiple_samplings(&self, feature_vector_sampling: i32, debug_name: &str, max_depth: i32, features_active: &[Vec<i32>], training_scheme: TrainingScheme) -> Result<Vec<Tree>, String> {
+        let mut trees = self.train_multiple_samplings_raw(feature_vector_sampling, debug_name, max_depth, features_active, training_scheme)?;
+        for t in &mut trees {
+            if !t.root.is_some() {
+                t.root = get_leaf(t, &self.rows.w_all);
+            }
+        }
+        Ok(trees)
+    }
+
+    fn train_multiple_samplings_raw(&self, feature_vector_sampling: i32, debug_name: &str, max_depth: i32, features_active: &[Vec<i32>], training_scheme: TrainingScheme) -> Result<Vec<Tree>, String> {
         if training_scheme == TrainingScheme::Partitioned {
             let trainer = FeatureSamplingTrainerKernel::init(debug_name, max_depth, &self.rows, &self.features, self.bucket_memory.clone(), &self.fs).map_err(|e| format!("Error training partition {debug_name}: {e}"))?;
             return trainer.train_partitioned(feature_vector_sampling, debug_name, features_active).map_err(|e| format!("Error training partition {debug_name}: {e}"));
@@ -926,9 +938,6 @@ impl PartitionData {
             }
             let mut tree = Tree::new();
             tree.root = my_data.train(feature_vector_sampling, i as i32, debug_name, 0, max_depth, &mut tree, training_scheme).map_err(|e| format!("Error training tree {i}: {e}"))?;
-            if !tree.root.is_some() {
-                return Err(format!("Error training tree {i}: no tree"));
-            }
             Ok(tree)
         }).collect()
     }

@@ -344,16 +344,32 @@ impl MetalComputeEvent {
             s => Err(format!("Metal command buffer: {s:?}")),
         }
     }
+
+    /// The seconds the GPU spent on the work, from its start to its end (`GPUStartTime`, `GPUEndTime`; the work must
+    /// have completed): what the device took, whatever the host's scheduling.
+    pub fn gpu_seconds(&self) -> f64 {
+        use objc::{msg_send, sel, sel_impl};
+        let cb: &metal::CommandBufferRef = &self.command_buffer;
+        let (start, end): (f64, f64) = unsafe { (msg_send![cb, GPUStartTime], msg_send![cb, GPUEndTime]) };
+        end - start
+    }
+}
+
+/// Runs `f` in an autorelease pool: the Metal objects it makes come autoreleased, and a thread with no pool never
+/// releases them. Command buffers left that way stay counted against the queue (64 at most), and the queue's next
+/// command buffer then waits for ever (upstream ran on threads whose run loop drained a pool).
+fn pooled<R>(f: impl FnOnce() -> R) -> R {
+    objc::rc::autoreleasepool(f)
 }
 
 impl MetalComputeQueue {
     pub fn new(queue: &metal::CommandQueueRef) -> Self {
-        MetalComputeQueue { queue: queue.to_owned(), command_buffer: queue.new_command_buffer().to_owned() }
+        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()) }
     }
 
     /// `newBindContext`: an encoder for one launch of `function`.
     pub fn new_bind_context(&self, function: &MetalComputeFunction) -> MetalBindContext {
-        let encoder = self.command_buffer.new_compute_command_encoder().to_owned();
+        let encoder = pooled(|| self.command_buffer.new_compute_command_encoder().to_owned());
         encoder.set_compute_pipeline_state(&function.compute_pipeline_state);
         MetalBindContext { encoder }
     }
@@ -364,10 +380,12 @@ impl MetalComputeQueue {
             return;
         }
         let device = dst.device();
-        let staging = device.new_buffer_with_data(bytes.as_ptr().cast(), bytes.len() as u64, metal::MTLResourceOptions::StorageModeShared);
-        let blit = self.command_buffer.new_blit_command_encoder();
-        blit.copy_from_buffer(&staging, 0, dst, dst_offset, bytes.len() as u64);
-        blit.end_encoding();
+        pooled(|| {
+            let staging = device.new_buffer_with_data(bytes.as_ptr().cast(), bytes.len() as u64, metal::MTLResourceOptions::StorageModeShared);
+            let blit = self.command_buffer.new_blit_command_encoder();
+            blit.copy_from_buffer(&staging, 0, dst, dst_offset, bytes.len() as u64);
+            blit.end_encoding();
+        });
     }
 
     /// `enqueueFillArray`: `count` copies of `value` into `dst` from element `offset` (all of it when `count` is
@@ -377,9 +395,11 @@ impl MetalComputeQueue {
         let count = count.unwrap_or(dst.length() as usize / size - offset);
         let one = unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size) };
         if one.iter().all(|&b| b == 0) {
-            let blit = self.command_buffer.new_blit_command_encoder();
-            blit.fill_buffer(dst, metal::NSRange::new((offset * size) as u64, (count * size) as u64), 0);
-            blit.end_encoding();
+            pooled(|| {
+                let blit = self.command_buffer.new_blit_command_encoder();
+                blit.fill_buffer(dst, metal::NSRange::new((offset * size) as u64, (count * size) as u64), 0);
+                blit.end_encoding();
+            });
             return;
         }
         let bytes: Vec<u8> = one.iter().copied().cycle().take(count * size).collect();
@@ -388,14 +408,16 @@ impl MetalComputeQueue {
 
     /// `enqueueCopyBetweenDeviceRegions`.
     pub fn enqueue_copy_between_device_regions(&self, src: &metal::BufferRef, dst: &metal::BufferRef, src_offset: u64, dst_offset: u64, length: u64) {
-        let blit = self.command_buffer.new_blit_command_encoder();
-        blit.copy_from_buffer(src, src_offset, dst, dst_offset, length);
-        blit.end_encoding();
+        pooled(|| {
+            let blit = self.command_buffer.new_blit_command_encoder();
+            blit.copy_from_buffer(src, src_offset, dst, dst_offset, length);
+            blit.end_encoding();
+        });
     }
 
     /// Commits the work so far; its event.
     pub fn flush(&mut self) -> MetalComputeEvent {
-        let next = self.queue.new_command_buffer().to_owned();
+        let next = pooled(|| self.queue.new_command_buffer().to_owned());
         let cb = std::mem::replace(&mut self.command_buffer, next);
         cb.commit();
         MetalComputeEvent { command_buffer: cb }
@@ -409,7 +431,7 @@ impl MetalComputeQueue {
 /// `allocUninitializedArraySync`: device memory for `length` elements (shared storage, so the host reads it back
 /// after the work completes; at least 16 bytes, as Metal will not bind an empty buffer).
 pub fn alloc_uninitialized_array_sync<T>(device: &DeviceRef, length: usize) -> metal::Buffer {
-    device.new_buffer((length * std::mem::size_of::<T>()).max(16) as u64, metal::MTLResourceOptions::StorageModeShared)
+    pooled(|| device.new_buffer((length * std::mem::size_of::<T>()).max(16) as u64, metal::MTLResourceOptions::StorageModeShared))
 }
 
 /// `transferToDeviceImmutable`/`manageMemoryRegionSync`: device memory holding `data`.
