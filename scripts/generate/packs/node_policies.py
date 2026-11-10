@@ -286,7 +286,7 @@ def binds_captures(value):
 def compact_doc(doc, minimum=64):
     """Writes each AST sub-rule the document spells out more than once (64 canonical bytes or more, its own: no `field`
     or `stopBy` of the relation holding it, no captures, naming only shared utilities) once, as a shared utility of the
-    document's TypeScript define that every copy calls (`matches`): the conformance check's compact gate counts a
+    document's TypeScript define that every copy calls (`matches`): pack validation's `compact` check (check 1) counts a
     subtree written out twice as expansion. Clause utilities that two or more clauses carry verbatim are shared first."""
     # A copy: the generators share fragment objects (FIRST, NOT_TAGGED, …) between rules and documents.
     doc = hoist_common(json.loads(json.dumps(doc)))
