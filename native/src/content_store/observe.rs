@@ -329,7 +329,7 @@ impl Observer {
 
     /// Followed kind/stat and link flags for one complete metadata demand batch.
     /// Directory names can be reused; child size changes still need fresh stats.
-    pub(crate) fn metadata_batch(&mut self, paths: &[PathBuf]) -> Vec<(Kind, Stat, bool)> {
+    pub fn metadata_batch(&mut self, paths: &[PathBuf]) -> Vec<(Kind, Stat, bool)> {
         paths.iter().map(|path| {
             let (kind, stat) = self.stat(path).unwrap_or((Kind::Missing, Stat::default()));
             self.counts.stats += 1;
