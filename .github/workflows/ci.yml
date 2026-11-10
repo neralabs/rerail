@@ -644,13 +644,11 @@ jobs:
       run:
         shell: bash
     steps:
-      # Windows refuses paths over 260 characters unless Git is told to use long paths (as in package.yml). Git for
-      # Windows checks text out with CRLF line ends by default (.gitattributes); the suite reads the tracked rules,
-      # locks and fixtures as committed, with LF line ends, as on Linux and macOS.
-      - name: Set Git to check out as on Linux
-        run: |
-          git config --system core.longpaths true
-          git config --system core.autocrlf false
+      # Windows refuses paths over 260 characters unless Git is told to use long paths (as in package.yml). Line ends
+      # stay as Git for Windows sets them (core.autocrlf true), so the job checks out as a contributor does and fails
+      # when .gitattributes stops keeping the rules, locks, fixtures and model as committed.
+      - name: Allow long paths in Git on Windows
+        run: git config --system core.longpaths true
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
