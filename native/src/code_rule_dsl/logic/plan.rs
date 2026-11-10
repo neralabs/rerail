@@ -5251,12 +5251,26 @@ fn level_trace() -> Option<&'static str> {
     PATH.get_or_init(|| std::env::var("RERAIL_LEVEL_TRACE").ok()).as_deref()
 }
 
+/// This thread's CPU seconds (wasm32: `prof::single_thread_cpu`).
+#[cfg(target_family = "wasm")]
+fn thread_cpu() -> f64 {
+    crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64()
+}
+
 /// This thread's CPU seconds.
+#[cfg(unix)]
 fn thread_cpu() -> f64 {
     let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: a valid timespec out.
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
     t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+}
+
+/// This thread's CPU seconds (user + kernel).
+#[cfg(windows)]
+fn thread_cpu() -> f64 {
+    let (user, kernel) = crate::code_rule_dsl::prof::windows_cpu(true);
+    (user + kernel).as_secs_f64()
 }
 
 fn rules_by_stratum<'a>(prog: &'a Program, sccs: &[BTreeSet<String>]) -> Vec<Vec<&'a Rule>> {
