@@ -3492,8 +3492,9 @@ impl Run<'_, '_> {
                 continue;
             }
             let Ok(((order, _, _), _)) = self.model.plan_rule_reused(prog, &r.head, &r.body, None) else { continue };
+            // As text, the form the level's batch reads and keys its pairs by (`level::digest`).
             if let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &self.native_rels) {
-                out.push(spec);
+                out.push(spec.to_text());
             }
         }
         out
