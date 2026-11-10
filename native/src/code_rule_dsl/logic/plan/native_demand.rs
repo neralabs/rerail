@@ -200,6 +200,7 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
                     facts,
                     guest: None,
                     module: None,
+                    tape: None,
                 }];
                 let mut stats = Stats::empty(&lowered.program);
                 for (name, source) in syntax::with_nearest(

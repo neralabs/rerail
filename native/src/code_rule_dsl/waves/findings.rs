@@ -313,6 +313,44 @@ fn metavariable(
     }))
 }
 
+/// Where each of `names` binds in W's match of `grammar` at `node` of `root`'s tape (an `ast` atom's captures,
+/// decision 0107): per name, its nodes as tape preorder ids, a single capture's node or a multi-capture's every node.
+/// `None` where W does not match there or a name binds no node (a text-only binding); `Err` with the limit W's matcher
+/// hit within `work` visits.
+pub(in crate::code_rule_dsl) fn captured(
+    grammar: &GrammarMatcher,
+    root: &AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+    node: u32,
+    names: &[String],
+    work: usize,
+) -> Result<Option<Vec<Vec<u32>>>, String> {
+    begin_clause(grammar, work);
+    let mut found = grammar.match_rule(node_at(root, node));
+    let transformed = match (&grammar.transform, &mut found) {
+        (Some(transform), Some(found)) => transform.apply(found.get_env_mut()).is_ok(),
+        _ => true,
+    };
+    let (_, exceeded) = end_clause();
+    if let Some(limit) = exceeded {
+        return Err(format!("{limit:?}"));
+    }
+    if !transformed {
+        return Err("Work".to_owned());
+    }
+    let Some(found) = found else { return Ok(None) };
+    let env = found.get_env();
+    Ok(names
+        .iter()
+        .map(|name| {
+            let nodes: Vec<u32> = match env.get_match(name) {
+                Some(node) => vec![node.node_id() as u32],
+                None => env.get_multiple_matches(name).iter().map(|node| node.node_id() as u32).collect(),
+            };
+            (!nodes.is_empty()).then_some(nodes)
+        })
+        .collect())
+}
+
 pub(in crate::code_rule_dsl) struct Layer {
     shapes: Vec<Shape>,
     /// Code rule ids: `r` is an index.

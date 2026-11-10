@@ -191,6 +191,21 @@ pub(in crate::code_rule_dsl) struct Step {
     pub(in crate::code_rule_dsl) mode: Option<Mode>,
 }
 
+/// Tells each kind-set axis a planned order reads by its `n` how many keys come into that step (the rows the planner
+/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0105).
+fn expect_axis_lookups(db: &Connection, plan: &super::profile::RulePlan) {
+    let mut into = 1.0;
+    for step in &plan.steps {
+        let rel = step.literal.split('(').next().unwrap_or("").trim();
+        if super::front::is_transduced(rel) && (step.access.starts_with("lookup on (n") || step.access.starts_with("membership on (n")) {
+            if let Some(source) = crate::code_rule_dsl::facts::vtab::bound_source(db, rel) {
+                source.expect_lookups(0, into);
+            }
+        }
+        into = step.rows;
+    }
+}
+
 /// An atom's binding pattern: its relation, and which columns are bound, constants by value (T's `atom_sig`).
 type Sig = (String, Vec<(usize, Option<Constant>)>);
 
@@ -1630,8 +1645,10 @@ impl Model {
         };
         // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
         super::profile::work(super::profile::Unit::Candidate, candidates);
-        // Also when the run may use the device: placement prices each join step from these (decision 0095).
-        let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get))).then(|| {
+        // Also when the run may use the device: placement prices each join step from these (decision 0095); and when
+        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0105).
+        let axis = || body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && super::front::is_transduced(&a.rel)));
+        let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get) || axis())).then(|| {
             let _explain = super::profile::span(|| "explain record".into());
             // The chosen order step by step, priced as the search priced it.
             let mut bound: BTreeSet<String> = BTreeSet::new();
@@ -4095,6 +4112,9 @@ impl<'a> Run<'a, '_> {
                 self.why_class = Some(missing_class(self, &r.head, &order, None));
                 return Ok(Native::Declined);
             };
+            if let Some(x) = &x {
+                expect_axis_lookups(self.db, x);
+            }
             explained.push((format!("seed {}", r.head.rel), rule_no(r), x, took, 0));
             *est.entry(r.head.rel.as_str()).or_default() += rows;
             lines.push(SpecLine::Seed { head: ri[&r.head.rel], join: spec });
@@ -4160,6 +4180,9 @@ impl<'a> Run<'a, '_> {
                     return Ok(Native::Declined);
                 };
                 let x = x.map(|x| delta_sources(x, &order, at, scc));
+                if let Some(x) = &x {
+                    expect_axis_lookups(self.db, x);
+                }
                 explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), x, took, 0));
                 // The wave whose delta is all of the relation (it was empty before): any order, the atom read in full.
                 if whole_plan.is_none() {

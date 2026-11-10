@@ -128,6 +128,9 @@ pub(crate) trait Source: Send + Sync {
     fn made_on_lookup(&self) -> bool {
         false
     }
+    /// The planner expects `keys` lookups on `column` (decision 0105): a source that can make every row at once for
+    /// less than that many lookups cost chooses to.
+    fn expect_lookups(&self, _column: usize, _keys: f64) {}
     /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
     /// reading every row: a source whose rows are made on lookup.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {

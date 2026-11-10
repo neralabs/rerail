@@ -1910,6 +1910,9 @@ pub struct Columns {
     pub parent: Vec<u32>,
     /// 1 for an extra (a comment).
     pub extra: Vec<u8>,
+    /// The supertypes, one row each: the node's record and the supertype's kind.
+    pub super_node: Vec<u32>,
+    pub super_kind: Vec<u32>,
 }
 
 impl Columns {
@@ -1935,7 +1938,11 @@ impl Tape {
         };
         let (parent, mut extra) = (take(&mut self.parent), std::mem::take(&mut self.extra));
         extra.truncate(n);
-        Columns { kind, field, start, end, size, parent, extra }
+        let s = self.counts[1] as usize;
+        let (mut super_node, mut super_kind) = (std::mem::take(&mut self.super_node), std::mem::take(&mut self.super_kind));
+        super_node.truncate(s);
+        super_kind.truncate(s);
+        Columns { kind, field, start, end, size, parent, extra, super_node, super_kind }
     }
 
     /// The node table as `stream::Node`s.

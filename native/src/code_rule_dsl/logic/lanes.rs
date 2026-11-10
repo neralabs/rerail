@@ -295,8 +295,13 @@ pub(in crate::code_rule_dsl) mod prof {
 
     /// Runs `batch` on this thread's executor, its report added to `form`'s.
     pub(in crate::code_rule_dsl) fn run(form: &'static str, batch: Batch) -> Result<(Vec<Done>, Report), String> {
+        run_on(super::executor(), form, batch)
+    }
+
+    /// [`run`] on `ex` (a job whose binding is not this thread's: [`executor_for`](super::executor_for)).
+    pub(in crate::code_rule_dsl) fn run_on(ex: &rerail_accel::Executor, form: &'static str, batch: Batch) -> Result<(Vec<Done>, Report), String> {
         let n = batch.0.len() as u64;
-        let r = super::executor().run(batch)?;
+        let r = ex.run_as(form, batch)?;
         if profile::on() {
             {
                 let (l, k) = LEVEL.get();
