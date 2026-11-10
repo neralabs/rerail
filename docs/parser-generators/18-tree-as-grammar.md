@@ -40,6 +40,23 @@ tree json {
 - **`nested`** marks a node that may contain itself. Its content runs on a stack frame; every
   other node is inlined into the level that uses it. A non-nested node may not refer to
   itself, directly or through others.
+- **Shared rules.** The compiler also gives a level of its own to a node or a choice that is
+  inlined in several places, when a call saves enough states. Inlined, each place has a copy
+  of the rule's inner states: those it may go on from. Called, the level has them once, and
+  each use pays a push and a return. The states saved are the inner positions, once instead
+  of at each use, less a state per call:
+
+  ```
+  saved = (uses - 1) * inner - uses       # shared when saved >= 8
+  ```
+
+  A choice of single tokens has no inner position: each place needs its states either way, so
+  it stays inlined (JSON's `value`). So does JSON's `pair`: two uses save three states. A rule
+  that may match no token, or whose first token merges into the leaf before, stays inlined
+  (a call takes a token of its own), as do the rules a level that refuses a mark uses.
+
+  `.rr`'s expressions and aggregates are used in many places. With every rule inlined, its
+  machine had 858 states and 8,370 arms; shared, 438 and 4,014.
 - **Every token is a leaf node,** as before; `skip` bytes are in none.
 - The root spans the file from its first token to the file's end, as tree-sitter's does
   (trailing whitespace included).

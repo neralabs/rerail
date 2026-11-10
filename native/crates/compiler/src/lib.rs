@@ -60,3 +60,5 @@ mod outline_tests;
 mod tier2_tests;
 #[cfg(test)]
 mod ladder_tests;
+#[cfg(test)]
+mod grammar_tests;

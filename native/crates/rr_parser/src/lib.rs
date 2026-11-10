@@ -198,6 +198,19 @@ pub mod tests {
         }
     }
 
+    /// Tier 2's state machine is built once per rule, not once per place a rule is used: rules
+    /// whose calls save states are calls (`grammar::shared`). With every rule inlined into each
+    /// place, `.rr` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as
+    /// the compiler improves.
+    #[test]
+    fn the_state_machine_shares_its_rules() {
+        let c = super::compiled().expect("compiles");
+        let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
+        let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
+        assert!(states <= 438, "{states} states");
+        assert!(arms <= 4014, "{arms} arms");
+    }
+
     /// The parse path is the compiled code's: the host functions around the two compiled calls
     /// (layout, buffers, the columns taken) hold no loop over bytes, tokens or nodes, and call
     /// no Rust that walks them. Each function on the path is read from its source and refused if
