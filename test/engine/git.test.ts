@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome, gitInstalled,
@@ -31,9 +32,9 @@ async function repository(files: Record<string, string>): Promise<string> {
 async function partialClone(): Promise<{ clone: string; oid: string }> {
   const origin = await repository({ "a.py": "print(1)\n" });
   git(origin, "config", "uploadpack.allowFilter", "true");
-  const clone = join(origin, "..", `${origin.split("/").pop()}-clone`);
+  const clone = join(origin, "..", `${basename(origin)}-clone`);
   roots.push(clone);
-  git(origin, "clone", "--quiet", "--filter=blob:none", "--no-checkout", `file://${origin}`, clone);
+  git(origin, "clone", "--quiet", "--filter=blob:none", "--no-checkout", pathToFileURL(origin).href, clone);
   return { clone, oid: git(clone, "rev-parse", "HEAD:a.py").trim() };
 }
 

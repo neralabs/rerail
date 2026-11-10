@@ -565,17 +565,21 @@ describe("Rerail daemon", () => {
 
   it("queries one full audit per historically audited repository", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    // Absolute on this platform, as every session's folder is: the audit control resolves the folder it is given.
+    const repoA = resolve("/workspace/repo-a");
+    const repoB = resolve("/workspace/repo-b");
+    const repoC = resolve("/workspace/repo-c");
     const path = join(root, "rerail.sqlite");
     const sessionStore = new SqliteSessionStore(path, { repositoryId: "test-repository" });
-    sessionStore.openSession({ host: "omp", sessionId: "repo-a-session", cwd: "/workspace/repo-a" });
-    sessionStore.openSession({ host: "omp", sessionId: "repo-b-session", cwd: "/workspace/repo-b" });
-    sessionStore.openSession({ host: "omp", sessionId: "repo-c-session", cwd: "/workspace/repo-c" });
+    sessionStore.openSession({ host: "omp", sessionId: "repo-a-session", cwd: repoA });
+    sessionStore.openSession({ host: "omp", sessionId: "repo-b-session", cwd: repoB });
+    sessionStore.openSession({ host: "omp", sessionId: "repo-c-session", cwd: repoC });
     const controls = new SqliteAuditControlStore(path);
-    expect(controls.claimRepositoryAudit("repo-a-session", "/workspace/repo-a")).toBe(true);
+    expect(controls.claimRepositoryAudit("repo-a-session", repoA)).toBe(true);
     const audits = new SqliteAuditStore(path);
     const repositoryAuditId = audits.start({
       sessionId: "repo-a-session",
-      workspaceRoot: "/workspace/repo-a",
+      workspaceRoot: repoA,
       scope: "repository",
       mode: "log",
       revision: 1,
@@ -619,10 +623,10 @@ describe("Rerail daemon", () => {
       // The run had 30 more failures than it lists; the repository listing counts them.
       unlistedFailureCount: 30,
     });
-    controls.finishRepositoryAudit("repo-a-session", "/workspace/repo-a", repositoryAuditId, "failed", "Source exceeds the per-file byte budget");
+    controls.finishRepositoryAudit("repo-a-session", repoA, repositoryAuditId, "failed", "Source exceeds the per-file byte budget");
     const historicalAuditId = audits.start({
       sessionId: "repo-b-session",
-      workspaceRoot: "/workspace/repo-b",
+      workspaceRoot: repoB,
       scope: "repository",
       mode: "steer",
       revision: 1,
@@ -633,7 +637,7 @@ describe("Rerail daemon", () => {
     audits.finish(historicalAuditId, { status: "completed" });
     const touchedAuditId = audits.start({
       sessionId: "repo-c-session",
-      workspaceRoot: "/workspace/repo-c",
+      workspaceRoot: repoC,
       scope: "touched-files",
       mode: "log",
       revision: 1,
@@ -650,7 +654,7 @@ describe("Rerail daemon", () => {
       body: {
         repositories: [
           {
-            workspaceRoot: "/workspace/repo-a",
+            workspaceRoot: repoA,
             repositoryAudit: {
               sessionId: "repo-a-session",
               auditId: repositoryAuditId,
@@ -674,12 +678,12 @@ describe("Rerail daemon", () => {
             },
           },
           {
-            workspaceRoot: "/workspace/repo-b",
+            workspaceRoot: repoB,
             repositoryAudit: null,
             audit: null,
           },
           {
-            workspaceRoot: "/workspace/repo-c",
+            workspaceRoot: repoC,
             repositoryAudit: null,
             audit: null,
           },

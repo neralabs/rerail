@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "../../../src/engine/catalog/lint-config/lint-config-formats.js";
@@ -32,7 +33,7 @@ async function repository(files: Readonly<Record<string, string>>): Promise<stri
   return root;
 }
 
-const packDirectory = (id: string): string => decodeURIComponent(new URL(`../../../packs/${id}`, import.meta.url).pathname);
+const packDirectory = (id: string): string => fileURLToPath(new URL(`../../../packs/${id}`, import.meta.url));
 
 const HOOKS_RULE = "react-hooks-rules-of-hooks";
 

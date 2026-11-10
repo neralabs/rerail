@@ -15,6 +15,7 @@ import {
 import { RerailRuntime, type RerailRuntimeOptions } from "../../src/runtime/runtime.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { testCodeRuleCatalog } from "../support/repository-rules.js";
+import { literal } from "../support/text-patterns.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-steer-strategy-");
 

@@ -458,7 +458,9 @@ describe("Claude Code data isolation", () => {
     await registerHarnesses({ ...options, platform: "win32" });
     const settings = await readIsolation(path);
     expect(settings.sandbox).toBeUndefined();
-    expect(settings.permissions?.deny).toContain(`Edit(/${rerailHome}/**)`);
+    // Claude Code matches a Windows path in POSIX form, its drive as a folder: `C:\Users\me` is `/c/Users/me`.
+    const claudePath = rerailHome.replaceAll("\\", "/").replace(/^([A-Za-z]):/u, (_drive, letter: string) => `/${letter.toLowerCase()}`);
+    expect(settings.permissions?.deny).toContain(`Edit(/${claudePath}/**)`);
   });
 
   it("keeps entries another root registered when removing this one", async () => {

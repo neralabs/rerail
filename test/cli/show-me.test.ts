@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   checkoutStatus,
@@ -119,7 +119,7 @@ describe("rerail show-me", () => {
     expect(exit).toBe(0);
     const start = JSON.parse(stdout) as ShowMeStart;
     expect(start).toMatchObject({ ruleId: SHOW_ME_RULE_ID, path: SHOW_ME_FILE, violating: SHOW_ME_VIOLATING, fixed: SHOW_ME_FIXED });
-    expect(start.file.endsWith(`/${SHOW_ME_FILE}`)).toBe(true);
+    expect(start.file.endsWith(`${sep}${SHOW_ME_FILE}`)).toBe(true);
     expect(existsSync(start.file)).toBe(false);
     expect(rulesOf(repo)).toEqual({ library: [SHOW_ME_RULE_ID, OTHER_RULE.id].sort(), setUp: true, repository: [SHOW_ME_RULE_ID, OTHER_RULE.id].sort() });
   });

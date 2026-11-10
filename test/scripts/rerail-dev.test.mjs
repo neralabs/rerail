@@ -3,7 +3,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -60,7 +60,9 @@ describe("launch arguments", () => {
 
 describe("dev instance", () => {
   it("is one validated loopback target whose URL names its port", () => {
-    const instance = { checkout: "/c", home: "/c/.rerail/dev/home", port: 35_167, url: "http://127.0.0.1:35167" };
+    // Absolute on this platform: the home must be its own resolved path, and on Windows that starts with a drive.
+    const checkout = resolve("/c");
+    const instance = { checkout, home: join(checkout, ".rerail", "dev", "home"), port: 35_167, url: "http://127.0.0.1:35167" };
     expect(validateDevInstance(instance)).toEqual(instance);
     expect(() => validateDevInstance({ ...instance, url: "http://127.0.0.1:35168" })).toThrow(/url must be http:\/\/127\.0\.0\.1:35167/);
     for (const port of [0, 1023, 65_536, 35_167.5, "35167"]) {

@@ -8,6 +8,9 @@ import {
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { CODEX_HOOK_EVENTS, registerHarnesses, type Harness } from "../../src/setup/harness-registration.js";
 
+/** `text` as it stands inside a JSON string: a Windows path's backslashes are written twice there. */
+const inJson = (text: string): string => JSON.stringify(text).slice(1, -1);
+
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -149,7 +152,7 @@ describe("connectCodingAgents", () => {
     expect(result.all).toEqual(["cursor"]);
     expect(await readFile(settings, "utf8")).toBe(commented);
     expect(await readdir(join(home, ".claude"))).toEqual(expect.not.arrayContaining([expect.stringMatching(/\.bak$/u)]));
-    expect(await readFile(join(home, ".cursor", "hooks.json"), "utf8")).toContain(join(root, "dist", "hosts", "cursor", "cursor-hook.js"));
+    expect(await readFile(join(home, ".cursor", "hooks.json"), "utf8")).toContain(inJson(join(root, "dist", "hosts", "cursor", "cursor-hook.js")));
   });
 
   it("counts an agent as connected when its registration is out of date, as after Node moved, without touching it", async () => {
@@ -157,7 +160,7 @@ describe("connectCodingAgents", () => {
     // Registered by a Node that has moved since (nvm switched, or Homebrew's versioned keg is gone).
     const settings = join(home, ".claude", "settings.json");
     const registered = await readFile(settings, "utf8");
-    const stale = registered.replaceAll(pinnedNodePath(), "/old/node-v24.0.0/bin/node");
+    const stale = registered.replaceAll(inJson(pinnedNodePath()), "/old/node-v24.0.0/bin/node");
     expect(stale).not.toBe(registered);
     await writeFile(settings, stale);
 

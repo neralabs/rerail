@@ -791,6 +791,10 @@ describe("ledgerPreimage", () => {
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
 }
+/** `path` relative to `root` as the bridge names a file, with `/` between its parts on every platform. */
+function repositoryPath(root: string, path: string): string {
+  return relative(root, path).split(sep).join("/");
+}
 /** A repository on `main`, with a branch `other` ahead of it: it changes `src/a.py`, adds `src/new.py` and removes `src/gone.py`. */
 async function twoBranches(): Promise<string> {
   const root = await workspace();
@@ -852,7 +856,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const { bridge, auditGeneratedEdits } = await opened(root, extra);
     await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
-      [{ path: relative(root, join(worktree, "src", "a.py")), language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n" }],
+      [{ path: repositoryPath(root, join(worktree, "src", "a.py")), language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n" }],
     ]);
   });
 
@@ -863,7 +867,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
     await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode])).toEqual([
-      [[relative(root, join(worktree, "src", "a.py"))], "log"],
+      [[repositoryPath(root, join(worktree, "src", "a.py"))], "log"],
       [["src/a.py"], undefined],
     ]);
   });
@@ -888,7 +892,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
-    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual([relative(root, join(worktree, "src", "a.py"))]);
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual([repositoryPath(root, join(worktree, "src", "a.py"))]);
   });
 
   it("takes a worktree's first walk as its baseline, though `git worktree add` wrote it after the session opened, and records a later change", async () => {
@@ -958,7 +962,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.checkpoint("turn");
     walk.release();
     await bridge.settleWorktreeWalk();
-    expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "top.py"))]);
+    expect(auditedPaths(auditGeneratedEdits)).toEqual([repositoryPath(root, join(worktree, "top.py"))]);
   });
 
   it("takes what a walk could not read in a worktree as a baseline once it can, but for what was written since", async () => {
@@ -977,7 +981,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await writeFile(join(worktree, "deep", "new.py"), "violation\n");
     await bridge.checkpoint("turn");
     await bridge.settleWorktreeWalk();
-    expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "deep", "new.py"))]);
+    expect(auditedPaths(auditGeneratedEdits)).toEqual([repositoryPath(root, join(worktree, "deep", "new.py"))]);
     expect((await bridge.checkpoint("turn")).failures).toEqual([]);
   });
 

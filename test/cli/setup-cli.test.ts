@@ -33,6 +33,7 @@ import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
 import { INSTALLED_PACKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
+import { mainContentStoreDirectory } from "../../src/engine/native/rerail-build.js";
 import { POSIX_MODES } from "../support/file-mode.js";
 import { stubUserHome } from "../support/user-home.js";
 
@@ -107,11 +108,12 @@ describe("rerail install --root", () => {
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
 
     const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
-      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+      hooks: Record<string, Array<{ hooks: Array<{ command: string; args?: string[] }> }>>;
     };
-    // One stable path, not the checkout's: retiring the workspace cannot orphan the hooks.
+    // One stable path, not the checkout's: retiring the workspace cannot orphan the hooks. On Windows the hook is in exec
+    // form, its path among its arguments.
     for (const groups of Object.values(settings.hooks)) {
-      for (const group of groups) for (const hook of group.hooks) expect(hook.command).toContain(hookPath);
+      for (const group of groups) for (const hook of group.hooks) expect([hook.command, ...hook.args ?? []].join(" ")).toContain(hookPath);
     }
     expect(await readFile(join(hostConfigHome, ".claude", "commands", "rerail.md"), "utf8")).toContain(
       join(context.updater.currentLink, "dist", "cli", "cli.js"),
@@ -270,7 +272,8 @@ describe("rerail install --root", () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     const { updater } = context;
-    const installed = [join(updater.versionsRoot, "1.0.0", "node_modules", "@neralabs", "rerail"), join(context.home, "packs", "node_modules"), join(hostConfigHome, ".cache", "rerail")];
+    const cache = mainContentStoreDirectory(hostConfigHome);
+    const installed = [join(updater.versionsRoot, "1.0.0", "node_modules", "@neralabs", "rerail"), join(context.home, "packs", "node_modules"), cache];
     for (const path of installed) await mkdir(path, { recursive: true });
     await writeFile(join(context.home, "consent.json"), "{}");
     // What `rerail activate`, the device secret store, `rules export` and a daemon write cut short leave in the home.
@@ -284,13 +287,13 @@ describe("rerail install --root", () => {
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
 
-    for (const path of [updater.currentLink, updater.launcherPath, updater.versionsRoot, updater.statePath, join(context.home, "packs"), join(hostConfigHome, ".cache", "rerail")]) {
+    for (const path of [updater.currentLink, updater.launcherPath, updater.versionsRoot, updater.statePath, join(context.home, "packs"), cache]) {
       expect(existsSync(path), path).toBe(false);
     }
     expect(existsSync(join(packageRoot, "package.json"))).toBe(true);
     const text = output.mock.calls.join("");
     expect(text).toContain(`Removed ${dirname(updater.launcherPath)} (the rerail command).`);
-    expect(text).toContain(`Removed ${join(hostConfigHome, ".cache", "rerail")} (the cache).`);
+    expect(text).toContain(`Removed ${cache} (the cache).`);
     // A home only Rerail uses, activated or not, may go as a whole.
     expect(text).toContain(`Kept ${context.home}: active-profile, coding-agents.json, consent.json, daemon.json.4242.tmp, device-secrets, profiles, rules.json (Rerail's settings, logs and records; delete it if you will not install Rerail again).`);
   });
@@ -312,7 +315,7 @@ describe("rerail install --root", () => {
     await writeFile(join(context.home, "packs", "list.txt"), "mine");
     await writeFile(join(context.home, ".bashrc"), "");
     // Another Rerail home's daemon (alive: this test's parent process) holds the cache.
-    const cache = join(hostConfigHome, ".cache", "rerail");
+    const cache = mainContentStoreDirectory(hostConfigHome);
     await mkdir(cache, { recursive: true });
     await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: process.ppid }));
     const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
