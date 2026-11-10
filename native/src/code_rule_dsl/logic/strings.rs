@@ -218,16 +218,21 @@ impl Vocabulary {
             return out;
         }
         let words = self.tests.len().div_ceil(64);
-        let mut seen = self.seen.lock().unwrap();
         let (mut tested, t0) = (0, super::plan::corpus::thread_usage());
         // The strings not seen before, tested by every test's plans at once (the text layer's vocabulary engine).
+        // `seen` is held only to read and to add: testing runs on the pool, and a worker waiting in it may take
+        // another batch's `rows`, which would wait for the lock (a deadlock). Two batches may test one string twice.
         let mut fresh: Vec<(u32, &str)> = Vec::new();
-        let mut queued: HashSet<u32> = HashSet::new();
-        for (s, &sym) in strings.iter().zip(symbols) {
-            if !seen.contains_key(&sym) && queued.insert(sym) {
-                fresh.push((sym, s.as_str()));
+        {
+            let seen = self.seen.lock().unwrap();
+            let mut queued: HashSet<u32> = HashSet::new();
+            for (s, &sym) in strings.iter().zip(symbols) {
+                if !seen.contains_key(&sym) && queued.insert(sym) {
+                    fresh.push((sym, s.as_str()));
+                }
             }
         }
+        let mut tested_bits: Vec<(u32, Box<[u64]>)> = Vec::new();
         if !fresh.is_empty() {
             tested += fresh.len();
             let compiled = self.compiled.get_or_init(|| self.compile_with(None));
@@ -240,9 +245,11 @@ impl Vocabulary {
                     bits[t as usize][k / 64] |= 1 << (k % 64);
                 }
             }
-            for ((sym, _), b) in fresh.iter().zip(bits) {
-                seen.insert(*sym, b);
-            }
+            tested_bits.extend(fresh.iter().map(|(sym, _)| *sym).zip(bits));
+        }
+        let mut seen = self.seen.lock().unwrap();
+        for (sym, b) in tested_bits {
+            seen.entry(sym).or_insert(b);
         }
         for &sym in symbols {
             let bits = &seen[&sym];
