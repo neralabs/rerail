@@ -84,6 +84,14 @@ fn unescape(body: &str) -> Result<String, String> {
 
 /// A string as an `.rr` literal, read back by `unescape` as the same string.
 pub(in crate::code_rule_dsl) fn quote(s: &str) -> String {
+    // Most strings need no escape: copied whole.
+    if !s.chars().any(|c| matches!(c, '"' | '\\') || c.is_control()) {
+        let mut out = String::with_capacity(s.len() + 2);
+        out.push('"');
+        out.push_str(s);
+        out.push('"');
+        return out;
+    }
     let mut out = String::from("\"");
     for c in s.chars() {
         match c {

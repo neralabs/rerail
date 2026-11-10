@@ -320,7 +320,9 @@ fn depth_summary(prog: &Program, rules: &[&Rule], depths: &Depths) -> BTreeMap<(
 
 /// The depth guarantees of a component's relations: for a recursive one the least spans its rules keep,
 /// from no rows up, widened to no bound on a side that still moves after a few rounds.
-fn depth_summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, depths: &mut Depths) {
+/// A component that reads no member of itself (not `recursive`) is settled by its first round: its rules read only
+/// relations below it, so a second round gives the first's spans again.
+fn depth_summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, depths: &mut Depths, recursive: bool) {
     let rels: Vec<&String> = component.iter().filter(|rel| by_head.contains_key(rel.as_str()) && node_columns(prog, rel).len() > 1).collect();
     for rel in &rels {
         let columns = node_columns(prog, rel);
@@ -354,7 +356,7 @@ fn depth_summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTree
                 changed = true;
             }
         }
-        if !changed {
+        if !changed || !recursive {
             return;
         }
     }
@@ -552,7 +554,8 @@ fn meet(a: &Guarantees, b: &Guarantees) -> Guarantees {
 
 /// The guarantees of a component's relations: for a recursive one the greatest that its rules keep, from
 /// every move strict down.
-fn summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, moves: &mut Moves) {
+/// As `depth_summaries`, a component that is not `recursive` is settled by its first round.
+fn summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, moves: &mut Moves, recursive: bool) {
     let rels: Vec<&String> = component.iter().filter(|rel| by_head.contains_key(rel.as_str()) && node_columns(prog, rel).len() > 1).collect();
     for rel in &rels {
         let columns = node_columns(prog, rel);
@@ -572,7 +575,7 @@ fn summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
                 changed = true;
             }
         }
-        if !changed {
+        if !changed || !recursive {
             return;
         }
     }
@@ -872,8 +875,8 @@ pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<Str
     for component in &sccs {
         let recursive = component.len() > 1 || component.iter().any(|r| edges_by.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
         // The component's guarantees, for its own rules and the components above it.
-        summaries(prog, component, &by_head, &mut moves);
-        depth_summaries(prog, component, &by_head, &mut depths);
+        summaries(prog, component, &by_head, &mut moves, recursive);
+        depth_summaries(prog, component, &by_head, &mut depths, recursive);
         if !recursive {
             continue;
         }

@@ -21,11 +21,28 @@ struct Held {
     set: HashTable<u32>,
     /// The rows as a source, made when the cross-file part first reads them. No chunk adds after that.
     source: Option<Arc<dyn Source>>,
+    /// Rows appended unchecked (`append_own`), not in `set`: each a document's own, which no other file's entry
+    /// holds. Their ids, the location column that names their document, and the documents.
+    unset: Vec<std::ops::Range<u32>>,
+    at: Option<usize>,
+    unset_docs: rustc_hash::FxHashSet<i64>,
 }
 
 impl Held {
     fn new(width: usize) -> Self {
-        Held { columns: vec![Vec::new(); width], set: HashTable::new(), source: None }
+        Held { columns: vec![Vec::new(); width], set: HashTable::new(), source: None, unset: Vec::new(), at: None, unset_docs: Default::default() }
+    }
+
+    /// The rows appended unchecked put in the set: a row may now come again.
+    fn set_all(&mut self) {
+        let columns = &self.columns;
+        for range in std::mem::take(&mut self.unset) {
+            for id in range {
+                let h = Held::hash(columns.iter().map(|col| col[id as usize]));
+                self.set.insert_unique(h, id, |&i| Held::hash(columns.iter().map(|col| col[i as usize])));
+            }
+        }
+        self.unset_docs.clear();
     }
 
     fn len(&self) -> usize {
@@ -58,6 +75,10 @@ impl Exports {
             for (c, v) in row.iter_mut().enumerate() {
                 *v = rows.value(r, c);
             }
+            // A row of a document whose own rows were appended unchecked may be one of them: they are set first.
+            if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains(&super::memo::document_of(row[at]))) {
+                held.set_all();
+            }
             let h = Held::hash(row.iter().copied());
             let columns = &held.columns;
             let same = |&id: &u32| row.iter().enumerate().all(|(c, v)| columns[c][id as usize] == *v);
@@ -73,6 +94,31 @@ impl Exports {
             added += 1;
         }
         added
+    }
+
+    /// Appends rows (`columns`, `width` of them) to export `rel` without looking for them among those it holds, as
+    /// `add` does: each row's column `at` names one of `documents`, whose own rows these are (a memo entry's rows of
+    /// its own file), which no other file's rows hold, and no row is given twice. Rows that may be another file's
+    /// too (a value document's, kept by each file that asked for it) go through `add`. A later `add` of a row of one
+    /// of `documents` puts these in the set first, so a document that comes again is still kept once.
+    pub(super) fn append_own(&mut self, rel: &str, width: usize, at: usize, columns: Vec<Vec<i64>>, documents: impl IntoIterator<Item = i64>) -> usize {
+        let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
+        debug_assert!(held.source.is_none(), "export {rel} added to after the cross-file part read it");
+        let n = columns.first().map_or(0, Vec::len);
+        if n == 0 {
+            return 0;
+        }
+        if held.at.is_some_and(|a| a != at) {
+            held.set_all();
+        }
+        held.at = Some(at);
+        let start = held.len() as u32;
+        for (to, from) in held.columns.iter_mut().zip(columns) {
+            to.extend(from);
+        }
+        held.unset.push(start..start + n as u32);
+        held.unset_docs.extend(documents);
+        n
     }
 
     /// How many rows export `rel` holds.
@@ -143,6 +189,8 @@ impl Exports {
         }
         let columns = std::mem::take(&mut held.columns);
         held.set = HashTable::new();
+        held.unset.clear();
+        held.unset_docs.clear();
         let names = (0..width).map(|c| format!("c{c}")).collect();
         let values = if columns.is_empty() { vec![Some(Vec::new()); width] } else { columns.into_iter().map(Some).collect() };
         let source = crate::code_rule_dsl::logic::native::component::columns_source(names, values);
@@ -332,5 +380,26 @@ mod tests {
         // Every row found again after the moves.
         assert!(c.patch("r", 2, &[5, 50, 2, 20], -1));
         assert_eq!(c.rows(), 0);
+    }
+
+    #[test]
+    fn a_documents_own_rows_are_appended_unchecked_and_still_kept_once() {
+        let chunk = |rows: Vec<[i64; 2]>| {
+            let names = vec!["c0".to_owned(), "c1".to_owned()];
+            crate::code_rule_dsl::logic::native::component::columns_source(names, (0..2).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
+        };
+        let node = |doc: i64, i: i64| (doc << 32) | i;
+        let mut exports = Exports::default();
+        // Document 1's own rows, then document 2's, appended unchecked.
+        assert_eq!(exports.append_own("e", 2, 0, vec![vec![node(1, 0), node(1, 1)], vec![7, 8]], [1]), 2);
+        assert_eq!(exports.append_own("e", 2, 0, vec![vec![node(2, 0)], vec![9]], [2]), 1);
+        // Another document's rows are checked against the set alone; a shared row is kept once.
+        assert_eq!(exports.add("e", 2, chunk(vec![[node(3, 0), 1], [node(3, 0), 1]]).as_ref()), 1);
+        // A row of document 1 again: the unchecked rows are set first, so it is found.
+        assert_eq!(exports.add("e", 2, chunk(vec![[node(1, 1), 8], [node(1, 2), 8]]).as_ref()), 1);
+        let s = exports.source("e", 2);
+        let mut rows: Vec<(i64, i64)> = (0..s.len()).map(|r| (s.value(r, 0), s.value(r, 1))).collect();
+        rows.sort();
+        assert_eq!(rows, vec![(node(1, 0), 7), (node(1, 1), 8), (node(1, 2), 8), (node(2, 0), 9), (node(3, 0), 1)]);
     }
 }

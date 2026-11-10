@@ -30,6 +30,11 @@ pub trait Backend: Send + Sync {
     fn can(&self, k: &Kernel) -> bool;
     /// Runs `ks` as one submission. The outputs are in `ks`' order, each equal to [`crate::cpu::run`]'s.
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String>;
+    /// [`Backend::submit`], with where the submission's time went ([`Phases`]); a lane that does not split its work
+    /// reports the default.
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
+        self.submit(ks).map(|o| (o, Phases::default()))
+    }
     /// Drops what the lane keeps for the join id `id` (decision 0100 §4).
     fn forget(&self, _id: u64) {}
     /// Drops everything the lane keeps (a chunk's end).
@@ -50,6 +55,25 @@ pub struct SpaceCounts {
     pub misses: u64,
     /// Entries dropped for the limit.
     pub evicted: u64,
+}
+
+/// Where one lane's submission went, in seconds, each phase summed over the submission. A lane that overlaps its
+/// host work with the device (the Neural Engine, tile by tile) has phases that run at the same time, so they sum
+/// to more than its wall time.
+///
+/// - `encode`: wall time writing inputs in the device's form (the Neural Engine: `a`'s bits expanded to fp16 in
+///   place into IOSurfaces);
+/// - `device`: wall time on the device, where the lane can see it (the Neural Engine: its prediction calls);
+/// - `decode`: wall time reading outputs back (the Neural Engine: fp16 partial counts summed, each launch's share
+///   and thresholds);
+/// - `worker_cpu`: CPU (user + sys) spent for the submission off the lane's own thread (the Neural Engine: its
+///   predictor thread and Core ML's threads).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Phases {
+    pub encode: f64,
+    pub device: Option<f64>,
+    pub decode: f64,
+    pub worker_cpu: f64,
 }
 
 /// One kernel to run, optionally pinned to a lane.
@@ -95,8 +119,24 @@ pub struct Report {
     pub cpu_freed: f64,
     /// Estimated seconds lost against the fastest lane, summed over launches placed elsewhere.
     pub lost: f64,
-    /// The process's CPU time (user + sys) over the batch.
+    /// The process's CPU time (user + sys) over the batch. Other threads' work counts too: a profile reads
+    /// `lane_cpu` and `phases` instead.
     pub cpu: f64,
+    /// Wall seconds of [`Executor::run`] as a whole (from `begin` to `wait`'s return), and of its placement.
+    pub total: f64,
+    pub place: f64,
+    /// Per lane: CPU seconds of the lane's worker thread over its submission (`CLOCK_THREAD_CPUTIME_ID`), and what
+    /// the backend says of its phases.
+    pub lane_cpu: [f64; 4],
+    pub phases: [Phases; 4],
+}
+
+impl Report {
+    /// Wall seconds of the run that were neither placement nor the slowest lane's submission: handing the shares to
+    /// the lanes' workers, the caller's work meanwhile (`begin` to `wait`), and gathering the outputs.
+    pub fn overhead(&self) -> f64 {
+        (self.total - self.place - self.wall.iter().copied().fold(0.0, f64::max)).max(0.0)
+    }
 }
 
 /// The lanes this process has, their prices, and the submission of batches.
@@ -107,8 +147,10 @@ pub struct Executor {
     pub prices: Prices,
 }
 
-/// A lane's share of a batch, and where its outputs go: the outputs and the submission's wall seconds.
-type Task = (Vec<Kernel>, std::sync::mpsc::SyncSender<(Result<Vec<Output>, String>, f64)>);
+/// A lane's submission: its outputs and phases, its wall seconds and its worker's CPU seconds.
+type Ran = (Result<(Vec<Output>, Phases), String>, f64, f64);
+/// A lane's share of a batch, and where its submission's result goes.
+type Task = (Vec<Kernel>, std::sync::mpsc::SyncSender<Ran>);
 
 /// The worker of `backend`: runs each task it is sent, in order, until the executor drops.
 fn worker(backend: Arc<dyn Backend>) -> std::sync::mpsc::Sender<Task> {
@@ -117,10 +159,10 @@ fn worker(backend: Arc<dyn Backend>) -> std::sync::mpsc::Sender<Task> {
         .name(format!("rerail-accel {}", backend.lane().name()))
         .spawn(move || {
             for (ks, reply) in take {
-                let t = Instant::now();
+                let (t, c) = (Instant::now(), thread_cpu());
                 let refs: Vec<&Kernel> = ks.iter().collect();
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.submit(&refs))).unwrap_or_else(|_| Err("its submission panicked".into()));
-                let _ = reply.send((r, t.elapsed().as_secs_f64()));
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.submit_timed(&refs))).unwrap_or_else(|_| Err("its submission panicked".into()));
+                let _ = reply.send((r, t.elapsed().as_secs_f64(), thread_cpu() - c));
             }
         })
         .expect("a lane's worker thread");
@@ -131,10 +173,11 @@ fn worker(backend: Arc<dyn Backend>) -> std::sync::mpsc::Sender<Task> {
 pub struct Running {
     placed: Vec<(Lane, f64, f64)>,
     per_lane: [Vec<usize>; 4],
-    replies: Vec<(Lane, std::sync::mpsc::Receiver<(Result<Vec<Output>, String>, f64)>)>,
+    replies: Vec<(Lane, std::sync::mpsc::Receiver<Ran>)>,
     report: Report,
     joules: [f64; 4],
     cpu0: f64,
+    t0: Instant,
 }
 
 impl Executor {
@@ -166,10 +209,6 @@ impl Executor {
 
     pub fn lanes(&self) -> Vec<Lane> {
         self.backends.iter().map(|b| b.lane()).collect()
-    }
-
-    fn backend(&self, l: Lane) -> Option<&Arc<dyn Backend>> {
-        self.backends.iter().find(|b| b.lane() == l)
     }
 
     /// Drops what every lane keeps for the join id `id`: its relation changed, or no later launch reads it. A lane
@@ -226,9 +265,10 @@ impl Executor {
 
     /// Places a batch and gives each lane its share, without waiting: the lanes run while the caller works.
     pub fn begin(&self, batch: Batch) -> Result<Running, String> {
+        let t0 = Instant::now();
         let cpu0 = process_cpu();
         let placed = self.place(&batch)?;
-        let mut report = Report::default();
+        let mut report = Report { place: t0.elapsed().as_secs_f64(), ..Report::default() };
         let mut per_lane: [Vec<usize>; 4] = Default::default();
         for (i, &(lane, est, fastest)) in placed.iter().enumerate() {
             per_lane[lane.index()].push(i);
@@ -262,20 +302,24 @@ impl Executor {
         for lane in Lane::ALL {
             joules[lane.index()] = self.prices.joules(lane, 1.0);
         }
-        Ok(Running { placed, per_lane, replies, report, joules, cpu0 })
+        Ok(Running { placed, per_lane, replies, report, joules, cpu0, t0 })
     }
 }
 
 impl Running {
     /// Waits for every lane's share: each launch's output, in the batch's order, and the batch's report.
     pub fn wait(self) -> Result<(Vec<Done>, Report), String> {
-        let Running { placed, per_lane, replies, mut report, joules, cpu0 } = self;
+        let Running { placed, per_lane, replies, mut report, joules, cpu0, t0 } = self;
         let mut outs: Vec<Option<Output>> = vec![None; placed.len()];
         let mut failed: Option<String> = None;
         for (lane, take) in replies {
-            let (r, wall) = take.recv().map_err(|_| format!("{} lane: its worker ended", lane.name()))?;
+            let (r, wall, cpu) = take.recv().map_err(|_| format!("{} lane: its worker ended", lane.name()))?;
             let r = match r {
-                Ok(r) => r,
+                Ok((r, phases)) => {
+                    report.lane_cpu[lane.index()] = cpu;
+                    report.phases[lane.index()] = phases;
+                    r
+                }
                 Err(e) => {
                     failed.get_or_insert(format!("{} lane: {e}", lane.name()));
                     continue;
@@ -296,6 +340,7 @@ impl Running {
             return Err(e);
         }
         report.cpu = process_cpu() - cpu0;
+        report.total = t0.elapsed().as_secs_f64();
         let done = outs
             .into_iter()
             .zip(placed)
@@ -368,8 +413,29 @@ impl Backend for CpuBackend {
         }
     }
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
+        self.submit_timed(ks).map(|(o, _)| o)
+    }
+    /// One launch runs on the calling thread; several on the rayon pool, each worker's CPU counted.
+    fn submit_timed(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Phases), String> {
         use rayon::prelude::*;
-        ks.par_iter().map(|k| self.join(k)).collect()
+        if ks.len() == 1 {
+            // The kernel parallelizes inside, on the pool: its workers' CPU is the pool's over the call (other work
+            // the pool ran meanwhile counts too).
+            let before = pool_cpu();
+            let o = self.join(ks[0])?;
+            return Ok((vec![o], Phases { worker_cpu: (pool_cpu() - before).max(0.0), ..Phases::default() }));
+        }
+        let me = std::thread::current().id();
+        let ran: Vec<(Output, f64)> = ks
+            .par_iter()
+            .map(|k| {
+                let c = thread_cpu();
+                let o = self.join(k)?;
+                Ok((o, if std::thread::current().id() == me { 0.0 } else { thread_cpu() - c }))
+            })
+            .collect::<Result<_, String>>()?;
+        let worker_cpu = ran.iter().map(|r| r.1).sum();
+        Ok((ran.into_iter().map(|r| r.0).collect(), Phases { worker_cpu, ..Phases::default() }))
     }
     fn forget(&self, id: u64) {
         if let Ok(mut s) = self.space.lock() {
@@ -386,6 +452,27 @@ impl Backend for CpuBackend {
     }
     fn space(&self) -> SpaceCounts {
         self.space.lock().map(|s| SpaceCounts { entries: s.sorted.len(), bytes: s.bytes, ..s.counts }).unwrap_or_default()
+    }
+}
+
+/// The rayon pool's CPU seconds: every worker's thread clock, summed.
+fn pool_cpu() -> f64 {
+    rayon::broadcast(|_| thread_cpu()).iter().sum()
+}
+
+/// This thread's CPU seconds (`CLOCK_THREAD_CPUTIME_ID`; 0 where there is none).
+pub fn thread_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut t: libc::timespec = unsafe { std::mem::zeroed() };
+        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } != 0 {
+            return 0.0;
+        }
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
     }
 }
 
