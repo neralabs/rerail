@@ -95,6 +95,11 @@ pub(crate) fn producer_facts<'tree, D: ast_grep_core::Doc>(
                 facts.gate(-1, Target::None);
             }
         }
+        SemanticFactSource::Tokens(test) => {
+            if test.holds(&node) {
+                facts.gate(1, Target::None);
+            }
+        }
         SemanticFactSource::Calls(_) => {}
     }
     facts

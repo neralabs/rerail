@@ -1293,6 +1293,8 @@ impl Builder {
                 call_through = Some(term.through.through);
             }
             Semantic::Resolves(_) | Semantic::Arguments(_) | Semantic::Layout(_) => {}
+            // A token test that binds nothing and tests no rule at the token is a gate.
+            Semantic::Tokens(test) if test.is_plain() => {}
             Semantic::Parse(_) => unreachable!("parse returned before semantic fact lowering"),
             // W's `embedded` (embedded documents) and P's `filePath` have no fact family in N's catalog.
             Semantic::Value(_)
@@ -1400,13 +1402,13 @@ impl Builder {
                 SemanticFactSource::FormatArgs(test)
             }
             Semantic::Layout(test) => SemanticFactSource::Layout((**test).clone()),
+            Semantic::Tokens(test) => SemanticFactSource::Tokens((**test).clone()),
             Semantic::Calls(test) => SemanticFactSource::Calls((**test).clone()),
             Semantic::Value(_)
             | Semantic::Parse(_)
             | Semantic::Host(_)
             | Semantic::Capture(_)
             | Semantic::Embedded(_)
-            | Semantic::Tokens(_)
             | Semantic::FilePath(_)
             | Semantic::ImportTarget(_) => {
                 unreachable!("unsupported semantic families returned before descriptor creation")

@@ -364,8 +364,10 @@ fn the_sql_fallback_relates_on_the_tape_exactly() {
                 assert_eq!(candidates, matched, "{rule} reported exact on tape {file}");
             }
         }
-        // Every rule but the pattern (its parent hops stay a superset) is exact.
-        assert_eq!(*exact, number != rules.len() - 1, "{rule}");
+        // Every rule but the pattern (its parent hops stay a superset) and the neighbours is
+        // exact: a neighbour is also no token beside the node (RER-131), tested after the rows.
+        let neighbour = ["precedes", "follows"].iter().any(|key| rule[key].is_object() && rule[key].get("stopBy").is_none());
+        assert_eq!(*exact, number != rules.len() - 1 && !neighbour, "{rule}");
     }
     // Each relation finds something in the sample, so the equalities above are not vacuous.
     for ((rows, _), rule) in selected.iter().zip(&rules) {

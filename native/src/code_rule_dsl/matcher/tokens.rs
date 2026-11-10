@@ -74,6 +74,9 @@ pub(in crate::code_rule_dsl) struct TokenTest {
     pub(in crate::code_rule_dsl) tests: Vec<(Place, Regex)>,
     /// Every count is within its bounds.
     pub(in crate::code_rule_dsl) counts: Vec<PartCount>,
+    /// No token stands at any of these places (`Before`, `After`): a `precedes` or `follows`
+    /// neighbour that is named (`compile::ast_rule`), as the sibling right beside the node.
+    pub(in crate::code_rule_dsl) none: Vec<Place>,
     /// `as`: binds the token the first test found (a `has`, `before`, `after`, `beforeCode`,
     /// `afterCode` or field token), for a message, anchor or fix range.
     pub(in crate::code_rule_dsl) capture: Option<String>,
@@ -86,7 +89,7 @@ pub(in crate::code_rule_dsl) struct TokenTest {
 
 impl std::fmt::Debug for TokenTest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TokenTest").field("tests", &self.tests).field("counts", &self.counts).field("capture", &self.capture).field("where", &self.rule.is_some()).finish()
+        f.debug_struct("TokenTest").field("tests", &self.tests).field("counts", &self.counts).field("none", &self.none).field("capture", &self.capture).field("where", &self.rule.is_some()).finish()
     }
 }
 
@@ -99,7 +102,7 @@ impl TokenTest {
         let Some((first, rest)) = self.tests.split_first() else {
             return self.holds(&node).then_some(node);
         };
-        if !rest.iter().all(|(place, re)| holds(place, re, &node)) || !self.counted(&node) {
+        if !rest.iter().all(|(place, re)| holds(place, re, &node)) || !self.counted(&node) || !self.alone(&node) {
             return None;
         }
         if self.capture.is_none() && self.rule.is_none() {
@@ -125,7 +128,15 @@ impl TokenTest {
     }
 
     pub(in crate::code_rule_dsl) fn holds<'r, D: ast_grep_core::Doc>(&self, node: &ast_grep_core::Node<'r, D>) -> bool {
-        self.tests.iter().all(|(place, re)| holds(place, re, node)) && self.counted(node)
+        self.tests.iter().all(|(place, re)| holds(place, re, node)) && self.counted(node) && self.alone(node)
+    }
+
+    fn alone<'r, D: ast_grep_core::Doc>(&self, node: &ast_grep_core::Node<'r, D>) -> bool {
+        self.none.iter().all(|place| match place {
+            Place::Before => node.token_before().is_none(),
+            Place::After => node.token_after().is_none(),
+            _ => true,
+        })
     }
 
     fn counted<'r, D: ast_grep_core::Doc>(&self, node: &ast_grep_core::Node<'r, D>) -> bool {
@@ -173,7 +184,27 @@ fn found<'r, D: ast_grep_core::Doc>(place: &Place, re: &Regex, node: &ast_grep_c
             near.filter(|near| !near.is_named() && re.is_match(&near.text()))
         }
         Place::Field(name) => node.field(name).filter(|child| !child.is_named() && re.is_match(&child.text())),
-        Place::Below | Place::Earlier | Place::Later => None,
+        Place::Below => {
+            return node.dfs().filter(|n| n.is_named()).flat_map(|n| n.tokens().filter(matches).map(|token| token.node().clone()).collect::<Vec<_>>()).collect();
+        }
+        Place::Earlier | Place::Later => {
+            let Some(parent) = node.parent() else { return Vec::new() };
+            let span = node.range();
+            let mut tokens: Vec<_> = parent
+                .tokens()
+                .filter(|token| {
+                    let at = token.range();
+                    if *place == Place::Earlier { at.end <= span.start } else { at.start >= span.end }
+                })
+                .filter(matches)
+                .map(|token| token.node().clone())
+                .collect();
+            // Nearest first, as the walk meets them.
+            if *place == Place::Earlier {
+                tokens.reverse();
+            }
+            return tokens;
+        }
     };
     one.into_iter().collect()
 }
@@ -353,6 +384,16 @@ impl TapeTokens {
             let entry = &index.entries[at as usize];
             let parent = (entry.parent != NONE).then(|| &index.entries[entry.parent as usize]);
             let mut known = true;
+            for place in &test.none {
+                let beside = match place {
+                    Place::Before => entry.near[0],
+                    Place::After => entry.near[1],
+                    _ => continue,
+                };
+                if matches!(beside, Near::Token(_)) {
+                    continue 'starts;
+                }
+            }
             for (place, prefix) in &tests {
                 let any = |(start, end): (u32, u32)| prefix[end as usize] > prefix[start as usize];
                 let near = |near: Near| matches!(near, Near::Token(row) if any((row, row + 1)));

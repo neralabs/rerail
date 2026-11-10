@@ -113,6 +113,8 @@ pub(in crate::code_rule_dsl) enum SemanticFactSource {
     Arguments(crate::code_rule_dsl::matcher::Arguments),
     FormatArgs(crate::code_rule_dsl::matcher::FormatArgs),
     Layout(crate::code_rule_dsl::matcher::Layout),
+    /// A plain `tokens` test (no `as`, no `where`): a gate at each node, as `Layout` is.
+    Tokens(crate::code_rule_dsl::matcher::TokenTest),
     Calls(crate::code_rule_dsl::calls::CallsTest),
 }
 
@@ -137,7 +139,7 @@ impl SemanticFactSource {
                     })
             }
             Self::FormatArgs(test) => test.unused.is_some() || test.missing.is_some(),
-            Self::Resolves(_) | Self::Arguments(_) | Self::Layout(_) | Self::Calls(_) => false,
+            Self::Resolves(_) | Self::Arguments(_) | Self::Layout(_) | Self::Tokens(_) | Self::Calls(_) => false,
         }
     }
 }

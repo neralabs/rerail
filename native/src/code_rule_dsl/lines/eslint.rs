@@ -106,41 +106,42 @@ fn sort_keys_restarts_after_a_blank_line() {
 
 /// no-unexpected-multiline for calls and computed members: the `(` or `[` on a line after the
 /// token before it (comments passed over, as `getTokenBefore` does), unless optional (a call's
-/// `?.` is a token, a member's an `optional_chain`) or without arguments.
+/// `?.` is a token, a member's an `optional_chain`) or without arguments. A rule ranges over named
+/// nodes, so the bracket is its parent's token (`tokens`), reported where it is.
 #[test]
 fn no_unexpected_multiline_reads_the_line_before_the_bracket() {
     let broken = json!({ "layout": { "before": { "to": "token", "breaks": { "min": 1 } } } });
     let not_optional = json!({ "not": { "has": { "stopBy": "neighbor",
         "any": [{ "kind": "optional_chain" }, { "regex": "^\\?\\.$" }] } } });
-    let mut call = json!({ "regex": "^\\($", "inside": { "kind": "arguments", "stopBy": "neighbor",
+    let call = json!({ "kind": "arguments",
         "has": { "stopBy": "neighbor", "not": { "regex": "^[(),]$" } },
-        "inside": { "kind": "call_expression", "stopBy": "neighbor", "all": [not_optional.clone()] } } });
-    call["layout"] = broken["layout"].clone();
-    let mut member = json!({ "regex": "^\\[$", "inside": { "kind": "subscript_expression", "stopBy": "neighbor",
-        "all": [not_optional] } });
-    member["layout"] = broken["layout"].clone();
+        "inside": { "kind": "call_expression", "stopBy": "neighbor", "all": [not_optional.clone()] },
+        "tokens": { "has": "^\\($", "as": "BRACKET", "where": broken.clone() } });
+    let member = json!({ "kind": "subscript_expression", "all": [not_optional],
+        "tokens": { "has": "^\\[$", "as": "BRACKET", "where": broken } });
     let ast = json!({ "rule": { "any": [call, member] } });
     assert_eq!(
-        starts(ast, oracle!("ecma/lines/eslint/no-unexpected-multiline.ts")),
+        starts_at(ast, "capture.BRACKET", oracle!("ecma/lines/eslint/no-unexpected-multiline.ts")),
         expected("no-unexpected-multiline.ts")
     );
 }
 
 /// no-useless-concat: `+` between two string literals on one line: the left operand's end and the
-/// right one's start (read from the operator, which sits between them).
+/// right one's start (read from the operator, which sits between them, as the expression's token).
 #[test]
 fn no_useless_concat_reads_the_operands_lines() {
     let literal = |field: &str, name: &str| json!({ "has": { "field": field, "any": [{ "kind": "string" }, { "kind": "template_string" }], "pattern": format!("${name}") } });
     let ast = json!({ "rule": {
-        "regex": "^\\+$",
-        "inside": { "kind": "binary_expression", "stopBy": "neighbor", "all": [literal("left", "L"), literal("right", "R")] },
-        "layout": {
-            "before": { "to": "capture.L", "breaks": { "eq": 0 } },
-            "after": { "to": "capture.R", "breaks": { "eq": 0 } },
-        },
+        "kind": "binary_expression",
+        "all": [literal("left", "L"), literal("right", "R"), { "tokens": { "has": "^\\+$", "as": "PLUS", "where": {
+            "layout": {
+                "before": { "to": "capture.L", "breaks": { "eq": 0 } },
+                "after": { "to": "capture.R", "breaks": { "eq": 0 } },
+            },
+        } } }],
     } });
     assert_eq!(
-        starts(ast, oracle!("ecma/lines/eslint/no-useless-concat.ts")),
+        starts_at(ast, "capture.PLUS", oracle!("ecma/lines/eslint/no-useless-concat.ts")),
         expected("no-useless-concat.ts")
     );
 }
