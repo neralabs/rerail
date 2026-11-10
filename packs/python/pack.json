@@ -131,7 +131,8 @@
       "id": "ruff-b009-get-attr-with-constant",
       "document": "rules/ruff-b009-get-attr-with-constant.json",
       "title": "Ruff B009: Get attr with constant",
-      "group": "Ruff"
+      "group": "Ruff",
+      "on": false
     },
     {
       "id": "ruff-b010-set-attr-with-constant",

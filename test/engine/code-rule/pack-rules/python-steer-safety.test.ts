@@ -64,6 +64,13 @@ describe("ASYNC222 retains wait arguments and returned status", () => {
   });
 });
 
+it("B009 asks for a plain read only where the type declares the attribute, and keeps getattr otherwise", () => {
+  const messages = findings("ruff-b009-get-attr-with-constant", "def patched():\n    pass\nmarker = getattr(patched, \"_marker\")\n");
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatch(/type declares this attribute.*`obj\.name`/);
+  expect(messages[0]).toMatch(/if not .*keep `getattr`/);
+});
+
 it("B010 asks for an assignment only where the type declares the attribute, and keeps setattr otherwise", () => {
   const messages = findings("ruff-b010-set-attr-with-constant", "def patched():\n    pass\nsetattr(patched, \"_marker\", True)\n");
   expect(messages).toHaveLength(1);
