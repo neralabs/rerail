@@ -27,7 +27,20 @@ export interface EngineService {
   ): Promise<readonly AdapterDelivery[]>;
   /** How many runtimes are open: one per checkout some live session uses. */
   openRuntimes(): number;
+  /** Closes every session that has sent no event for the idle limit; the service also does this every minute. */
+  closeIdleSessions(): Promise<void>;
 }
+
+/**
+ * How long a session may send no event before the engine service closes it as its end would. Its end is not certain to
+ * arrive: a coding agent that is killed sends none, and Claude Code gives its SessionEnd hook 1.5 s, which a hook on a
+ * busy Windows machine outlasts. A session whose end was lost kept its state (its own copy of its checkout's source
+ * walk, its conversation history, its evaluator) until the daemon stopped. A closed session's next event opens it again
+ * from its ledger.
+ */
+export const IDLE_SESSION_MS = 30 * 60_000;
+/** How often the engine service looks for idle sessions. */
+const IDLE_SWEEP_MS = 60_000;
 
 const ConfigurationSchema = z
   .object({
@@ -153,14 +166,25 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
    * named outright gets none.
    */
   pipeFallback?: () => string;
+  /** Defaults to `IDLE_SESSION_MS`; tests pass their own. */
+  idleSessionMs?: number;
+  /** The clock idle sessions are measured by; defaults to `Date.now`. */
+  now?: () => number;
 };
 
 interface EngineRoutingState {
   runtimes: Map<string, RerailRuntime>;
   runtimeKeysBySession: Map<string, Set<string>>;
   runtimeKeysByConfiguration: Map<string, string>;
+  /** When each open session last sent an event, by its lane (`laneOf`). */
+  lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
+}
+
+/** The lane one session's work in one runtime runs in, one at a time. */
+function laneOf(runtimeKey: string, sessionId: string): string {
+  return JSON.stringify([runtimeKey, sessionId]);
 }
 
 interface RuntimeRoute {
@@ -194,7 +218,7 @@ function resolveRuntimeRoute(
     }
     return { runtimeKey: configuredRuntimeKey ?? candidates!.values().next().value! };
   }
-  const { accessToken: _accessToken, ...serviceDefaults } = options;
+  const { accessToken: _accessToken, idleSessionMs: _idleSessionMs, now: _now, ...serviceDefaults } = options;
   const runtimeOptions: RerailRuntimeOptions = configuration === undefined
     ? {
         ...serviceDefaults,
@@ -226,7 +250,8 @@ async function routeEngineEvent(
 ): Promise<readonly AdapterDelivery[]> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
-  const execution = state.lanes.run(JSON.stringify([runtimeKey, sessionId]), () => {
+  const lane = laneOf(runtimeKey, sessionId);
+  const execution = state.lanes.run(lane, () => {
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
@@ -238,22 +263,59 @@ async function routeEngineEvent(
       const keys = state.runtimeKeysBySession.get(sessionId) ?? new Set<string>();
       keys.add(runtimeKey);
       state.runtimeKeysBySession.set(sessionId, keys);
+      state.lastEventAt.set(lane, (options.now ?? Date.now)());
     }
     return runtime.ingest(event);
   });
-  state.pending.add(execution);
-  void execution.then(
-    () => state.pending.delete(execution),
-    () => state.pending.delete(execution),
-  );
+  track(state, execution);
   const deliveries = await execution;
   if (event.kind === "session-end") {
-    const keys = state.runtimeKeysBySession.get(sessionId);
-    keys?.delete(runtimeKey);
-    if (keys?.size === 0) state.runtimeKeysBySession.delete(sessionId);
-    retireUnusedRuntime(state, runtimeKey);
+    state.lastEventAt.delete(lane);
+    releaseSessionRuntime(state, sessionId, runtimeKey);
   }
   return deliveries;
+}
+
+/** Keeps `work` among what `close` waits for until it settles. */
+function track(state: EngineRoutingState, work: Promise<unknown>): void {
+  const settled = work.then(() => [] as const, () => [] as const);
+  state.pending.add(settled);
+  void settled.then(() => state.pending.delete(settled));
+}
+
+/** `sessionId` no longer uses the runtime at `runtimeKey`, which closes when no other session does. */
+function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
+  const keys = state.runtimeKeysBySession.get(sessionId);
+  keys?.delete(runtimeKey);
+  if (keys?.size === 0) state.runtimeKeysBySession.delete(sessionId);
+  retireUnusedRuntime(state, runtimeKey);
+}
+
+/**
+ * Closes, as its end would, each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`), and then its runtime
+ * when no other session uses it. The check runs again in the session's lane, so an event that came in meanwhile keeps the
+ * session open. A close that fails is reported and tried again on the next sweep.
+ */
+async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now: () => number): Promise<void> {
+  const idle = (lane: string): boolean => {
+    const at = state.lastEventAt.get(lane);
+    return at !== undefined && now() - at >= idleMs;
+  };
+  await Promise.all([...state.lastEventAt.keys()].filter(idle).map(async (lane) => {
+    const [runtimeKey, sessionId] = JSON.parse(lane) as [string, string];
+    const closing = state.lanes.run(lane, async () => {
+      if (!idle(lane)) return false;
+      await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId);
+      state.lastEventAt.delete(lane);
+      return true;
+    });
+    track(state, closing);
+    try {
+      if (await closing) releaseSessionRuntime(state, sessionId, runtimeKey);
+    } catch (error) {
+      process.stderr.write(`rerail: closing idle session ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }));
 }
 
 /**
@@ -388,9 +450,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     runtimes: new Map(),
     runtimeKeysBySession: new Map(),
     runtimeKeysByConfiguration: new Map(),
+    lastEventAt: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
   };
+  const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
     if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
@@ -431,7 +495,9 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     },
     ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
     openRuntimes: () => routing.runtimes.size,
+    closeIdleSessions: sweepIdleSessions,
     async close() {
+      clearInterval(idleSweep);
       const closed = Promise.withResolvers<void>();
       server.close((error) => (error ? closed.reject(error) : closed.resolve()));
       await closed.promise;
@@ -440,9 +506,13 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     },
   };
   server.requestTimeout = 30_000;
+  // Never keeps the process alive; `closeIdleSessions` reports its own failures.
+  const idleSweep = setInterval(() => void sweepIdleSessions(), IDLE_SWEEP_MS);
+  idleSweep.unref();
   try {
     socketPath = await listenOnSocket(server, options.socketPath, options);
   } catch (error) {
+    clearInterval(idleSweep);
     server.close();
     await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     throw error;

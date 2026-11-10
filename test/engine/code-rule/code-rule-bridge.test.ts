@@ -691,6 +691,31 @@ describe("CodeRuleBridge", () => {
     }));
   });
 
+  it("keeps one observation of an unchanged source for all the sessions that share baseline observations", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "src", "read.py"), "stable\n");
+    await writeFile(join(root, "src", "skipped.py"), "stable\n");
+    await awaitClockAfter(join(root, "src", "read.py"), join(root, "src", "skipped.py"));
+    const observations: SourceObservationCache = new Map();
+    // A source no rule reads is observed by its stamp alone.
+    const open = async (sessionId: string): Promise<void> => {
+      const bridge = createBridge(root, {
+        ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))),
+        acceptsPath: path => path !== "src/skipped.py",
+      }, { observations });
+      await bridge.openWorkspace(sessionId);
+    };
+    await open("session-1");
+    await vi.waitFor(() => expect(observations.get(root)?.get("src/read.py")?.digest).toBeDefined());
+    const first = observations.get(root)!;
+    await open("session-2");
+    await vi.waitFor(() => expect(observations.get(root)).not.toBe(first));
+    // Each live session keeps a baseline of every source of its checkout, so a copy each would cost a whole checkout's
+    // observations a session.
+    expect(observations.get(root)?.get("src/read.py")).toBe(first.get("src/read.py"));
+    expect(observations.get(root)?.get("src/skipped.py")).toBe(first.get("src/skipped.py"));
+  });
+
   it("abandons the baseline walk of an interrupted session", async () => {
     const root = await workspace();
     await writeFile(join(root, "src", "a.py"), "before\n");

@@ -95,8 +95,15 @@ function sourceLocation(absolute: string, path: string): SourceLocation {
   const language = sourceLanguageOfPath(path);
   return { absolute, path, language: language ?? UNLISTED_TEXT_LANGUAGE, unlisted: language === undefined };
 }
-function observation({ text: _text, deleted: _deleted, ...source }: Source): ObservedSource {
-  return source;
+/**
+ * `source` as a baseline keeps it: without its text or deletion mark. A source that carries neither is kept as it is, so
+ * every session whose walk found it unchanged holds the one object the runtime's shared observations hold, not a copy
+ * of every file of the checkout each.
+ */
+function observation(source: Source): ObservedSource {
+  if (!("text" in source) && !("deleted" in source)) return source;
+  const { text: _text, deleted: _deleted, ...observed } = source;
+  return observed;
 }
 interface PendingEdit {
   readonly paths: readonly string[];
@@ -1602,12 +1609,21 @@ export class CodeRuleBridge {
     // A first observation made after a shell write is not a trustworthy preimage.
     // Preserve it as an uncaptured change, never as newly generated source.
     if ((baselinePath && !changedSinceStart(discovery, after)) || sameSource(before, after)) {
-      if (after !== undefined) this.#observed.set(path, observation(after));
+      if (after !== undefined) this.#observe(after);
       return undefined;
     }
     if (after === undefined) return this.#deletedEdit(path, before);
-    this.#observed.set(path, observation(after));
+    this.#observe(after);
     return uncapturedEdit(path, after, uncapturedPreimage(baselinePath, before));
+  }
+
+  /**
+   * Keeps `source` as this session's baseline of its path, keyed by the path string the observation holds: an unchanged
+   * source's observation is the one every session sharing baseline observations holds, and so is its path.
+   */
+  #observe(source: Source): void {
+    const observed = observation(source);
+    this.#observed.set(observed.path, observed);
   }
 
   /**
@@ -1690,9 +1706,9 @@ export class CodeRuleBridge {
   async #observedFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<Source | undefined> {
     const stamped = { path: location.path, language: location.language, stamp: fileStamp(info), observedAt: walk.observedAt };
     const previous = walk.previousSources.get(location.path);
-    if (!walk.view.acceptsPath(location.path)) return { ...stamped, ...knownDigest(previous) };
     const modifiedAt = Math.max(info.mtimeMs, info.ctimeMs);
     if (staleStamp(previous, stamped.stamp, modifiedAt)) return previous;
+    if (!walk.view.acceptsPath(location.path)) return { ...stamped, ...knownDigest(previous) };
     const unread = await unreadFile(location, info);
     if (unread !== undefined) return { ...stamped, modifiedAt, ...unread };
     return await this.#readObservedFile(walk, location, { ...stamped, modifiedAt }, previous);

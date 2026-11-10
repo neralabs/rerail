@@ -1,7 +1,12 @@
 import { resolve } from "node:path";
+import { runInNewContext } from "node:vm";
+import { setFlagsFromString } from "node:v8";
 import { describe, expect, it } from "vitest";
 import { ConversationRuleRegistry } from "../../../src/engine/catalog/registry.js";
 import type { ConversationRule } from "../../../src/engine/catalog/rule-schema.js";
+
+setFlagsFromString("--expose-gc");
+const gc = runInNewContext("gc") as () => void;
 
 function rule(overrides: Partial<ConversationRule> = {}): ConversationRule {
   return {
@@ -77,5 +82,22 @@ describe("ConversationRuleRegistry", () => {
       "gap",
       "once",
     ]);
+  });
+
+  it("holds its model once among all registries of that model, each with its own rules, since every session opens one", () => {
+    // The first load also pays for the native module and its one-time state.
+    const first = new ConversationRuleRegistry({ modelPath: resolve("model") });
+    first.replace([rule()]);
+    gc();
+    const before = process.memoryUsage().rss;
+    const count = 10;
+    const registries = Array.from({ length: count }, () => new ConversationRuleRegistry({ modelPath: resolve("model") }));
+    gc();
+    const perRegistry = (process.memoryUsage().rss - before) / count;
+    // A loaded copy of the model's weights and tokenizers is about 14 MB; a registry that shares it adds its rule set.
+    expect(perRegistry / 1e6).toBeLessThan(2);
+    const sample = { source: "assistant-text", boundary: "message", text: "Guest checkout remains available." } as const;
+    expect(first.match(sample).map(match => match.ruleId)).toEqual(["checkout"]);
+    expect(registries.map(registry => registry.match(sample))).toEqual(registries.map(() => []));
   });
 });
