@@ -57,7 +57,14 @@ fr_checked(c) :- fr_latest(c, a), fr_scope(c, f), fr_good(g), fr_scope(g, f), ea
 fr_bad(c, which, column, ordinal) :- fr_candidate(c, _, which), fr_latest(c, _), !fr_checked(c),
     docof(c, d), fr_file(d), fr_trigger(d), fr_api_gate(d), !syntax_error(d, _, _), col(c, column), visit_index(c, ordinal).
 .decl fr_file(d: number)
-fr_file(d) :- file_name(d, n), suffix(".py", n), !path_part(d, "tests"), !path_part(d, "test"), !fr_excluded(d), fr_selected(d).
+fr_file(d) :- fr_scope_path(d,p), suffix(".py",p), !fr_test_path(d), !fr_dot_file(d), !fr_excluded(d), fr_selected(d).
+.decl fr_scope_path(d: number,path: symbol)
+fr_scope_path(d,p) :- doc(d,name,_),option_item("logicalPaths",i,name),option_item("scopePaths",i,p).
+fr_scope_path(d,p) :- doc(d,p,_),!option_item("logicalPaths",_,_).
+.decl fr_test_path(d: number)
+fr_test_path(d) :- fr_scope_path(d,p),(contains("/tests/",cat("/",p));contains("/test/",cat("/",p))).
+.decl fr_dot_file(d: number)
+fr_dot_file(d) :- option("entryPoint",_),fr_scope_path(d,p),(p=".py";suffix("/.py",p)).
 .decl fr_selected(d: number)
 fr_selected(d) :- doc(d, _, _), option("entryPoint", _).
 fr_selected(d) :- doc(d, p, _), !option("entryPoint", _),

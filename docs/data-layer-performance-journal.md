@@ -11421,3 +11421,18 @@ The admission regression rejects a missing positive, missing native work, an alt
 The final tooling run passes 409 tests. The shared reporter also passes 32 recorded PermissionError and backend-type cases on the current engine.
 The inventory admits ClassVar with no failed, skipped, or delegated original assertions. Global admission is now 13 of 100 ports.
 The other entries remain 83 drafts and four absent translations. No full-repository cold benchmark ran, and no Linear ticket was created.
+
+### ForwardRef workspace positives on Final fc6, 2026-11-10
+
+The fixed inventory assigns 53 assertions to ForwardRef. Five exercise its detector; 48 exercise PR-monitor orchestration with mocked linter callbacks.
+The source passes all 53 assertions. The initial snapshot run also passes all 53.
+The [red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-workspace-finalfc6-red.json.gz) shows both original positives fail through the workspace API.
+The transport used the caller's absolute temporary path as the engine document name. That name did not match the production roots.
+
+The adapter now uses a document name inside the existing input scope. Native clauses use the separately supplied caller path for file and test-directory selection.
+This retains the production prefilter. The scope corpus includes paths outside production roots, test exclusions, dotfiles, relative paths, and supplied-source gates.
+The [progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-forwardref-scope-finalfc6-progress.json.gz) retains 32 native executions on Final fc6.
+Both APIs pass all 53 original assertions and 11 additional scope cases. The 48 monitor assertions execute unchanged and submit no detector work.
+
+The tooling suite passes all 409 tests. ForwardRef remains a draft pending its plugin, CLI, production, pre-read selection, update, and removal contracts.
+The fetched Final tip remains `fc6c1e0d9`. Global admission remains 13 of 100 ports.

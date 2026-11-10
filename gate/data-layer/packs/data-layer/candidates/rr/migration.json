@@ -1595,7 +1595,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
-      "sha256": "5a270def9a5c798919a65add13d66bef02846b4c1de2ca4337d8745bab782839",
+      "sha256": "2e11505d5f098517740c53238d194317e8bbd88f53b66d91611ee3565e027b41",
       "origin": "authored",
       "upstreamPath": "scripts/lint_forwardref.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3435,7 +3435,7 @@
       "legacySha256": "9bccddea5856ae1e41d834d68d7da4d96fdebe512c93c03bcef605a818f35333",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/forwardref.rr",
-      "ruleSha256": "5a270def9a5c798919a65add13d66bef02846b4c1de2ca4337d8745bab782839"
+      "ruleSha256": "2e11505d5f098517740c53238d194317e8bbd88f53b66d91611ee3565e027b41"
     },
     {
       "check": "unresolved_forward_refs",
