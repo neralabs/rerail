@@ -121,10 +121,23 @@ Three faults found on the way, fixed:
   every process found its inputs changed. An input's frame is now its program's.
 
 P3 over the same 54 files, three processes, no edit: the main thread's CPU 28.8 s (cold), 13.4 s, then 4.7 s; P3's
-cross part 6.4 s, 0.78 s (1 of 481 strata), 0.91 s; the agree count 4,815 each time. The second process still runs
-the phases in full: the cold process prepares its programs itself (0098's dropped columns, simplified bodies, text
-tests) and later ones read the stored prepared program without those rewrites, so the phases' relations have other
-identities once. Open: the stored prepared program and a fresh one should be the same program.
+cross part 6.4 s, 0.78 s (1 of 481 strata), 0.91 s; the agree count 4,815 each time. The second process ran the
+phases in full. Not the relations' identities (every stratum the second process has, the cold one has with the same
+identity); two faults, both fixed:
+
+- A frame space counted a run per program that kept frames in it, not per run. Every program over one root keeps
+  frames in one space (the phases, P3's cross part, its loading cone, phase 0), so the cold run's eight programs
+  were eight runs, and the types phase's 126 frames were collected (unused for `RUNS` = 4 runs) before the run
+  ended. A space now counts the outermost run once (`corpus::run_token`), however many of its programs keep frames
+  (`frames::the_programs_of_one_run_count_one_run_of_their_space`).
+- A stored prepared program lost the relations it has facts of but no rows (`py_site`, `rr_ctx3`: constants folded to
+  nothing), so the struct phase's file-local part had another memo key in every later process than in the one that
+  prepared it, and its 183 library documents were derived again. `fact_rel` keeps them
+  (`program_facts::a_relation_of_no_facts_reads_back_as_one`); the stored program is the program prepared.
+
+After both, on the same 54 files at load 137 to 160: 92.3 s CPU cold (its first run since the prepared program's
+schema moved), 31.7 s, 29.8 s; the second process no longer runs the struct phase's local part (6.2 s cold, 0 after)
+or the types phase (0 of 110 strata).
 
 This is the same for P2, for calls_cx's cross part and for the pack (t31 B4). t31's "column blocks" would be the
 kept relations' encoding, not a format of their own.

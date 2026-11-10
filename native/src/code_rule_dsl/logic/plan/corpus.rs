@@ -1463,13 +1463,29 @@ pub(crate) fn run_with_options(
 thread_local! {
     /// Runs under way on this thread: a run started inside another (a phase, the constants, phase 0) is nested.
     static RUNS_UNDER_WAY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The outermost run under way on this thread, by its token (`run_token`).
+    static RUN_TOKEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The outermost runs of the process, numbered from 1.
+static RUNS_STARTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The token of the outermost run under way on this thread, which its nested runs share: the frames' spaces count a
+/// run once, however many of its programs keep frames in them (`content_store::frames`). `0` outside a run.
+pub(in crate::code_rule_dsl) fn run_token() -> u64 {
+    RUN_TOKEN.with(std::cell::Cell::get)
 }
 
 /// Counts a run under way on this thread until dropped.
 struct UnderWay;
 impl UnderWay {
     fn enter() -> UnderWay {
-        RUNS_UNDER_WAY.with(|n| n.set(n.get() + 1));
+        RUNS_UNDER_WAY.with(|n| {
+            if n.get() == 0 {
+                RUN_TOKEN.with(|t| t.set(RUNS_STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1));
+            }
+            n.set(n.get() + 1)
+        });
         UnderWay
     }
 }

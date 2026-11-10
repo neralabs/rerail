@@ -30,9 +30,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The pointer's schema (program text and plan to document): bumped when its meaning changes.
-const POINTER: u32 = 101;
-/// The document facts' schema: bumped when the encoding or the facts' meaning changes.
-const FACTS: u32 = 102;
+const POINTER: u32 = 102;
+/// The document facts' schema: bumped when the encoding or the facts' meaning changes (103: `fact_rel`).
+const FACTS: u32 = 103;
 
 /// The path a lookup names. The entries read no path (`path_dependent: false`); the store keeps them under none.
 const PATH: &str = "rerail/prepared";
