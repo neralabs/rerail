@@ -15,9 +15,9 @@ mod build_languages;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
-pub mod content_store;
+pub use rerail_store::content_store;
 pub mod git_ignore;
-pub mod git_workspace;
+pub use rerail_store::git_workspace;
 mod main_instance;
 mod model;
 pub mod process;
@@ -62,6 +62,22 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 /// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
 /// which the system allocator served at 10% of the parse. Installed when the addon loads, before
 /// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
+/// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
+/// and the prefilter's tapes. Set as the library loads, before any store is opened.
+fn install_store_functions() {
+    content_store::set_connection_functions(|db| {
+        code_rule_dsl::text::install(db)?;
+        code_rule_dsl::prefilter::tapes::install(db)
+    });
+}
+
+/// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.
+#[cfg(windows)]
+#[napi_derive::module_init]
+fn install_store_functions_on_load() {
+    install_store_functions();
+}
+
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
@@ -69,6 +85,7 @@ fn install_tree_sitter_allocator() {
     // is made: the one pool, of the most threads the process uses (`RERAIL_THREADS`), the process's main thread
     // one of them when it is the one loading.
     threads::configure(threads::is_main_thread());
+    install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
         // SAFETY: jemalloc's malloc accepts any size.

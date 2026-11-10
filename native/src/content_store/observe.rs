@@ -34,11 +34,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// One trusted file in this many is hashed again each process (`RERAIL_VALIDATE_EVERY`).
-pub(crate) const VALIDATE_EVERY: u64 = 64;
+pub const VALIDATE_EVERY: u64 = 64;
 
 /// What is at a path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Kind {
+pub enum Kind {
     Missing,
     File,
     Dir,
@@ -66,7 +66,7 @@ impl Kind {
 
 /// A path's stat, as the observer compares it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(crate) struct Stat {
+pub struct Stat {
     pub dev: i64,
     pub ino: i64,
     pub size: i64,
@@ -89,7 +89,7 @@ impl Stat {
 }
 
 /// A directory's entries: (name, is a directory), sorted by name.
-pub(crate) type Listing = Arc<Vec<(String, bool)>>;
+pub type Listing = Arc<Vec<(String, bool)>>;
 
 /// What the observer knows of a path: its stat when observed, and the answer computed then.
 #[derive(Clone, Debug)]
@@ -112,7 +112,7 @@ impl Entry {
 
 /// What the observer did, for profiles and benchmarks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Counts {
+pub struct Counts {
     /// `stat` calls.
     pub stats: u64,
     /// Answers reused on a stat.
@@ -132,7 +132,7 @@ pub(crate) struct Counts {
 }
 
 impl Counts {
-    pub(crate) fn since(&self, before: &Counts) -> Counts {
+    pub fn since(&self, before: &Counts) -> Counts {
         Counts {
             stats: self.stats - before.stats,
             reused: self.reused - before.reused,
@@ -164,7 +164,7 @@ impl std::fmt::Display for Counts {
 }
 
 /// The observer of one store (or of none: `RERAIL_TAPE_CACHE=off`, answers kept for the process only).
-pub(crate) struct Observer {
+pub struct Observer {
     db: Option<Connection>,
     entries: HashMap<PathBuf, Entry>,
     /// Paths whose entry changed since the last `flush`.
@@ -174,7 +174,7 @@ pub(crate) struct Observer {
     new_aliases: Vec<(Vec<u8>, [u8; 32])>,
     epoch: u64,
     validate_every: u64,
-    pub(crate) counts: Counts,
+    pub counts: Counts,
     /// The working directory, for relative paths: an entry is kept by its absolute path.
     cwd: PathBuf,
     /// The Git work trees this run has discovered (`git`): a clean file's digest may come from its blob.
@@ -277,7 +277,7 @@ impl Observer {
     }
 
     /// Loads every kept entry under `dir` at once: one range read, for a walk.
-    pub(crate) fn preload(&mut self, dir: &Path) {
+    pub fn preload(&mut self, dir: &Path) {
         let dir = &self.abs(dir);
         let Some(db) = self.db.as_ref() else { return };
         let lo = dir.to_string_lossy().into_owned();
@@ -323,7 +323,7 @@ impl Observer {
     }
 
     /// What is at `path` now (following symlinks): one `stat`.
-    pub(crate) fn kind(&mut self, path: &Path) -> Kind {
+    pub fn kind(&mut self, path: &Path) -> Kind {
         self.stat(path).map_or(Kind::Missing, |(k, _)| k)
     }
 
@@ -344,7 +344,7 @@ impl Observer {
     }
 
     /// The sha256 of the file at `path` (`None`: not a readable file), read only when its stat changed.
-    pub(crate) fn digest(&mut self, path: &Path) -> Option<[u8; 32]> {
+    pub fn digest(&mut self, path: &Path) -> Option<[u8; 32]> {
         let path = &self.abs(path);
         let started = now_ns();
         let (kind, now) = self.stat(path)?;
@@ -388,12 +388,12 @@ impl Observer {
     }
 
     /// Starts a run: the Git work trees are discovered again, as they may have changed since.
-    pub(crate) fn begin(&mut self) {
+    pub fn begin(&mut self) {
         self.git.clear();
     }
 
     /// The Git work tree holding `root`, discovered once per run (`None`: not in one, or Git cannot read it).
-    pub(crate) fn git(&mut self, root: &Path) -> Option<Arc<crate::git_workspace::GitWorkspace>> {
+    pub fn git(&mut self, root: &Path) -> Option<Arc<crate::git_workspace::GitWorkspace>> {
         let root = std::fs::canonicalize(self.abs(root)).ok()?;
         if let Some((_, g)) = self.git.iter().find(|(under, _)| root.starts_with(under)) {
             return Some(Arc::clone(g));
@@ -405,7 +405,7 @@ impl Observer {
     }
 
     /// The bytes of the file at `path` and their sha256 (`None`: not a readable file). Always reads.
-    pub(crate) fn read(&mut self, path: &Path) -> Option<(Vec<u8>, [u8; 32])> {
+    pub fn read(&mut self, path: &Path) -> Option<(Vec<u8>, [u8; 32])> {
         let path = &self.abs(path);
         let started = now_ns();
         let (kind, now) = self.stat(path)?;
@@ -429,7 +429,7 @@ impl Observer {
 
     /// The entries of the directory at `dir` (`None`: not a readable directory), listed only when its stat changed.
     /// An entry is a directory when what it names is one, symlinks followed.
-    pub(crate) fn listing(&mut self, dir: &Path) -> Option<Listing> {
+    pub fn listing(&mut self, dir: &Path) -> Option<Listing> {
         let dir = &self.abs(dir);
         let started = now_ns();
         let (kind, now) = self.stat(dir)?;
@@ -462,12 +462,12 @@ impl Observer {
     }
 
     /// The digest of `dir`'s listing, as `listing` gives it.
-    pub(crate) fn listing_digest(&mut self, dir: &Path) -> Option<[u8; 32]> {
+    pub fn listing_digest(&mut self, dir: &Path) -> Option<[u8; 32]> {
         self.listing(dir).map(|l| listing_digest(&l))
     }
 
     /// The digest of a clean Git blob's bytes, when the store has seen them (`git_alias`).
-    pub(crate) fn alias(&mut self, blob: &[u8]) -> Option<[u8; 32]> {
+    pub fn alias(&mut self, blob: &[u8]) -> Option<[u8; 32]> {
         if let Some(d) = self.aliases.get(blob) {
             return Some(*d);
         }
@@ -486,26 +486,26 @@ impl Observer {
     }
 
     /// Records that a Git blob's bytes have `digest`.
-    pub(crate) fn record_alias(&mut self, blob: &[u8], digest: [u8; 32]) {
+    pub fn record_alias(&mut self, blob: &[u8], digest: [u8; 32]) {
         if self.aliases.insert(blob.to_owned(), digest) != Some(digest) {
             self.new_aliases.push((blob.to_owned(), digest));
         }
     }
 
     /// The record of the last run under `key`: what it consulted, and its outputs (`corpus::reuse`).
-    pub(crate) fn run_record(&self, key: &str) -> Option<(String, Vec<u8>)> {
+    pub fn run_record(&self, key: &str) -> Option<(String, Vec<u8>)> {
         self.db.as_ref()?.prepare_cached("SELECT consulted, outputs FROM run_record WHERE key=?1").ok()?.query_row([key], |r| Ok((r.get(0)?, r.get(1)?))).optional().ok()?
     }
 
     /// Keeps a run's record under `key`, replacing the last.
-    pub(crate) fn put_run_record(&self, key: &str, consulted: &str, outputs: &[u8]) {
+    pub fn put_run_record(&self, key: &str, consulted: &str, outputs: &[u8]) {
         if let Some(db) = self.db.as_ref() {
             let _ = db.execute("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
         }
     }
 
     /// Writes what changed since the last flush to the store, in one transaction.
-    pub(crate) fn flush(&mut self) {
+    pub fn flush(&mut self) {
         let Some(db) = self.db.as_mut() else {
             self.dirty.clear();
             self.new_aliases.clear();
@@ -538,7 +538,7 @@ impl Observer {
 }
 
 /// The P0 store beside a content store: `<content store>.files`.
-pub(crate) fn store_beside(content_store: &Path) -> PathBuf {
+pub fn store_beside(content_store: &Path) -> PathBuf {
     let mut name = content_store.as_os_str().to_owned();
     name.push(".files");
     PathBuf::from(name)
@@ -546,7 +546,7 @@ pub(crate) fn store_beside(content_store: &Path) -> PathBuf {
 
 /// Runs `f` with the observer of the P0 store at `store` (`None`: in memory, for the process). One observer per
 /// store, for the process.
-pub(crate) fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) -> T {
+pub fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) -> T {
     static OBSERVERS: OnceLock<Mutex<HashMap<Option<PathBuf>, Observer>>> = OnceLock::new();
     let all = OBSERVERS.get_or_init(Default::default);
     let mut all = all.lock().unwrap_or_else(|e| e.into_inner());
@@ -556,7 +556,7 @@ pub(crate) fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) 
 }
 
 /// A hex digest, as records keep them.
-pub(crate) fn hex(d: &[u8; 32]) -> String {
+pub fn hex(d: &[u8; 32]) -> String {
     d.iter().map(|b| format!("{b:02x}")).collect()
 }
 

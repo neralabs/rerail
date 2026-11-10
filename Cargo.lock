@@ -3192,6 +3192,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-store",
  "rerail-tier1",
  "ruff_python_ast",
  "ruff_python_parser",
@@ -3214,6 +3215,28 @@ dependencies = [
  "tree-sitter-language",
  "unicode-normalization",
  "windows-sys 0.61.2",
+ "zstd",
+]
+
+[[package]]
+name = "rerail-store"
+version = "0.1.0"
+dependencies = [
+ "foldhash",
+ "gix",
+ "hashbrown 0.16.1",
+ "libc",
+ "parking_lot",
+ "rayon",
+ "regex",
+ "regex-syntax",
+ "rerail-accel",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tikv-jemalloc-sys",
  "zstd",
 ]
 

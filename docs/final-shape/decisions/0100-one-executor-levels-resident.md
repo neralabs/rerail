@@ -454,6 +454,49 @@ device, so each is one program whose GPU form runs its passes.
 
 
 
+### 14. Execution costs recorded, and fitted back into the prices
+
+The prices start from priors: a table of seconds a unit for each form and lane, and a program's own rates.
+Some are guesses (§13). The executor already measures every job it runs, but only for the profile of one run.
+Now every finished job also becomes a **sample**, kept across runs, and the prices learn from the samples.
+
+A sample is what a regressor would need later, one row a job:
+
+- the lane, its launches' kernel names (a program's own name, a form's otherwise), the launch count and units;
+- what the price expected: wall seconds and host CPU seconds;
+- what it cost: its wall, its thread's CPU, its wait in the queue, and its phases (encode, upload, the device's
+  submit and schedule, and so on);
+- whether it was cold (it compiled a pipeline or made a buffer), whether it failed, and the machine's load.
+
+Each row also has its time, its machine (the architecture, the cores, the GPU) and the pool's thread count.
+
+**Written back on a thread of its own.** The scoreboard keeps a job's sample when it finishes, in a bounded
+buffer (100,000; past it, samples are dropped and counted). A thread wakes once a second, takes the buffer and
+writes it to SQLite in one transaction. A command's end writes what is left. The run never waits on the store.
+
+```rust
+// accel/src/score.rs, Scoreboard::finish: one sample a finished job
+held.push(Sample { lane: t.lane, forms, units, estimate: est, wall: ran, cpu, cold, ... });
+```
+
+**Read lazily, on another thread.** When the run first makes an executor, a pool job reads this machine's
+latest 20,000 samples and fits rates from them. Until it is done, the prices are the priors. Each price looks
+the rate up in its own thread's copy, taken again only when the fitted rates change, so pricing takes no shared
+lock. (A first version read a shared `RwLock` on every price: 7 s more CPU on the pack, from its contended
+cache line.)
+
+**What is fitted.** For now, only what one sample measures directly: a device lane's rate, from its wall less
+its submission and launch costs, and a program's rate on the cores (one job, one thread). A table form on the
+cores splits over threads, so its wall is not one unit's cost, and it keeps its prior. A rate is the median of
+at least 8 warm, successful samples of one kernel name alone. The profile lists the samples read and each rate
+in place.
+
+**The store** is `RERAIL_COSTS` (a SQLite file, or `off`), else `~/.cache/rerail/costs.sqlite`. Tests write
+none unless it is set. It keeps 500,000 samples for each machine.
+
+A regressor trained on the table (over units, load, launches and phases) replaces the medians later, behind the
+same lookup.
+
 ## Order of work
 
 1. **Merge the executor's branch** and renumber its decisions to 0098 and 0099. *Done*: findings identical on the
@@ -660,7 +703,15 @@ device, so each is one program whose GPU form runs its passes.
     - The span prefilter is a program. Its test checks every (file, pattern) against the pattern alone, pinned to
       the cores, pinned to the GPU, and placed by price.
     - The engine's Metal programs use the shared device and queue; the dead dispatcher is removed.
-17. **Gates:**
+17. **Execution costs recorded (§14).** *Built*:
+    - Samples kept by the scoreboard, written on the statistics thread and read back on a pool job.
+    - Rates fitted into the prices. A test fits a device lane's rate from warm samples of one kernel, and leaves
+      out cold, failed and mixed jobs and a table form on the cores.
+    - Over three runs of the pack sharing one store, each run read the samples of the runs before it (173, then
+      346). No rate was fitted yet: a run gives only 4 warm samples of each device kernel. The findings are
+      identical. CPU against the build before, in turn at a load of 48–103: 46.5 s and 42.1 s, against 48.7 s and
+      49.1 s.
+18. **Gates:**
    - The pack's findings are identical, and so are the data layer's at scale.
    - Host CPU (user + sys) of the device joins is below the CPU radix sort join's, on the lab's 232 joins and on
      the pack.
@@ -671,8 +722,8 @@ device, so each is one program whose GPU form runs its passes.
 - **Which waits run jobs.** A thread waiting on the pool may run a long job of another's, and its own work then
   waits for it (§12, measured). A critical path that still suffers from it would wait without running jobs, at
   the cost of a thread.
-- **Program prices are priors.** The span prefilter's rates are guesses; the scoreboard measures each launch, and
-  the rates should come from it.
+- **Program prices are priors** until enough samples are kept (§14). A table form on the cores is not fitted yet;
+  a regressor over the samples would fit it, with the threads it split over as a feature.
 - **The transducer's other GPU paths** become programs (§13) as they reach a corpus run.
 
 - **Count tables and the scalar summaries overlap.** The engine's per-key memo of scalar summaries answers a count
