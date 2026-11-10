@@ -1,0 +1,97 @@
+// General dispatch families. BaseServerPlan provenance remains an explicit unsupported scope.
+#include "python/ast-shape.rr"
+#include "python/source-range.rr"
+.decl sd_document(d: number, path: symbol)
+sd_document(d,p) :- doc(d,_,_), option("dispatchPath",p).
+sd_document(d,p) :- doc(d,p,_), !option("dispatchPath",_).
+.decl sd_selected(d: number)
+sd_selected(d) :- sd_document(d,p), sd_root(root), prefix(cat(root,"/"),p), !sd_late(p),
+    !contains("/tests/",cat("/",p,"/")), !contains("/test/",cat("/",p,"/")), !syntax_error(d,_,_).
+.decl sd_terminal(e: node, name: symbol)
+sd_terminal(e,@nfkc(n)) :- ast_name(e,n).
+sd_terminal(e,@nfkc(n)) :- kind(e,"attribute"), field(e,"attribute",a), text(a,n).
+sd_terminal(e,@nfkc(n)) :- kind(e,"dotted_name"), child(e,a,i), text(a,n), i=max j : { child(e,_,j) }.
+.decl sd_pos(a: node)
+sd_pos(a) :- kind(al,"argument_list"), child(al,a,_), !kind(a,"keyword_argument"), !kind(a,"dictionary_splat"), !kind(a,"comment").
+.decl sd_arg(c: node, i: number, a: node)
+sd_arg(c,i,a) :- kind(c,"call"), field(c,"arguments",al), child(al,x,j), sd_pos(x), unparen(x,a),
+    i=count : {child(al,y,k),sd_pos(y),k<j}.
+sd_arg(c,0,a) :- kind(c,"call"), field(c,"arguments",a), kind(a,"generator_expression").
+.decl sd_callee(c: node, name: symbol)
+sd_callee(c,n) :- kind(c,"call"), field(c,"function",raw), unparen(raw,f), sd_terminal(f,n).
+.decl sd_backend(e: node)
+sd_backend(e) :- ast_name(e,raw), @nfkc(raw)="backend_type".
+sd_backend(e) :- kind(e,"attribute"), field(e,"attribute",a), text(a,raw), @nfkc(raw)="backend_type".
+sd_backend(e) :- kind(e,"attribute"), field(e,"object",raw), unparen(raw,v), sd_backend(v).
+sd_backend(e) :- sd_callee(e,n), sd_backend_call(n).
+.decl sd_literal(e: node)
+sd_literal(e) :- str_const(e,v), sd_backend_pattern(pattern), match(pattern,v).
+sd_literal(e) :- kind(e,"attribute"), field(e,"object",raw), unparen(raw,v), ast_name(v,n), @nfkc(n)="BackendType".
+.decl sd_desc(e: node, child: node)
+.decl sd_walk_root(e: node)
+sd_walk_root(e) :- kind(e,"comparison_operator").
+sd_walk_root(e) :- sd_operand(_,e).
+sd_desc(e,e) :- sd_walk_root(e).
+sd_desc(e,n) :- sd_walk_root(e), within(n,e).
+.decl sd_operand(e: node, operand: node)
+sd_operand(e,v) :- cmp_pair(e,_,_,a,_), unparen(a,v).
+sd_operand(e,v) :- cmp_pair(e,_,_,_,a), unparen(a,v).
+.decl sd_type_name(e: node, name: symbol)
+sd_type_name(e,n) :- sd_terminal(e,n), (kind(e,"identifier");kind(e,"attribute");kind(e,"dotted_name")).
+sd_type_name(e,n) :- kind(e,"tuple"), child(e,x,_), unparen(x,v), sd_type_name(v,n).
+sd_type_name(e,n) :- kind(e,"binary_operator"), op(e,"|"), (field(e,"left",x);field(e,"right",x)), unparen(x,v), sd_type_name(v,n).
+.decl sd_step(name: symbol)
+sd_step(n) :- sd_type_name(_,n), !sd_nonstep(n), (sd_step_name(n);sd_step_suffix(s),suffix(s,n)).
+sd_step(n) :- str_const(_,n), !sd_nonstep(n), (sd_step_name(n);sd_step_suffix(s),suffix(s,n)).
+.decl sd_dialect(e: node)
+sd_dialect(e) :- ast_name(e,n), @nfkc(n)="dialect".
+sd_dialect(e) :- kind(e,"attribute"), field(e,"attribute",a), text(a,n), @nfkc(n)="dialect".
+sd_dialect(e) :- sd_callee(e,"getattr"), sd_arg(e,1,a), str_const(a,"dialect").
+.decl sd_truth(e: node)
+sd_truth(e) :- sd_dialect(e).
+sd_truth(e) :- kind(e,"not_operator"), field(e,"argument",raw), unparen(raw,x), sd_dialect(x).
+sd_truth(e) :- sd_callee(e,"bool"), sd_arg(e,0,x), !sd_arg(e,1,_), sd_dialect(x).
+sd_truth(e) :- kind(e,"boolean_operator"), (field(e,"left",raw);field(e,"right",raw)), unparen(raw,x), sd_truth(x).
+.decl sd_condition(n: node)
+sd_condition(x) :- (kind(s,"if_statement");kind(s,"elif_clause");kind(s,"while_statement")), field(s,"condition",raw), unparen(raw,x).
+sd_condition(x) :- kind(s,"conditional_expression"), child(s,raw,1), unparen(raw,x).
+sd_condition(x) :- kind(s,"assert_statement"), child(s,raw,0), unparen(raw,x).
+sd_condition(x) :- kind(s,"case_clause"), field(s,"guard",g), child(g,raw,0), unparen(raw,x).
+.decl sd_typename_expression(n: node)
+sd_typename_expression(n) :- kind(n,"attribute"), field(n,"attribute",a), text(a,name), @nfkc(name)="__name__",
+    field(n,"object",raw), unparen(raw,x), sd_callee(x,"type").
+sd_typename_expression(n) :- kind(n,"attribute"), field(n,"attribute",a), text(a,name), @nfkc(name)="__name__",
+    field(n,"object",raw), unparen(raw,x), kind(x,"attribute"), field(x,"attribute",b), text(b,bname), @nfkc(bname)="__class__".
+.decl sd_hit(n: node, layer: number, code: symbol)
+sd_hit(n,layer,"SPD001") :- py_ast_attribute(n,raw,layer), sd_family(@nfkc(raw)).
+sd_hit(n,0,"SPD001") :- kind(n,"comparison_operator"), sd_desc(n,a), sd_backend(a), sd_desc(n,b), sd_literal(b).
+sd_hit(n,0,"SPD002") :- sd_callee(n,"isinstance"), sd_arg(n,1,a), sd_type_name(a,t), sd_step(t).
+sd_hit(n,0,"SPD002") :- kind(n,"comparison_operator"), sd_operand(n,a), sd_callee(a,"type"), sd_operand(n,b), sd_type_name(b,t), sd_step(t).
+sd_hit(n,0,"SPD002") :- kind(n,"class_pattern"), child(n,c,0), sd_type_name(c,t), sd_step(t).
+sd_hit(n,0,"SPD003") :- kind(n,"comparison_operator"), sd_operand(n,a), sd_typename_expression(a), sd_operand(n,b), sd_desc(b,c), str_const(c,t), sd_step(t).
+sd_hit(n,0,"SPD004") :- kind(n,"comparison_operator"), sd_operand(n,a), sd_dialect(a), sd_operand(n,b), kind(b,"none").
+sd_hit(n,0,"SPD004") :- sd_condition(n), sd_truth(n).
+.decl sd_scope_kind(k: symbol)
+sd_scope_kind("function_definition"). sd_scope_kind("class_definition").
+.decl sd_decorator_owner(n: node, f: node)
+sd_decorator_owner(n,f) :- decorator(f,e), within(n,e).
+.decl sd_scope(n: node, name: symbol)
+sd_scope(n,@replace_all(@nfkc(q),"\\.<locals>","")) :- sd_hit(n,_,_), nearest(n,f,sd_scope_kind), py_qualname(f,q), !sd_decorator_owner(n,_).
+sd_scope(n,@replace_all(@nfkc(q),"\\.<locals>","")) :- sd_decorator_owner(n,f), py_qualname(f,q).
+sd_scope(n,"<module>") :- sd_hit(n,_,_), !nearest(n,_,sd_scope_kind), !sd_decorator_owner(n,_).
+.decl sd_extent(n: node, layer: number, start: number, end: number)
+sd_extent(n,0,a,b) :- node(_,n,k,a,b), k!="dotted_name".
+sd_extent(n,layer,a,b) :- node(_,n,"dotted_name",a,_), py_ast_attribute(n,_,layer),
+    child(n,c,i), i=last-layer, last=max j : {child(n,_,j)}, node(_,c,_,_,b).
+.decl sd_event(n: node, layer: number, code: symbol, scope: symbol, expression: symbol, normalized: symbol, line: number, order: number)
+sd_event(n,layer,code,scope,expression,normal,l,i) :- sd_hit(n,layer,code), docof(n,d), sd_selected(d), sd_scope(n,scope),
+    sd_extent(n,layer,a,b), source(d,sp), text(sp,src), expression=@byte_slice(src,a,b), sd_whitespace(w),
+    normal=@replace_all(@replace_all(expression,w," "),"^ +| +$",""), line(n,l), visit_index(n,i).
+.decl sd_occurrence(n: node, layer: number, code: symbol, count: number)
+sd_occurrence(n,k,c,prev+1) :- sd_event(n,k,c,s,e,normal,l,i),
+    prev=count : {sd_event(m,j,c,s,e2,normal,l2,i2), (l2<l;l2=l,e2<e;l2=l,e2=e,i2<i;l2=l,e2=e,i2=i,j<k)}.
+.violation Dispatch(at: span, code_value: symbol, scope: symbol, expression: symbol, occurrence: number, inventory: symbol, message: symbol) code {code_value} "{message}"
+Dispatch(@place(p,l),c,s,e,occ,cat(c,"|",p,"|",s,"|",normal,"|occurrence=",to_string(occ)),message) :-
+    sd_event(n,k,c,s,e,normal,l,_), sd_occurrence(n,k,c,occ), docof(n,d), sd_document(d,p), sd_message(c,message).
+.violation DispatchIncomplete(at: span) code "DISPATCH_INCOMPLETE" "BaseServerPlan executor provenance is not ported"
+DispatchIncomplete(@place(p,0)) :- sd_document(_,p), sd_base(p).

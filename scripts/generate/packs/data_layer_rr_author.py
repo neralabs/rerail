@@ -260,6 +260,8 @@ def main():
                   ('serverplan_name_inference', lambda s, t: serverplan_name_inference(s, t, header))]
     from data_layer_rr_composition import generate as composition
     generators.append(('plan_composition_architecture',lambda s,t:composition(s,t,header)[0]))
+    from data_layer_rr_dispatch import generate as dispatch
+    generators.append(('serverplan_dispatch_architecture',lambda s,t:dispatch(s,t,header)))
     unknown = set(args.check or []) - {name for name, _ in generators}
     if unknown: parser.error('Unknown checks: '+', '.join(sorted(unknown)))
     for check, generate in generators:

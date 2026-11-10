@@ -2687,6 +2687,25 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_no_blanket_grammar_bypass.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
+      "sha256": "e8192c3b01e973efe5b4db8907a3b361d6fef8a6017d2ac47eb9e44de195eed8",
+      "origin": "authored",
+      "upstreamPath": "scripts/lint_serverplan_dispatch_architecture.py",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/source-range.rr",
+      "sha256": "8fc15a864ee460ab1dff88a3aec950e0da21984fb4ee67064a00ca589291fddc",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/dispatch-source.rr",
+      "sha256": "375fbe7e0ff44e6ba0e246ae07cc142cbbbde1eb685c89f4e1769c0bf33b0861",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -3608,8 +3627,9 @@
       "batch": 6,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-dispatch-architecture.json",
       "legacySha256": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
-      "status": "absent",
-      "rulePath": null
+      "status": "draft",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
+      "ruleSha256": "e8192c3b01e973efe5b4db8907a3b361d6fef8a6017d2ac47eb9e44de195eed8"
     },
     {
       "check": "serverplan_quality",
@@ -4340,7 +4360,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
-    "status": "Committed root CLI 74bdcc6367bdc37c on Final ec3cfe1b7. Its current receipts verify 705 native executions for hasattr_async and 1635 for no_blanket_grammar_bypass; the separate 486-execution composition progress receipt retains its application-probe gap. Historical receipts retain their stated program, harness and engine cohorts.",
+    "status": "Checked byte-range source extraction committed; new CLI build and dispatch acceptance are pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4504,7 +4524,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "635dba50bfc5f9b136e9400c91a50e6aa8f2a2fd6b0270f61eded4243f5fbcce"
+        "sha256": "f48c5b47c9c0852d44753978f520a26eeefa6efa03d86f488b4a6ade975c9e15"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
@@ -4524,7 +4544,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/tests.rs",
-        "sha256": "2c1674668a024c6d06f85359b2867e191174d96acb28dcb44ddb54734927b937"
+        "sha256": "22567b903a82118e8655c1265f1f5f5a9aab1961c2c81e1fdc95c0f93e931f16"
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
