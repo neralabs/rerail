@@ -1,6 +1,6 @@
 //! The form of a cache (decision 0103 §1): what `.cache C by K` refuses.
 
-use super::{Cache, caches};
+use super::caches;
 
 fn program(text: &str) -> crate::code_rule_dsl::logic::front::Program {
     crate::code_rule_dsl::logic::rr::parse(text).unwrap()
@@ -18,7 +18,8 @@ const DECLS: &str = ".decl src(a: symbol, b: symbol)\n.input src\n.decl k(a: sym
 #[test]
 fn a_cache_is_a_key_rule_and_an_output_rule() {
     let p = program(&format!("{DECLS}.cache c by k\nk(a) :- src(a, _).\nc(a, b) :- k(a), src(a, b).\n.output c\n"));
-    assert_eq!(caches(&p).unwrap(), vec![Cache { out: "c".into(), key: "k".into(), cols: vec![0] }]);
+    let got = caches(&p).unwrap();
+    assert_eq!((got[0].out.as_str(), got[0].key.as_str(), got[0].cols.clone(), got.len()), ("c", "k", vec![0], 1));
     // The key in another column of the output.
     let p = program(&format!("{DECLS}.cache c by k\nk(a) :- src(a, _).\nc(b, a) :- k(a), src(a, b).\n.output c\n"));
     assert_eq!(caches(&p).unwrap()[0].cols, vec![1]);
