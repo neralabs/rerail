@@ -4651,7 +4651,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
     let inlined;
     let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
-    let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
+    let chose = super::profile::span(|| "inline or store".into());
+    let choice = if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None };
+    drop(chose);
+    let prog: &Program = match choice {
         Some((p, done)) => {
             super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
             inlined_rels = done.into_iter().collect();
@@ -4665,12 +4668,16 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                     }
                 }
             }
+            let _a = super::profile::span(|| "analysis of the inlined program".into());
             model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&inlined)).into();
             &inlined
         }
         None => prog,
     };
-    let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
+    let splitting = super::profile::span(|| "negation split".into());
+    let split_neg = if corpus { demand::split_negations(prog, &model) } else { None };
+    drop(splitting);
+    let prog: &Program = match split_neg {
         Some((p, demanded)) => {
             super::profile::decision("demand (decision 0048)", || {
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))

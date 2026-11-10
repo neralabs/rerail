@@ -79,14 +79,22 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
             }
         }
     }
+    // `RERAIL_INLINE_ONLY=r,…` (the lab's comparison): those relations inlined where they can be, every other stored.
+    let only: Option<Vec<String>> = std::env::var("RERAIL_INLINE_ONLY").ok().map(|v| v.split(',').map(str::to_owned).collect());
+    // The estimates below plan every rule, which a maintained program has about ten times of. They price only a
+    // relation that may be inlined: none (a session's part stores its relations, decision 0099), none are made.
+    let open = |rel: &str| !prog.qualified(rel, "no_inline") && !reasons.contains_key(rel) && readers.contains_key(rel);
+    if only.is_none() && !rules_of.keys().any(|rel| prog.qualified(rel, "inline") || open(rel)) {
+        let stored = rules_of.keys().filter(|rel| prog.qualified(rel, "no_inline")).count();
+        super::super::profile::decision("inline or store (decision 0099)", || format!("no relation may be inlined ({stored} `.decl … no_inline`): nothing estimated"));
+        return Ok(None);
+    }
     // Estimated rows and work of every derived relation, in evaluation order; observed rows where an earlier chunk
     // measured them. The estimates are the planner's while it prices the readers, then taken back.
     let (estimates, inserted) = estimate(prog, model, &rules_of, &sccs);
     let mut inline: BTreeSet<String> = BTreeSet::new();
     let mut lines: Vec<String> = Vec::new();
     let mut refused_inline: Vec<String> = Vec::new();
-    // `RERAIL_INLINE_ONLY=r,…` (the lab's comparison): those relations inlined where they can be, every other stored.
-    let only: Option<Vec<String>> = std::env::var("RERAIL_INLINE_ONLY").ok().map(|v| v.split(',').map(str::to_owned).collect());
     for (rel, rules) in &rules_of {
         let rel = *rel;
         if only.as_ref().is_some_and(|o| !o.iter().any(|x| x == rel)) {
