@@ -765,10 +765,34 @@ supports, and keep a support only where the next run maintains it. The data:
 - **A support derived again is rarely maintained next step.** Under `estimate`, 4 of 166 go from derived again
   to maintained at 07→08, and 5 of 455 at 23→24. So not keeping it would rarely cost a rebuild.
 
-**What this suggests.** Keep a support that is a view of one input a view in a session as well. Its old rows are
+**What this suggests** (built: next section). Keep a support that is a view of one input a view in a session as well. Its old rows are
 the view over the input's old rows, and its delta is the view over the input's delta. That saves the 19 views'
 time and about a quarter of the kept memory, with no third form in the rewrite. Folding the other supports into
 their heads would save 0.15–0.35 s a step for a third form, and fewer, larger strata is 0101's work anyway.
+
+### Built: a view of one input stays a view in a session (2026-11-10)
+
+This follows the data above. A view of one input is a relation of one rule whose body is one positive atom of an
+input, with every input column in its head. A row of it is then exactly one row of the input. The cold run plans
+such a relation as a SQL view. A session now treats it the same way:
+- its rule stays as given, so it plans as a view;
+- its old rows are the view over the input's old rows, and its delta is the view over the input's delta;
+- no rows of it are kept, and the cut neither runs it nor binds it when its input is unchanged.
+
+`RERAIL_SESSION_VIEWS=off` gives the old behaviour.
+
+**Measured**, both modes at once on one binary (cross-part CPU seconds and kept megabytes):
+
+| | O125 06 | 07 | 08 | stress 23 | 24 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| views, CPU | 14.3 | 12.2 | 12.0 | 12.0 | 13.3 |
+| relations, CPU | 16.1 | 12.4 | 12.1 | 13.6 | 14.1 |
+| views, kept | 58.5 | 57.6 | 55.2 | 40.1 | 59.6 |
+| relations, kept | 73.7 | 72.4 | 69.9 | 51.7 | 74.9 |
+
+The engine's work is unchanged, as expected: the cost was in making, indexing and measuring the relations, not in
+joins. There are 30–93 fewer engine calls a step, and the kept memory falls by 20–22%. Steps 08 and 24 equal the
+full derive, and the findings gate is unchanged.
 
 ### What makes levels expensive
 
