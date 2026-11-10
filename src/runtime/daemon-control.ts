@@ -1,3 +1,4 @@
+import type { SpawnOptions } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
@@ -10,7 +11,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
-import { loadNativeBinding, type NativeBinding } from "../engine/native/native.js";
+import { loadNativeBinding } from "../engine/native/native.js";
 import { forgetMainInstanceHolder } from "../engine/native/main-instance.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
@@ -413,24 +414,79 @@ export async function probeDaemon(
   }
 }
 
-/** What a daemon lookup asks of the machine; tests pass their own. */
+/** A process Node's spawn started, as daemon-control reads it: its pid, how it ended, and letting this process exit first. */
+export interface StartedChild {
+  readonly pid?: number | undefined;
+  once(event: "error", listener: (error: Error) => void): unknown;
+  once(event: "exit", listener: (code: number | null) => void): unknown;
+  unref(): void;
+}
+
+/** What Windows' native spawn starts: a program, its arguments, its folder (null keeps this process's), and its log. */
+export interface NativeLaunch {
+  program: string;
+  args: string[];
+  cwd: string | null;
+  env: Record<string, string>;
+  logFile: string;
+}
+
+/**
+ * A process the native spawn started: its pid, and its exit code (null while it runs), read from the handle the native
+ * module kept, so a pid Windows has given to another process is no answer. A binary built before that has no `exitCode`.
+ */
+export interface NativeProcess {
+  pid: number;
+  exitCode?: () => number | null;
+}
+
+/**
+ * Everything daemon-control asks of the machine it runs on. Each entry point that reaches the OS takes one,
+ * {@link THIS_MACHINE} unless a test passes its own, so a test states the platform it checks and runs on every OS. The
+ * helpers that only compute from a platform (`readDaemonState`, `stillRunningMessage`, `browserOpener`) take the
+ * machine's.
+ */
 export interface DaemonMachine {
   platform: NodeJS.Platform;
+  /** `process.kill`; signal 0 asks whether a pid is live (`processState`). */
   kill: ProcessSignal;
+  /** This process's environment: `RERAIL_HOME`, `RERAIL_AUTOSTART`, `SystemRoot`, and what a launched process inherits. */
+  env: NodeJS.ProcessEnv;
   /** The named pipes that exist on Windows, read from `\\.\pipe\` without connecting to any. */
   pipes(): readonly string[];
   /** Whether the engine on `socketPath` proves it holds `accessToken`, which it never sees (`engineHoldsCapability`). */
   holdsCapability(socketPath: string, accessToken: string): Promise<boolean>;
   /** Removes the main-instance record when it names `pid` (`forgetMainInstanceHolder`). */
   forgetMainInstanceHolder(pid: number): void;
+  /** The Node binary Rerail's own processes run under ({@link nodeExecutable}). */
+  nodeExecutable(): string;
+  /** Windows: starts a process through the native module's spawn ({@link launchDetached} says why). */
+  spawnDetached(launch: NativeLaunch): NativeProcess;
+  /** Node's spawn, through `child-process.ts`, which hides its window: the daemon's on macOS and Linux, and Orca's CLI. */
+  spawn(command: string, args: readonly string[], options: SpawnOptions): StartedChild;
+  /** Starts the browser opener, whose window the person is meant to see (`spawnShown`). */
+  spawnShown(command: string, args: readonly string[], options: SpawnOptions): StartedChild;
+}
+
+/** Starts `launch` through the native module's spawn; its exit code comes from the handle the module kept, if it keeps one. */
+function nativeSpawnDetached(launch: NativeLaunch): NativeProcess {
+  const native = loadNativeBinding();
+  const pid = native.spawnDetached(launch.program, launch.args, launch.cwd, launch.env, launch.logFile);
+  if (native.detachedExitCode === undefined) return { pid };
+  return { pid, exitCode: () => native.detachedExitCode?.(pid) ?? null };
 }
 
 const THIS_MACHINE: DaemonMachine = {
   platform: process.platform,
   kill: (pid, signal) => process.kill(pid, signal),
+  env: process.env,
   pipes: listPipes,
   holdsCapability: async (socketPath, accessToken) => await engineHoldsCapability(socketPath, accessToken),
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
+  nodeExecutable: () => nodeExecutable(),
+  spawnDetached: nativeSpawnDetached,
+  spawn: (command, args, options) => spawn(command, args, options),
+  spawnShown,
 };
 
 /**
@@ -501,8 +557,8 @@ export async function lookupDaemon(
 }
 
 /** The healthy daemon recorded in `home`, or undefined when there is none to reuse. */
-export async function findRunningDaemon(home: string): Promise<RunningDaemon | undefined> {
-  const lookup = await lookupDaemon(home);
+export async function findRunningDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<RunningDaemon | undefined> {
+  const lookup = await lookupDaemon(home, machine);
   return lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
 }
 
@@ -533,6 +589,7 @@ export async function withStartLock<T>(
   home: string,
   operation: () => Promise<T>,
   timing: StartLockTiming = DEFAULT_START_LOCK_TIMING,
+  machine: DaemonMachine = THIS_MACHINE,
 ): Promise<T> {
   const lockPath = join(home, START_LOCK_DIR);
   const leasePath = join(lockPath, "lease.json");
@@ -544,7 +601,7 @@ export async function withStartLock<T>(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const lease = await readStartLockLease(leasePath);
-      const stale = lease === undefined || !processAlive(lease.pid) || lease.expiresAt < Date.now();
+      const stale = lease === undefined || !processAlive(lease.pid, machine.kill) || lease.expiresAt < Date.now();
       if (stale) {
         await rm(lockPath, { recursive: true, force: true });
         continue;
@@ -597,23 +654,27 @@ export interface DaemonControl {
  * stable Homebrew symlink is the usual cause) kills it before it can answer. Repairing here, in the launcher,
  * puts the rebuild and any unrepairable failure in front of whoever ran `rerail daemon start` rather than in the log.
  */
-async function repairSqlite(control: DaemonControl): Promise<void> {
+async function repairSqlite(control: DaemonControl, machine: DaemonMachine): Promise<void> {
   const repair = control.ensureSqlite ?? (async (packageRoot: string) => await ensureSqlite(packageRoot, {
-    executable: nodeExecutable(),
+    executable: machine.nodeExecutable(),
     log: line => process.stderr.write(`${line}\n`),
   }));
   const result = await repair(control.packageRoot);
   if (result.rebuilt) process.stderr.write(`Rebuilt better-sqlite3 in ${result.prefix}\n`);
 }
 
-export async function startDaemon(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
+export async function startDaemon(
+  control: DaemonControl,
+  options: DaemonLaunchOptions,
+  machine: DaemonMachine = THIS_MACHINE,
+): Promise<StartDaemonResult> {
   makeRerailHome(control.home);
   return await withStartLock(control.home, async () => {
-    const lookup = await lookupDaemon(control.home);
+    const lookup = await lookupDaemon(control.home, machine);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
-    return await spawnDaemon(control, options);
-  });
+    return await spawnDaemon(control, options, machine);
+  }, DEFAULT_START_LOCK_TIMING, machine);
 }
 
 /**
@@ -621,20 +682,24 @@ export async function startDaemon(control: DaemonControl, options: DaemonLaunchO
  * another managed package. Hooks use this before sending engine service configuration:
  * an older daemon cannot safely accept fields introduced by the active hook.
  */
-export async function startDaemonForPackage(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
+export async function startDaemonForPackage(
+  control: DaemonControl,
+  options: DaemonLaunchOptions,
+  machine: DaemonMachine = THIS_MACHINE,
+): Promise<StartDaemonResult> {
   makeRerailHome(control.home);
   return await withStartLock(control.home, async () => {
-    const lookup = await lookupDaemon(control.home);
+    const lookup = await lookupDaemon(control.home, machine);
     if (lookup.status === "running") {
       if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
       }
-      await stopFoundDaemon(control.home, lookup);
-      return await spawnDaemon(control, options);
+      await stopFoundDaemon(control.home, lookup, machine);
+      return await spawnDaemon(control, options, machine);
     }
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
-    return await spawnDaemon(control, options);
-  });
+    return await spawnDaemon(control, options, machine);
+  }, DEFAULT_START_LOCK_TIMING, machine);
 }
 
 /** Whether a healthy daemon was launched from the package the caller is executing. */
@@ -652,23 +717,28 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
  * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon. A daemon that is alive but busy is waited for
  * (`patientLookup`), until `deadline` (epoch ms) when the caller names one, as a hook does.
  */
-export async function daemonEngineEndpoint(replaceOtherPackage: boolean, deadline?: number): Promise<EngineEndpoint> {
-  const home = defaultRerailHome();
+export async function daemonEngineEndpoint(
+  replaceOtherPackage: boolean,
+  deadline?: number,
+  machine: DaemonMachine = THIS_MACHINE,
+): Promise<EngineEndpoint> {
+  const home = defaultRerailHome(machine.env);
   const packageRoot = PACKAGE_ROOT;
   const control = { home, packageRoot };
   const options = { dev: false };
   let daemon: RunningDaemon | undefined;
   try {
-    if (process.env.RERAIL_AUTOSTART === "0") {
-      const lookup = await patientLookup(home, undefined, deadline);
+    if (machine.env.RERAIL_AUTOSTART === "0") {
+      const lookup = await patientLookup(home, machine, deadline);
       if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
       daemon = lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
     } else {
-      daemon = (replaceOtherPackage ? await startDaemonForPackage(control, options) : await startDaemon(control, options)).daemon;
+      const start = replaceOtherPackage ? startDaemonForPackage : startDaemon;
+      daemon = (await start(control, options, machine)).daemon;
     }
   } catch (error) {
     if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
-    const answered = await patientLookup(home, error.lookup, deadline);
+    const answered = await patientLookup(home, machine, deadline, error.lookup);
     if (answered.status !== "running") throw error;
     daemon = { state: answered.state, health: answered.health };
   }
@@ -692,10 +762,12 @@ export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclu
  * from another package (an update installed mid-session) is replaced as `daemonEngineEndpoint(true)` replaces it, so
  * steering carries on with this package's engine.
  */
-export async function runningDaemonEngineEndpoint(deadline?: number): Promise<HookDaemon> {
-  const lookup = await patientLookup(defaultRerailHome(), undefined, deadline);
+export async function runningDaemonEngineEndpoint(deadline?: number, machine: DaemonMachine = THIS_MACHINE): Promise<HookDaemon> {
+  const lookup = await patientLookup(defaultRerailHome(machine.env), machine, deadline);
   if (lookup.status !== "running") return lookup;
-  const endpoint = await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true, deadline);
+  const endpoint = await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT)
+    ? engineEndpointOf(lookup.state)
+    : await daemonEngineEndpoint(true, deadline, machine);
   return { status: "running", endpoint };
 }
 
@@ -711,11 +783,16 @@ export const HOOK_DAEMON_WAIT_MS = PROBE_TIMEOUT_MS + BUSY_DAEMON_WAIT_MS;
  * running. Nothing, the capability included, goes to its engine socket before that answer: a pid Windows reused, or a
  * socket another process holds, is not the daemon.
  */
-async function patientLookup(home: string, first?: DaemonLookup, deadline?: number): Promise<DaemonLookup> {
-  const lookup = first ?? await lookupDaemon(home);
+async function patientLookup(
+  home: string,
+  machine: DaemonMachine,
+  deadline: number | undefined,
+  first?: DaemonLookup,
+): Promise<DaemonLookup> {
+  const lookup = first ?? await lookupDaemon(home, machine);
   if (lookup.status !== "unresponsive") return lookup;
   const wait = deadline === undefined ? BUSY_DAEMON_WAIT_MS : deadline - Date.now();
-  return wait > 0 ? await lookupDaemon(home, THIS_MACHINE, wait) : lookup;
+  return wait > 0 ? await lookupDaemon(home, machine, wait) : lookup;
 }
 
 /**
@@ -723,8 +800,9 @@ async function patientLookup(home: string, first?: DaemonLookup, deadline?: numb
  * through the native spawn on Windows (`launchDaemonProcess`), and returns its pid without waiting for it: a daemon
  * restarting itself hands over this way.
  */
-export function relaunchDaemon(args: string[], logFile: string): number | undefined {
-  return launchDaemonProcess({ home: defaultRerailHome(), packageRoot: PACKAGE_ROOT }, args, process.env, logFile).pid;
+export function relaunchDaemon(args: string[], logFile: string, machine: DaemonMachine = THIS_MACHINE): number | undefined {
+  const control = { home: defaultRerailHome(machine.env), packageRoot: PACKAGE_ROOT };
+  return launchDaemonProcess(control, { args, env: machine.env, logFile }, machine).pid;
 }
 
 export interface LaunchedDaemon {
@@ -762,9 +840,9 @@ export interface DetachedLaunch {
  * Why a process the native spawn started is gone, or undefined while it runs: its exit code, from the handle the native
  * module kept. A binary built before it had no such handle, and there only a pid that no process holds says so.
  */
-function detachedExitReason(native: Pick<NativeBinding, "detachedExitCode">, pid: number, kill: ProcessSignal): string | undefined {
-  if (native.detachedExitCode === undefined) return processAlive(pid, kill) ? undefined : "exited";
-  const code = native.detachedExitCode(pid);
+function detachedExitReason(launched: NativeProcess, kill: ProcessSignal): string | undefined {
+  if (launched.exitCode === undefined) return processAlive(launched.pid, kill) ? undefined : "exited";
+  const code = launched.exitCode();
   return code === null ? undefined : `exited with code ${code}`;
 }
 
@@ -777,20 +855,19 @@ function detachedExitReason(native: Pick<NativeBinding, "detachedExitCode">, pid
  * as `just` leaves its own stdout inheritable, so a daemon started below it held the caller's output pipe open and a
  * captured `rerail setup | tee` never finished. The native spawn passes only NUL stdin and the log, and keeps the
  * child's handle, which says when it exits and with what code even after Windows gives its pid to another process.
- * The Node binary and the pid checks are `machine`'s, as in every other entry point here.
+ * The Node binary, both spawns and the pid checks are `machine`'s.
  */
 export function launchDetached(launch: DetachedLaunch, machine: DaemonMachine = THIS_MACHINE): LaunchedDaemon {
-  const node = nodeExecutable(machine.platform);
+  const program = machine.nodeExecutable();
   if (machine.platform === "win32") {
-    const definedEnv = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
-    const native = loadNativeBinding();
-    const pid = native.spawnDetached(node, [...launch.args], launch.cwd ?? null, definedEnv, launch.logFile);
-    return { pid, exitReason: () => detachedExitReason(native, pid, machine.kill) };
+    const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+    const launched = machine.spawnDetached({ program, args: [...launch.args], cwd: launch.cwd ?? null, env, logFile: launch.logFile });
+    return { pid: launched.pid, exitReason: () => detachedExitReason(launched, machine.kill) };
   }
   const log = openSync(launch.logFile, "a", 0o600);
-  let child;
+  let child: StartedChild;
   try {
-    child = spawn(node, [...launch.args], { detached: true, stdio: ["ignore", log, log], cwd: launch.cwd, env: launch.env });
+    child = machine.spawn(program, [...launch.args], { detached: true, stdio: ["ignore", log, log], cwd: launch.cwd, env: launch.env });
   } finally {
     closeSync(log);
   }
@@ -811,22 +888,23 @@ export function launchDetached(launch: DetachedLaunch, machine: DaemonMachine = 
  * long as it ran. The repository goes to it as `--workspace-root` instead, and the daemon looks for Git from there
  * (`searchGitFrom`), so a `PATH` entry inside the repository is still skipped.
  */
-function launchDaemonProcess(control: DaemonControl, args: string[], env: NodeJS.ProcessEnv, logFile: string): LaunchedDaemon {
-  return launchDetached({ args, cwd: control.home, env, logFile });
+function launchDaemonProcess(control: DaemonControl, launch: Omit<DetachedLaunch, "cwd">, machine: DaemonMachine): LaunchedDaemon {
+  return launchDetached({ ...launch, cwd: control.home }, machine);
 }
 
-async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
-  await repairSqlite(control);
+async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions, machine: DaemonMachine): Promise<StartDaemonResult> {
+  await repairSqlite(control, machine);
   await mkdir(control.home, { recursive: true, mode: 0o700 });
   // A Rerail home an earlier release made outside the profile folder kept its parent's ACL on Windows, which there lets
   // every local user read the capability and the database; a launch, rare beside hooks, gives it an owner-only one.
   keepFolderPrivate(control.home, { repair: true });
   const stateFile = join(control.home, DAEMON_STATE_FILE);
   const logFile = join(control.home, DAEMON_LOG_FILE);
-  const env = { ...(options.env ?? process.env), RERAIL_HOME: control.home };
+  const env = { ...(options.env ?? machine.env), RERAIL_HOME: control.home };
   // The log is appended to across runs; a failure shows only what this launch wrote.
   const logOffset = await stat(logFile).then(info => info.size, () => 0);
-  const { pid, exitReason } = launchDaemonProcess(control, daemonArguments(control, options, stateFile), env, logFile);
+  const args = daemonArguments(control, options, stateFile);
+  const { pid, exitReason } = launchDaemonProcess(control, { args, env, logFile }, machine);
 
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -835,7 +913,7 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions)
       const output = await tailFile(logFile, logOffset, 20);
       throw new Error(`Rerail daemon ${exit} before it was ready${output === "" ? "." : `:\n${output}`}`);
     }
-    const state = await readDaemonState(stateFile);
+    const state = await readDaemonState(stateFile, machine.platform);
     if (state !== undefined && state.pid === pid) {
       const probe = await probeDaemon(state);
       if (probe.status === "ok" && probe.health.pid === state.pid) return { started: true, daemon: { state, health: probe.health } };
@@ -871,15 +949,15 @@ let autostartAttempted = false;
 export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
   if (autostartAttempted) return;
   autostartAttempted = true;
-  const setting = process.env.RERAIL_AUTOSTART;
+  const setting = machine.env.RERAIL_AUTOSTART;
   if (setting === "0" || setting === "false") return;
-  const home = defaultRerailHome();
+  const home = defaultRerailHome(machine.env);
   try {
     makeRerailHome(home);
     launchDetached({
       args: [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "daemon", "start", "--workspace-root", process.cwd()],
       cwd: home,
-      env: process.env,
+      env: machine.env,
       logFile: join(home, DAEMON_LOG_FILE),
     }, machine);
   } catch {
@@ -978,9 +1056,9 @@ export function browserOpener(url: string, platform: NodeJS.Platform = process.p
 }
 
 /** Hands the URL to the desktop's default browser. Returns once the opener has been spawned. */
-export function openInBrowser(url: string): void {
-  const { command, args, cwd } = browserOpener(url);
-  const child = spawnShown(command, args, { detached: true, stdio: "ignore", ...(cwd === undefined ? {} : { cwd }) });
+export function openInBrowser(url: string, machine: DaemonMachine = THIS_MACHINE): void {
+  const { command, args, cwd } = browserOpener(url, machine.platform, machine.env);
+  const child = machine.spawnShown(command, args, { detached: true, stdio: "ignore", ...(cwd === undefined ? {} : { cwd }) });
   child.once("error", () => {
     process.stderr.write(`rerail: could not open a browser; visit ${url}\n`);
   });
@@ -1001,14 +1079,14 @@ const ORCA_EXECUTABLES: readonly string[] = [
 ];
 
 /** The first installed Orca CLI among `candidates`, or undefined when Orca is not installed (always on Windows). */
-export function orcaExecutable(candidates: readonly string[] = ORCA_EXECUTABLES): string | undefined {
-  if (process.platform === "win32") return undefined;
+export function orcaExecutable(candidates: readonly string[] = ORCA_EXECUTABLES, platform: NodeJS.Platform = process.platform): string | undefined {
+  if (platform === "win32") return undefined;
   return candidates.find(candidate => existsSync(candidate));
 }
 
-/** `url` as {@link dashboardLink} makes it for the daemon `home` records; as it is when there is none. */
-export async function dashboardAccessLink(url: string, home: string): Promise<string> {
-  const state = await readDaemonState(join(home, DAEMON_STATE_FILE)).catch(() => undefined);
+/** `url` as {@link dashboardLink} makes it for the daemon `home` records on `platform`; as it is when there is none. */
+export async function dashboardAccessLink(url: string, home: string, platform: NodeJS.Platform = process.platform): Promise<string> {
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE), platform).catch(() => undefined);
   return state === undefined ? url : dashboardLink(state, url);
 }
 
@@ -1019,21 +1097,22 @@ export async function dashboardAccessLink(url: string, home: string): Promise<st
  */
 export async function openDashboard(
   page: string,
-  env: NodeJS.ProcessEnv = process.env,
+  machine: DaemonMachine = THIS_MACHINE,
   candidates: readonly string[] = ORCA_EXECUTABLES,
 ): Promise<PageOpening> {
-  const url = await dashboardAccessLink(page, defaultRerailHome(env));
-  const orca = env.ORCA_TAB_ID === undefined || env.ORCA_TAB_ID === "" ? undefined : orcaExecutable(candidates);
+  const { env, platform } = machine;
+  const url = await dashboardAccessLink(page, defaultRerailHome(env), platform);
+  const orca = env.ORCA_TAB_ID === undefined || env.ORCA_TAB_ID === "" ? undefined : orcaExecutable(candidates, platform);
   if (orca === undefined) {
-    openInBrowser(url);
+    openInBrowser(url, machine);
     return "system-browser";
   }
   const { promise, resolve } = Promise.withResolvers<boolean>();
-  const child = spawn(orca, ["tab", "create", "--url", url], { stdio: "ignore", timeout: ORCA_TAB_TIMEOUT_MS });
+  const child = machine.spawn(orca, ["tab", "create", "--url", url], { stdio: "ignore", timeout: ORCA_TAB_TIMEOUT_MS });
   // A spawn failure may or may not be followed by `exit`; the first verdict wins.
   child.once("error", () => resolve(false));
   child.once("exit", code => resolve(code === 0));
   if (await promise) return "orca-tab";
-  openInBrowser(url);
+  openInBrowser(url, machine);
   return "system-browser";
 }

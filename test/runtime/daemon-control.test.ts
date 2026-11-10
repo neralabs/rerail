@@ -1,5 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import type * as ChildProcessModule from "node:child_process";
+import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo } from "node:net";
 import { existsSync } from "node:fs";
@@ -8,39 +7,12 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-/** Tests that open pages install an interceptor; every other spawn reaches the real child_process. */
-const opener = vi.hoisted(() => ({
-  intercept: undefined as ((command: string, args: readonly string[], options: ChildProcessModule.SpawnOptions) => ChildProcess) | undefined,
-}));
-vi.mock("node:child_process", async () => {
-  const actual = await vi.importActual<typeof ChildProcessModule>("node:child_process");
-  return {
-    ...actual,
-    spawn: (command: string, args: readonly string[], options: ChildProcessModule.SpawnOptions) =>
-      opener.intercept?.(command, args, options) ?? actual.spawn(command, args, options),
-  };
-});
-/** Tests that launch on Windows install a native spawn; every other call reaches the real binding. */
-const native = vi.hoisted(() => ({
-  spawnDetached: undefined as ((program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string) => number) | undefined,
-  /** Absent, as in a binary built before it. */
-  detachedExitCode: undefined as ((pid: number) => number | null) | undefined,
-}));
-vi.mock("../../src/engine/native/native.js", async () => {
-  const actual = await vi.importActual<typeof import("../../src/engine/native/native.js")>("../../src/engine/native/native.js");
-  return {
-    ...actual,
-    loadNativeBinding: () => native.spawnDetached === undefined
-      ? actual.loadNativeBinding()
-      // Only the detached spawn and its exit code are read on this path; the cast stands in for the rest of the binding.
-      : { spawnDetached: native.spawnDetached, detachedExitCode: native.detachedExitCode } as unknown as ReturnType<typeof actual.loadNativeBinding>,
-  };
-});
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
 import {
   type DaemonMachine,
   type DaemonState,
+  type NativeLaunch,
+  type StartedChild,
   autostartDaemon,
   browserOpener,
   DAEMON_LOG_FILE,
@@ -64,6 +36,7 @@ import {
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 
@@ -393,7 +366,8 @@ describe("Rerail daemon control", () => {
 
 describe("openDashboard", () => {
   const url = "http://127.0.0.1:4737/#rules";
-  const desktopOpener = browserOpener(url).command;
+  // Orca runs on macOS and Linux, and never on Windows: these tests open pages as macOS does, on every OS.
+  const desktopOpener = browserOpener(url, "darwin").command;
   let outsideOrca: NodeJS.ProcessEnv;
   let underOrca: NodeJS.ProcessEnv;
   /** An installed Orca CLI, preceded by an absent candidate that must be skipped. */
@@ -410,23 +384,25 @@ describe("openDashboard", () => {
     underOrca = { ...outsideOrca, ORCA_TAB_ID: "tab-1" };
   });
 
-  /** Records every spawn; `orca` children settle per `settle`, desktop openers are inert. */
-  function interceptSpawns(settle: (child: EventEmitter) => void, opened = url): string[] {
+  /**
+   * A macOS machine with `env` that records every spawn in `commands`; `orca` children settle per `settle`, desktop
+   * openers are inert.
+   */
+  function opening(env: NodeJS.ProcessEnv, settle: (child: EventEmitter) => void, opened = url): { commands: string[]; machine: DaemonMachine } {
     const commands: string[] = [];
-    opener.intercept = (command, args) => {
+    const start = (command: string, args: readonly string[]): StartedChild => {
       commands.push(command);
-      const child = Object.assign(new EventEmitter(), { unref() {} }) as unknown as ChildProcess;
+      const child = Object.assign(new EventEmitter(), { unref() {} });
       if (command === orca) {
         expect(args).toEqual(["tab", "create", "--url", opened]);
         process.nextTick(() => settle(child));
       }
       return child;
     };
-    return commands;
+    return { commands, machine: fakeMachine("darwin", { env, spawn: start, spawnShown: start }) };
   }
 
   afterEach(async () => {
-    opener.intercept = undefined;
     await rm(scratch, { recursive: true, force: true });
   });
 
@@ -438,46 +414,46 @@ describe("openDashboard", () => {
   });
 
   it("uses the desktop browser outside Orca", async () => {
-    const commands = interceptSpawns(() => { throw new Error("orca must not be spawned"); });
-    expect(await openDashboard(url, outsideOrca, candidates)).toBe("system-browser");
+    const { commands, machine } = opening(outsideOrca, () => { throw new Error("orca must not be spawned"); });
+    expect(await openDashboard(url, machine, candidates)).toBe("system-browser");
     expect(commands).toEqual([desktopOpener]);
   });
 
-  it.skipIf(process.platform === "win32")("opens a tab in the Orca window through its installed absolute path", async () => {
-    const commands = interceptSpawns(child => child.emit("exit", 0, null));
-    expect(await openDashboard(url, underOrca, candidates)).toBe("orca-tab");
+  it("opens a tab in the Orca window through its installed absolute path", async () => {
+    const { commands, machine } = opening(underOrca, child => child.emit("exit", 0, null));
+    expect(await openDashboard(url, machine, candidates)).toBe("orca-tab");
     expect(commands).toEqual([orca]);
   });
 
   it("uses the desktop browser without consulting PATH when no Orca CLI is installed", async () => {
-    const commands = interceptSpawns(() => { throw new Error("orca must not be spawned"); });
-    expect(await openDashboard(url, underOrca, [join(scratch, "missing", "orca")])).toBe("system-browser");
+    const { commands, machine } = opening(underOrca, () => { throw new Error("orca must not be spawned"); });
+    expect(await openDashboard(url, machine, [join(scratch, "missing", "orca")])).toBe("system-browser");
     expect(commands).toEqual([desktopOpener]);
   });
 
-  it.skipIf(process.platform === "win32")("falls back to the desktop browser when orca cannot be spawned", async () => {
-    const commands = interceptSpawns(child => child.emit("error", Object.assign(new Error("spawn orca EACCES"), { code: "EACCES" })));
-    expect(await openDashboard(url, underOrca, candidates)).toBe("system-browser");
+  it("falls back to the desktop browser when orca cannot be spawned", async () => {
+    const { commands, machine } = opening(underOrca, child => child.emit("error", Object.assign(new Error("spawn orca EACCES"), { code: "EACCES" })));
+    expect(await openDashboard(url, machine, candidates)).toBe("system-browser");
     expect(commands).toEqual([orca, desktopOpener]);
   });
 
-  it.skipIf(process.platform === "win32")("falls back to the desktop browser when orca fails", async () => {
-    const commands = interceptSpawns(child => child.emit("exit", 1, null));
-    expect(await openDashboard(url, underOrca, candidates)).toBe("system-browser");
+  it("falls back to the desktop browser when orca fails", async () => {
+    const { commands, machine } = opening(underOrca, child => child.emit("exit", 1, null));
+    expect(await openDashboard(url, machine, candidates)).toBe("system-browser");
     expect(commands).toEqual([orca, desktopOpener]);
   });
 
-  it.skipIf(process.platform === "win32")("hands the home daemon's access capability to the browser, only for that daemon's own pages", async () => {
+  it("hands the home daemon's access capability to the browser, only for that daemon's own pages", async () => {
     const home = outsideOrca.RERAIL_HOME!;
     await mkdir(home, { recursive: true });
     await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4737/", accessToken: "cap" })));
-    const commands = interceptSpawns(child => child.emit("exit", 0, null), "http://127.0.0.1:4737/?rerail-access=cap#rules");
-    expect(await openDashboard(url, underOrca, candidates)).toBe("orca-tab");
+    const { commands, machine } = opening(underOrca, child => child.emit("exit", 0, null), "http://127.0.0.1:4737/?rerail-access=cap#rules");
+    expect(await openDashboard(url, machine, candidates)).toBe("orca-tab");
     expect(commands).toEqual([orca]);
     // Another origin is not this daemon, and a loopback-only daemon has nothing to hand over.
-    expect(await dashboardAccessLink("http://127.0.0.1:1/#rules", home)).toBe("http://127.0.0.1:1/#rules");
+    expect(await dashboardAccessLink("http://127.0.0.1:1/#rules", home, "darwin")).toBe("http://127.0.0.1:1/#rules");
     await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4737/" })));
-    expect(await dashboardAccessLink(url, home)).toBe(url);
+    expect(await dashboardAccessLink(url, home, "darwin")).toBe(url);
   });
 });
 
@@ -506,19 +482,17 @@ describe("a state file Windows left behind", () => {
    * A Windows machine where every pid, even one no process can hold, is a live process of this user, with `pipes`, where
    * no engine proves it holds a capability, and whose main-instance records forgotten go to `forgotten`.
    */
-  function windows(pipes: readonly string[], signals: Array<string | number | undefined> = [], forgotten: number[] = []) {
-    return {
-      platform: "win32" as const,
-      kill: (_pid: number, signal?: string | number) => {
+  function windows(pipes: readonly string[], signals: Array<string | number | undefined> = [], forgotten: number[] = []): DaemonMachine {
+    return fakeMachine("win32", {
+      kill: (_pid, signal) => {
         signals.push(signal);
         return true;
       },
       pipes: () => pipes,
-      holdsCapability: async () => false,
-      forgetMainInstanceHolder: (pid: number) => {
+      forgetMainInstanceHolder: pid => {
         forgotten.push(pid);
       },
-    };
+    });
   }
 
   const denied = (): boolean => {
@@ -678,20 +652,6 @@ describe("a state file Windows left behind", () => {
   });
 });
 
-/** A Windows machine with no engine pipe, where a pid is live while `alive` says so. */
-function windowsMachine(alive: (pid: number) => boolean = () => true): DaemonMachine {
-  return {
-    platform: "win32",
-    kill: (pid) => {
-      if (!alive(pid)) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
-      return true;
-    },
-    pipes: () => [],
-    holdsCapability: async () => false,
-    forgetMainInstanceHolder: () => undefined,
-  };
-}
-
 describe("launching the daemon", () => {
   let home: string;
 
@@ -700,62 +660,63 @@ describe("launching the daemon", () => {
   });
 
   afterEach(async () => {
-    opener.intercept = undefined;
-    native.spawnDetached = undefined;
-    native.detachedExitCode = undefined;
     await rm(home, { recursive: true, force: true });
   });
 
   it("on Windows reads a launched process's exit code from the handle the native spawn kept, whoever has its pid now", () => {
     // A live pid, as when Windows has given a dead daemon's pid to another process during the start wait.
-    native.spawnDetached = () => process.pid;
     const codes: Array<number | null> = [null, 3];
-    const asked: number[] = [];
-    native.detachedExitCode = (pid) => {
-      asked.push(pid);
-      return codes.shift() ?? null;
-    };
-    const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, windowsMachine());
+    const machine = fakeMachine("win32", {
+      kill: () => true,
+      spawnDetached: () => ({ pid: process.pid, exitCode: () => codes.shift() ?? null }),
+    });
+    const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, machine);
     expect(daemon.exitReason()).toBeUndefined();
     expect(daemon.exitReason()).toBe("exited with code 3");
-    expect(asked).toEqual([process.pid, process.pid]);
   });
 
   it("goes through the native spawn on Windows, whose hidden console the daemon's Git and npm share, never Node's detached spawn", () => {
-    const launched: Array<{ args: string[]; cwd: string | null; logPath: string }> = [];
-    // This process's pid, which the machine reads as gone: the exit is the machine's answer, not this OS's.
-    native.spawnDetached = (_program, args, cwd, _env, logPath) => {
-      launched.push({ args, cwd, logPath });
-      return process.pid;
-    };
-    opener.intercept = () => {
-      throw new Error("Node's spawn must not start a detached process on Windows");
-    };
+    const launched: NativeLaunch[] = [];
+    // This process's pid, which the machine reads as gone, from a binary that keeps no handle: the exit is the
+    // machine's answer, not this OS's. Node's spawn is the fake machine's, which fails the test.
+    const machine = fakeMachine("win32", {
+      nodeExecutable: () => String.raw`C:\Program Files\nodejs\node.exe`,
+      spawnDetached: launch => {
+        launched.push(launch);
+        return { pid: process.pid };
+      },
+    });
     const log = join(home, DAEMON_LOG_FILE);
-    const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, windowsMachine(pid => pid !== process.pid));
+    const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, machine);
     expect(daemon.pid).toBe(process.pid);
     expect(daemon.exitReason()).toBe("exited");
-    expect(launched).toEqual([{ args: ["cli.js", "daemon", "start"], cwd: null, logPath: log }]);
+    expect(launched).toEqual([{
+      program: String.raw`C:\Program Files\nodejs\node.exe`, args: ["cli.js", "daemon", "start"], cwd: null, env: { A: "1" }, logFile: log,
+    }]);
   });
 
-  it("starts the daemon in the Rerail home and names the caller's folder as its workspace root", async () => {
+  // The native spawn on Windows, Node's elsewhere: each platform's launch, on every OS.
+  it.each(["linux", "win32"] as const)("starts the daemon in the Rerail home and names the caller's folder as its workspace root (%s)", async platform => {
     const launches: Array<{ args: readonly string[]; cwd: unknown }> = [];
-    opener.intercept = (_command, args, options) => {
-      launches.push({ args, cwd: options.cwd });
-      const child = Object.assign(new EventEmitter(), { pid: DEAD_PID, unref() {} });
-      process.nextTick(() => child.emit("exit", 1, null));
-      return child as unknown as ChildProcess;
-    };
-    native.spawnDetached = (_program, args, cwd) => {
-      launches.push({ args, cwd });
-      return DEAD_PID;
-    };
+    const machine = fakeMachine(platform, {
+      spawn: (_command, args, options) => {
+        launches.push({ args, cwd: options.cwd });
+        const child = Object.assign(new EventEmitter(), { pid: DEAD_PID, unref() {} });
+        process.nextTick(() => child.emit("exit", 1, null));
+        return child;
+      },
+      spawnDetached: ({ args, cwd }) => {
+        launches.push({ args, cwd });
+        return { pid: DEAD_PID };
+      },
+    });
     const repository = join(home, "repository");
     await mkdir(repository);
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     await expect(startDaemon(
       { home, packageRoot, ensureSqlite: async root => ({ prefix: root, rebuilt: false }) },
       { dev: true, port: 0, cwd: repository },
+      machine,
     )).rejects.toThrow(/exited/u);
     expect(launches).toHaveLength(1);
     expect(launches[0]!.cwd).toBe(home);
@@ -765,31 +726,21 @@ describe("launching the daemon", () => {
 });
 
 describe("autostartDaemon", () => {
-  afterEach(() => {
-    opener.intercept = undefined;
-    native.spawnDetached = undefined;
-    vi.unstubAllEnvs();
-  });
-
   it("launches the daemon verb, never `rerail start`, in the Rerail home, and on Windows through the native spawn, never Node's detached one", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
-    vi.stubEnv("RERAIL_HOME", home);
-    vi.stubEnv("RERAIL_AUTOSTART", "1");
     const spawned: Array<{ args: readonly string[]; cwd: string | null }> = [];
-    // Node's `detached: true` on Windows gives the launcher no console, so every console program it starts opens a window.
-    const detachedByNode: Array<readonly string[]> = [];
-    opener.intercept = (_command, args) => {
-      detachedByNode.push(args);
-      return Object.assign(new EventEmitter(), { unref() {} }) as unknown as ChildProcess;
-    };
-    native.spawnDetached = (_program, args, cwd) => {
-      spawned.push({ args, cwd });
-      return DEAD_PID;
-    };
+    // Node's `detached: true` on Windows gives the launcher no console, so every console program it starts opens a
+    // window. The fake machine's Node spawn fails the launch, which the autostart swallows: nothing would be spawned.
+    const machine = fakeMachine("win32", {
+      env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "1" },
+      spawnDetached: ({ args, cwd }) => {
+        spawned.push({ args, cwd });
+        return { pid: DEAD_PID };
+      },
+    });
     try {
       // Once per process: this is the only call this file makes.
-      autostartDaemon(windowsMachine());
-      expect(detachedByNode).toEqual([]);
+      autostartDaemon(machine);
       expect(spawned).toHaveLength(1);
       // Windows holds a process's current folder open: a launcher started in the session's folder kept that checkout
       // from being deleted or renamed while it ran. The session's folder goes to it by name, as the daemon's workspace.

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { cacheHolder } from "../../src/cli/setup-cli.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -11,13 +12,7 @@ afterEach(async () => {
 
 /** A Windows machine where every pid is a live process, with `pipes`. */
 function windows(pipes: readonly string[]) {
-  return {
-    platform: "win32" as const,
-    kill: () => true,
-    pipes: () => pipes,
-    holdsCapability: async () => false,
-    forgetMainInstanceHolder: () => undefined,
-  };
+  return fakeMachine("win32", { kill: () => true, pipes: () => pipes });
 }
 
 describe("the uninstall's cache holder", () => {

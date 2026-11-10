@@ -10,6 +10,7 @@ export {
   DAEMON_STATE_FILE,
   daemonFetch,
   type DaemonHealth,
+  type DaemonMachine,
   type DaemonLaunchOptions,
   type EngineEndpoint,
   type DaemonState,
