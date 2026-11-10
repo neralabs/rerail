@@ -494,27 +494,29 @@ fn git_revisions(program: &mut front::Program, root: &Path, base: Option<&str>, 
     }
 }
 
-/// Whether the reads `populate` recorded (`take_consulted`) would read the same now, for `program`'s artifact
-/// declarations. A base read names its revision as it was given (a reference may move), and is read again.
-pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String, String, String)]) -> bool {
-    let Ok(declared) = artifacts(&program.settings) else { return false };
-    consulted.iter().all(|(what, path, digest)| {
-        let now = match what.as_str() {
+/// What each read `populate` records (`take_consulted`) is now, for `program`'s artifact declarations: the
+/// observer a cache's freshness reads (`cached`, decision 0102 §2). `None` for a kind no reader records, or when the
+/// declarations cannot be read. A base read names its revision as it was given (a reference may move), and is read
+/// again.
+pub(super) fn observer<'a>(program: &front::Program, root: &'a Path) -> impl FnMut(&str, &str) -> Option<String> + 'a {
+    let declared = artifacts(&program.settings).ok();
+    move |what: &str, path: &str| {
+        let declared = declared.as_ref()?;
+        Some(match what {
             "input" => of_result(&read_repository_file(root, path)),
             "input_dir" => listing(root, path),
             "artifact" => {
-                let (text, inputs) = read_artifact(root, &declared, path);
+                let (text, inputs) = read_artifact(root, declared, path);
                 artifact_entry(&text, &inputs)
             }
-            "git_rev" | "git_index" => return crate::code_rule_dsl::logic::strings::git::still(what, path, digest),
+            "git_rev" | "git_index" => return crate::code_rule_dsl::logic::strings::git::now(what, path),
             "base" => {
-                let Some((rev, file)) = path.split_once('\t') else { return false };
+                let (rev, file) = path.split_once('\t')?;
                 of_result(&base_reader(root, (!rev.is_empty()).then_some(rev))(file))
             }
-            _ => return false,
-        };
-        now == *digest
-    })
+            _ => return None,
+        })
+    }
 }
 
 /// The file names of a `dir=` input's directory, as its reader lists them.

@@ -35,6 +35,20 @@ fn an_entry_is_fresh_while_what_it_read_is_as_it_was() {
 }
 
 #[test]
+fn the_reads_that_changed_are_the_rules() {
+    let reads: Vec<(String, String, String)> = [("doc", "a.py", "aa"), ("doc", "b.py", "bb"), ("input", "allow.txt", "cc"), ("refused", "c.py", "none")]
+        .iter()
+        .map(|(k, n, d)| ((*k).to_owned(), (*n).to_owned(), (*d).to_owned()))
+        .collect();
+    let mut now = |doc_b: &'static str| move |kind: &str, name: &str| Some(match (kind, name) { ("doc", "b.py") => doc_b, ("doc", _) => "aa", ("input", _) => "cc", _ => "none" }.to_owned());
+    assert!(super::changed(&reads, &mut now("bb")).unwrap().is_empty());
+    assert_eq!(super::changed(&reads, &mut now("b2")).unwrap(), vec![("doc".to_owned(), "b.py".to_owned())]);
+    // A kind the observer does not know is changed: it cannot be shown to be as it was.
+    let got = super::changed(&reads, &mut |kind, _| (kind != "input").then(|| "aa".to_owned())).unwrap();
+    assert!(got.contains(&("input".to_owned(), "allow.txt".to_owned())), "{got:?}");
+}
+
+#[test]
 fn a_key_keeps_an_entry_for_each_state_of_its_inputs() {
     let (_dir, path) = store();
     for (digest, row) in [("aa", "3\t11"), ("bb", "3\t12")] {
@@ -133,8 +147,6 @@ mod architecture {
 
     /// The tests of freshness written outside the pattern, and the one call site each may still have.
     const BESPOKE_CALLS: &[(&str, &str)] = &[
-        ("code_rule_dsl/logic/plan/corpus.rs", "inputs::still("),
-        ("code_rule_dsl/logic/plan/corpus.rs", ".still("),
         ("code_rule_dsl/logic/plan/corpus/phases.rs", "unchanged_phase("),
         ("code_rule_dsl/logic/plan/corpus/reuse.rs", "!unchanged(programs"),
         ("code_rule_dsl/logic/plan/corpus/combined.rs", "file.unchanged("),
@@ -149,7 +161,7 @@ mod architecture {
         for file in &files {
             let rel = relative(file);
             let text = std::fs::read_to_string(file).unwrap();
-            for needle in ["inputs::still(", ".still(", "unchanged_phase(", "unchanged(programs", "file.unchanged(", "derivation_valid("] {
+            for needle in ["::still(", ".still(", "unchanged_phase(", "unchanged(programs", "file.unchanged(", "derivation_valid("] {
                 let calls = text.lines().filter(|l| l.contains(needle) && !l.trim_start().starts_with("//") && !l.contains("fn ")).count();
                 for _ in 0..calls {
                     found.push((rel.clone(), needle));

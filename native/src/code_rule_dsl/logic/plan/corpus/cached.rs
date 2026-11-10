@@ -136,15 +136,7 @@ pub(super) fn fresh(path: &Path, cache: &str, key: &str, observe: &mut dyn FnMut
         .prepare("SELECT id, kind, name, digest FROM cache_reads WHERE cache=?1 AND key=?2")?
         .query_map([cache, key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    // What each thing read is now: each asked once, however many entries read it.
-    let asked: BTreeSet<(&str, &str)> = reads.iter().map(|(_, k, n, _)| (k.as_str(), n.as_str())).collect();
-    let observed: Vec<(String, String, String)> = asked.into_iter().filter_map(|(k, n)| observe(k, n).map(|d| (k.to_owned(), n.to_owned(), fact(&d)))).collect();
-    let sym = |s: &str| Value::Str(s.to_owned());
-    let mut prog = crate::code_rule_dsl::logic::rr::parse(RULES).map_err(|e| Error::Plan(format!("lib/cache.rr: {e}")))?;
-    prog.facts.insert("cache_entry".into(), ids.iter().map(|i| vec![sym(cache), sym(key), sym(i)]).collect());
-    prog.facts.insert("cache_read".into(), reads.iter().map(|(i, k, n, d)| vec![sym(cache), sym(key), sym(i), sym(k), sym(n), sym(d)]).collect());
-    prog.facts.insert("observed".into(), observed.iter().map(|(k, n, d)| vec![sym(k), sym(n), sym(d)]).collect());
-    let got = crate::code_rule_dsl::logic::plan::run_facts(&prog)?;
+    let got = evaluate(cache, key, &ids, &reads, observe)?;
     let fresh: BTreeSet<String> = got.outputs.get("cache_fresh").into_iter().flatten().filter_map(|line| line.split('\t').nth(2).map(str::to_owned)).collect();
     let Some(id) = fresh.into_iter().next() else { return Ok(None) };
     let mut rows = Rows::new();
@@ -155,6 +147,38 @@ pub(super) fn fresh(path: &Path, cache: &str, key: &str, observe: &mut dyn FnMut
     }
     let reads = reads.into_iter().filter(|(i, ..)| *i == id).map(|(_, k, n, d)| (k, n, if d == UNREAD { String::new() } else { d })).collect();
     Ok(Some(Hit { rows, reads }))
+}
+
+/// `lib/cache.rr` over entries `ids` of `cache` under `key`, their `reads` (id, kind, name, digest), and what
+/// `observe` says each read thing is now: each asked once, however many entries read it.
+fn evaluate(cache: &str, key: &str, ids: &[String], reads: &[(String, String, String, String)], observe: &mut dyn FnMut(&str, &str) -> Option<String>) -> Result<crate::code_rule_dsl::logic::plan::Outcome> {
+    let asked: BTreeSet<(&str, &str)> = reads.iter().map(|(_, k, n, _)| (k.as_str(), n.as_str())).collect();
+    let observed: Vec<(String, String, String)> = asked.into_iter().filter_map(|(k, n)| observe(k, n).map(|d| (k.to_owned(), n.to_owned(), fact(&d)))).collect();
+    let sym = |s: &str| Value::Str(s.to_owned());
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(RULES).map_err(|e| Error::Plan(format!("lib/cache.rr: {e}")))?;
+    prog.facts.insert("cache_entry".into(), ids.iter().map(|i| vec![sym(cache), sym(key), sym(i)]).collect());
+    prog.facts.insert("cache_read".into(), reads.iter().map(|(i, k, n, d)| vec![sym(cache), sym(key), sym(i), sym(k), sym(n), sym(d)]).collect());
+    prog.facts.insert("observed".into(), observed.iter().map(|(k, n, d)| vec![sym(k), sym(n), sym(d)]).collect());
+    crate::code_rule_dsl::logic::plan::run_facts(&prog)
+}
+
+/// Which of `reads` (as `Report::consulted` records them: kind, name, digest) are not as they were, by
+/// `lib/cache.rr` (`cache_changed`) over what `observe` says each is now. For a user that brings an entry up to date
+/// by what changed (the whole-run cutoff, by the documents whose bytes changed) rather than deriving it again.
+pub(super) fn changed(reads: &[(String, String, String)], observe: &mut dyn FnMut(&str, &str) -> Option<String>) -> Result<Vec<(String, String)>> {
+    let id = "run".to_owned();
+    let reads: Vec<(String, String, String, String)> = reads.iter().map(|(k, n, d)| (id.clone(), k.clone(), n.clone(), fact(d))).collect();
+    let got = evaluate("run", "run", std::slice::from_ref(&id), &reads, observe)?;
+    Ok(got
+        .outputs
+        .get("cache_changed")
+        .into_iter()
+        .flatten()
+        .filter_map(|line| {
+            let cols: Vec<&str> = line.split('\t').collect();
+            Some((cols.get(3)?.to_string(), cols.get(4)?.to_string()))
+        })
+        .collect())
 }
 
 #[cfg(test)]

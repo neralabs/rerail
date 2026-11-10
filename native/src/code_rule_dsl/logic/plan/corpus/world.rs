@@ -183,14 +183,10 @@ impl World {
         out
     }
 
-    /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike. Phase 0's
-    /// observer answers each by a `stat`, reading only what changed.
-    pub(super) fn still(&mut self, consulted: &[(String, String, String)]) -> bool {
-        consulted.iter().all(|(what, path, digest)| self.now(what, path).is_some_and(|now| now == *digest))
-    }
-
     /// What one consulted thing (`consulted`'s `what` and path) is now, as its digest; `None` for a kind the world
-    /// does not observe. A cache's freshness reads these as `observed` facts (`cached`, decision 0102 §2).
+    /// does not observe. A cache's freshness reads these as `observed` facts (`cached`, decision 0102 §2): a run
+    /// whose consulted things are all as they were would ask, load and derive the same. Phase 0's observer answers
+    /// each by a `stat`, reading only what changed.
     pub(super) fn now(&mut self, what: &str, path: &str) -> Option<String> {
         Some(match what {
             "dir" => listing_digest(&self.dir(path)),

@@ -286,10 +286,18 @@ fn changes_of(programs: &[&str], root: &Path, typing: &Typing, options: &serde_j
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1) {
         return Ok(None);
     }
-    let changed: Vec<String> = docs.iter().filter(|d| world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
+    // What changed is the freshness rule's (`cached::changed`, decision 0102): each read observed now, a document's
+    // bytes, a reader's file, a request's answer. Only documents changed: the run can be brought up to date by them.
     const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
-    let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
-    Ok((inputs::still(&prog, root, &read) && world::World::new(root, &prog).still(&requests)).then_some(changed))
+    let mut world = world::World::new(root, &prog);
+    let mut readers = inputs::observer(&prog, root);
+    let mut observe = |kind: &str, name: &str| match kind {
+        "doc" => Some(world::bytes_digest(&root.join(name))),
+        k if READERS.contains(&k) => readers(k, name),
+        _ => world.now(kind, name),
+    };
+    let changed = cached::changed(consulted, &mut observe)?;
+    Ok(changed.iter().all(|(kind, _)| kind == "doc").then(|| changed.into_iter().map(|(_, name)| name).collect()))
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1656,7 +1664,7 @@ fn run_observed(
     consulted.extend(folded);
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     external_inputs(&mut prog, root)?;
-    // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`).
+    // The repository files, artifacts and base revision the readers read are consulted too (`inputs::observer`).
     let read = inputs::take_consulted();
     if t.is_none() {
         consulted.extend(read);
@@ -2369,13 +2377,13 @@ fn run_observed(
         for (rel, _, measured) in &repository {
             stats.measured(rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
         }
-        super::run_atoms_native_over(consts, &db, "main", stats, rels.iter().cloned().collect(), modes)?;
+        let got = super::run_atoms_native_over(consts, &db, "main", stats, rels.iter().cloned().collect(), modes)?;
         for rel in rels {
             let width = lowered.program.decls[rel].len();
             let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
-            let held = crate::code_rule_dsl::logic::native::component::derived(&db, rel);
-            let values: Vec<Option<Vec<i64>>> =
-                (0..width).map(|c| Some(held.as_ref().map(|s| (0..s.len()).map(|r| s.value(r, c)).collect()).unwrap_or_default())).collect();
+            // Kept in the engine, or written to its table (a stratum the native engine declined): `held_rows`.
+            let rows = held_rows(&db, &got, rel, width)?;
+            let values: Vec<Option<Vec<i64>>> = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
             let source = crate::code_rule_dsl::logic::native::component::columns_source(names, values);
             let measured = syntax::statistics(source.as_ref());
             modules.bind(&db, rel, Arc::clone(&source))?;

@@ -3455,9 +3455,10 @@ which are reads of the entry, and `World::still` is no longer called for them.
 The rest are listed in `corpus::cached::tests::architecture`, by table (`NOT_YET_MOVED`) and by the freshness test
 each still makes itself (`BESPOKE_CALLS`). The lists may only shrink. In 0102's order:
 
-- **The phase store's run record and the whole-run cutoff** (`phase_record`, `run_record`; `unchanged_phase`,
-  `inputs::still`, `World::still` in `corpus::changes_of`, `reuse::unchanged`): the same consulted reads as the
-  constants.
+- **The phase store's run record and the whole-run cutoff** (`phase_record`, `run_record`): their freshness is
+  the rule's now (`corpus::changes_of` reads `cached::changed`; on 591 files an unchanged rerun of `values` takes
+  1.08 to 1.17 s CPU against 1.02 to 1.04 s, load 75 to 88). Their records are still their own tables, read by
+  `unchanged_phase` and `reuse::unchanged`.
 - **The per-file memo** (`facts_results`, its plan digest).
 - **Tapes and their indexes, and the projected relations** (`tape_objects`, `file_documents`, the prefilter's and
   vocabulary's tables), after RER-131's named-only tapes merge.

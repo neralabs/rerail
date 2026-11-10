@@ -12,10 +12,14 @@
 // What each thing an entry read is now.
 .decl observed(kind: symbol, name: symbol, digest: symbol)
 
-// An entry is stale when something it read is not as it was, or can no longer be observed.
+// What an entry read that is not as it was, or can no longer be observed; the entry is then stale. A user that
+// can bring an entry up to date (the whole-run cutoff, by the documents that changed) reads which.
+.decl cache_changed(cache: symbol, key: symbol, id: symbol, kind: symbol, name: symbol)
+cache_changed(c, k, i, kind, n) :- cache_read(c, k, i, kind, n, d), observed(kind, n, now), now != d.
+cache_changed(c, k, i, kind, n) :- cache_read(c, k, i, kind, n, _), !observed(kind, n, _).
+.output cache_changed
 .decl cache_stale(cache: symbol, key: symbol, id: symbol)
-cache_stale(c, k, i) :- cache_read(c, k, i, kind, n, d), observed(kind, n, now), now != d.
-cache_stale(c, k, i) :- cache_read(c, k, i, kind, n, _), !observed(kind, n, _).
+cache_stale(c, k, i) :- cache_changed(c, k, i, _, _).
 
 .decl cache_fresh(cache: symbol, key: symbol, id: symbol)
 cache_fresh(c, k, i) :- cache_entry(c, k, i), !cache_stale(c, k, i).

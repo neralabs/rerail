@@ -111,7 +111,11 @@ The not-yet-moved list may only shrink. Each item on it names the open item that
 1. The pattern, `lib/cache.rr`, the recorder and reader, and the checks. Built: see the commit that adds this
    record.
 2. The constants' rows (0094 §6): the first cache moved. Built with step 1.
-3. The phase store's run record and the whole-run cutoff (`reuse.rs`): the same consulted reads, moved next.
+3. The phase store's run record and the whole-run cutoff (`reuse.rs`): the same consulted reads. Their freshness
+   is built: `corpus::changes_of` asks `cached::changed`, which reads `cache_changed` (the documents that changed,
+   so the run is brought up to date by them), and `World::still`, `inputs::still` and `git::still` are gone; each
+   is now only an observer (`now`, `observer`). The records are still their own tables (`phase_record`,
+   `run_record`), moved next.
 4. The per-file memo: its reads are the file's content source and the program, whose rows the memo already holds.
    Its plan digest goes.
 5. Tapes and the projected relations (the stored-projection spike, O-names-cost): an entry per (tape, relation),
