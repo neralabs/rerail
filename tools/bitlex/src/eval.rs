@@ -69,6 +69,8 @@ pub struct TreeDecl {
     pub provisional: Vec<String>,
     /// The `remember` choices: the token each takes is its level's word (`as CHOICE`).
     pub remember: Vec<String>,
+    /// The flags a level runs with (`flag F`, `with F A`, `unless F A`).
+    pub flags: Vec<String>,
 }
 
 pub struct Output {
@@ -398,6 +400,7 @@ impl<'a> Ev<'a> {
             Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
             Stmt::Reading { name, reading } => self.tree.get_or_insert_with(TreeDecl::default).readings.push((name.clone(), reading.clone())),
             Stmt::Provisional(fields) => self.tree.get_or_insert_with(TreeDecl::default).provisional.extend(fields.iter().cloned()),
+            Stmt::Flags(names) => self.tree.get_or_insert_with(TreeDecl::default).flags.extend(names.iter().cloned()),
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             Stmt::Mark { kind, at, end } => {
                 let m = self.mask(at)?;
@@ -1248,7 +1251,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) => return Err("check: a tree's notation in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } => return Err("check: a tree's notation in a byte grammar".into()),
     })
 }
 

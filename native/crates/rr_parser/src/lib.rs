@@ -207,8 +207,8 @@ pub mod tests {
         let c = super::compiled().expect("compiles");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 252, "{states} states");
-        assert!(arms <= 2396, "{arms} arms");
+        assert!(states <= 234, "{states} states");
+        assert!(arms <= 2225, "{arms} arms");
     }
 
     /// The parse path is the compiled code's: the host functions around the two compiled calls

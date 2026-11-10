@@ -376,7 +376,7 @@ tree rr {
                         | relation: identifier arguments: argument_list
   node argument_list nested = '(' [argument: term (',' argument: term)*] ')'
   # A body: a conjunction; a `;` after it wraps it in a disjunction of alternatives.
-  choice body           = conjunction [wrap disjunction alternative (';' alternative: conjunction)+]
+  choice body           = without no_named conjunction [wrap disjunction alternative (';' alternative: without no_named conjunction)+]
   node conjunction nested = literal: literal (',' literal: literal)*
   node group nested     = '(' body: body ')'
   # A literal: an atom, a comparison of two terms, a pattern match or a negation. A word is a
@@ -437,7 +437,7 @@ tree rr {
   choice numeric        = number [merge float fraction]
   choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call | json
                         | identifier as variable [wrap call function as identifier arguments: argument_list
-                                                 | wrap named_argument name as identifier ':' value: term]
+                                                 | unless no_named (wrap named_argument name as identifier ':' value: term)]
                         | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
                         | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
                           | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']]
@@ -461,36 +461,23 @@ tree rr {
   choice count_agg      = wrap aggregate operator as 'count' ':' '{' body: body '}'
   choice word_agg      = wrap aggregate operator as aggregate_word aggregated
   # What a value's aggregate holds after its word.
-  choice aggregated     = value: agg_value ['by' ('(' key: term (',' key: term)* ')' | key: agg_value)] ['sep' separator: string] ':' '{' body: body '}'
-  # An aggregate's value or single key: a term with no named argument in it, starting with no
-  # `-` or `(` (after the word those make it a variable's or a call's). A word of an aggregate
-  # here starts its own aggregate, a call or a variable, as it does in any term.
-  choice agg_value = (numeric | string | code_literal | '_' as wildcard | functor_nn | json) more_nn
-                   | identifier as variable [wrap call function as identifier arguments: argument_list_nn] more_nn
+  choice aggregated     = value: with no_named agg_value ['by' ('(' key: without no_named term (',' key: without no_named term)* ')' | key: with no_named agg_value)] ['sep' separator: string] ':' '{' body: body '}'
+  # An aggregate's value or single key: a term with no named argument in it (`no_named`, down
+  # through the calls in it), starting with no `-` or `(` (after the word those make it a
+  # variable's or a call's). A word of an aggregate here starts its own aggregate, a call or a
+  # variable, as it does in any term. A body, and a key in parentheses, may hold named
+  # arguments again (`without no_named`).
+  flag no_named
+  choice agg_value nested = (numeric | string | code_literal | '_' as wildcard | functor_call | json) more
+                   | identifier as variable [wrap call function as identifier arguments: argument_list] more
                    | count_value
                    | word_in_value
   # `count` in a value: a `:` after it is its aggregate's, as the engine reads it (a nested
   # level takes what it can before it ends).
-  choice count_value nested = 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list_nn] more_nn
+  choice count_value nested = 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list] more
   # An aggregate's word in a value, read as in any other term.
-  choice word_in_value nested = aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                             | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']] more_nn
-  # Terms with no named argument.
-  choice more_nn        = (wrap binary_expression left operator: multiplicative right: primary_nn)* (wrap binary_expression left operator: additive right: product_nn)*
-  choice term_nn nested = product_nn (wrap binary_expression left operator: additive right: product_nn)*
-  choice product_nn     = primary_nn (wrap binary_expression left operator: multiplicative right: primary_nn)*
-  choice primary_nn     = numeric | unsigned_nn
-  choice unsigned_nn nested = string | code_literal | '_' as wildcard | minus_nn | functor_nn | json
-                            | identifier as variable [wrap call function as identifier arguments: argument_list_nn]
-                            | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list_nn]
-                            | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list_nn
-                          | (wrap call function as identifier arguments: argument_list_nn) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']]
-                            | parenthesized_nn
-  choice minus_nn       = '-' (merge number number [merge float fraction] | wrap unary_expression operator operand: unsigned_nn)
-  # The same nodes as their named kinds, retagged at their first token.
-  node parenthesized_nn = retag parenthesized_expression '(' expression: term_nn ')'
-  node functor_nn       = retag functor_call '@' function: identifier arguments: argument_list_nn
-  node argument_list_nn nested = retag argument_list '(' [argument: term_nn (',' argument: term_nn)*] ')'
+  choice word_in_value nested = aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
+                             | (wrap call function as identifier arguments: argument_list) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']] more
   choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '{' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
   # A setting's: every punctuation but `{`, which opens a JSON object.
   choice setting_punctuation = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'

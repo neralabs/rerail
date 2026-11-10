@@ -19,7 +19,7 @@
 use crate::Error;
 
 use crate::native_cpu_shape::Step;
-use crate::native_ir::{On, Structure, StructuralOperation as Op};
+use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
 use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, REMEMBERED, Refused};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
@@ -172,6 +172,8 @@ pub struct CompiledStream {
     marks: u64,
     /// The program has `WRAP`: the tape has the frames, chains and preorder columns.
     pub wraps: bool,
+    /// The program has context beside each return (`has_context`): two return slots a call.
+    context: bool,
     pub clif: String,
     pub disassembly: String,
     /// The CLIF blocks of the loops' heads, with their steps (`native_cpu_shape`): the token
@@ -195,7 +197,7 @@ fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<usize> {
             out
         }
         Op::Return { again } => pushes.iter().map(|&p| usize::from(p) + usize::from(again)).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
         _ => vec![pc + 1],
     }
     .into_iter()
@@ -346,12 +348,13 @@ enum Mem {
     Sel,
     /// A shared arm's words' distance from its body's first place's, for a refusal there.
     Shift,
-    /// The level's word (`REMEMBER`), kept beside each call's return.
+    /// The level's word (`REMEMBER`) and flags (`FLAG`), kept beside each call's return.
     Word,
+    Flags,
 }
 
 impl Mem {
-    const COUNT: u32 = 9;
+    const COUNT: u32 = 10;
 }
 
 struct Vars {
@@ -820,7 +823,7 @@ pub struct SharedRuns {
 fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. }
     )
 }
 
@@ -1090,7 +1093,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         };
         // A kind as a word names it: its level's word's (`REMEMBERED`, `REMEMBER`), refused where
         // the level has none; else the kind.
-        let remembers = words.iter().any(|b| matches!(b.operation, Op::Remember { .. }));
+        let two_slots = has_context(words);
         let kind_of = |f: &mut FunctionBuilder<'_>, kind: u16, pc: usize| {
             if kind == REMEMBERED {
                 let w = mget(f, Mem::Word);
@@ -1458,6 +1461,28 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     mset(&mut f, Mem::Word, k);
                     f.ins().jump(fall, &[]);
                 }
+                Op::Flag { flag, op } => {
+                    let fl = mget(&mut f, Mem::Flags);
+                    let bit = 1i64 << flag;
+                    match op {
+                        FlagOp::Set => {
+                            let fl = f.ins().bor_imm(fl, bit);
+                            mset(&mut f, Mem::Flags, fl);
+                            f.ins().jump(fall, &[]);
+                        }
+                        FlagOp::Clear => {
+                            let fl = f.ins().band_imm(fl, !bit);
+                            mset(&mut f, Mem::Flags, fl);
+                            f.ins().jump(fall, &[]);
+                        }
+                        // The next word where the flag is set; else the one after.
+                        FlagOp::Test => {
+                            let skip = wb.get(pc + 2).copied().unwrap_or(off_end);
+                            let set = f.ins().band_imm(fl, bit);
+                            f.ins().brif(set, fall, &[], skip, &[]);
+                        }
+                    }
+                }
                 Op::Retag { kind, on: On::Moved } => {
                     let m = mget(&mut f, Mem::Moved);
                     let k = kind_of(&mut f, kind, pc);
@@ -1800,15 +1825,19 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                 Op::Push { target } => {
                     let ret = f.use_var(v.ret);
                     let t = f.ins().iconst(types::I64, i64::from(target));
-                    // The caller's word beside its return, in the high half (`REMEMBER`).
-                    let t = if remembers {
-                        let w = mget(&mut f, Mem::Word);
-                        let w = f.ins().ishl_imm(w, 16);
-                        f.ins().bor(t, w)
+                    // With context (`REMEMBER`, `FLAG`), two slots a call: its return, then the
+                    // caller's word and flags (`context`).
+                    if two_slots {
+                        let at = f.ins().ishl_imm(ret, 1);
+                        put(&mut f, ret_c, at, t);
+                        let (w, fl) = (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags));
+                        let fl = f.ins().ishl_imm(fl, 16);
+                        let wf = f.ins().bor(w, fl);
+                        let at = f.ins().iadd_imm(at, 1);
+                        put(&mut f, ret_c, at, wf);
                     } else {
-                        t
-                    };
-                    put(&mut f, ret_c, ret, t);
+                        put(&mut f, ret_c, ret, t);
+                    }
                     let ret = f.ins().iadd_imm(ret, 1);
                     f.def_var(v.ret, ret);
                     f.ins().jump(fall, &[]);
@@ -1822,17 +1851,19 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     guard(&mut f, none, pc);
                     let ret = f.ins().iadd_imm(ret, -1);
                     f.def_var(v.ret, ret);
-                    let p = {
+                    let p = if two_slots {
+                        // The caller's word and flags back, from beside its return.
+                        let at = f.ins().ishl_imm(ret, 1);
+                        let a = slot(&mut f, ret_c, at);
+                        let wf = f.ins().uload32(flags, a, 4);
+                        let w = f.ins().band_imm(wf, 0xffff);
+                        let fl = f.ins().ushr_imm(wf, 16);
+                        mset(&mut f, Mem::Word, w);
+                        mset(&mut f, Mem::Flags, fl);
+                        f.ins().uload32(flags, a, 0)
+                    } else {
                         let a = slot(&mut f, ret_c, ret);
                         f.ins().uload32(flags, a, 0)
-                    };
-                    // The caller's word back (`REMEMBER`), from beside its return.
-                    let p = if remembers {
-                        let w = f.ins().ushr_imm(p, 16);
-                        mset(&mut f, Mem::Word, w);
-                        f.ins().band_imm(p, 0xffff)
-                    } else {
-                        p
                     };
                     // A compare tree over the places `PUSH` names.
                     let t: Vec<(u32, Block)> = pushes.iter().map(|&p| (u32::from(p), word(p + u16::from(again)))).collect();
@@ -1998,7 +2029,14 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
     let own_calls = calls;
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, clif, disassembly, heads, own_calls })
+    let two_slots = has_context(words);
+    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, heads, own_calls })
+}
+
+/// Whether the program has context beside each call's return (a level's word, its flags): two
+/// return slots a call.
+fn has_context(words: &[crate::native_ir::StructuralBlock]) -> bool {
+    words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. }))
 }
 
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last
@@ -2077,7 +2115,7 @@ impl CompiledStream {
             super_node: vec![0; supers],
             super_kind: vec![0; supers],
             open: vec![0; nodes],
-            returns: vec![0; pushes],
+            returns: vec![0; if self.context { 2 * pushes } else { pushes }],
             counts: [0; 3],
             frames: std::array::from_fn(|_| vec![0; if self.wraps { nodes + 1 } else { 0 }]),
             chains: std::array::from_fn(|_| vec![0; if self.wraps { nodes } else { 0 }]),
@@ -2154,7 +2192,7 @@ impl CompiledStream {
             totals_mask: tier1.totals_mask,
             room_nodes: tape.kind.len() as u64,
             room_supers: tape.super_node.len() as u64,
-            room_pushes: tape.returns.len() as u64,
+            room_pushes: (tape.returns.len() / if self.context { 2 } else { 1 }) as u64,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers.
         unsafe { (self.entry)(&ctx) }

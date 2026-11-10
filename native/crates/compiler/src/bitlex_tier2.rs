@@ -176,6 +176,15 @@ impl Emit<'_> {
         at
     }
 
+    /// Call `i`'s flags, set or clear (`FLAG m=0, 1`), after its `PUSH`.
+    fn flags_of(&mut self, flags: &[(u8, u16, bool)], i: usize) {
+        for &(call, flag, set) in flags {
+            if usize::from(call) == i {
+                self.push("FLAG", u8::from(!set), Arg::Num(flag));
+            }
+        }
+    }
+
     /// An arm's acts, push and jump, here.
     fn body(&mut self, arm: usize) -> u16 {
         let at = self.pc();
@@ -184,6 +193,21 @@ impl Emit<'_> {
         // A remembered token is the word of the level it is taken at: after the calls the arm
         // makes, which keep their caller's (`PUSH`), so the innermost level's.
         let mut remember = None;
+        // Each call's flags (`with F R`), after its `PUSH`: (call, flag, set).
+        let mut flags: Vec<(u8, u16, bool)> = Vec::new();
+        // The arm's guards first (`unless F`): where the flag is set, the state goes on as if it
+        // had no arm on the token: its end, or a refusal.
+        for act in a.acts.clone() {
+            if let Act::Unless { flag } = act {
+                self.push("FLAG", 2, Arg::Num(flag));
+                if self.default == REFUSE {
+                    self.push("STOP", 0, Arg::None);
+                } else {
+                    self.push("GOTO", 0, Arg::Pc(self.default));
+                }
+            }
+        }
+        let a = &self.arms[arm];
         for act in a.acts.clone() {
             let (supers, field) = match act {
                 Act::Close => {
@@ -228,6 +252,11 @@ impl Emit<'_> {
                     remember = Some(kind);
                     continue;
                 }
+                Act::Flag { flag, set, call } => {
+                    flags.push((call, flag, set));
+                    continue;
+                }
+                Act::Unless { .. } => continue,
                 Act::Relabel { field, moved, inner } => {
                     // Mode 2: the node made last at this level; mode 3: the node its wrap holds
                     // first.
@@ -268,8 +297,9 @@ impl Emit<'_> {
         let ends_at_once = !self.arms.iter().any(|b| b.from == to);
         match (ret.split_last(), st.end) {
             (Some((&p, outer)), Some(c)) if ends_at_once => {
-                for &o in outer {
+                for (i, &o) in outer.iter().enumerate() {
                     self.push("PUSH", 0, Arg::Return(o));
+                    self.flags_of(&flags, i);
                 }
                 for _ in 0..c + u8::from(st.own) {
                     self.push("CLOSE", 1, Arg::None);
@@ -277,8 +307,9 @@ impl Emit<'_> {
                 self.push("GOTO", 0, Arg::State(p));
             }
             _ => {
-                for &p in &ret {
+                for (i, &p) in ret.iter().enumerate() {
                     self.push("PUSH", 0, Arg::Return(p));
+                    self.flags_of(&flags, i);
                 }
                 if let Some(k) = remember {
                     self.push("REMEMBER", 0, Arg::Kind(k));
@@ -723,6 +754,7 @@ fn ways(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], pc: usize) -
             (vec![p, p.wrapping_add(1)], 1)
         }
         "WORD" if mode != 0 => (vec![], 2),
+        "FLAG" if mode >= 2 => (vec![], 2),
         "MARK" | "ROW" => (vec![], 2),
         _ => (vec![], 1),
     }

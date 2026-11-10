@@ -13,7 +13,7 @@ pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Rea
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=REMEMBER).contains(&opcode)
+    (TOKEN..=FLAG).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -51,6 +51,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         MERGE => mode <= 1 && operand != REMEMBERED,
         WRAP => mode == 0 && operand != REMEMBERED,
         REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
+        FLAG => mode <= 2 && operand < 16,
         CLOSE => mode <= 1 && operand == 0,
         PUSH => mode == 0 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
@@ -132,6 +133,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             }
             RETURN => returns.iter().map(|&p| p + usize::from(mode)).collect(),
             WORD_IS if mode == 1 => vec![pc + 1, pc + 2],
+            FLAG if mode == 2 => vec![pc + 1, pc + 2],
             MARK | ROW => vec![pc + 1, pc + 2],
             _ => vec![pc + 1],
         }
@@ -265,8 +267,10 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
     // A reading dropped a node (`GONE`): its record stays, of kind `DEAD`, left out at `ACCEPT`.
     let mut dead = false;
     // Each call's return, with its caller's word (`REMEMBER`), given back where it returns.
-    let mut returns: Vec<(u16, u16)> = Vec::new();
+    let mut returns: Vec<(u16, u16, u16)> = Vec::new();
     let mut word: u16 = 0;
+    // The level's flags (`FLAG`), a bit each: the caller's come back where a call returns.
+    let mut flags: u16 = 0;
     let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
     loop {
         let (opcode, mode, operand) = split(words[pc]);
@@ -512,11 +516,18 @@ pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Res
             NODE_FIELD if mode == 1 => nodes[moved].field = operand,
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
-            PUSH => returns.push((operand, word)),
+            PUSH => returns.push((operand, word, flags)),
             REMEMBER => word = operand,
+            FLAG if mode == 0 => flags |= 1 << operand,
+            FLAG if mode == 1 => flags &= !(1 << operand),
+            FLAG => {
+                if flags & (1 << operand) == 0 {
+                    pc += 1;
+                }
+            }
             RETURN => {
-                let Some((p, w)) = returns.pop() else { return refuse(pc - 1, "a return with no call") };
-                word = w;
+                let Some((p, w, fl)) = returns.pop() else { return refuse(pc - 1, "a return with no call") };
+                (word, flags) = (w, fl);
                 pc = usize::from(p) + usize::from(mode);
             }
             ACCEPT => {

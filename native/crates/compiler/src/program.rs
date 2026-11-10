@@ -66,6 +66,10 @@ pub const WRAP: u8 = 0x62;
 /// (`PUSH`) keeps its caller's word, given back where it returns; the called level starts
 /// with it.
 pub const REMEMBER: u8 = 0x63;
+/// The level's flag `operand` (`with F R`, `unless F A`): `m=0` set, `m=1` clear, after a
+/// `PUSH` (the called level's; the caller's come back where it returns); `m=2` a test, which
+/// runs the next word where the flag is set and skips it where it is clear.
+pub const FLAG: u8 = 0x64;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;

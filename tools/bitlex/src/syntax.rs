@@ -115,6 +115,11 @@ pub enum Gram {
     /// every node inside it are read by reading `R` (a `reading` statement), as the tree of
     /// another rule: a cover grammar's node, once the token after it says which it is.
     Reread { reading: String, body: Box<Gram> },
+    /// `with F A`, `without F A`, `A` a nested rule: its level, and the levels it calls, run
+    /// with flag `F` set (`with`) or clear; the caller's flags are its own again after it.
+    Flag { flag: String, set: bool, body: Box<Gram> },
+    /// `unless F A`: `A` where flag `F` is clear; where it is set, as if `A` were not there.
+    Unless { flag: String, body: Box<Gram> },
 }
 
 /// What a `reading` does with a node of a kind it names.
@@ -216,6 +221,9 @@ pub enum Stmt {
     /// level; `as CHOICE` (and a reading's `K as CHOICE`) then names that token's kind. A nested
     /// level starts with its caller's and gives it back when it ends.
     Remember(Vec<String>),
+    /// `flag F …` (in a tree): flags a level runs with (`with F A`, `unless F A`), clear in the
+    /// root's.
+    Flags(Vec<String>),
 }
 
 impl Stmt {
@@ -536,6 +544,14 @@ impl P {
             return Ok(Gram::Field(name, Box::new(self.gram_atom()?)));
         }
         match name.as_str() {
+            "with" | "without" => {
+                let flag = self.ident()?;
+                Ok(Gram::Flag { flag, set: name == "with", body: Box::new(self.gram_atom()?) })
+            }
+            "unless" => {
+                let flag = self.ident()?;
+                Ok(Gram::Unless { flag, body: Box::new(self.gram_atom()?) })
+            }
             "retag" => {
                 let kind = self.ident()?;
                 Ok(Gram::Retag(kind, Box::new(self.gram_atom()?)))
@@ -963,6 +979,16 @@ impl P {
                     }
                 }
                 Stmt::Reading { name, reading }
+            }
+            "flag" => {
+                let mut names = vec![];
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    names.push(self.ident()?);
+                }
+                if names.is_empty() {
+                    return self.err("flag F …");
+                }
+                Stmt::Flags(names)
             }
             "remember" => {
                 let mut names = vec![];

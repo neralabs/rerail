@@ -190,3 +190,30 @@ fn a_rule_that_takes_a_remembered_word_stays_inlined() {
     src = src.replace("remember word\n", "");
     assert_eq!(grammar::shared_names(&tree(&src), &tokens), ["tail"]);
 }
+
+#[test]
+fn a_flag_guards_an_arm_in_the_levels_it_is_set_for() {
+    // `inner` after `p` runs with flag `nb`, after `q` without: its `b` arm is guarded, a test
+    // of the flag its level runs with; the call after `p` sets it.
+    let src = "tree t {\n  node root = (p with nb inner | q inner)*\n  flag nb\n  node inner nested = a [unless nb (b c)]\n}";
+    let (_, m) = states(src);
+    let guarded: Vec<&str> = m.lines().filter(|l| l.contains(" unless 0")).collect();
+    assert_eq!(guarded.len(), 1, "the `b` arm: {m}");
+    // Two calls of `inner` (after `p`, after `q`); only the one after `p` sets the flag.
+    let calls = m.lines().filter(|l| l.contains(" push ")).count();
+    let set = m.lines().filter(|l| l.contains(" push ") && l.contains(" with 0 call 0")).count();
+    assert_eq!((calls, set), (2, 1), "{m}");
+}
+
+#[test]
+fn a_flag_set_on_the_way_settles_a_first_tokens_guard() {
+    // `inner`'s first token is guarded: entered with the flag set, that arm is not there;
+    // entered with it clear, it is, unguarded.
+    let src = "tree t {\n  node root = (p with nb inner | q without nb inner)*\n  flag nb\n  node inner nested = unless nb a | b\n}";
+    let (_, m) = states(src);
+    assert!(!m.contains(" unless "), "every guard settled: {m}");
+    // After `p` only `b` enters `inner` (the arm on `a` is not there); after `q` both do.
+    let with = m.lines().filter(|l| l.contains(" with 0 call 0")).count();
+    let without = m.lines().filter(|l| l.contains(" without 0 call 0")).count();
+    assert_eq!((with, without), (1, 2), "{m}");
+}

@@ -58,6 +58,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (MERGE, "MERGE"),
     (WRAP, "WRAP"),
     (REMEMBER, "REMEMBER"),
+    (FLAG, "FLAG"),
 ];
 
 /// How an opcode's operand prints.

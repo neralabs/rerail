@@ -92,6 +92,9 @@ struct Parser<'a> {
     /// The token a `remember` choice took last at this level: `as` that choice names its kind.
     /// A nested level starts with its caller's, which it gives back when it ends.
     word: Option<String>,
+    /// The flags this level runs with (`with F A`): its caller's, but where a `with` or a
+    /// `without` set them.
+    flags: Vec<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -194,7 +197,7 @@ impl<'a> Parser<'a> {
                 (b | x, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.first(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.first(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.first(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
             Gram::Any(_) => (0, false),
@@ -223,7 +226,7 @@ impl<'a> Parser<'a> {
                 (s, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.starts(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.starts(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.starts(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts(body),
             Gram::Balanced { open, .. } => (Starts::of(open), false),
             Gram::Any(except) => (Starts { kinds: Default::default(), any: Some(except.iter().cloned().collect()) }, false),
@@ -253,6 +256,24 @@ impl<'a> Parser<'a> {
     fn matches(&mut self, g: &Gram, at: usize, follow: u64) -> Option<usize> {
         match g {
             Gram::Lit(k) => self.token(k, at, follow),
+            // The levels `body` runs, with the flag set or clear; the caller's flags after.
+            Gram::Flag { flag, set, body } => {
+                let was = self.flags.clone();
+                self.flags.retain(|f| f != flag);
+                if *set {
+                    self.flags.push(flag.clone());
+                }
+                let next = self.matches(body, at, follow);
+                self.flags = was;
+                next
+            }
+            // Where the flag is set, as if `body` were not there.
+            Gram::Unless { flag, body } => {
+                if self.flags.contains(flag) {
+                    return None;
+                }
+                self.matches(body, at, follow)
+            }
             Gram::Sym(name) => {
                 // A nested level gives its caller's word back when it ends; a `remember` choice
                 // makes the token it took its level's word.
@@ -696,7 +717,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         return Err("more than 64 marks and soft keywords".into());
     }
     let extra_at = extras.iter().map(|e| e.1.start).collect();
-    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, dissolved: None, fatal: None, word: None };
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, dissolved: None, fatal: None, word: None, flags: Vec::new() };
     first_of(&mut p);
     // A whole root is opened at byte 0 and matched by its content, which may be empty. Marks
     // before the first token are kept where the root can start with them.
