@@ -140,6 +140,12 @@ impl World {
         out
     }
 
+    /// The document a load of `asked` gave earlier in this run, if any: a load asked again is answered alike.
+    pub(super) fn loaded_as(&self, asked: &str) -> Option<Loaded> {
+        let path = self.allowed(asked)?;
+        self.loads.get(path.to_string_lossy().as_ref()).cloned()
+    }
+
     pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
         if corpus.contains(asked) || self.refused.contains(asked) {
             return None;
