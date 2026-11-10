@@ -891,6 +891,61 @@ Levels (above) is the default for a session's recursive strata on the integratio
 Result: O125 1–8 are the same as full with levels (with and without `RERAIL_AGAIN=off`).
 Gate: 3988 303 298 0.
 
+## Measured: θ, the smaller items, and counting against DRed again (2026-11-10)
+
+O125 replay steps 06–08 (edits) and stress steps 23–24 (mass deletes), debug build, `RERAIL_NODE_IDS=definition`.
+The modes of each table ran at the same time, at load 80–140. Work is the engine's work units (deterministic);
+calls are engine runs.
+
+**θ.** On edits it hardly matters. A lower θ derives more strata again: fewer calls, more work, the same CPU.
+
+| θ | 07: cross CPU, work, calls | 08: cross CPU, work, calls |
+| --- | --- | --- |
+| 0.1 | 9.7 s, 6.67 M, 1,683 | 10.7 s, 7.14 M, 1,624 |
+| 0.5 | 10.9 s, 6.39 M, 2,657 | 10.4 s, 7.38 M, 2,519 |
+| 1 | 11.0 s, 6.18 M, 2,796 | 11.8 s, 6.38 M, 3,135 |
+| off | 10.6 s, 4.95 M, 3,479 | 11.6 s, 4.92 M, 4,213 |
+
+On mass deletes it matters, but anything from 0.1 to 0.25 does the same:
+
+| θ | 23: cross CPU, work, calls | 24: cross CPU, work, calls |
+| --- | --- | --- |
+| 0.1 | 10.8 s, 4.60 M, 1,665 | 12.4 s, 7.35 M, 1,787 |
+| 0.25 (default) | 11.4 s, 4.88 M, 1,679 | 12.3 s, 7.35 M, 1,787 |
+| 1 | 14.7 s, 6.38 M, 2,109 | 12.2 s, 7.70 M, 1,909 |
+| off | 26.4 s, 12.79 M, 3,660 | 20.7 s, 20.91 M, 3,729 |
+
+So θ stays 0.25. The cost-estimate half of §4 is not built: a single θ from 0.1 to 1 moves an edit's cost by about
+10%, so a better choice per group has little to gain on these replays.
+
+**The probe off by 270×.** `fv__live` by `(k, v)` no longer runs at 23–24: θ derives those strata again. A joint
+estimate for probes on several columns was tried. It prices a probe by the fanout of a native index on those
+columns (Σ postings² / rows), not by the product of each column's own. Work moved by under 0.4% either way, with
+derive-again on or off. One seed plan got worse (2,255 to 3,450 work units) and one check got slightly better,
+so the change was not kept. The misordered joins left are of another kind (0101, "after the sort fix").
+
+**Levels, one check batch per level.** No longer costly. The level waves take 0.06–0.17 s a step (167–220 runs).
+Batching levels together is also not sound as it stands: a lower level's candidate could support a higher one's.
+
+**The first step's statistics.** At step 06 a kept relation's statistics are counted from its postings, once,
+so later steps patch them by delta. That is 798 relations and 1.55 s of the step, about 0.3 µs a row and column
+in a debug build. Counting only for the strata that run would not help: nearly every stratum runs at the first
+step (4,123 of them). It is the same cost as the measure it replaced, and it is paid once a session.
+
+**Counting against DRed** (`RERAIL_MAINTAIN=dred RERAIL_RECURSIVE=dred`), cross CPU of steps 06 / 07 / 08:
+
+| | counting | DRed |
+| --- | --- | --- |
+| before 0101's sort fix | 15.0 / 11.7 / 12.0 s | 10.9 / 8.7 / 8.7 s |
+| after it | 14.2 / 8.2 / 7.7 s | 10.7 / 8.4 / 6.9 s |
+| work | 1.47 / 6.38 / 7.45 M | 1.48 / 6.63 / 7.40 M |
+| engine calls | 2,492 / 2,601 / 2,429 | 947 / 958 / 859 |
+
+Before today's fixes counting cost 1.5–2× DRed. It is now even with it on edits 07–08, within this load's noise.
+At the first step, 06, it costs about 3.5 s more: it counts its kept relations once (above), and it runs more
+pieces. Its extra calls are its supports. Each one is cheap now: counting's 2,601 calls took 3.4 s of joins at
+07 and DRed's 958 took 4.1 s, for the same work.
+
 ## What the prior work says
 
 - **Target architecture (03):**
@@ -934,10 +989,10 @@ Gate: 3988 303 298 0.
 ## Open
 
 - Whether 03 §2's "no DRed" is to be read as "no stored witness" (§6). This needs the architecture owner.
-- θ is set (0.25, floor 1,024 rows) and catches steps 23–25, but is not tuned. The cost-estimate half of §4 is
-  not built. Neither matters much until the per-stratum fixed cost is gone (0101): today it, not row work, keeps
-  a maintained step at about twice a cold one.
-- Levels: one check batch per level, and the probe estimate on `__live` relations that is off by about 270×.
+- The cost-estimate half of §4 is not built. Measured, a single θ from 0.1 to 1 moves an edit's cost by about
+  10% (θ, above), so it waits for a replay where groups differ more.
+- Counting or DRed as the session default: even on edits after 0101's sort fix. Counting costs about 3.5 s more
+  on a session's first step.
 - Interface summaries for libraries (03 §14's derivations) and this session store meet at the library boundary;
   0083 §5–§6 places it, and this record does not.
 

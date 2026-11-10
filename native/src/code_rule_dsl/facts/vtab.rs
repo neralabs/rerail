@@ -161,6 +161,11 @@ pub(crate) trait Source: Send + Sync {
     fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {
         None
     }
+    /// Whether `sorted_rows` serves `column`, asked without building its index: a plan choosing among a source's
+    /// columns built every candidate's sorted form to ask, where it reads one.
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.sorted_rows(column, 0).is_some()
+    }
 }
 
 #[derive(Default)]

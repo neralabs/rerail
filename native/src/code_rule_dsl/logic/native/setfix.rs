@@ -2281,7 +2281,7 @@ impl InRel {
             .enumerate()
             .filter_map(|(j, &c)| {
                 let sc = v.cols[c];
-                let sorted_source = v.src.sorted_rows(sc, 0).is_some();
+                let sorted_source = v.src.sorts_rows(sc);
                 let sorted = sorted_source && v.ids.is_none() && v.eqs.is_empty();
                 let source = !sorted_source && v.ids.is_none() && v.src.indexed(sc);
                 (sorted || source).then(|| (v.src.estimated_matches(sc, false), j, sorted))
@@ -2365,9 +2365,9 @@ impl InRel {
                 empty(false, false)
             } else if let Some(i) = self.chains.iter().position(|ix| ix.cols == cols) {
                 Csr { chain: Some(i), ..empty(false, false) }
-            } else if let (Some(v), [c]) = (&self.view, cols) && v.ids.is_none() && v.eqs.is_empty() && v.src.sorted_rows(v.cols[*c], 0).is_some() {
+            } else if let (Some(v), [c]) = (&self.view, cols) && v.ids.is_none() && v.eqs.is_empty() && v.src.sorts_rows(v.cols[*c]) {
                 empty(false, true)
-            } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) && v.src.sorted_rows(v.cols[*c], 0).is_none() {
+            } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) && !v.src.sorts_rows(v.cols[*c]) {
                 // (A source's lookup allocates each probe's rows; over a sorted source a filtered view builds its own.)
                 empty(true, false)
             } else if let Some((lead, sorted)) = self.lead(cols) {
@@ -2585,7 +2585,13 @@ impl Stored {
             .collect()
     }
     fn distinct(&self, c: usize) -> usize {
-        *self.distinct[c].get_or_init(|| self.sorted(c).keys.len().max(1))
+        // Statistics kept with the rows (`columns_source_measured`, or measured once) give it without a sort: a plan
+        // asks each key column's count to choose the one it probes by, and sorting all of them to ask was most of an
+        // edit's index cost (0101).
+        *self.distinct[c].get_or_init(|| {
+            let kept = self.statistics.as_ref().and_then(|s| s.get()).and_then(|st| st.iter().find(|m| m.0 == self.columns[c]).map(|m| m.2 as usize));
+            kept.unwrap_or_else(|| self.sorted(c).keys.len()).max(1)
+        })
     }
     /// An order whose leading columns are exactly `cols` (as a set), built most selective column first.
     fn order(&self, cols: &[usize]) -> (Vec<usize>, Arc<Vec<u32>>) {
@@ -2743,6 +2749,7 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
     /// A column held nowhere (no rule names it, `columns_source`) reads as 0.
     fn value(&self, row: usize, c: usize) -> i64 { self.col(c).get(row).copied().unwrap_or(0) }
     fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { Some(self.rows_of(c, v)) }
+    fn sorts_rows(&self, _: usize) -> bool { true }
 }
 /// A relation held in memory as columns (`None`: a column no rule reads, which reads as 0), read in place: a
 /// probe on a column is a slice of its sorted index, built on first use.

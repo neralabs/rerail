@@ -600,6 +600,9 @@ impl Source for Renamed {
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.0.sorted_rows(column, value)
     }
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.0.sorts_rows(column)
+    }
     fn prepare_lookup(&self, columns: &[usize]) {
         self.0.prepare_lookup(columns)
     }
