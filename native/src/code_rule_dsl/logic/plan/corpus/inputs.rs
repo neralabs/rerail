@@ -83,32 +83,35 @@ fn typed(row: Vec<Json>, columns: &[(String, String)], text: bool) -> ReadResult
 }
 
 /// Integer conversion is data: one failed member must not discard its siblings.
-fn python_float_text(text: &str) -> bool {
-    text.contains(['.', 'e', 'E']) || matches!(text,"nan"|"inf"|"-inf")
+type PythonIntResult = std::result::Result<String, (&'static str, String)>;
+
+fn float_int(value: f64) -> PythonIntResult {
+    use num_traits::FromPrimitive;
+    if value.is_nan() { Err(("ValueError", "cannot convert float NaN to integer".into())) }
+    else { num_bigint::BigInt::from_f64(value.trunc()).map(|v| v.to_string()).ok_or(("OverflowError", "cannot convert float infinity to integer".into())) }
+}
+
+fn int_type_error(name: &str) -> PythonIntResult {
+    Err(("TypeError",format!("int() argument must be a string, a bytes-like object or a real number, not '{name}'")))
+}
+
+fn int_row(converted: PythonIntResult) -> Vec<Json> {
+    let (value, kind, detail) = match converted { Ok(v) => (v, "", String::new()), Err((k,e)) => (String::new(),k,e) };
+    [value,kind.to_owned(),detail].into_iter().map(Json::String).collect()
 }
 
 fn python_int(value: &Json) -> Vec<Json> {
-    use num_traits::FromPrimitive;
-    let converted: std::result::Result<String, (&str, String)> = match value {
+    int_row(match value {
         Json::Bool(b) => Ok(i32::from(*b).to_string()),
         Json::Number(n) => {
             let text = n.to_string();
-            if !python_float_text(&text) {
+            if !text.contains(['.', 'e', 'E']) {
                 crate::code_rule_dsl::logic::strings::python_integer_text(&text).map_err(|e| ("ValueError", e))
-            } else {
-                let f = text.parse::<f64>().unwrap_or(f64::NAN);
-                if f.is_nan() { Err(("ValueError", "cannot convert float NaN to integer".into())) }
-                else { num_bigint::BigInt::from_f64(f.trunc()).map(|v| v.to_string()).ok_or(("OverflowError", "cannot convert float infinity to integer".into())) }
-            }
+            } else { float_int(text.parse::<f64>().unwrap_or(f64::NAN)) }
         }
         Json::String(s) => crate::code_rule_dsl::logic::strings::python_integer_text(s).map_err(|e| ("ValueError",e)),
-        other => {
-            let name = match other { Json::Null => "NoneType", Json::Array(_) => "list", _ => "dict" };
-            Err(("TypeError",format!("int() argument must be a string, a bytes-like object or a real number, not '{name}'")))
-        }
-    };
-    let (value, kind, detail) = match converted { Ok(v) => (v, "", String::new()), Err((k,e)) => (String::new(),k,e) };
-    [value,kind.to_owned(),detail].into_iter().map(Json::String).collect()
+        other => int_type_error(match other { Json::Null => "NoneType", Json::Array(_) => "list", _ => "dict" }),
+    })
 }
 
 fn python_repr(value: &Json) -> String {
@@ -119,7 +122,7 @@ fn python_repr(value: &Json) -> String {
         Json::String(s) => string_repr(s),
         Json::Number(n) => {
             let raw = n.to_string();
-            if python_float_text(&raw) {
+            if raw.contains(['.', 'e', 'E']) {
                 crate::code_rule_dsl::value::python::float_repr(raw.parse().expect("a JSON number"))
             } else { raw.parse::<num_bigint::BigInt>().expect("a JSON integer").to_string() }
         }
@@ -128,35 +131,66 @@ fn python_repr(value: &Json) -> String {
     }
 }
 
-/// A lossless primitive envelope, separate from ordinary JSON values. Floats
-/// carry IEEE-754 bits so NaN, infinity and negative zero survive JSON transport.
-/// The same native coercers serve these values and ordinary JSON selectors.
-fn python_value(value: &Json) -> ReadResult<Json> {
+/// Typed values remain distinct from JSON numbers: JSON has no NaN or infinity.
+/// Primitive payloads borrow the shared input document; containers retain order.
+enum PythonValue<'a> {
+    Json(&'a Json),
+    Integer(String),
+    Float(f64),
+    List(Vec<PythonValue<'a>>),
+    Dict(Vec<(&'a str,PythonValue<'a>)>),
+}
+
+impl PythonValue<'_> {
+    fn repr(&self) -> String {
+        use crate::code_rule_dsl::facts::vtab::syntax::python_print::string_repr;
+        match self {
+            Self::Json(v)=>python_repr(v),
+            Self::Integer(v)=>v.clone(),
+            Self::Float(v)=>crate::code_rule_dsl::value::python::float_repr(*v),
+            Self::List(v)=>format!("[{}]",v.iter().map(Self::repr).collect::<Vec<_>>().join(", ")),
+            Self::Dict(v)=>format!("{{{}}}",v.iter().map(|(k,v)|format!("{}: {}",string_repr(k),v.repr())).collect::<Vec<_>>().join(", ")),
+        }
+    }
+    fn text(&self) -> String {
+        match self { Self::Json(Json::String(s))=>s.clone(), _=>self.repr() }
+    }
+    fn integer(&self) -> Vec<Json> {
+        match self {
+            Self::Json(v)=>python_int(v), Self::Integer(v)=>int_row(Ok(v.clone())),
+            Self::Float(v)=>int_row(float_int(*v)),
+            Self::List(_)=>int_row(int_type_error("list")), Self::Dict(_)=>int_row(int_type_error("dict")),
+        }
+    }
+}
+
+fn python_value(value: &Json) -> ReadResult<PythonValue<'_>> {
     let parts=value.as_array().filter(|p|p.len()==2).ok_or_else(||malformed("Python value must be a [kind, payload] pair"))?;
     let bad=||malformed("invalid Python value payload");
     Ok(match parts[0].as_str().ok_or_else(bad)? {
-        "null" if parts[1].is_null()=>Json::Null,
-        "bool"=>Json::Bool(parts[1].as_bool().ok_or_else(bad)?),
-        "str"=>Json::String(parts[1].as_str().ok_or_else(bad)?.to_owned()),
+        "null" if parts[1].is_null()=>PythonValue::Json(&parts[1]),
+        "bool" if parts[1].is_boolean()=>PythonValue::Json(&parts[1]),
+        "str" if parts[1].is_string()=>PythonValue::Json(&parts[1]),
         "int"=>{
             let raw=parts[1].as_str().ok_or_else(bad)?;
-            let integer=raw.parse::<num_bigint::BigInt>().map_err(|_|bad())?;
-            Json::Number(serde_json::Number::from_string_unchecked(integer.to_string()))
+            PythonValue::Integer(raw.parse::<num_bigint::BigInt>().map_err(|_|bad())?.to_string())
         },
         "float"=>{
             let raw=parts[1].as_str().filter(|s|s.len()==16).ok_or_else(bad)?;
-            let bits=u64::from_str_radix(raw,16).map_err(|_|bad())?;
-            let text=crate::code_rule_dsl::value::python::float_repr(f64::from_bits(bits));
-            Json::Number(serde_json::Number::from_string_unchecked(text))
+            PythonValue::Float(f64::from_bits(u64::from_str_radix(raw,16).map_err(|_|bad())?))
         },
-        "list"=>Json::Array(parts[1].as_array().ok_or_else(bad)?.iter().map(python_value).collect::<ReadResult<_>>()?),
+        "list"=>PythonValue::List(parts[1].as_array().ok_or_else(bad)?.iter().map(python_value).collect::<ReadResult<_>>()?),
         "dict"=>{
-            let mut map=serde_json::Map::new();
+            let mut items=Vec::new();
+            let mut positions=BTreeMap::new();
             for row in parts[1].as_array().ok_or_else(bad)? {
                 let pair=row.as_array().filter(|r|r.len()==2).ok_or_else(bad)?;
-                map.insert(pair[0].as_str().ok_or_else(bad)?.to_owned(),python_value(&pair[1])?);
+                let key=pair[0].as_str().ok_or_else(bad)?;
+                let value=python_value(&pair[1])?;
+                if let Some(&at)=positions.get(key) { items[at]=(key,value); }
+                else { positions.insert(key,items.len());items.push((key,value)); }
             }
-            Json::Object(map)
+            PythonValue::Dict(items)
         },
         _=>return Err(bad()),
     })
@@ -169,10 +203,11 @@ fn json_rows(value: &Json, pointer: &str, records: bool, projection: &str, prefi
     select(value, &steps, prefix, &mut selected);
     let mut out = Vec::new();
     for (prefix, value) in selected {
-        let decoded=projection.starts_with("python-value-").then(||python_value(value)).transpose()?;
-        let value=decoded.as_ref().unwrap_or(value);
-        let projection=match projection { "python-value-str"=>"python-str", "python-value-int"=>"python-int", other=>other };
-        let rows: Vec<Vec<Json>> = if projection == "type" {
+        let rows: Vec<Vec<Json>> = if projection == "python-value-str" {
+            vec![vec![Json::String(python_value(value)?.text())]]
+        } else if projection == "python-value-int" {
+            vec![python_value(value)?.integer()]
+        } else if projection == "type" {
             let kind = match value {
                 Json::Null => "null", Json::Bool(_) => "boolean", Json::Number(_) => "number",
                 Json::String(_) => "string", Json::Array(_) => "array", Json::Object(_) => "object",
