@@ -84,7 +84,8 @@ plain_three(g, m) :- exit_method(g, m), count : { sig_param(g, p, n, i, k, a, d)
     count : { sig_param(g, p, n, i, k, a, d), pos_kind(k) } = 4.
 // loose(f, form): each of f's three arguments is unannotated, `object`/`Unused`, or the form's type.
 .decl loose(f: node, form: symbol)
-loose(f, form) :- exit_method(f, _), (form = "none" ; form = "exc"), count : { arg(f, p, i, a), !loose_arg(a, i, form) } = 0.
+loose(f, "none") :- exit_method(f, _), count : { arg(f, p, i, a), !loose_arg(a, i, "none") } = 0.
+loose(f, "exc") :- exit_method(f, _), count : { arg(f, p, i, a), !loose_arg(a, i, "exc") } = 0.
 .decl loose_arg(a: loc, i: number, form: symbol)
 loose_arg(a, i, f) :- arg(_, _, i, a), (f = "none" ; f = "exc"), unset(a).
 loose_arg(a, i, f) :- arg(_, _, i, a), (f = "none" ; f = "exc"), type_bare(a, t), object_or_unused(t).

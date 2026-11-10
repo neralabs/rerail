@@ -353,7 +353,7 @@ per word, a loop over the stream), but nothing generates it yet.
 
 Each executor must compute what the Bitlex file means, not only what the interpreter
 says. The corpus checks both. It is in
-`native/src/code_rule_dsl/transducer/packed/bitlex_corpus/`, one Bitlex file per
+`native/crates/parser_tests/bitlex_corpus/`, one Bitlex file per
 program, from one construct alone up to combinations of many.
 
 For every file and every input:

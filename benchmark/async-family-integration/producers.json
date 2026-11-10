@@ -1,0 +1,25 @@
+{
+  "all_calls": 691328,
+  "async_calls": 65399,
+  "core_construction_cpu_ns": 1057690000,
+  "eager_argument_rows": 1005452,
+  "files": 5725,
+  "nodes": 19007630,
+  "parse_tape_cpu_ns": 10632136000,
+  "runs": [
+    {
+      "postings_all_families_cpu_ns": 67416000,
+      "reference_async_structure_cpu_ns": 159075000
+    },
+    {
+      "postings_all_families_cpu_ns": 49040000,
+      "reference_async_structure_cpu_ns": 134972000
+    },
+    {
+      "postings_all_families_cpu_ns": 41221000,
+      "reference_async_structure_cpu_ns": 131837000
+    }
+  ],
+  "scope": "Producer-only microbenchmark, not end-to-end execution. Postings builds every call family and arguments; reference builds only async-context call structure. Core construction is separate; production may reuse it. Every async call ID agrees per document. Per-document CPU clocks and output destruction excluded from producer timers.",
+  "source_bytes": 95697853
+}

@@ -6,9 +6,9 @@ mod anchors;
 pub(in crate::code_rule_dsl) mod p_anchors;
 // P's anchor corpus at P's paths, for P's relational workspace code and the `p-anchor-corpus` path.
 #[cfg(test)]
-pub(in crate::code_rule_dsl) use p_anchors::sql::{Corpus, CorpusSlot, anchor_plans_for_file};
+pub(in crate::code_rule_dsl) use p_anchors::sql::{Corpus, CorpusSlot};
 #[cfg(all(test, feature = "p-anchor-corpus"))]
-pub(in crate::code_rule_dsl) use p_anchors::sql::anchor_plans;
+pub(in crate::code_rule_dsl) use p_anchors::sql::{anchor_plans, anchor_plans_for_file};
 /// D's anchors module and SQL anchor engine as copied (bb79b40a), test-only: the closure of D's
 /// plan-input statistics (O19).
 #[cfg(test)]
@@ -34,6 +34,8 @@ mod lower;
 mod memo;
 mod nth_child;
 mod parse;
+#[cfg(test)]
+pub(crate) mod python_facts;
 mod relation;
 mod resolve;
 mod run;

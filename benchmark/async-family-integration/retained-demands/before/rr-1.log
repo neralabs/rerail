@@ -1,0 +1,80 @@
+
+running 1 test
+test code_rule_dsl::findings::async_reference::rr_comparison::complete_async_family_authored_rr_corpus_profile ... chunk 0: footprint 330 MB (max 433), heap live 370 MB, outputs 0 lines
+chunk 1: footprint 336 MB (max 433), heap live 375 MB, outputs 0 lines
+chunk 2: footprint 326 MB (max 433), heap live 363 MB, outputs 0 lines
+chunk 3: footprint 366 MB (max 433), heap live 401 MB, outputs 0 lines
+chunk 4: footprint 370 MB (max 433), heap live 401 MB, outputs 0 lines
+chunk 5: footprint 373 MB (max 433), heap live 401 MB, outputs 0 lines
+chunk 6: footprint 381 MB (max 433), heap live 408 MB, outputs 0 lines
+chunk 7: footprint 383 MB (max 433), heap live 409 MB, outputs 0 lines
+chunk 8: footprint 384 MB (max 433), heap live 409 MB, outputs 0 lines
+chunk 9: footprint 388 MB (max 433), heap live 410 MB, outputs 0 lines
+chunk 10: footprint 402 MB (max 438), heap live 424 MB, outputs 0 lines
+chunk 11: footprint 405 MB (max 438), heap live 424 MB, outputs 0 lines
+chunk 12: footprint 406 MB (max 438), heap live 425 MB, outputs 0 lines
+chunk 13: footprint 411 MB (max 440), heap live 425 MB, outputs 0 lines
+chunk 14: footprint 415 MB (max 442), heap live 426 MB, outputs 0 lines
+chunk 15: footprint 415 MB (max 442), heap live 426 MB, outputs 0 lines
+chunk 16: footprint 418 MB (max 443), heap live 426 MB, outputs 0 lines
+chunk 17: footprint 422 MB (max 451), heap live 427 MB, outputs 0 lines
+chunk 18: footprint 427 MB (max 456), heap live 430 MB, outputs 0 lines
+chunk 19: footprint 455 MB (max 507), heap live 457 MB, outputs 0 lines
+chunk 20: footprint 458 MB (max 507), heap live 456 MB, outputs 0 lines
+chunk 21: footprint 463 MB (max 507), heap live 459 MB, outputs 0 lines
+chunk 22: footprint 460 MB (max 507), heap live 456 MB, outputs 0 lines
+chunk 23: footprint 465 MB (max 507), heap live 457 MB, outputs 0 lines
+chunk 24: footprint 465 MB (max 507), heap live 456 MB, outputs 0 lines
+chunk 25: footprint 469 MB (max 507), heap live 457 MB, outputs 0 lines
+chunk 26: footprint 470 MB (max 507), heap live 457 MB, outputs 0 lines
+chunk 27: footprint 480 MB (max 507), heap live 463 MB, outputs 0 lines
+chunk 28: footprint 482 MB (max 511), heap live 462 MB, outputs 0 lines
+chunk 29: footprint 479 MB (max 511), heap live 458 MB, outputs 0 lines
+chunk 30: footprint 485 MB (max 511), heap live 462 MB, outputs 0 lines
+chunk 31: footprint 454 MB (max 517), heap live 461 MB, outputs 0 lines
+chunk 32: footprint 457 MB (max 517), heap live 462 MB, outputs 0 lines
+chunk 33: footprint 461 MB (max 517), heap live 463 MB, outputs 0 lines
+chunk 34: footprint 461 MB (max 517), heap live 460 MB, outputs 0 lines
+chunk 35: footprint 464 MB (max 517), heap live 462 MB, outputs 0 lines
+chunk 36: footprint 469 MB (max 517), heap live 464 MB, outputs 0 lines
+chunk 37: footprint 467 MB (max 517), heap live 461 MB, outputs 0 lines
+chunk 38: footprint 476 MB (max 517), heap live 465 MB, outputs 0 lines
+chunk 39: footprint 528 MB (max 599), heap live 521 MB, outputs 0 lines
+chunk 40: footprint 527 MB (max 599), heap live 519 MB, outputs 0 lines
+chunk 41: footprint 529 MB (max 599), heap live 518 MB, outputs 0 lines
+chunk 42: footprint 532 MB (max 599), heap live 520 MB, outputs 0 lines
+chunk 43: footprint 533 MB (max 599), heap live 520 MB, outputs 0 lines
+chunk 44: footprint 538 MB (max 599), heap live 521 MB, outputs 0 lines
+chunk 45: footprint 510 MB (max 599), heap live 523 MB, outputs 0 lines
+chunk 46: footprint 511 MB (max 599), heap live 522 MB, outputs 0 lines
+chunk 47: footprint 521 MB (max 599), heap live 529 MB, outputs 0 lines
+chunk 48: footprint 519 MB (max 599), heap live 523 MB, outputs 0 lines
+chunk 49: footprint 521 MB (max 599), heap live 524 MB, outputs 0 lines
+chunk 50: footprint 520 MB (max 599), heap live 522 MB, outputs 0 lines
+chunk 51: footprint 532 MB (max 599), heap live 530 MB, outputs 0 lines
+chunk 52: footprint 528 MB (max 599), heap live 526 MB, outputs 0 lines
+chunk 53: footprint 531 MB (max 599), heap live 526 MB, outputs 0 lines
+chunk 54: footprint 534 MB (max 599), heap live 528 MB, outputs 0 lines
+chunk 55: footprint 534 MB (max 599), heap live 526 MB, outputs 0 lines
+chunk 56: footprint 537 MB (max 599), heap live 526 MB, outputs 0 lines
+chunk 57: footprint 540 MB (max 599), heap live 525 MB, outputs 0 lines
+chunk 58: footprint 543 MB (max 599), heap live 526 MB, outputs 0 lines
+chunk 59: footprint 545 MB (max 599), heap live 527 MB, outputs 0 lines
+chunk 60: footprint 516 MB (max 599), heap live 527 MB, outputs 0 lines
+chunk 61: footprint 516 MB (max 599), heap live 526 MB, outputs 0 lines
+chunk 62: footprint 523 MB (max 599), heap live 529 MB, outputs 0 lines
+chunk 63: footprint 526 MB (max 599), heap live 531 MB, outputs 0 lines
+chunk 64: footprint 523 MB (max 599), heap live 526 MB, outputs 0 lines
+chunk 65: footprint 526 MB (max 599), heap live 529 MB, outputs 0 lines
+chunk 66: footprint 529 MB (max 599), heap live 528 MB, outputs 0 lines
+chunk 67: footprint 534 MB (max 599), heap live 530 MB, outputs 0 lines
+chunk 68: footprint 535 MB (max 599), heap live 530 MB, outputs 0 lines
+chunk 69: footprint 538 MB (max 599), heap live 529 MB, outputs 0 lines
+chunk 70: footprint 540 MB (max 599), heap live 530 MB, outputs 0 lines
+chunk 71: footprint 545 MB (max 599), heap live 532 MB, outputs 0 lines
+chunk 72: footprint 544 MB (max 599), heap live 527 MB, outputs 0 lines
+authored .rr: 5725 files, 0 keys, 13681906000 CPU ns, 46505247375 wall ns
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3224 filtered out; finished in 46.62s
+

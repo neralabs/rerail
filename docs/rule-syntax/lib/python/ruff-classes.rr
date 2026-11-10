@@ -119,8 +119,7 @@ ann_input(a) :- type_app(_, _, _, a).
 ann_input(x) :- ann_input(t), ann_strip(t, m), kind(m, k), (k = "binary_operator" ; k = "union_type"), child(m, x, _).
 // A string annotation's parsed tree is an input too, for the rules that read strings (RUF013); the class rules
 // look only at the annotation node itself, which stays a string.
-ann_input(r) :- ann_input(t), ann_strip(t, s), (kind(s, "string") ; kind(s, "concatenated_string")),
-    parsed(s, "annotation", r).
+ann_input(r) :- ann_input(t), ann_strip(t, s), str_node(s), parsed(s, "annotation", r).
 // type_app(t, h, i, a): `h[a0, a1]` as a subscript (`typing.Optional[int]`) or a generic_type (`Optional[int]`).
 .decl type_app(t: node, h: node, i: number, a: node)
 type_app(t, h, i, a) :- ann_input(t), ann_strip(t, m), kind(m, "subscript"), field(m, "value", h),

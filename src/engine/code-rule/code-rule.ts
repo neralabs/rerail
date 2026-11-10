@@ -99,9 +99,8 @@ export interface CodeRuleDslDefineClause {
 }
 
 export interface CodeRuleDslDefine {
-  /** Report all findings together only above this count. Failures remain visible. */
+  /** Report findings only above this count; failures remain visible. */
   report_when?: { count: { gt: number } };
-
   /** The language `utils` compile for; required with them. */
   language?: CodeRuleLanguageId;
   /**
@@ -197,14 +196,17 @@ export interface CodeRuleDslRelational {
   partitionBy?: "file" | "repository";
   syntax?: { name: string; gate: string; fields?: string[]; columns?: string[]; excludeKinds?: string[]; emptyTextKinds?: string[]; edges?: string; ownership?: string; owners?: Record<string,{kind:string;outermost?:boolean}> };
   inputs: Record<string, CodeRuleDslRelation>;
-  references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
+  references?: { language: "python"; siblingLinks?: { decorator: string; name: { replace: string; by: string } }[]; constructorFields?: { fieldToParameter: { replace: string; by: string } } };
   stages?: ({ name: string } & (
     | { query: string; indexes?: string[][]; deferred?: Record<string, string>; reachability?: never }
-    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest" }; query?: never; indexes?: never; deferred?: never }
+    | { pythonAst: { roots: string; syntax: string; fields: ("dump" | "body_sha256" | "signature_sha256" | "identifier" | "unparse" | "literal_json" | "dump_sha256" | "column" | "repr_unparse")[] }; query?: never; indexes?: never; deferred?: never; reachability?: never }
+    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest"; selection?: "memoized-first"; sinks?: string; match?: "node" | "edge" }; query?: never; indexes?: never; deferred?: never }
   ))[];
   query: string;
   key?: string[];
   code?: string;
+  /** Output column containing the exact diagnostic message. */
+  message?: string;
 }
 
 
@@ -241,7 +243,7 @@ export interface CodeRuleDslRegexQuery {
 
 export interface CodeRuleDslAstQuery {
   ast: {
-    /** Gate on whole-file syntax. Invalid permits matches inside error regions. */
+    /** Gate on whole-file syntax. */
     syntax?: "valid" | "invalid";
     language: CodeRuleLanguageId;
     rule: CodeRuleDslAstRule;
@@ -654,7 +656,6 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
   kind?: string;
   regex?: string;
   nthChild?: CodeRuleDslNthChild;
-  /** File path condition that can also scope a call-graph seed. */
   filePath?: CodeRuleDslTextCondition;
   all?: CodeRuleDslAstRule[];
   any?: CodeRuleDslAstRule[];
@@ -714,10 +715,8 @@ export interface CodeRuleDslLayoutGap {
  * is not evaluated in a file with syntax errors. A parsed tree's rule (`parse`) refuses it.
  */
 export interface CodeRuleDslLayout {
-  /** Regex on the complete first line of the node, or the preceding line. */
   line?: string;
   previousLine?: string;
-  /** Regex over a bounded window around the first line, optionally ending at the first matching line, inclusive. */
   context?: { before?: number; after?: number; through?: string; regex: string };
   span?: CodeRuleDslLineCount;
   start?: CodeRuleDslLineCount;
@@ -863,7 +862,6 @@ export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotat
  */
 export interface CodeRuleDslParse extends CodeRuleDslAstRule {
   grammar: CodeRuleDslParseGrammar;
-  /** The opaque slot text in a pythonFString projection. Defaults to "{}". */
   interpolation?: string;
 }
 

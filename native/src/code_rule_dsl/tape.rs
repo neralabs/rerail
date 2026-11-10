@@ -62,6 +62,7 @@ mod index;
 pub(in crate::code_rule_dsl) use index::IndexImage;
 mod wire;
 pub(in crate::code_rule_dsl) mod resident;
+pub(in crate::code_rule_dsl) mod validated;
 pub(super) use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 const ERROR_SYMBOL: u16 = u16::MAX;
@@ -154,6 +155,7 @@ pub(super) struct Grammar {
 }
 
 impl Grammar {
+    pub(super) fn dialect(&self) -> GrammarDialect { self.lang }
     /// The name of field `code` (M's facts-a, which read the private catalog directly).
     #[allow(dead_code)]
     pub(super) fn field_name(&self, code: u16) -> Option<&'static str> {
@@ -167,11 +169,9 @@ impl Grammar {
         self.lang.get_ts_language()
     }
 
-    #[cfg(test)]
     pub(super) fn field_code(&self, name: &str) -> Option<u16> {
         self.kinds.field_id(name)
     }
-    #[cfg(test)]
     pub(super) fn has_field(&self, name: &str) -> bool {
         self.kinds.field_id(name).is_some()
     }
@@ -1892,129 +1892,21 @@ impl TapeDoc {
         lines: Arc<LineTable>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
-        checked(budget)?;
-        if image.language != grammar.lang
-            || image.source_len != source.len()
-            || image.source_digest != source_digest(&source, budget)?
-        {
-            return Err("tape grammar or source revision mismatch".into());
-        }
         let count = image.node_count();
-        let widths_valid = [image.widths[0], image.widths[1], image.widths[2] & !TAIL_FROM_START].iter().all(|width| matches!(width, 2 | 4));
-        if count == 0
-            || count > u32::MAX as usize
-            || !widths_valid
-            || image.code.len() != count * 2
-            || image.size.len() != count * image.size_width()
-            || image.base.len() != count.div_ceil(CHECKPOINT_STRIDE) * 4
-            || image.off.len() != count * image.off_width()
-            || image.tail.len() != count * image.tail_width()
-        {
-            return Err("malformed v9np tape".into());
-        }
-        for code in &image.codes {
-            let kind = code.kf & 1023;
-            let field = code.kf >> 10;
-            let error = code.flags & CODE_ERROR != 0;
-            if code.flags & !(CODE_EXTRA | CODE_ERROR | CODE_MISSING) != 0
-                || (error && (kind != ERROR_CODE || code.flags & CODE_MISSING != 0))
-                || (!error && (usize::from(kind) >= grammar.kinds.kind_count() || !grammar.kinds.kind_is_visible(kind)))
-                || usize::from(field) > grammar.kinds.field_count()
-                || (field != 0 && grammar.kinds.field_name(field).is_none())
-                || (code.alias != SENTINEL && image.kind_aliases.get(usize::from(code.alias)).is_none_or(|alias| alias.0.is_empty()))
-            {
-                return Err("unknown v9np grammar code".into());
-            }
-            if usize::from(code.class_count) > MAX_NODE_SUPERTYPES
-                || code.classes().windows(2).any(|pair| pair[0] >= pair[1])
-                || code.classes[usize::from(code.class_count).min(MAX_NODE_SUPERTYPES)..].iter().any(|&unused| unused != 0)
-                || code.classes().iter().any(|&class| usize::from(class) >= grammar.kinds.kind_count() || !grammar.kinds.kind_is_supertype(class))
-            {
-                return Err("invalid abstract node class entry".into());
-            }
-        }
-        let from_start = image.widths[2] & TAIL_FROM_START != 0;
-        let mut nodes: Vec<Rec> = Vec::with_capacity(count);
+        let mut nodes = Vec::new();
         let mut kind_overrides = Vec::new();
         let mut supertypes = Vec::new();
-        // Parents rebuilt from the sizes: the enclosing subtree on the stack.
-        let mut parent_stack: Vec<(usize, u64)> = Vec::new();
-        let mut unwound = 0usize;
-        for index in 0..count {
-            if index % 256 == 0 {
-                checked(budget)?;
-            }
-            let code = *image.codes.get(usize::from(image.code_at(index))).ok_or("unknown v9np code")?;
-            let field = code.kf >> 10;
-            let error = code.flags & CODE_ERROR != 0;
-            let missing = code.flags & CODE_MISSING != 0;
-            let kind = if error { ERROR_SYMBOL } else { code.kf & 1023 };
-            if code.alias != SENTINEL {
-                kind_overrides.push((index as u32, code.alias));
-            }
-            supertypes.extend(code.classes().iter().map(|&class| (index as u32, class)));
-            let size = image.size_at(index);
-            if size == 0 || index.checked_add(size as usize).is_none_or(|end| end > count) {
-                return Err("invalid subtree boundary".into());
-            }
-            let start = image.start_at(index);
-            let from = if from_start { start } else { image.start_at(index + size as usize - 1) };
-            let end = from.checked_add(image.tail_at(index)).ok_or("span end overflow")?;
-            if end < start
-                || (missing && (start != end || size != 1))
-                || end as usize > source.len()
-                || !source.is_char_boundary(start as usize)
-                || !source.is_char_boundary(end as usize)
-            {
-                return Err("span outside source or UTF-8 boundary".into());
-            }
-            while parent_stack
-                .last()
-                .is_some_and(|&(parent, _)| index >= parent + nodes[parent].size as usize)
-            {
-                if unwound.is_multiple_of(256) {
-                    checked(budget)?;
-                }
-                unwound += 1;
-                parent_stack.pop();
-            }
-            let parent = if index == 0 {
-                if field != 0 || size as usize != count {
-                    return Err("invalid tape root".into());
-                }
-                NONE
-            } else {
-                let enclosing = parent_stack.last().ok_or("orphan tape node")?.0;
-                if start < nodes[enclosing].start || end > nodes[enclosing].end {
-                    return Err("invalid tape parent or span".into());
-                }
-                enclosing as u32
-            };
-            let first_field = field != 0
-                && parent_stack.last_mut().is_some_and(|(_, fields)| {
-                    let bit = 1_u64 << field;
-                    let first = *fields & bit == 0;
-                    *fields |= bit;
-                    first
-                });
+        validated::visit(&source, &grammar, image, budget, |node, classes| {
+            if node.id == 0 { nodes.reserve_exact(count); }
+            if node.alias != SENTINEL { kind_overrides.push((node.id, node.alias)); }
+            supertypes.extend(classes.iter().map(|&class| (node.id, class)));
             nodes.push(Rec {
-                kind,
-                field,
-                start,
-                end,
-                size,
-                parent,
-                first: NONE,
-                next: NONE,
-                prev: NONE,
-                children: 0,
-                extra: code.flags & CODE_EXTRA != 0,
-                error,
-                missing,
-                first_field,
+                kind: node.kind, field: node.field, start: node.start, end: node.end,
+                size: node.size, parent: node.parent, first: NONE, next: NONE, prev: NONE, children: 0,
+                extra: node.flags & 2 != 0, error: node.flags & 8 != 0, missing: node.flags & 4 != 0,
+                first_field: node.first_field,
             });
-            parent_stack.push((index, 0));
-        }
+        })?;
         let mut last = vec![NONE; count];
         for index in 1..count {
             if index % 256 == 0 {
@@ -2025,11 +1917,6 @@ impl TapeDoc {
                 nodes[parent].first = index as u32;
             }
             let prev = last[parent];
-            // Siblings sit in byte order, so their ends never decrease (`walk_anchor` steps
-            // from a node on that).
-            if prev != NONE && nodes[prev as usize].end > nodes[index].end {
-                return Err("tape siblings out of byte order".into());
-            }
             nodes[index].prev = prev;
             if prev != NONE {
                 nodes[prev as usize].next = index as u32;

@@ -11,12 +11,14 @@
 //! A file read with `parse_file` has `core.rr` before it, included or not.
 
 mod check;
+mod aggregate_demand;
 mod from_tape;
 mod lower;
 mod print;
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub(in crate::code_rule_dsl) use rerail_rr_syntax::tape;
+mod tape_type;
 mod translate;
 
 #[cfg(test)]

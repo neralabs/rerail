@@ -35,10 +35,6 @@ pub struct Plan {
     pub lanes: Vec<bool>,
     /// Made a 64-bit mask too: read outside the vectors, an output, or a carried field's value.
     pub mask: Vec<bool>,
-    /// How far back a byte-local value reads: its leaves' bytes at most `lag` before its own
-    /// (a `prev` adds its shift, a `pair` and a `plane_before` one). On the vectors it is
-    /// computed at a lag (`Lanes::get_at`): each leaf from the bytes that far back, loaded so.
-    lag: Vec<u8>,
     /// May be set on a byte of 0x00 (the zeros before a file), for a shiftable value.
     at_zero: Vec<bool>,
     /// Its value on every window of ASCII bytes, when it is the same on all of them.
@@ -112,7 +108,8 @@ fn class_byte(t: &ClassTable, b: u8) -> u8 {
     t.lo[usize::from(b & 15)] & t.hi[usize::from(b >> 4)]
 }
 
-/// Which values are byte-local, on the vectors, and how far back each reads (`Plan::lag`), and
+/// Which values are byte-local, on the vectors, and how far back each reads (its leaves' bytes at
+/// most that far before its own: a `prev` adds its shift, a `pair` and a `plane_before` one), and
 /// what may be true of each on ASCII bytes. `deep`: a `prev` of any byte-local value (within
 /// `MAX_LAG`) and `within` are on the vectors too; else only a `prev` of one with no `prev` in
 /// it, simdjson's `prev<N>` of the input's classes.
@@ -266,7 +263,7 @@ impl Plan {
         // Worth a branch: a byte test or class known on ASCII bytes (not a constant).
         let ascii_branch = native.insts.iter().enumerate().any(|(at, i)| lanes[at] && ascii[at].is_some() && matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_)));
         let full = full_words(native, &lanes);
-        Plan { lanes, mask, lag, at_zero, ascii, before, ascii_branch, full, regions, region_of }
+        Plan { lanes, mask, at_zero, ascii, before, ascii_branch, full, regions, region_of }
     }
 
     /// The values made masks and the gated regions, for a choice of values on the vectors.

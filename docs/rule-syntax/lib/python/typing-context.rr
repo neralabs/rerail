@@ -27,7 +27,7 @@
 #include "python/misc2-typecheck.rr"   // tc_block, tc_ann_owner; future_annotations, stub_file, targets
 .decl typing_root(r: node)
 typing_root(r) :- ann_root(r), deferred_ann(r).
-typing_root(s) :- ann_root(a), (s = a ; within(s, a)), parsed(s, "annotation", _).   // a string annotation
+typing_root(s) :- ann_ctx(s), str_node(s), parsed(s, "annotation", _).   // a string annotation
 typing_root(v) :- kind(s, "type_alias_statement"), field(s, "right", v).
 typing_root(b) :- type_param(_, _, _, _, _, b, _), !unset(b).
 typing_root(d) :- type_param(_, _, _, _, _, _, d), !unset(d).
@@ -40,4 +40,4 @@ deferred_ann(r) :- ann_root(r), tc_ann_owner(r, a), kind(a, "assignment"), neare
     (kind(s, "function_definition") ; kind(s, "lambda")).
 .decl typing_only_ctx(n: node)
 typing_only_ctx(n) :- typing_root(r), (n = r ; within(n, r)).
-typing_only_ctx(n) :- typing_root(s), parsed(s, "annotation", r), (n = r ; within(n, r)).
+typing_only_ctx(n) :- typing_root(s), str_node(s), parsed(s, "annotation", r), (n = r ; within(n, r)).

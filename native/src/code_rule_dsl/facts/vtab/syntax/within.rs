@@ -175,7 +175,7 @@ impl Within {
             for (doc, p) in self.batch.docs.iter().enumerate() {
                 let base = self.batch.nodes[doc] as u32;
                 for l in 0..p.len() {
-                    let up = p.parent[l as usize];
+                    let up = p.parent(l as usize);
                     parent.push(if up == NONE { file_local::NONE } else { base + up });
                     kind.push(i64::from(self.member(doc, l)));
                 }
@@ -262,7 +262,7 @@ impl Within {
             if axis == Axis::Has && !self.member(doc, local) {
                 return out;
             }
-            let mut up = p.parent[local as usize];
+            let mut up = p.parent(local as usize);
             while up != NONE {
                 if axis == Axis::Has || self.member(doc, up) {
                     out.push(up);
@@ -270,16 +270,16 @@ impl Within {
                         break;
                     }
                 }
-                up = p.parent[up as usize];
+                up = p.parent(up as usize);
             }
             return out;
         }
         if self.mode == Mode::Tree {
             let mut out = Vec::new();
-            let mut up = p.parent[local as usize];
+            let mut up = p.parent(local as usize);
             while up != NONE {
                 out.push(up);
-                up = p.parent[up as usize];
+                up = p.parent(up as usize);
             }
             return out;
         }
@@ -292,12 +292,12 @@ impl Within {
             return (0..p.len()).filter(|&b| holds(b)).collect();
         }
         let mut out = vec![local];
-        let mut up = p.parent[local as usize];
+        let mut up = p.parent(local as usize);
         while up != NONE {
             if holds(up) {
                 out.push(up);
             }
-            up = p.parent[up as usize];
+            up = p.parent(up as usize);
         }
         // Descendants with the same span: down through children of that span.
         let mut stack = vec![local];
@@ -315,8 +315,9 @@ impl Within {
     /// The nodes (locals) that `local` holds.
     fn contained(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
+        let sizes = p.sizes();
         if let Mode::Axis(axis) = self.mode {
-            let end = local + p.size[local as usize];
+            let end = local + sizes[local as usize];
             return match axis {
                 _ if axis != Axis::Has && !self.member(doc, local) => Vec::new(),
                 Axis::Inside => (local + 1..=end).collect(),
@@ -326,22 +327,22 @@ impl Within {
                     let (mut out, mut n) = (Vec::new(), local + 1);
                     while n <= end {
                         out.push(n);
-                        n += if self.member(doc, n) { p.size[n as usize] + 1 } else { 1 };
+                        n += if self.member(doc, n) { sizes[n as usize] + 1 } else { 1 };
                     }
                     out
                 }
             };
         }
         if self.mode == Mode::Tree {
-            return (local + 1..=local + p.size[local as usize]).collect();
+            return (local + 1..=local + sizes[local as usize]).collect();
         }
         let (s, e) = self.span(doc, local);
-        let end = local + p.size[local as usize];
+        let end = local + sizes[local as usize];
         let mut out: Vec<u32> = (local..=end).collect();
-        let mut up = p.parent[local as usize];
+        let mut up = p.parent(local as usize);
         while up != NONE && self.span(doc, up) == (s, e) {
             out.push(up);
-            up = p.parent[up as usize];
+            up = p.parent(up as usize);
         }
         let (subtree, held) = ((end - local + 1) as usize, out.len());
         for &z in &self.zero()[doc] {
@@ -405,10 +406,11 @@ impl Within {
             }
             let (mut rows, mut nodes, mut ancestors, mut sq_inner) = (0i64, 0i64, 0i64, 0i64);
             for p in &self.batch.docs {
+                let (depths, sizes) = (p.depths(), p.sizes());
                 for l in 0..p.len() as usize {
                     // Span mode counts the node itself on both sides.
                     let own = i64::from(self.mode == Mode::Span);
-                    let (d, s) = (i64::from(p.depth[l]) + own, i64::from(p.size[l]) + own);
+                    let (d, s) = (i64::from(depths[l]) + own, i64::from(sizes[l]) + own);
                     rows += d;
                     nodes += 1;
                     ancestors += i64::from(s > 0);
@@ -432,6 +434,8 @@ impl Within {
     fn axis_shape(&self, axis: Axis) -> Shape {
         let (mut members, mut covered, mut below, mut below_sq, mut above, mut above_sq, mut nodes) = (0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64);
         for (doc, p) in self.batch.docs.iter().enumerate() {
+            // The first member demands these columns; documents without members allocate neither.
+            let mut columns = None;
             // The end of the outermost member's subtree the walk is in.
             let mut until: Option<u32> = None;
             for l in 0..p.len() {
@@ -442,10 +446,11 @@ impl Within {
                 if !self.member(doc, l) {
                     continue;
                 }
+                let (sizes, depths) = *columns.get_or_insert_with(|| (p.sizes(), p.depths()));
                 if !until.is_some_and(|u| l <= u) {
-                    until = Some(l + p.size[l as usize]);
+                    until = Some(l + sizes[l as usize]);
                 }
-                let (s, d) = (i64::from(p.size[l as usize]), i64::from(p.depth[l as usize]));
+                let (s, d) = (i64::from(sizes[l as usize]), i64::from(depths[l as usize]));
                 members += 1;
                 below += s;
                 below_sq += s * s;
