@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
-  gitInstalled, GitUnavailableError, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
+  gitInstalled, GitReads, GitUnavailableError, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
   runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -149,6 +149,20 @@ describe("gitHead and headMovedOnlyByCommits", () => {
   });
 });
 
+describe("GitReads", () => {
+  it("answers a read it stopped as without Git, and starts no Git once stopped", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const reads = new GitReads();
+    const running = reads.run(signal => gitHead(root, { signal }));
+    await reads.stop();
+
+    await expect(running).resolves.toBeUndefined();
+    await expect(reads.run(signal => gitHead(root, { signal }))).resolves.toBeUndefined();
+    await expect(reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, signal }))).resolves.toEqual(new Map());
+    await expect(new GitReads().run(signal => gitHead(root, { signal }))).resolves.toMatch(/^[0-9a-f]{40}/u);
+  });
+});
+
 describe("gitExcludeFiles", () => {
   afterEach(() => { vi.unstubAllEnvs(); });
 
@@ -204,11 +218,11 @@ describe("gitExcludeFiles", () => {
     await mkdir(share);
     const globals = [join(share, ".gitconfig"), join(share, ".config", "git", "config")];
     // Git's home, not the account's: HOME here names another folder than the one homedir() answers.
-    expect((await gitConfigFiles(root, { ...process.env, HOME: share })).slice(2)).toEqual(globals);
+    expect((await gitConfigFiles(root, { env: { ...process.env, HOME: share } })).slice(2)).toEqual(globals);
     if (process.platform === "win32") {
       const { HOME: _home, ...withoutHome } = process.env;
       const drive = share.slice(0, 2);
-      expect((await gitConfigFiles(root, { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, "win32")).slice(2)).toEqual(globals);
+      expect((await gitConfigFiles(root, { env: { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, platform: "win32" })).slice(2)).toEqual(globals);
     }
   });
 });
@@ -248,13 +262,13 @@ describe("gitCrlfPaths", () => {
     await writeFile(join(root, ".git", "info", "attributes"), "*.py text\n*.bin -text eol=crlf\n*.txt eol=crlf\n*.ts text=auto\n");
     const paths = ["a.py", "b.bin", "c.txt", "d.md", "e.ts"];
     // A text file takes core.eol, whose default (native) is CRLF on Windows alone; -text is never converted.
-    expect(Object.fromEntries(await gitCrlfPaths(root, paths, "win32"))).toEqual({ "a.py": "text", "c.txt": "text", "e.ts": "auto" });
-    expect(Object.fromEntries(await gitCrlfPaths(root, paths, "linux"))).toEqual({ "c.txt": "text" });
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "win32" }))).toEqual({ "a.py": "text", "c.txt": "text", "e.ts": "auto" });
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "linux" }))).toEqual({ "c.txt": "text" });
     // core.autocrlf=true converts every file with no text attribute too, by Git's guess; input converts none on checkout.
     git(root, "config", "core.autocrlf", "true");
-    expect(Object.fromEntries(await gitCrlfPaths(root, paths, "linux"))).toEqual({ "a.py": "text", "c.txt": "text", "d.md": "auto", "e.ts": "auto" });
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "linux" }))).toEqual({ "a.py": "text", "c.txt": "text", "d.md": "auto", "e.ts": "auto" });
     git(root, "config", "core.autocrlf", "input");
-    expect(Object.fromEntries(await gitCrlfPaths(root, paths, "win32"))).toEqual({ "c.txt": "text" });
+    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "win32" }))).toEqual({ "c.txt": "text" });
   });
 
   it("reads core.autocrlf from the person's global settings, which tests otherwise keep from every repository", async () => {
@@ -262,7 +276,7 @@ describe("gitCrlfPaths", () => {
     const global = join(root, ".git", "person.gitconfig");
     await writeFile(global, "[core]\n\tautocrlf = true\n");
     vi.stubEnv("GIT_CONFIG_GLOBAL", global);
-    expect(Object.fromEntries(await gitCrlfPaths(root, ["a.py"], "linux"))).toEqual({ "a.py": "auto" });
+    expect(Object.fromEntries(await gitCrlfPaths(root, ["a.py"], { platform: "linux" }))).toEqual({ "a.py": "auto" });
   });
 });
 

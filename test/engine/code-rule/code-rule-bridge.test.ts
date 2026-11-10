@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import type * as ChildProcesses from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
@@ -36,6 +37,24 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
   };
 });
+/** Every process the bridge started without waiting for it, as Rerail starts them all through node:child_process. */
+const started = vi.hoisted(() => ({ children: [] as ChildProcess[] }));
+vi.mock("node:child_process", async importOriginal => {
+  const actual = await importOriginal<typeof ChildProcesses>();
+  const recorded = (name: "execFile" | "spawn") => (...args: unknown[]): unknown => {
+    // Reflect.apply returns any; both starters return the process they started.
+    const child = Reflect.apply(actual[name], undefined, args) as ChildProcess;
+    started.children.push(child);
+    return child;
+  };
+  return { ...actual, execFile: recorded("execFile"), spawn: recorded("spawn") };
+});
+/** The processes started with `folder` among their arguments that have not exited. */
+function runningIn(folder: string): string[] {
+  return started.children
+    .filter(child => child.exitCode === null && child.signalCode === null && child.spawnargs.includes(folder))
+    .map(child => child.spawnargs.join(" "));
+}
 
 interface DiscoveryGate {
   entered: Promise<void>;
@@ -727,6 +746,23 @@ describe("CodeRuleBridge", () => {
     await bridge.close();
 
     expect(observations.size).toBe(0);
+  });
+
+  it("closes mid-walk with no Git it started still running in the folder, which can then be removed at once", async () => {
+    const root = await workspace();
+    git(root, "init", "--quiet");
+    const bridge = new CodeRuleBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+      onIgnoreRulesChanged: () => undefined,
+    });
+
+    await bridge.openWorkspace("session-1");
+    // The baseline walk reads HEAD and the ignore rules ask Git for their exclude files, neither waited for by the open.
+    expect(runningIn(root)).not.toEqual([]);
+    await bridge.close();
+
+    expect(runningIn(root)).toEqual([]);
+    // One try: on Windows a process still running in the folder keeps it from being removed.
+    await rm(root, { recursive: true, force: true });
   });
 
   it("sends a deletion with its preimage instead of an unreadable workspace scan", async () => {

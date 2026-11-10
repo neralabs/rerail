@@ -366,27 +366,87 @@ export function gitText(cwd: string, args: readonly string[]): string | undefine
   return result.status === 0 ? result.stdout.trim() : undefined;
 }
 
-/** Trimmed stdout of a successful Git command run under `runGit`'s safe configuration without blocking; else undefined. */
-async function gitOutput(cwd: string, args: readonly string[]): Promise<string | undefined> {
-  let executable: string;
+/**
+ * How a Git read that does not block can be stopped. Every such read settles only once the Git it started has exited:
+ * on Windows a running process holds the folder it runs in, so a read that answered before its Git exited would leave
+ * the checkout impossible to remove or rename for a moment.
+ */
+export interface GitReadOptions {
+  /** Once aborted, the read kills its Git, or starts none, and answers as it does without Git. */
+  signal?: AbortSignal | undefined;
+}
+
+/**
+ * The Git reads one owner started without waiting for each, such as a session's source walks: {@link stop} kills those
+ * still running and settles once each has exited, so the owner can end with no Git left running in its checkouts.
+ */
+export class GitReads {
+  readonly #stopping = new AbortController();
+  readonly #running = new Set<Promise<unknown>>();
+
+  /** Runs `read` with the signal {@link stop} aborts; once stopped, a read starts no Git and answers as without Git. */
+  run<T>(read: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const running = read(this.#stopping.signal);
+    this.#running.add(running);
+    const forget = (): void => {
+      this.#running.delete(running);
+    };
+    running.then(forget, forget);
+    return running;
+  }
+
+  /** Kills every read still running and settles once the Git each started has exited. */
+  async stop(): Promise<void> {
+    this.#stopping.abort();
+    await Promise.allSettled([...this.#running]);
+  }
+}
+
+/** The Git to start a read with; undefined without Git, or once `signal` is aborted. */
+function readerGit(signal: AbortSignal | undefined): string | undefined {
+  if (signal?.aborted === true) return undefined;
   try {
-    executable = gitExecutable();
+    return gitExecutable();
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Resolves once `child` has exited, or at once when it never started. An aborted read is answered before that: Node
+ * reports the abort as an error as soon as it kills the process.
+ */
+async function exited(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const { promise, resolve: settle } = Promise.withResolvers<void>();
+  child.once("exit", () => settle());
+  child.once("error", () => {
+    if (child.pid === undefined) settle();
+  });
+  await promise;
+}
+
+/**
+ * Trimmed stdout of a successful Git command run under `runGit`'s safe configuration without blocking; else undefined.
+ * Settles once that Git has exited ({@link GitReadOptions}).
+ */
+async function gitOutput(cwd: string, args: readonly string[], signal: AbortSignal | undefined): Promise<string | undefined> {
+  const executable = readerGit(signal);
+  if (executable === undefined) return undefined;
   const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
-  execFile(
+  const child = execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
+    { encoding: "utf8", timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" }, signal },
     (error, stdout) => settle(error === null ? stdout.trim() : undefined),
   );
-  return await promise;
+  const [output] = await Promise.all([promise, exited(child)]);
+  return output;
 }
 
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
-export async function gitHead(cwd: string): Promise<string | undefined> {
-  return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+export async function gitHead(cwd: string, options: GitReadOptions = {}): Promise<string | undefined> {
+  return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"], options.signal);
 }
 
 /**
@@ -394,11 +454,11 @@ export async function gitHead(cwd: string): Promise<string | undefined> {
  * folder's, which every worktree shares) and the file `core.excludesFile` names, else Git's default, `git/ignore` in
  * `XDG_CONFIG_HOME` or `~/.config`. Empty outside a Git checkout, or without Git.
  */
-export async function gitExcludeFiles(cwd: string): Promise<string[]> {
+export async function gitExcludeFiles(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
   // Git prints the path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
-  const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"]);
+  const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"], options.signal);
   if (exclude === undefined || exclude === "") return [];
-  const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"]);
+  const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"], options.signal);
   return [resolve(cwd, exclude), resolve(cwd, configured || defaultExcludesFile())];
 }
 
@@ -440,12 +500,16 @@ function defaultExcludesFile(env: NodeJS.ProcessEnv = process.env, platform: Nod
 /**
  * The configuration files that can name the excludes file of the Git checkout at `cwd`, absolute: its repository's
  * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `.gitconfig`
- * in Git's home ({@link gitHome}, from `env` on `platform`) and `git/config` in `XDG_CONFIG_HOME` or that home's
- * `.config`. The system file, which only an administrator writes, and files `include.path` pulls in are left out. Empty
- * outside a Git checkout, or without Git.
+ * in Git's home ({@link gitHome}, from `env` on `platform`, this process's by default) and `git/config` in
+ * `XDG_CONFIG_HOME` or that home's `.config`. The system file, which only an administrator writes, and files
+ * `include.path` pulls in are left out. Empty outside a Git checkout, or without Git.
  */
-export async function gitConfigFiles(cwd: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): Promise<string[]> {
-  const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"]);
+export async function gitConfigFiles(
+  cwd: string,
+  options: GitReadOptions & { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
+): Promise<string[]> {
+  const { env = process.env, platform = process.platform } = options;
+  const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"], options.signal);
   if (local === undefined || local === "") return [];
   const global = env.GIT_CONFIG_GLOBAL;
   const globals = global === undefined || global === ""
@@ -464,8 +528,8 @@ const COMMIT_SUBJECT = /^commit(?: \([^)]*\))?: /u;
  * found it, by `HEAD`'s reflog. Anything else there (a checkout, pull, merge, rebase, reset, cherry-pick) wrote files, and
  * so did a move the reflog cannot show (`from` is not in it). With no `from`, `HEAD`'s newest move is all there is to go by.
  */
-export async function headMovedOnlyByCommits(cwd: string, from: string | undefined): Promise<boolean> {
-  const reflog = await gitOutput(cwd, ["reflog", "show", "-n", String(MAX_REFLOG_ENTRIES), "--format=%H %gs", "HEAD"]);
+export async function headMovedOnlyByCommits(cwd: string, from: string | undefined, options: GitReadOptions = {}): Promise<boolean> {
+  const reflog = await gitOutput(cwd, ["reflog", "show", "-n", String(MAX_REFLOG_ENTRIES), "--format=%H %gs", "HEAD"], options.signal);
   if (reflog === undefined) return false;
   const entries = reflog.split("\n");
   const moves = from === undefined ? 1 : entries.findIndex(entry => entry.startsWith(`${from} `));
@@ -473,14 +537,14 @@ export async function headMovedOnlyByCommits(cwd: string, from: string | undefin
 }
 
 /** The distinct commits `cwd`'s branches and remote-tracking branches point at; empty without Git or outside a repository. */
-export async function gitBranchTips(cwd: string): Promise<string[]> {
-  const tips = await gitOutput(cwd, ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"]);
+export async function gitBranchTips(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
+  const tips = await gitOutput(cwd, ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"], options.signal);
   return tips === undefined || tips === "" ? [] : [...new Set(tips.split("\n"))];
 }
 
 /** The commits reachable from `to` but not from `from` (`git rev-list from..to`); empty when Git cannot say. */
-export async function gitCommitsBetween(cwd: string, from: string, to: string): Promise<string[]> {
-  const commits = await gitOutput(cwd, ["rev-list", `${from}..${to}`]);
+export async function gitCommitsBetween(cwd: string, from: string, to: string, options: GitReadOptions = {}): Promise<string[]> {
+  const commits = await gitOutput(cwd, ["rev-list", `${from}..${to}`], options.signal);
   return commits === undefined || commits === "" ? [] : commits.split("\n");
 }
 
@@ -546,25 +610,12 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
-async function lineEndingAttributes(cwd: string, paths: readonly string[]): Promise<Map<string, LineEndingAttributes>> {
+async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
   const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
-  let executable: string;
-  try {
-    executable = gitExecutable();
-  } catch {
-    return attributes;
-  }
-  const { promise, resolve: settle } = Promise.withResolvers<void>();
-  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
-    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
-    stdio: ["pipe", "pipe", "ignore"],
-  });
   const chunks: Buffer[] = [];
-  child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-  settleWhenDone(child, settle, DEFAULT_TIMEOUT_MS);
-  child.stdin.on("error", () => undefined);
-  child.stdin.end(paths.map(path => `${path}\0`).join(""));
-  await promise;
+  await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
+    input: paths.map(path => `${path}\0`).join(""), onData: chunk => chunks.push(chunk), signal,
+  });
   // `<path> NUL <attribute> NUL <value> NUL`, once per path and attribute.
   const fields = Buffer.concat(chunks).toString("utf8").split("\0");
   for (let at = 0; at + 2 < fields.length; at += 3) {
@@ -582,14 +633,19 @@ async function lineEndingAttributes(cwd: string, paths: readonly string[]): Prom
  * without Git, outside a repository or past the timeout, so a file with CRLF line breaks is then never taken for Git's
  * writing.
  */
-export async function gitCrlfPaths(cwd: string, paths: readonly string[], platform: NodeJS.Platform = process.platform): Promise<Map<string, CrlfRule>> {
+export async function gitCrlfPaths(
+  cwd: string,
+  paths: readonly string[],
+  options: GitReadOptions & { platform?: NodeJS.Platform } = {},
+): Promise<Map<string, CrlfRule>> {
+  const { platform = process.platform, signal } = options;
   const asked = paths.filter(path => !path.includes("\0"));
   const rules = new Map<string, CrlfRule>();
   if (asked.length === 0) return rules;
   const [autocrlf, coreEol, attributes] = await Promise.all([
-    gitOutput(cwd, ["config", "--get", "core.autocrlf"]),
-    gitOutput(cwd, ["config", "--get", "core.eol"]),
-    lineEndingAttributes(cwd, asked),
+    gitOutput(cwd, ["config", "--get", "core.autocrlf"], signal),
+    gitOutput(cwd, ["config", "--get", "core.eol"], signal),
+    lineEndingAttributes(cwd, asked, signal),
   ]);
   const config = { autocrlf: autocrlf?.toLowerCase(), coreEol: coreEol?.toLowerCase() };
   for (const path of asked) {
@@ -605,27 +661,14 @@ export async function gitCrlfPaths(cwd: string, paths: readonly string[], platfo
  * --batch-check`: no blob is read. A revision Git does not resolve to a blob is absent, and so is every revision
  * without Git, outside a repository, or past the timeout; one containing a newline cannot be asked for and is skipped.
  */
-export async function readGitBlobIds(cwd: string, revisions: readonly string[]): Promise<Map<string, string>> {
+export async function readGitBlobIds(cwd: string, revisions: readonly string[], options: GitReadOptions = {}): Promise<Map<string, string>> {
   const asked = revisions.filter(revision => !/[\r\n]/u.test(revision));
   const ids = new Map<string, string>();
   if (asked.length === 0) return ids;
-  let executable: string;
-  try {
-    executable = gitExecutable();
-  } catch {
-    return ids;
-  }
-  const { promise, resolve: settle } = Promise.withResolvers<void>();
-  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch-check=%(objectname) %(objecttype)"], {
-    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
-    stdio: ["pipe", "pipe", "ignore"],
-  });
   const chunks: Buffer[] = [];
-  child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
-  settleWhenDone(child, settle, DEFAULT_TIMEOUT_MS);
-  child.stdin.on("error", () => undefined);
-  child.stdin.end(asked.map(revision => `${revision}\n`).join(""));
-  await promise;
+  await streamGit(cwd, ["cat-file", "--batch-check=%(objectname) %(objecttype)"], {
+    input: asked.map(revision => `${revision}\n`).join(""), onData: chunk => chunks.push(chunk), signal: options.signal,
+  });
   // One line per revision, in order: `<oid> <type>`, or `<revision> missing` (or `ambiguous`), which repeats the
   // revision and so may hold any text, spaces included; only a whole line of an object id and `blob` names one.
   const lines = Buffer.concat(chunks).toString("utf8").split("\n");
@@ -671,6 +714,36 @@ function settleWhenDone(child: ChildProcess, settle: () => void, timeoutMs: numb
   });
 }
 
+/** What {@link streamGit} writes to Git and does with what Git prints. */
+interface GitStream extends GitReadOptions {
+  readonly input: string;
+  readonly onData: (chunk: Buffer) => void;
+  /** `DEFAULT_TIMEOUT_MS` by default. */
+  readonly timeout?: number;
+}
+
+/**
+ * Runs `git -C <cwd> <args>` under `runGit`'s safe configuration without blocking, writes `stream.input` to it and hands
+ * each chunk it prints to `stream.onData`. Settles once Git is done ({@link settleWhenDone}) and has exited
+ * ({@link GitReadOptions}); without Git, or once `stream.signal` is aborted, it starts nothing.
+ */
+async function streamGit(cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
+  const executable = readerGit(stream.signal);
+  if (executable === undefined) return;
+  const { promise, resolve: settle } = Promise.withResolvers<void>();
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["pipe", "pipe", "ignore"],
+    signal: stream.signal,
+  });
+  child.stdout.on("data", stream.onData);
+  settleWhenDone(child, settle, stream.timeout ?? DEFAULT_TIMEOUT_MS);
+  // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
+  child.stdin.on("error", () => undefined);
+  child.stdin.end(stream.input);
+  await Promise.all([promise, exited(child)]);
+}
+
 /** One object body of `git cat-file --batch` output being read: kept, or skipped as it streams past. */
 interface BatchBody {
   readonly revision: string;
@@ -691,26 +764,29 @@ interface BatchBody {
 export async function readGitBlobs(
   cwd: string,
   revisions: readonly string[],
-  options: { maxBlobBytes: number; timeout?: number },
+  options: GitReadOptions & { maxBlobBytes: number; timeout?: number },
 ): Promise<Map<string, Buffer>> {
   const asked = revisions.filter(revision => !/[\r\n]/u.test(revision));
   const blobs = new Map<string, Buffer>();
   if (asked.length === 0) return blobs;
-  let executable: string;
-  try {
-    executable = gitExecutable();
-  } catch {
-    return blobs;
-  }
-  const { promise, resolve: settle } = Promise.withResolvers<void>();
-  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
-    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
-    stdio: ["pipe", "pipe", "ignore"],
+  await streamGit(cwd, ["cat-file", "--batch"], {
+    input: asked.map(revision => `${revision}\n`).join(""),
+    onData: batchReader(asked, options.maxBlobBytes, blobs),
+    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+    signal: options.signal,
   });
+  return blobs;
+}
+
+/**
+ * Reads `git cat-file --batch` output for `asked`, chunk by chunk, into `blobs`: each blob of at most `maxBlobBytes`,
+ * under the revision that asked for it.
+ */
+function batchReader(asked: readonly string[], maxBlobBytes: number, blobs: Map<string, Buffer>): (chunk: Buffer) => void {
   let next = 0;
   let header: Buffer[] = [];
   let body: BatchBody | undefined;
-  child.stdout.on("data", (chunk: Buffer) => {
+  return (chunk: Buffer) => {
     let offset = 0;
     while (offset < chunk.length) {
       if (body !== undefined) {
@@ -737,14 +813,8 @@ export async function readGitBlobs(
       const revision = asked[next++];
       if (revision === undefined || fields.length !== 3 || !/^[0-9a-f]+$/u.test(fields[0]!)) continue;
       const size = Number(fields[2]);
-      const kept = fields[1] === "blob" && size <= options.maxBlobBytes ? [] : undefined;
+      const kept = fields[1] === "blob" && size <= maxBlobBytes ? [] : undefined;
       body = { revision, size, kept, remaining: size + 1 };
     }
-  });
-  settleWhenDone(child, settle, options.timeout ?? DEFAULT_TIMEOUT_MS);
-  // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
-  child.stdin.on("error", () => undefined);
-  child.stdin.end(asked.map(revision => `${revision}\n`).join(""));
-  await promise;
-  return blobs;
+  };
 }

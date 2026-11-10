@@ -16,7 +16,7 @@ import type {
   WalkView,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
-import { gitBranchTips, gitCommitsBetween, gitCrlfPaths, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs, type CrlfRule } from "../git.js";
+import { gitBranchTips, gitCommitsBetween, gitCrlfPaths, gitHead, GitReads, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs, type CrlfRule } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { renameWithRetry } from "../file-replace.js";
@@ -158,24 +158,26 @@ interface GitView extends GitBlobs {
   readonly stopped: boolean;
 }
 async function readGitView(discovery: SourceDiscovery, checkout: string, paths: readonly string[]): Promise<GitBlobs | undefined> {
-  const head = await gitHead(checkout);
+  const { git } = discovery;
+  const head = await git.run(signal => gitHead(checkout, { signal }));
   if (head === undefined) return undefined;
   const from = discovery.heads.get(checkout);
   if (from === undefined) discovery.heads.set(checkout, head);
   const moved = from !== head;
-  const committed = moved && await headMovedOnlyByCommits(checkout, from);
+  const committed = moved && await git.run(signal => headMovedOnlyByCommits(checkout, from, { signal }));
   const before = from === head ? undefined : from;
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-    readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES }),
-    gitCrlfPaths(checkout, paths),
+    git.run(signal => readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
+    git.run(signal => gitCrlfPaths(checkout, paths, { signal })),
   ]);
   return { blobs, head, moved, committed, before, crlf };
 }
 /** The commits that moved `HEAD` since the last walk: none when something else moved it, undefined when Git cannot list them. */
-async function commitsMade(checkout: string, view: GitBlobs): Promise<string[] | undefined> {
+async function commitsMade(git: GitReads, checkout: string, view: GitBlobs): Promise<string[] | undefined> {
   if (!view.committed) return [];
-  const commits = view.before === undefined ? [view.head] : await gitCommitsBetween(checkout, view.before, view.head);
+  const { before, head } = view;
+  const commits = before === undefined ? [head] : await git.run(signal => gitCommitsBetween(checkout, before, head, { signal }));
   return commits.length === 0 ? undefined : commits;
 }
 function gitRevisions(path: string, before: string | undefined): string[] {
@@ -383,6 +385,11 @@ interface SourceDiscovery {
   readonly reported: Map<string, string>;
   /** Each checkout's `HEAD` when the last walk that finished began, by its root: what the next walk's changes followed. */
   readonly heads: Map<string, string>;
+  /**
+   * Every Git read the session's walks and ignore rules start, which `close` stops and waits out: a walk is never waited
+   * for, and on Windows a Git it left running would hold the checkout after the session ended.
+   */
+  readonly git: GitReads;
 }
 
 /**
@@ -592,18 +599,18 @@ function uncapturedEdit(
  * names for it.
  */
 async function recoverFromGit(
-  root: string,
+  discovery: SourceDiscovery,
   checkout: string,
   paths: readonly string[],
   uncaptured: ReadonlyMap<string, string>,
   recovered: Map<string, string>,
 ): Promise<void> {
-  const named = paths.map(path => ({ path, inCheckout: sessionPath(checkout, resolve(root, path)) }));
+  const named = paths.map(path => ({ path, inCheckout: sessionPath(checkout, resolve(discovery.root, path)) }));
   const revisions = named.flatMap(({ inCheckout }) => [`:./${inCheckout}`, `HEAD:./${inCheckout}`]);
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-    readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES }),
-    gitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout)),
+    discovery.git.run(signal => readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
+    discovery.git.run(signal => gitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout), { signal })),
   ]);
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);
@@ -732,7 +739,8 @@ export class CodeRuleBridge {
   async openWorkspace(sessionId: string): Promise<void> {
     await this.#enqueue(async () => {
       const startedAt = await filesystemClock();
-      if (this.#discovery !== undefined) this.#discovery.cancelled = true;
+      const previous = this.#discovery;
+      if (previous !== undefined) previous.cancelled = true;
       if (this.#sessionId !== undefined) {
         this.#sessionId = undefined;
         await this.#auditor.close();
@@ -744,17 +752,19 @@ export class CodeRuleBridge {
       this.#texts.clear();
       this.#textBytes = 0;
       this.#discovery = undefined;
+      await previous?.git.stop();
       const root = await realpath(this.#cwd);
       await this.#auditor.openWorkspace(sessionId);
+      const git = new GitReads();
       // After the auditor opens, so it can name the checkouts whose ignore rules apply.
-      this.#ignoreRules = this.#openIgnoreRules(root);
+      this.#ignoreRules = this.#openIgnoreRules(root, git);
       this.#sessionId = sessionId;
       this.#revision = 0;
       this.#lastResponse = emptyResponse(0);
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
-        heads: new Map(),
+        heads: new Map(), git,
       };
       this.#discovery = discovery;
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
@@ -1090,6 +1100,9 @@ export class CodeRuleBridge {
       this.#texts.clear();
       this.#textBytes = 0;
       this.#discovery = undefined;
+      // The walk itself is never waited for, but every Git it or the ignore rules started is: on Windows one still running
+      // would keep the checkout from being removed or renamed once the session has ended.
+      await discovery.git.stop();
       await this.#auditor.close(options);
     });
   }
@@ -1174,11 +1187,14 @@ export class CodeRuleBridge {
     reportBestEffort(() => this.#onDiscoveryPending?.(boundary));
   }
 
-  /** The session folder's ignore rule files and its checkouts' as they are when it opens, while their changes are reported. */
-  async #openIgnoreRules(root: string): Promise<IgnoreRuleFiles | undefined> {
+  /**
+   * The session folder's ignore rule files and its checkouts' as they are when it opens, while their changes are reported;
+   * Git is asked about them through the session's reads, `git`.
+   */
+  async #openIgnoreRules(root: string, git: GitReads): Promise<IgnoreRuleFiles | undefined> {
     if (this.#onIgnoreRulesChanged === undefined) return undefined;
     try {
-      return await IgnoreRuleFiles.open(root, this.#auditor.ignoreRuleRoots?.() ?? []);
+      return await IgnoreRuleFiles.open(root, this.#auditor.ignoreRuleRoots?.() ?? [], git);
     } catch (error) {
       process.stderr.write(`rerail: cannot read Git's ignore rule files for ${root}: ${errorMessage(error)}\n`);
       return undefined;
@@ -1474,7 +1490,7 @@ export class CodeRuleBridge {
     const heads = new Map<string, string>();
     const others = [...discovery.heads.keys()].filter(known => !discovery.worktrees.roots.has(sessionPath(discovery.root, known)));
     for (const root of worktrees ?? new Set([discovery.root, ...others])) {
-      const head = await gitHead(root);
+      const head = await discovery.git.run(signal => gitHead(root, { signal }));
       if (head !== undefined) heads.set(root, head);
     }
     return heads;
@@ -1546,15 +1562,21 @@ export class CodeRuleBridge {
       const verdict = edit.readError === undefined ? this.#gitVerdict(view, edit, path, prior) : undefined;
       if (verdict !== undefined) verdicts.set(edit.path, verdict);
     }
-    await this.#addRestoredVerdicts(checkout, view, named, verdicts);
+    await this.#addRestoredVerdicts(discovery.git, checkout, view, named, verdicts);
     return verdicts;
   }
 
   /** Of the changes Git has not explained, those restored from a branch are Git's, their text kept for the next edit. */
-  async #addRestoredVerdicts(checkout: string, view: GitBlobs, named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>, verdicts: Map<string, GitVerdict>): Promise<void> {
+  async #addRestoredVerdicts(
+    git: GitReads,
+    checkout: string,
+    view: GitBlobs,
+    named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>,
+    verdicts: Map<string, GitVerdict>,
+  ): Promise<void> {
     const unexplained = named.filter(({ edit }) => !verdicts.has(edit.path) && edit.readError === undefined && edit.generatedText !== undefined);
     if (unexplained.length === 0) return;
-    for (const path of await this.#restoredFromBranches(checkout, view, unexplained)) verdicts.set(path, { keepText: true });
+    for (const path of await this.#restoredFromBranches(git, checkout, view, unexplained)) verdicts.set(path, { keepText: true });
   }
 
   #gitVerdict(view: GitView, edit: CodeRuleEdit, path: string, prior: string | undefined): GitVerdict | undefined {
@@ -1581,18 +1603,24 @@ export class CodeRuleBridge {
    * line breaks is also looked for as the LF text a checkout wrote it from, where the repository's settings have a
    * checkout write CRLF.
    */
-  async #restoredFromBranches(checkout: string, view: GitBlobs, named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>): Promise<string[]> {
+  async #restoredFromBranches(
+    git: GitReads,
+    checkout: string,
+    view: GitBlobs,
+    named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>,
+  ): Promise<string[]> {
     // Git names a blob by the SHA-1, or in a SHA-256 repository the SHA-256, of its header and bytes; `HEAD`'s id says which.
     const algorithm = view.head.length === 64 ? "sha256" : "sha1";
     const ids = new Map(named.map(({ edit, path }) => [edit.path, blobIds(edit.generatedText!, algorithm, view.crlf.get(path))]));
-    const known = await readGitBlobIds(checkout, [...new Set([...ids.values()].flat())]);
+    const known = await git.run(signal => readGitBlobIds(checkout, [...new Set([...ids.values()].flat())], { signal }));
     const candidates = named.filter(({ edit }) => ids.get(edit.path)!.some(id => known.has(id)));
     if (candidates.length === 0) return [];
-    const excluded = await commitsMade(checkout, view);
+    const excluded = await commitsMade(git, checkout, view);
     if (excluded === undefined) return [];
-    const tips = (await gitBranchTips(checkout)).filter(tip => !excluded.includes(tip));
+    const tips = (await git.run(signal => gitBranchTips(checkout, { signal }))).filter(tip => !excluded.includes(tip));
     if (tips.length === 0) return [];
-    const held = await readGitBlobIds(checkout, candidates.flatMap(({ path }) => tips.map(tip => `${tip}:./${path}`)));
+    const branchRevisions = candidates.flatMap(({ path }) => tips.map(tip => `${tip}:./${path}`));
+    const held = await git.run(signal => readGitBlobIds(checkout, branchRevisions, { signal }));
     return candidates
       .filter(({ edit, path }) => tips.some(tip => ids.get(edit.path)!.includes(held.get(`${tip}:./${path}`) ?? "")))
       .map(({ edit }) => edit.path);
@@ -1822,7 +1850,7 @@ export class CodeRuleBridge {
     mode?: AuditMode,
   ): Promise<CodeRuleResponse> {
     const sessionId = this.#requireSession();
-    const edits = await this.#recoverPreimages(discovery.root, captured, uncaptured);
+    const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
     for (const edit of edits) {
       this.#forgetText(edit.path);
       if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText);
@@ -1843,15 +1871,15 @@ export class CodeRuleBridge {
    * keeps its `previousReadError`, so the generated lines stay unknown rather than guessed.
    */
   async #recoverPreimages(
-    root: string,
+    discovery: SourceDiscovery,
     edits: CodeRuleEditBatch["edits"],
     uncaptured: ReadonlyMap<string, string>,
   ): Promise<CodeRuleEditBatch["edits"]> {
     if (uncaptured.size === 0) return edits;
     const recovered = new Map<string, string>();
     const unresolved = this.#recoverFromTexts(uncaptured, recovered);
-    for (const [checkout, paths] of this.#byOwningCheckout(root, unresolved, path => path).owned)
-      await recoverFromGit(root, checkout, paths, uncaptured, recovered);
+    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, unresolved, path => path).owned)
+      await recoverFromGit(discovery, checkout, paths, uncaptured, recovered);
     return edits.map(edit => {
       const previousText = recovered.get(edit.path);
       if (previousText === undefined) return edit;
