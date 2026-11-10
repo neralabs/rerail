@@ -448,6 +448,11 @@ impl Retained {
     }
 
     /// The last run's source of an input, as it bound it.
+    /// Kept relation `rel` and its width, if this run kept it.
+    pub(in crate::code_rule_dsl) fn kept(&self, rel: &str) -> Option<(&Arc<InRel>, usize)> {
+        self.rels.get(rel).map(|k| (&k.rel, k.width))
+    }
+
     pub(in crate::code_rule_dsl) fn input_source(&self, rel: &str) -> Option<&Arc<dyn Source>> {
         self.input_srcs.get(rel)
     }

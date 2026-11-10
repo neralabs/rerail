@@ -1249,6 +1249,13 @@ unsafe impl VTabCursor for RelCursor {
 // T's `near`/`down` steps (ancestor climbs over a loaded tape) are not kept: tree axes run in the transducer.
 
 /// `@dot(a, b)` (`core.rr`): `a.b`, and `b` when `a` is "".
+/// `cat(a, b)` as a rule's head computes it, with `conn`'s symbols (the recursive-maintenance spike's evaluator).
+pub fn cat_symbols(conn: &Connection, a: i64, b: i64) -> i64 {
+    let syms = symbols(conn).expect("the connection's symbols");
+    let mut syms = syms.write().unwrap();
+    cat(&mut syms, a, b)
+}
+
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
     if syms.name(a).is_empty() {
         return b;
