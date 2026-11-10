@@ -3815,8 +3815,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "d024fa208a8067b46e7d0d8aa3bd82f7b0700311",
-    "status": "Final d024fa208 root profiling CLI registered; 121 focused engine tests, 215 tooling tests, ten production-root cases and 33 workspace CLI cases pass. Full first-ten cohort refresh and supplied-fact reporter admission remain open.",
+    "upstreamCommit": "957f1352013cd1993a84e1ac97ae5a80ac18d68e",
+    "status": "Final 957f13520 merged without conflicts; existing generic extensions unchanged. Root artifact rebuild and current-cohort validation pending.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
