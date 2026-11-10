@@ -3674,10 +3674,9 @@
         "scannerPositivesPerAPI": 203,
         "originalTestsPerAPI": 49,
         "remaining": [
-          "CLI contracts and filesystem inventory-read errors",
-          "persistent updates",
-          "scanner behavior-removal controls",
-          "full original inventory and admission"
+          "Production inventory I/O error contracts",
+          "Scanner behavior-removal controls",
+          "Full original-inventory admission"
         ],
         "checkpoints": [
           {
@@ -3703,6 +3702,10 @@
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-supplied-final776-progress.json.gz",
             "sha256": "87aac76e8aa65a13818289ef1879325d17fbccbc16bdadadf0ac00333d986114"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finald03-progress.json.gz",
+            "sha256": "857d06000446f177c7ccf961e191e14240534e92a5cb3df32949aad9ba710a75"
           }
         ],
         "findingProjectionCasesPerAPI": 47,
@@ -4441,7 +4444,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "d03a0567d62dcec4b0dfafabc02ad46605c794bb",
-    "status": "Final d03a0567d merged; CLI build and acceptance pending.",
+    "status": "Final d03a0567d merged and CLI rebuilt; dispatch original, scanner, repository, supplied, CLI, signing and persistent progress corpora pass through both APIs. Dispatch admission remains open.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [

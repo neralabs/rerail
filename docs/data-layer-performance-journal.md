@@ -11108,3 +11108,41 @@ The full CLI, signing, and regression replays still need to finish on these repa
 Production inventory I/O errors, remaining persistent sequences, scanner controls, and admission remain open.
 Dispatch remains a draft. The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
 No full-repository cold benchmark ran. No Linear ticket was created.
+
+### Dispatch CLI and signing acceptance on Final d03, 2026-11-10
+
+[The validated progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-cli-finald03-progress.json.gz) contains 105 reports and 651 native executions.
+All reports use the frozen `f1c9541ced83d272…` CLI and the repaired inventory demand policy.
+The receipt retains consumed programs, harnesses, exact source recordings, and build provenance.
+
+Each API passes the following coverage:
+
+| Contract | Cases |
+|---|---:|
+| Unchanged original tests | 49 |
+| Source scanner | 298 |
+| Finding projections | 47 |
+| Supplied facts | 222 |
+| Repository | 43 |
+| Persistent update steps | 17 |
+| CLI | 48 |
+| Actual signing | 31 |
+
+The original tests retain all setup, call, and teardown phases. Their complete observations match the independent source recording.
+The scanner corpus retains 203 finding-positive cases per API. Supplied facts retain their positive findings and error results.
+CLI coverage includes positive scans, callback order, duplicate findings, signing aliases, verification order, and inventory errors.
+Signing uses public synthetic seeds. The comparisons include signatures, complete file bytes, streams, I/O errors, and repeated writes.
+Persistent updates include edits, removals, aliases, inventory changes, signature changes, empty directories, and unchanged repeats.
+No original rule semantics execute during native replay.
+
+The receipt validator requires complete coverage through both APIs and exact typed results.
+It verifies source bytes, oracle contents, engine identity, and consumed program hashes.
+Eight regression tests reject false completion, including omitted positives and Boolean exit statuses that compare equal to integers.
+The tooling suite passes 384 tests and 165 subtests in 20.08 seconds elapsed.
+All native acceptance commands stay within 115 seconds. Compilation remains a separate measurement.
+
+Dispatch remains a draft. Production inventory I/O errors, scanner behavior-removal controls, and final admission remain open.
+The CLI adapter's I/O coverage does not certify native production inventory errors.
+Earlier supplied-fact control receipts retain their original engine identities; this receipt does not refresh those controls.
+The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+No full-repository cold benchmark ran. No Linear ticket was created.
