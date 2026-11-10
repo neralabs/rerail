@@ -27,7 +27,8 @@
 //! stratum whose spec the lab does not take yet (SQL probes, gates, requests, a relation kept from an earlier run) is
 //! skipped, with its reason on stderr. Captures stop at 2 GB in all.
 
-use super::{DERIVED, InRel, Interner, input, is_dead, scope, symbols, unhex};
+use super::spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Source, Start};
+use super::{DERIVED, InRel, Interner, input_of, is_dead, scope, symbols};
 use rusqlite::{Connection, params_from_iter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -66,10 +67,6 @@ pub(in crate::code_rule_dsl) fn wanted(name: &str, work: f64) -> Option<PathBuf>
     (0..).map(|k| dir.join(format!("{safe}-{k}.sqlite"))).find(|p| !p.exists())
 }
 
-fn hex(s: &str) -> String {
-    s.bytes().map(|b| format!("{b:02x}")).collect()
-}
-
 /// Writes `rows` (each `types.len()` values, symbols as the run's atoms) as table `table` of `out`.
 fn write_rows(out: &Connection, table: &str, types: &[u8], rows: impl Iterator<Item = Vec<i64>>) -> rusqlite::Result<u64> {
     let cols: Vec<String> = (0..types.len()).map(|c| format!("c{c} INTEGER")).collect();
@@ -104,12 +101,12 @@ fn table_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner)
         return Ok(rows_of(&rel).collect());
     }
     let cols: Vec<String> = (0..types.len()).map(|c| format!("c{c}")).collect();
-    let rel = input(conn, &format!("x:{}:{}:{}", hex(table), hex(&cols.join(", ")), String::from_utf8_lossy(types)), syms)?;
+    let rel = input_of(conn, &InputKey { base: false, sql: table.to_owned(), cols: cols.join(", "), types: String::from_utf8_lossy(types).into_owned() }, syms)?;
     Ok(rows_of(&rel).collect())
 }
 
 /// Captures stratum `name`'s sources and seeds before it opens with `spec`, or says why it is not taken.
-pub(in crate::code_rule_dsl) fn capture_inputs(conn: &Connection, name: &str, spec: &str, path: &Path) -> Option<Capture> {
+pub(in crate::code_rule_dsl) fn capture_inputs(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Option<Capture> {
     match capture_(conn, name, spec, path) {
         Ok(c) => Some(c),
         Err(why) => {
@@ -120,109 +117,104 @@ pub(in crate::code_rule_dsl) fn capture_inputs(conn: &Connection, name: &str, sp
     }
 }
 
-fn capture_(conn: &Connection, name: &str, spec: &str, path: &Path) -> Result<Capture, String> {
+/// `join` with each of its sources that is not the component's (a native relation's, an input's) given by `f`.
+fn with_sources(join: &JoinSpec, f: &mut dyn FnMut(&Source) -> Source) -> JoinSpec {
+    let items = join
+        .items
+        .iter()
+        .map(|item| {
+            let mut item = item.clone();
+            if let JoinItem::Atom { src, .. } | JoinItem::Count { src, .. } | JoinItem::Extreme { src, .. } | JoinItem::StrJoin { src, .. } = &mut item
+                && matches!(src, Source::Native(_) | Source::Input(_))
+            {
+                *src = f(src);
+            }
+            item
+        })
+        .collect();
+    JoinSpec { items }
+}
+
+fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Result<Capture, String> {
     let shared = symbols(conn).map_err(|e| e.to_string())?;
     let mut syms = Interner::for_loading(&shared);
     let out = Connection::open(path).map_err(|e| e.to_string())?;
     out.execute_batch("PRAGMA journal_mode = OFF; PRAGMA synchronous = OFF; CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)").map_err(|e| e.to_string())?;
-    let mut sources: Vec<String> = Vec::new();
+    // The joins' sources, in order of first use: each becomes a table of the capture.
+    let mut sources: Vec<Source> = Vec::new();
     let mut rels: Vec<(String, String, Vec<u8>, bool)> = Vec::new();
-    let mut lines: Vec<String> = Vec::new();
-    // The source tokens of a native join (decoded), rewritten to the capture's tables.
-    let rewrite = |join: &str, sources: &mut Vec<String>| -> String {
-        join.lines()
-            .map(|line| {
-                line.split(' ')
-                    .map(|tok| {
-                        if tok.starts_with("r:") || tok.starts_with("t:") {
-                            let k = sources.iter().position(|s| s == tok).unwrap_or_else(|| {
-                                sources.push(tok.to_owned());
-                                sources.len() - 1
-                            });
-                            format!("@SRC{k}@")
-                        } else {
-                            tok.to_owned()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    for line in spec.lines() {
-        let toks: Vec<&str> = line.split(' ').collect();
-        match toks.first().copied() {
-            Some("name") => lines.push(line.to_owned()),
+    for line in &spec.lines {
+        match line {
             // The run held its rows in memory, not in tables; the replay writes them, to compare them.
-            Some("nowrite") => {}
-            Some("rel") => {
-                if toks.len() > 3 && toks[3..].iter().any(|t| *t != "empty") {
-                    return Err(format!("a relation with {:?} (kept or read from a query)", &toks[3..]));
+            Line::NoWrite | Line::Seed { .. } | Line::Join { .. } => {}
+            Line::Rel { name, types, start } => {
+                let empty = match start {
+                    Start::Rows => false,
+                    Start::Empty => true,
+                    _ => return Err("a relation kept or read from a query".to_owned()),
+                };
+                rels.push((name.clone(), format!("r{}", rels.len()), types.as_bytes().to_vec(), empty));
+            }
+            Line::Request(_) => return Err("a `request` line".to_owned()),
+            Line::Produced(_) => return Err("a `produced` line".to_owned()),
+            Line::Probe { .. } => return Err("a `probe` line".to_owned()),
+            Line::Gate { .. } => return Err("a `gate` line".to_owned()),
+            Line::Levels { .. } => return Err("a `levels` line".to_owned()),
+            Line::Edge(_) => return Err("a `rule` line".to_owned()),
+        }
+        let joins: Vec<&Arc<JoinSpec>> = match line {
+            Line::Seed { join, .. } => vec![join],
+            Line::Join { join, whole, .. } => std::iter::once(join).chain(whole).collect(),
+            _ => Vec::new(),
+        };
+        for join in joins {
+            with_sources(join, &mut |src| {
+                if !sources.contains(src) {
+                    sources.push(src.clone());
                 }
-                let lab = format!("r{}", rels.len());
-                rels.push((toks[1].to_owned(), lab.clone(), toks[2].as_bytes().to_vec(), toks.get(3) == Some(&"empty")));
-                lines.push(std::iter::once("rel").chain([lab.as_str()]).chain(toks[2..].iter().copied()).collect::<Vec<_>>().join(" "));
-            }
-            Some("seed") if toks.len() == 3 => {
-                let join = unhex(toks[2]).map_err(|e| e.to_string())?;
-                lines.push(format!("seed {} @HEX{}@", toks[1], hex(&rewrite(&join, &mut sources))));
-            }
-            Some("join") if toks.len() >= 4 => {
-                let mut l = format!("join {} {}", toks[1], toks[2]);
-                for t in &toks[3..] {
-                    let join = unhex(t).map_err(|e| e.to_string())?;
-                    l += &format!(" @HEX{}@", hex(&rewrite(&join, &mut sources)));
-                }
-                lines.push(l);
-            }
-            Some(other) => return Err(format!("a `{other}` line")),
-            None => {}
+                src.clone()
+            });
         }
     }
     // Each source as a table of the capture.
-    let mut tables: Vec<String> = Vec::new();
+    let mut tables: Vec<Source> = Vec::new();
     let mut bytes = 0u64;
-    for (k, tok) in sources.iter().enumerate() {
-        let rel: Arc<InRel> = if let Some(t) = tok.strip_prefix("r:") {
-            let table = unhex(t).map_err(|e| e.to_string())?;
-            DERIVED.lock().unwrap().get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?
-        } else {
-            input(conn, &tok[2..], &mut syms).map_err(|e| e.to_string())?
+    for (k, src) in sources.iter().enumerate() {
+        let (rel, base): (Arc<InRel>, bool) = match src {
+            Source::Native(table) => (DERIVED.lock().unwrap().get(&(scope(conn), table.clone())).cloned().ok_or_else(|| format!("no native relation {table}"))?, false),
+            Source::Input(key) => (input_of(conn, key, &mut syms).map_err(|e| e.to_string())?, key.base),
+            _ => unreachable!("only a native relation or an input is a source"),
         };
         let table = format!("s{k}");
         let n = write_rows(&out, &table, &rel.types, rows_of(&rel)).map_err(|e| e.to_string())?;
         bytes += n * 8 * rel.k as u64;
         let cols: Vec<String> = (0..rel.k).map(|c| format!("c{c}")).collect();
-        let flag = if tok.starts_with("t:b:") { "b" } else { "x" };
-        tables.push(format!("t:{flag}:{}:{}:{}", hex(&table), hex(&cols.join(", ")), String::from_utf8_lossy(&rel.types)));
+        tables.push(Source::Input(InputKey { base, sql: table, cols: cols.join(", "), types: String::from_utf8_lossy(&rel.types).into_owned() }));
     }
     for (table, lab, types, empty) in &rels {
         // An `empty` relation starts with no rows: nothing wrote its table, and it may have none.
         let rows = if *empty { Vec::new() } else { table_rows(conn, table, types, &mut syms).map_err(|e| e.to_string())? };
         write_rows(&out, lab, types, rows.into_iter()).map_err(|e| e.to_string())?;
     }
-    // The spec over the capture's tables: each join's source tokens replaced, then hex again.
-    let spec: Vec<String> = lines
+    // The spec over the capture's tables: its relations by their capture names, each join's sources replaced.
+    let to_capture = |join: &JoinSpec| Arc::new(with_sources(join, &mut |src| tables[sources.iter().position(|s| s == src).expect("a source seen")].clone()));
+    let mut r = 0;
+    let lines: Vec<Line> = spec
+        .lines
         .iter()
-        .map(|l| {
-            l.split(' ')
-                .map(|tok| match tok.strip_prefix("@HEX").and_then(|t| t.strip_suffix('@')) {
-                    Some(h) => {
-                        let mut join = unhex(h).unwrap_or_default();
-                        for (k, t) in tables.iter().enumerate() {
-                            join = join.replace(&format!("@SRC{k}@"), t);
-                        }
-                        hex(&join)
-                    }
-                    None => tok.to_owned(),
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
+        .filter_map(|line| match line {
+            Line::NoWrite => None,
+            Line::Rel { types, start, .. } => {
+                r += 1;
+                Some(Line::Rel { name: format!("r{}", r - 1), types: types.clone(), start: start.clone() })
+            }
+            Line::Seed { head, join } => Some(Line::Seed { head: *head, join: to_capture(join) }),
+            Line::Join { head, delta, join, whole } => Some(Line::Join { head: *head, delta: *delta, join: to_capture(join), whole: whole.as_deref().map(to_capture) }),
+            _ => None,
         })
         .collect();
-    let name_line = spec.iter().find_map(|l| l.strip_prefix("name ")).unwrap_or(name).to_owned();
-    for (k, v) in [("name", name_line.as_str()), ("stratum", name), ("spec", &spec.join("\n"))] {
+    let captured = ComponentSpec { name: spec.name.clone(), lines };
+    for (k, v) in [("name", spec.name.as_str()), ("stratum", name), ("spec", &captured.to_text())] {
         out.execute("INSERT INTO meta VALUES (?1, ?2)", [k, v]).map_err(|e| e.to_string())?;
     }
     WRITTEN.fetch_add(bytes, Ordering::Relaxed);
@@ -351,10 +343,12 @@ mod tests {
             }
             let outs: Vec<&String> = tables.iter().filter(|t| t.starts_with("out")).collect();
             super::super::open(&db, &spec).unwrap();
+            // `RERAIL_RELATIONAL_LAB_HOST_ONLY`: the captures alone, no device work (the run's own CPU and memory).
             #[cfg(target_os = "macos")]
-            device.add(&super::super::scans(&db, &name).unwrap());
-            #[cfg(target_os = "macos")]
-            device.tiles(&super::super::tiles(&db, &name).unwrap());
+            if std::env::var_os("RERAIL_RELATIONAL_LAB_HOST_ONLY").is_none() {
+                device.add(&super::super::scans(&db, &name).unwrap());
+                device.tiles(&super::super::tiles(&db, &name).unwrap());
+            }
             let c0 = thread_cpu();
             let result = super::super::run(&db, &name, 0).unwrap();
             let cpu = (thread_cpu() - c0) * 1e3;
@@ -383,11 +377,27 @@ mod tests {
         assert_eq!(same, all);
     }
 
+    /// The process's CPU seconds, user and system (every thread's: Metal's completion threads too).
+    #[cfg(target_os = "macos")]
+    fn process_cpu() -> f64 {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: a valid rusage out.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
+        t(u.ru_utime) + t(u.ru_stime)
+    }
+
     /// The captures' fused filters over input relations (`setfix::scans`), each run on Metal over its rows in the
     /// 16-bit layout (`metal_rows`) and checked against the CPU's rows.
     #[cfg(target_os = "macos")]
     #[derive(Default)]
-    struct Device { joins: usize, joins_same: usize, joins_off: usize, pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
+    struct Device { probe: Probe, sort_cpu: f64, sort_same: usize, joins: usize, joins_same: usize, pairs: usize, tile_pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, tile_host: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
+
+    /// The device's sort and probe joins: joins run and right, sorts and the joins that found theirs resident, GPU and
+    /// host CPU (the uploads, the sorts' and probes' encoding and the pairs' read), and the keys' bytes.
+    #[cfg(target_os = "macos")]
+    #[derive(Default)]
+    struct Probe { upload: f64, submissions: usize, joins: usize, same: usize, off: usize, sorts: usize, resident: usize, sort_gpu: f64, probe_gpu: f64, host: f64, right_host: f64, bytes: usize, wide: usize }
 
     #[cfg(target_os = "macos")]
     impl Device {
@@ -419,49 +429,119 @@ mod tests {
         }
 
         fn tiles(&mut self, cases: &[super::super::TileCase]) {
-            use crate::code_rule_dsl::transducer::packed::metal_rows::{Form, Resident, tile_join};
-            for case in cases {
-                let (nl, nr) = (case.left[0].len(), case.right[0].len());
-                // Key 0 a node column of one chunk on both sides: the first key that is.
-                let order = (0..case.left.len()).find_map(|k0| {
-                    let mut keys: Vec<usize> = vec![k0];
-                    keys.extend((0..case.left.len()).filter(|&k| k != k0));
-                    let l: Vec<&[i64]> = keys.iter().map(|&k| case.left[k].as_slice()).collect();
-                    let r: Vec<&[i64]> = keys.iter().map(|&k| case.right[k].as_slice()).collect();
-                    let (l, r) = (Resident::new(&l, nl).ok()?, Resident::new(&r, nr).ok()?);
-                    // Node ids: `d << 32 | i`, so a key 0 under 2^32 is not one (a number of a chunk of its own).
-                    let nodes = case.left[k0].iter().chain(&case.right[k0]).all(|&v| v >> 32 > 0);
-                    (l.forms[0] == Form::Low16 && r.forms[0] == Form::Low16 && nodes && keys.len() <= 3).then_some((l, r, keys.len()))
-                });
-                let Some((l, r, k)) = order else {
-                    if self.joins_off < 8 {
-                        let peek = |c: &[i64]| c.iter().take(3).map(|v| format!("{v:#x}")).collect::<Vec<_>>().join(",");
-                        println!("    tile off {}: {} keys, {} x {} rows, left {} right {}", case.rule, case.left.len(), nl, nr, peek(&case.left[0]), peek(&case.right[0]));
-                    }
-                    self.joins_off += 1;
-                    continue
-                };
-                let keys: Vec<usize> = (0..k).collect();
-                let Ok(got) = tile_join(&l, &keys, &r, &keys) else { self.joins_off += 1; continue };
-                let mut pairs = got.pairs.clone();
+            use crate::code_rule_dsl::transducer::packed::metal_rows::{Form, Joined, Resident, tile_join};
+            use crate::code_rule_dsl::transducer::packed::metal_sort::{Column, Keyed, probe};
+            use crate::code_rule_dsl::transducer::packed::rows_sort;
+            let same = |got: &[(u32, u32)], case: &super::super::TileCase, how: &str| -> bool {
+                let mut pairs = got.to_vec();
                 pairs.sort_unstable();
                 let mut want = case.pairs.clone();
                 want.sort_unstable();
-                self.joins += 1;
-                if pairs == want { self.joins_same += 1 } else { println!("    tile DIFF {}: {} pairs, the CPU {}", case.rule, pairs.len(), want.len()) }
-                self.pairs += want.len();
-                self.compared += got.compared;
+                if pairs != want { println!("    join DIFF {how} {}: {} pairs, the CPU {}", case.rule, pairs.len(), want.len()) }
+                pairs == want
+            };
+            // The capture's right sides sorted on the device, each once: the joins after its first find it resident.
+            let mut resident: std::collections::HashMap<&str, Keyed> = std::collections::HashMap::new();
+            let mut host_sorted: std::collections::HashMap<&str, rows_sort::Keyed> = std::collections::HashMap::new();
+            for case in cases {
+                let (nl, nr) = (case.left[0].len(), case.right[0].len());
+                let k = case.left.len();
+                self.pairs += case.pairs.len();
                 self.join_cpu += case.cpu_seconds;
+                let l: Vec<&[i64]> = case.left.iter().map(Vec::as_slice).collect();
+                let r: Vec<&[i64]> = case.right.iter().map(Vec::as_slice).collect();
+                // The CPU's sort join: the right radix-sorted by key 0 on the host once a capture, the left per join,
+                // their runs merged.
+                let c0 = process_cpu();
+                let keyed = host_sorted.entry(case.right_key.as_str()).or_insert_with(|| rows_sort::Keyed::new(r[0]));
+                let sorted = rows_sort::join_keyed(&l, keyed, &r);
+                self.sort_cpu += process_cpu() - c0;
+                self.sort_same += usize::from(same(&sorted, case, "sort join"));
+                // The device: the right side sorted by key 0 (once a capture), the left uploaded and probing it. Its
+                // host CPU is the process's (Metal's completion threads too).
+                let h0 = process_cpu();
+                let keyed = match resident.entry(case.right_key.as_str()) {
+                    std::collections::hash_map::Entry::Occupied(e) => {
+                        self.probe.resident += 1;
+                        Ok(&*e.into_mut())
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        let u0 = process_cpu();
+                        let columns = r.iter().map(|c| Column::upload(c)).collect::<Result<Vec<_>, _>>();
+                        self.probe.upload += process_cpu() - u0;
+                        let sorted = columns.and_then(Keyed::sort);
+                        self.probe.right_host += process_cpu() - h0;
+                        sorted.map(|s| {
+                            self.probe.sorts += 1;
+                            self.probe.bytes += s.bytes;
+                            &*e.insert(s)
+                        })
+                    }
+                };
+                let got = keyed.and_then(|keyed| {
+                    let u0 = process_cpu();
+                    let left = l.iter().map(|c| Column::upload(c)).collect::<Result<Vec<_>, _>>()?;
+                    self.probe.upload += process_cpu() - u0;
+                    let bytes: usize = left.iter().map(Column::bytes).sum();
+                    probe(&left, keyed, case.left[0].len() * 2).map(|p| (p, bytes))
+                });
+                self.probe.host += process_cpu() - h0;
+                match got {
+                    Ok((p, bytes)) => {
+                        self.probe.joins += 1;
+                        self.probe.same += usize::from(same(&p.pairs, case, "by sort and probe"));
+                        self.probe.probe_gpu += p.gpu_seconds;
+                        self.probe.submissions += p.submissions as usize;
+                        self.probe.bytes += bytes;
+                        self.probe.wide += 8 * k * (nl + nr);
+                    }
+                    Err(_) => self.probe.off += 1,
+                }
+                // By chunk, when key 0 is a node column of one chunk on both sides: the first key that is.
+                let t0 = process_cpu();
+                let order = (0..k).find_map(|k0| {
+                    let mut keys: Vec<usize> = vec![k0];
+                    keys.extend((0..k).filter(|&x| x != k0));
+                    let l: Vec<&[i64]> = keys.iter().map(|&x| case.left[x].as_slice()).collect();
+                    let r: Vec<&[i64]> = keys.iter().map(|&x| case.right[x].as_slice()).collect();
+                    // Node ids: `d << 32 | i`, so a key 0 under 2^32 is not one (a number of a chunk of its own).
+                    let nodes = case.left[k0].iter().chain(&case.right[k0]).all(|&v| v >> 32 > 0);
+                    if !nodes { return None; }
+                    let (l, r) = (Resident::new(&l, nl).ok()?, Resident::new(&r, nr).ok()?);
+                    (l.forms[0] == Form::Low16 && r.forms[0] == Form::Low16).then_some((l, r))
+                });
+                let Some((lr, rr)) = order else { continue };
+                let keys: Vec<usize> = (0..k).collect();
+                let got: Result<Joined, _> = tile_join(&lr, &keys, &rr, &keys);
+                self.tile_host += process_cpu() - t0;
+                let Ok(got) = got else { continue };
+                self.joins += 1;
+                self.joins_same += usize::from(same(&got.pairs, case, "by chunk"));
+                self.compared += got.compared;
+                self.tile_pairs += got.pairs.len();
                 self.join_gpu += got.gpu_seconds;
             }
+            // The sorts ran ahead of their probes, unwaited: their GPU time once all completed.
+            self.probe.sort_gpu += resident.values().map(Keyed::gpu_seconds).sum::<f64>();
         }
 
         fn report(&self) {
+            let p = &self.probe;
             println!(
-                "device tile joins: {} of {} give the CPU's pairs ({} not on the device); {} pairs from {} compared; CPU hash join {:.1} ms, GPU {:.1} ms",
-                self.joins_same, self.joins, self.joins_off, self.pairs, self.compared, self.join_cpu * 1e3, self.join_gpu * 1e3
+                "joins: {} pairs; CPU hash join {:.1} ms; CPU sort join, each right side sorted once a capture, {:.1} ms ({} of {} give the hash join's pairs)",
+                self.pairs, self.join_cpu * 1e3, self.sort_cpu * 1e3, self.sort_same, p.joins + p.off
             );
-            assert_eq!(self.joins_same, self.joins, "every tile join gives the CPU's pairs");
+            println!(
+                "device sort and probe: {} of {} give the CPU's pairs ({} not on the device); {} sorts, {} joins found theirs resident, {} submissions; GPU sort {:.1} ms, probe {:.1} ms; host CPU {:.1} ms ({:.1} ms of it the right sides' upload and sort, {:.1} ms every upload); on the device {} kB, the keys {} kB as i64",
+                p.same, p.joins, p.off, p.sorts, p.resident, p.submissions + p.sorts, p.sort_gpu * 1e3, p.probe_gpu * 1e3, p.host * 1e3, p.right_host * 1e3, p.upload * 1e3, p.bytes >> 10, p.wide >> 10
+            );
+            println!(
+                "device tile by chunk: {} of {} give the CPU's pairs ({} pairs), {} compared, GPU {:.1} ms, host CPU {:.1} ms",
+                self.joins_same, self.joins, self.tile_pairs, self.compared, self.join_gpu * 1e3, self.tile_host * 1e3
+            );
+            assert_eq!(self.sort_same, p.joins + p.off, "every CPU sort join gives the hash join's pairs");
+            assert_eq!(self.joins_same, self.joins, "every chunk tile join gives the CPU's pairs");
+            assert_eq!(p.same, p.joins, "every sort and probe join gives the CPU's pairs");
             println!(
                 "device scans: {} of {} give the CPU's rows ({} not on the device); {} rows in, {} passed; CPU {:.1} ms, GPU {:.1} ms; columns {} kB as 16-bit layout, {} kB as i64 (low16 {}, i32 {}, i64 {})",
                 self.same, self.cases, self.unsupported, self.rows, self.passed, self.cpu * 1e3, self.gpu * 1e3, self.bytes >> 10, self.wide >> 10, self.forms[0], self.forms[1], self.forms[2]

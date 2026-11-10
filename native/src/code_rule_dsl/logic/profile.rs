@@ -138,6 +138,10 @@ struct PlacedTotal {
     cpu_estimate: f64,
     gpu_estimate: f64,
     cpu: f64,
+    /// Its join steps by the form placement chose (CPU index, GPU sort and probe, GPU tile): how many, their
+    /// estimate on the CPU's index, and on the form chosen (of the steps estimated under `JOIN_ESTIMATE_CAP`), and
+    /// how many were estimated over it.
+    joins: [(u64, f64, f64, u64); 3],
 }
 
 #[derive(Default)]
@@ -312,6 +316,7 @@ pub(in crate::code_rule_dsl) fn span(name: impl FnOnce() -> String) -> Span {
         return Span(false);
     }
     let name = name();
+    memory::sample();
     STACK.with(|s| {
         let mut s = s.lock();
         let path = match s.opens.last() {
@@ -355,6 +360,30 @@ impl Drop for Span {
             t.own_rise += rise.saturating_sub(open.children_rise);
         });
     }
+}
+
+/// Each live thread's innermost open span, as `thread: path` (for the memory sampler).
+fn open_paths() -> (Vec<String>, usize) {
+    let all: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
+    (all.iter().filter_map(|t| { let t = t.lock(); t.opens.last().map(|o| format!("{}: {}", t.name, o.path)) }).collect(), all.len())
+}
+
+/// The process's peaks so far, for a caller to print after a run (the run's report is written before its caller's
+/// own work): the high-water mark of the footprint and of the resident set, and the sampler's peak with what was
+/// open then. Also rewrites `memory.tsv` in the profile directory, so the timeline covers the caller's work too.
+pub(in crate::code_rule_dsl) fn peaks() -> String {
+    let (now, max) = memory::footprint();
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+    // SAFETY: fills a `rusage` for this process.
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+    // macOS reports bytes, Linux kilobytes.
+    let rss = if cfg!(target_os = "macos") { usage.ru_maxrss as f64 } else { usage.ru_maxrss as f64 * 1024.0 };
+    let mut r = format!("process: footprint {} MB now, {} MB at most; resident set {} MB at most\n", memory::mb(now as f64), memory::mb(max as f64), memory::mb(rss));
+    memory::sampled_report(&mut r);
+    if let Some(dir) = directory() {
+        let _ = std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv());
+    }
+    r
 }
 
 /// This thread's open span's path, `-` outside any.
@@ -493,7 +522,27 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     t.cpu_estimate += p.cpu_s;
     t.gpu_estimate += p.gpu_s;
     t.cpu += cpu;
+    for c in &p.joins {
+        use crate::code_rule_dsl::logic::plan::placement::JoinForm;
+        let chosen = match c.form {
+            JoinForm::Index => c.index_s,
+            JoinForm::Probe => c.probe_s.unwrap_or(c.index_s),
+            JoinForm::Tile => c.tile_s.unwrap_or(c.index_s),
+        };
+        let e = &mut t.joins[c.form as usize];
+        e.0 += 1;
+        if c.index_s < JOIN_ESTIMATE_CAP {
+            e.1 += c.index_s;
+            e.2 += chosen;
+        } else {
+            e.3 += 1;
+        }
+    }
 }
+
+/// A join step estimated over this many seconds is a planned estimate gone wrong (a cross product priced at 10^20
+/// rows): counted, not summed.
+const JOIN_ESTIMATE_CAP: f64 = 1e3;
 
 /// Where the native strata ran (decision 0095): how many on each backend, the strata the GPU would run cheaper and
 /// the forms it lacks for them, by their CPU. What the device must take on next, and what it would save.
@@ -514,7 +563,7 @@ fn placements(r: &mut String, state: &State) {
         runs - gpu,
         if device { "Metal" } else { "CPU" }
     );
-    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU assumed (2 ns a unit, 0.15 ms a submission) until the relational lab measures it.");
+    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU assumed (2 ns a unit, 0.15 ms a submission) but for join steps, priced on each form from the relational lab's measures.");
     // The strata the GPU would run cheaper in at least one run, and did not.
     let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
     let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
@@ -552,6 +601,17 @@ fn placements(r: &mut String, state: &State) {
     // The strata themselves, costliest first.
     let mut top = cheaper.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
+    // Each join step on the form its prices chose (the lab's measured device prices): what the device's joins would
+    // take on, in strata the device runs once it has their other forms.
+    let joins: Vec<(u64, f64, f64, u64)> = (0..3).map(|f| all.values().fold((0, 0.0, 0.0, 0), |a, t| (a.0 + t.joins[f].0, a.1 + t.joins[f].1, a.2 + t.joins[f].2, a.3 + t.joins[f].3))).collect();
+    if joins.iter().any(|j| j.0 > 0) {
+        use crate::code_rule_dsl::logic::plan::placement::JoinForm;
+        let _ = writeln!(r, "Join steps by the form their prices choose (estimates; the device's prices measured by the relational lab; steps estimated over {JOIN_ESTIMATE_CAP:.0} s counted, not summed):");
+        let _ = writeln!(r, "{:>9} {:>10} {:>10} {:>9}  form", "steps", "index s", "chosen s", "over cap");
+        for (f, form) in [JoinForm::Index, JoinForm::Probe, JoinForm::Tile].into_iter().enumerate() {
+            let _ = writeln!(r, "{:>9} {:>10.3} {:>10.3} {:>9}  {}", joins[f].0, joins[f].1, joins[f].2, joins[f].3, form.name());
+        }
+    }
     let _ = writeln!(r, "Costliest strata the GPU would run cheaper:");
     let _ = writeln!(r, "{:>8} {:>8} {:>12} {:>12} {:>5}  stratum: forms (missing on the GPU)", "cpu s", "gpu s", "planned", "work", "runs");
     for (key, t) in top.iter().take(20) {
@@ -852,6 +912,7 @@ fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     for (p, t) in rose.iter().take(15) {
         let _ = writeln!(r, "{:>10} MB  {}", memory::mb(t.own_rise as f64), short(p, 140));
     }
+    memory::sampled_report(r);
 }
 
 /// CPU (user + system) of the thread with Mach port `port` (macOS), read from another thread; `None` elsewhere.
@@ -930,6 +991,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", t.calls, t.total, t.own, t.alloc, t.own_alloc, t.freed, t.rise, t.own_rise);
     }
     std::fs::write(dir.join("spans.tsv"), spans_tsv)?;
+    std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv())?;
     let mut sql: Vec<_> = state.sql.iter().collect();
     sql.sort_by_key(|(_, s)| std::cmp::Reverse(s.ns));
     let mut sql_tsv = String::from("span\truns\tms\tvm_steps\tfullscan_steps\tsorts\tautoindex_rows\tsql\n");
@@ -1203,6 +1265,25 @@ mod tests {
 
     /// Decision 0084: a span charges the bytes its thread allocated, its own apart from its children's, and what it
     /// freed; a dump lists the spans still open on every thread, with the SQL statement running.
+    #[test]
+    fn the_memory_sampler_charges_a_rise_to_the_span_open_on_its_thread() {
+        let _serial = one_run();
+        set(true);
+        {
+            let _s = span(|| "sampler probe: a big allocation".into());
+            // Touched pages, held for several sampling periods, well above anything before it in this test process.
+            let big = std::hint::black_box(vec![7u8; 256 << 20]);
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            drop(big);
+        }
+        let s = memory::SAMPLED.lock().unwrap();
+        assert!(s.every_ms > 0);
+        let charged: Vec<&String> = s.rise.iter().filter(|(p, (r, _))| p.ends_with("sampler probe: a big allocation") && *r > 0).map(|(p, _)| p).collect();
+        assert!(!charged.is_empty(), "the rise is charged to the open span: {:?}", s.rise.keys().collect::<Vec<_>>());
+        drop(s);
+        set(false);
+    }
+
     #[test]
     fn spans_charge_memory_and_a_dump_lists_what_is_open() {
         let _serial = one_run();

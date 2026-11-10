@@ -2,7 +2,8 @@
 
 Status: accepted as the design (2026-11-09), settled by the spikes in §"Evidence". Amended the same day (§2–§4):
 statistics live in memory and are written with the wave SQLite commits, as blobs, never a row per value. Steps 1
-and 2 are built (`logic/plan/statkeep.rs`, `corpus/keptstats.rs`); steps 3 and 4 are open ("Order of work").
+to 4 are built for a session (`logic/plan/statkeep.rs`, `corpus/keptstats.rs`, `corpus/retain.rs`; "Order of
+work").
 
 ## Intro
 
@@ -279,18 +280,22 @@ Node columns are exact (§1) and are not sketched.
 | --- | --- | --- |
 | 1 | A phase export's statistics counted once, then patched by each version's plus and minus | built (`8da5e1b01`): `PhasedSource` keeps its `RelStats` |
 | 2 | A base relation's statistics patched by file: a file's old rows out (by the content counted), its new in; replayed rows not counted again | built for memoised runs, in a session (`e388adcc3`) and over the tape cache, durable as one blob per memo plan (`5f7def8b8`) |
-| 3 | An unchanged file is neither replayed nor counted: the session keeps the base sources and exports, and patches a changed file's rows in | counted: the exports' statistics are kept by file too (phased-facts branch); replayed: open, the hits' exports are still held again each run (0.46 s at O125 step 07) |
-| 4 | Derived relations: a maintained relation's statistics patched by its delta rather than read from its postings | open |
+| 3 | An unchanged file is neither replayed nor counted: the session keeps the base sources and exports, and patches a changed file's rows in | built, in a session: the keeper counts each export row and each base relation's held row by the files holding it (`exports::Counted`), and the files' tree counts; a changed file's old rows out and new in, a gone file's out. An unchanged hit's rows are not held again (`58e74ad23`); a file is counted in one pass a column (`5c9635187`) |
+| 4 | Derived relations: a maintained relation's statistics patched by its delta rather than read from its postings | built, in a session (`02d67b604`): the engine's maintained relation gives its delta from the one it started as (`InRel::delta_since`), which patches the `RelStats` kept with it |
 
 Measured on the O125 replay (calls.rr over real history, a session, load 65–140), per one-to-four-file step:
 
-| Cost | Before | After steps 1–2 |
-| --- | --- | --- |
-| Base relations measured (`measure the base rows held`) | 0.56 s | 0.08–0.09 s (making the sources) |
-| Memo hits' rows measured again (`measure <rel> (memo)`) | about 0.6 s | none |
-| Kept relations' `r__old` (`bind and measure kept`, step 4) | 0.58–0.88 s | the same |
-| The memo replay (`local/memo replay`, step 3) | 1.3–1.5 s | the same |
-| The step | 27–40 s, nearly all of it the cross-file evaluation | the same within the load's noise |
+| Cost | Before | After steps 1–2 | After step 3 |
+| --- | --- | --- | --- |
+| Base relations measured (`measure the base rows held`) | 0.56 s | 0.08–0.09 s (making the sources) | the same |
+| Memo hits' rows measured again (`measure <rel> (memo)`) | about 0.6 s | none | none |
+| Kept relations' `r__old` measured (`bind and measure kept/measure r__old`, step 4) | 0.25–0.37 s of the 0.58–0.88 s bind | the same | 0.08 s for the 18 not maintained, and 0.02–0.22 s patching the 264 maintained by their deltas (step 4) |
+| The memo replay (`local/memo replay`) | 1.3–1.5 s | 0.45–0.52 s (after the feeders' merges), 0.43 s of it holding the hits' export rows | 0.002–0.04 s: the counted exports, base rows and tree counts installed |
+| Counting a changed file out and in (`memo remember`) | | 0.48–0.68 s for a 13,300-row file, over 207 relations | 0.79 s with its export rows counted too, four hash passes a column; 0.29–0.70 s in one pass |
+| The step | 27–40 s, nearly all of it the cross-file evaluation | the same within the load's noise | 20.5–24.3 s, 16.5–22 s of it the cross-file part |
+
+Step 3's numbers are O125 steps 1–2 (2026-11-09, load 80–115), and step 4's steps 1–3 (load 40–140); each step's
+outputs equal a full run's, with the counted rows and with them given up (the hits held from the memo instead).
 
 The gate's replay over commits patches 1–3 files a step from the kept blob; its CPU is the same with the keeper on
 and off (alternated, load 90–117), as its statistics were a small share. Every step compared with a full run
@@ -298,12 +303,34 @@ gave the same outputs (O125 steps 1–2; the struct phase spike, E1–E3).
 
 What steps 3 and 4 need:
 
-- **Step 3** keeps last run's base sources, exports and file-local lines in the session and replaces a changed
-  file's rows in each, rather than rebuilding them from every file's memo entry. The statistics need nothing
-  more: the keeper already counts only the files whose content changed.
-- **Step 4** takes a maintained relation's delta from the engine (the rows it truly inserted and deleted) and
-  patches the `RelStats` kept with the last run's relation, rather than walking its postings
-  (`InRel::posted`, O(rows) for a few-valued column, whose postings are all long).
+- **Step 3, as built.** The keeper counts a session's exports by file (`exports::Counted`: each row with how
+  many files hold it), alongside the statistics, by the same old-content lookup. A memo hit whose content it
+  counted is not held again; the run's exports are the counted ones, installed once every file was seen (before
+  the cone of requests' digests, or before the statistics). The cone starts from the counted rows less those of
+  the files it has not seen yet (gone, or loaded only last run); its loads' rows are held as before. A keeper
+  that gives up mid-run (a chunk not attributed to its files, a memo entry gone) holds the skipped hits from the
+  memo, as the replay did, and counts every file in again next run. Only a session keeps them: a process over the
+  tape cache would count them in each run for nothing. `RERAIL_COUNT_EXPORTS=off` turns it off.
+- **Step 3, the rest.** The base relations' held columns are kept as counted rows too, by the files holding
+  them, and so is the sum of the files' tree counts: an unchanged hit adds nothing, and the run installs them
+  (0.004 s). A file is counted in one pass a column: each row's value goes into its document's map, and the
+  sums are read from the maps (`one_pass_counts_as_the_four_passes_did` checks it against the four passes).
+- **Step 4, as built.** A maintained relation starts as the kept one less its overdeleted rows (`Rel::based`):
+  in place, its first rows the old ones with those marked dead, or compacted from the survivors when too many
+  are dead (DRed's overdelete is often more than an eighth of a relation at O125). Either way it records the
+  relation it started as, so `InRel::delta_since` gives the rows it removed and added at the cost of the change
+  and a pass over the dead bits. A session keeps each such relation's `RelStats` (`retain::Patched`) with the
+  counts of the constants rules test it by. They are counted from its rows the first run it is maintained, and
+  patched by its delta each run after. A row's delta is not whole documents, so a column's `sqd` would read as
+  `sq`; a maintained relation's statistics keep a sketch of its (document, value) pairs for it
+  (`RelStats::paired`, within 1.5× in `a_paired_relation_patched_by_rows_keeps_its_sum_within_documents`). A
+  relation a run did not derive again keeps its statistics as it keeps its rows.
+- **What is left.** The first count of a maintained relation costs about 1 s at O125, once a session. The input
+  deltas' `__plus` and `__minus` are measured each run (0.27 s over 400 sources at O125): their rows are the
+  changed files', which the keeper counts anyway, so its per-file count could give them. The program's
+  analysis (pruning, lowering, splitting, 1.3 s) is kept by the process and read back by the store (decision
+  0073); a process serving two stores now keeps it for each, so it no longer prepares the program again on each
+  switch (O125 with `O125_FULL_EACH`).
 
 The measurement aids stay: `RERAIL_STATS_SKEW`, `RERAIL_STATS_SKEW_LOG` and `RERAIL_STATS_SHADOW`. Each step's
 claim is checked by running them again.

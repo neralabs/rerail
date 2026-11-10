@@ -11,7 +11,9 @@
 //!
 //! A stratum is clean when none of its reads changed (an input whose digest differs, or a relation of a stratum that
 //! runs) and its relations were kept. Kept relations are bounded by a byte budget (`RERAIL_CROSS_RETAIN_MB`, 256 MB):
-//! past it, a relation is not kept and its stratum runs again next time.
+//! past it, a relation is not kept and its stratum runs again next time. Nor is one the run recomputed in its readers
+//! (decision 0099: it has no rows to keep). Run again over unchanged reads, such a stratum derives the rows it did,
+//! so it leaves its readers clean.
 //!
 //! Stage 2 (decision 0077 §3, `maintain`) maintains a changed stratum's rows from the deltas (DRed) instead of deriving
 //! them again; it reads the old rows of what changed, so inputs' sources are kept too.
@@ -66,6 +68,39 @@ pub(in crate::code_rule_dsl) struct Retained {
     /// Each input source's rows hashed by document (`document_delta`), when a run took them: the next run's old
     /// side, not hashed again.
     input_docs: HashMap<String, Arc<DocDigests>>,
+    /// A maintained relation's statistics kept by its delta (decision 0096 step 4), under the name it is bound as
+    /// next run (`r__old`): of the engine's relation `at`, which a run derived as the one before less the rows it
+    /// marked dead and with those it added (`InRel::delta_since`).
+    patched: HashMap<String, Patched>,
+}
+
+/// A relation's statistics kept by delta, of the engine's relation at address `at`, with its counts of the
+/// constants `tested` (`Measured`'s second and third).
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct Patched {
+    pub(in crate::code_rule_dsl) at: usize,
+    pub(in crate::code_rule_dsl) stats: crate::code_rule_dsl::logic::plan::statkeep::RelStats,
+    pub(in crate::code_rule_dsl) counts: Vec<(String, i64, i64)>,
+    pub(in crate::code_rule_dsl) tested: BTreeSet<(usize, i64)>,
+}
+
+impl Patched {
+    /// The statistics of `new`, derived from `old` (whose these are) by `delta_since`: these patched by its rows
+    /// gone and added. `None` if `new` did not start as `old`.
+    pub(in crate::code_rule_dsl) fn after(&self, old: &InRel, new: &Arc<InRel>, width: usize) -> Option<Patched> {
+        let (added, removed) = new.delta_since(old)?;
+        let mut p = self.clone();
+        p.at = Arc::as_ptr(new) as *const u8 as usize;
+        p.stats.delta(&added, &removed, width);
+        // Each constant's count, by the rows of its column holding it.
+        let index: HashMap<&str, usize> = p.stats.columns().iter().enumerate().map(|(c, n)| (n.as_str(), c)).collect();
+        for (name, v, n) in &mut p.counts {
+            let Some(&c) = index.get(name.as_str()).filter(|c| **c < width) else { continue };
+            let count = |flat: &[i64]| flat.chunks_exact(width).filter(|r| r[c] == *v).count() as i64;
+            *n += count(&added) - count(&removed);
+        }
+        Some(p)
+    }
 }
 
 /// A source's rows by document: each document's sum of row hashes and its row count.
@@ -241,10 +276,14 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let whole = kept.is_none() || (!prog.gates.is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
     for scc in &sccs {
-        let runs = whole || reads(prog, scc).iter().any(|r| dirty.contains(r)) || !scc.iter().all(|r| kept.is_some_and(|k| k.rels.contains_key(r)));
-        if runs {
+        let stale = whole || reads(prog, scc).iter().any(|r| dirty.contains(r));
+        if stale {
             ran += 1;
             dirty.extend(scc.iter().cloned());
+        } else if !scc.iter().all(|r| kept.is_some_and(|k| k.rels.contains_key(r))) {
+            // Not kept (past the budget, or recomputed in its readers, decision 0099) but of unchanged reads: run
+            // again, its rows as before, so its readers stay clean.
+            ran += 1;
         } else {
             clean.extend(scc.iter().cloned());
         }
@@ -321,6 +360,7 @@ pub(in crate::code_rule_dsl) fn after(
     input_stats: HashMap<String, InputStats>,
     mut input_docs: HashMap<String, Arc<DocDigests>>,
     docs: (super::input_delta::Docs, [u8; 32]),
+    mut patched: HashMap<String, Patched>,
 ) -> Retained {
     // An input bound as the last run's source keeps that source's hashes.
     if let Some(old) = &old {
@@ -335,6 +375,10 @@ pub(in crate::code_rule_dsl) fn after(
     }
     let mut rels: HashMap<String, Kept> = HashMap::new();
     if let Some(old) = old.filter(|o| o.key == key) {
+        // A relation this run did not derive again keeps its statistics kept by delta, as it keeps its rows.
+        for (name, p) in old.patched {
+            patched.entry(name).or_insert(p);
+        }
         for (rel, k) in old.rels {
             if cut.clean.contains(&rel) {
                 rels.insert(rel, k);
@@ -355,7 +399,8 @@ pub(in crate::code_rule_dsl) fn after(
     // Statistics of the relations still kept, as they are.
     let alive: std::collections::HashSet<usize> = rels.values().map(|k| Arc::as_ptr(&k.rel) as *const u8 as usize).collect();
     let measured = measured.into_iter().filter(|((_, at), _)| alive.contains(at)).collect();
-    Retained { key, inputs, rels, input_srcs, measured, input_stats, input_docs, docs }
+    let patched = patched.into_iter().filter(|(_, p)| alive.contains(&p.at)).collect();
+    Retained { key, inputs, rels, input_srcs, measured, input_stats, input_docs, docs, patched }
 }
 
 /// `source` (input `rel`), or the last run's source of the same rows: same name, columns and digest, in any kept
@@ -396,6 +441,11 @@ impl Retained {
     /// The statistics measured of kept relation `held` bound as `name`, if a run measured them.
     pub(in crate::code_rule_dsl) fn measured(&self, name: &str, held: &Arc<InRel>) -> Option<&Measured> {
         self.measured.get(&(name.to_owned(), Arc::as_ptr(held) as *const u8 as usize))
+    }
+
+    /// The statistics kept by delta of kept relation `held` bound as `name` (`Patched`), if a run kept them.
+    pub(in crate::code_rule_dsl) fn patched(&self, name: &str, held: &Arc<InRel>) -> Option<&Patched> {
+        self.patched.get(name).filter(|p| p.at == Arc::as_ptr(held) as *const u8 as usize)
     }
 
     /// Every statistic kept, to be carried to the next run's (`after`).
@@ -583,7 +633,7 @@ mod tests {
             let width=p.decls[name].len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
-        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default()};
+        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default()};
         let result=cut(Some(&kept),key,&p,&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};

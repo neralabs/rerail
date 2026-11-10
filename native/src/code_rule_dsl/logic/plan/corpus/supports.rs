@@ -1,27 +1,29 @@
-//! Exact maintenance without delete-and-rederive, for comparing with it (`RERAIL_MAINTAIN=count`): counting, held
-//! as support sets, because the engine holds sets.
+//! Exact maintenance without delete-and-rederive, a session's default (`RERAIL_MAINTAIN=dred` compares with
+//! delete-and-rederive): counting, held as support sets, because the engine holds sets.
 //!
 //! Each rule of a non-recursive stratum gets its own relation of derivations: the head's columns, then every other
 //! variable its positive atoms bind (a wildcard there becomes a variable). A row of it has exactly one derivation,
 //! so its deletes are exact and it needs no rederivation (`maintain` reads `__sup` relations so). The head is their
-//! projection, and a head row is gone when its last support is: one probe, a count reaching zero.
+//! projection, and a head row is gone when its last support is: one probe, a count reaching zero (`maintain`: a
+//! head row that keeps a support is neither deleted nor derived again).
 //!
 //! ```text
 //! h(x) :- p(x, y), q(y, _).      becomes    h__sup0(x, y, w0) :- p(x, y), q(y, w0).
 //!                                           h(x) :- h__sup0(x, _, _).
 //! ```
 //!
-//! A recursive stratum is derived again (`maintain`): counting over cycles needs a witness of each row's level,
-//! which this comparison leaves out. A rule with an aggregate, `nearest`, a matcher, or a variable no positive atom
-//! binds keeps its form; its stratum is maintained as before.
+//! A recursive stratum keeps its rules and is maintained by delete-and-rederive (`maintain`): counting over cycles
+//! needs a witness of each row's level (decision 0090's levels spike), not built yet. A rule with an aggregate,
+//! `nearest`, a matcher, or a variable no positive atom binds keeps its form; its stratum is maintained as before.
 
 use super::lower;
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Whether `RERAIL_MAINTAIN=count` asks for counting rather than delete-and-rederive.
+/// Whether a session maintains by counting: the default. `RERAIL_MAINTAIN=dred` asks for delete-and-rederive, to
+/// compare with.
 pub(in crate::code_rule_dsl) fn counting() -> bool {
-    std::env::var("RERAIL_MAINTAIN").is_ok_and(|v| v == "count")
+    std::env::var("RERAIL_MAINTAIN").map_or(true, |v| v != "dred")
 }
 
 /// A support relation of `rel`'s: a row of it is one derivation.

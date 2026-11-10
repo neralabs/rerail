@@ -256,6 +256,12 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         return Ok((f, Vec::new(), d));
     }
     let (mut facts, mut runs, mut handed) = (Facts::new(), Vec::new(), Deltas::new());
+    // The constants' own run (`constants::derive`) reads no phase: its relations are made from no document, and a
+    // phase's exports are the run's inputs, never a constant. Run under its options, a phase would be a constants
+    // run itself, writing none of its exports.
+    if options.get(super::constants::OWN).is_some() {
+        return Ok((facts, runs, handed));
+    }
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
     for (name, reads) in wanted(prog, dir.as_deref())? {
         // An earlier phase that reads a phase of its own runs that one first, inside its run (struct, then types).
@@ -313,8 +319,8 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let checking = super::thread_usage();
         if let Some(documents) = reuse(&name, &key, &text, root, typing, options)? {
             let versions = current_versions(&name, &declared.exports)?;
-            let rows = stored_rows(&name, &wanted_rows(&reads, &versions, held))?;
-            hand_on(&name, &program, &reads, &rows, &mut facts)?;
+            let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its kept exports read")); stored_rows(&name, &wanted_rows(&reads, &versions, held))? };
+            { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
             hand_versions(&reads, &versions, &mut handed);
             let now = super::thread_usage();
             let mut report = Report::default();
@@ -329,10 +335,11 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let producer: [u8; 32] = Sha256::digest(src.as_bytes()).into();
         // Some workspace documents changed, and nothing else: their rows replaced, when the rest stands.
         let job = Job { name: &name, key: &key, text: &text, root, scratch, modes, binding, chunk_nodes, typing, options, program: &program, declared: &declared, producer };
-        let full_because = match maintain(&job)? {
+        let maintained = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: maintained")); maintain(&job)? };
+        let full_because = match maintained {
             Ok((report, exports, units, granules, began, versions)) => {
-                let rows = stored_rows(&name, &wanted_rows(&reads, &versions, held))?;
-                hand_on(&name, &program, &reads, &rows, &mut facts)?;
+                let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); stored_rows(&name, &wanted_rows(&reads, &versions, held))? };
+                { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
                 hand_versions(&reads, &versions, &mut handed);
                 runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began, full_because: None, versions });
                 continue;
@@ -341,15 +348,18 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         };
         let report = super::run_with_options(&[&text], root, None, &out, modes, binding, chunk_nodes, typing, options)?;
         let began = thread_cpu();
-        let rows = read_exports(&name, &program, &declared, &out)?;
-        let ((exports, units, granules), versions) = keep(&name, &rows, &declared.positions, declared.owner.as_deref(), producer, None)?;
+        let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &declared, &out)? };
+        let ((exports, units, granules), versions) = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports kept")); keep(&name, &rows, &declared.positions, declared.owner.as_deref(), producer, None)? };
         // Once its exports are kept: what it consulted, so an unchanged next run takes them as they are, and each
         // document's cone inputs, so a run of changed documents can tell whether the rest stands.
-        record(&name, &key, &report.consulted)?;
-        record_documents(&name, &report.cone_inputs, true)?;
+        {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: what it consulted recorded"));
+            record(&name, &key, &report.consulted)?;
+            record_documents(&name, &report.cone_inputs, true)?;
+        }
         let wanted = wanted_rows(&reads, &versions, held);
         let rows: BTreeMap<String, Vec<Vec<String>>> = rows.into_iter().filter(|(e, _)| wanted.contains(e)).collect();
-        hand_on(&name, &program, &reads, &rows, &mut facts)?;
+        { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
         hand_versions(&reads, &versions, &mut handed);
         runs.push(PhaseRun { name, report, exports, units, granules, bookkeeping: thread_cpu() - began, full_because: Some(full_because), versions });
     }
@@ -408,7 +418,10 @@ fn hand_versions(reads: &[(String, String)], versions: &Deltas, handed: &mut Del
 fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) -> Result<BTreeMap<String, Vec<Vec<String>>>> {
     let mut rows: BTreeMap<String, Vec<Vec<String>>> = BTreeMap::new();
     for export in &declared.exports {
-        let text = std::fs::read_to_string(out.join(format!("{export}.csv"))).map_err(|e| Error::Plan(format!("phase {name}: {export}: {e}")))?;
+        let text = std::fs::read_to_string(out.join(format!("{export}.csv"))).map_err(|e| {
+            let held: Vec<String> = std::fs::read_dir(out).map(|d| d.filter_map(|f| f.ok().map(|f| f.file_name().to_string_lossy().into_owned())).collect()).unwrap_or_default();
+            Error::Plan(format!("phase {name}: {export}: {e} (in {}, which holds {held:?})", out.display()))
+        })?;
         let width = program.decls[export].len();
         let read: Vec<Vec<String>> = text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect();
         // Outputs are lines of tab-separated values, unescaped: a value holding a newline or a tab would come back
@@ -984,6 +997,29 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         std::fs::write(phases.join("p1.rr"), format!("{p1}\n.decl p2__anc(s: symbol, a: symbol)\n.decl seen(s: symbol)\nseen(s) :- p2__anc(s, _).\n.output seen\n")).unwrap();
         let err = run(&reader).err().expect("a cycle refused").to_string();
         assert!(err.contains("phases read each other"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A reader with a constant of its own (made from the run's settings alone, folded first by `constants`) reads a
+    /// phase: the constants' run starts no phase, so the phase runs once, as itself, and writes its exports.
+    #[test]
+    fn a_reader_with_constants_runs_its_phases_once_as_themselves() {
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("phases-constants");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (src, phases) = (dir.join("src"), dir.join("phases"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&phases).unwrap();
+        std::fs::write(src.join("a.py"), "class A:\n    pass\n").unwrap();
+        std::fs::write(phases.join("p1.rr"), "#include \"core.rr\"\n.phase p1\n.export def\n.decl def(s: symbol, k: symbol)\ndef(x, \"class\") :- kind(n, \"class_definition\"), field(n, \"name\", i), text(i, x).\n").unwrap();
+        let out = dir.join("out");
+        let _no_session = crate::code_rule_dsl::logic::plan::corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let options = serde_json::json!({ "phase_dir": phases.to_string_lossy(), "env": ["mode=strict"] });
+        let reader = "#include \"core.rr\"\n.decl mode(m: symbol)\nmode(m) :- env(\"mode\", m).\n.decl p1__def(s: symbol, k: symbol)\n.decl r(s: symbol, m: symbol)\nr(s, m) :- p1__def(s, _), mode(m), kind(_, \"module\").\n.output r\n";
+        let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+        let report = crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
+        assert_eq!(std::fs::read_to_string(out.join("r.csv")).unwrap(), "A\tstrict\n");
+        assert_eq!(report.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["p1"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -360,7 +360,63 @@ Before a stratum opens, the planner has priced each of its rules: an estimate of
        have more than three keys.
    - Not yet: the planner pricing `tile` (Σ |left| × |right| per chunk, which the lab now measures), and running it
      from the engine. The replay's numbers are the first measured GPU price: about 0.45 ns per pair compared.
-4. **Negation, then aggregates (`sort`, `group`).**
+   - **Equi-joins by sort and probe** (`metal_sort`). This replaces an earlier key-run form whose sort ran on the
+     host and cost as much CPU as the CPU hash join.
+     - **Upload:** a column goes to the device as each value's offset from its least, in 16, 32 or 64 bits, as
+       narrow as its span allows and exact. The host makes one pass for the span and one that writes the offsets
+       straight into the device buffer (`Column`).
+     - **Sort:** the right side is sorted by key 0 on the device with a stable LSD radix sort. Tiles of 1,024 rows;
+       an 8-bit digit per pass, only as many passes as the key's span needs. A row's place is its digit's offset for
+       the tile, plus the rows of its digit earlier in the tile (a rank among its simdgroup's lanes from 32 bounded
+       shuffles). No atomic decides an order. Then the key's runs (heads, a scan, compaction) and the other columns
+       gathered into the sorted order. 10 kB of threadgroup memory at most.
+     - **Residency:** a `Keyed` (the sorted relation) stays on the device while the host holds it. Every probe of
+       that relation by the same keys uses one sort.
+     - **Probe:** a thread per left row (unsorted) finds its key's run by a bounded binary search and loops over the
+       run, testing the other keys. Count, scan and scatter run in one command buffer, into space for the pairs the
+       planner expects; a second scatter runs only when there are more. The pairs come out in left-row order.
+     - **The host's part, made small.** Pipelines are kept per variant. One encoder runs a command buffer's
+       dispatches in order. Intermediates live in per-thread scratch. Buffers come from a per-thread pool, since a
+       new buffer costs about 6 µs to make and again when Metal first maps it; a pooled one costs 0.1 µs. A sort is
+       committed without waiting; its probe follows it on the same queue. The columns a running sort reads stay
+       held until it completes, because Metal does not order a host write to a reused buffer after a GPU read.
+       (Releasing them early broke 9 of 232 joins in the lab; holding them fixed it.)
+   - **On the CPU: a radix sort join** (`rows_sort`). The same sort on the host: LSD radix over the offsets and row
+     numbers packed into one word (`u64`, or `u128` past 32 bits), every digit's histogram in one pass, and a digit
+     every row shares skipped. The runs are merged.
+   - **The lab check** (all 232 two-atom joins of the 144 captures; 5,632,341 pairs). Every form gives the CPU
+     hash join's pairs. CPU time is the process's (Metal's threads too), at load 65–75:
+
+     | Form | CPU | GPU |
+     |---|---|---|
+     | CPU hash join | 234 ms | |
+     | CPU radix sort join, each right side sorted once a capture | 96 ms | |
+     | GPU sort and probe: 138 sorts (94 joins found theirs resident), 431 submissions | 128 ms | 63 ms |
+     | GPU chunk tile, the 110 joins it fits (387 M pairs compared) | 163 ms | 156 ms |
+
+     - The device's own work is small: 43 ms sorting and 20 ms probing. What the host still pays is per
+       submission, about 20 µs of process CPU for an empty one and about 1.5 µs per dispatch. A sort costs about
+       100 µs of host CPU whatever its size, and a probe about 55 µs (`host_costs`). At 200,000 rows the device's
+       host cost is about a seventh of the CPU radix sort's (168 µs against 1,139 µs); at 1,000 rows the CPU wins.
+     - So joins one at a time do not pay on the device: the strata's joins are small. The device pays once a
+       stratum's device work is batched into few submissions and its relations stay resident across the chunk's
+       strata. That is §5's device waves, and the order of work below.
+   - **Priced in the planner** (`placement::price_join`). Each join step is priced on each form from the planner's
+     own estimates (its recorded plan: rows in, the relation's rows, rows out, keys, and whether it reads a range
+     inside a document). The forms are the CPU index, the GPU sort and probe (a relation sorted once a stratum per
+     relation and keys), and the GPU tile (for a range inside a document). The device's prices are the lab's
+     measures. The cheapest form, by `MARGIN`, is the step's choice, and the stratum's GPU estimate is its joins on
+     their device forms.
+     - The profile's placement section counts join steps by the form chosen. Python pack: 45,160 stay on the CPU
+       index and 5,260 would take the sort and probe; 166 have estimates over 1,000 s (cross products), which are
+       counted but not summed.
+     - The stratum still runs on the CPU (`DEVICE_FORMS` is empty): the engine does not yet run a join on the
+       device.
+   - The chunk tile stays for what equality does not cover: pairs within a document under `within`, `@doc`
+     equality and order comparisons (the brute force per document that §4 meant).
+4. **Negation, then aggregates (`sort`, `group`).** `sort` is built (step 3). Next: a stratum's joins run on
+   the device from the engine, as the placement chooses, in one command buffer per stratum, its relations resident
+   across the chunk's strata.
 5. **Device waves (§5)**, once enough strata run to make whole levels.
 6. **Recursion:** the queue for file-local fixpoints, waves for the rest.
 7. **Text tests** on the device (O66).

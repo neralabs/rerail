@@ -14,6 +14,7 @@
 
 use super::{CollectionReport, ContentStore, MAX_COLLECTION_BATCH, STRING_OWNER, SourceId, StoreError, StoreResult};
 use super::rows::intern_string;
+use super::bounded_insert;
 
 /// `object_pins`' kind for a memo plan a run holds (O95): its id is the plan digest's first eight bytes.
 const OBJECT_PLAN: i64 = 3;
@@ -23,7 +24,7 @@ fn plan_object(plan: &[u8]) -> i64 {
     first.copy_from_slice(&plan[..8]);
     i64::from_le_bytes(first)
 }
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{OptionalExtension, params, types::Value};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -193,14 +194,16 @@ impl ContentStore {
         self.immediate_transaction(|tx| {
             tx.execute("INSERT OR IGNORE INTO corpus_roots(path) VALUES (?1)", [root])?;
             let root_id: i64 = tx.query_row("SELECT root_id FROM corpus_roots WHERE path=?1", [root], |r| r.get(0))?;
-            let mut put = tx.prepare_cached(
-                "INSERT INTO corpus_stats(root_id, path, size, mtime_ns, inode, source_id, recorded_ns) VALUES (?1,?2,?3,?4,?5,?6,?7) \
-                 ON CONFLICT(root_id, path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns, inode=excluded.inode, \
+            // A few statements whatever the files' number.
+            bounded_insert::insert(
+                tx,
+                "INSERT INTO corpus_stats(root_id, path, size, mtime_ns, inode, source_id, recorded_ns)",
+                "ON CONFLICT(root_id, path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns, inode=excluded.inode, \
                  source_id=excluded.source_id, recorded_ns=excluded.recorded_ns",
+                read.iter().map(|(path, stat, id)| {
+                    [Value::Integer(root_id), Value::Text(path.clone()), Value::Integer(stat.size), Value::Integer(stat.mtime_ns), Value::Integer(stat.inode), Value::Integer(id.0), Value::Integer(now_ns)]
+                }),
             )?;
-            for (path, stat, id) in read {
-                put.execute(params![root_id, path, stat.size, stat.mtime_ns, stat.inode, id.0, now_ns])?;
-            }
             Ok(())
         })
     }
@@ -227,10 +230,12 @@ impl ContentStore {
     /// Records the relations a memo plan's entries hold rows of, each with its declared columns (JSON).
     pub fn record_corpus_relations(&self, plan: [u8; 32], relations: &[(String, String)]) -> StoreResult<()> {
         self.immediate_transaction(|tx| {
-            let mut put = tx.prepare_cached("INSERT OR REPLACE INTO corpus_plan_relations(plan_digest, relation, columns) VALUES (?1, ?2, ?3)")?;
-            for (relation, columns) in relations {
-                put.execute(params![&plan[..], relation, columns])?;
-            }
+            bounded_insert::insert(
+                tx,
+                "INSERT OR REPLACE INTO corpus_plan_relations(plan_digest, relation, columns)",
+                "",
+                relations.iter().map(|(relation, columns)| [Value::Blob(plan.to_vec()), Value::Text(relation.clone()), Value::Text(columns.clone())]),
+            )?;
             Ok(())
         })
     }
@@ -291,9 +296,12 @@ impl ContentStore {
             let root_id: i64 = tx.query_row("SELECT root_id FROM corpus_roots WHERE path=?1", [root], |r| r.get(0))?;
             let run: i64 = tx.query_row("UPDATE corpus_state SET run=run+1 WHERE singleton=1 RETURNING run", [], |r| r.get(0))?;
             let moved = tx.execute("UPDATE corpus_manifests SET last_run=?1, last_time=?2 WHERE root_id=?3 AND digest=?4", params![run, now, root_id, &digest[..]])?;
-            for p in std::iter::once(&plan).chain(&also) {
-                tx.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1) ON CONFLICT(plan_digest) DO UPDATE SET live=1", [&p[..]])?;
-            }
+            bounded_insert::insert(
+                tx,
+                "INSERT INTO corpus_plans(plan_digest, live)",
+                "ON CONFLICT(plan_digest) DO UPDATE SET live=1",
+                std::iter::once(&plan).chain(&also).map(|p| [Value::Blob(p.to_vec()), Value::Integer(1)]),
+            )?;
             if moved > 0 {
                 return Ok(false);
             }
@@ -314,14 +322,19 @@ impl ContentStore {
                 params![root_id, run, now, grammar_version, tape_format, &plan[..], &digest[..], blob],
             )?;
             let manifest = tx.last_insert_rowid();
-            let mut named = tx.prepare_cached("INSERT OR IGNORE INTO corpus_manifest_plans(manifest_id, plan_digest) VALUES (?1, ?2)")?;
-            for p in &also {
-                named.execute(params![manifest, &p[..]])?;
-            }
-            let mut live = tx.prepare_cached("INSERT OR IGNORE INTO corpus_live(source_id, grammar_version, tape_format) VALUES (?1,?2,?3)")?;
-            for id in ids.iter().filter(|id| !before.contains(id)) {
-                live.execute(params![id, grammar_version, tape_format])?;
-            }
+            bounded_insert::insert(
+                tx,
+                "INSERT OR IGNORE INTO corpus_manifest_plans(manifest_id, plan_digest)",
+                "",
+                also.iter().map(|p| [Value::Integer(manifest), Value::Blob(p.to_vec())]),
+            )?;
+            // The sources new to the root's manifests: a few statements whatever their number.
+            bounded_insert::insert(
+                tx,
+                "INSERT OR IGNORE INTO corpus_live(source_id, grammar_version, tape_format)",
+                "",
+                ids.iter().filter(|id| !before.contains(id)).map(|id| [Value::Integer(*id), Value::Integer(grammar_version), Value::Integer(tape_format)]),
+            )?;
             tx.execute("UPDATE corpus_state SET due=1 WHERE singleton=1", [])?;
             Ok(true)
         })
@@ -499,35 +512,28 @@ impl ContentStore {
             }
             let unlive: Vec<&(i64, i64, i64)> = live.iter().filter(|k| !keep_live.contains(k)).collect();
             let evicted: Vec<i64> = manifests.iter().map(|m| m.id).filter(|id| !kept_ids.contains(id)).collect();
-            let mut gone = tx.prepare_cached("DELETE FROM corpus_manifests WHERE manifest_id=?1")?;
-            let mut gone_named = tx.prepare_cached("DELETE FROM corpus_manifest_plans WHERE manifest_id=?1")?;
-            for id in &evicted {
-                gone_named.execute([id])?;
-                gone.execute([id])?;
-            }
-            let mut unlived = tx.prepare_cached("DELETE FROM corpus_live WHERE source_id=?1 AND grammar_version=?2 AND tape_format=?3")?;
-            for (s, g, f) in &unlive {
-                unlived.execute(params![s, g, f])?;
-            }
+            // Each set in one statement, whatever its size.
+            let evicted_json = serde_json::to_string(&evicted).expect("integers");
+            tx.prepare_cached("DELETE FROM corpus_manifest_plans WHERE manifest_id IN (SELECT value FROM json_each(?1))")?.execute([&evicted_json])?;
+            tx.prepare_cached("DELETE FROM corpus_manifests WHERE manifest_id IN (SELECT value FROM json_each(?1))")?.execute([&evicted_json])?;
+            tx.prepare_cached(
+                "DELETE FROM corpus_live WHERE (source_id, grammar_version, tape_format) IN \
+                 (SELECT json_extract(value,'$[0]'), json_extract(value,'$[1]'), json_extract(value,'$[2]') FROM json_each(?1))",
+            )?
+            .execute([serde_json::to_string(&unlive.iter().map(|(s, g, f)| [*s, *g, *f]).collect::<Vec<_>>()).expect("integers")])?;
             // A plan a kept manifest names, or a run holds (`hold_corpus_plan`), is live; any other recorded plan is dead.
             let held: HashSet<i64> = tx
                 .prepare("SELECT object_id FROM object_pins WHERE object_kind_id=?1 AND lease_until>=?2")?
                 .query_map(params![OBJECT_PLAN, now], |r| r.get(0))?
                 .collect::<Result<_, _>>()?;
             let plans: Vec<Vec<u8>> = tx.prepare("SELECT plan_digest FROM corpus_plans")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            let mut mark = tx.prepare_cached("UPDATE corpus_plans SET live=?1 WHERE plan_digest=?2")?;
-            for plan in plans {
-                let live = keep_plans.contains(&plan) || (plan.len() >= 8 && held.contains(&plan_object(&plan)));
-                mark.execute(params![i64::from(live), plan])?;
-            }
-            {
-                let mut stats = tx.prepare_cached("DELETE FROM corpus_stats WHERE root_id=?1")?;
-                let mut root = tx.prepare_cached("DELETE FROM corpus_roots WHERE root_id=?1")?;
-                for id in &gone_roots {
-                    stats.execute([id])?;
-                    root.execute([id])?;
-                }
-            }
+            // Every plan's liveness in one statement: the live ones listed (hex), the rest dead.
+            let live_plans: Vec<String> = plans.iter().filter(|plan| keep_plans.contains(*plan) || (plan.len() >= 8 && held.contains(&plan_object(plan)))).map(|p| hex(p)).collect();
+            tx.prepare_cached("UPDATE corpus_plans SET live = (plan_digest IN (SELECT unhex(value) FROM json_each(?1)))")?
+                .execute([serde_json::to_string(&live_plans).expect("text")])?;
+            let gone_json = serde_json::to_string(&gone_roots).expect("integers");
+            tx.prepare_cached("DELETE FROM corpus_stats WHERE root_id IN (SELECT value FROM json_each(?1))")?.execute([&gone_json])?;
+            tx.prepare_cached("DELETE FROM corpus_roots WHERE root_id IN (SELECT value FROM json_each(?1))")?.execute([&gone_json])?;
             tx.execute("UPDATE corpus_decided SET run=(SELECT run FROM corpus_state WHERE singleton=1), time=?1 WHERE singleton=1", [now])?;
             // Collection stays due until a pass finds nothing (`collect_corpus_pass`), unless a new manifest came first.
             tx.execute("UPDATE corpus_state SET due=2, history_bytes=?1 WHERE singleton=1 AND due<=1", [decided.history as i64])?;
@@ -716,3 +722,8 @@ fn decode_ids(bytes: &[u8]) -> StoreResult<Vec<i64>> {
 
 #[cfg(test)]
 mod tests;
+
+/// `bytes` as lower-case hex, as SQLite's `unhex` reads it.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}

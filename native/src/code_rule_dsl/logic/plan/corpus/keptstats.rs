@@ -30,13 +30,30 @@ pub(super) struct Keeper {
     failed: Option<String>,
     /// Files counted in and out this run.
     pub(super) counted: (usize, usize),
+    /// A session's exports, counted by file as the statistics are (decision 0096 step 3), with the exports they
+    /// hold; `building` while a run counts every file in (the first run, or after one gave them up).
+    exports: Option<super::exports::Counted>,
+    export_rels: Vec<String>,
+    building: bool,
+    /// With the exports: each base relation's held columns, counted by file (`Counted`, a row emitted once per file
+    /// holding it), by (relation, memo key, the columns taken from an entry's row); and the files' tree counts.
+    base_rels: Vec<(String, String, Vec<usize>)>,
+    base: super::exports::Counted,
+    own: super::Own,
+}
+
+/// What a session's keeper keeps of its files beyond their statistics (0096 step 3): the exports, and each base
+/// relation's held columns as (relation, memo key, the columns an entry's row gives).
+pub(super) struct Keep {
+    pub(super) exports: Vec<String>,
+    pub(super) base: Vec<(String, String, Vec<usize>)>,
 }
 
 impl Keeper {
     /// For a run reading `rels`, by entry key: the base relations held (`memo::base_key`, each with every column
     /// `input_columns` names) and the exports (each with its columns `c0…`), and `exports`, each export's column that
     /// names its rows' document (`Keeper::doc_at`).
-    pub(super) fn begin(&mut self, rels: &[(String, Vec<String>)], exports: HashMap<String, Option<usize>>) {
+    pub(super) fn begin(&mut self, rels: &[(String, Vec<String>)], exports: HashMap<String, Option<usize>>, keep: Option<Keep>) {
         self.doc_at = exports;
         self.seen.clear();
         self.failed = None;
@@ -49,6 +66,51 @@ impl Keeper {
         for (rel, columns) in rels {
             self.rels.entry(rel.clone()).or_insert_with(|| RelStats::new(columns.clone()));
         }
+        // The exports counted while the files counted are the same ones; else counted again from every file.
+        match keep {
+            Some(Keep { exports: names, base }) => {
+                if self.exports.is_none() || self.export_rels != names || self.base_rels != base || self.docs.is_empty() {
+                    self.exports = Some(super::exports::Counted::default());
+                    self.base = super::exports::Counted::default();
+                    self.own = super::Own::default();
+                    self.building = true;
+                } else {
+                    self.building = false;
+                }
+                self.export_rels = names;
+                self.base_rels = base;
+            }
+            None => {
+                self.exports = None;
+                self.building = false;
+            }
+        }
+    }
+
+    /// Whether the counted exports hold this run's rows of the files counted (none built this run, none given up):
+    /// a memo hit's export rows need not be held again.
+    pub(super) fn exports_held(&self) -> bool {
+        self.exports.is_some() && !self.building && self.failed.is_none()
+    }
+
+    /// The files counted that this run has not seen yet, with the content and key they were counted under.
+    pub(super) fn unseen(&self) -> Vec<(String, memo::Content, i64)> {
+        self.docs.iter().filter(|(p, _)| !self.seen.contains(*p)).map(|(p, (c, k))| (p.clone(), *c, *k)).collect()
+    }
+
+    /// The exports counted, after a run whose every file was counted (`end` gave the statistics).
+    pub(super) fn counted_exports(&self) -> Option<&super::exports::Counted> {
+        self.exports.as_ref().filter(|_| self.failed.is_none())
+    }
+
+    /// With `counted_exports`: the base relations' columns counted, by (relation, the columns' order in `base_rels`).
+    pub(super) fn counted_base(&self) -> Option<(&super::exports::Counted, &[(String, String, Vec<usize>)])> {
+        self.counted_exports().map(|_| (&self.base, self.base_rels.as_slice()))
+    }
+
+    /// With `counted_exports`: the counted files' tree counts, summed.
+    pub(super) fn counted_own(&self) -> Option<&super::Own> {
+        self.counted_exports().map(|_| &self.own)
     }
 
     /// Whether this run has given the keeper up.
@@ -58,6 +120,8 @@ impl Keeper {
 
     pub(super) fn fail(&mut self, why: impl Into<String>) {
         self.failed.get_or_insert_with(|| why.into());
+        self.exports = None;
+        self.building = false;
     }
 
     /// File `path`'s rows in this run (`entry`, under `content`, its document `key`): counted in if its content is new to the keeper,
@@ -72,15 +136,51 @@ impl Keeper {
         self.seen.insert(path.to_owned());
         let now = (content, key);
         match self.docs.get(path).copied() {
-            Some(was) if same(was, now) => return,
+            Some(was) if same(was, now) => {
+                // Counted already; its exports too, unless they are being counted from every file.
+                if self.building {
+                    self.patch_exports(path, entry, 1);
+                }
+                return;
+            }
             Some((c, k)) => match old(c, k) {
-                Some(before) => self.count(&before, -1),
+                Some(before) => {
+                    self.count(&before, -1);
+                    if !self.building {
+                        self.patch_exports(path, &before, -1);
+                    }
+                }
                 None => return self.fail(format!("{path}: the memo no longer holds the rows counted")),
             },
             None => {}
         }
         self.count(entry, 1);
+        self.patch_exports(path, entry, 1);
         self.docs.insert(path.to_owned(), now);
+    }
+
+    /// `entry`'s export rows into the counted exports (`sign` 1) or out (−1); the exports are given up if a row
+    /// counted out is not held.
+    fn patch_exports(&mut self, path: &str, entry: &memo::Entry, sign: i64) {
+        let Some(counted) = self.exports.as_mut() else { return };
+        let mut ok = self.export_rels.iter().all(|rel| match entry.rows.get(rel) {
+            Some((width, values)) => counted.patch(rel, *width, values, sign),
+            None => true,
+        });
+        for (rel, key, from) in &self.base_rels {
+            let Some((width, values)) = entry.rows.get(key) else { continue };
+            if from.iter().any(|c| c >= width) {
+                ok = false;
+                break;
+            }
+            let projected: Vec<i64> = values.chunks_exact(*width).flat_map(|row| from.iter().map(|c| row[*c])).collect();
+            ok &= self.base.patch(rel, from.len(), &projected, sign);
+        }
+        let own = super::Own::taken(&entry.rows);
+        if sign > 0 { self.own.add(&own) } else { self.own.sub(&own) }
+        if !ok {
+            self.fail(format!("{path}: an export row counted out that the counted exports do not hold"));
+        }
     }
 
     fn count(&mut self, entry: &memo::Entry, sign: i64) {
@@ -103,7 +203,12 @@ impl Keeper {
             for path in gone {
                 let (c, k) = self.docs.remove(&path).expect("listed");
                 match old(&path, c, k) {
-                    Some(before) => self.count(&before, -1),
+                    Some(before) => {
+                        self.count(&before, -1);
+                        if !self.building {
+                            self.patch_exports(&path, &before, -1);
+                        }
+                    }
                     None => {
                         self.fail(format!("{path}: gone, and the memo no longer holds the rows counted"));
                         break;
@@ -114,8 +219,10 @@ impl Keeper {
         if let Some(why) = self.failed.take() {
             self.docs.clear();
             self.rels.clear();
+            self.exports = None;
             return Err(why);
         }
+        self.building = false;
         Ok(self.rels.clone())
     }
 }
@@ -200,7 +307,7 @@ mod tests {
         let id = |n| memo::Content::Stored(crate::content_store::SourceId::from_raw(n));
         let rels = [(memo::base_key("r"), vec!["n".to_owned(), "v".to_owned()])];
         let mut k = Keeper::default();
-        k.begin(&rels, Default::default());
+        k.begin(&rels, Default::default(), None);
         for (n, path) in ["a.py", "b.py"].iter().enumerate() {
             k.file(path, Some(id(n as i64 + 1)), n as i64 + 1, &entry(n as i64 + 1, 0), &|_, _| None);
         }
@@ -208,7 +315,7 @@ mod tests {
         let mut back = Keeper::decode(&k.encode()).expect("a keeper");
         assert_eq!(back.encode(), k.encode());
         // b.py edited: counted out by its old content, in by its new.
-        back.begin(&rels, Default::default());
+        back.begin(&rels, Default::default(), None);
         back.file("a.py", Some(id(1)), 1, &entry(1, 0), &|_, _| None);
         back.file("b.py", Some(id(3)), 2, &entry(2, 1), &|c, key| matches!(c, memo::Content::Stored(s) if s.raw() == 2).then(|| entry(key, 0)));
         let after = back.end(&|_, _, _| None).unwrap();
