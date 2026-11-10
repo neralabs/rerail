@@ -718,7 +718,7 @@ describe("Rerail session restore", () => {
         content: [
           "Rerail has guidance for this Bash call:",
           "- Ask before force-pushing. [acme:no-force-push]",
-          steerLatitude("claude-code", "acme:no-force-push", { kind: "tool", tool: "Bash" }),
+          steerLatitude("claude-code", "acme:no-force-push", "Follow"),
         ].join("\n"),
         ruleIds: ["acme:no-force-push"],
         rules: [{ id: "acme:no-force-push", state: "steered" }],
