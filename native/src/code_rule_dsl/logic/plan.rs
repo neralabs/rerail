@@ -3766,6 +3766,8 @@ impl Run<'_, '_> {
             Some("a component with gates or requests")
         } else if orders.is_empty() {
             Some("no native seed join")
+        } else if placement::device_joins_off() {
+            Some("device joins off (RERAIL_DEVICE_JOINS=off, a measurement aid)")
         } else {
             lines.insert(1, "device".to_owned());
             None
