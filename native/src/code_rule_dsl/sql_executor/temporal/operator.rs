@@ -372,7 +372,11 @@ impl Operator {
         let _context = w.profile_scope(|| json!({"stage":if self.opaque.is_some(){"opaque SQL producer"}else{"recursive SQL kernel"},"logicalAnalysis":self.logical_analysis.as_ref()}));
         let query = self.opaque.as_ref().map(|p|p.select.clone()).unwrap_or_else(||self.run.emitted.queries[0].as_ref().unwrap().render());
         // Match the original INSERT OR IGNORE: a NULL head does not publish a row.
-        let count = store.select_available(w.db, &self.result, &query, true, true)?;
+        let count = crate::code_rule_dsl::logic::lanes::sql_executor().local(
+            rerail_accel::Lane::Sql,
+            if self.opaque.is_some() {"SQL opaque producer"} else {"SQL recursive kernel"},
+            0.0,|| store.select_available(w.db, &self.result, &query, true, true),
+        )?;
         self.run.counts.insert(self.result.clone(), count as u64);
         Ok(())
     }

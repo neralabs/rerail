@@ -524,35 +524,36 @@ impl CodeRuleSqlExecutor {
                 .map(parameter)
                 .collect::<Result<Vec<_>>>()?;
             let budget = this.limits.enter(this.db.connection_mut())?;
-            let result = (|| {
-                let mut statement = this.db.prepare(&sql).map_err(error)?;
-                if !statement.readonly() || statement.column_count() == 0 {
-                    return Err(error(
-                        "query requires a read-only SQL statement with result columns",
-                    ));
-                }
-                let columns: Vec<String> = statement.column_names().map(str::to_owned).collect();
-                let mut cursor = statement
-                    .query(rusqlite::params_from_iter(parameters))
-                    .map_err(error)?;
-                let limit = max_rows.unwrap_or(10_000) as usize;
-                let mut rows = Vec::new();
-                let mut truncated = false;
-                while let Some(row) = cursor.next().map_err(error)? {
-                    if rows.len() == limit {
-                        truncated = true;
-                        break;
+            let result = super::logic::lanes::sql_executor().local(
+                rerail_accel::Lane::Sql,"SQL owner query",0.0,|| {
+                    let mut statement = this.db.prepare(&sql).map_err(error)?;
+                    if !statement.readonly() || statement.column_count() == 0 {
+                        return Err(error(
+                            "query requires a read-only SQL statement with result columns",
+                        ));
                     }
-                    let mut values = Vec::new();
-                    for c in 0..columns.len() {
-                        values.push(match row.get_ref(c).map_err(error)? {
-                            ValueRef::Null => Value::Null,
-                            ValueRef::Integer(n) => wire::integer(n),
-                            ValueRef::Real(n) => json!(n),
-                            ValueRef::Text(s) => {
-                                Value::String(std::str::from_utf8(s).map_err(error)?.to_owned())
-                            }
-                            ValueRef::Blob(b) => json!({"blob": b}),
+                    let columns: Vec<String> = statement.column_names().map(str::to_owned).collect();
+                    let mut cursor = statement
+                        .query(rusqlite::params_from_iter(parameters))
+                        .map_err(error)?;
+                    let limit = max_rows.unwrap_or(10_000) as usize;
+                    let mut rows = Vec::new();
+                    let mut truncated = false;
+                    while let Some(row) = cursor.next().map_err(error)? {
+                        if rows.len() == limit {
+                            truncated = true;
+                            break;
+                        }
+                        let mut values = Vec::new();
+                        for c in 0..columns.len() {
+                            values.push(match row.get_ref(c).map_err(error)? {
+                                ValueRef::Null => Value::Null,
+                                ValueRef::Integer(n) => wire::integer(n),
+                                ValueRef::Real(n) => json!(n),
+                                ValueRef::Text(s) => {
+                                    Value::String(std::str::from_utf8(s).map_err(error)?.to_owned())
+                                }
+                                ValueRef::Blob(b) => json!({"blob": b}),
                         });
                     }
                     rows.push(values);
@@ -561,7 +562,7 @@ impl CodeRuleSqlExecutor {
                     &json!({"columns": columns, "rows": rows, "truncated": truncated}),
                 )
                 .map_err(error)
-            })();
+            });
             budget.leave(this.db.connection_mut());
             result
         })

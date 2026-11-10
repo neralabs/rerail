@@ -3323,3 +3323,20 @@ Broader integration checks also corrected two old four-lane test arrays and the 
 The separate SQL program tests continue to cover the SQL lane.
 
 This removes an avoidable dispatch barrier. It does not migrate retained recursive rule state into the new physical planner.
+
+### Score SQL work at owner-only boundaries (2026-11-10)
+
+Opaque producers, separate recursive SQL kernels, direct queries, and cold SQL rule statements bypassed the new SQL scoreboard.
+They now enter its owner-thread path, preserving their connection, callback, and publication boundaries.
+Cold rule jobs include preparation and parameter binding. Rejected queries and failed executions finish with a failed job status.
+`explain().sql_placement` reports the SQL lane, shared-pool path, and owner-bound work classes.
+
+The isolated profiling regression now covers successful and failed owner queries, cold SQL rules, and an opaque producer.
+It verifies the SQL form names and zero CPU-fallback jobs, with both one and two configured workers.
+Worker connections remain identifiable through event context, and their setup still submits no helper SQL.
+All 186 SQL tests and all six wave-scheduler tests pass in the debug build.
+The accelerator checkpoint remains 43 unit tests and eleven integration tests passing.
+
+These changes add no SQL statements and do not reset statement allowances.
+The profiler measures executed statements; the scoreboard measures jobs, including preparation and rejected queries.
+Retained recursive lowering and complete-session admission remain the next required integration work.

@@ -1,6 +1,7 @@
 # SQL fact and rule execution
 
-The SQL executor exposes facts, derived relations, and the content store on one SQLite connection.
+The SQL executor exposes facts, derived relations, and the content store through a session-owned SQLite connection.
+Read-only work groups use separate worker connections over pinned native inputs.
 It lowers `.rr` fact and rule programs through the existing typed SQL planner.
 The existing wave scheduler runs those statements until their relations stop changing.
 Planning reads bound row estimates and recorded wave counts. An SQL input without a recorded count uses a default estimate.
@@ -178,9 +179,13 @@ Workers share the operation's `max_steps` and `timeout_ms` limits. They never re
 Worker queries permit known pure functions. Writes and connection-specific callbacks require the owner connection.
 
 The response contains `rows`, `plan`, `submissions`, and `vmSteps`.
+Graph outputs are private to that operation and return as row arrays.
 `explain()` also includes the latest successful graph plan without executing SQL.
 SQL profiles include every worker connection. Session profile totals include worker statements, including failures.
 The shared SQL scoreboard records group placement, queue time, CPU time, completion, and failures.
+Retained phases, opaque producers, recursive SQL kernels, direct queries, and cold SQL rules enter its owner-thread path.
+The profiler counts SQLite statements; the scoreboard measures execution jobs, including rejected queries.
+`explain()` reports the SQL placement policy and its owner boundary.
 The standalone SQL request accepts these same graphs in a `query_plans` array and returns their results under that key.
 
 This graph API and retained rule execution currently have separate physical planners.

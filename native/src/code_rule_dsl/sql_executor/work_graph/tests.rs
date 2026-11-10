@@ -262,21 +262,23 @@ fn worker_profiles_cover_every_statement_and_session_totals() {
             if path.extension().is_none_or(|e| e != "json") {
                 continue;
             }
-            let profile: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            let profile: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             assert!(profile["error"].is_null(), "{profile}");
             assert_eq!(profile["executionCoverage"]["running"], 0);
-            let mut worker = false;
-            // Events retain the worker label; every connection has an explained SQL catalogue.
-            for query in profile["queries"].as_array().unwrap() {
-                if query["sql"]
-                    .as_str()
-                    .is_some_and(|s| s.starts_with("WITH RECURSIVE \""))
+            let worker = std::fs::read_to_string(path.with_extension("jsonl"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .any(|event| event["context"]["stage"] == "SQL read-only group");
+            if worker {
+                for query in profile["queries"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|q| q["kind"] == "sql")
                 {
-                    worker = true;
                     assert!(query.get("plan").is_some(), "{query}");
                 }
-            }
-            if worker {
                 connections += 1;
                 statements += profile["executionCoverage"]["started"].as_u64().unwrap();
             }
@@ -325,6 +327,36 @@ fn profiled_graph_child() {
         (sql.jobs, sql.failed, sql.running, sql.queued),
         (expected, 0, 0, 0)
     );
+    assert_eq!(score.units[Lane::Cpu.index()].jobs, 0);
+    executor
+        .query("SELECT count(*) FROM input_rows".into(), None, None)
+        .unwrap();
+    assert!(
+        executor
+            .query("SELECT abs(-9223372036854775808)".into(), None, None)
+            .is_err()
+    );
+    let score = super::super::super::logic::lanes::sql_executor().score();
+    let sql = &score.units[Lane::Sql.index()];
+    assert_eq!(
+        (sql.jobs, sql.failed, sql.running, sql.queued),
+        (expected + 2, 1, 0, 0)
+    );
+    assert_eq!(score.forms[&(Lane::Sql, "SQL owner query")].launches, 2);
+    executor.cold_oracle = true;
+    executor.run(".decl input_rows(k:number)\n.input input_rows\n.decl copied(k:number)\ncopied(k) :- input_rows(k).\n.output copied\n".into(),"python".into(),None).unwrap();
+    executor.cold_oracle = false;
+    executor.run(".decl input_rows(k:number)\n.input input_rows\n.decl total(n:number)\n.input total(IO=sql,query=\"SELECT count(*) FROM input_rows\")\n.output total\n".into(),"python".into(),None).unwrap();
+    let score = super::super::super::logic::lanes::sql_executor().score();
+    for name in ["SQL cold rule", "SQL opaque producer"] {
+        assert!(
+            score
+                .forms
+                .get(&(Lane::Sql, name))
+                .is_some_and(|form| form.launches > 0),
+            "{name} missing from {score}"
+        );
+    }
     assert_eq!(score.units[Lane::Cpu.index()].jobs, 0);
 }
 

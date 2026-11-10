@@ -1,14 +1,16 @@
 //! The engine's compute lanes (decision 0098 §2): one executor per binding, shared by every stratum of the process.
 //!
 //! - Under the **CPU binding**, the CPU's lanes: the cores and, where the CPU has one, its matrix unit (SME2). The
-//!   CPU is a target in its own right (0095 §7), and SME is part of it.
+//!   CPU is a target in its own right (0095 §7), and SME is part of it. SQL forms are also available.
 //! - Under the **Metal binding**, every lane this machine has: the cores, SME, the GPU and the Neural Engine. Each
 //!   launch goes where `rerail_accel::price` places it: the least energy among the lanes within the parity band of
 //!   the first to finish.
 //!
-//! Which binding a thread's run has is the placement planner's (`plan::placement::set_device`).
+//! The SQL binding accepts only SQL forms. Connection-bound SQL keeps a scored owner-thread gate.
 //!
-//! Both executors run the cores' jobs on one pool of `RERAIL_THREADS` threads (4 when unset), and each keeps a
+//! Which native binding a thread's run has is the placement planner's (`plan::placement::set_device`).
+//!
+//! CPU and SQL jobs share one pool of `RERAIL_THREADS` threads (the available cores when unset). Each binding keeps a
 //! scoreboard of its jobs (`rerail_accel::score`): `RERAIL_SCOREBOARD=<file>` traces every job, and the strata loop
 //! appends the scoreboard at each chunk's end.
 
