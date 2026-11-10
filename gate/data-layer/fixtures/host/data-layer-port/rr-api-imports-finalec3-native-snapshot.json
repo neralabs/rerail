@@ -1,0 +1,82 @@
+{
+  "format": "rerail.recorded-original-admission/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "mode": "snapshot",
+  "exitCode": 0,
+  "engineSha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
+  "policySha256": {
+    "no_api_root_imports": "791bd5f83ba1af2b8da180ab4d0ae70dc7bd8cec0f6c603528beaac0d86ca0e0"
+  },
+  "cases": {
+    "scripts/tests/test_lint_no_api_root_imports.py::test_flags_root_api_import": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_api_root_imports.py::test_flags_root_api_import_in_documentation_literal": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_api_root_imports.py::test_allows_explicit_layer_import": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_no_api_root_imports.py::test_tolerates_invalid_python": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "collected": [
+    "scripts/tests/test_lint_no_api_root_imports.py::test_flags_root_api_import",
+    "scripts/tests/test_lint_no_api_root_imports.py::test_flags_root_api_import_in_documentation_literal",
+    "scripts/tests/test_lint_no_api_root_imports.py::test_allows_explicit_layer_import",
+    "scripts/tests/test_lint_no_api_root_imports.py::test_tolerates_invalid_python"
+  ],
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "checkpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz",
+    "sha256": "2ec4850ab35d3c4b2eb81db2823114ce52ac831f2558d2e5416f4520e42670b4"
+  }
+}

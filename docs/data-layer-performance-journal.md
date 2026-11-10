@@ -1,5 +1,38 @@
 # Data-layer performance journal
 
+## Root API imports native public contracts: 2026-11-10
+
+The pinned source corpus for `no_api_root_imports` contains 168 cases.
+It covers direct/relative/aliased imports, normalized identifiers, decoded literals, concatenation, f-strings, regex occurrence order, scopes, and malformed source.
+It also covers fact conversion, discovery, stable duplicate findings, exact CLI streams, and CLI error behavior.
+The [explicit-file regression](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-dotfile-red.json.gz) records a false positive for a file named `.py`.
+The source FactEngine rejects that name as an explicit Python file. Native batch scope now does the same.
+
+The file/content APIs preserve the initial source trigger, then read the project-root-relative file through the native batch path.
+The file finder preserves the observed `os.walk` order. A native traversal plan supplies directory exclusions before enumeration.
+The host applies that I/O plan. SQL checks the complete inventory's directory ancestry and filename predicates.
+Excluded directories are not enumerated to build facts that the engine would later discard.
+No per-directory query is added. Scans and CLI reports also submit whole batches.
+
+Fact conversion uses native JSON shape checks and scalar projections.
+It retains Boolean integer lines, unbounded integers, fallback paths, Python string values, and untouched outgoing fact values.
+The CLI searches the entire argv for the exact `--check` token, as the source does. Other arguments are ignored.
+Native rows define path/line ordering and preserve partial stdout before an outside-root error.
+
+The new contract runner shares pin verification, source-code guards, typed comparisons, sharding, and both native API transports.
+Source recording executes the original linter. Native replay rejects its semantic functions and constructors except passive DTO storage.
+Rules invoke no Python and add no engine code.
+
+The [complete Root API Imports receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz) verifies 467 native executions on Final `ec3cfe1b7`.
+All four original tests pass through both APIs, including both positive tests.
+All 168 additional public cases pass through each API.
+Twenty production cases cover the original corpus plus Unicode trigger boundaries, literal ordering, and concatenation.
+Sixteen supplied-fact cases, 14 persistent steps, and 11 disabled-behavior controls also pass.
+The receipt retains complete observations, source recordings, programs, harnesses, and engine provenance.
+The admission tests reject missing positives, incorrect `.py` scope, Boolean-to-integer substitution, and omitted original negatives.
+All 282 tooling tests pass. Selected-rule regeneration is byte-identical.
+The fixed inventory gate admits Root API Imports. The global migration remains incomplete: seven accepted ports, 88 drafts, and five absent translations.
+
 ## Versioned lifecycle native contract repairs: 2026-11-10
 
 The source corpus contains 142 cases for `versioned_lifecycle_legacy_surfaces`.

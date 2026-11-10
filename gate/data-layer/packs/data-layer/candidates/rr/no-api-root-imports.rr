@@ -19,10 +19,11 @@ nari_framework_hidden(d) :- path_part(d, p),
     (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
 .decl nari_file(d: number)
 nari_file(d) :- pp_doc(d,_), option("entryPoint", entry),
-    (entry = "check_file" ; entry = "check_file_content"), file_name(d, f), suffix(".py", f), !nari_hidden(d).
+    (entry = "check_file" ; entry = "check_file_content"), !option("nariBatch","true"), file_name(d, f), suffix(".py", f), !nari_hidden(d).
+nari_file(d) :- nari_batch_file(d).
 .decl nari_api_gate(d: number)
-nari_api_gate(d) :- nari_file(d), !option("entryPoint", "check_file_content").
-nari_api_gate(d) :- nari_file(d), option("entryPoint", "check_file_content"), option("providedSource", s),
+nari_api_gate(d) :- nari_file(d), !option("providedSource", _).
+nari_api_gate(d) :- nari_file(d), option("providedSource", s),
     (contains("from api", s) ; contains("import api", s)).
 .decl nari_active(d: number)
 nari_active(d) :- nari_api_gate(d), !syntax_error(d, _, _), source(d, sp), text(sp, s),
@@ -108,3 +109,23 @@ sf_config("message","field").
 sf_config("code","NARI001").
 sf_config("order","message").
 sf_default("message","deprecated root api import").
+
+.decl ni_config(key: symbol, ordinal: number, value: symbol)
+ni_config("extractor",0,"{\"extractor_id\": \"no_api_root_imports.violations\", \"schema_version\": \"1\", \"implementation_version\": \"no-api-root-imports-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"from api import\", \"import api\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"da72dba2976b3c9a\", \"node_kinds\": [\"ImportFrom\", \"Constant\"]}").
+ni_config("regex",0,"(^|\\n)(?P<indent>[ \\t]*)from api import [^\\n]+").
+ni_config("regex",1,"(^|\\n)(?P<indent>[ \\t]*)import api\\s*(\\n|$)").
+ni_config("flags",0,"32").
+ni_config("flags",1,"32").
+ni_config("exclude",0,"tmp").
+ni_config("exclude",1,".claude").
+ni_config("exclude",2,"data_history").
+ni_config("exclude",3,".venv").
+ni_config("exclude",4,".venv314").
+ni_config("exclude",5,".venv-docker").
+ni_config("exclude",6,"__pycache__").
+ni_config("exclude",7,".git").
+ni_config("exclude",8,"docs").
+ni_config("exclude",9,"browser_build").
+ni_config("exclude",10,"_build").
+ni_config("exclude",11,"scripts").
+#include "data-layer/api-imports-api.rr"

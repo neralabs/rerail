@@ -28,6 +28,13 @@ SPECS = {
                'root-scope':(0,1),'test-scope':(0,1),'discovery-duplicates':(3,2)},
         cliControl='renderer',extraControls=['collector-order','fact-split'],
         scope='Recorded native scanners, collector order, scope, class predicate, DTO rendering/facts, CLI, discovery, reporter, production and persistent updates.'),
+    'rerail.api-imports-admission/v1': dict(check='no_api_root_imports',public=168,original=4,positive=2,
+        production=16,parts=6,prefix='',label='api-imports-finalec3',
+        productionSupplement=dict(ids=['unicode-off','unicode-on','literal-order','concat'],findings=[0,1,2,2]),
+        pairs={'ast-import':(1,0),'literal-from':(1,0),'literal-import':(1,0),'supplied-source':(0,1),
+               'dotfile-suffix':(0,1),'test-scope':(0,1),'duplicate-files':(1,2),'walk-suffix':(1,2)},
+        cliControl='check-flag',extraControls=['fact-line-type'],
+        scope='Recorded native import and literal detection, scope, batched scans, discovery, fact conversion, CLI, reporter, production and persistent updates.'),
 }
 
 
@@ -198,6 +205,12 @@ def validate(value):
             def outputs(rows):return [r['parameters']['stdout'] for r in rows if r['code']=='LC_OUTPUT']
             require(len(outputs(a))==1 and 'base LazyVersionedWriteTransaction @legacy lifecycle surface' in outputs(a)[0], 'Renderer source output differs')
             require(outputs(b)==[outputs(a)[0].replace('base LazyVersionedWriteTransaction @legacy lifecycle surface','DISABLED')], 'Renderer control failed for another reason')
+        elif row['name']=='check-flag':
+            def statuses(rows):return [r['parameters']['value'] for r in rows if r['code']=='NI_EXIT']
+            require(statuses(a)==[0] and statuses(b)==[1], 'CLI flag control failed for another reason')
+        elif row['name']=='fact-line-type':
+            def projected(rows):return json.loads(next(r['parameters']['value_json'] for r in rows if r['code']=='NI_VALUE'))
+            require(projected(a) is None and projected(b)['line']==2.5, 'Fact line-type control failed for another reason')
         else:
             def stdout(rows): return ''.join(r['parameters']['stdout'] for r in sorted(
                 (r for r in rows if r['code']=='RCS_OUTPUT'),key=lambda r:(r['parameters']['phase'],r['parameters']['ordinal'])))

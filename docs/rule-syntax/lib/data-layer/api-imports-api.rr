@@ -1,0 +1,91 @@
+// Explicit file scope is evaluated over the complete caller batch.
+.decl ni_owner(i: number, document: symbol, path: symbol)
+ni_owner(i,d,p) :- option("nariBatch","true"), option_item("ownerDocs",i,d), option_item("ownerPaths",i,p).
+.decl ni_relative(path: symbol, root: symbol, value: symbol)
+ni_relative(p,p,".") :- ni_owner(_,_,p), option("nariRoot",p).
+ni_relative(p,r,@slice(p,strlen(r)+1,strlen(p))) :- ni_owner(_,_,p), option("nariRoot",r), r != "/", r != "//", r != ".", prefix(cat(r,"/"),p).
+ni_relative(p,"/",@slice(p,1,strlen(p))) :- ni_owner(_,_,p), option("nariRoot","/"), p != "/", prefix("/",p), !prefix("//",p).
+ni_relative(p,"//",@slice(p,2,strlen(p))) :- ni_owner(_,_,p), option("nariRoot","//"), p != "//", prefix("//",p).
+ni_relative(p,".",p) :- ni_owner(_,_,p), option("nariRoot","."), !prefix("/",p).
+.decl ni_scope(i: number, path: symbol)
+ni_scope(i,p) :- ni_owner(i,_,owner), option("nariRoot",root), ni_relative(owner,root,p).
+ni_scope(i,p) :- ni_owner(i,_,p), option("nariRoot",root), !ni_relative(p,root,_).
+.decl ni_test(i: number)
+ni_test(i) :- ni_scope(i,p), @count_matches("(^|/)(test|tests)(/|$)",p) > 0.
+.decl ni_first(path: symbol, ordinal: number)
+ni_first(p,n) :- ni_owner(_,_,p), n=min i : { ni_owner(i,_,p) }.
+.decl nari_batch_file(d: number)
+nari_batch_file(d) :- ni_owner(i,p,owner), ni_first(owner,i), pp_doc(d,p), !ni_test(i), suffix(".py",owner), strlen(@replace_all(owner,".*/","")) > 3.
+.violation NariConfig(at: span, key: symbol, ordinal: number, value: symbol) code "NI_CONFIG" "native configuration"
+NariConfig(@place("",0),k,i,v) :- option("entryPoint","_ni_configuration"), ni_config(k,i,v).
+
+// The host walker executes this traversal plan; SQL enforces the file filters.
+.violation NariPrune(at: span, value: symbol) code "NI_PRUNE" "traversal exclusion"
+NariPrune(@place("",0),p) :- option("entryPoint","_ni_walk_plan"), option_item("excludeDirs",_,p).
+.decl ni_walk(i: number, path: symbol)
+ni_walk(i,p) :- option("entryPoint","_ni_walk_files"), option_item("walkFiles",i,p).
+.decl ni_walk_excluded(i: number)
+ni_walk_excluded(i) :- ni_walk(i,p), option_item("excludeDirs",_,e), !contains("/",e),
+    (prefix(cat(e,"/"),p) ; contains(cat("/",e,"/"),p)).
+.violation NariFile(at: span, ordinal: number, value: symbol) code "NI_FILE" "selected file"
+NariFile(@place("",0),i,p) :- ni_walk(i,p), suffix(".py",p), !ni_walk_excluded(i).
+
+// JSON values share one decoder and native Python-compatible scalar projections.
+.decl nif_row(i: number, raw: symbol)
+.input nif_row(IO=json,filename="api-imports-values.json",path="/rows/*/raw",projection="json")
+.decl nif_kind(i: number, kind: symbol)
+.input nif_kind(IO=json,filename="api-imports-values.json",path="/rows/*/raw",projection="type")
+.decl nif_path(i: number, value: symbol)
+.input nif_path(IO=json,filename="api-imports-values.json",path="/rows/*/raw/file_path",projection="python-str")
+.decl nif_path_json(i: number, value: symbol)
+.input nif_path_json(IO=json,filename="api-imports-values.json",path="/rows/*/raw/file_path",projection="json")
+.decl nif_fallback(i: number, value: symbol)
+.input nif_fallback(IO=json,filename="api-imports-values.json",path="/rows/*/fallback")
+.decl nif_line(i: number, value: symbol)
+.input nif_line(IO=json,filename="api-imports-values.json",path="/rows/*/raw/line",projection="json")
+.decl nif_line_kind(i: number, kind: symbol)
+.input nif_line_kind(IO=json,filename="api-imports-values.json",path="/rows/*/raw/line",projection="type")
+.decl nif_message(i: number, value: symbol)
+.input nif_message(IO=json,filename="api-imports-values.json",path="/rows/*/raw/message",projection="json")
+.decl nif_message_kind(i: number, kind: symbol)
+.input nif_message_kind(IO=json,filename="api-imports-values.json",path="/rows/*/raw/message",projection="type")
+.decl nif_integer(i: number)
+nif_integer(i) :- nif_line_kind(i,"boolean").
+nif_integer(i) :- nif_line_kind(i,"number"), nif_line(i,s), @count_matches("[.eE]",s)=0.
+.decl nif_valid(i: number)
+nif_valid(i) :- option("entryPoint","_ni_from_fact"), nif_kind(i,"object"), nif_integer(i), nif_message_kind(i,"string").
+sf_path_input(i,0,p) :- nif_valid(i), nif_path(i,p).
+sf_path_input(i,0,p) :- nif_valid(i), !nif_path(i,_), nif_fallback(i,p).
+.violation NariValue(at: span, ordinal: number, value_json: symbol) code "NI_VALUE" "projected value"
+NariValue(@place("",0),i,cat("{\"file_path\":",@json_str(p),",\"line\":",line,",\"message\":",message,"}")) :- nif_valid(i), sf_path(i,0,p), nif_line(i,line), nif_message(i,message).
+NariValue(@place("",0),i,"null") :- option("entryPoint","_ni_from_fact"), nif_row(i,_), !nif_valid(i).
+NariValue(@place("",0),i,cat("{\"file_path\":",p,",\"line\":",line,",\"message\":",message,"}")) :- option("entryPoint","_ni_to_fact"), nif_path_json(i,p), nif_line(i,line), nif_message(i,message).
+
+// Native sort fields preserve string path order, numeric lines, and stable ties.
+.decl nic_row(i: number, path: symbol, line: number, text_line: symbol, message: symbol)
+nic_row(i,p,to_number(l),l,m) :- option("entryPoint","_ni_cli_report"), option_item("cliPath",i,p), option_item("cliLine",i,l), option_item("cliMessage",i,m).
+.decl nic_count(n: number)
+nic_count(n) :- option("entryPoint","_ni_cli_report"), n=count : { nic_row(_,_,_,_,_) }.
+.decl nic_relative(i: number, path: symbol)
+nic_relative(i,".") :- nic_row(i,p,_,_,_), option("sourceRoot",p).
+nic_relative(i,@slice(p,strlen(root)+1,strlen(p))) :- nic_row(i,p,_,_,_), option("sourceRoot",root), root != "/", root != "//", root != ".", prefix(cat(root,"/"),p).
+nic_relative(i,@slice(p,1,strlen(p))) :- nic_row(i,p,_,_,_), option("sourceRoot","/"), prefix("/",p), !prefix("//",p), p != "/".
+nic_relative(i,@slice(p,2,strlen(p))) :- nic_row(i,p,_,_,_), option("sourceRoot","//"), prefix("//",p), p != "//".
+nic_relative(i,p) :- nic_row(i,p,_,_,_), option("sourceRoot","."), !prefix("/",p).
+.decl nic_bad(i: number, path: symbol, line: number)
+nic_bad(i,p,l) :- nic_row(i,p,l,_,_), !nic_relative(i,_).
+.decl nic_blocked(i: number)
+nic_blocked(i) :- nic_row(i,p,l,_,_), nic_bad(j,q,m), (@str_cmp(q,p)<0 ; (q=p,m<l) ; (q=p,m=l,j<i)).
+.violation NariPathError(at: span, path: symbol, line: number, ordinal: number) code "NI_PATH_ERROR" "Path is outside root"
+NariPathError(@place("",0),p,l,i) :- nic_bad(i,p,l), !nic_blocked(i).
+.violation NariOutput(at: span, phase: number, path_key: symbol, line: number, ordinal: number, stdout: symbol) code "NI_OUTPUT" "CLI output"
+NariOutput(@place("",0),0,"",0,0,"No deprecated root api imports found.\n") :- nic_count(0).
+NariOutput(@place("",0),0,"",0,0,cat("Found ",to_string(n)," deprecated root api import violation(s):\n\n")) :- nic_count(n), n>0.
+NariOutput(@place("",0),1,p,l,i,cat("  ",rel,":",text_line,": ",m,"\n")) :- nic_row(i,p,l,text_line,m), nic_relative(i,rel), !nic_blocked(i).
+NariOutput(@place("",0),2,"",0,0,"\nUse `data_layer.<module>` for public imports.\nUse explicit `api.lXXXX_*` imports for internal code.\n") :- nic_count(n),n>0,!nic_bad(_,_,_).
+.decl nic_check()
+nic_check() :- option("entryPoint","_ni_cli_report"), option_item("argv",_,"--check").
+.violation NariExit(at: span, value: number) code "NI_EXIT" "CLI status"
+NariExit(@place("",0),0) :- nic_count(0).
+NariExit(@place("",0),0) :- nic_count(n),n>0,!nic_check(),!nic_bad(_,_,_).
+NariExit(@place("",0),1) :- nic_count(n),n>0,nic_check(),!nic_bad(_,_,_).

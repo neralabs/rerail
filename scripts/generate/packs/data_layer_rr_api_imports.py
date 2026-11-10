@@ -31,14 +31,15 @@ nari_framework_hidden(d) :- path_part(d, p),
     (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
 .decl nari_file(d: number)
 nari_file(d) :- doc(d, _, _), option("entryPoint", entry),
-    (entry = "check_file" ; entry = "check_file_content"), file_name(d, f), suffix(".py", f), !nari_hidden(d).
+    (entry = "check_file" ; entry = "check_file_content"), !option("nariBatch","true"), file_name(d, f), suffix(".py", f), !nari_hidden(d).
+nari_file(d) :- nari_batch_file(d).
 nari_file(d) :- doc(d, path, _), !option("entryPoint", _), file_name(d, f), suffix(".py", f),
     !nari_hidden(d), !nari_framework_hidden(d),
     (prefix("impl/", path) ; prefix("data_layer/", path) ; prefix("_internal/", path) ;
      match("l__DIGITS__{4}_[^/\n][^/]*/[\s\S]*", path)).
 .decl nari_api_gate(d: number)
-nari_api_gate(d) :- nari_file(d), !option("entryPoint", "check_file_content").
-nari_api_gate(d) :- nari_file(d), option("entryPoint", "check_file_content"), option("providedSource", s),
+nari_api_gate(d) :- nari_file(d), !option("providedSource", _).
+nari_api_gate(d) :- nari_file(d), option("providedSource", s),
     (contains("from api", s) ; contains("import api", s)).
 .decl nari_active(d: number)
 nari_active(d) :- nari_api_gate(d), !syntax_error(d, _, _), source(d, sp), text(sp, s),
@@ -90,4 +91,16 @@ RootExample(@place(path, l), rank, piece, pattern, occurrence) :- nari_text(n, p
 '''
     from data_layer_rr_cli import api_scope
     from data_layer_rr_production import production
-    return production(source, 'no_api_root_imports', (api_scope(text.replace('__DIGITS__', json.dumps(digits)[1:-1]))))
+    return production(source, 'no_api_root_imports', (api_scope(text.replace('__DIGITS__', json.dumps(digits)[1:-1])))) + api_suffix(original)
+
+
+def api_suffix(original):
+    from dataclasses import asdict
+    config=dict(extractor=[json.dumps(asdict(original.NO_API_ROOT_IMPORTS_EXTRACTOR))],
+        regex=[original.ROOT_IMPORT_RE.pattern,original.ROOT_IMPORT_TEXT_RE.pattern],
+        flags=[str(original.ROOT_IMPORT_RE.flags),str(original.ROOT_IMPORT_TEXT_RE.flags)],
+        exclude=['tmp','.claude','data_history','.venv','.venv314','.venv-docker','__pycache__','.git','docs','browser_build','_build','scripts'])
+    text='\n.decl ni_config(key: symbol, ordinal: number, value: symbol)\n'
+    for key,values in config.items():
+        for i,value in enumerate(values):text+=f'ni_config({json.dumps(key)},{i},{json.dumps(value)}).\n'
+    return text+'#include "data-layer/api-imports-api.rr"\n'

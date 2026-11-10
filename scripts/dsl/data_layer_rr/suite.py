@@ -559,6 +559,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'no_api_root_imports':
+                from api_imports_port import install
+                install(self,module)
             if check == 'versioned_lifecycle_legacy_surfaces':
                 from lifecycle_port import install
                 install(self,module)

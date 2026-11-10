@@ -97,7 +97,12 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory has **six accepted ports, 89 drafts, and five absent translations**.
+The current inventory has **seven accepted ports, 88 drafts, and five absent translations**.
+`no_api_root_imports` passes its complete recorded contract on Final `ec3cfe1b7`.
+Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-api-imports-complete-finalec3.json.gz) verifies 467 native executions.
+All four original tests and all 168 public cases pass through both APIs, including import and literal positives.
+Twenty production cases, 16 supplied-fact cases, 14 persistent steps, and 11 controls also pass.
+The CLI, batched scans, discovery filtering, and fact conversions execute native rules. All 282 tooling tests pass.
 `versioned_lifecycle_legacy_surfaces` passes its complete recorded contract on Final `ec3cfe1b7`.
 Its [admission receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-lifecycle-complete-finalec3.json.gz) verifies 449 native executions.
 All 142 public cases pass through each API. The unchanged original test passes with all three recorded linter calls.
@@ -138,7 +143,7 @@ The CLI's shared project helper now validates, coerces, orders, and renders mode
 The frontend only constructs passive typed DTOs; it rejects missing native coercion.
 The [projection checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-model-projection-final041.json.gz) covers all 206 projection cases and 33 CLI cases.
 The [Surface admission checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-surface-full-contract-final041.json.gz) refreshes all reporter, original-suite, production, and update checks on the same engine.
-Surface, PermissionError, RemovedCompat, and Versioned Lifecycle are admitted. The other first-ten ports still need their complete refresh and admission.
+Surface, PermissionError, RemovedCompat, Versioned Lifecycle, and Root API Imports are admitted. The other first-ten ports still need their complete refresh and admission.
 The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.
