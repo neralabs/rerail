@@ -10,6 +10,7 @@ import { preUpdateSnapshotPath, runResetCommand, runRulesCommand, type SnapshotU
 import type { UpdateResult, UpdateStatus } from "../../src/setup/index.js";
 import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, recordCheckout, upsertLibraryRule } from "../../src/engine/index.js";
 import { MOCK_CODE_RULES } from "../../src/cli/index.js";
+import { POSIX_MODES } from "../support/file-mode.js";
 
 /** Set to make `eraseFreedPages` fail as a busy database or a full disk makes it fail. */
 const erase = vi.hoisted(() => ({ failure: undefined as Error | undefined }));
@@ -128,7 +129,7 @@ describe("rerail update", () => {
     migrate(path);
     expect(repositoryKeys(path)).toEqual(["after", "before"]);
     expect(repositoryKeys(preUpdateSnapshotPath(path))).toEqual(["before"]);
-    expect(statSync(preUpdateSnapshotPath(path)).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect(statSync(preUpdateSnapshotPath(path)).mode & 0o777).toBe(0o600);
     expect(vi.mocked(process.stdout.write)).toHaveBeenCalledWith(`Copied ${path} to ${preUpdateSnapshotPath(path)}\n`);
   });
 
@@ -168,7 +169,8 @@ describe("rerail update", () => {
 
   // When neither a new copy nor the old one's removal works (a folder this user cannot write), the update has still
   // happened: it is reported, with what to remove by hand, not failed.
-  it("reports an old copy it cannot remove instead of failing the update", async () => {
+  it("reports an old copy it cannot remove instead of failing the update", async ({ skip }) => {
+    skip(process.platform === "win32", "Windows ignores a folder's read-only mode, so no folder here refuses this user's writes");
     const path = await database();
     const updater = new FakeUpdater();
     await updateWithSnapshot(updater, path, "2.0.0");

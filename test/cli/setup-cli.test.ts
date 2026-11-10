@@ -33,6 +33,7 @@ import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
 import { INSTALLED_PACKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
+import { POSIX_MODES } from "../support/file-mode.js";
 
 const temporaryDirectories: string[] = [];
 const previousHome = process.env.HOME;
@@ -92,7 +93,7 @@ describe("rerail install --root", () => {
     expect(await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context)).toBe(0);
 
     expect(await readlink(updater.currentLink)).toBe(packageRoot);
-    expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
+    if (POSIX_MODES) expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
 
     // The checkout is recorded as current, but stays unmanaged: no rollback target is invented for it.
     const status = await updater.status();

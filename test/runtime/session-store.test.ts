@@ -33,6 +33,7 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native
 import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { approve, currentSubject } from "../../src/engine/index.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/file-mode.js";
 import { removeFolder } from "../support/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
@@ -95,8 +96,10 @@ describe("SQLite session persistence", () => {
     }]);
     store.close();
 
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(root, "private"))).mode & 0o777).toBe(0o700);
+    if (POSIX_MODES) {
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      expect((await stat(join(root, "private"))).mode & 0o777).toBe(0o700);
+    }
     const database = new Database(path, { readonly: true });
     expect(database.prepare("SELECT kind, observed_at AS observedAt, payload_json AS payloadJson FROM events WHERE event_id != 'event-3' ORDER BY sequence").all()).toEqual([
       { kind: "user-prompt", observedAt: 110, payloadJson: JSON.stringify({ text: "hello" }) },
@@ -113,7 +116,8 @@ describe("SQLite session persistence", () => {
     database.close();
   });
 
-  it("creates a private session store directory without changing caller-owned parent permissions", async () => {
+  it("creates a private session store directory without changing caller-owned parent permissions", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
     const root = await temporaryDirectory();
     const callerDirectory = join(root, "configured");
     const databaseDirectory = join(callerDirectory, "transcripts");

@@ -6,6 +6,7 @@ import { RerailRuntime } from "../../src/runtime/index.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { resolveSessionPaths } from "../../src/runtime/session-paths.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/file-mode.js";
 import { symlinkOrSkip } from "../support/links.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-session-records-gitignore-");
@@ -58,7 +59,8 @@ describe("session records in a checkout", () => {
     expect((await lstat(join(storageRoot, ".gitignore"))).isFile()).toBe(true);
   });
 
-  it("write the .gitignore readable by the person only, like the ledgers", async () => {
+  it("write the .gitignore readable by the person only, like the ledgers", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
     const { checkout, storageRoot, databasePath } = await checkoutWithSessionStorage();
     await openOneSession(checkout, storageRoot, databasePath);
     expect((await stat(join(storageRoot, ".gitignore"))).mode & 0o777).toBe(0o600);

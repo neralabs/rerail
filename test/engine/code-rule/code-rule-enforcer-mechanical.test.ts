@@ -1218,7 +1218,8 @@ describe("mechanical code rule regressions", () => {
     expect(await repositoryAuditPaths(join(links, "checkout"))).toEqual(walked);
   }, 60_000);
 
-  it("audits a Git checkout holding unreadable untracked directories as the walk does", async () => {
+  it("audits a Git checkout holding unreadable untracked directories as the walk does", async ({ skip }) => {
+    skip(process.platform === "win32", "Windows ignores a folder's mode, so chmod cannot make a folder unreadable");
     const plain = await mkdtemp(join(tmpdir(), "rerail-scan-plain-"));
     const checkout = await mkdtemp(join(tmpdir(), "rerail-scan-git-"));
     roots.push(plain, checkout);

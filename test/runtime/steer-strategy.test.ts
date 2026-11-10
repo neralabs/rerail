@@ -143,7 +143,8 @@ describe("The rewind steer strategy", () => {
     }
   });
 
-  it("leaves every file with the edit's text, and steers as a message, when one of them cannot be put back", async () => {
+  it("leaves every file with the edit's text, and steers as a message, when one of them cannot be put back", async ({ skip }) => {
+    skip(process.platform === "win32", "Windows ignores a folder's read-only mode, so no folder here refuses a new file");
     const session = await strategySession({ strategy: "rewind", host: "omp", files: { "a/x.py": "X = 0\n", "b/y.py": "Y = 0\n" } });
     const locked = join(session.root, "b");
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);

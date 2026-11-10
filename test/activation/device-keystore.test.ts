@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { deviceSecretStore, FileDeviceSecretStore, SystemDeviceSecretStore } from "../../src/activation/device-keystore.js";
+import { POSIX_MODES } from "../support/file-mode.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -29,7 +30,7 @@ describe("device secret store selection", () => {
     expect(await store.read("profile-a")).toBeUndefined();
     await store.write("profile-a", "secret");
     expect(await store.read("profile-a")).toBe("secret");
-    expect((await stat(join(home, "device-secrets", "profile-a"))).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect((await stat(join(home, "device-secrets", "profile-a"))).mode & 0o777).toBe(0o600);
     await store.remove("profile-a");
     expect(await store.read("profile-a")).toBeUndefined();
     await expect(store.write("../escape", "x")).rejects.toThrow("Invalid Rerail profile name");
