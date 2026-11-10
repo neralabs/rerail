@@ -1,0 +1,22 @@
+// When a cache's entry is still right (decision 0102 §3). Every cache keeps its entries as facts: the entry,
+// and each thing it read with the digest it had then. Phase 0's observer says what each of those is now. The
+// engine runs these rules like any other, so no cache tests its own freshness. The three relations below are
+// given as facts: the entries a run looks up, their reads, and the observations of those reads.
+
+// Entry `id` of cache `cache`, under the name `key` its user looks it up by. A key may have several entries
+// (a branch and its revert): any fresh one is right.
+.decl cache_entry(cache: symbol, key: symbol, id: symbol)
+// What the entry read: a file, a directory's listing, a setting, the engine's build, a program's text. A path
+// that was missing is read too, with what was there ("none"); a thing that could not be read has the digest "-".
+.decl cache_read(cache: symbol, key: symbol, id: symbol, kind: symbol, name: symbol, digest: symbol)
+// What each thing an entry read is now.
+.decl observed(kind: symbol, name: symbol, digest: symbol)
+
+// An entry is stale when something it read is not as it was, or can no longer be observed.
+.decl cache_stale(cache: symbol, key: symbol, id: symbol)
+cache_stale(c, k, i) :- cache_read(c, k, i, kind, n, d), observed(kind, n, now), now != d.
+cache_stale(c, k, i) :- cache_read(c, k, i, kind, n, _), !observed(kind, n, _).
+
+.decl cache_fresh(cache: symbol, key: symbol, id: symbol)
+cache_fresh(c, k, i) :- cache_entry(c, k, i), !cache_stale(c, k, i).
+.output cache_fresh

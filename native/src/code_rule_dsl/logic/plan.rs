@@ -4514,6 +4514,14 @@ pub(in crate::code_rule_dsl) fn run_sql(prog: &Program, facts: &Path) -> Result<
     run(prog, &db, Inputs::file(), None, Hooks::default())
 }
 
+/// Evaluates `prog` over its own facts alone, no base relation bound: the same planner and engine as every run, for
+/// a program whose inputs are facts its caller gives (a cache's freshness, `corpus::cached`, decision 0102).
+pub(in crate::code_rule_dsl) fn run_facts(prog: &Program) -> Result<Outcome> {
+    let db = Connection::open_in_memory()?;
+    db.execute_batch("ATTACH ':memory:' AS f; PRAGMA temp_store = MEMORY;")?;
+    run(prog, &db, Inputs::file(), None, Hooks::default())
+}
+
 /// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
 /// connection before anything runs, as T's `run_sql` loads `RDL_EXT`.
 pub(in crate::code_rule_dsl) fn run_sql_native(
