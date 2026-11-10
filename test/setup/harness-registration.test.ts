@@ -1470,7 +1470,8 @@ describe("Cursor hooks.json", () => {
     const { home, root } = await fixture();
     const nodePath = String.raw`C:\Users\José O'Brien\AppData\Local\nvm\v24.9.0\node.exe`;
     const path = join(home, ".cursor", "hooks.json");
-    const hookPath = join(root, "dist", "hosts", "cursor", "cursor-hook.js");
+    // A Windows set-up writes the hook's path by Windows' path rules, whatever the host the test runs on.
+    const hookPath = win32.join(root, "dist", "hosts", "cursor", "cursor-hook.js");
     // The `cmd` form earlier set-ups wrote, which PowerShell breaks at its nested quotes and `$PATH`; registering replaces it.
     const cmdForm = `cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (for %I in (node.exe) do @"%~$PATH:I" "${hookPath}")"`;
     await seed(path, { version: 1, hooks: { sessionStart: [{ command: cmdForm }] } });

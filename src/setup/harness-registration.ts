@@ -484,7 +484,7 @@ function powershellHookCommand(context: HookCommandContext, executable: string):
  */
 function cursorPowershellHookCommand(context: HookCommandContext, executable: string): string {
   const node = powershellLiteral(context.nodePath);
-  const hook = powershellLiteral(join(context.root, executable));
+  const hook = powershellLiteral(hookScript(context, executable));
   return `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath ${node}) { $input | & ${node} ${hook} } else { $input | node ${hook} } }`;
 }
 
