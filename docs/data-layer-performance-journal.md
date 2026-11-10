@@ -11312,3 +11312,29 @@ Production findings, persistent updates, removal controls, and 200 tests in shar
 The live alignment gate found newer Final commit `ca24b294a` after this immutable cohort completed.
 This does not change the recorded ef317 evidence. The next step is to merge the newer engine and register a fresh artifact.
 No full-repository cold benchmark ran. No Linear ticket was created.
+
+### Final ca24 merge and native production entry, 2026-11-10
+
+Merge `cc6daa899` adopts Final `ca24b294a`, including its integrated compiler, retained facts, and batched AST matcher launches.
+Five conflicts retain Final's functionality and the reviewed migration extensions. The optimized root CLI build passes in 241.082 seconds.
+The registered artifact is `cf886770ed29ec41…`. Engine ancestry and source-tree hashes bind it to the adopted cohort.
+
+Final also adds a CPython fact producer. Native acceptance now blocks its interpreter executables and records attempted launches.
+The regression proves that an engine cannot hide a failed worker attempt and still pass acceptance.
+The production cohort runs with this guard active. These ports use no CPython facts.
+
+The [production checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-production-finalca24-progress.json.gz) validates 17 cases through each API and 84 native executions.
+Each execution retains complete program and harness bytes. Native metadata, selected files, fact presence, fact payloads, and report order match FactEngine's recording.
+The default public production findings also match the contract findings in each case.
+Production uses the existing production reader and the shared dynamic-loading hit relation.
+The public finder retains its distinct directory exclusions. Production includes the additional directories required by FactEngine.
+The production entry now preserves plugin descriptions and separates ordinary absolute finding paths from relative signature-failure paths.
+
+The prior ef317 interface checkpoint remains valid evidence for its own artifact. Its 96 reports cover all 115 dedicated original tests and six complete contract groups through both APIs.
+Those interface groups need a refresh on ca24. Two hundred original cases in shared modules, persistent updates, and removal controls remain open.
+Dynamic loading remains a draft. Global admission remains 12 of 100 ports; this checkpoint does not claim another completed rule.
+No full-repository cold benchmark ran. No Linear ticket was created.
+
+The final tooling run passes 396 tests and 165 subtests in 10.16 seconds.
+The migration manifest also records seven standard-library files changed by the integration merge.
+Each file is byte-identical to Final ca24. The inventory verification passes after recording that upstream provenance.

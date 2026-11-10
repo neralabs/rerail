@@ -42,4 +42,4 @@ def exercise(module,case,temporary):
 if __name__=='__main__':
     from contract_runner import main
     from dynamic_port import install
-    main(CHECK,'rerail.dynamic-production-contract/v1',cases,exercise,install,['dynamic_production_contract.py','first_ten_production_contract.py','dynamic_port.py','dynamic_cli_port.py','dynamic_plugin_port.py'])
+    main(CHECK,'rerail.dynamic-production-contract/v1',cases,exercise,install,['dynamic_production_contract.py','first_ten_production_contract.py','dynamic_port.py','dynamic_cli_port.py','dynamic_plugin_port.py','dynamic_production_port.py'])

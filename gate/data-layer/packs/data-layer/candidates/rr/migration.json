@@ -760,8 +760,16 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/annotations.rr",
-      "sha256": "cb15fe34ea8758ce4b3b4bb7297cb01f7a1531535149eb54b58a091189ddb305",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "49aef096e5217ac34f56b90d7261503cf08b0f1ce1590bb2d2c7e0ed1bdef8e5",
+      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+      "repairs": [
+        {
+          "before": "cb15fe34ea8758ce4b3b4bb7297cb01f7a1531535149eb54b58a091189ddb305",
+          "after": "49aef096e5217ac34f56b90d7261503cf08b0f1ce1590bb2d2c7e0ed1bdef8e5",
+          "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        }
+      ],
+      "upstreamSha256": "49aef096e5217ac34f56b90d7261503cf08b0f1ce1590bb2d2c7e0ed1bdef8e5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/ast.rr",
@@ -941,8 +949,16 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/names.rr",
-      "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62",
+      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+      "repairs": [
+        {
+          "before": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53",
+          "after": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62",
+          "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        }
+      ],
+      "upstreamSha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
     },
     {
       "destination": "docs/rule-syntax/lib/python/naming.rr",
@@ -961,8 +977,16 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/pyflakes.rr",
-      "sha256": "c5dc1a2d35d4a703a2fd2c58559ab64d7c15f5e5c90deddeb6f6c28d06a7dd41",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "df979b0c0e6b7ae5d7db6b07be3d077cb5d894a18470b00a544b725206b8163a",
+      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+      "repairs": [
+        {
+          "before": "c5dc1a2d35d4a703a2fd2c58559ab64d7c15f5e5c90deddeb6f6c28d06a7dd41",
+          "after": "df979b0c0e6b7ae5d7db6b07be3d077cb5d894a18470b00a544b725206b8163a",
+          "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        }
+      ],
+      "upstreamSha256": "df979b0c0e6b7ae5d7db6b07be3d077cb5d894a18470b00a544b725206b8163a"
     },
     {
       "destination": "docs/rule-syntax/lib/python/pytest.rr",
@@ -971,8 +995,16 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/ruff-classes.rr",
-      "sha256": "14e0ed7c1b253e10f27604592c96fb0866ed79fc10713f881738699481013656",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "03eb4e5745314b4248046783211a9166fdfc46740690db08c6a265060d16c6f0",
+      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+      "repairs": [
+        {
+          "before": "14e0ed7c1b253e10f27604592c96fb0866ed79fc10713f881738699481013656",
+          "after": "03eb4e5745314b4248046783211a9166fdfc46740690db08c6a265060d16c6f0",
+          "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        }
+      ],
+      "upstreamSha256": "03eb4e5745314b4248046783211a9166fdfc46740690db08c6a265060d16c6f0"
     },
     {
       "destination": "docs/rule-syntax/lib/python/ruff-sorting.rr",
@@ -1004,9 +1036,16 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/security.rr",
-      "sha256": "c9ca13a7e8e502b04425b205ce8a1b936541c5d33105a47557d89bcbc2f024fa",
-      "upstreamSha256": "c9ca13a7e8e502b04425b205ce8a1b936541c5d33105a47557d89bcbc2f024fa",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "260eacf4744afba9b643d12cb88c34e488be79e9c65249302d903c20a976670b",
+      "upstreamSha256": "260eacf4744afba9b643d12cb88c34e488be79e9c65249302d903c20a976670b",
+      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+      "repairs": [
+        {
+          "before": "c9ca13a7e8e502b04425b205ce8a1b936541c5d33105a47557d89bcbc2f024fa",
+          "after": "260eacf4744afba9b643d12cb88c34e488be79e9c65249302d903c20a976670b",
+          "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/simplify.rr",
@@ -1015,13 +1054,29 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/typing-context.rr",
-      "sha256": "2ea9556b8ebee64bc060b31e3f94b9931b136be124f346e30025b21ae387e959",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "ed344c2d014ab5ad4767fc897cb30f02f16863c5005fdf4dc8b12a25b1086035",
+      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+      "repairs": [
+        {
+          "before": "2ea9556b8ebee64bc060b31e3f94b9931b136be124f346e30025b21ae387e959",
+          "after": "ed344c2d014ab5ad4767fc897cb30f02f16863c5005fdf4dc8b12a25b1086035",
+          "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        }
+      ],
+      "upstreamSha256": "ed344c2d014ab5ad4767fc897cb30f02f16863c5005fdf4dc8b12a25b1086035"
     },
     {
       "destination": "docs/rule-syntax/lib/python/typing.rr",
-      "sha256": "64ce1afc83e6c8cb98a9b292523cfb9297eff92967b393fa8434b98fa7aef1d2",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "c60fa4ddee0d983f6fd923a423e8148f3c1fc309acc1d79ff5bfbb79586e68bd",
+      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
+      "repairs": [
+        {
+          "before": "64ce1afc83e6c8cb98a9b292523cfb9297eff92967b393fa8434b98fa7aef1d2",
+          "after": "c60fa4ddee0d983f6fd923a423e8148f3c1fc309acc1d79ff5bfbb79586e68bd",
+          "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        }
+      ],
+      "upstreamSha256": "c60fa4ddee0d983f6fd923a423e8148f3c1fc309acc1d79ff5bfbb79586e68bd"
     },
     {
       "destination": "docs/rule-syntax/lib/python/upgrade-format.rr",
@@ -1519,7 +1574,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
-      "sha256": "ed0f5966ef05515f8b1b3d1a7952c287235e4fbea25d6e9bb54b15f8c8c8edc2",
+      "sha256": "c9ebe4034b5aefa037132fb162b75d5e468e6108d265b5a6428da50a3a7c2aa5",
       "origin": "authored",
       "upstreamPath": "scripts/lint_dynamic_module_loading.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2763,7 +2818,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading-repository.rr",
-      "sha256": "1203f4e0176a8b8212e540c053a2609571ce1557a44ecce47e30ad09ed98e5a7",
+      "sha256": "c4c110a89d80453fe8f967c3459a0396cfa2c02aaa0e9c4b0599d534c6eb0029",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_dynamic_module_loading.py"
@@ -2823,6 +2878,12 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "sha256": "a15f8947ec2b0071efeb1dfeb93ef296473643f0255db3078cf1d259bb5be6e7"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/dynamic-production.rr",
+      "sha256": "3a71c2edfbd0894a1deceab85a97018bad54d3a8355450ce2bda5131f5a68d61",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
   ],
   "rules": [
@@ -3360,7 +3421,7 @@
       "legacySha256": "60a9cff5845cb22edfd90b365ba5ac41e948b605115c0233af66a81ab68d6478",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/dynamic-module-loading.rr",
-      "ruleSha256": "ed0f5966ef05515f8b1b3d1a7952c287235e4fbea25d6e9bb54b15f8c8c8edc2"
+      "ruleSha256": "c9ebe4034b5aefa037132fb162b75d5e468e6108d265b5a6428da50a3a7c2aa5"
     },
     {
       "check": "forwardref",
@@ -4825,17 +4886,17 @@
       }
     ],
     "cliArtifact": {
-      "engineCommit": "f7c7a37ba3d3c650f5305d45d8430e6e8f3faffc",
-      "upstreamCommit": "ef317e108358b2107336d1dd957ef9856b721b8d",
+      "engineCommit": "66f65dd5362d89ca2a31b28c9613df13a376a35a",
+      "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
       "sourceTrees": {
-        "native": "5bc9a586e642773c03b6a4547d2d8a3196041c58",
+        "native": "b9f5792c538851dcc6a0217367a0d6b6f450b895",
         "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-        "Cargo.toml": "bfce2f449c0ee137f9606200433782ccc20e69c0",
-        "Cargo.lock": "708164ac8a73f7ef6ebb46975a1f3408d263f6ec"
+        "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+        "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
       },
-      "path": ".rerail/modern-engine-alignment/cli-962595dd2fea7697",
-      "sha256": "962595dd2fea769709e611dd0734485e7762565961b3ca182e475b391a4989b1",
+      "path": ".rerail/modern-engine-alignment/cli-cf886770ed29ec41",
+      "sha256": "cf886770ed29ec41cfd549dd57f1b6f5fb3ef4376097a0c63fb167e1bfae8b84",
       "command": [
         "cargo",
         "build",
@@ -4848,7 +4909,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 95.8
+      "seconds": 241.082
     },
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",

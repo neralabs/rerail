@@ -74,4 +74,6 @@ def install(backend,module,detectors=False):
     install_cli(backend,module)
     from dynamic_plugin_port import install as install_plugin
     install_plugin(backend,module)
+    from dynamic_production_port import production
+    module._rerail_dynamic_production=lambda root:production(backend,root)
     module._rerail_dynamic_configuration=lambda:configuration(backend)

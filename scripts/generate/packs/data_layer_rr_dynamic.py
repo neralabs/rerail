@@ -91,7 +91,8 @@ DynamicSignature(@place("scripts/lint_dynamic_module_loading.py", 1)) :- !option
     allow_status("dynamic_module_loading", status), status != "valid".
 '''
     from data_layer_rr_dynamic_cli import suffix
-    return text+suffix(source)
+    from data_layer_rr_dynamic_production import augment
+    return augment(source,text+suffix(source))
 
 
 def repository_program(text):

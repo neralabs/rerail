@@ -1,0 +1,15 @@
+// FactEngine's walk differs from the public finder's walk. Share its existing
+// production reader, while all extraction consumers share dml_hit.
+#include "data-layer/plugin-production.rr"
+.decl dml_production_hit(d: number,path: symbol,line: number,ordinal: number,content: symbol,label: symbol)
+dml_production_hit(d,p,l,i,c,t) :- pp_doc(d,p),pp_fact_present(d),!dml_allowed(p),dml_hit(d,l,i,c,t).
+.violation DynamicProductionFact(at: span,path: symbol,path_order: symbol,order0: number,order1: number,order2: number,f_file_path: symbol,f_line: number,f_line_content: symbol,f_description: symbol) code "DL_FACT" "production fact"
+DynamicProductionFact(@place("",0),p,@replace_all(p,"/","\u0000"),l,i,0,full,l,c,t) :- option("entryPoint","_production_contract"),dml_production_hit(_,p,l,i,c,t),pp_absolute(p,full).
+pp_report(p,l,"DML001",t,p,l,t,i,l,i,0) :- pp_run(),allow_status("dynamic_module_loading","valid"),dml_production_hit(_,p,l,i,_,t).
+.decl dml_production_signature_failure()
+dml_production_signature_failure() :- pp_run(),allow_status("dynamic_module_loading",s),s!="valid".
+// Signature failure has a relative script path, unlike ordinary file findings.
+ProductionReport(@place("scripts/lint_dynamic_module_loading.py",1),"DML000","scripts/lint_dynamic_module_loading.py",1,"dynamic module loading allowlist signature verification failed","",1,"",0,0,0,0) :- option("entryPoint","_production_contract"),dml_production_signature_failure().
+.violation DynamicProduction(at: span,code_value: symbol,file: symbol,source_line: number,source_message: symbol,severity: symbol) code {code_value} "{source_message}"
+DynamicProduction(@place(p,l),c,full,l,m,s) :- !option("entryPoint",_),pp_report(p,l,c,m,_,_,_,_,_,_,_),pp_absolute(p,full),pp_config("findingSeverity",s).
+DynamicProduction(@place("scripts/lint_dynamic_module_loading.py",1),"DML000","scripts/lint_dynamic_module_loading.py",1,"dynamic module loading allowlist signature verification failed","hard-fail") :- !option("entryPoint",_),dml_production_signature_failure().

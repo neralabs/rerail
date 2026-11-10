@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -162,7 +163,19 @@ def _execute(engine, rule, files, options, sources, workspace_name, *, physical_
             arguments = dict(arguments, env=[*arguments.get('env', []), 'data-layer.api=true'])
         write_json(option_file, arguments)
         command = [str(engine), 'run-rr', str(rule), str(corpus), str(root / 'out'), str(option_file)]
-        run = subprocess.run(command, text=True, capture_output=True, timeout=100)
+        # The integrated engine supports a CPython fact producer. These ports
+        # must remain native, including when a failed worker would be swallowed.
+        guard = root / 'no-python'
+        guard.mkdir()
+        attempted = root / 'python-attempted'
+        for name in ('python3.13','python3','python','python.exe'):
+            executable = guard / name
+            executable.write_text('#!/bin/sh\nprintf \'%s\\n\' '+shlex.quote(name)+' >> '+shlex.quote(str(attempted))+'\nprintf \'Native rule acceptance forbids Python execution\\n\' >&2\nexit 97\n')
+            executable.chmod(0o755)
+        environment = dict(os.environ, PATH=str(guard)+os.pathsep+os.environ.get('PATH',''))
+        run = subprocess.run(command, text=True, capture_output=True, timeout=100, env=environment)
+        if attempted.exists():
+            raise AssertionError('Native rule execution attempted Python: '+attempted.read_text().strip())
         if run.returncode:
             raise RuntimeError(run.stderr)
         native = json.loads(run.stdout)

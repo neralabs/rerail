@@ -45,7 +45,7 @@ def main(check,format,build_cases,exercise,install,dependencies,*,guard_modules=
                 return result
             def native(self,check,entry,files,options=None,*,root=None):
                 policy=ROOT/'gate/data-layer/packs/data-layer/candidates/rr'/policy_filename(check,entry)
-                arguments=dict(entryPoint=entry,**(options or {}))
+                arguments=dict(({} if entry is None else dict(entryPoint=entry)),**(options or {}))
                 if root is None:result=execute(a.engine,policy,files,arguments)
                 else:
                     from replay import execute_repository
