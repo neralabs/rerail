@@ -382,7 +382,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
       "Scanned acme-api. None of Rerail’s rule packs fit it.",
       "",
       "  Found           .py 3 · .ts 1",
-      "  Not scanned     files Git ignores",
+      "                  from Git’s list of files, which leaves out what Git ignores",
       "  Closest         Python excludes the 3 files it looks for: tests/ (2),",
       "                  scripts/ (1)",
       "  Packs look for  Python  *.py, *.pyi",

@@ -177,7 +177,7 @@ describe("a third party's pack", () => {
 });
 
 describe("rerail packs recommend", () => {
-  it("says why no rule pack fits, before listing the packs", { timeout: 30_000 }, async () => {
+  it("says why no rule pack fits, then lists each pack once, with what it looks for", { timeout: 30_000 }, async () => {
     const root = realpathSync(temporaryHome());
     for (const path of ["tests/test_a.py", "tests/test_b.py", "scripts/release.py", "README.md"]) {
       mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -187,15 +187,16 @@ describe("rerail packs recommend", () => {
 
     const text = await packsOutput(["recommend", "--repo", root], directoryPackStore(repositoryPath("packs"), ["python"], temporaryHome()));
 
-    expect(text).toContain([
-      `No rule pack fits ${root}.`,
-      "  Found           .py 3 · .md 1",
-      "  Not scanned     files Git ignores",
-      "  Closest         Python excludes the 3 files it looks for: tests/ (2),",
-      "                  scripts/ (1)",
-      "  Packs look for  Python  *.py, *.pyi",
+    expect(text).toMatch(new RegExp([
+      `No rule pack fits ${root.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\.`,
+      "  Found           \\.py 3 · \\.md 1",
+      "                  from Git’s list of files, which leaves out what Git ignores",
+      "  Closest         Python excludes the 3 files it looks for: tests/ \\(2\\),",
+      "                  scripts/ \\(1\\)",
       "Other rule packs:",
-    ].join("\n"));
+      "  @neralabs/rerail-pack-python@\\S+ \\(\\d+ rules\\): looks for \\*\\.py, \\*\\.pyi\n",
+    ].join("\n"), "u"));
+    expect(text).not.toContain("Packs look for");
   });
 });
 

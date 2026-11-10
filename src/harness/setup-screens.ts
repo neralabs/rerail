@@ -588,16 +588,23 @@ function capped(items: readonly string[], max: number, more: (count: number) => 
   return items.length <= max ? [...items] : [...items.slice(0, max), more(items.length - max)];
 }
 
-function foundRows(explanation: NoFitExplanation): string[] {
+/** The files the scan read, counted by ending; files without one are counted only when no file has one. */
+function endingRows(explanation: NoFitExplanation): string[] {
   const endings = explanation.endings.map(({ ending, fileCount }) => `${clean(ending)} ${fileCount}`);
-  return endings.length === 0 ? ["no files"] : wrapWords(marked(endings, " ·"), NO_FIT_TEXT_WIDTH);
+  if (endings.length > 0) return wrapWords(marked(endings, " ·"), NO_FIT_TEXT_WIDTH);
+  return [explanation.fileCount === 0 ? "no files" : `${plural(explanation.fileCount, "file")}, none with an ending`];
 }
 
-/** The folders the scan skipped, and under Git, the files Git ignores, which it never lists. */
+/** How the scan read the repository, when that bounds what it found: Git's listing, or a walk that stopped early. */
+function howScannedRows(explanation: NoFitExplanation): string[] {
+  if (explanation.git) return ["from Git’s list of files, which leaves out what Git ignores"];
+  return explanation.stoppedEarly ? [`the scan stopped early, after ${explanation.fileCount.toLocaleString("en-US")} files`] : [];
+}
+
+/** The folders the scan skipped that the repository has, with the files Git lists in each. */
 function notScannedRows(explanation: NoFitExplanation): string[] {
   const folders = explanation.notScanned.map(({ folder, fileCount }) => `${clean(folder)}/${fileCount === undefined ? "" : ` (${fileCount})`}`);
-  const ignored = !explanation.git ? [] : folders.length === 0 ? ["files", "Git", "ignores"] : ["and", "files", "Git", "ignores"];
-  return wrapWords([...marked(folders, ","), ...ignored], NO_FIT_TEXT_WIDTH);
+  return wrapWords(marked(folders, ","), NO_FIT_TEXT_WIDTH);
 }
 
 function nearMissRows(explanation: NoFitExplanation): string[] {
@@ -608,42 +615,50 @@ function nearMissRows(explanation: NoFitExplanation): string[] {
   });
 }
 
-/** A pack's file globs, then its dependencies as one item, each list capped. */
-function looksForItems(pack: NoFitExplanation["packs"][number]): string[] {
+/** A pack's file globs, then its dependencies, each list capped, as words for `wrapWords`. */
+function looksForWords(pack: NoFitExplanation["packs"][number]): string[] {
   const more = (count: number): string => `+${count} more`;
-  const dependencies = capped(pack.dependencies.map(clean), MAX_LOOKS_FOR_DEPENDENCIES, more);
-  return [
-    ...capped(pack.files.map(clean), MAX_LOOKS_FOR_FILES, more),
-    ...(dependencies.length === 0 ? [] : [`${pack.dependencies.length === 1 ? "dependency" : "dependencies"}: ${dependencies.join(", ")}`]),
-  ];
+  const files = capped(pack.files.map(clean), MAX_LOOKS_FOR_FILES, more);
+  const dependencies = marked(capped(pack.dependencies.map(clean), MAX_LOOKS_FOR_DEPENDENCIES, more), ",");
+  if (dependencies.length === 0) return marked(files, ",");
+  // The label stays with the first name, so a wrap never leaves it alone at the end of a row.
+  dependencies[0] = `${pack.dependencies.length === 1 ? "dependency:" : "dependencies:"} ${dependencies[0]}`;
+  return [...files.map(file => `${file},`), ...dependencies];
 }
+
+/** What a pack looks for, on one line, as `rerail packs recommend` prints it after the pack. */
+export const looksForText = (pack: NoFitExplanation["packs"][number]): string => looksForWords(pack).join(" ");
 
 /** Each pack, then what it looks for, wrapped in a column after the names; a name too long for it has its own row. */
 function looksForRows(explanation: NoFitExplanation): string[] {
   const nameWidth = Math.min(MAX_PACK_NAME_WIDTH, Math.max(0, ...explanation.packs.map(pack => clean(pack.name).length))) + PACK_NAME_GAP;
   return explanation.packs.flatMap(pack => {
     const name = clean(pack.name);
-    const rows = wrapWords(marked(looksForItems(pack), ","), NO_FIT_TEXT_WIDTH - nameWidth);
+    const rows = wrapWords(looksForWords(pack), NO_FIT_TEXT_WIDTH - nameWidth);
     if (name.length + PACK_NAME_GAP > nameWidth) return [name, ...rows.map(row => `${" ".repeat(nameWidth)}${row}`)];
     return rows.map((row, index) => `${(index === 0 ? name : "").padEnd(nameWidth)}${row}`);
   });
 }
 
-/** What the scan found and left out, the packs that came closest, and what each pack looks for. */
-function noFitRows(explanation: NoFitExplanation, style: Style): string[] {
+/** What the scan found and left out, and the packs that came closest. */
+function scanRows(explanation: NoFitExplanation, style: Style): string[] {
   const notScanned = notScannedRows(explanation);
   const nearMisses = nearMissRows(explanation);
   return [
-    ...labelled("Found", foundRows(explanation), style),
+    ...labelled("Found", [...endingRows(explanation), ...howScannedRows(explanation)], style),
     ...(notScanned.length === 0 ? [] : labelled("Not scanned", notScanned, style)),
     ...(nearMisses.length === 0 ? [] : labelled("Closest", nearMisses, style)),
-    ...labelled("Packs look for", looksForRows(explanation), style),
   ];
 }
 
-/** Why no rule pack fits, as `rerail packs recommend` prints it. */
-export function noFitLines(explanation: NoFitExplanation): string[] {
-  return noFitRows(explanation, PLAIN_STYLE);
+/** Why no rule pack fits: the scan's rows, then what each pack looks for. */
+function noFitRows(explanation: NoFitExplanation, style: Style): string[] {
+  return [...scanRows(explanation, style), ...labelled("Packs look for", looksForRows(explanation), style)];
+}
+
+/** What the scan found and left out, as `rerail packs recommend` prints it; each pack's line says what it looks for. */
+export function noFitScanLines(explanation: NoFitExplanation): string[] {
+  return scanRows(explanation, PLAIN_STYLE);
 }
 
 /** The packs that fit, as a table, or why none does. */

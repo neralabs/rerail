@@ -432,11 +432,13 @@ describe("discoverPacks", () => {
 
       expect(discovery.recommended).toEqual([]);
       expect(discovery.nothingFits).toEqual({
+        fileCount: 4,
         endings: [{ ending: ".py", fileCount: 3 }, { ending: ".md", fileCount: 1 }],
         notScanned: [],
         git: false,
+        stoppedEarly: false,
         nearMisses: [{ name: "Python", fileCount: 3, excludedBy: [{ glob: "tests/", fileCount: 2 }, { glob: "scripts/", fileCount: 1 }] }],
-        packs: [{ name: "Python", files: ["*.py", "*.pyi"], dependencies: [] }, { name: "SQL", files: ["*.sql"], dependencies: [] }],
+        packs: [{ id: "python", name: "Python", files: ["*.py", "*.pyi"], dependencies: [] }, { id: "sql", name: "SQL", files: ["*.sql"], dependencies: [] }],
       });
     });
 

@@ -197,7 +197,8 @@ its rules. `rerail packs recommend` lists them too.
 Scanned acme-api. None of Rerail’s rule packs fit it.
 
   Found           .py 3 · .md 1
-  Not scanned     files Git ignores
+                  from Git’s list of files, which leaves out what Git ignores
+  Not scanned     fixtures/ (1)
   Closest         Python excludes the 3 files it looks for: tests/ (2),
                   scripts/ (1)
   Packs look for  Python      *.py, *.pyi
@@ -205,11 +206,12 @@ Scanned acme-api. None of Rerail’s rule packs fit it.
                               dependency: typescript
 ```
 
-A pack fits when the repository has a file or dependency it looks for. **Found** counts the files scanned by ending.
-**Not scanned** names the folders set-up never reads, such as `fixtures/` and `node_modules/`, and under Git the files
-Git ignores. **Closest** is a pack that looks for files the repository has but excludes every one of them, by the
-places it names; **Packs look for** says what each pack would match. To add a pack anyway, answer "Change rule packs…",
-or run `rerail packs add <id>`. `rerail packs recommend` prints the same explanation.
+A pack fits when the repository has a file or dependency it looks for. **Found** counts the files scanned by ending
+and says how they were listed. **Not scanned** names the folders set-up never reads, such as `fixtures/` and
+`node_modules/`, with the files in each. **Closest** is a pack that looks for files the repository has but excludes
+every one of them, by the places it names; a leading `/` means only at the repository's top. **Packs look for** says
+what each pack would match. To add a pack anyway, answer "Change rule packs…", or run `rerail packs add <id>`.
+`rerail packs recommend` prints the same explanation, with what each pack looks for on that pack's line.
 
 ## The `rerail` command
 

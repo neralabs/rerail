@@ -172,7 +172,7 @@ describe("globPattern", () => {
 });
 
 /** A scan of `files` alone, as Git would list them. */
-const scanOf = (files: string[]): RepositoryScan => ({ files, dependencies: new Map(), notScanned: [], git: true });
+const scanOf = (files: string[]): RepositoryScan => ({ files, dependencies: new Map(), notScanned: [], git: true, stoppedEarly: false });
 /** The match definition of Rerail's own pack `id`. */
 const packMatch = (id: string): RulePackMatch => JSON.parse(readFileSync(fileURLToPath(new URL(`../../../packs/${id}/pack.json`, import.meta.url)), "utf8")).match;
 
@@ -222,12 +222,20 @@ describe("nearMiss", () => {
   });
 
   it("counts a file two signals look for once, under the excludes of the signal that names it most closely", () => {
-    // The complexity pack's PHP signal excludes *.blade.php, which its Blade signal looks for: tests/ is why it is skipped.
+    // The Complexity pack's PHP signal excludes *.blade.php, which its Blade signal looks for: tests/ is why it is
+    // skipped. The first signal that matches, PHP, would say *.blade.php.
     expect(nearMiss(packMatch("complexity"), scanOf(["tests/view.blade.php"]))).toEqual({ fileCount: 1, excludedBy: [{ glob: "tests/", fileCount: 1 }] });
   });
 
-  it("is undefined when the pack fits, when none of its files are there, and for a dependency signal", () => {
-    expect(nearMiss(python, scanOf(["src/app/models.py", "tests/test_models.py"]))).toBeUndefined();
+  it("tells an exclude anchored at the root from one at any depth, as .gitignore writes them", () => {
+    const match = { any: [{ files: ["**/*.py"], exclude: ["tests/**", "**/tests/**"], label: "*.py files" }] };
+    expect(nearMiss(match, scanOf(["tests/a.py", "src/tests/b.py"]))).toEqual({
+      fileCount: 2,
+      excludedBy: [{ glob: "/tests/", fileCount: 1 }, { glob: "tests/", fileCount: 1 }],
+    });
+  });
+
+  it("is undefined when none of its files are there, and for a dependency signal", () => {
     expect(nearMiss(python, scanOf(["main.go", "README.md"]))).toBeUndefined();
     expect(nearMiss({ any: [{ dependencies: { ecosystem: "pypi", names: ["django"] } }] }, scanOf(["tests/test_views.py"]))).toBeUndefined();
   });
@@ -255,6 +263,7 @@ describe("scanRepository's folders not scanned", () => {
     const root = await temporaryDirectory("rerail-unseen-");
     writeFiles(root, {
       ".gitignore": "local/\n",
+      ".rerail/rules/own.json": "{}\n",
       "fixtures/app.py": "app = None\n",
       "testdata/sample.py": "sample = None\n",
       ".venv/lib/site.py": "site = None\n",
@@ -267,6 +276,7 @@ describe("scanRepository's folders not scanned", () => {
     const found = scanRepository(root);
     expect(found.files).toEqual([".gitignore", "notes.md"]);
     expect(found.git).toBe(true);
+    // .rerail is skipped too, but holds no project code, so it is not named.
     expect(found.notScanned).toEqual([
       { folder: "build", fileCount: 2 },
       { folder: ".venv", fileCount: 1 },
@@ -275,12 +285,13 @@ describe("scanRepository's folders not scanned", () => {
     ]);
   });
 
-  it("names, outside Git, the folders it walked past without entering them", async () => {
+  it("names, outside Git, the folders it walked past without entering them, and never version control's", async () => {
     const root = await temporaryDirectory("rerail-unseen-walk-");
-    writeFiles(root, { "fixtures/app.py": "app = None\n", "node_modules/pkg/index.js": "\n", "notes.md": "notes\n" });
+    writeFiles(root, { ".hg/store/data": "\n", "fixtures/app.py": "app = None\n", "node_modules/pkg/index.js": "\n", "notes.md": "notes\n" });
     const found = scanRepository(root);
     expect(found.files).toEqual(["notes.md"]);
     expect(found.git).toBe(false);
+    expect(found.stoppedEarly).toBe(false);
     expect(found.notScanned).toEqual([{ folder: "fixtures" }, { folder: "node_modules" }]);
   });
 });

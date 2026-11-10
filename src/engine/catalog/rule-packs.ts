@@ -390,16 +390,20 @@ export function rulePacksThatFit(scan: RepositoryScan, packs: readonly RulePack[
 
 /** Why none of a set of packs fits a repository: what the scan found and left out, and what each pack looks for. */
 export interface NoFitExplanation {
+  /** How many files the scan read, with an ending or not. */
+  readonly fileCount: number;
   /** The endings of the files scanned, most files first. */
   readonly endings: readonly FileEnding[];
   /** The folders the scan did not enter. */
   readonly notScanned: readonly NotScannedFolder[];
   /** Whether the scan read Git's listing, which leaves out the files Git ignores. */
   readonly git: boolean;
+  /** Whether the walk outside Git stopped early, so the rest describes only the files it read. */
+  readonly stoppedEarly: boolean;
   /** The packs that look for files the repository has but exclude every one of them, most files first. */
   readonly nearMisses: readonly (NearMiss & { readonly name: string })[];
   /** What each pack looks for, in the order the packs came. */
-  readonly packs: readonly (PackLooksFor & { readonly name: string })[];
+  readonly packs: readonly (PackLooksFor & { readonly id: string; readonly name: string })[];
 }
 
 /** Why none of `packs` fits the scanned repository; the caller knows none does (`rulePacksThatFit` gave none). */
@@ -409,11 +413,13 @@ export function explainNoFit(scan: RepositoryScan, packs: readonly RulePack[]): 
     return missed === undefined ? [] : [{ name: pack.name, ...missed }];
   });
   return {
+    fileCount: scan.files.length,
     endings: fileEndings(scan),
     notScanned: scan.notScanned,
     git: scan.git,
+    stoppedEarly: scan.stoppedEarly,
     nearMisses: nearMisses.sort((left, right) => right.fileCount - left.fileCount),
-    packs: packs.map(pack => ({ name: pack.name, ...packLooksFor(pack.match) })),
+    packs: packs.map(pack => ({ id: pack.id, name: pack.name, ...packLooksFor(pack.match) })),
   };
 }
 

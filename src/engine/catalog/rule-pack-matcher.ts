@@ -37,6 +37,8 @@ export interface RepositoryScan {
   readonly notScanned: readonly NotScannedFolder[];
   /** Whether `files` is Git's listing, which leaves out what Git ignores, rather than a walk of the folder. */
   readonly git: boolean;
+  /** Whether the walk outside Git stopped at `MAX_WALKED_FILES` with folders left unread. */
+  readonly stoppedEarly: boolean;
 }
 
 /** A dependency, build-output or test-data folder the scan does not enter, by name (`node_modules`, `fixtures`). */
@@ -69,30 +71,31 @@ function readableEntries(directory: string): Dirent[] {
 }
 
 const notScannedFolder = (name: string): boolean => IGNORED_DIRECTORIES.has(name) || FIXTURE_DIRECTORIES.has(name);
+/** Version control's and Rerail's own folders hold no project code: skipped like the others, but never named. */
+const UNNAMED_FOLDERS = new Set([".git", ".hg", ".svn", ".rerail"]);
 
 interface Walked {
   readonly files: string[];
   /** The names of the folders the walk did not enter. */
   readonly notEntered: Set<string>;
+  /** The folders still to read. */
+  readonly pending: string[];
 }
 
-/** Adds the files in `directory` to `walked` and returns its folders to enter next. */
-function walkFolder(root: string, directory: string, walked: Walked): string[] {
-  const next: string[] = [];
+/** Adds the files in `directory` to `walked`, and its folders to those still to read. */
+function walkFolder(root: string, directory: string, walked: Walked): void {
   for (const entry of readableEntries(directory)) {
     if (entry.isFile()) walked.files.push(relative(root, join(directory, entry.name)).split(sep).join("/"));
     else if (!entry.isDirectory()) continue;
     else if (notScannedFolder(entry.name)) walked.notEntered.add(entry.name);
-    else next.push(join(directory, entry.name));
+    else walked.pending.push(join(directory, entry.name));
   }
-  return next;
 }
 
-/** The files under `root`, up to `MAX_WALKED_FILES`, and the folders it did not enter. */
+/** The files under `root`, up to `MAX_WALKED_FILES`, the folders it did not enter, and those it had yet to read. */
 function walk(root: string): Walked {
-  const walked: Walked = { files: [], notEntered: new Set() };
-  const pending = [root];
-  while (pending.length > 0 && walked.files.length < MAX_WALKED_FILES) pending.push(...walkFolder(root, pending.pop()!, walked));
+  const walked: Walked = { files: [], notEntered: new Set(), pending: [root] };
+  while (walked.pending.length > 0 && walked.files.length < MAX_WALKED_FILES) walkFolder(root, walked.pending.pop()!, walked);
   return walked;
 }
 
@@ -115,7 +118,7 @@ const SKIP_WORKTREE_TAG = "S";
  * (skip-worktree entries, which `--cached` lists and `--deleted` does not report), plus untracked-but-not-ignored;
  * a bounded walk elsewhere. Files under a folder the scan does not enter are left out and counted per folder name.
  */
-function listRepositoryFiles(root: string): Pick<RepositoryScan, "files" | "notScanned" | "git"> {
+function listRepositoryFiles(root: string): Pick<RepositoryScan, "files" | "notScanned" | "git" | "stoppedEarly"> {
   // `-t` prefixes each entry with its status tag and a space: `H` tracked, `S` skip-worktree, `?` untracked, ….
   const tagged = gitListing(root, ["-t", "--cached", "--others", "--exclude-standard"]);
   const listed = tagged?.filter(entry => !entry.startsWith(`${SKIP_WORKTREE_TAG} `)).map(entry => entry.slice(2));
@@ -135,7 +138,12 @@ function listRepositoryFiles(root: string): Pick<RepositoryScan, "files" | "notS
       .sort(([leftFolder, leftCount], [rightFolder, rightCount]) => rightCount - leftCount || compareDeterministicStrings(leftFolder, rightFolder))
       .map(([folder, fileCount]) => ({ folder, fileCount }))
     : [...walked.notEntered].sort(compareDeterministicStrings).map(folder => ({ folder }));
-  return { files, notScanned, git: walked === undefined };
+  return {
+    files,
+    notScanned: notScanned.filter(({ folder }) => !UNNAMED_FOLDERS.has(folder)),
+    git: walked === undefined,
+    stoppedEarly: (walked?.pending.length ?? 0) > 0,
+  };
 }
 
 /**
@@ -267,7 +275,8 @@ export function normalizeDependencyName(ecosystem: DependencyEcosystem, name: st
 }
 
 export function scanRepository(root: string): RepositoryScan {
-  const { files, notScanned, git } = listRepositoryFiles(root);
+  const listing = listRepositoryFiles(root);
+  const { files } = listing;
   const dependencies = new Map<DependencyEcosystem, Map<string, string[]>>(DEPENDENCY_ECOSYSTEMS.map(ecosystem => [ecosystem, new Map()]));
   const manifests = files
     .flatMap(path => {
@@ -279,7 +288,7 @@ export function scanRepository(root: string): RepositoryScan {
     const byName = dependencies.get(ecosystem)!;
     for (const name of new Set(manifestDependencies(root, path, ecosystem))) byName.set(name, [...(byName.get(name) ?? []), path]);
   }
-  return { files, dependencies, notScanned, git };
+  return { ...listing, dependencies };
 }
 
 /** How many characters the glob token at `index` spans: `**\/`, `**`, a whole `{…}` group, or one character. */
@@ -384,9 +393,12 @@ export function matchFolder(match: RulePackMatch, scan: RepositoryScan): string 
   return commonDirectory(match.any.flatMap(signal => signalEvidence(signal, scan)));
 }
 
-/** A file glob as a person reads it: `**\/tests/**` is `tests/`, `**\/*.py` is `*.py`. */
+/**
+ * A file glob as a person reads it, `.gitignore` style: `**\/tests/**` is `tests/` and `**\/*.py` is `*.py`, at any
+ * depth; a glob anchored at the repository root keeps a leading `/` (`tests/**` is `/tests/`).
+ */
 function shownGlob(glob: string): string {
-  const name = glob.startsWith("**/") ? glob.slice(3) : glob;
+  const name = glob.startsWith("**/") ? glob.slice(3) : `/${glob}`;
   return name.endsWith("/**") ? name.slice(0, -2) : name;
 }
 
@@ -405,8 +417,9 @@ interface FileSignalPatterns {
 
 /**
  * The exclude glob that leaves `path` out, taken from the file signal whose include glob names it most closely, the
- * longest (a Blade view is a PHP file too, and the Blade signal's excludes say why it is skipped); undefined for a
- * file no signal looks for, or one a signal does not exclude.
+ * longest. Two signals of one pack can look for one file, each excluding it for a different reason: the Complexity
+ * pack's PHP signal excludes `*.blade.php`, which its Blade signal looks for, so `tests/view.blade.php` is out because
+ * of the Blade signal's `tests/`. Undefined for a file no signal looks for, or one a signal does not exclude.
  */
 function excludingGlob(path: string, signals: readonly FileSignalPatterns[]): string | undefined {
   let closest: { readonly length: number; readonly signal: FileSignalPatterns } | undefined;
@@ -419,11 +432,11 @@ function excludingGlob(path: string, signals: readonly FileSignalPatterns[]): st
 }
 
 /**
- * How close `match` came to fitting: undefined when it fits, or when the repository has none of the files it looks
- * for. Dependency signals never come close: a dependency is in a manifest or not.
+ * How close `match`, which does not fit the scan, came to fitting: undefined when the repository has none of the files
+ * it looks for. For a pack that fits, only its excluded files are counted. Dependency signals never come close: a
+ * dependency is in a manifest or not.
  */
 export function nearMiss(match: RulePackMatch, scan: RepositoryScan): NearMiss | undefined {
-  if (match.any.some(signal => signalEvidence(signal, scan).length > 0)) return undefined;
   const signals = match.any.flatMap((signal): FileSignalPatterns[] => "dependencies" in signal ? [] : [{
     includes: signal.files.map(glob => ({ length: glob.length, pattern: globPattern([glob]) })),
     excludes: (signal.exclude ?? []).map(glob => ({ glob: shownGlob(glob), pattern: globPattern([glob]) })),

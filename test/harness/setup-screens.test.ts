@@ -364,14 +364,16 @@ describe("T4 / C4 recommended rule packs", () => {
 
   type NoFitExplanation = NonNullable<RecommendedPacksInput["nothingFits"]>;
   const NO_FIT: NoFitExplanation = {
+    fileCount: 13,
     endings: [{ ending: ".py", fileCount: 9 }, { ending: ".md", fileCount: 4 }],
     notScanned: [{ folder: "fixtures", fileCount: 2 }],
     git: true,
+    stoppedEarly: false,
     nearMisses: [{ name: "Python", fileCount: 9, excludedBy: [{ glob: "tests/", fileCount: 6 }, { glob: "scripts/", fileCount: 3 }] }],
     packs: [
-      { name: "Python", files: ["*.py", "*.pyi"], dependencies: [] },
-      { name: "TypeScript", files: ["*.ts", "*.mts", "*.cts", "*.tsx"], dependencies: ["typescript"] },
-      { name: "Node.js", files: ["*.cjs", "*.mjs"], dependencies: ["express", "koa", "fastify"] },
+      { id: "python", name: "Python", files: ["*.py", "*.pyi"], dependencies: [] },
+      { id: "typescript", name: "TypeScript", files: ["*.ts", "*.mts", "*.cts", "*.tsx"], dependencies: ["typescript"] },
+      { id: "node", name: "Node.js", files: ["*.cjs"], dependencies: ["express", "koa", "fastify"] },
     ],
   };
   const noFit = (nothingFits: Partial<NoFitExplanation>): string =>
@@ -382,14 +384,14 @@ describe("T4 / C4 recommended rule packs", () => {
       "Scanned acme-web. None of Rerail’s rule packs fit it.",
       "",
       "  Found           .py 9 · .md 4",
-      "  Not scanned     fixtures/ (2) and files Git ignores",
+      "                  from Git’s list of files, which leaves out what Git ignores",
+      "  Not scanned     fixtures/ (2)",
       "  Closest         Python excludes the 9 files it looks for: tests/ (6),",
       "                  scripts/ (3)",
       "  Packs look for  Python      *.py, *.pyi",
       "                  TypeScript  *.ts, *.mts, *.cts, +1 more,",
       "                              dependency: typescript",
-      "                  Node.js     *.cjs, *.mjs,",
-      "                              dependencies: express, koa, +1 more",
+      "                  Node.js     *.cjs, dependencies: express, koa, +1 more",
     ].join("\n");
     expect(stripAnsi(renderRecommendedPacks({ ...PACKS, packs: [], nothingFits: NO_FIT }, "terminal"))).toContain(`● ${block}`);
     expect(noFit({})).toContain(block);
@@ -398,13 +400,21 @@ describe("T4 / C4 recommended rule packs", () => {
   it("lists every file ending, so a lone source file among many others is not hidden", () => {
     const endings = [[".md", 40], [".json", 12], [".yaml", 6], [".toml", 2], [".go", 1]] as const;
     expect(noFit({ endings: endings.map(([ending, fileCount]) => ({ ending, fileCount })) })).toContain("  Found           .md 40 · .json 12 · .yaml 6 · .toml 2 · .go 1\n");
-    expect(noFit({ endings: [] })).toContain("  Found           no files\n");
   });
 
-  it("says Git-ignored files were not scanned only under Git, and leaves the row out when nothing was skipped", () => {
-    expect(noFit({ notScanned: [] })).toContain("  Not scanned     files Git ignores\n");
-    expect(noFit({ notScanned: [{ folder: "node_modules" }], git: false })).toContain("  Not scanned     node_modules/\n");
-    expect(noFit({ notScanned: [], git: false })).not.toContain("Not scanned");
+  it("counts the files it found when none has an ending, and says no files only when there were none", () => {
+    expect(noFit({ fileCount: 4, endings: [], git: false })).toContain("  Found           4 files, none with an ending\n");
+    expect(noFit({ fileCount: 0, endings: [], git: false })).toContain("  Found           no files\n");
+  });
+
+  it("says how the scan read the repository: Git's list, or a walk that stopped early", () => {
+    expect(noFit({ git: false })).not.toContain("Git’s list");
+    expect(noFit({ git: false, stoppedEarly: true, fileCount: 200_000 })).toContain("                  the scan stopped early, after 200,000 files\n");
+  });
+
+  it("names the folders it did not scan, and leaves the row out when it skipped none", () => {
+    expect(noFit({ notScanned: [{ folder: "node_modules" }, { folder: "fixtures" }], git: false })).toContain("  Not scanned     node_modules/, fixtures/\n");
+    expect(noFit({ notScanned: [] })).not.toContain("Not scanned");
   });
 
   it("names at most two closest packs and three excludes each, counting the other excludes, and leaves the row out when none came close", () => {
@@ -420,8 +430,15 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(noFit({ nearMisses: [] })).not.toContain("Closest");
   });
 
+  it("wraps a long dependency list within the column", () => {
+    const packs = [{ id: "web", name: "Third Party Web Framework", files: [], dependencies: ["@nestjs/core", "@feathersjs/feathers", "a", "b"] }];
+    const rows = noFit({ packs }).split("\n").filter(row => row.startsWith(" ".repeat(18)) && /@|\+2 more/u.test(row));
+    expect(rows.every(row => row.length <= 80)).toBe(true);
+    expect(rows.join(" ").replace(/\s+/gu, " ")).toContain("dependencies: @nestjs/core, @feathersjs/feathers, +2 more");
+  });
+
   it("caps the pack name column, giving a name too long for it a row of its own", () => {
-    const packs = [{ name: "An Exceedingly Long Third Party Pack", files: ["*.x"], dependencies: [] }, NO_FIT.packs[0]!];
+    const packs = [{ id: "long", name: "An Exceedingly Long Third Party Pack", files: ["*.x"], dependencies: [] }, NO_FIT.packs[0]!];
     // The column is 24 characters and the gap after it: 26.
     expect(noFit({ packs })).toContain([
       "  Packs look for  An Exceedingly Long Third Party Pack",
