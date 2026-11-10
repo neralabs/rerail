@@ -396,9 +396,16 @@ impl View {
             .zip(self.canonical_root.as_ref())
             .and_then(|(root, canonical_root)| {
                 let canonical = root.join(relative).canonicalize().ok()?;
-                let inside = canonical.strip_prefix(canonical_root).ok()?;
-                let inside = inside.to_str()?;
-                Some(self.absolute(inside))
+                // Its names joined by `/`, as every path here is: Windows separates the ones
+                // disk gives by `\`.
+                let inside = canonical
+                    .strip_prefix(canonical_root)
+                    .ok()?
+                    .components()
+                    .map(|name| name.as_os_str().to_str())
+                    .collect::<Option<Vec<_>>>()?
+                    .join("/");
+                Some(self.absolute(&inside))
             })
             .unwrap_or_else(|| absolute.to_owned());
         cache.bound();

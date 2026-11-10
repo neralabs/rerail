@@ -334,7 +334,7 @@ fn a_windows_root_is_read_at_a_slash_separated_path() {
 }
 
 /// Below a Windows root, a drive path or the verbatim path `canonicalize` gives, a relative file
-/// and an installed package resolve on disk.
+/// and an installed package resolve on disk, each at its `/`-separated path.
 #[cfg(windows)]
 #[test]
 fn a_windows_root_resolves_the_files_on_disk_below_it() {
@@ -351,10 +351,15 @@ fn a_windows_root_resolves_the_files_on_disk_below_it() {
     let drive = PathBuf::from(verbatim.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
     for root in [&drive, &verbatim] {
         let view = on_disk(root);
-        for specifier in ["./b.mjs", "./lib/c.js", "pkg"] {
+        for (specifier, file) in [
+            ("./b.mjs", "b.mjs"),
+            ("./lib/c.js", "lib/c.js"),
+            ("pkg", "node_modules/pkg/main.js"),
+        ] {
+            let found = target(&view, "a.mjs", specifier, Style::Import);
             assert_eq!(
-                outcome(&view, "a.mjs", specifier, Style::Import),
-                (true, false),
+                (found.file_path.as_deref(), found.error.as_deref()),
+                (Some(view.absolute(file).as_str()), None),
                 "{specifier} below {root:?}"
             );
         }
