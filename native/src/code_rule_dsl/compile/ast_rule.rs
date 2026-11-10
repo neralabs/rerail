@@ -1345,6 +1345,20 @@ fn reached_tokens(key: &str, relation: &Value, kind: Option<&str>, language: Gra
 /// `None` where the target has no regex, or what it asks besides holds of named nodes only.
 fn reached_tokens_where(key: &str, relation: &Value, kind: Option<&str>, language: GrammarDialect, path: &str, gaps: &mut Vec<String>, utils: &UtilScope) -> Result<Option<AstMatcher>> {
     let Some(object) = relation.as_object() else { return Ok(None) };
+    // An `all` of parts with distinct keys reads as their one object, as `token_reach` reads it.
+    let mut flat = object.clone();
+    if let Some(parts) = object.get("all").and_then(Value::as_array) {
+        flat.remove("all");
+        for part in parts {
+            let Some(part) = part.as_object() else { return Ok(None) };
+            for (key, value) in part {
+                if flat.insert(key.clone(), value.clone()).is_some() {
+                    return Ok(None);
+                }
+            }
+        }
+    }
+    let object = &flat;
     let Some(regex) = object.get("regex").and_then(Value::as_str) else { return Ok(None) };
     let rest: serde_json::Map<String, Value> = object.iter().filter(|(key, _)| !matches!(key.as_str(), "stopBy" | "field" | "regex")).map(|(k, v)| (k.clone(), v.clone())).collect();
     // A named kind or a pattern never holds at a token.
