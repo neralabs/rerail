@@ -300,6 +300,10 @@ Still to come:
 
 ## The order
 
+The plan for what is left, with every cache as facts (decision 0102) and the sibling worktrees' work, is
+t32 (`t32-the-rest-of-t28-a-plan.md`).
+
+
 | step | where | what | measures |
 |---|---|---|---|
 | 1 | engine, done | chained phases, keyed by upstream exports; cycles refused; nested runs profiled | phase tests |
