@@ -10274,3 +10274,39 @@ The complete first-ten production/update refresh and remaining 90 migrations are
 Final advanced to `04173bf00` during this frozen cohort. The live alignment check correctly requests another merge.
 These results certify Final 957; they do not certify that newer engine.
 
+# Next native projection boundary
+
+The remaining Surface CLI helper calls `project_serverplan_facts_from_view` through its test adapter.
+That adapter sorts files and calls the Python model validator. The supplied-fact reporter no longer uses it.
+Close this boundary before admitting the rule:
+
+1. Add a projection entry point over the existing native model validation relations.
+2. Return file order and complete model values, including native integer and Boolean coercion.
+3. Preserve missing fields, defaults, nested model types, tuple order, duplicate rows, and field-presence metadata.
+4. Construct passive DTOs from those native values. Do not let a Python validator determine rule results.
+5. Move message path joining to native rules. Preserve the existing CLI callback protocol.
+6. Run full projection parity, disabled-coercion controls, both original-suite APIs, and the CLI corpus.
+
+The five pinned models need a root and one child-model level. Their primitive tuples add one array level.
+Use bounded render stages over these known schema levels; a generic graph scheduler is unnecessary.
+Keep original raw values for exception details. Use typed scalar columns for native coercion and rendering.
+Do not restore Python detection, an older engine, or an optional execution path.
+
+# Final 041 root integration checkpoint, 2026-11-09
+
+Merged Final `04173bf00` without conflicts after committing the complete Final 957 reporter receipts.
+Retained its ordered document builders, process thread setting, and inlined-relation retention changes.
+Reviewed the automatic changes to `plan.rs` and `plan/corpus.rs`; the other 41 local extension files remain unchanged.
+
+The optimized root CLI build took 148.988 seconds. The root unit build took 96.733 seconds.
+Frozen artifacts: `cli-f67f15aeb0d8acc1` and `unit-73f4ba5504a762cd`.
+All 131 focused engine tests pass, including three ordering tests, one thread-budget test, and two retention tests.
+Two existing report/writer helpers remain ignored. All 229 tooling tests pass.
+The nine original Surface workspace cases and ten supplied-fact cases also pass on this engine.
+The focused receipt is `rr-final041-focused-engine-validation.json.gz`.
+It includes builds, native observations, programs, and harness snapshots. It records unit outcomes without retaining full stdout.
+
+The inventory audit passes. The full migration gate remains red: 93 drafts and five absent translations still lack full admission evidence.
+The 450-execution complete reporter receipts remain bound to Final 957; they are not relabeled as Final 041 results.
+The shared project helper and complete first-ten cohort refresh remain next.
+

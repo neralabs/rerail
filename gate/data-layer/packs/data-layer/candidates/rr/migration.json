@@ -3830,7 +3830,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "04173bf00bc872fdfe1c9b602e0867f2f0f9d86b",
-    "status": "Final 04173bf00 merged, preserving inlined-relation retention and ordered document builders. Root rebuild and focused validation pending. Last complete reporter cohort: Final 957, 450 native executions.",
+    "status": "Final 04173bf00 root CLI registered. 131 focused engine tests and 229 tooling tests pass; nine original Surface workspace cases and ten supplied-fact cases pass. Complete 450-execution reporter receipts remain on Final 957. Full-native admission remains open.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4069,17 +4069,17 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "a51e3ecb498185dba6ce5f15f8c31e28ec25230d",
-      "upstreamCommit": "957f1352013cd1993a84e1ac97ae5a80ac18d68e",
+      "engineCommit": "8ef73b3b2e632b58a084dce0cd2b69d2e16b1a35",
+      "upstreamCommit": "04173bf00bc872fdfe1c9b602e0867f2f0f9d86b",
       "sourceTrees": {
-        "native": "015cd67a676be0289ad44bdaf4df5a5cfbc6587f",
+        "native": "69a8a79edf809fcfc36d0d60498bff4c9f60015d",
         "accel": "875e8daa91a43d3e3b1f8bc6f710b7bf6379d663",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-42fa8363b44ea304",
-      "sha256": "42fa8363b44ea304bd5661e07606327c5edb93215ccb40556c24096a59a27b6d",
+      "path": ".rerail/modern-engine-alignment/cli-f67f15aeb0d8acc1",
+      "sha256": "f67f15aeb0d8acc147eb4c26d8f7fdbf162340eda334bf829ffd5041b5ce7782",
       "command": [
         "cargo",
         "build",
@@ -4092,7 +4092,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 203.563
+      "seconds": 148.988
     }
   },
   "engineSourceSnapshots": [
