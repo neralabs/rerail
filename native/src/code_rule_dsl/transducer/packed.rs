@@ -237,7 +237,7 @@ pub(in crate::code_rule_dsl) use compilation::PlanId;
 mod native_cpu;
 mod native_cpu_capture;
 mod native_cpu_capture_pair;
-use rerail_tier1::native_cpu_codegen;
+use rerail_compiler::native_cpu_codegen;
 mod native_cpu_lua;
 mod native_cpu_output;
 mod native_cpu_output_sort;
@@ -247,10 +247,10 @@ mod native_cpu_regex;
 mod native_cpu_scheduler;
 mod native_cpu_value;
 // Block programs' Cranelift definer (`block`).
-use rerail_tier1::native_cpu_block;
-use rerail_tier1::native_cpu_lanes;
-use rerail_tier1::native_cpu_pressure;
-use rerail_tier1::native_cpu_shape;
+use rerail_compiler::native_cpu_block;
+use rerail_compiler::native_cpu_lanes;
+use rerail_compiler::native_cpu_pressure;
+use rerail_compiler::native_cpu_shape;
 mod native_cpu_stream;
 mod native_ir;
 mod output;
@@ -267,17 +267,16 @@ pub(in crate::code_rule_dsl) mod fusion;
 pub(in crate::code_rule_dsl) mod rir;
 mod value;
 // Block programs: the side program over source bytes (docs/parser-generators/12-what-is-wanted.md).
-pub(in crate::code_rule_dsl) use rerail_tier1::block;
+pub(in crate::code_rule_dsl) use rerail_compiler::block;
 pub(in crate::code_rule_dsl) mod regex_block;
 #[cfg(test)]
 mod block_tests;
 // The Bitlex compiler: a Bitlex file to a block program (docs/parser-generators/13-tape-on-the-gpu.md).
 mod bitlex_compile;
+// The tree section's compilers, the compiler crate's.
+use rerail_compiler::{bitlex_prove, bitlex_tier2, grammar};
 // The `.rr` parser: the Bitlex grammar compiled, the engine's parser for what it refuses.
 pub(in crate::code_rule_dsl) mod rr_parser;
-mod grammar;
-mod bitlex_prove;
-mod bitlex_tier2;
 pub(in crate::code_rule_dsl) mod stream;
 #[cfg(test)]
 mod bitlex_compile_tests;
@@ -1017,7 +1016,7 @@ pub(super) fn interpreter_reference(
 }
 
 // The transducer's errors, shared with tier 1's crate.
-pub(in crate::code_rule_dsl) use rerail_tier1::Error;
+pub(in crate::code_rule_dsl) use rerail_compiler::Error;
 
 #[derive(Clone, Copy)]
 struct Path {

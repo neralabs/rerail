@@ -486,7 +486,7 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
 }
 
 // The block programs' native IR (`BlockNative`) is tier 1's, in its own crate.
-pub(super) use rerail_tier1::block_native::*;
+pub(super) use rerail_compiler::block_native::*;
 
 #[cfg(test)]
 mod tests {

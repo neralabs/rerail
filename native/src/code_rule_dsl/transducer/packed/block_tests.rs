@@ -4,8 +4,8 @@
 //! against a byte-by-byte reference that exists only here, and checked for what it lowers to:
 //! straight bit operations.
 
-// The IR text's helpers, tier 1's (`rerail_tier1::clif_text`).
-pub(super) use rerail_tier1::clif_text::{hot_loop, loop_costs, machine_loop, opcode};
+// The IR text's helpers, tier 1's (`rerail_compiler::clif_text`).
+pub(super) use rerail_compiler::clif_text::{hot_loop, loop_costs, machine_loop, opcode};
 use super::*;
 use super::block::BlockRun;
 
@@ -345,7 +345,7 @@ fn eq_lowers_to_straight_bit_operations() {
 /// compare and a ballot. Neither loops over bytes.
 #[test]
 fn interpreters_have_no_byte_loops() {
-    let cpu = include_str!("../../../../crates/tier1/src/block.rs");
+    let cpu = include_str!("../../../../crates/compiler/src/block.rs");
     let kernel = &cpu[cpu.find("pub fn eq(block").expect("the eq kernel")..];
     let kernel = &kernel[..kernel.find("\n}\n").expect("its end")];
     for word in ["for ", "while ", "loop {", ".iter()", "[j]", "[i]"] {

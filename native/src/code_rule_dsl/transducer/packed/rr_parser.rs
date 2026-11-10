@@ -236,8 +236,8 @@ pub(super) mod tests {
             ("native_cpu_stream.rs", "fn sized(&self"),
             ("rr_parser.rs", "pub(in crate::code_rule_dsl) fn tapes("),
             ("rr_parser.rs", "fn metal_tapes("),
-            ("../../../../crates/tier1/src/native_cpu_block.rs", "pub fn new(program: &CompiledBlock, files"),
-            ("../../../../crates/tier1/src/native_cpu_block.rs", "pub fn call(&mut self, program: &CompiledBlock)"),
+            ("../../../../crates/compiler/src/native_cpu_block.rs", "pub fn new(program: &CompiledBlock, files"),
+            ("../../../../crates/compiler/src/native_cpu_block.rs", "pub fn call(&mut self, program: &CompiledBlock)"),
         ];
         let walks = [".iter(", ".iter_mut(", ".into_iter(", ".chunks", ".windows(", ".flatten(", ".map(", ".fold(", ".for_each(", ".bytes()", ".chars()", ".collect", ".position(", ".find(", ".any(", ".all(", ".filter(", ".sum(", ".count()", "while ", "loop {", "nodes()"];
         let loops_allowed = ["for file in files", "for entry in &program.entries"];
