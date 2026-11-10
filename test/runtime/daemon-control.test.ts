@@ -59,6 +59,7 @@ import {
   startDaemonForPackage,
   stillRunningMessage,
   stopDaemon,
+  stopFoundDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
@@ -619,6 +620,33 @@ describe("a state file Windows left behind", () => {
     expect(signals.filter(signal => signal !== 0)).toEqual([]);
     // A daemon Windows ends leaves its main-instance record naming a pid Windows soon reuses; the stop removes it.
     expect(forgotten).toEqual([DEAD_PID]);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
+  it("stops the daemon a lookup found without looking it up, or probing it, again", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native" })));
+    let running = true;
+    const probes: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      if (String(url).endsWith("/native/shutdown")) {
+        running = false;
+        return Response.json({ stopping: true }, { status: 202 });
+      }
+      probes.push(String(url));
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    const machine = {
+      ...windows([PIPE_NAME]),
+      kill: (_pid: number, signal?: string | number) => {
+        if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+    };
+    const found = await lookupDaemon(home, machine);
+    if (found.status === "absent") throw new Error("the recorded daemon was not found");
+    await stopFoundDaemon(home, found, machine);
+    expect(probes).toHaveLength(1);
     expect(existsSync(stateFile)).toBe(false);
   });
 

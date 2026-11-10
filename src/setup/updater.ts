@@ -23,7 +23,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn } from "../engine/child-process.js";
 import { removeScratch, renameWithRetry } from "../engine/file-replace.js";
-import { DAEMON_STATE_FILE, daemonUsesPackageRoot, readDaemonState, stopDaemon } from "../runtime/daemon-control.js";
+import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
@@ -349,8 +349,8 @@ function batchPath(path: string, rerailHome: string): string | undefined {
  */
 async function stopDaemonFrom(home: string, packageRoot: string, platform: NodeJS.Platform): Promise<void> {
   if (platform !== "win32") return;
-  const state = await readDaemonState(join(home, DAEMON_STATE_FILE));
-  if (state !== undefined && await daemonUsesPackageRoot(state, packageRoot)) await stopDaemon(home);
+  const lookup = await lookupDaemon(home);
+  if (lookup.status !== "absent" && await daemonUsesPackageRoot(lookup.state, packageRoot)) await stopFoundDaemon(home, lookup);
 }
 
 async function repairManagedInstallation(packageRoot: string): Promise<SqliteRepairResult> {

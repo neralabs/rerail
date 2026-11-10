@@ -670,7 +670,7 @@ export async function startDaemonForPackage(control: DaemonControl, options: Dae
       if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
       }
-      await stopDaemon(control.home);
+      await stopFoundDaemon(control.home, lookup);
       return await spawnDaemon(control, options);
     }
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
@@ -960,9 +960,18 @@ async function requestDaemonShutdown(state: DaemonState): Promise<boolean> {
 export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
   const lookup = await lookupDaemon(home, machine);
   if (lookup.status === "absent") return "not-running";
-  const pid = lookup.state.pid;
+  await stopFoundDaemon(home, lookup, machine);
+  return "stopped";
+}
+
+/** A daemon a lookup found alive: running, unresponsive or refusing the capability. */
+export type FoundDaemon = Exclude<DaemonLookup, { status: "absent" }>;
+
+/** Stops the daemon `found`, which a {@link lookupDaemon} of `home` returned, as {@link stopDaemon} does. */
+export async function stopFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine = THIS_MACHINE): Promise<void> {
+  const pid = found.state.pid;
   const alive = (): boolean => processAlive(pid, machine.kill);
-  if (machine.platform !== "win32" || !(await requestDaemonShutdown(lookup.state))) signalDaemon(pid, "SIGTERM", machine);
+  if (machine.platform !== "win32" || !(await requestDaemonShutdown(found.state))) signalDaemon(pid, "SIGTERM", machine);
   const deadline = Date.now() + STOP_TIMEOUT_MS;
   while (alive() && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
   if (alive()) {
@@ -976,7 +985,6 @@ export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MAC
   // always does, leaves both behind, and a record naming a pid Windows reuses would keep the uninstall from the cache.
   await rm(join(home, DAEMON_STATE_FILE), { force: true });
   if (machine.platform === "win32") machine.forgetMainInstanceHolder(pid);
-  return "stopped";
 }
 
 /**
