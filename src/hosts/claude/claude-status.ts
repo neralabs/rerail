@@ -15,11 +15,12 @@ import { REQUIRED_NODE_MAJOR } from "../../engine/package-root.js";
  * The checkout's start state from the database, read-only: the status line refreshes often and must never
  * take the write lock, so where only a writable open could read the database (no schema yet) it cannot say
  * (undefined, "not running").
- * Loaded only when no daemon answers: the reader links Drizzle and SQLite, about 170 ms per status-line run.
+ * Loaded only when no daemon answers, as one does not while it is busy: the reader links Drizzle and SQLite. It is the
+ * bundled `start-state-reader.js`, so the run resolves no Drizzle module at run time (285 MB when it did).
  */
 async function localStartState(root: string): Promise<RepositoryStartState | undefined> {
   // Static import cannot work here: it would load Drizzle and SQLite on every status-line run, daemon or not.
-  const reader = await import("../../runtime/repository-start.js");
+  const reader = await import("../../runtime/start-state-reader.js");
   return reader.readOnlyStartState(root);
 }
 

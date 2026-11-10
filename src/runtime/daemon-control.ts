@@ -652,9 +652,10 @@ export async function daemonUsesPackageRoot(daemon: Pick<DaemonState, "packageRo
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
  * another package, which is how a hook keeps an older daemon from receiving fields it predates; a client that
  * outlives an update passes false after its first event so it keeps using the newer daemon instead of displacing
- * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon.
+ * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon. A daemon that is alive but busy is waited for
+ * (`patientLookup`), until `deadline` (epoch ms) when the caller names one, as a hook does.
  */
-export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promise<EngineEndpoint> {
+export async function daemonEngineEndpoint(replaceOtherPackage: boolean, deadline?: number): Promise<EngineEndpoint> {
   const home = defaultRerailHome();
   const packageRoot = PACKAGE_ROOT;
   const control = { home, packageRoot };
@@ -662,7 +663,7 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
   let daemon: RunningDaemon | undefined;
   try {
     if (process.env.RERAIL_AUTOSTART === "0") {
-      const lookup = await patientLookup(home);
+      const lookup = await patientLookup(home, undefined, deadline);
       if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
       daemon = lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
     } else {
@@ -670,7 +671,7 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
     }
   } catch (error) {
     if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
-    const answered = await patientLookup(home, error.lookup);
+    const answered = await patientLookup(home, error.lookup, deadline);
     if (answered.status !== "running") throw error;
     daemon = { state: answered.state, health: answered.health };
   }
@@ -682,30 +683,42 @@ export async function daemonEngineEndpoint(replaceOtherPackage: boolean): Promis
 }
 
 /**
- * The engine endpoint for a hook after a session's start, or undefined when no daemon is alive to take the event. A
- * daemon that is down is not started: each tool call then costs one failed probe instead of an autostart that can
- * outlast the coding agent's hook timeout (design N11). A busy one is waited for (`patientLookup`). A healthy daemon
+ * The daemon a hook found after a session's start: its engine endpoint, or why no daemon takes the event. `absent`
+ * means none runs; `unresponsive` and `refused` name a daemon that is alive, which a start would only refuse to replace.
+ */
+export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclude<DaemonLookup, { status: "running" }>;
+
+/**
+ * The engine endpoint for a hook after a session's start, or why there is none. A daemon that is down is not started:
+ * each tool call then costs one failed probe instead of an autostart that can outlast the coding agent's hook timeout
+ * (design N11). A busy one is waited for (`patientLookup`), until `deadline` when the hook names one. A healthy daemon
  * from another package (an update installed mid-session) is replaced as `daemonEngineEndpoint(true)` replaces it, so
  * steering carries on with this package's engine.
  */
-export async function runningDaemonEngineEndpoint(): Promise<EngineEndpoint | undefined> {
-  const lookup = await patientLookup(defaultRerailHome());
-  if (lookup.status !== "running") return undefined;
-  return await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true);
+export async function runningDaemonEngineEndpoint(deadline?: number): Promise<HookDaemon> {
+  const lookup = await patientLookup(defaultRerailHome(), undefined, deadline);
+  if (lookup.status !== "running") return lookup;
+  const endpoint = await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT) ? engineEndpointOf(lookup.state) : await daemonEngineEndpoint(true, deadline);
+  return { status: "running", endpoint };
 }
 
 /** How long, in all, a hook's second health probe waits for a busy daemon to answer as itself. */
 const BUSY_DAEMON_WAIT_MS = 10_000;
+/** How long, in all, a hook waits for a busy daemon from the event's arrival: the first probe and the busy wait after it. */
+export const HOOK_DAEMON_WAIT_MS = PROBE_TIMEOUT_MS + BUSY_DAEMON_WAIT_MS;
 
 /**
  * The daemon lookup a hook acts on. A daemon whose pid is alive but which missed the first probe's 2 s, as one does
- * while its one event loop runs an audit or a long garbage collection, is probed once more with up to
- * `BUSY_DAEMON_WAIT_MS`; only an answer from the recorded pid makes it running. Nothing, the capability included, goes
- * to its engine socket before that answer: a pid Windows reused, or a socket another process holds, is not the daemon.
+ * while its one event loop runs an audit or a long garbage collection, is probed once more, with up to
+ * `BUSY_DAEMON_WAIT_MS` or until `deadline` (epoch ms) when one is given; only an answer from the recorded pid makes it
+ * running. Nothing, the capability included, goes to its engine socket before that answer: a pid Windows reused, or a
+ * socket another process holds, is not the daemon.
  */
-async function patientLookup(home: string, first?: DaemonLookup): Promise<DaemonLookup> {
+async function patientLookup(home: string, first?: DaemonLookup, deadline?: number): Promise<DaemonLookup> {
   const lookup = first ?? await lookupDaemon(home);
-  return lookup.status === "unresponsive" ? await lookupDaemon(home, THIS_MACHINE, BUSY_DAEMON_WAIT_MS) : lookup;
+  if (lookup.status !== "unresponsive") return lookup;
+  const wait = deadline === undefined ? BUSY_DAEMON_WAIT_MS : deadline - Date.now();
+  return wait > 0 ? await lookupDaemon(home, THIS_MACHINE, wait) : lookup;
 }
 
 /**

@@ -43,7 +43,10 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
   const servers: Server[] = [];
   afterEach(async () => {
     vi.unstubAllEnvs();
-    await Promise.all(servers.splice(0).map(server => new Promise(resolve => server.close(resolve))));
+    await Promise.all(servers.splice(0).map(server => {
+      server.closeAllConnections();
+      return new Promise(resolve => server.close(resolve));
+    }));
     await closeNativeTestDaemons();
   });
 
@@ -118,6 +121,70 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     await expect(runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath)).rejects.toThrow();
     expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath)).toEqual({});
     expect(received).toEqual([]);
+  });
+
+  /** A listener at a new loopback URL that takes every request and answers none: a daemon whose event loop is held. */
+  async function silentFront(): Promise<string> {
+    const server = createHttpServer(() => undefined);
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  }
+
+  it("waits out a silent daemon once for a session's concurrent hooks, not once per hook in turn", { timeout: 90_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const common = { session_id: "parallel-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    // Parallel tool calls and subagents send one session's PreToolUse hooks at once, while a walk holds the daemon.
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const started = performance.now();
+    const toolCall = async (id: string): Promise<number> => {
+      await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: id, tool_input: { file_path: "a.ts" } }, daemonPath);
+      return performance.now() - started;
+    };
+    const finished = await Promise.all([toolCall("t1"), toolCall("t2"), toolCall("t3")]);
+    // Each hook gives up on the silent daemon about 12 s after its event arrives. Under the session's lock each would
+    // begin its wait when the one before it gave up, and the three would finish 2 s or more apart.
+    expect(Math.max(...finished) - Math.min(...finished)).toBeLessThan(1_000);
+  });
+
+  it("gives up on a silent daemon 12 s after the event arrives, the start check's read of it included", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const common = { session_id: "silent-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const started = performance.now();
+    expect(await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "t1", tool_input: { file_path: "a.ts" } }, daemonPath)).toEqual({});
+    // The start check waited 2 s for the daemon, then the endpoint lookup waited its own 2 s and 10 s: about 14.3 s.
+    expect(performance.now() - started).toBeLessThan(13_000);
+  });
+
+  // RERAIL_AUTOSTART=1 is a person's session, where the start finds the daemon alive and waits for it; 0 starts none.
+  it.each(["1", "0"])("gives up on a silent daemon at a session's start 12 s after the event arrives (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", autostart);
+    await startNativeTestDaemon(root);
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const { embedder: _embedder, databasePath: _databasePath, ...daemonPath } = hookOptions(root);
+    const started = performance.now();
+    await expect(runClaudeHook({ session_id: "silent-start", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonPath))
+      .rejects.toThrow(/is alive but not answering/u);
+    // The start check waited 2 s for the daemon, then the start's lookup waited its own 2 s and 10 s: about 14 s, and
+    // 24 s with RERAIL_AUTOSTART=0, whose lookup waited the 10 s twice.
+    expect(performance.now() - started).toBeLessThan(13_000);
   });
 });
 
