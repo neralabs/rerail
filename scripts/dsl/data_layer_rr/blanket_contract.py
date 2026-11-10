@@ -44,6 +44,14 @@ def cases(module):
     for group in ['clean','both','methods','references']:
         for args in [[],['--check']]:add('cli','cli-'+group+repr(args),group=group,args=args)
     for arg in ['--help','--bad-flag']:add('cli','cli-'+arg,group='clean',args=[arg])
+    for i,source in enumerate(['def execute_grammar(): pass\n_ALLOW_DIRECT_EXECUTION\n',
+        'allow_direct_execution=1\ndef execute_grammar(): pass\n_ALLOW_DIRECT_EXECUTION\n']):
+        add('content','content-phase-order-'+str(i),source=source,disk=source)
+        add('facts','facts-phase-order-'+str(i),source=source)
+    for target in ['.py','tests/sql.py','scripts/lint_impl_direct_execution.py']:
+        add('methods','target-methods-'+target,target=target,source='def execute_grammar(): pass\n')
+        add('content','target-content-'+target,target=target,source='execute_grammar',disk='def execute_grammar(): pass\n')
+    add('fact-batch','fact-batch-groups')
     add('configuration','configuration')
     return rows
 
@@ -54,13 +62,28 @@ def exercise(module,case,temporary):
         path.parent.mkdir(parents=True,exist_ok=True)
         if text is not None:path.write_text(text,encoding='utf-8')
     with contextlib.ExitStack() as stack:
-        kind=case['kind'];target=root/module.SQL_CONNECTION_FILE
+        kind=case['kind']
+        if case.get('target'):stack.enter_context(patch.object(module,'SQL_CONNECTION_FILE',case['target']))
+        target=root/module.SQL_CONNECTION_FILE
         if kind in {'methods','facts'}:
             path=target
             if case.get('file_kind')=='directory':path.mkdir(parents=True)
             elif case.get('file_kind')=='invalid-utf8':path.parent.mkdir(parents=True);path.write_bytes(b'\xff')
             else:write(path,case['source'])
             action=lambda:module.check_no_public_grammar_methods(root) if kind=='methods' else module._facts_for_files(root,(path,))
+        elif kind=='fact-batch':
+            write(target,'_ALLOW_DIRECT_EXECUTION=1\ndef execute_grammar(): pass\n')
+            other=root/'api/a.py';write(other,'\n\n_ALLOW_DIRECT_EXECUTION=1\n')
+            def action():
+                rows=module._facts_for_files(root,(target,other));groups=[];seen=set()
+                for row in rows:
+                    path=row['file_path']
+                    if not groups or path!=groups[-1]['path']:
+                        if path in seen:raise AssertionError('Interleaved collector file groups')
+                        seen.add(path);groups.append(dict(path=path,rows=[]))
+                    groups[-1]['rows'].append(row)
+                # FactEngine completion may permute whole file groups. Retain each complete group and its order.
+                return sorted(groups,key=lambda g:g['path'])
         elif kind=='content':
             path=root/case.get('path',module.SQL_CONNECTION_FILE);write(path,case['disk'])
             action=lambda:module.scan_file_content(root,path,case['source'])
