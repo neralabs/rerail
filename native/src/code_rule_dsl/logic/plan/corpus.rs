@@ -4209,7 +4209,11 @@ fn run_observed(
     // cross-file inputs for the next (`retain`, decision 0077), so it binds them all.
     drop(binding_base);
     let binding_exports = crate::code_rule_dsl::logic::profile::span(|| "bind the exports".into());
-    let one_fixpoint = !cross.program.rules.is_empty() && session.is_none() && {
+    // Without a session, a run with the store keeps its cross-file part as a session does, in the store's frames
+    // (t33 K4): it starts from them and maintains them from the delta of its inputs. `RERAIL_CROSS_K4=off` keeps the
+    // strata as before (whole strata run or kept, `kept_strata`), to compare.
+    let k4 = durable.is_some() && std::env::var("RERAIL_CROSS_K4").map_or(true, |v| v != "off");
+    let one_fixpoint = !cross.program.rules.is_empty() && session.is_none() && !k4 && {
         let bounded = cross_rounds::bound(&cross.program, &split.same_doc)?;
         bounded.hops.is_empty() || cross_rounds::declared(&prog).is_none()
     };
@@ -4357,7 +4361,10 @@ fn run_observed(
         let k = declared.map(cross_rounds::k);
         if bounded.hops.is_empty() || k.is_none() {
             rounds = cross_rounds::Rounds { run: 1, converged: true, ..Default::default() };
-            match session.as_ref().map(|s| &s.cross) {
+            // A run with no session keeps its part in the frames (K4): held here for the run, read from them and
+            // written back to them.
+            let from_frames: Option<std::sync::Mutex<HashMap<[u8; 32], retain::Retained>>> = (session.is_none() && k4).then(Default::default);
+            match session.as_ref().map(|s| &s.cross).or(from_frames.as_ref()) {
                 // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
                 Some(cell) => {
                     // A session maintains its cross-file part from the rows the last run kept: each relation is
@@ -4410,7 +4417,17 @@ fn run_observed(
                     let mut cells = cell.lock().expect("the session's cross-file part");
                     // Taken out while the run uses it; a run that fails leaves no kept part for this program.
                     let mut cell = cells.remove(&ckey);
+                    let frames_space = kept_strata::space(root);
+                    if cell.is_none() && from_frames.is_some() {
+                        let _s = span("the kept part, from the frames");
+                        cell = Some(retain::Retained::from_frames(store, frames_space, ckey, &cross.program)?);
+                    }
                     let cut = retain::cut(cell.as_ref(), ckey, &cross.program, &digests)?;
+                    if let Some(kept) = cell.as_mut().filter(|_| from_frames.is_some()) {
+                        let (rels, rows) = kept.load(store, &cut, &cross.program)?;
+                        crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
+                    }
+                    let was_frames = cell.as_ref().and_then(|k| k.frames().cloned());
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
                     let same = cell.as_ref().map(|kept| kept.same_inputs(ckey, &digests)).unwrap_or_default();
@@ -4910,7 +4927,11 @@ fn run_observed(
                     if recursive_spike::on() {
                         recursive_spike::run(&cross.program, cell.as_ref(), &rows, &cross_inputs, &|a, b| crate::code_rule_dsl::logic::native::component::cat_symbols(&db, a, b));
                     }
-                    let next = retain::after(cell.take(), ckey, digests, &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_program), patched);
+                    let next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_program), patched);
+                    if let Some(was) = &was_frames {
+                        let written = next.write_frames(store, was, &cross.program, &cut, &cross_inputs, &digests)?;
+                        crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
+                    }
                     drop(s);
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
                         format!(
@@ -4930,7 +4951,12 @@ fn run_observed(
                             eprintln!("KEPT {kind}: {rows} rows, values {:.2} MB, levels {:.2} MB, sets and indexes {:.2} MB", values as f64 / 1e6, levels as f64 / 1e6, index as f64 / 1e6);
                         }
                     }
-                    cross_strata = Some(cut.strata);
+                    // Kept across runs in the frames, or in the session.
+                    if from_frames.is_some() {
+                        cross_kept = Some(cut.strata);
+                    } else {
+                        cross_strata = Some(cut.strata);
+                    }
                     cross_maintained = maintained.maintained;
                     cross_recursive = maintained.recursive;
                     cross_derived_again = maintained.derived_again;
@@ -6342,6 +6368,95 @@ outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
         assert!(rows == joined || rows == flipped, "the parts' join is the product: {} rows against {}", joined.len(), rows.len());
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// t33 K4: with no session, a run starts from the cross-file part its store's frames hold and maintains it from
+    /// the delta of its inputs, as a session does from memory. After each edit the findings are those of a run with
+    /// an empty store, and an edit's strata are maintained from deltas; an import cycle made and broken maintains a
+    /// recursive stratum.
+    #[test]
+    fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
+        use crate::code_rule_dsl::typing::file_local::Binding;
+        let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let base = std::env::temp_dir().join(format!("rerail-k4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let out = base.join("out");
+        let findings = || {
+            let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+            rows.sort();
+            rows
+        };
+        // Each run is a new process's as far as the cross-file part goes: no session, the store on disk. One with a
+        // store of its own keeps nothing.
+        let fresh = std::cell::Cell::new(0);
+        let run = |texts: &[&str], src: &std::path::Path, kept: bool| {
+            let path = if kept {
+                base.join("kept.sqlite")
+            } else {
+                fresh.set(fresh.get() + 1);
+                base.join(format!("fresh{}.sqlite", fresh.get()))
+            };
+            super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(path));
+            let report = super::run_all(texts, src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+            (report, findings())
+        };
+        let edit = |texts: &[&str], src: &std::path::Path, edits: &[(&str, &str)]| {
+            let (first, expected) = run(texts, src, true);
+            let (ran, all) = first.cross_kept.expect("a run with a store keeps its cross-file part");
+            assert_eq!(ran, all, "the first run evaluates every stratum");
+            assert_eq!(run(texts, src, false).1, expected);
+            let (mut maintained, mut recursive) = (0, 0);
+            for (path, text) in edits {
+                std::fs::write(src.join(path), text).unwrap();
+                let (report, got) = run(texts, src, true);
+                let (_, want) = run(texts, src, false);
+                assert_eq!(got, want, "after editing {path}, the findings are those of a run with an empty store");
+                eprintln!("{path}: {:?} strata, {:?} maintained (recursive, derived again; {:?}); {} findings", report.cross_kept, report.cross_maintained, report.cross_again, got.len());
+                maintained += report.cross_maintained.0;
+                recursive += report.cross_maintained.1;
+            }
+            (maintained, recursive)
+        };
+        // Joins and negations: two bandit rules.
+        let src = base.join("src");
+        std::fs::create_dir_all(src.join("pkg")).unwrap();
+        std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
+        std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
+        std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
+        std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
+        let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+        let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
+        let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
+        let (maintained, _) = edit(
+            &texts,
+            &src,
+            &[
+                ("other.py", "import json\nimport pickle\njson.loads('1')\npickle.loads(b'2')\n"),
+                ("main.py", "from pkg.loader import load\nload(b'x')\neval('1')\n"),
+                ("pkg/loader.py", "import marshal as p\n\ndef load(b):\n    return p.loads(b)\n"),
+            ],
+        );
+        assert!(maintained > 0, "an edit's strata are maintained from deltas");
+        // Recursion: an import cycle, broken and closed again.
+        let src = base.join("cycle");
+        std::fs::create_dir_all(&src).unwrap();
+        for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from a import z\n"), ("d.py", "x = 1\n")] {
+            std::fs::write(src.join(path), text).unwrap();
+        }
+        let rule = base.join("reach.rr");
+        std::fs::write(
+            &rule,
+            ".policy \"test-import-cycle\" revision 1\n.description \"An import that closes a cycle of imports.\"\n.language python\n.mode steer\n\
+             .scope include \"**/*.py\"\n#include \"python/names.rr\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
+             .decl reach(a: number, b: number)\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
+             .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
+        )
+        .unwrap();
+        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let (_, recursive) = edit(&[program.as_str()], &src, &[("c.py", "from d import z\n"), ("d.py", "from a import w\n"), ("b.py", "x = 2\n"), ("b.py", "from c import y\n")]);
+        assert!(findings().len() >= 3, "the cycle's imports: {:?}", findings());
+        assert!(recursive > 0, "the import cycle's stratum is maintained");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// Decision 0077 §4: with no session, the cross part's strata are kept in the tape cache. A run over unchanged

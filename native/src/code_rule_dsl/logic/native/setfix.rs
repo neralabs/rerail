@@ -1994,6 +1994,16 @@ impl InRel {
         let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
         Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() })
     }
+    /// A relation of `n` rows, flat (`types.len()` values each), as a stored frame gives them (t33 K4): read as a
+    /// relation the run derived.
+    pub fn from_flat(rows: Vec<i64>, n: usize, types: Vec<u8>) -> Arc<InRel> {
+        let k = types.len();
+        Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), set: HashTable::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() })
+    }
+    /// Its columns' value types (the engine's codes).
+    pub fn types(&self) -> &[u8] {
+        &self.types
+    }
     /// Its rows, as a source of columns `names`.
     pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
         Derived::new(Arc::clone(self), Some(names))
