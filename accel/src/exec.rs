@@ -3,10 +3,11 @@
 //! **Jobs.** A [`Batch`] is a level's launches: launches that do not read each other's outputs (decision 0095 §5).
 //! The executor runs them as jobs on the lanes' workers:
 //!
-//! - **The cores** have a pool of [`threads`] workers (`RERAIL_THREADS`, 4 by default), one pool for the process,
-//!   shared by every executor. Each launch placed on the cores is a job of its own, so a batch's launches on the
-//!   cores run on all the pool's threads at once, beside every other batch's. A kernel that splits its work (the
-//!   reference's parallel loops) splits it over the same threads, not over the machine's.
+//! - **The cores** are the process's one pool ([`configure`]: [`threads`] threads, `RERAIL_THREADS`, else the
+//!   machine's cores), shared by every executor and by every other job of the process. Each launch placed on the
+//!   cores is a job of its own, so a batch's launches on the cores run on all the pool's threads at once, beside
+//!   every other batch's and every other job. A kernel that splits its work (the reference's parallel loops) splits
+//!   it over the same threads.
 //! - **SME, the GPU and the Neural Engine** each have one worker thread for the executor's life. A batch's share of
 //!   such a lane is one job: **one submission** ([`Backend::submit`]), so the lane's fixed cost is paid once a batch
 //!   (one command buffer on the GPU, one streaming session per SME unit, batched predictions on the Neural Engine).
@@ -37,25 +38,82 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
-/// The cores' workers: `RERAIL_THREADS`, a whole number of at least 1; 4 when unset.
+/// The process's threads: `RERAIL_THREADS`, a whole number of at least 1; else the cores the machine offers.
 ///
-/// The variable is the engine's thread setting (the most threads the process uses). The executor's pool takes its
-/// number, so the cores' jobs never use more threads than it allows.
+/// It sizes the one pool ([`configure`]): every job of the process's work runs on it, so the process never uses more
+/// threads for its work than this.
 pub fn threads() -> usize {
     static N: OnceLock<usize> = OnceLock::new();
-    *N.get_or_init(|| std::env::var("RERAIL_THREADS").ok().and_then(|v| v.trim().parse::<usize>().ok()).filter(|&n| n >= 1).unwrap_or(4))
+    *N.get_or_init(|| {
+        std::env::var("RERAIL_THREADS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|&n| n >= 1)
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+    })
 }
 
-/// The cores' pool: [`threads`] workers, made once for the process.
-pub fn pool() -> &'static rayon::ThreadPool {
-    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
-    POOL.get_or_init(|| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads())
-            .thread_name(|i| format!("rerail-cpu {i}"))
-            .build()
-            .expect("the executor's thread pool")
-    })
+/// Makes the one pool: rayon's global pool, [`threads`] threads named `rerail-cpu <i>`. Every job runs on it: the
+/// cores' launches, host jobs ([`Executor::spawn`]), and every parallel loop and job of the caller's (rayon's
+/// functions reach the global pool).
+///
+/// With `this_thread`, the calling thread is the pool's thread 0, so the work it does itself, and its waits that run
+/// other jobs ([`help_until`]), are the pool's too: a program's main thread, called before any other thread uses the
+/// pool. Without it (a library, a test), the pool's threads are its own. A pool already made stays as it is.
+pub fn configure(this_thread: bool) {
+    static MADE: OnceLock<()> = OnceLock::new();
+    MADE.get_or_init(|| {
+        let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}"));
+        let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
+    });
+}
+
+thread_local! {
+    /// This thread's CPU seconds in other jobs it ran while it waited (`help_once`).
+    static HELPED: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+}
+
+/// Runs one of the pool's other jobs on this thread, if one is queued (a pool thread's wait): whether it ran one. Its
+/// CPU is counted as helped ([`helped`]), not as the waiter's own.
+pub fn help_once() -> bool {
+    let c0 = crate::score::thread_cpu();
+    let ran = rayon::yield_now() == Some(rayon::Yield::Executed);
+    if ran {
+        let spent = crate::score::thread_cpu() - c0;
+        HELPED.with(|h| h.set(h.get() + spent));
+    }
+    ran
+}
+
+/// This thread's CPU seconds so far in jobs it ran for others while it waited: a caller that measures its own
+/// work by its thread's CPU takes them out.
+pub fn helped() -> f64 {
+    HELPED.with(std::cell::Cell::get)
+}
+
+/// Whether this thread is one of the pool's.
+pub fn on_pool() -> bool {
+    rayon::current_thread_index().is_some()
+}
+
+/// Waits until `poll` gives a value, running the pool's other jobs meanwhile when this is one of its threads, so a
+/// job that waits for others never holds its thread idle while they queue. Between polls with nothing to run, it
+/// sleeps a little more each time (20 µs, up to 1 ms): a wait is bounded, and wakes for what it waits for at most
+/// that late.
+pub fn help_until<T>(mut poll: impl FnMut() -> Option<T>) -> T {
+    let pool = on_pool();
+    let mut nap = 20e-6f64;
+    loop {
+        if let Some(t) = poll() {
+            return t;
+        }
+        if pool && help_once() {
+            nap = 20e-6;
+            continue;
+        }
+        std::thread::sleep(std::time::Duration::from_secs_f64(nap));
+        nap = (nap * 2.0).min(1e-3);
+    }
 }
 
 /// The cores' slowdown under the machine's load: the 1-minute load average over the cores, at least 1, read at most
@@ -495,13 +553,13 @@ impl<R> Job<R> {
     /// Waits for the job: its result, or an error when it panicked. On one of the pool's own threads, the wait runs
     /// the pool's other jobs meanwhile, so jobs that wait for jobs cannot take every thread and stall.
     pub fn wait(self) -> Result<R, String> {
-        let got = if pool().current_thread_index().is_some() {
+        let got = if on_pool() {
             loop {
                 match self.take.try_recv() {
                     Ok(r) => break Ok(r),
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => break Err(()),
                     Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        if rayon::yield_now() != Some(rayon::Yield::Executed) {
+                        if !help_once() {
                             match self.take.recv_timeout(std::time::Duration::from_micros(100)) {
                                 Ok(r) => break Ok(r),
                                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
@@ -527,6 +585,7 @@ impl<R> Job<R> {
 impl Executor {
     /// Every lane this machine has, with the default prices.
     pub fn new() -> Self {
+        configure(false);
         let present = lanes::present();
         let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default())];
         #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
@@ -547,6 +606,7 @@ impl Executor {
 
     /// Only the given lanes' backends (tests; a binding that allows only some lanes).
     pub fn with(backends: Vec<Arc<dyn Backend>>) -> Self {
+        configure(false);
         let mut slots = [0; 4];
         for b in &backends {
             slots[b.lane().index()] = if b.lane() == Lane::Cpu { threads() } else { 1 };
@@ -753,7 +813,7 @@ impl Executor {
                     cpu = Some(Arc::clone(b));
                     for _ in 0..per_lane[lane.index()].min(threads()) {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
-                        pool().spawn_fifo(move || claims.serve_cpu(&*backend));
+                        rayon::spawn_fifo(move || claims.serve_cpu(&*backend));
                     }
                 }
                 // A device lane: its worker claims its share when it reaches the batch, and a device with nothing
@@ -775,7 +835,7 @@ impl Executor {
         let mut ticket = self.board.queue(Lane::Cpu, vec![Item { form: name, units: 0.0, estimate, host: estimate }]);
         let (reply, take) = std::sync::mpsc::sync_channel(1);
         let board = Arc::clone(&self.board);
-        pool().spawn_fifo(move || {
+        rayon::spawn_fifo(move || {
             board.start(&mut ticket);
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
             board.finish(ticket, r.is_ok());
@@ -792,6 +852,7 @@ impl Running {
     pub fn wait(self) -> Result<(Vec<Done>, Report), String> {
         let Running { claims, take, cpu, tag, mut report, cpu0 } = self;
         let asked = Instant::now();
+        let on_pool = on_pool();
         let n = claims.kernels.len();
         let mut outs: Vec<Option<(Lane, Output)>> = vec![None; n];
         let mut failed: Option<String> = None;
@@ -837,6 +898,10 @@ impl Running {
                 let r = run_job(&**cpu, &claims.board, &[&claims.kernels[i]], ticket);
                 store((Lane::Cpu, vec![i], r), &mut got);
                 helped += 1;
+                continue;
+            }
+            // On one of the pool's threads, the pool's other jobs meanwhile.
+            if on_pool && help_once() {
                 continue;
             }
             match take.recv_timeout(std::time::Duration::from_micros(100)) {
