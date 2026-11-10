@@ -190,6 +190,8 @@ export interface ViolationHistoryEntry {
   auditId: string;
   at: number;
   host: string | null;
+  /** The coding agent was not told: the audit ran in Log mode, or the violation's rule was in Log mode then. */
+  logged: boolean;
 }
 
 export interface ViolationHistoryPage {
@@ -571,13 +573,14 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   )`;
   // The page and its total from one snapshot, so a commit between them cannot make them disagree.
   const { rows, total } = database.transaction(() => ({
-    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string; at: number; host: string | null }>(sql`
+    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string; at: number; host: string | null; logged: number }>(sql`
     SELECT
       json_extract(${audits.violations}, '$[' || page.ordinal || ']') AS payload,
       page.audit_id AS auditId, page.ordinal AS ordinal, page.session_id AS sessionId, page.started_at AS at,
-      ${sessions.host} AS host
+      ${sessions.host} AS host, page.logged AS logged
     FROM (
-      SELECT ${auditViolations.auditId}, ${auditViolations.ordinal}, ${auditViolations.sessionId}, ${auditViolations.startedAt}
+      SELECT ${auditViolations.auditId}, ${auditViolations.ordinal}, ${auditViolations.sessionId}, ${auditViolations.startedAt},
+        ${auditViolations.logged}
       FROM ${auditViolations}
       WHERE ${and(matching, continuing)}
       ORDER BY ${auditViolations.startedAt} DESC, ${auditViolations.auditId} DESC, ${auditViolations.ordinal}
@@ -599,6 +602,7 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
       auditId: row.auditId,
       at: row.at,
       host: row.host,
+      logged: row.logged === 1,
     })),
     total,
     nextCursor: rows.length > limit && last !== undefined ? encodeCursor([last.at, last.auditId, last.ordinal]) : null,

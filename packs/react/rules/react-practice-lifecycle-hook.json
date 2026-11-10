@@ -1,0 +1,675 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-practice-lifecycle-hook",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use useEffect instead of once-on-mount hooks from hook libraries when the callback reads props or state; those hooks hide the reads from dependency checks.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.cy.*",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/*.stories.*",
+      "**/*.story.*",
+      "**/__stories__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "lh-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?:react)$"
+            }
+          },
+          "lh-react-object": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^React$",
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "lh-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "lh-lib-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?:react-use|ahooks|@react-hookz/web|usehooks-ts)(?:/(?:esm|es|lib|dist))?$"
+            }
+          },
+          "lh-lib-file-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?:react-use|ahooks|@react-hookz/web|usehooks-ts)/(?:esm|es|lib|dist|cjs)/(?:useMount|useEffectOnce|useMountEffect)(?:/index)?(?:\\.[cm]?js)?$"
+            }
+          },
+          "lh-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "lh-lib-source"
+                        }
+                      },
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useMount|useEffectOnce|useMountEffect)$"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_clause",
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "lh-lib-file-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "kind": "namespace_import",
+                            "inside": {
+                              "stopBy": "end",
+                              "kind": "import_statement",
+                              "has": {
+                                "field": "source",
+                                "matches": "lh-lib-source"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useMount|useEffectOnce|useMountEffect)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "lh-fn": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "lh-call-args": {
+            "kind": "arguments",
+            "inside": {
+              "kind": "call_expression",
+              "has": {
+                "field": "function",
+                "matches": "lh-callee"
+              }
+            }
+          },
+          "lh-ref-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:useRef)$",
+                  "resolves": {
+                    "global": [
+                      "useRef"
+                    ]
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "import_specifier",
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "import_statement",
+                          "has": {
+                            "field": "source",
+                            "matches": "lh-react-source"
+                          }
+                        },
+                        "has": {
+                          "field": "name",
+                          "regex": "^(?:useRef)$"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "any": [
+                    {
+                      "regex": "^(?:useRef)$"
+                    },
+                    {
+                      "resolves": {
+                        "binding": {
+                          "occurrence": {
+                            "inside": {
+                              "kind": "pair_pattern",
+                              "has": {
+                                "field": "key",
+                                "regex": "^(?:useRef)$"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "variable_declarator",
+                        "has": {
+                          "field": "value",
+                          "matches": "lh-react-object"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "lh-react-object"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^(?:useRef)$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "lh-state-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$",
+                  "resolves": {
+                    "global": [
+                      "useState",
+                      "useReducer",
+                      "useTransition",
+                      "useActionState",
+                      "useId"
+                    ]
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "import_specifier",
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "import_statement",
+                          "has": {
+                            "field": "source",
+                            "matches": "lh-react-source"
+                          }
+                        },
+                        "has": {
+                          "field": "name",
+                          "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "any": [
+                    {
+                      "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$"
+                    },
+                    {
+                      "resolves": {
+                        "binding": {
+                          "occurrence": {
+                            "inside": {
+                              "kind": "pair_pattern",
+                              "has": {
+                                "field": "key",
+                                "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "variable_declarator",
+                        "has": {
+                          "field": "value",
+                          "matches": "lh-react-object"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "lh-react-object"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^(?:useState|useReducer|useTransition|useActionState|useId)$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "lh-initial-name": {
+            "regex": "^(?:default|initial)(?:[A-Z_]|$)"
+          },
+          "lh-reactive-read": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "shorthand_property_identifier"
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "call_expression",
+                    "field": "function"
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "member_expression",
+                    "field": "object",
+                    "inside": {
+                      "kind": "call_expression",
+                      "field": "function"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "member_expression",
+                    "field": "object",
+                    "has": {
+                      "field": "property",
+                      "regex": "^current$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "member_expression",
+                    "field": "object",
+                    "has": {
+                      "field": "property",
+                      "matches": "lh-initial-name"
+                    }
+                  }
+                },
+                {
+                  "matches": "lh-initial-name"
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "matches": "lh-ref-call"
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "matches": "lh-state-call",
+                        "has": {
+                          "field": "function",
+                          "regex": "(?:^|\\.)useId$"
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "occurrence": {
+                        "nthChild": {
+                          "position": 2,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
+                        "inside": {
+                          "kind": "array_pattern",
+                          "inside": {
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "value",
+                              "matches": "lh-state-call"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "type_query"
+                      },
+                      {
+                        "kind": "type_arguments"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "number"
+                          },
+                          {
+                            "kind": "true"
+                          },
+                          {
+                            "kind": "false"
+                          },
+                          {
+                            "kind": "null"
+                          }
+                        ],
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "lexical_declaration",
+                          "regex": "^const\\b"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "resolves": {
+              "binding": {
+                "site": {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "lh-fn"
+                  },
+                  "not": {
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": "end",
+                          "matches": "lh-call-args"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "matches": "lh-fn"
+                          },
+                          "matches": "lh-fn",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "lh-fn",
+                            "has": {
+                              "stopBy": "end",
+                              "kind": "call_expression",
+                              "has": {
+                                "field": "function",
+                                "matches": "lh-callee"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "mount-wrapper-reads-component",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "lh-callee",
+                  "pattern": "$HOOK"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "any": [
+                      {
+                        "matches": "lh-fn",
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "lh-reactive-read"
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "parenthesized_expression"
+                          },
+                          {
+                            "kind": "as_expression"
+                          },
+                          {
+                            "kind": "satisfies_expression"
+                          }
+                        ],
+                        "has": {
+                          "stopBy": "end",
+                          "matches": "lh-fn",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "lh-reactive-read"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "LIFECYCLE_HOOK_HIDES_DEPS",
+        "anchor": "witness.start",
+        "message": "$HOOK runs once on mount, so dependency checks miss what its callback reads. If these values can change while mounted, use useEffect and list them as its dependencies; if reading them once is intended, keep $HOOK (on React 19.2+, useEffectEvent makes that explicit)."
+      }
+    }
+  ]
+}
