@@ -141,6 +141,45 @@ struct Submitted {
     command: metal::CommandBuffer,
     done: Option<std::sync::mpsc::Receiver<()>>,
     reads: Vec<Column>,
+    /// The host clock at its commit (`host_clock`).
+    committed: f64,
+}
+
+/// The host clock Metal's command buffer times are on (`mach_absolute_time`, in seconds).
+pub fn host_clock() -> f64 {
+    #[repr(C)]
+    struct Timebase {
+        numer: u32,
+        denom: u32,
+    }
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut Timebase) -> i32;
+        fn mach_absolute_time() -> u64;
+    }
+    static RATIO: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    let ratio = *RATIO.get_or_init(|| {
+        let mut info = Timebase { numer: 0, denom: 0 };
+        // SAFETY: fills the struct.
+        unsafe { mach_timebase_info(&mut info) };
+        f64::from(info.numer) / f64::from(info.denom.max(1)) / 1e9
+    });
+    // SAFETY: no arguments.
+    (unsafe { mach_absolute_time() }) as f64 * ratio
+}
+
+/// A completed command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the system's
+/// scheduling (`kernelStartTime`), to the device's start, the device's run, and its end to the host's wait returning.
+#[allow(unexpected_cfgs)] // `msg_send!` expands to a `cargo-clippy` cfg check.
+pub fn add_timeline(command: &CommandBufferRef, committed: f64, returned: f64) {
+    use objc::{msg_send, sel, sel_impl};
+    let (k, s, e): (f64, f64, f64) = unsafe { (msg_send![command, kernelStartTime], msg_send![command, GPUStartTime], msg_send![command, GPUEndTime]) };
+    if k <= 0.0 || s <= 0.0 || e <= 0.0 {
+        return;
+    }
+    crate::score::add("gpu submit", 0.0, (k - committed).max(0.0));
+    crate::score::add("gpu schedule", 0.0, (s - k).max(0.0));
+    crate::score::add("gpu run", 0.0, (e - s).max(0.0));
+    crate::score::add("gpu wake", 0.0, (returned - e).max(0.0));
 }
 
 impl Submitted {
@@ -155,21 +194,25 @@ impl Submitted {
             command.add_completed_handler(&block);
             rx
         });
-        shared::guard()?;
-        command.commit();
-        Ok(Submitted { command: command.to_owned(), done, reads: Vec::new() })
+        crate::score::phase("gpu commit", || -> Result<(), String> {
+            shared::guard()?;
+            command.commit();
+            Ok(())
+        })?;
+        Ok(Submitted { command: command.to_owned(), done, reads: Vec::new(), committed: host_clock() })
     }
 
     /// Waits for it; its GPU seconds. The buffers it read return to the pool after.
     fn wait(self) -> f64 {
-        match self.done {
+        crate::score::phase("gpu wait", || match &self.done {
             Some(rx) if self.command.status() != metal::MTLCommandBufferStatus::Completed => {
                 let _ = rx.recv();
                 // The handler runs as the buffer completes: its status may lag a moment.
                 self.command.wait_until_completed();
             }
             _ => self.command.wait_until_completed(),
-        }
+        });
+        add_timeline(&self.command, self.committed, host_clock());
         gpu_seconds(&self.command)
     }
 }

@@ -276,6 +276,32 @@ executor's default is 4, which is what was asked for.
    - Their jobs waited 0.21 s in the queue in all, against 0.08 s run, at a machine load of 80–190 (threads woken
      late under that load). User + sys is unchanged: 44.1 + 2.5 s on the default run, against 44.2 + 3.4 s before.
    - The run's peak resident memory is 1.45–1.50 GB, over the 1 GB budget. It was 1.44 GB before this step.
+   - **Host CPU by phase.** Each job's thread CPU, and each phase's CPU and wall time, are on the scoreboard and in
+     the profile's executor section. The GPU lane also records each command buffer's timeline (submit,
+     schedule, run, wake). `RERAIL_LANE_PIN=<lane>` places every launch a lane can run on it, to measure.
+   - The pack under `--metal`, the floor at 0, each lane pinned in turn (load 59–102):
+
+     | | GPU lane | The cores |
+     |---|---|---|
+     | Jobs (launches) | 101 (176) | 176 (176) |
+     | Thread CPU, all jobs | 28 ms | 51 ms |
+     | Warm job (after the first 20) | 204 µs | median 53 µs, p90 1.25 ms (joins) |
+
+     The GPU's warm job splits as:
+     - encoding, 95 µs (about 5.5 encoder calls, 17 µs each);
+     - the uploads' narrowing copy, 32 µs;
+     - commit with the budget check, 16 µs;
+     - reads, 13 µs;
+     - the wait, 8 µs;
+     - about 40 µs not in a phase.
+
+     A command buffer's wall time under that load is 3.3 ms (submit 0.7, schedule 1.0, run 0.4, wake 1.1),
+     with no host CPU in it. The first jobs compile their pipelines: up to 165 ms of wall time, but 2.8 ms of
+     this thread's CPU (Metal compiles in its own service). Metal's own threads are not in the job's CPU.
+   - **The run's host CPU is elsewhere.** The native set engine's join walks take 15.1 s, in 10,586 plans. The 11
+     plans over 0.1 s each take 4 s. The rest average about 1 ms a plan. The scalar summaries take 2.3 s. The
+     statistics and plans take 3.1 s and SQL 0.35 s. The executor's launches take 0.05 s, and building the level
+     batch's key columns 0.03 s.
 8. **Gates:**
    - The pack's findings are identical, and so are the data layer's at scale.
    - Host CPU (user + sys) of the device joins is below the CPU radix sort join's, on the lab's 232 joins and on

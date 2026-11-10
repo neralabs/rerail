@@ -13,12 +13,21 @@
 //! - jobs, launches and failures; seconds busy (summed over jobs) and seconds waited in the queue;
 //! - the price's estimate against the time taken, summed, per lane and per form.
 //!
+//! **Phases.** A lane's code names the parts of a job's host work ([`phase`]): its thread CPU and its wall seconds,
+//! summed per lane and phase. The GPU lane also adds each command buffer's timeline as wall-only phases (`gpu
+//! submit`: commit to the system's scheduling; `gpu schedule`: to the device's start; `gpu run`; `gpu wake`: the
+//! device's end to the host's wait returning). And every job's own thread CPU is kept: on a device lane, that is the
+//! host CPU the device cost, which on a loaded machine is the price that matters, not the device's latency. Metal's
+//! own threads (its completion handlers, the driver's) are not on the job's thread, so they are not in it.
+//!
 //! **The trace.** With `RERAIL_SCOREBOARD=<file>`, every finished job appends a line to the file (tab-separated,
 //! times in seconds from the process's first job):
 //!
 //! ```text
-//! job  lane  thread  launches  forms  units  estimate  queued  start  end  ok
+//! job  lane  thread  launches  forms  units  estimate  queued  start  end  ok  cpu  phases
 //! ```
+//!
+//! `cpu` is the job's thread CPU; `phases` lists each phase as `name=cpu/wall` in microseconds.
 //!
 //! and [`Scoreboard::note`] appends the summary (lines that start with `#`), at a chunk's end for the engine.
 
@@ -48,6 +57,8 @@ pub struct Unit {
     /// Seconds run and seconds waited, summed over finished jobs.
     pub busy: f64,
     pub waited: f64,
+    /// The jobs' own thread CPU seconds, summed: on a device lane, the host CPU the device cost.
+    pub cpu: f64,
     /// The price's estimate of the finished jobs, summed.
     pub estimated: f64,
     /// The estimate of the jobs queued or running now.
@@ -77,19 +88,30 @@ pub struct FormRow {
     pub actual: f64,
 }
 
+/// One phase's counts on one lane.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PhaseRow {
+    pub count: u64,
+    /// Thread CPU seconds (0 for a device's own timeline) and wall seconds.
+    pub cpu: f64,
+    pub wall: f64,
+}
+
 /// The scoreboard's state at one moment.
 #[derive(Clone, Debug, Default)]
 pub struct Score {
     pub units: [Unit; 4],
     /// By (lane, form).
     pub forms: BTreeMap<(Lane, &'static str), FormRow>,
+    /// By (lane, phase).
+    pub phases: BTreeMap<(Lane, &'static str), PhaseRow>,
     /// Seconds since the executor's first job.
     pub elapsed: f64,
 }
 
 impl std::fmt::Display for Score {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "lane  slots  jobs  launches  failed  busy s  waited s  estimate s  util  peak  queued  running")?;
+        writeln!(f, "lane  slots  jobs  launches  failed  busy s  cpu s   waited s  estimate s  util  peak  queued  running")?;
         for l in Lane::ALL {
             let u = &self.units[l.index()];
             if u.slots == 0 {
@@ -97,13 +119,14 @@ impl std::fmt::Display for Score {
             }
             writeln!(
                 f,
-                "{:<4}  {:>5}  {:>4}  {:>8}  {:>6}  {:>6.3}  {:>8.3}  {:>10.3}  {:>4.2}  {:>4}  {:>6}  {:>7}",
+                "{:<4}  {:>5}  {:>4}  {:>8}  {:>6}  {:>6.3}  {:>6.3}  {:>8.3}  {:>10.3}  {:>4.2}  {:>4}  {:>6}  {:>7}",
                 l.name(),
                 u.slots,
                 u.jobs,
                 u.launches,
                 u.failed,
                 u.busy,
+                u.cpu,
                 u.waited,
                 u.estimated,
                 u.utilization(),
@@ -116,8 +139,59 @@ impl std::fmt::Display for Score {
         for ((l, form), r) in &self.forms {
             writeln!(f, "{:<4}  {:<20}  {:>8}  {:>10.3e}  {:>10.4}  {:>8.4}", l.name(), form, r.launches, r.units, r.estimated, r.actual)?;
         }
+        if !self.phases.is_empty() {
+            writeln!(f, "lane  phase                 count     cpu ms   wall ms  cpu us each")?;
+            for ((l, name), p) in &self.phases {
+                writeln!(f, "{:<4}  {:<20}  {:>6}  {:>9.3}  {:>8.3}  {:>11.1}", l.name(), name, p.count, p.cpu * 1e3, p.wall * 1e3, p.cpu * 1e6 / p.count.max(1) as f64)?;
+            }
+        }
         write!(f, "elapsed {:.3} s", self.elapsed)
     }
+}
+
+/// This thread's CPU seconds.
+pub fn thread_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: a valid timespec out.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
+    }
+}
+
+thread_local! {
+    /// The phases of the job this thread runs: (name, count, cpu, wall), in first-seen order.
+    static PHASES: std::cell::RefCell<Vec<(&'static str, u64, f64, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Adds `cpu` and `wall` seconds to this thread's job under `name`.
+pub fn add(name: &'static str, cpu: f64, wall: f64) {
+    PHASES.with_borrow_mut(|p| match p.iter_mut().find(|e| e.0 == name) {
+        Some(e) => {
+            e.1 += 1;
+            e.2 += cpu;
+            e.3 += wall;
+        }
+        None => p.push((name, 1, cpu, wall)),
+    });
+}
+
+/// Runs `f` as the phase `name` of this thread's job: its thread CPU and wall seconds are counted.
+pub fn phase<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
+    let (c0, t0) = (thread_cpu(), Instant::now());
+    let r = f();
+    add(name, thread_cpu() - c0, t0.elapsed().as_secs_f64());
+    r
+}
+
+/// This thread's phases so far, taken (a job's start clears them, its end takes them).
+pub fn take_phases() -> Vec<(&'static str, u64, f64, f64)> {
+    PHASES.with_borrow_mut(std::mem::take)
 }
 
 /// A launch of a job: its form's name, units and estimate.
@@ -135,6 +209,7 @@ pub struct Ticket {
     items: Vec<Item>,
     queued: Instant,
     started: Option<Instant>,
+    cpu0: f64,
 }
 
 /// An executor's scoreboard.
@@ -157,7 +232,7 @@ fn trace() -> Option<&'static Mutex<std::fs::File>> {
         .get_or_init(|| {
             let path = std::env::var("RERAIL_SCOREBOARD").ok().filter(|p| !p.is_empty())?;
             let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).ok()?;
-            let _ = writeln!(f, "job\tlane\tthread\tlaunches\tforms\tunits\testimate\tqueued\tstart\tend\tok");
+            let _ = writeln!(f, "job\tlane\tthread\tlaunches\tforms\tunits\testimate\tqueued\tstart\tend\tok\tcpu\tphases");
             Some(Mutex::new(f))
         })
         .as_ref()
@@ -191,13 +266,15 @@ impl Scoreboard {
             u.queued += 1;
             u.outstanding += est;
         });
-        Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None }
+        Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, cpu0: 0.0 }
     }
 
     /// A worker took the job.
     pub fn start(&self, t: &mut Ticket) {
+        take_phases();
         let now = Instant::now();
         t.started = Some(now);
+        t.cpu0 = thread_cpu();
         self.with(|s| {
             let u = &mut s.units[t.lane.index()];
             u.queued -= 1;
@@ -211,6 +288,8 @@ impl Scoreboard {
     /// The job ended, well or not: its seconds run.
     pub fn finish(&self, t: Ticket, ok: bool) -> f64 {
         let end = Instant::now();
+        let cpu = thread_cpu() - t.cpu0;
+        let phases = take_phases();
         let start = t.started.unwrap_or(end);
         let ran = end.duration_since(start).as_secs_f64();
         let waited = start.saturating_duration_since(t.queued).as_secs_f64();
@@ -223,6 +302,7 @@ impl Scoreboard {
             u.launches += t.items.len() as u64;
             u.failed += u64::from(!ok);
             u.busy += ran;
+            u.cpu += cpu;
             u.waited += waited;
             u.estimated += est;
             u.last = u.last.max(since(end));
@@ -233,14 +313,21 @@ impl Scoreboard {
                 r.estimated += i.estimate;
                 r.actual += if est > 0.0 { ran * i.estimate / est } else { ran / t.items.len().max(1) as f64 };
             }
+            for &(name, n, c, w) in &phases {
+                let p = s.phases.entry((t.lane, name)).or_default();
+                p.count += n;
+                p.cpu += c;
+                p.wall += w;
+            }
         });
         if let Some(f) = trace() {
             let mut forms: Vec<&str> = t.items.iter().map(|i| i.form).collect();
             forms.dedup();
             let units: f64 = t.items.iter().map(|i| i.units).sum();
             let thread = std::thread::current().name().unwrap_or("?").to_owned();
+            let ph: Vec<String> = phases.iter().map(|&(name, _, c, w)| format!("{name}={:.1}/{:.1}", c * 1e6, w * 1e6)).collect();
             let line = format!(
-                "{}\t{}\t{thread}\t{}\t{}\t{units:.0}\t{est:.6}\t{:.6}\t{:.6}\t{:.6}\t{}\n",
+                "{}\t{}\t{thread}\t{}\t{}\t{units:.0}\t{est:.6}\t{:.6}\t{:.6}\t{:.6}\t{}\t{:.6}\t{}\n",
                 t.id,
                 t.lane.name(),
                 t.items.len(),
@@ -248,7 +335,9 @@ impl Scoreboard {
                 since(t.queued),
                 since(start),
                 since(end),
-                u8::from(ok)
+                u8::from(ok),
+                cpu,
+                ph.join(",")
             );
             let _ = f.lock().unwrap_or_else(|p| p.into_inner()).write_all(line.as_bytes());
         }
