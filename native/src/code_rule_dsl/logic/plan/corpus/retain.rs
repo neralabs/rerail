@@ -508,6 +508,21 @@ impl Retained {
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         self.rels.values().map(Kept::bytes).sum()
     }
+    /// What the kept relations hold, by kind of relation (a counting support, `h__sup…`, or any other): rows,
+    /// values, levels, and indexes and sets, in bytes (`InRel::held_bytes`). `RERAIL_KEPT_BYTES` prints it.
+    pub(in crate::code_rule_dsl) fn held(&self) -> [(&'static str, usize, usize, usize, usize); 2] {
+        let mut out = [("supports", 0, 0, 0, 0), ("other", 0, 0, 0, 0)];
+        for (rel, k) in &self.rels {
+            let at = usize::from(!super::supports::is_support(rel));
+            let (values, levels, index) = k.rel.held_bytes();
+            let o = &mut out[at];
+            o.1 += k.rel.rows();
+            o.2 += values;
+            o.3 += levels;
+            o.4 += index;
+        }
+        out
+    }
 }
 
 /// An input's source under another relation's column names (`r__old`'s, `sql_col`): read in place, not copied.
