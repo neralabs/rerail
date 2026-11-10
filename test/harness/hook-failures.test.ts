@@ -1,5 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -79,6 +81,35 @@ describe("a hook that cannot record its event", () => {
     expect(readHookFailures(rerailHome, 0)).toEqual([
       expect.objectContaining({ host: "claude-code", event: "PostToolUse", reason: "no Rerail daemon answered, so this event was not recorded" }),
     ]);
+  });
+
+  it("logs the event as lost and starts no daemon when the recorded daemon is alive but refuses it", async () => {
+    const rerailHome = await home();
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    // A live daemon: this process, holding the engine socket daemon.json names, refusing the capability it records.
+    const refusing = createHttpServer((_request, response) => response.writeHead(401).end());
+    const engine = createNetServer();
+    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-alive-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
+    await new Promise<void>(resolve => refusing.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>(resolve => engine.listen(socketPath, resolve));
+    try {
+      const port = (refusing.address() as AddressInfo).port;
+      writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
+        pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test", ui: "bundled",
+        startedAt: 1, packageRoot: rerailHome, databasePath: join(rerailHome, "rerail.sqlite"), kernelSocketPath: socketPath, accessToken: "token",
+      }));
+      const handle = vi.fn(async () => ({}));
+      expect(await runHostHook("claude-code", rerailHome, "s", false, { storageRoot: join(rerailHome, "sessions") }, handle, "PreToolUse")).toEqual({});
+      expect(handle).not.toHaveBeenCalled();
+      // A start finds the same daemon and refuses to replace it: the background start would cost a process and do nothing.
+      expect(autostart.calls).toBe(0);
+      expect(readHookFailures(rerailHome, 0)).toEqual([expect.objectContaining({
+        event: "PreToolUse", reason: `the Rerail daemon (pid ${process.pid}) refused the access capability in daemon.json, so this event was not recorded`,
+      })]);
+    } finally {
+      await Promise.all([refusing, engine].map(server => new Promise(resolve => server.close(resolve))));
+    }
   });
 
   it("logs a failure inside the hook under the event's own name, then fails as before", async () => {
