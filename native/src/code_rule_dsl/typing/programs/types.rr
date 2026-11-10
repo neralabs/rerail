@@ -37,6 +37,7 @@
 .decl struct__vann(s: symbol, a: symbol)
 .decl struct__alias(s: symbol, e: symbol)
 .decl struct__tvar(s: symbol)
+.decl struct__all(m: symbol, x: symbol)
 .decl struct__ann(m: symbol, e: symbol, a: symbol, h: symbol)
 .decl struct__annarg(m: symbol, a: symbol, j: number, x: symbol)
 
@@ -69,8 +70,12 @@ malias(m, x, y, r) :- struct__binds(m, x, "assign", ""), struct__alias(@dot(m, x
     r = substr(e, strlen(y) + 1, strlen(e) - strlen(y) - 1).
 binds(m, x, d) :- malias(m, x, y, ""), binds(m, y, d).
 binds(m, x, d) :- malias(m, x, y, r), r != "", binds(m, y, d0), t = @dot(d0, r), res(t, d).
-// `from n import *`: n's names that are not private, and not bound in m itself.
-binds(m, x, d) :- struct__binds(m, "*", "star", n), binds(n, x, d), x != "*", !prefix("_", x), !own_name(m, x).
+// `from n import *`: the names n's `__all__` lists, or with none, n's names that are not private; not those bound
+// in m itself.
+binds(m, x, d) :- struct__binds(m, "*", "star", n), struct__all(n, x), binds(n, x, d), !own_name(m, x).
+binds(m, x, d) :- struct__binds(m, "*", "star", n), !hasall(n), binds(n, x, d), x != "*", !prefix("_", x), !own_name(m, x).
+.decl hasall(n: symbol)
+hasall(n) :- struct__all(n, _).
 .decl own_name(m: symbol, x: symbol)
 own_name(m, x) :- struct__binds(m, x, how, _), how != "star".
 .decl mbound(m: symbol, x: symbol)
