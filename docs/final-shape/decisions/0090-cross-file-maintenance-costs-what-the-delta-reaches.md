@@ -789,6 +789,29 @@ DRed takes 9.7–10.9 s, and a cold derive takes 4.4–8.8 s. Counting runs 783 
 "Built: counting the default" section measured a 0.2–0.5 s difference on steps 01–04, but here it is 4–10 s. So
 until 0101 removes the per-stratum fixed cost, counting is the slower default on edits like these.
 
+## Merged: levels the default in the integration branch, held only where read (2026-11-10)
+
+Levels (above) is the default for a session's recursive strata on the integration branch too
+(`RERAIL_RECURSIVE=dred` compares). Four fixes made it exact and cheaper there.
+
+- **Rows dead before a run.** O125 step 08 kept 1 `type_of` and 2 `possible_type` rows a full run does not
+  derive. A `live` row deleted in an earlier run came back to life when its level was shown, and `id_of` found
+  that old dead copy, not the row's later live one. The driver now keeps the rows dead before the run
+  (`was_dead`): never shown, never a candidate's row (517250487).
+- **What is read back.** A relation is read back from the engine only if this run kept it there natively
+  (`Outcome::native`), and only with levels. Reading back by `h__gone` left a 58-relation component on
+  delete-and-rederive.
+- **Levels only where read.** Every relation held a 4-byte level per row. Now only a relation on a cycle of its
+  component's rules, a levels line's relation, or one started from a kept relation with levels gets them. At
+  O125 the kept levels go from 13.1 MB to 2.9 MB.
+- **The planner asks for them.** A component keeps levels only when its spec says `leveled`. The plan writes that
+  line for a stratum whose relations carry the `levels` qualifier, and only a session's cross part sets it. A
+  full run holds no levels. Its closures run on the device, since bit rows give reach, not distance. With
+  levels, a closure is made by distance on the host (`by_distance`).
+
+Result: O125 1–8 are the same as full with levels (with and without `RERAIL_AGAIN=off`).
+Gate: 3988 303 298 0.
+
 ## What the prior work says
 
 - **Target architecture (03):**
