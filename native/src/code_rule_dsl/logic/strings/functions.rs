@@ -390,9 +390,7 @@ pub(in crate::code_rule_dsl) fn slice(s: &str, start: i64, end: i64) -> String {
     if a >= b { String::new() } else { chars[a..b].iter().collect() }
 }
 
-/// Half-open UTF-8 byte range, as stored on syntax nodes. Invalid ranges yield no value.
-/// Equality key for numeric literal tokens under Python's `==`. Integers keep
-/// their full precision; integral floats use their exact binary integer value.
+/// Hexadecimal key for a valid bytes literal, preserving escapes and raw prefixes.
 /// This reads scalar syntax only and never evaluates arbitrary source code.
 fn python_bytes_key(source: &str) -> Option<String> {
     use crate::code_rule_dsl::value::python::{prefix,decode_escapes};
@@ -412,6 +410,8 @@ fn python_bytes_key(source: &str) -> Option<String> {
     Some(key)
 }
 
+/// Equality key for numeric literal tokens under Python's `==`. Integers keep
+/// their full precision; integral floats use their exact binary integer value.
 fn python_number_key(source: &str) -> Option<String> {
     use num_bigint::BigInt;
     use num_traits::FromPrimitive;
@@ -445,6 +445,7 @@ fn python_number_key(source: &str) -> Option<String> {
     Some(format!("f:{:016x}",value.to_bits()))
 }
 
+/// Half-open UTF-8 byte range, as stored on syntax nodes. Invalid ranges yield no value.
 pub(in crate::code_rule_dsl) fn byte_slice(s: &str, start: i64, end: i64) -> Option<String> {
     let (start, end) = (usize::try_from(start).ok()?, usize::try_from(end).ok()?);
     s.get(start..end).map(str::to_owned)
