@@ -96,4 +96,4 @@ pub(in crate::code_rule_dsl) fn analyze(
 }
 
 mod loops;
-pub(in crate::code_rule_dsl) use loops::version_loop;
+pub(in crate::code_rule_dsl) use loops::{version_loop,compact_retained};

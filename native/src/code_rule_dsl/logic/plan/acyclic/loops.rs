@@ -74,3 +74,85 @@ pub(in crate::code_rule_dsl) fn version_loop(
     }
     loops::analyze(members, members.is_disjoint(lattices), checked, stages)
 }
+
+/// Keep one incremental context cache for each full emitted rule. Only the retained
+/// context executor uses this schedule; ordinary SQL keeps its explicit delta variants.
+pub(in crate::code_rule_dsl) fn compact_retained(
+    steps: &mut Vec<(schedule::Step, Option<Query>)>,
+    lattices: &BTreeSet<String>,
+) -> Vec<serde_json::Value> {
+    use super::super::super::analysis::stages::Components;
+    let mut edges = BTreeMap::<String, BTreeSet<String>>::new();
+    for (step, query) in steps.iter() {
+        edges
+            .entry(step.output.clone())
+            .or_default()
+            .extend(reads(step, query.as_ref()));
+    }
+    let components = Components::analyze(&edges);
+    let groups = components
+        .recursive
+        .iter()
+        .map(|r| components.members[r].clone())
+        .collect::<BTreeSet<_>>();
+    let delta = |q: &Query| {
+        q.reads()
+            .iter()
+            .any(|r| matches!(r, Relation::Derived { delta: true, .. }))
+    };
+    let mut removed = BTreeSet::new();
+    let mut reports = vec![];
+    for members in groups {
+        let full = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, (step, query))| {
+                members.contains(&step.output) && query.as_ref().is_some_and(|q| !delta(q))
+            })
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        let variants = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, (step, query))| {
+                members.contains(&step.output) && query.as_ref().is_some_and(delta)
+            })
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        let analysis = version_loop(steps, &members, lattices);
+        let incremental = !full.is_empty()
+            && full.iter().all(|&id| {
+                let q = steps[id].1.as_ref().unwrap();
+                q.ctes.is_empty()
+                    || q.reads()
+                        .iter()
+                        .filter_map(|r| r.program_relation())
+                        .all(|r| !members.contains(r))
+            });
+        let decision = analysis.retained_full_rules(incremental);
+        if decision.proven {
+            for &id in &full {
+                let recursive = reads(&steps[id].0, steps[id].1.as_ref())
+                    .into_iter()
+                    .filter(|r| members.contains(r))
+                    .collect::<Vec<_>>();
+                let step = &mut steps[id].0;
+                for relation in recursive {
+                    if !step.reads.contains(&relation) {
+                        step.reads.push(relation);
+                    }
+                }
+            }
+            removed.extend(variants.iter().copied());
+        }
+        reports.push(serde_json::json!({"component":members,"decision":decision,"full_rules":full.len(),
+            "generated_delta_variants":variants.len(),"removed_delta_variants":if decision.proven {variants.len()}else{0}}));
+    }
+    let mut id = 0;
+    steps.retain(|_| {
+        let keep = !removed.contains(&id);
+        id += 1;
+        keep
+    });
+    reports
+}

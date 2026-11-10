@@ -29,6 +29,23 @@ pub(in crate::code_rule_dsl) struct Analysis {
     pub stages: BTreeMap<String, Stage>,
     pub decision: Decision,
 }
+impl Analysis {
+    /// A retained positive context already differentiates each recursive input.
+    /// A second cache for an emitted delta variant duplicates that work.
+    pub fn retained_full_rules(&self, recursive_contexts: bool) -> Decision {
+        if !self.decision.proven {
+            return self.decision.clone();
+        }
+        Decision::new(
+            recursive_contexts,
+            if recursive_contexts {
+                "Retained full-rule contexts consume recursive input deltas; generated delta-variant caches are redundant"
+            } else {
+                "A recursive auxiliary query still requires its specialized delta kernel"
+            },
+        )
+    }
+}
 pub(in crate::code_rule_dsl) fn analyze(
     recursive_sources: &BTreeSet<String>,
     set_outputs: bool,
@@ -108,6 +125,8 @@ mod tests {
         ]);
         let positive = analyze(&members, true, true, stages.clone());
         assert!(positive.decision.proven);
+        assert!(positive.retained_full_rules(true).proven);
+        assert!(!positive.retained_full_rules(false).proven);
         assert_eq!(positive.component_dependent_stages.len(), 3);
         stages
             .get_mut("out")

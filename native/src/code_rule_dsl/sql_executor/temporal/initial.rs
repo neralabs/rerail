@@ -47,6 +47,8 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         .filter(|(s, _)| outputs.contains(&s.output))
         .map(|(s, q)| (s.clone(),q.clone()))
         .collect::<Vec<_>>();
+    let cache_decisions=Arc::new(plan::acyclic::compact_retained(&mut steps,
+        &original.lattices.iter().map(|(r,_,_)|r.clone()).collect()));
     plan::acyclic::order(&mut steps);
     let stage_decisions = plan::acyclic::analyze(&steps,
         &original.relations.iter().cloned().collect(),
@@ -112,6 +114,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn run(
         components,
         steps: Arc::new(steps),
         stage_decisions,
+        cache_decisions,
         after,
         frames: vec![],
         limit: run.max_waves,

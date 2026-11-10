@@ -3067,3 +3067,29 @@ The profiler parent invokes its separately ignored child. It checks component pl
 Component regressions cover cyclic reachability, mutually recursive relations with different widths, stable external summaries, execution limits, cleanup, retry, and unchanged results.
 The public explain regression checks the shared component proof through the session interface.
 Both headless examples build in the development profile. No release or profiling-profile build runs.
+
+### Retained component cache consolidation (2026-11-10)
+
+The retained graph kept independent context and support caches for full rules and their generated delta variants.
+For positive set recursion, the full-rule context cache already computes changes from each input version.
+Retaining both cache families duplicates maintenance and makes a compiled component transition unnecessarily large.
+
+The shared component analysis now proves whether full-rule contexts can replace generated delta caches.
+The retained schedule removes proven redundant variants and wakes full rules when their recursive inputs change.
+This preserves frozen preceding-frame inputs and the existing iteration history for cyclic deletions.
+It does not introduce another cold evaluation or change the independent SQL oracle.
+Lattices, opaque effects, component-dependent scalars, and recursive queries with auxiliary CTEs retain their existing paths.
+An external-only CTE seed can remain beside incremental recursive rules.
+
+Public explain reports each component decision, full-rule count, generated variant count, and removed variant count under `component_cache_scheduling`.
+The decisions belong to the execution plan and are shared across retained frames.
+The executor-independent proof can also serve native planning.
+
+Debug verification passes 176 SQL-executor tests, fifteen shared-analysis tests, and twelve SQL-profiler tests.
+The new regression uses 512 disconnected regions, mutual recursion, nonlinear joins, and alternate anchors.
+It verifies unsupported-cycle retraction, changed negative inputs, empty-state recovery, wave-limit rollback, and retry against the independent cold oracle.
+Sparse cycle retraction also has a VM-work bound.
+
+This consolidates retained state; it does not yet move production feedback into one recursive SQL statement.
+The component transition must still preserve contexts, supports, and maintenance cursors when it adopts the SQL loop.
+Complete corpus and mixed-producer replays will measure the resulting execution shape before a submission or CPU claim.
