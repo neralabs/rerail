@@ -75,6 +75,8 @@ pub(crate) trait Source: Send + Sync {
         Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),None))
     }
     fn text_column(&self, _column: usize) -> bool { false }
+    /// The source as itself, for a caller that carries state between two of one kind (`carry_sorted`).
+    fn as_any(&self) -> Option<&dyn std::any::Any> { None }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
     /// Row `row`'s values of `columns`, into `out`: one value at a time by default; a source that finds a row's
@@ -166,6 +168,11 @@ pub(crate) trait Source: Send + Sync {
     /// where the source keeps none.
     fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {
         None
+    }
+    /// Whether `sorted_rows` serves `column`, asked without building its index: a plan choosing among a source's
+    /// columns built every candidate's sorted form to ask, where it reads one.
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.sorted_rows(column, 0).is_some()
     }
 }
 

@@ -56,7 +56,7 @@ use super::retain::{Cut, Retained};
 use super::{Error, Result, lower};
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Rule, Term};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// The part as a run evaluates it, the old rows it reads, and how its strata were evaluated.
@@ -72,6 +72,41 @@ pub(in crate::code_rule_dsl) struct Maintained {
     pub(in crate::code_rule_dsl) recursive: usize,
     /// Each stratum derived again, by one of its relations, and why.
     pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
+    /// The relations that are views of one input (`input_views`): never kept, their old rows and deltas the input's.
+    pub(in crate::code_rule_dsl) views: BTreeSet<String>,
+}
+
+/// The derived relations that are views of one input: one rule, one positive atom of an input, every column of the
+/// input in the head (a variable the head names, or a constant), so a row of it is one row of the input. Such a
+/// relation is a view when planned (`plan_views`); a session keeps it as one (decision 0090): its old rows are the
+/// view over the input's old rows, its delta the view over the input's delta, and none of its rows are kept.
+///
+/// `RERAIL_SESSION_VIEWS=off` keeps and maintains them as other relations, to compare.
+pub(in crate::code_rule_dsl) fn input_views(prog: &front::Program) -> BTreeMap<String, Rule> {
+    if std::env::var("RERAIL_SESSION_VIEWS").is_ok_and(|v| v == "off") {
+        return BTreeMap::new();
+    }
+    let mut by: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+    for r in &prog.rules {
+        by.entry(r.head.rel.as_str()).or_default().push(r);
+    }
+    by.into_iter()
+        .filter_map(|(rel, rules)| {
+            let [rule] = rules.as_slice() else { return None };
+            let [Literal::Atom(a)] = rule.body.as_slice() else { return None };
+            if a.neg || a.gated || !prog.inputs.contains(&a.rel) || prog.lattice.contains_key(rel) || prog.natives.contains_key(rel) || prog.facts.contains_key(rel) || prog.outputs.iter().any(|o| o == rel) {
+                return None;
+            }
+            let head: BTreeSet<&str> = rule.head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
+            let terms_ok = rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_)));
+            let one_to_one = a.args.iter().all(|t| match t {
+                Term::Var(v) => head.contains(v.as_str()),
+                Term::Int(_) | Term::Str(_) => true,
+                _ => false,
+            });
+            (terms_ok && one_to_one).then(|| (rel.to_owned(), (*rule).clone()))
+        })
+        .collect()
 }
 
 fn named(rel: &str, suffix: &str) -> String {
@@ -170,12 +205,9 @@ fn named_heads(rule: &Rule) -> Rule {
 }
 
 /// `part` (the cut's program) with each changed stratum maintained where it can be, and the old rows it reads.
-/// An input's delta given whole (an earlier phase's, `phases::Versioned`): its rows new and its rows gone, bound as
-/// `r__plus` and `r__minus` in place of their diff of every old and new row.
-pub(in crate::code_rule_dsl) type Given = std::collections::HashMap<String, (Arc<dyn Source>, Arc<dyn Source>)>;
-
-/// `given` answers for an input whose delta it has (`Given`'s, or found by its documents), asked only for the inputs a
-/// maintained stratum reads the delta of.
+/// `given` answers for an input whose delta it has (its rows new and gone, found by its documents), bound as
+/// `r__plus` and `r__minus` in place of their diff of every old and new row; asked only for the inputs a maintained
+/// stratum reads the delta of.
 pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
     let mut part = cut.program(cross);
     let (sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
@@ -183,9 +215,12 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let why = if kept.is_none() { "nothing kept" } else { "the program has gates" };
     let Some(kept) = kept.filter(|_| cross.program.gates.is_empty()) else {
         let again = dirty.iter().map(|scc| (scc.iter().next().cloned().unwrap_or_default(), why)).collect();
-        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again });
+        let views = input_views(&cross.program).into_keys().collect();
+        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again, views });
     };
-    let old = |rel: &str| kept.has_old(rel);
+    // The views of one input whose input's old rows are kept: what they read is the input's (`input_views`).
+    let views: BTreeMap<String, Rule> = input_views(&cross.program).into_iter().filter(|(_, r)| r.body[0].atom().is_some_and(|a| kept.has_old(&a.rel))).collect();
+    let old = |rel: &str| kept.has_old(rel) || views.contains_key(rel);
     let mut changed: BTreeSet<String> = cut.changed.iter().cloned().collect();
     let mut rules: Vec<Rule> = Vec::new();
     let mut olds: BTreeSet<String> = BTreeSet::new();
@@ -204,6 +239,16 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let mut groups: Vec<(BTreeSet<String>, usize, usize, Vec<Rule>)> = Vec::new();
     for scc in dirty {
         let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
+        // A view of one input stays one: its rule as given, changed when its input changed.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(view) = views.get(*rel)
+        {
+            rules.push(view.clone());
+            if view.body[0].atom().is_some_and(|a| changed.contains(&a.rel)) {
+                changed.insert((*rel).clone());
+            }
+            continue;
+        }
         let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
         let mine: Vec<&Rule> = named_rules.iter().collect();
         // `RERAIL_CROSS_MAINTAIN_ONLY`: maintain only the strata holding one of these relations (comma-separated; empty:
@@ -418,10 +463,25 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         groups.push((scc.clone(), start, rules.len(), as_given));
     }
     let mut sources = Vec::new();
+    // A view's delta and old rows are the view over its input's: the input's are made or bound too.
+    let input_of = |rel: &str| views.get(rel).and_then(|r| r.body[0].atom()).map(|a| a.rel.clone());
+    let view_deltas: Vec<String> = deltas.iter().filter_map(|r| input_of(r)).collect();
+    let view_inputs: BTreeSet<String> = view_deltas.iter().cloned().collect();
+    deltas.extend(view_deltas);
+    let view_olds: Vec<String> = olds.iter().filter_map(|r| input_of(r)).collect();
+    olds.extend(view_olds);
+    let over_input = |rel: &str, suffix: &str| -> Rule {
+        let view = &views[rel];
+        let a = view.body[0].atom().expect("a view's atom");
+        Rule { head: Atom { rel: named(rel, suffix), ..view.head.clone() }, body: vec![atom(named(&a.rel, suffix), a.args.clone(), false)] }
+    };
     for rel in &deltas {
         let v = row(part.program.decls[rel].len());
         let head = |suffix: &str| Atom { rel: named(rel, suffix), args: v.clone(), neg: false, gated: false };
-        if maint.contains(rel) {
+        if views.contains_key(rel) {
+            rules.push(over_input(rel, "minus"));
+            rules.push(over_input(rel, "plus"));
+        } else if maint.contains(rel) {
             // A maintained relation's net change, from its own overdeleted, rederived and inserted rows.
             let body = if exact_rels.contains(rel) {
                 vec![atom(named(rel, "del"), v.clone(), false), atom(named(rel, "ins"), v.clone(), true)]
@@ -438,6 +498,10 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                 part.program.inputs.push(named(rel, suffix));
             }
         } else {
+            // A view's input whose delta is not given: found from its old rows, bound below.
+            if view_inputs.contains(rel) {
+                olds.insert(rel.clone());
+            }
             rules.push(Rule { head: head("minus"), body: vec![atom(named(rel, "old"), v.clone(), false), atom(rel.clone(), v.clone(), true)] });
             rules.push(Rule { head: head("plus"), body: vec![atom(rel.clone(), v.clone(), false), atom(named(rel, "old"), v.clone(), true)] });
         }
@@ -477,6 +541,11 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         part.program.again.push(front::Again { scc, owned, rules: given, deltas: again_deltas, reads: reads.into_iter().collect(), olds });
     }
     for rel in &olds {
+        if views.contains_key(rel) {
+            rules.push(over_input(rel, "old"));
+            fresh.push((rel.clone(), named(rel, "old")));
+            continue;
+        }
         // Named as the planner reads its statistics (`sql_col`).
         let (source, held) = kept.old_source(rel, &named(rel, "old")).expect("a maintained read's old rows");
         sources.push((named(rel, "old"), source, held));
@@ -502,5 +571,6 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
     }
     part.program.rules = rules;
-    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again })
+    let views = views.into_keys().collect();
+    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, views })
 }
