@@ -1,13 +1,14 @@
 //! A component's spec as values. The planner hands these to the engine in process (`open_spec`, `reprobe_spec`),
 //! so a plan is not written as text and parsed again. The text (the module's spec lines, joins hex-encoded within)
-//! is kept for the SQL functions (`set_fixpoint_open(spec)`, T's extension), the lab's captures and the spikes'
-//! spec files: `to_text` writes what the planner wrote, and `parse` reads it back.
+//! is kept for the SQL functions (`set_fixpoint_open(spec)`: T's extension, a copy of the engine with its own
+//! components, over text symbols), the lab's capture files and the spikes' spec files: `to_text` writes what the
+//! planner wrote, and `parse` reads it back.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 /// A value position: `_`, `v<slot>`, `i:<int>` or `x:<hex symbol>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Tok {
     Wild,
     Slot(usize),
@@ -16,14 +17,14 @@ pub enum Tok {
 }
 
 /// An atom's column: a value position, or an aggregate's own column (`a<name>`, the same name tests equality).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Arg {
     Tok(Tok),
     Local(String),
 }
 
 /// A head term: a value, or two slots' symbols joined by "." (`cat:v<a>:v<b>`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum HeadTok {
     Tok(Tok),
     Cat(usize, usize),
@@ -41,7 +42,7 @@ pub struct InputKey {
 
 /// Where an atom's rows are: the component's relation `i`'s delta (`d<i>`) or all of it (`c<i>`), a lower stratum's
 /// native relation (`r:<hex table>`) or an input.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Source {
     Delta(usize),
     Full(usize),
@@ -49,7 +50,7 @@ pub enum Source {
     Input(InputKey),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Extreme {
     Sum,
     Min,
@@ -57,7 +58,7 @@ pub enum Extreme {
 }
 
 /// One step of a native join, in plan order, or its head (last).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum JoinItem {
     /// `pos|neg <src> <args…>`
     Atom { neg: bool, src: Source, args: Vec<Arg> },
@@ -92,7 +93,7 @@ pub enum JoinItem {
 }
 
 /// A native join: its steps, then its head.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct JoinSpec {
     pub items: Vec<JoinItem>,
 }
@@ -525,7 +526,7 @@ impl ComponentSpec {
 }
 
 impl Reprobe {
-    /// The SQL function's `kind` and hex `body` (`set_fixpoint_reprobe`).
+    /// The SQL function's `kind` and hex `body` (`set_fixpoint_reprobe`), as a caller holding only text writes them.
     pub fn text(&self) -> (&'static str, String) {
         match self {
             Reprobe::Sql(sql) => ("sql", hex(sql)),
