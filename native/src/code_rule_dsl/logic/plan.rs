@@ -70,10 +70,11 @@ type Result<T> = std::result::Result<T, Error>;
 
 pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
+mod choices;
 mod demand;
+pub(in crate::code_rule_dsl) mod keeps;
 pub(in crate::code_rule_dsl) mod sketch;
 pub(in crate::code_rule_dsl) mod statkeep;
-mod keeps;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -572,16 +573,35 @@ fn levels_of(h: &str, scc: &BTreeSet<String>) -> Option<[String; 5]> {
     names.iter().all(|n| scc.contains(n)).then_some(names)
 }
 
+/// The variable `l = r` assigns from its right side: `r` an unbound variable and `l` a bound variable or a constant
+/// (`$s = $a` with `$s` bound reads as `$a = $s`). Without it, `p($s), q($a), $s = $a` could only be ordered as a
+/// cross product of `p` and `q` narrowed after by the test (decision 0099 item 4: `fl4317_typing_root`, 14 k rows,
+/// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
+fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) -> Option<&'t String> {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != "=" {
+        return None;
+    }
+    let Term::Var(y) = r else { return None };
+    let ready = match l {
+        Term::Var(x) => bound.contains(x),
+        Term::Int(_) | Term::Str(_) => true,
+        _ => false,
+    };
+    (ready && !bound.contains(y)).then_some(y)
+}
+
 fn is_join(l: &Literal) -> bool {
     matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. })
 }
 
 /// Whether a filter can run: `$x = e` assigns $x if it is unbound when `e`'s variables are bound (SQL and the native
-/// `cat`/`eq` steps bind an unbound left side); otherwise it is a test.
+/// `cat`/`eq` steps bind an unbound left side); otherwise it is a test. An equality of a bound variable or constant
+/// with an unbound variable, `$s = $a`, assigns the right side as `$a = $s` would (`binds_right`).
 fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
     match l {
         Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
-        Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some(),
+        Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some() || binds_right(l, op, r, bound).is_some(),
         Literal::Agg { var, over, atom, op } => {
             let mut need = atom.vars();
             need.remove(var);
@@ -681,6 +701,7 @@ impl KeepPlans {
     pub(in crate::code_rule_dsl) fn start(across: Option<u64>) -> Self {
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
         PLANS.with(|p| *p.borrow_mut() = Some(kept.unwrap_or_default()));
+        keeps::observing(true);
         KeepPlans(across)
     }
 }
@@ -688,10 +709,22 @@ impl KeepPlans {
 impl Drop for KeepPlans {
     fn drop(&mut self) {
         let plans = PLANS.with(|p| p.borrow_mut().take());
+        keeps::observing(false);
         if let (Some(g), Some(plans)) = (self.0, plans) {
             SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans)));
         }
     }
+}
+
+thread_local! {
+    /// Whether a plan is explained step by step whether or not the run is profiled (`explaining`): the choice of
+    /// what a relation keeps re-prices each step of its plans (decision 0099).
+    static EXPLAIN_ALWAYS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Plans explained step by step while `on` (`EXPLAIN_ALWAYS`), the setting before returned.
+pub(in crate::code_rule_dsl) fn explaining(on: bool) -> bool {
+    EXPLAIN_ALWAYS.with(|e| e.replace(on))
 }
 
 thread_local! {
@@ -1572,7 +1605,7 @@ impl Model {
         // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
         super::profile::work(super::profile::Unit::Candidate, candidates);
         // Also when the run may use the device: placement prices each join step from these (decision 0095).
-        let explained = (explain && (super::profile::on() || placement::device_on())).then(|| {
+        let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get))).then(|| {
             let _explain = super::profile::span(|| "explain record".into());
             // The chosen order step by step, priced as the search priced it.
             let mut bound: BTreeSet<String> = BTreeSet::new();
@@ -2136,6 +2169,9 @@ impl Model {
                     if *op == "=" && lv.is_some_and(|v| !env.contains_key(v)) {
                         let e = sql_term(r, &env, atoms)?;
                         env.insert(lv.expect("a variable").clone(), e);
+                    } else if let Some(y) = binds_right(l, op, r, &env.keys().cloned().collect()) {
+                        let e = sql_term(l, &env, atoms)?;
+                        env.insert(y.clone(), e);
                     } else if *op == "="
                         && let Some(lv) = lv
                         && r.is_cat()
@@ -2481,6 +2517,50 @@ impl Fx<'_> {
 }
 
 /// A run's evaluation state on its connection.
+/// A native stratum's outcome.
+enum Native<'a> {
+    /// A rule has a literal with no native step: nothing ran.
+    Declined,
+    Ran,
+    /// Its run waits on its device wave (`lanes::wave`): the driver's state, to resume once the wave ran.
+    Waiting(Box<Driving<'a>>),
+}
+
+/// A native stratum between its component's open and its close: what its driver (`Run::drive`) needs to run the
+/// component's chunks of waves, replan between them and record what it did. Held while the stratum waits on its
+/// device wave.
+struct Driving<'a> {
+    scc: BTreeSet<String>,
+    solving: bool,
+    name: String,
+    spec: ComponentSpec,
+    rels: Vec<String>,
+    ri: BTreeMap<String, usize>,
+    views: HashMap<String, (String, String)>,
+    sql_views: bool,
+    sql_probe: Vec<bool>,
+    orders: Vec<Vec<Step>>,
+    probes: Vec<(&'a Rule, usize, Vec<Step>)>,
+    order_rules: Vec<u64>,
+    nseeds: usize,
+    seeds: Vec<&'a Rule>,
+    ngates: usize,
+    explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)>,
+    counted: Vec<Vec<(u64, u64)>>,
+    timed: Vec<f64>,
+    chunk: i64,
+    /// Per probe, the sizes its last live replan read (`live_sizes`).
+    replanned_at: Vec<Option<Vec<f64>>>,
+    started: std::time::Instant,
+    placed: placement::Placement,
+    shape: placement::Shape,
+    /// This thread's CPU the stratum has spent so far (while profiling).
+    cpu_own: f64,
+    lab: Option<super::native::component::lab::Capture>,
+    /// Placed on the device but a shape its run does not take: why, reported once the stratum closes.
+    not_taken: Option<&'static str>,
+}
+
 struct Run<'a, 'b> {
     prog: &'a Program,
     db: &'a Connection,
@@ -2790,6 +2870,7 @@ impl Run<'_, '_> {
 /// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
 /// skipped.
 fn observe(stats: &mut Stats, rule: u64, order: &[Step], counts: &[(i64, i64)]) {
+    keeps::observe_steps(rule, order, counts);
     // A probe that ran no step past its first (its delta empty this chunk) observed nothing.
     if counts.iter().skip(1).all(|&(n_in, _)| n_in == 0) {
         return;
@@ -3065,7 +3146,7 @@ fn const_tok(t: &Term) -> Option<Tok> {
     }
 }
 
-impl Run<'_, '_> {
+impl<'a> Run<'a, '_> {
     fn fx(&self) -> Fx<'_> {
         Fx { db: self.db, direct: self.model.inputs.atoms.is_some() }
     }
@@ -3507,11 +3588,23 @@ impl Run<'_, '_> {
             }
         }
         let mut head = Vec::new();
-        for t in &h.args {
+        for (k, t) in h.args.iter().enumerate() {
             match t {
-                Term::Call(f, args) if f == "cat" && args.iter().all(|x| matches!(x, Term::Var(_))) => {
+                Term::Call(f, args) if f == "cat" && args.len() == 2 && args.iter().all(|x| matches!(x, Term::Var(v) if slots.contains_key(v))) => {
                     let (Some(Tok::Slot(a)), Some(Tok::Slot(b))) = (tok(&args[0], &mut slots), tok(&args[1], &mut slots)) else { return None };
                     head.push(HeadTok::Cat(a, b));
+                }
+                // `sym_at($e, @cat(1539, $x))`: a qualified name of a constant scope (the planner folds a scope's name
+                // to its symbol) and a bound part, or two constants: the name made into a slot of its own first.
+                Term::Call(f, args) if f == "cat" && args.len() == 2 => {
+                    let part = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Int(_) | Term::Str(_)) || matches!(t, Term::Var(v) if slots.contains_key(v));
+                    if !args.iter().all(|x| part(x, &slots)) {
+                        return None;
+                    }
+                    let (a, b) = (tok(&args[0], &mut slots)?, tok(&args[1], &mut slots)?);
+                    let out = tok(&Term::Var(format!("rr_head_cat{k}")), &mut slots)?;
+                    lines.push(JoinItem::Cat { out: out.clone(), a, b });
+                    head.push(HeadTok::Tok(out));
                 }
                 // `q(…, @concat(m, ".", a))`, `q(…, @add($i, 1))`: the computed term made into a slot before the head
                 // reads it.
@@ -3551,15 +3644,30 @@ impl Run<'_, '_> {
         out
     }
 
-    fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
+    /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it. The stratum
+    /// may come back waiting on its device wave (`Native::Waiting`); `native_resume` finishes it once the wave ran.
+    fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule]) -> Result<Native<'a>> {
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
-        self.model.stats.solve(if reads { scc.clone() } else { BTreeSet::new() });
+        self.lent(reads.then(|| scc.clone()), |this, native_rels, numbers| this.native_stratum_(scc, rules, native_rels, numbers))
+    }
+
+    /// Resumes a stratum that waited on its device wave, after the wave ran: its driver goes on from the run that
+    /// suspended it.
+    fn native_resume(&mut self, d: Box<Driving<'a>>) -> Result<Native<'a>> {
+        let solving = d.solving.then(|| d.scc.clone());
+        self.lent(solving, |this, native_rels, numbers| this.drive(d, native_rels, numbers))
+    }
+
+    /// Runs `f` with the relations run natively so far and the rules' numbers lent to it, and `solving` as the
+    /// component being solved.
+    fn lent<T>(&mut self, solving: Option<BTreeSet<String>>, f: impl FnOnce(&mut Self, &BTreeSet<String>, &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<T>) -> Result<T> {
+        self.model.stats.solve(solving.unwrap_or_default());
         // The relations run natively so far, lent to the stratum (it reads them, and adds its own only at the end):
         // cloning them per stratum was quadratic in strata (3% of a combined run's main thread).
         let native_rels = std::mem::take(&mut self.native_rels);
         // Lent too, so the stratum may call `&mut self` methods while its spans name rules by number.
         let numbers = std::mem::take(&mut self.numbers);
-        let out = self.native_stratum_(scc, rules, &native_rels, &numbers);
+        let out = f(self, &native_rels, &numbers);
         self.numbers = numbers;
         let added = std::mem::replace(&mut self.native_rels, native_rels);
         self.native_rels.extend(added);
@@ -3572,19 +3680,19 @@ impl Run<'_, '_> {
     /// replanned from live counts between chunks of waves (T's `native_stratum_`). Lower strata it reads natively
     /// come from the native store (`r:`), others from their tables or the facts. Nothing is written back: the
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
-    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule], native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<bool> {
+    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule], native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let prog = self.prog;
         self.why_not = None;
         self.why_class = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
             self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
             self.why_class = Some("a lattice relation".into());
-            return Ok(false);
+            return Ok(Native::Declined);
         }
         if scc.iter().any(|r| prog.natives.contains_key(r)) {
             self.why_not = Some("a relation made natively from its inputs' tables (`dfs_first`)".into());
             self.why_class = Some("read of a dfs_first relation".into());
-            return Ok(false);
+            return Ok(Native::Declined);
         }
         let rels: Vec<&String> = scc.iter().collect();
         let ri: BTreeMap<String, usize> = rels.iter().enumerate().map(|(i, r)| ((*r).clone(), i)).collect();
@@ -3592,12 +3700,12 @@ impl Run<'_, '_> {
         let mut gates: Vec<&(String, crate::code_rule_dsl::logic::magic::Gate)> = prog.gates.iter().filter(|(g, _)| scc.contains(g)).collect();
         gates.sort_by(|a, b| (a.1.level, &a.0).cmp(&(b.1.level, &b.0)));
         // A gate's rule only placed it here.
-        let rules: Vec<&Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
+        let rules: Vec<&'a Rule> = rules.iter().copied().filter(|r| !gates.iter().any(|(g, _)| *g == r.head.rel)).collect();
         // A levels stratum (decision 0090): per relation `h`, `h__chk` and `h__gone` are written by the engine's
         // driver; their rules only placed them here.
         let levels: Vec<[String; 5]> = scc.iter().filter_map(|r| r.strip_suffix("__cand")).filter_map(|h| levels_of(h, scc)).collect();
         let placed: BTreeSet<&String> = levels.iter().flat_map(|l| [&l[1], &l[3]]).collect();
-        let rules: Vec<&Rule> = rules.into_iter().filter(|r| !placed.contains(&r.head.rel)).collect();
+        let rules: Vec<&'a Rule> = rules.into_iter().filter(|r| !placed.contains(&r.head.rel)).collect();
         // A maintained stratum's survivors (`h :- h__old, !h__del`, decision 0077): the relation starts as the kept
         // `h__old` with `h__del`'s rows dead in place (decision 0090 step 4), not derived row by row.
         // `RERAIL_DRED_COPY`: derive them by the rule (to measure what starting in place saves).
@@ -3652,7 +3760,7 @@ impl Run<'_, '_> {
             }
             super::profile::stratum(&stratum_key(scc), "native set engine", || "every rule joins an empty relation: held empty, no component opened".to_owned());
             self.native_rels.extend(scc.iter().cloned());
-            return Ok(true);
+            return Ok(Native::Ran);
         }
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
@@ -3700,16 +3808,28 @@ impl Run<'_, '_> {
         // Its shape and planned work, for where it runs (`placement`, decision 0095).
         let mut shape = placement::Shape::default();
         // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
+        // Prefixes are probed with a head of no terms: the rule's own head names variables a prefix has not bound yet,
+        // so every prefix would fail at its first step. `None`: every step has one, and the head is what has none.
+        let first_missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> Option<usize> {
+            let bare = Atom { rel: h.rel.clone(), args: Vec::new(), neg: false, gated: false };
+            (1..=order.len()).find(|&k| this.join_spec(&bare, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none())
+        };
         let missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
-            let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
-            let s = &order[k.saturating_sub(1)];
-            format!("{}{} has no native step", s.lit, if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
+            match first_missing(this, h, order, at) {
+                Some(k) => {
+                    let s = &order[k - 1];
+                    format!("{}{} has no native step", s.lit, if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
+                }
+                None => format!("the head {h} has no native form"),
+            }
         };
         // The same step's kind (`decline_class`).
         let missing_class = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
-            let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
-            let s = &order[k.saturating_sub(1)];
-            if s.mode == Some(Mode::Range) { "a range read inside a document".to_owned() } else { decline_class(&s.lit, prog, native_rels) }
+            match first_missing(this, h, order, at) {
+                Some(k) if order[k - 1].mode == Some(Mode::Range) => "a range read inside a document".to_owned(),
+                Some(k) => decline_class(&order[k - 1].lit, prog, native_rels),
+                None => "a head term".to_owned(),
+            }
         };
         for r in &seeds {
             let span = planning(r, "plan");
@@ -3733,7 +3853,7 @@ impl Run<'_, '_> {
                 }
                 self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, None)));
                 self.why_class = Some(missing_class(self, &r.head, &order, None));
-                return Ok(false);
+                return Ok(Native::Declined);
             };
             explained.push((format!("seed {}", r.head.rel), rule_no(r), x, took, 0));
             *est.entry(r.head.rel.as_str()).or_default() += rows;
@@ -3798,7 +3918,7 @@ impl Run<'_, '_> {
                     }
                     self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, Some(at))));
                     self.why_class = Some(missing_class(self, &r.head, &order, Some(at)));
-                    return Ok(false);
+                    return Ok(Native::Declined);
                 };
                 let x = x.map(|x| delta_sources(x, &order, at, scc));
                 explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), x, took, 0));
@@ -3828,7 +3948,7 @@ impl Run<'_, '_> {
             }
             lines.push(SpecLine::Gate { done: ri[g], src: d.src.as_ref().map(|s| ri[s]), quiet, after });
         }
-        let spec = ComponentSpec { name: name.clone(), lines };
+        let mut spec = ComponentSpec { name: name.clone(), lines };
         drop(spec_span);
         // The O125 spike (`RERAIL_SPIKE_SPECS=<dir>`): each stratum named as it starts, its spec written out.
         if let Some(dir) = std::env::var_os("RERAIL_SPIKE_SPECS") {
@@ -3837,16 +3957,33 @@ impl Run<'_, '_> {
             let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), spec.to_text()));
         }
         let started = std::time::Instant::now();
-        // Where it runs (decision 0095). The device has no relational form yet, so every stratum runs here; the
-        // placement is recorded with the CPU it took, for the profile's "Placement" section.
+        // Where it runs (decision 0095 §7, §8). A stratum the placement puts on the device says so in its spec
+        // (`device`): its seed joins run there, in one submission, unless the device refuses one of them, which the
+        // profile then names. Only a stratum of seeds alone can go: recursion, gates and requests are forms the device
+        // lacks.
         let placed = placement::place(&shape);
+        // Placed there but a shape the device's run does not take: named, as a refusal.
+        let not_taken = if !placed.gpu {
+            None
+        } else if !probes.is_empty() {
+            Some("a recursive component")
+        } else if !gates.is_empty() || answering {
+            Some("a component with gates or requests")
+        } else if orders.is_empty() {
+            Some("no native seed join")
+        } else if placement::device_joins_off() {
+            Some("device joins off (RERAIL_DEVICE_JOINS=off, a measurement aid)")
+        } else {
+            spec.lines.insert(0, SpecLine::Device);
+            None
+        };
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s } else { 0.0 };
-        let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
+        let counted: Vec<Vec<(u64, u64)>> = Vec::new();
         // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
         let lab = super::native::component::lab::wanted(&name, shape.work)
             .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &spec, &path));
         // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
-        let mut timed: Vec<f64> = Vec::new();
+        let timed: Vec<f64> = Vec::new();
         self.fx().open(&spec)?;
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
@@ -3866,12 +4003,62 @@ impl Run<'_, '_> {
             }
         }
         order_rules.extend(probes.iter().map(|p| obs_rule(&p.0.head, &p.0.body)));
-        let mut chunk: i64 = 1;
-        // Per probe, the sizes its last live replan read (`live_sizes`).
-        let mut replanned_at: Vec<Option<Vec<f64>>> = vec![None; probes.len()];
+        let replanned_at = vec![None; probes.len()];
+        let d = Driving {
+            scc: scc.clone(),
+            solving: !self.model.stats.solving.is_empty(),
+            name,
+            spec,
+            rels: rels.iter().map(|r| (*r).clone()).collect(),
+            ri,
+            views,
+            sql_views,
+            sql_probe,
+            orders,
+            probes,
+            order_rules,
+            nseeds,
+            seeds,
+            ngates: gates.len(),
+            explained,
+            counted,
+            timed,
+            chunk: 1,
+            replanned_at,
+            started,
+            placed,
+            shape,
+            cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
+            lab,
+            not_taken,
+        };
+        self.drive(Box::new(d), native_rels, numbers)
+    }
+
+    /// A native stratum's driver: its component's chunks of waves to the fixpoint, replanned from live counts
+    /// between them, then what it did recorded and the component closed. A run that waits on its device wave
+    /// (`lanes::wave`) suspends the stratum: the driver's state goes back to the strata loop, which resumes it once
+    /// the wave ran.
+    fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
+        let prog = self.prog;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut timed, mut chunk, mut replanned_at, started, placed, shape, cpu_own, lab, not_taken } = *d;
+        let scc = &scc_owned;
+        let rels: Vec<&String> = rels_owned.iter().collect();
+        let planning = |r: &Rule, what: &str| {
+            super::profile::span(|| {
+                let no = numbers.get(&(r as *const Rule)).map_or("?".to_owned(), |k| format!("{k:04}"));
+                format!("{what} #{no} {}, {} literals", r.head.rel, r.body.len())
+            })
+        };
+        let profiling = super::profile::on();
+        // This thread's CPU at the stratum's start, less what other strata spent while it waited.
+        let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_own } else { 0.0 };
         let keeping_plans = PLANS.with(|p| p.borrow().is_some());
         loop {
-            let f: String = self.fx().run(&name, chunk as u32)?;
+            let f: String = {
+                let _wave = super::lanes::wave::suspendable();
+                self.fx().run(&name, chunk as u32)?
+            };
             let f: Vec<&str> = f.split_whitespace().collect();
             if let Some(per) = f.get(7).filter(|_| f.len() == 9 && super::profile::on()) {
                 for (k, item) in per.split(',').enumerate() {
@@ -3884,6 +4071,15 @@ impl Run<'_, '_> {
             if f.last() == Some(&"2") {
                 answer_pending(self.db, self.model.inputs.atoms.is_some(), &mut self.answer, &mut self.answered, &name, scc)?;
                 continue;
+            }
+            // Waiting on its device wave: the stratum is suspended with its driver's state, and resumed here.
+            if f.last() == Some(&"3") {
+                drop(rels);
+                return Ok(Native::Waiting(Box::new(Driving {
+                    scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
+                    explained, counted, timed, chunk, replanned_at, started, placed, shape, lab, not_taken,
+                    cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
+                })));
             }
             let steps = self.fx().steps(&name)?;
             for ((o, &rule), line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&order_rules).zip(&steps) {
@@ -3969,10 +4165,36 @@ impl Run<'_, '_> {
             }
             chunk *= 2;
         }
+        // What each rule's steps produced and each relation holds, for a later chunk's choice of what a relation
+        // keeps (decision 0099, `keeps::observe`).
+        {
+            let ruled: Vec<(u64, &[(u64, u64)])> = order_rules.iter().zip(&counted).map(|(&r, c)| (r, c.as_slice())).collect();
+            // Each relation's rows, and per column its distinct values and fanout as the live counts left them.
+            let sizes: Vec<keeps::Seen> = rels
+                .iter()
+                .filter_map(|r| {
+                    let rows = *self.model.stats.card.get(*r)?;
+                    let width = prog.decls.get(*r).map_or(0, Vec::len);
+                    let cols = (0..width).map(|c| (self.model.ndv.get(&((*r).clone(), c)).copied(), self.model.stats.fan.get(&((*r).clone(), c)).copied())).collect();
+                    Some(keeps::Seen { rel: r.as_str(), rows, cols })
+                })
+                .collect();
+            keeps::observe(&ruled, &sizes, self.model.stats.nodes);
+        }
+        // What the device did, or why it refused (taken whether or not profiling, so a report never outlives its
+        // stratum).
+        #[cfg(target_os = "macos")]
+        let device = super::native::component::device_report().or_else(|| {
+            not_taken.map(|why| super::native::component::DeviceReport { refused: Some(why.to_owned()), ..Default::default() })
+        });
+        #[cfg(not(target_os = "macos"))]
+        let _ = not_taken;
+        #[cfg(not(target_os = "macos"))]
+        let device: Option<()> = None;
         if profiling {
             let (u, s) = corpus::thread_usage();
             let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();
-            super::profile::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at);
+            super::profile::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at, device.as_ref());
         }
         if super::profile::on() {
             let empty = Vec::new();
@@ -3988,7 +4210,7 @@ impl Run<'_, '_> {
                     "every rule has a native step: component {name}, {} seed joins, {} delta probes, {} gates; inputs read in place, derived relations held in memory",
                     seeds.len(),
                     probes.len(),
-                    gates.len()
+                    ngates
                 )
             });
             for (k, (kind, rule, x, took, replans)) in explained.iter().enumerate() {
@@ -4040,7 +4262,7 @@ impl Run<'_, '_> {
             super::native::component::lab::capture_outputs(self.db, capture);
         }
         self.native_rels.extend(scc.iter().cloned());
-        Ok(true)
+        Ok(Native::Ran)
     }
 
     /// Runs a one-relation flat-lattice component natively (sqlite-ext `lattice_fixpoint`, T's `native_fixpoint`)
@@ -4457,6 +4679,87 @@ pub(in crate::code_rule_dsl) struct Hooks<'a> {
     pub(in crate::code_rule_dsl) unload: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Answers the requests a component makes, inside the fixpoint (decision 0065 §2a).
     pub(in crate::code_rule_dsl) answer: Option<Answer<'a>>,
+    /// The strata an earlier run of the program kept (decision 0077 §4): a stratum whose reads are unchanged is not run.
+    pub(in crate::code_rule_dsl) strata: Option<&'a mut dyn KeptStrata>,
+}
+
+/// What an earlier run of a program kept of its strata, and what this run gives back (decision 0077 §4).
+pub(in crate::code_rule_dsl) trait KeptStrata {
+    /// The program the run evaluates, as the whole-program choices left it: what was kept is of that program.
+    fn program(&mut self, digest: &[u8; 32]);
+    /// Input `rel`'s digest in this run (`None`: not known).
+    fn input(&mut self, rel: &str) -> Option<u64>;
+    /// The digest relation or input `rel` had in the earlier run.
+    fn was(&self, rel: &str) -> Option<u64>;
+    /// Whether the earlier run's rows of `rel` are kept.
+    fn has_rows(&self, rel: &str) -> bool;
+    /// The earlier run's rows of `rel`: its columns' types, the rows flat, and their count.
+    fn rows(&mut self, rel: &str) -> Option<(Vec<u8>, Vec<i64>, usize)>;
+    /// This run derived `rel`: its digest, and its rows (types, flat, count), or `None` when SQL derived it.
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Vec<i64>, usize)>);
+    /// The run's end: the strata it evaluated, of all.
+    fn counted(&mut self, evaluated: usize, of: usize);
+}
+
+/// The relations a stratum's rules read: atoms (an aggregate's too), `node` and `child` for a `nearest` climb, a
+/// native operator's inputs.
+fn stratum_reads(prog: &Program, scc: &BTreeSet<String>, rules: &[&Rule]) -> BTreeSet<String> {
+    let mut out: BTreeSet<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.clone())).collect();
+    if rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Nearest { .. }))) {
+        out.extend(["node".to_owned(), "child".to_owned()]);
+    }
+    for rel in scc {
+        if let Some(native) = prog.natives.get(rel) {
+            out.extend(native.reads().into_iter().map(str::to_owned));
+        }
+    }
+    out
+}
+
+/// After a stratum ran: each of its relations' digest and rows, given to `ks` (and to this run's `fresh`).
+fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BTreeSet<String>, fresh: &mut HashMap<String, Option<u64>>) {
+    for r in scc {
+        let got = if run.native_rels.contains(r) { super::native::component::kept_rows(db, r) } else { None };
+        let got = got.map(|(types, rows, n)| (rows_digest(types.len(), &rows, n), types, rows, n));
+        fresh.insert(r.clone(), got.as_ref().map(|g| g.0));
+        ks.ran(r, got);
+    }
+}
+
+/// Holds clean relation `rel` in the run as the earlier run kept it, with its statistics; its rows' count.
+fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel: &str) -> Result<usize> {
+    let (types, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+    let k = types.len();
+    let mut ndv = Vec::with_capacity(k);
+    for c in 0..k {
+        let distinct: rustc_hash::FxHashSet<i64> = rows.iter().skip(c).step_by(k).copied().collect();
+        ndv.push(distinct.len() as i64);
+    }
+    super::native::component::hold_rows(db, rel, types, rows, n);
+    run.native_rels.insert(rel.to_owned());
+    run.model.stats.card.insert(rel.to_owned(), (n as f64).max(1.0));
+    for (c, d) in ndv.into_iter().enumerate() {
+        run.model.ndv.insert((rel.to_owned(), c), d.max(1) as f64);
+        run.model.stats.fan.insert((rel.to_owned(), c), if d > 0 { n as f64 / d as f64 } else { 1.0 });
+        run.model.stats.dfreq.remove(&(rel.to_owned(), c));
+    }
+    Ok(n)
+}
+
+/// An order-independent digest of rows (a set), as `corpus::retain::digest` takes a source's.
+pub(in crate::code_rule_dsl) fn rows_digest(width: usize, rows: &[i64], n: usize) -> u64 {
+    let mut sum: u64 = 0;
+    if width > 0 {
+        for row in rows.chunks_exact(width) {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for v in row {
+                h = (h ^ *v as u64).wrapping_mul(0x0000_0100_0000_01b3);
+                h ^= h >> 29;
+            }
+            sum = sum.wrapping_add(h.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        }
+    }
+    sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
 }
 
 /// `run_atoms_native_over`, telling `hooks` of each kept relation and input as its last reader runs, and of each
@@ -4623,51 +4926,89 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     if super::profile::on() {
         super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
     }
-    // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
-    // 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
-    let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
-    // What each derived relation keeps (decision 0099): stored, or inlined into its readers, from this plan's
-    // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
-    let inlined;
+    // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
+    // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
+    let chosen_key = corpus.then(|| choices::key(prog));
+    let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
+    let chosen: Option<std::sync::Arc<Program>>;
+    // The relations inlined, for the outcome (a session stores, never inlines, what it keeps: decision 0099).
     let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
-    let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
-        Some((p, done)) => {
-            super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
-            inlined_rels = done.into_iter().collect();
-            inlined = p;
-            // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
-            if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
-                use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                    for r in &inlined.rules {
-                        let _ = writeln!(f, "{r}");
-                    }
-                }
+    let prog: &Program = match reused {
+        Some(c) => {
+            let nodes = model.stats.nodes;
+            super::profile::decision("planning choices (decision 0090 §5)", || format!("kept: inline or store and demand as chosen at {:.0} nodes, taken at {nodes:.0}", c.nodes));
+            inlined_rels = c.inlined.iter().cloned().collect();
+            if !c.inlined.is_empty() {
+                super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", c.inlined.len(), c.inlined.join(", ")));
             }
-            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&inlined)).into();
-            &inlined
+            if !c.demanded.is_empty() {
+                super::profile::decision("demand (decision 0048)", || format!("{} relations computed only for the keys their readers reach: {}", c.demanded.len(), c.demanded.join(", ")));
+            }
+            if c.program.is_some() {
+                // The program run is the rewritten one: its analysis is that program's, made when asked.
+                model.analysis = std::sync::OnceLock::new();
+            }
+            chosen = c.program;
+            chosen.as_deref().unwrap_or(prog)
         }
-        None => prog,
-    };
-    let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
-        Some((p, demanded)) => {
-            super::profile::decision("demand (decision 0048)", || {
-                format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
-            });
-            split = p;
-            // The program run is the split one: its analysis is that program's, made when asked.
-            model.analysis = std::sync::OnceLock::new();
-            &split
+        None => {
+            // What each derived relation keeps (decision 0099): stored, or inlined into its readers, from this plan's
+            // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
+            let mut inlined_names = Vec::new();
+            let inlined = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
+                Some((p, done)) => {
+                    super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
+                    // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
+                    if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
+                        use std::io::Write;
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                            for r in &p.rules {
+                                let _ = writeln!(f, "{r}");
+                            }
+                        }
+                    }
+                    model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&p)).into();
+                    inlined_names = done;
+                    Some(p)
+                }
+                None => None,
+            };
+            // Relations computed for every node that rules only negate, computed for the keys those rules reach
+            // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
+            let mut demanded_names = Vec::new();
+            let split = match if corpus { demand::split_negations(inlined.as_ref().unwrap_or(prog), &model) } else { None } {
+                Some((p, demanded)) => {
+                    super::profile::decision("demand (decision 0048)", || {
+                        format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
+                    });
+                    // The program run is the split one: its analysis is that program's, made when asked.
+                    model.analysis = std::sync::OnceLock::new();
+                    demanded_names = demanded;
+                    Some(p)
+                }
+                None => None,
+            };
+            chosen = split.or(inlined).map(std::sync::Arc::new);
+            inlined_rels = inlined_names.iter().cloned().collect();
+            if let Some(k) = chosen_key {
+                choices::remember(k, choices::Chosen { program: chosen.clone(), inlined: inlined_names, demanded: demanded_names, nodes: model.stats.nodes });
+            }
+            chosen.as_deref().unwrap_or(prog)
         }
-        None => prog,
     };
     drop(demand_span);
     let strata_span = super::profile::span(|| "strata".into());
     if super::profile::on() {
         super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
     }
-    let (sccs, _) = strata(prog)?;
+    let (sccs, deps) = strata(prog)?;
+    // Device waves (decision 0095 §5, 0098 §6): the strata in order of their levels. A stratum's level is one more
+    // than the deepest level it depends on, so a level's strata do not depend on each other, and in this order each
+    // level's strata are adjacent: a level is a device wave. The sort is stable, so within a level the strata keep
+    // the dependency order's. Only strata run natively make waves (SQL launches nothing), so a run all in SQL keeps
+    // the dependency order, and T's plans in it.
+    let (sccs, level_of) = by_level(sccs, &deps, model.inputs.native.contains("program"));
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {
         rules_by.entry(r.head.rel.as_str()).or_default().push(r);
@@ -4803,20 +5144,15 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     for (r, &l) in &last {
         after_last[(l + 1).min(sccs.len())].push(r.clone());
     }
-    // Device waves (decision 0095 §5, 0098 §6). A stratum's level is one more than the deepest level it reads, so a
-    // level's strata read only earlier levels' relations. Each level's count tables that an earlier chunk found worth
-    // building (`count table`) are built as one batch when the level's first stratum runs: one submission per lane
-    // for the level, not one per stratum. A table whose relation is not held yet is built by its step, as before.
-    let level_of: Vec<usize> = {
-        let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
-        let by = rules_by_stratum(prog, &sccs);
-        let mut level = vec![0usize; sccs.len()];
-        for j in 0..sccs.len() {
-            let deepest = by[j].iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).filter_map(|a| of.get(a.rel.as_str())).filter(|&&d| d != j && d < j).map(|&d| level[d] + 1).max();
-            level[j] = deepest.unwrap_or(0);
-        }
-        level
-    };
+    // Device waves (decision 0095 §5, 0098 §6), by level (`by_level`):
+    // - Each level's count tables that an earlier chunk found worth building (`count table`) are built as one batch
+    //   when the level's first stratum runs. A table whose relation is not held yet is built by its step, as before.
+    // - A stratum whose form launches kernels (the closure's bit rows) prepares them and waits (`Native::Waiting`),
+    //   and the next strata of its level run. When the level ends, or a stratum depends on a waiting one, every
+    //   waiting launch goes to the executor as one batch (`lanes::wave::flush`), and the waiting strata finish in
+    //   order. So each lane gets one submission per level for each, not one per stratum.
+    // A waiting stratum has read its inputs: what it does after its wave reads only its own component and the
+    // launches' outputs. So the inputs it read may be dropped, and the relations it read released, while it waits.
     let wants_of: Vec<BTreeSet<(String, Vec<usize>)>> = rules_by_stratum(prog, &sccs)
         .iter()
         .zip(&sccs)
@@ -4835,13 +5171,54 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         .collect();
     let mut waved = vec![false; sccs.len()];
     let by_stratum = rules_by_stratum(prog, &sccs);
+    // Strata waiting on their device wave: position, key, driver's state.
+    let mut waiting: Vec<(usize, String, Box<Driving>)> = Vec::new();
+    // Relations no stratum reads, of strata that finished after the stratum following them ran: released or read
+    // out at the next stratum, as they would have been at the one following them.
+    let mut carry: Vec<String> = Vec::new();
+    // Strata kept from an earlier run of the program (`Hooks::strata`, decision 0077 §4): a stratum whose every read
+    // has the rows it had then is not run, its relations' rows taken from what was kept when a stratum that runs
+    // reads them (or the run's end keeps them); a stratum that runs gives its rows' digest, so one whose rows came
+    // out the same leaves its readers clean (early cutoff).
+    let mut strata_kept = hooks.strata.take().filter(|_| prog.gates.is_empty());
+    if let Some(ks) = strata_kept.as_deref_mut() {
+        ks.program(&choices::key(prog));
+    }
+    let input_set: BTreeSet<&str> = prog.inputs.iter().map(String::as_str).collect();
+    let produced_here = super::answers::produced(prog);
+    // This run's digest of each derived relation (`None`: not known, as for a stratum SQL ran); clean relations not
+    // yet held; the strata evaluated whose rows' digests are not taken yet. A stratum waiting on its device wave has
+    // no rows yet: its digest is taken once its wave ran (a stratum that reads it finishes the wave first).
+    let mut fresh: HashMap<String, Option<u64>> = HashMap::new();
+    let mut deferred: BTreeSet<String> = BTreeSet::new();
+    let mut evaluated: Vec<usize> = Vec::new();
+    let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     for (at, scc) in sccs.iter().enumerate() {
+        if !waiting.is_empty() {
+            let reads_waiting = || {
+                let theirs: HashSet<&str> = waiting.iter().flat_map(|w| sccs[w.0].iter().map(String::as_str)).collect();
+                scc.iter().flat_map(|r| deps.get(r).into_iter().flatten()).any(|(d, _)| theirs.contains(d.as_str()))
+            };
+            if level_of[at] != level_of[waiting[0].0] || reads_waiting() {
+                finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
+            }
+        }
+        super::lanes::prof::level(Some(level_of[at]));
+        if let Some(ks) = strata_kept.as_deref_mut() {
+            let (done, still): (Vec<usize>, Vec<usize>) = std::mem::take(&mut evaluated).into_iter().partition(|k| !waiting.iter().any(|w| w.0 == *k));
+            evaluated = still;
+            for k in done {
+                kept_strata_ran(ks, db, &run, &sccs[k], &mut fresh);
+            }
+        }
         let candidates: Vec<String> = if at == 0 {
             run.native_rels.iter().cloned().collect()
         } else {
             let mut c = std::mem::take(&mut after_last[at]);
             c.extend(sccs[at - 1].iter().filter(|r| !last.contains_key(*r)).cloned());
-            c.retain(|r| run.native_rels.contains(r));
+            c.append(&mut carry);
+            let mut seen = HashSet::new();
+            c.retain(|r| run.native_rels.contains(r) && seen.insert(r.clone()));
             c
         };
         let done: Vec<String> = candidates.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
@@ -4886,6 +5263,46 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         }
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
+        if let Some(ks) = strata_kept.as_deref_mut() {
+            let reads = stratum_reads(prog, scc, &rules);
+            // A stratum the engine makes otherwise (a native operator, a lattice, a view, a produced request, a
+            // tree pattern read off the documents) always runs.
+            let plain = !scc.iter().any(|r| prog.natives.contains_key(r) || prog.lattice.contains_key(r) || run.views.contains(r) || produced_here.contains_key(r.as_str()))
+                && !rules.iter().any(|r| r.body.iter().any(|l| matches!(l, Literal::Ast { .. })));
+            let mut clean = plain && !rules.is_empty() && scc.iter().all(|r| ks.has_rows(r));
+            for r in &reads {
+                if !clean {
+                    break;
+                }
+                let now = if fresh.contains_key(r) {
+                    fresh[r]
+                } else if input_set.contains(r.as_str()) {
+                    ks.input(r)
+                } else if rules_by.contains_key(r.as_str()) {
+                    None
+                } else {
+                    // Neither derived nor an input: the program's own facts, which its key holds.
+                    Some(0)
+                };
+                clean = now.is_some() && now == ks.was(r);
+            }
+            if clean {
+                for r in scc {
+                    fresh.insert(r.clone(), ks.was(r));
+                    deferred.insert(r.clone());
+                }
+                clean_strata += 1;
+                continue;
+            }
+            // A clean relation this stratum reads is held now, as the last run derived it.
+            let wanted: Vec<String> = reads.iter().filter(|r| deferred.contains(*r)).cloned().collect();
+            for r in wanted {
+                held_rows += kept_strata_hold(ks, db, &mut run, &r)?;
+                deferred.remove(&r);
+                held_again += 1;
+            }
+            evaluated.push(at);
+        }
         let _stratum = super::profile::span(|| format!("stratum {}", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
         // A produced relation above its request (decision 0065 §2a): its request is whole, so it is answered once, or
         // holds what a component's pauses answered. An input's rows are the caller's to write.
@@ -4964,12 +5381,19 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             if let (Some(path), Some(t0)) = (level_trace(), t0) {
                 use std::io::Write as _;
                 if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                    let _ = writeln!(f, "stratum\t{}\t{at}\t{:.6}\t{ran}\t{}", level_of[at], thread_cpu() - t0, rules.len());
+                    let _ = writeln!(f, "stratum\t{}\t{at}\t{:.6}\t{}\t{}", level_of[at], thread_cpu() - t0, match ran { Native::Ran => "ran", Native::Waiting(_) => "waiting", Native::Declined => "declined" }, rules.len());
                 }
             }
-            if ran {
-                outcome.native.insert(key);
-                continue;
+            match ran {
+                Native::Ran => {
+                    outcome.native.insert(key);
+                    continue;
+                }
+                Native::Waiting(d) => {
+                    waiting.push((at, key, d));
+                    continue;
+                }
+                Native::Declined => {}
             }
             why = format!("the native engine declined: {}", run.why_not.take().unwrap_or_else(|| "no reason given".into()));
             if prog.gates.iter().any(|(g, _)| scc.contains(g)) {
@@ -5064,6 +5488,24 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
+    finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last)?;
+    super::lanes::prof::level(None);
+    if let Some(ks) = strata_kept.as_deref_mut() {
+        for k in std::mem::take(&mut evaluated) {
+            kept_strata_ran(ks, db, &run, &sccs[k], &mut fresh);
+        }
+        // What stays to the run's end (outputs, relations kept for the caller) is held again if it was clean.
+        let wanted: Vec<String> = deferred.iter().filter(|r| stays.contains(*r)).cloned().collect();
+        for r in wanted {
+            held_rows += kept_strata_hold(ks, db, &mut run, &r)?;
+            deferred.remove(&r);
+            held_again += 1;
+        }
+        ks.counted(sccs.len() - clean_strata, sccs.len());
+        super::profile::decision("cross-file strata kept across runs (decision 0077 §4)", || {
+            format!("{clean_strata} of {} strata not run: their reads had the rows they had; {held_again} of their relations held again ({held_rows} rows)", sccs.len())
+        });
+    }
     // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins; the executor's scoreboard
     // so far, to its trace (`RERAIL_SCOREBOARD`).
     super::native::component::level_clear();
@@ -5091,6 +5533,54 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     outcome.handed = handed;
     outcome.inlined = inlined_rels;
     Ok(outcome)
+}
+
+/// The strata in order of their levels (stable; with `sort`), and each one's level: one more than the deepest level of a stratum
+/// it depends on (`deps`: reads, requests answered, a native operator's inputs). A level's strata do not depend on
+/// each other, so it is a device wave (decision 0095 §5).
+fn by_level(sccs: Vec<BTreeSet<String>>, deps: &super::front::Edges, sort: bool) -> (Vec<BTreeSet<String>>, Vec<usize>) {
+    let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
+    let mut level = vec![0usize; sccs.len()];
+    for j in 0..sccs.len() {
+        level[j] = sccs[j]
+            .iter()
+            .flat_map(|r| deps.get(r).into_iter().flatten())
+            .filter_map(|(d, _)| of.get(d.as_str()).copied())
+            .filter(|&d| d < j)
+            .map(|d| level[d] + 1)
+            .max()
+            .unwrap_or(0);
+    }
+    let mut order: Vec<usize> = (0..sccs.len()).collect();
+    if sort {
+        order.sort_by_key(|&j| level[j]);
+    }
+    let levels = order.iter().map(|&j| level[j]).collect();
+    let mut sccs: Vec<Option<BTreeSet<String>>> = sccs.into_iter().map(Some).collect();
+    (order.into_iter().map(|j| sccs[j].take().expect("each stratum once")).collect(), levels)
+}
+
+/// Runs the device wave the waiting strata wait on (`lanes::wave::flush`: their launches as one batch), then
+/// resumes each in order; one that waits again (a second form's launches) waits on the next wave.
+fn finish_wave<'a>(run: &mut Run<'a, '_>, waiting: &mut Vec<(usize, String, Box<Driving<'a>>)>, outcome: &mut Outcome, carry: &mut Vec<String>, sccs: &[BTreeSet<String>], last: &HashMap<String, usize>) -> Result<()> {
+    while !waiting.is_empty() {
+        {
+            let _wave = super::profile::span(|| "device wave (kernel launches)".into());
+            super::lanes::wave::flush(waiting.len()).map_err(Error::Plan)?;
+        }
+        for (j, key, d) in std::mem::take(waiting) {
+            let _stratum = super::profile::span(|| format!("stratum {} (after its device wave)", if key.len() > 80 { format!("{}…", &key[..80]) } else { key.clone() }));
+            match run.native_resume(d)? {
+                Native::Ran => {
+                    outcome.native.insert(key);
+                    carry.extend(sccs[j].iter().filter(|r| !last.contains_key(*r)).cloned());
+                }
+                Native::Waiting(d) => waiting.push((j, key, d)),
+                Native::Declined => return Err(Error::Plan(format!("{key}: a stratum that waited on its wave declined"))),
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Per relation, the first stratum whose rules read it; a view is read where its first reader runs.

@@ -146,7 +146,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
     for line in &spec.lines {
         match line {
             // The run held its rows in memory, not in tables; the replay writes them, to compare them.
-            Line::NoWrite | Line::Seed { .. } | Line::Join { .. } => {}
+            Line::NoWrite | Line::Device | Line::Seed { .. } | Line::Join { .. } => {}
             Line::Rel { name, types, start } => {
                 let empty = match start {
                     Start::Rows => false,
@@ -332,16 +332,61 @@ mod tests {
                 st.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
             };
             // Each table into the store, its texts interned as this store's atoms.
-            for t in &tables {
-                let info: Vec<(String, String)> = {
-                    let mut st = db.prepare(&format!("SELECT name, type FROM cap.pragma_table_info('{t}')")).unwrap();
-                    st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap()
-                };
-                let cols: Vec<String> = info.iter().map(|(c, _)| c.clone()).collect();
-                // In `temp`: a write there commits nothing of the store, whose new atoms are pending (0049).
-                db.execute_batch(&format!("CREATE TEMP TABLE {t} ({}); INSERT INTO temp.{t} SELECT * FROM cap.{t};", cols.join(", "))).unwrap();
-            }
+            let load = |db: &Connection, only_rels: bool| {
+                for t in &tables {
+                    if only_rels && !(t.starts_with('r') && t[1..].chars().all(|c| c.is_ascii_digit())) {
+                        continue;
+                    }
+                    let info: Vec<(String, String)> = {
+                        let mut st = db.prepare(&format!("SELECT name, type FROM cap.pragma_table_info('{t}')")).unwrap();
+                        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+                    };
+                    let cols: Vec<String> = info.iter().map(|(c, _)| c.clone()).collect();
+                    // In `temp`: a write there commits nothing of the store, whose new atoms are pending (0049).
+                    db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{t}; CREATE TEMP TABLE {t} ({}); INSERT INTO temp.{t} SELECT * FROM cap.{t};", cols.join(", "))).unwrap();
+                }
+            };
+            load(&db, false);
             let outs: Vec<&String> = tables.iter().filter(|t| t.starts_with("out")).collect();
+            // The same stratum on the device (decision 0095, step 4), first: its rows against the run's, row for row,
+            // or the reason the device refuses it. Then the relations as they were, for the CPU's run.
+            #[cfg(target_os = "macos")]
+            {
+                let dspec = spec.replacen('\n', "\ndevice\n", 1);
+                super::super::open(&db, &dspec).unwrap();
+                let c0 = process_cpu();
+                let result = super::super::run(&db, &name, 0).unwrap();
+                let cpu = (process_cpu() - c0) * 1e3;
+                super::super::close(&db, &name).unwrap();
+                let report = super::super::device_report();
+                let mut ok = true;
+                for out in &outs {
+                    let k = &out[3..];
+                    let (got, want) = (rows(&db, "temp", &format!("r{k}")), rows(&db, "cap", out));
+                    if got != want {
+                        ok = false;
+                        println!("    device r{k}: {} rows, the run had {}", got.len(), want.len());
+                    }
+                }
+                let _ = result;
+                match report {
+                    Some(r) if r.refused.is_none() => {
+                        device.strata += 1;
+                        device.strata_same += usize::from(ok);
+                        device.strata_cpu += cpu;
+                        device.strata_gpu += r.gpu_seconds * 1e3;
+                        device.strata_submissions += r.submissions as usize;
+                        println!("    device: {} ({cpu:.1} ms process CPU, GPU {:.2} ms, {} submissions, {} rules, {} stages, uploads {}, resident {})",
+                            if ok { "same" } else { "DIFF" }, r.gpu_seconds * 1e3, r.submissions, r.rules, r.stages, r.uploads, r.resident_hits);
+                    }
+                    Some(r) => {
+                        device.strata_refused += 1;
+                        println!("    device refused: {}", r.refused.unwrap_or_default());
+                    }
+                    None => println!("    device: no report"),
+                }
+                load(&db, true);
+            }
             super::super::open(&db, &spec).unwrap();
             // `RERAIL_RELATIONAL_LAB_HOST_ONLY`: the captures alone, no device work (the run's own CPU and memory).
             #[cfg(target_os = "macos")]
@@ -350,8 +395,14 @@ mod tests {
                 device.tiles(&super::super::tiles(&db, &name).unwrap());
             }
             let c0 = thread_cpu();
+            #[cfg(target_os = "macos")]
+            let p0 = process_cpu();
             let result = super::super::run(&db, &name, 0).unwrap();
             let cpu = (thread_cpu() - c0) * 1e3;
+            #[cfg(target_os = "macos")]
+            {
+                device.strata_cpu_host += (process_cpu() - p0) * 1e3;
+            }
             super::super::close(&db, &name).unwrap();
             let solve: f64 = result.split_whitespace().nth(5).and_then(|s| s.parse().ok()).unwrap_or(f64::NAN);
             let mut ok = true;
@@ -391,7 +442,7 @@ mod tests {
     /// 16-bit layout (`metal_rows`) and checked against the CPU's rows.
     #[cfg(target_os = "macos")]
     #[derive(Default)]
-    struct Device { probe: Probe, sort_cpu: f64, sort_same: usize, joins: usize, joins_same: usize, pairs: usize, tile_pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, tile_host: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
+    struct Device { strata: usize, strata_same: usize, strata_refused: usize, strata_cpu: f64, strata_cpu_host: f64, strata_gpu: f64, strata_submissions: usize, probe: Probe, sort_cpu: f64, sort_same: usize, joins: usize, joins_same: usize, pairs: usize, tile_pairs: usize, compared: u64, join_cpu: f64, join_gpu: f64, tile_host: f64, cases: usize, same: usize, unsupported: usize, rows: usize, passed: usize, cpu: f64, gpu: f64, bytes: usize, wide: usize, forms: [usize; 3] }
 
     /// The device's sort and probe joins: joins run and right, sorts and the joins that found theirs resident, GPU and
     /// host CPU (the uploads, the sorts' and probes' encoding and the pairs' read), and the keys' bytes.
@@ -526,6 +577,11 @@ mod tests {
         }
 
         fn report(&self) {
+            println!(
+                "device strata: {} of {} give the run's rows, {} refused; process CPU {:.1} ms on the device ({:.1} ms GPU, {} submissions) against {:.1} ms on the CPU (every capture)",
+                self.strata_same, self.strata, self.strata_refused, self.strata_cpu, self.strata_gpu, self.strata_submissions, self.strata_cpu_host
+            );
+            assert_eq!(self.strata_same, self.strata, "every stratum the device runs gives the run's rows");
             let p = &self.probe;
             println!(
                 "joins: {} pairs; CPU hash join {:.1} ms; CPU sort join, each right side sorted once a capture, {:.1} ms ({} of {} give the hash join's pairs)",

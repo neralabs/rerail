@@ -14,19 +14,31 @@
 //! walk reaches, and the rows are emitted from each node's reach. Many rows climb through the same nodes (every
 //! descendant of a scope walks through the scope's ancestors), so this does the rest's work once per node.
 //!
-//! The reach (`E⁺`):
+//! The reach (`E⁺`). No path leaves a weakly connected component of the reach graph, so each component is its own
+//! problem:
 //! - when every node has at most one successor (a climb up a tree, or any functional edge), by walking each row's
-//!   chain, which costs what it emits;
-//! - otherwise, when the nodes are few enough for bit rows (`MAX_DENSE`), by the executor's `Closure` kernel (SCC
-//!   condensation and bit rows), placed on a lane by its price;
-//! - otherwise the component runs semi-naive from the seeds, as it would have (the planner's other form).
+//!   chain, which costs what it emits; when every component is a chain, nothing else is built;
+//! - otherwise the components of at most `MAX_DENSE` nodes are packed into **pieces** of about `PACK` nodes, and each
+//!   piece is one `Closure` launch of the executor (SCC condensation and bit rows), placed on a lane by its price.
+//!   A piece's bits grow with its nodes squared, so packing keeps them at about the graph's nodes times `PACK`;
+//! - a component past `MAX_DENSE` nodes (or past the bits budget, `MAX_BITS`) is walked on the host: a search from
+//!   each start node in it, once per start. That reads each start's reach once, which semi-naive reads once per row.
+//!
+//! The form runs in two halves around its launches (`prepare`, `finish`), so a stratum can wait for them while the
+//! other strata of its level prepare theirs: the launches of a level then go to the executor as one batch (a device
+//! wave, decision 0095 §5, `lanes::wave`).
 
-use super::{Body, Component, Fresh, JoinRule, Key, SEED, Src, Step, Store, Term, run_join_collect};
+use super::{Body, Component, JoinRule, Key, SEED, Src, Step, Store, Term, run_join_each};
+use crate::code_rule_dsl::logic::lanes::prof;
+use rerail_accel::{Bits, Kernel, Output};
 use rustc_hash::FxHashMap as HashMap;
-use std::sync::Arc;
 
-/// The most nodes for bit rows: 16,384² bits are 32 MB.
-const MAX_DENSE: usize = 16_384;
+/// The most nodes of one launch's bit rows: 16,384² bits are 32 MB.
+pub(in crate::code_rule_dsl::logic) const MAX_DENSE: usize = 16_384;
+/// Components are packed into pieces of about this many nodes (a larger component is a piece alone).
+const PACK: usize = 1_024;
+/// The most bits a closure's launches hold at once (128 MB): past it, the largest pieces are walked on the host.
+const MAX_BITS: u64 = 1 << 30;
 
 /// A recognized closure: the walking column, the probe's rest as a join from `y` to `z`, and the slot of `y`.
 pub(super) struct Closure {
@@ -84,9 +96,20 @@ fn reads(s: &Step, r: usize) -> bool {
     matches!(src, Src::Delta(x) | Src::Full(x) | Src::FullMulti(x, _) if *x == r)
 }
 
+thread_local! {
+    /// Tests: this thread's components run semi-naive, for a reference (`semi_naive_here`).
+    static SEMI_NAIVE_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Tests: components opened on this thread run semi-naive (`on`) or may take the form.
+#[cfg(test)]
+pub(in crate::code_rule_dsl::logic) fn semi_naive_here(on: bool) {
+    SEMI_NAIVE_HERE.set(on);
+}
+
 /// The component's closure, when it has the shape (see the module's comment). `RERAIL_CLOSURE_FORM=off` turns it off.
 pub(super) fn recognize(c: &Component) -> Option<Closure> {
-    if std::env::var("RERAIL_CLOSURE_FORM").is_ok_and(|v| v == "off") {
+    if std::env::var("RERAIL_CLOSURE_FORM").is_ok_and(|v| v == "off") || SEMI_NAIVE_HERE.get() {
         return None;
     }
     let store = c.store.read().unwrap();
@@ -162,13 +185,38 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
 pub(super) struct Ran {
     pub(super) nodes: usize,
     pub(super) rows: usize,
-    pub(super) how: &'static str,
+    pub(super) how: String,
 }
 
-/// Runs the closure over relation 0's rows (the seeds, already in it). `None` when the reach is too large for bit rows
-/// and not a chain: the caller then runs semi-naive from the seeds.
-pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, lanes: &rerail_accel::Executor) -> Option<Ran> {
-    // The distinct start nodes, then the edges out of every node reached, by search.
+/// Where a node's reach comes from.
+#[derive(Clone, Copy)]
+enum At {
+    /// Its component is a chain: walk it.
+    Chain,
+    /// Row `local` of piece `piece`'s bit rows.
+    Dense { piece: u32, local: u32 },
+    /// Its component is past the limits: a search on the host.
+    Host,
+}
+
+/// The closure's first half done: the reach graph, where each node's reach comes from, and the launches the second
+/// half needs (one per piece, in piece order).
+pub(super) struct Prepared {
+    nodes: Vec<i64>,
+    index: HashMap<i64, u32>,
+    adj: Vec<Vec<u32>>,
+    /// Per node; empty when every component is a chain.
+    at: Vec<At>,
+    /// Each piece's nodes by local id.
+    pieces: Vec<Vec<u32>>,
+    pub(super) launches: Vec<Kernel>,
+}
+
+/// The first half: the distinct start nodes, the edges out of every node reached (the rest, searched once per
+/// node), then the reach graph's components, and the pieces' launches. `None` when the search fails: the caller then
+/// runs semi-naive from the seeds.
+pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<Prepared> {
+    let h = prof::host("closure", "encode: the reach's edges (the rest, per node)");
     let rel = &store.rels[0];
     let mut index: HashMap<i64, u32> = HashMap::default();
     let mut nodes: Vec<i64> = Vec::new();
@@ -183,34 +231,161 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
         });
     }
     let mut adj: Vec<Vec<u32>> = Vec::new();
-    let mut at = 0;
-    let mut out = Vec::new();
-    while at < nodes.len() {
-        out.clear();
-        // An error is the semi-naive path's to report: it runs the same steps.
-        run_join_collect(&cl.rest, store, syms, &[(cl.y, nodes[at])], &mut out).ok()?;
-        out.sort_unstable();
-        out.dedup();
-        let mut next = Vec::with_capacity(out.len());
-        for &z in &out {
-            let id = *index.entry(z).or_insert_with(|| {
-                nodes.push(z);
-                (nodes.len() - 1) as u32
-            });
-            next.push(id);
+    let mut started = false;
+    run_join_each(&cl.rest, store, syms, cl.y, &mut |out: &mut Vec<i64>| {
+        // `out`: the edges out of node `adj.len()`, once a node was searched.
+        if started {
+            out.sort_unstable();
+            out.dedup();
+            let mut next = Vec::with_capacity(out.len());
+            for &z in out.iter() {
+                let id = *index.entry(z).or_insert_with(|| {
+                    nodes.push(z);
+                    (nodes.len() - 1) as u32
+                });
+                next.push(id);
+            }
+            adj.push(next);
         }
-        adj.push(next);
-        at += 1;
-    }
+        started = true;
+        nodes.get(adj.len()).copied()
+    })
+    .ok()?;
+    drop(h);
     let n = nodes.len();
-    let chain = adj.iter().all(|a| a.len() <= 1);
-    // Each start node's reach, as node ids.
-    let reach: Box<dyn Fn(u32, &mut Vec<u32>)> = if chain {
-        let adj = Arc::new(adj);
-        Box::new(move |s: u32, into: &mut Vec<u32>| {
+    prof::count("closure", "nodes searched", n as u64);
+    if adj.iter().all(|a| a.len() <= 1) {
+        prof::count("closure", "closures by chains alone", 1);
+        return Some(Prepared { nodes, index, adj, at: Vec::new(), pieces: Vec::new(), launches: Vec::new() });
+    }
+    let _h = prof::host("closure", "encode: components, pieces, adjacency");
+    let (at, pieces, launches) = partition(&adj);
+    Some(Prepared { nodes, index, adj, at, pieces, launches })
+}
+
+/// The reach graph's weakly connected components, each a chain, a part of a dense piece, or walked on the host; and
+/// each piece's launch, its edges renumbered within it.
+fn partition(adj: &[Vec<u32>]) -> (Vec<At>, Vec<Vec<u32>>, Vec<Kernel>) {
+    let n = adj.len();
+    fn find(p: &mut [u32], mut x: u32) -> u32 {
+        while p[x as usize] != x {
+            let up = p[p[x as usize] as usize];
+            p[x as usize] = up;
+            x = up;
+        }
+        x
+    }
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    for (v, out) in adj.iter().enumerate() {
+        for &w in out {
+            let (a, b) = (find(&mut parent, v as u32), find(&mut parent, w));
+            if a != b {
+                parent[a.max(b) as usize] = a.min(b);
+            }
+        }
+    }
+    // Members of each component, ascending, components by their least node.
+    let mut comp_of = vec![u32::MAX; n];
+    let mut comps: Vec<Vec<u32>> = Vec::new();
+    for v in 0..n as u32 {
+        let r = find(&mut parent, v) as usize;
+        if comp_of[r] == u32::MAX {
+            comp_of[r] = comps.len() as u32;
+            comps.push(Vec::new());
+        }
+        comps[comp_of[r] as usize].push(v);
+    }
+    let mut at = vec![At::Chain; n];
+    // Dense components packed into pieces, in order.
+    let mut pieces: Vec<Vec<u32>> = Vec::new();
+    let mut cur: Vec<u32> = Vec::new();
+    let (mut chains, mut host, mut host_nodes) = (0u64, 0u64, 0u64);
+    for c in &comps {
+        if c.iter().all(|&v| adj[v as usize].len() <= 1) {
+            chains += 1;
+            continue;
+        }
+        if c.len() > MAX_DENSE {
+            c.iter().for_each(|&v| at[v as usize] = At::Host);
+            host += 1;
+            host_nodes += c.len() as u64;
+            continue;
+        }
+        if !cur.is_empty() && cur.len() + c.len() > PACK {
+            pieces.push(std::mem::take(&mut cur));
+        }
+        cur.extend_from_slice(c);
+    }
+    if !cur.is_empty() {
+        pieces.push(cur);
+    }
+    // The bits budget: the largest pieces go to the host until the rest fit.
+    let bits = |p: &Vec<u32>| (p.len() as u64).pow(2);
+    let mut total: u64 = pieces.iter().map(bits).sum();
+    if total > MAX_BITS {
+        let mut order: Vec<usize> = (0..pieces.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(pieces[i].len()));
+        let mut gone = vec![false; pieces.len()];
+        for i in order {
+            if total <= MAX_BITS {
+                break;
+            }
+            total -= bits(&pieces[i]);
+            gone[i] = true;
+            pieces[i].iter().for_each(|&v| at[v as usize] = At::Host);
+            host += 1;
+            host_nodes += pieces[i].len() as u64;
+        }
+        let mut k = 0;
+        pieces.retain(|_| {
+            k += 1;
+            !gone[k - 1]
+        });
+    }
+    let mut launches = Vec::with_capacity(pieces.len());
+    for (pi, p) in pieces.iter().enumerate() {
+        for (local, &v) in p.iter().enumerate() {
+            at[v as usize] = At::Dense { piece: pi as u32, local: local as u32 };
+        }
+        let mut off = Vec::with_capacity(p.len() + 1);
+        off.push(0u32);
+        let mut dst = Vec::new();
+        for &v in p {
+            dst.extend(adj[v as usize].iter().map(|&w| match at[w as usize] {
+                At::Dense { local, .. } => local,
+                _ => unreachable!("an edge leaves its component"),
+            }));
+            off.push(dst.len() as u32);
+        }
+        launches.push(Kernel::Closure { n: p.len() as u32, off: off.into(), dst: dst.into() });
+    }
+    prof::count("closure", "components walked as chains", chains);
+    prof::count("closure", "pieces by bit rows (launches)", pieces.len() as u64);
+    prof::count("closure", "components walked on the host (past the limits)", host);
+    prof::count("closure", "nodes walked on the host (past the limits)", host_nodes);
+    (at, pieces, launches)
+}
+
+/// The second half: each seed row with its column replaced by every node of its start's reach, from the chains, the
+/// pieces' bit rows (`outs`, one per launch) and the host's searches.
+pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut Store) -> Option<Ran> {
+    let bits: Vec<Bits> = outs.into_iter().map(|o| if let Output::Bits(b) = o { Some(b) } else { None }).collect::<Option<_>>()?;
+    if bits.len() != p.pieces.len() {
+        return None;
+    }
+    let n = p.nodes.len();
+    let (mut dense, mut chain, mut host) = (false, false, false);
+    // A host search's reach, once per start.
+    let mut searched: HashMap<u32, Vec<u32>> = HashMap::default();
+    let mut seen: Vec<u32> = Vec::new();
+    let mut stack: Vec<u32> = Vec::new();
+    let mut epoch = 0u32;
+    let mut reach = |s: u32, into: &mut Vec<u32>| match p.at.get(s as usize).copied().unwrap_or(At::Chain) {
+        At::Chain => {
+            chain = true;
             // Walk until the chain ends or comes back (a cycle: every node on it once).
             let mut v = s;
-            while let Some(&w) = adj[v as usize].first() {
+            while let Some(&w) = p.adj[v as usize].first() {
                 if into.contains(&w) {
                     break;
                 }
@@ -220,50 +395,62 @@ pub(super) fn run(cl: &Closure, store: &mut Store, syms: &mut super::Interner, l
                 }
                 v = w;
             }
-        })
-    } else if n <= MAX_DENSE {
-        let mut off = vec![0u32];
-        let mut dst = Vec::new();
-        for a in &adj {
-            dst.extend_from_slice(a);
-            off.push(dst.len() as u32);
         }
-        let k = rerail_accel::Kernel::Closure { n: n as u32, off: off.into(), dst: dst.into() };
-        let (mut done, _) = lanes.run(rerail_accel::Batch(vec![rerail_accel::Launch::new(k)])).ok()?;
-        let rerail_accel::Output::Bits(bits) = done.remove(0).out else { return None };
-        Box::new(move |s: u32, into: &mut Vec<u32>| {
-            for (w, word) in bits.row(s as usize).iter().enumerate() {
+        At::Dense { piece, local } => {
+            dense = true;
+            let nodes = &p.pieces[piece as usize];
+            for (w, word) in bits[piece as usize].row(local as usize).iter().enumerate() {
                 let mut word = *word;
                 while word != 0 {
-                    into.push((w * 64) as u32 + word.trailing_zeros());
+                    into.push(nodes[w * 64 + word.trailing_zeros() as usize]);
                     word &= word - 1;
                 }
             }
-        })
-    } else {
-        return None;
+        }
+        At::Host => {
+            host = true;
+            let r = searched.entry(s).or_insert_with(|| {
+                if seen.is_empty() {
+                    seen = vec![0; n];
+                }
+                epoch += 1;
+                let mut r = Vec::new();
+                stack.clear();
+                stack.extend(p.adj[s as usize].iter().copied());
+                while let Some(w) = stack.pop() {
+                    if seen[w as usize] == epoch {
+                        continue;
+                    }
+                    seen[w as usize] = epoch;
+                    r.push(w);
+                    stack.extend(p.adj[w as usize].iter().copied().filter(|&x| seen[x as usize] != epoch));
+                }
+                r
+            });
+            into.extend_from_slice(r);
+        }
     };
-    // The rows: each seed row with its column replaced by every node of its start's reach.
+    let _h = prof::host("closure", if p.at.is_empty() { "decode: chain walks, rows into the relation" } else { "decode: reach bits and walks, rows into the relation" });
     let rel = &mut store.rels[0];
     let seeds = rel.n;
-    let mut fresh = Fresh::default();
     let mut row = vec![0i64; rel.k];
     let mut into = Vec::new();
+    // Each row pushed once (the relation's push is its set check): no buffer of fresh rows to hash first.
+    let mut rows = 0;
     for id in 0..seeds {
         if rel.dead(id as u32) {
             continue;
         }
         row.copy_from_slice(rel.row(id));
         into.clear();
-        reach(index[&row[cl.col]], &mut into);
+        reach(p.index[&row[cl.col]], &mut into);
         for &z in &into {
-            row[cl.col] = nodes[z as usize];
-            fresh.add(&row);
+            row[cl.col] = p.nodes[z as usize];
+            rows += rel.push(&row) as usize;
         }
     }
-    let mut rows = 0;
-    for i in 0..fresh.n {
-        rows += rel.push(&fresh.data[i * rel.k..][..rel.k]) as usize;
-    }
-    Some(Ran { nodes: n, rows, how: if chain { "chains" } else { "bit rows" } })
+    drop(reach);
+    prof::count("closure", "rows made", rows as u64);
+    let how: Vec<&str> = [(dense, "bit rows"), (chain, "chains"), (host, "host walks past the limits")].iter().filter(|w| w.0).map(|w| w.1).collect();
+    Some(Ran { nodes: n, rows, how: if how.is_empty() { "chains".into() } else { how.join(" and ") } })
 }

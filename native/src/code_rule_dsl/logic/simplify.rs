@@ -824,10 +824,13 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             }
             let rename = |l: &Literal| rename_all(l, &to);
             body.extend(def.body.iter().map(rename));
-            // A computed column (`@replace_all($raw, …)`) or a constant, once the domain binds its variables.
+            // A computed column (`@replace_all($raw, …)`) or a constant, once the domain binds its variables. Only the
+            // head's side is renamed: the read's term is the reader's, whose variables may share a name with the
+            // definition's.
             for (h, r) in def.head.args.iter().zip(&read.args) {
                 if !matches!(h, Term::Var(_)) {
-                    body.push(rename(&Literal::Cmp { l: r.clone(), op: "=", r: h.clone() }));
+                    let Literal::Cmp { r: h, .. } = rename(&Literal::Cmp { l: Term::Wild, op: "=", r: h.clone() }) else { unreachable!("a comparison") };
+                    body.push(Literal::Cmp { l: r.clone(), op: "=", r: h });
                 }
             }
             let mut c = rule.clone();
@@ -1430,12 +1433,46 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     };
     let bodies: BTreeMap<&str, Vec<Rule>> = cands.iter().map(|&r| (r, rules_of.get(r).into_iter().flatten().map(|x| abstracted(x)).collect())).collect();
     let mut classes = class.values().collect::<BTreeSet<_>>().len();
+    // Each rule's canonical text is fixed but for the labels of the relations it reads: it is made once, with every
+    // relation a placeholder (its template), and the relations read kept in the order it labels them. A round's
+    // signature of a rule is its template and those relations' labels, equal exactly when the texts `canonical`
+    // gives under the round's labels are (a relation's name has no character of the text around it).
+    let mut templates: HashMap<String, usize> = HashMap::new();
+    let shapes: BTreeMap<&str, Vec<(usize, Vec<String>)>> = cands
+        .iter()
+        .map(|&r| {
+            let shaped = bodies[r]
+                .iter()
+                .map(|rule| {
+                    let read = std::cell::RefCell::new(Vec::new());
+                    let text = canonical(rule, &|rel: &str| {
+                        read.borrow_mut().push(rel.to_owned());
+                        "\u{1}".to_owned()
+                    });
+                    let n = templates.len();
+                    let mut read = read.into_inner();
+                    // The head's label is replaced by `@`.
+                    read.remove(0);
+                    (*templates.entry(text).or_insert(n), read)
+                })
+                .collect();
+            (r, shaped)
+        })
+        .collect();
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    enum Label<'a> {
+        Class(usize),
+        Name(&'a str),
+    }
     loop {
-        let label = |rel: &str| class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"));
-        let mut ids: HashMap<(usize, Vec<String>), usize> = HashMap::new();
+        let label = |rel: &'_ str| -> Option<usize> { class.get(rel).copied() };
+        let mut ids: HashMap<(usize, Vec<(usize, Vec<Label>)>), usize> = HashMap::new();
         let mut next: HashMap<&str, usize> = HashMap::new();
         for &r in &cands {
-            let mut sig: Vec<String> = bodies[r].iter().map(|rule| canonical(rule, &label)).collect();
+            let mut sig: Vec<(usize, Vec<Label>)> = shapes[r]
+                .iter()
+                .map(|(t, read)| (*t, read.iter().map(|rel| label(rel).map_or(Label::Name(rel.as_str()), Label::Class)).collect()))
+                .collect();
             sig.sort();
             let n = ids.len();
             next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
@@ -1494,13 +1531,24 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
 fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
     let Ok((sccs, _)) = super::front::strata(prog) else { return Vec::new() };
     let mut done = Vec::new();
+    // Each relation's rules, by place: made again only when a component is rewritten.
+    let index = |prog: &Program| -> HashMap<String, Vec<usize>> {
+        let mut by: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, r) in prog.rules.iter().enumerate() {
+            by.entry(r.head.rel.clone()).or_default().push(i);
+        }
+        by
+    };
+    let mut by_head = index(prog);
     for scc in sccs {
         let members: BTreeSet<String> = scc.into_iter().collect();
         let unary_node = |r: &str| prog.decls.get(r).is_some_and(|c| c.len() == 1 && c[0].1 == "node");
         if !members.iter().all(|r| unary_node(r) && !kept(prog, r)) {
             continue;
         }
-        let rules: Vec<&Rule> = prog.rules.iter().filter(|r| members.contains(&r.head.rel)).collect();
+        let mut places: Vec<usize> = members.iter().flat_map(|m| by_head.get(m).into_iter().flatten().copied()).collect();
+        places.sort_unstable();
+        let rules: Vec<&Rule> = places.iter().map(|&i| &prog.rules[i]).collect();
         // (from, to, step) edges and (relation, base rule) pairs.
         let mut edges: Vec<(String, String, bool)> = Vec::new();
         let mut bases: Vec<(String, Rule)> = Vec::new();
@@ -1615,6 +1663,7 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
         }
         prog.rules.retain(|r| !members.contains(&r.head.rel));
         prog.rules.extend(new_rules);
+        by_head = index(prog);
         if !prog.decls.contains_key(WITHIN) {
             prog.decls.insert(WITHIN.to_owned(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
         }
@@ -1741,6 +1790,91 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `congruence` signs a rule by its template and the labels of what it reads; that partitions the relations as
+    /// signing it by its canonical text under each round's labels does (the refinement as first written).
+    #[test]
+    fn congruence_by_templates_is_congruence_by_texts() {
+        let prog = super::super::rr::parse(
+            r#"
+            .decl e(a: number, b: number)
+            .input e
+            .decl f(a: number, b: number)
+            .input f
+            .decl p1(a: number, b: number)
+            .decl p2(a: number, b: number)
+            .decl p3(a: number, b: number)
+            .decl q1(a: number)
+            .decl q2(a: number)
+            .decl q3(a: number)
+            .decl c1(a: number, n: number)
+            .decl c2(a: number, n: number)
+            .decl out(a: number)
+            .output out
+            p1(x, y) :- e(x, y).
+            p1(x, z) :- p1(x, y), e(y, z).
+            p2(u, v) :- e(u, v).
+            p2(u, w) :- p2(u, v), e(v, w).
+            p3(x, y) :- f(x, y).
+            p3(x, z) :- p3(x, y), f(y, z).
+            q1(x) :- p1(x, _), !p3(x, x).
+            q2(x) :- p2(x, _), !p3(x, x).
+            q3(x) :- p3(x, _), !p1(x, x).
+            c1(a, n) :- e(a, _), n = count : { p1(a, _) }.
+            c2(a, n) :- e(a, _), n = count : { p2(a, _) }.
+            out(x) :- q1(x), q2(x), q3(x), c1(x, _), c2(x, _).
+            "#,
+        )
+        .unwrap();
+        let by_texts = |prog: &Program| -> Vec<Vec<String>> {
+            let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+            for r in &prog.rules {
+                rules_of.entry(r.head.rel.as_str()).or_default().push(r);
+            }
+            let cands: Vec<&str> = rules_of.keys().copied().filter(|r| !fixed(prog, r)).collect();
+            let types = |rel: &str| -> Vec<String> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default() };
+            let mut class: HashMap<&str, usize> = HashMap::new();
+            let mut ids: HashMap<(Vec<String>, usize), usize> = HashMap::new();
+            for &r in &cands {
+                let n = ids.len();
+                class.insert(r, *ids.entry((types(r), rules_of[r].len())).or_insert(n));
+            }
+            let mut classes = class.values().collect::<BTreeSet<_>>().len();
+            loop {
+                let label = |rel: &str| class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"));
+                let mut ids: HashMap<(usize, Vec<String>), usize> = HashMap::new();
+                let mut next: HashMap<&str, usize> = HashMap::new();
+                for &r in &cands {
+                    let mut sig: Vec<String> = rules_of[r].iter().map(|rule| canonical(rule, &label)).collect();
+                    sig.sort();
+                    let n = ids.len();
+                    next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
+                }
+                let now = ids.len();
+                class = next;
+                if now == classes {
+                    break;
+                }
+                classes = now;
+            }
+            let mut groups: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+            for &r in &cands {
+                groups.entry(class[r]).or_default().push(r.to_owned());
+            }
+            groups.into_values().filter(|g| g.len() > 1).map(|mut g| {
+                g.sort();
+                g
+            }).collect()
+        };
+        let mut want = by_texts(&prog);
+        let mut got = congruence(&prog, false);
+        want.sort();
+        got.sort();
+        assert_eq!(got, want);
+        // p1 and p2 are one relation, and so the relations over them; p3 reads `f`, not `e`.
+        assert!(got.contains(&vec!["p1".to_owned(), "p2".to_owned()]) && got.contains(&vec!["c1".to_owned(), "c2".to_owned()]), "{got:?}");
+        assert!(!got.iter().any(|g| g.contains(&"p3".to_owned())), "{got:?}");
+    }
 
     #[test]
     fn implied_atoms_kind_tests_and_identical_relations_go() {
@@ -2062,6 +2196,24 @@ mod tests {
         let rules: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
         // The function of the reader's own line; the domain's second `split_line` read is implied and dropped.
         assert_eq!(rules, vec![r#"line($d, $l, $s) :- picked($d), split_line($d, $l, $raw), $s = @replace_all($raw, "^ +", "")"#], "{rules:?}");
+        // The reader's own `$raw` (here its result, not the definition's `raw`) stays the reader's.
+        let mut prog = super::super::front::parse(
+            r#"
+            .decl split_line(d: int, l: int, t: sym)
+            .input split_line
+            .decl picked(d: int)
+            .input picked
+            .decl trim(raw: sym, s: sym)
+            trim($raw, @replace_all($raw, "^ +", "")) :- split_line(_, _, $raw).
+            .decl line(d: int, l: int, s: sym)
+            .output line
+            line($d, $l, $raw) :- picked($d), split_line($d, $l, $x), trim($x, $raw).
+            "#,
+        )
+        .unwrap();
+        assert!(simplify(&mut prog).inlined.contains(&"trim".to_owned()));
+        let rules: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        assert_eq!(rules, vec![r#"line($d, $l, $raw) :- picked($d), split_line($d, $l, $x), $raw = @replace_all($x, "^ +", "")"#], "{rules:?}");
     }
 
     #[test]

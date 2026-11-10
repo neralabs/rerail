@@ -145,7 +145,10 @@ fn tiling(npa: usize, npb: usize, k32: usize, units: usize) -> (usize, usize) {
 
 impl Sme {
     /// The submission, and the BMOPAs it issued (for the timing test).
+    /// Its phases go to the scoreboard: packing (`pack`), the streaming workers (`stream`, with the spawned workers'
+    /// CPU) and the masks turned into pairs (`pairs`).
     fn run(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, i64), String> {
+        let (mut c, mut t) = (crate::score::thread_cpu(), std::time::Instant::now());
         // Validate and pack every distinct operand once.
         let mut packed: HashMap<(usize, usize, usize), Packed> = HashMap::new();
         for (n, k) in ks.iter().enumerate() {
@@ -238,6 +241,8 @@ impl Sme {
 
         // The workers: one per unit, one streaming block each. The calling thread (the executor's thread for this
         // lane) is one of them, so a submission of one tile starts no thread.
+        crate::score::add("pack", crate::score::thread_cpu() - c, t.elapsed().as_secs_f64());
+        (c, t) = (crate::score::thread_cpu(), std::time::Instant::now());
         let tiles = Tiles(tiles);
         let next = AtomicI64::new(0);
         let workers = self.units.min(tiles.0.len());
@@ -246,12 +251,22 @@ impl Sme {
             rr_sme_worker_init();
             rr_sme_run(tiles.0.as_ptr(), tiles.0.len() as i64, next.as_ptr())
         };
-        let ops: i64 = std::thread::scope(|s| {
-            let hs: Vec<_> = (1..workers).map(|_| s.spawn(work)).collect();
+        let (ops, worker_cpu): (i64, f64) = std::thread::scope(|s| {
+            let hs: Vec<_> = (1..workers)
+                .map(|_| {
+                    s.spawn(move || {
+                        let c = crate::score::thread_cpu();
+                        let n = work();
+                        (n, crate::score::thread_cpu() - c)
+                    })
+                })
+                .collect();
             let mine = if workers > 0 { work() } else { 0 };
-            mine + hs.into_iter().map(|h| h.join().expect("an SME worker panicked")).sum::<i64>()
+            hs.into_iter().map(|h| h.join().expect("an SME worker panicked")).fold((mine, 0.0), |(a, c), (n, d)| (a + n, c + d))
         });
         drop(packed);
+        crate::score::add("stream", crate::score::thread_cpu() - c + worker_cpu, t.elapsed().as_secs_f64());
+        (c, t) = (crate::score::thread_cpu(), std::time::Instant::now());
 
         let outs = outs
             .into_iter()
@@ -261,6 +276,7 @@ impl Sme {
                 Out::Mask { rows, npb, masks, .. } => Output::Pairs(pairs(rows, npb, &masks)),
             })
             .collect();
+        crate::score::add("pairs", crate::score::thread_cpu() - c, t.elapsed().as_secs_f64());
         Ok((outs, ops))
     }
 }

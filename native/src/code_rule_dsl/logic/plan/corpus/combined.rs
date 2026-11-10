@@ -112,8 +112,15 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     Ok(true)
 }
 
-/// The source and plan the entry of texts `key` lives under, when the store keeps it: for the run's manifest.
+/// What the write of texts `key`'s program is queued under (`write_back`, decision 0102).
+pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"facts_memo/combined", key])
+}
+
+/// The source and plan the entry of texts `key` lives under, when the store keeps it: for the run's manifest. A
+/// queued write of it first.
 pub(super) fn named(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(SourceId, [u8; 32])>> {
+    store.settle(&queued(key));
     Ok(store.held_source_by_hash(HashKey::sha256(source_text(key).as_bytes()))?.map(|source| (source, plan().plans[0])))
 }
 

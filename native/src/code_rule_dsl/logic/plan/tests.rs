@@ -25,6 +25,73 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
 }
 
+/// A head that qualifies a bound name by a constant scope (`sym_at($e, @cat(1539, $x))`, the builtins' symbols)
+/// has a native step: the name is made into a slot before the head. A stratum the native engine declines runs in
+/// SQLite, a wait on SQL tables between waves that are otherwise in memory.
+#[test]
+fn a_head_that_qualifies_by_a_constant_scope_runs_natively() {
+    let p = parse(".decl p(e: number, x: symbol)\np(1, \"a\").\np(2, \"b\").\n.decl q(e: number, s: symbol)\nq(e, @dot(\"m\", x)) :- p(e, x).\n.output q\n").unwrap();
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        if !modes.is_empty() {
+            assert!(got.native.contains("q"), "q runs natively: {:?}", got.native);
+        }
+        let mut o = got.outputs["q"].clone();
+        o.sort();
+        outputs.push(o);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1].len(), 2, "{:?}", outputs[1]);
+}
+
+/// Device waves (decision 0095 §5): three closures of one level, each over a graph with a fork and a cycle, wait
+/// for their bit rows' launches, which run as one batch when the level ends; the rows are SQL's.
+#[test]
+fn closures_of_one_level_launch_in_one_wave() {
+    let mut src = String::new();
+    for (k, edges) in [(1, "(1,2),(1,3),(2,4),(3,4),(4,1),(5,6)"), (2, "(10,11),(10,12),(12,13),(13,10)"), (3, "(20,21),(21,22),(21,23),(23,20),(24,24)")] {
+        src += &format!(".decl e{k}(a: number, b: number)\n");
+        for e in edges.split("),(") {
+            src += &format!("e{k}({}).\n", e.trim_matches(|c| c == '(' || c == ')'));
+        }
+        src += &format!(".decl r{k}(a: number, b: number)\nr{k}(a, b) :- e{k}(a, b).\nr{k}(a, c) :- r{k}(a, b), e{k}(b, c).\n");
+    }
+    src += ".decl o(k: number, a: number, b: number)\no(1, a, b) :- r1(a, b).\no(2, a, b) :- r2(a, b).\no(3, a, b) :- r3(a, b).\n.output o\n";
+    let p = parse(&src).unwrap();
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let before = super::super::lanes::wave::flushed();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let after = super::super::lanes::wave::flushed();
+        if !modes.is_empty() {
+            for r in ["r1", "r2", "r3"] {
+                assert!(got.native.contains(r), "{r} runs natively");
+            }
+            assert_eq!((after.0 - before.0, after.1 - before.1), (1, 3), "the level's three closures in one wave of three launches");
+        }
+        let mut o = got.outputs["o"].clone();
+        o.sort();
+        outputs.push(o);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1].len(), 17 + 12 + 13, "{:?}", outputs[1]);
+}
+
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }
@@ -726,6 +793,40 @@ captured(v) :- capture_input(s), match_all("k=(?<v>[0-9]+)", s).
     let result = result.unwrap();
     assert_eq!(result.outputs["captured"].len(), 1000);
     assert!(count.load(Ordering::Relaxed) < 100, "1000 matches submitted {} SQLite executions", count.load(Ordering::Relaxed));
+}
+
+/// An equality of a bound variable with an unbound one, `$s = $a` with `$s` bound, assigns `$a` (decision 0099 item
+/// 4): the second atom is read by it, not crossed with the first and narrowed after (`fl4317_typing_root`: 14 k rows,
+/// then 2.86 M, then 603). The rule runs to the same rows either way round.
+#[test]
+fn an_equality_binds_its_right_side_before_the_next_join() {
+    let p = parse(
+        ".decl p(s: number)\n.decl q(a: number)\n.decl o(s: number)\n.decl o2(s: number)\n\
+         p(1). p(2). p(3). q(2). q(3). q(4).\n\
+         o(s) :- p(s), q(a), s = a.\no2(s) :- p(s), q(a), 3 = a, s = a.\n.output o\n.output o2\n",
+    )
+    .unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut stats = Stats::empty(&p);
+    stats.card.insert("p".into(), 14_000.0);
+    stats.card.insert("q".into(), 14_000.0);
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(stats);
+    let model = make_plan(&p, &db, inputs).unwrap();
+    let r = &p.rules.iter().find(|r| r.head.rel == "o").unwrap();
+    let (order, work, _) = model.plan_rule(&p, &r.head, &r.body, None).unwrap();
+    let shown: Vec<String> = order.iter().map(|s| s.lit.to_string()).collect();
+    assert_eq!(shown[1], "$s = $a", "the equality between the joins: {shown:?}, work {work}");
+    assert!(work < 100_000.0, "a cross product priced: {work}");
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
+    let mut o: Vec<String> = out.outputs["o"].iter().map(|r| format!("{r:?}")).collect();
+    o.sort();
+    assert_eq!(o.len(), 2, "{o:?}");
+    assert_eq!(out.outputs["o2"].len(), 1);
 }
 
 /// A delta probe of a recursive component prices a lookup by the share of the binding's values the column holds

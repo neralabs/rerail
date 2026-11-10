@@ -231,6 +231,31 @@ fn surfaces_and_arrays_agree_and_surfaces_are_reused() {
 }
 
 #[test]
+fn overlapped_tiles_agree_with_serial() {
+    // Five tiles (the last one short) through the pipeline and one after another, on the same lane, model and
+    // surfaces, against the reference; with two launches, so a tile spans both. The pipeline's phases are reported.
+    let lane = ane();
+    let mut rng = Rng(29);
+    let b = bits(&mut rng, 150, 2500, 4).fixed();
+    let a1 = bits(&mut rng, 3 * 2048 + 100, 2500, 3);
+    let a2 = bits(&mut rng, 2048 + 500, 2500, 3);
+    let ks = [product(&a1, &b, None), product(&a2, &b, Some(thresholds(&mut rng, &b, 3)))];
+    let refs: Vec<&Kernel> = ks.iter().collect();
+    let want: Vec<Output> = refs.iter().map(|k| crate::cpu::run(k)).collect();
+    let (got, split) = lane.submit_split(&refs).unwrap();
+    assert_eq!(got, want);
+    let s = lane.last_split();
+    assert!(s.surfaces && s.overlap);
+    assert_eq!((s.tiles, s.calls), (5, 5));
+    assert!(split.expand > 0.0 && split.sum > 0.0 && split.predict > 0.0, "{split:?}");
+    let pooled = |l: &Ane| l.pool.lock().unwrap().values().map(Vec::len).sum::<usize>();
+    assert_eq!(pooled(&lane), 2 * DEPTH * lane.prepared(&b).unwrap().pieces, "both sets went back to the pool");
+    lane.set_overlap(false);
+    assert_eq!(lane.submit(&refs).unwrap(), want);
+    assert!(!lane.last_split().overlap);
+}
+
+#[test]
 fn store_and_aot_skip_the_compile() {
     let store: Arc<dyn ModelStore> = Arc::new(MemoryStore::default());
     let mut rng = Rng(9);

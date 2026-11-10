@@ -176,6 +176,14 @@ pub fn drop_idle() {
     pipelines().lock().expect("the pipelines").clear();
 }
 
+/// Releases every idle buffer, keeping the pipelines: what a lane gives back to the device's budget after a refusal
+/// for room.
+pub fn drop_free() {
+    let mut p = pool().lock().expect("the pool");
+    p.idle.clear();
+    p.held = 0;
+}
+
 static GUARD: OnceLock<fn() -> Result<(), String>> = OnceLock::new();
 
 /// Sets the check every submission makes first (once per process; a second call is ignored).

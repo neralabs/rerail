@@ -25,6 +25,12 @@
 //! nothing on the host. The surfaces are kept in a pool by shape and reused by later submissions
 //! ([`coreml::Surface`]). A shape past IOSurface's limits ([`coreml::surface_fits`]) cannot be backed by one, and
 //! only such a shape takes the older path: plain arrays, one batch call (`predictionsFromBatch:`).
+//!
+//! **The host's work overlaps the predictions.** On IOSurfaces a submission is a pipeline over [`DEPTH`] sets of
+//! surfaces: while tile `k`'s prediction runs on a predictor thread, the lane's thread decodes tile `k - 1`'s
+//! counts and expands tile `k + 1` into the other set. Two bounded channels carry the tiles between the threads
+//! (at most [`DEPTH`] in flight); the lane's thread blocks only on a prediction it needs, for at most
+//! [`PREDICT_WAIT`]. `RERAIL_ANE_OVERLAP=off` runs the tiles one after another on the lane's thread.
 
 pub mod coreml;
 pub mod package;
@@ -32,7 +38,8 @@ pub mod package;
 #[cfg(test)]
 mod tests;
 
-use crate::exec::Backend;
+use crate::exec::{process_cpu, Backend};
+use crate::score::thread_cpu;
 use crate::kernel::{Bits, Kernel, Output};
 use crate::lanes::Lane;
 use package::Template;
@@ -57,6 +64,11 @@ pub const MAX_LOADED: usize = 64;
 pub const MAX_BATCH: usize = 16;
 /// Bytes of IOSurfaces the pool keeps between submissions; past it, returned surfaces are freed.
 pub const MAX_POOL_BYTES: usize = 256 << 20;
+/// Sets of tile surfaces a submission cycles through when it overlaps the host's work with the predictions: one
+/// being predicted while the host decodes and refills the other.
+pub const DEPTH: usize = 2;
+/// The longest the lane's thread waits for one prediction before it fails the submission.
+pub const PREDICT_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Compiled models by key: what the engine keeps as facts in its content store. The value is an archive of the
 /// compiled `.mlmodelc` directory ([`package::archive`]).
@@ -144,19 +156,40 @@ pub struct Prepared {
     pub pieces: usize,
 }
 
-/// Where the last submission's wall time went, in seconds: expanding `a`'s bits to fp16, the prediction calls, and
-/// summing the partial counts (with the outputs' conversion and the thresholds). `predict_cpu` is the process's CPU
-/// (user + sys) over the prediction calls: Core ML's own host work. `surfaces` says whether the tiles ran on
-/// IOSurfaces.
+/// Where the last submission's time went, in seconds, summed over its models:
+///
+/// - `expand`: wall time expanding `a`'s bits to fp16 (the scoreboard's `expand` phase);
+/// - `predict`: wall time of the prediction calls (`predict`); with `overlap` they run while the host
+///   expands and sums;
+/// - `sum`: wall time summing the partial counts, with the outputs' conversion and the thresholds (`sum`);
+/// - `wait`: wall time the lane's thread was blocked on a prediction with nothing else to do (no phase);
+/// - `expand_cpu`, `sum_cpu`: the lane's thread's CPU (user + sys) over `expand` and `sum` (on IOSurfaces only:
+///   the plain-array path expands on the rayon pool and leaves them zero);
+/// - `predict_cpu`: Core ML's host work: on IOSurfaces, the process's CPU over the tiles less the lane's thread's
+///   (so the predictor thread's and Core ML's own threads', the `predict` phase's CPU); on plain arrays, the process's CPU over the calls;
+/// - `surfaces`: whether every model's tiles ran on IOSurfaces; `overlap`: whether any ran pipelined.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Split {
     pub expand: f64,
     pub predict: f64,
     pub predict_cpu: f64,
     pub sum: f64,
+    pub wait: f64,
+    pub expand_cpu: f64,
+    pub sum_cpu: f64,
     pub calls: usize,
     pub tiles: usize,
     pub surfaces: bool,
+    pub overlap: bool,
+}
+
+impl Split {
+    /// Its phases on the executor's scoreboard.
+    fn score(&self) {
+        crate::score::add("expand", self.expand_cpu, self.expand);
+        crate::score::add("predict", self.predict_cpu, self.predict);
+        crate::score::add("sum", self.sum_cpu, self.sum);
+    }
 }
 
 struct Model {
@@ -189,6 +222,8 @@ pub struct Ane {
     pool: Mutex<HashMap<(usize, usize), Vec<coreml::Surface>>>,
     /// Tests only: every shape on plain arrays, so the path for shapes no IOSurface holds is checked too.
     arrays_only: std::sync::atomic::AtomicBool,
+    /// Whether the tiles on IOSurfaces are pipelined ([`DEPTH`] sets); off runs them one after another.
+    overlap: std::sync::atomic::AtomicBool,
 }
 
 static INSTANCE: AtomicUsize = AtomicUsize::new(0);
@@ -202,7 +237,12 @@ impl Ane {
     pub fn with_aot(store: Arc<dyn ModelStore>, extra_aot: Vec<(Vec<u8>, Arc<[u8]>)>) -> Self {
         let base = std::env::var_os("RERAIL_ANE_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
         let dir = base.join(format!("rerail-ane-{}-{}", std::process::id(), INSTANCE.fetch_add(1, Ordering::Relaxed)));
-        Ane { store, dir, cfg: coreml::config(), state: Mutex::new(State::default()), last: Mutex::default(), extra_aot, pool: Mutex::default(), arrays_only: Default::default() }
+        Ane { store, dir, cfg: coreml::config(), state: Mutex::new(State::default()), last: Mutex::default(), extra_aot, pool: Mutex::default(), arrays_only: Default::default(), overlap: (std::env::var("RERAIL_ANE_OVERLAP").as_deref() != Ok("off")).into() }
+    }
+
+    /// Whether later submissions overlap the host's work with the predictions (on unless `RERAIL_ANE_OVERLAP=off`).
+    pub fn set_overlap(&self, on: bool) {
+        self.overlap.store(on, Ordering::Relaxed);
     }
 
     /// Where the last submission's time went.
@@ -347,7 +387,7 @@ impl Ane {
 
     /// Runs every launch against one model: their rows concatenated, tiled, predicted; partial counts summed per
     /// piece; thresholds applied.
-    fn run_model(&self, m: &Model, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
+    fn run_model(&self, m: &Model, ks: &[&Kernel], split: &mut Split) -> Result<Vec<Output>, String> {
         let t = &m.template;
         // Every row of every launch, in order: (launch, row).
         let parts: Vec<(&Bits, &Bits, Option<&[u32]>)> = ks
@@ -368,19 +408,19 @@ impl Ane {
         let tiles = total.div_ceil(t.m);
         let surfaces = !self.arrays_only.load(Ordering::Relaxed)
             && (0..t.pieces.len()).all(|p| coreml::surface_fits(t.m, t.k(p))) && coreml::surface_fits(t.m, n);
-        let mut split = Split { tiles, surfaces, ..Default::default() };
+        split.tiles += tiles;
+        split.surfaces &= surfaces;
         if surfaces {
-            self.counts_on_surfaces(m, total, &row_of, &mut counts, &mut split)?;
+            self.counts_on_surfaces(m, total, &row_of, &mut counts, tiles, split)?;
         } else {
-            self.counts_on_arrays(m, total, &row_of, &mut counts, &mut split)?;
+            self.counts_on_arrays(m, total, &row_of, &mut counts, tiles, split)?;
         }
         // Each launch's share, as the reference gives it.
-        let t0 = Instant::now();
         if let [(a, b, None)] = parts[..] {
             // One launch's counts: the summed counts themselves, not a copy.
-            *self.last.lock().unwrap() = split;
             return Ok(vec![Output::Counts { rows: a.rows, cols: b.rows, data: counts }]);
         }
+        let (t0, c0) = (Instant::now(), thread_cpu());
         let outs: Vec<Output> = parts
             .iter()
             .zip(&starts)
@@ -398,7 +438,7 @@ impl Ane {
             })
             .collect();
         split.sum += t0.elapsed().as_secs_f64();
-        *self.last.lock().unwrap() = split;
+        split.sum_cpu += thread_cpu() - c0;
         Ok(outs)
     }
 }
@@ -427,6 +467,10 @@ impl Ane {
     /// The partial counts, tile by tile, on IOSurfaces: each tile's rows expanded in place into the pieces' input
     /// surfaces, one prediction, and the outputs read from the surfaces Core ML wrote them into.
     ///
+    /// With `overlap` (and more than one tile) the tiles are a pipeline over [`DEPTH`] sets of surfaces: a predictor
+    /// thread runs the predictions in order while this thread expands the next tile into a free set and decodes the
+    /// last one predicted. Without it, the three steps run one after another here.
+    ///
     /// The host's part runs on the lane's own thread, not the rayon pool: it is a few ms at the spikes' sizes, and
     /// the pool's workers spinning between a submission's short parallel steps cost several times that in CPU (W1:
     /// 4 ms of CPU a submission serial, 30 ms on the pool). The lane is there to free the CPU.
@@ -436,65 +480,55 @@ impl Ane {
         total: usize,
         row_of: &(dyn Fn(usize) -> (&'b Bits, usize) + Sync),
         counts: &mut [u32],
+        tiles: usize,
         split: &mut Split,
     ) -> Result<(), String> {
         let t = &m.template;
         let n = t.n;
         let np = t.pieces.len();
-        let mut held = Vec::with_capacity(2 * np);
+        let depth = if self.overlap.load(Ordering::Relaxed) { DEPTH.min(tiles) } else { 1 };
+        let mut held = Vec::with_capacity(depth * 2 * np);
         let r = (|| {
-            for p in 0..np {
-                held.push(self.take(t.m, t.k(p))?);
+            for _ in 0..depth {
+                for p in 0..np {
+                    held.push(self.take(t.m, t.k(p))?);
+                }
+                for _ in 0..np {
+                    held.push(self.take(t.m, n)?);
+                }
             }
-            for _ in 0..np {
-                held.push(self.take(t.m, n)?);
-            }
-            let (ins, outs) = held.split_at(np);
             let in_names: Vec<String> = (0..np).map(|p| format!("x{p}")).collect();
-            let inputs: Vec<(&str, &coreml::Surface)> = in_names.iter().map(String::as_str).zip(ins).collect();
-            let outputs: Vec<(&str, &coreml::Surface)> = m.outputs.iter().map(String::as_str).zip(outs).collect();
-            let bad = std::sync::atomic::AtomicBool::new(false);
-            for tile in 0..split.tiles {
-                let t0 = Instant::now();
-                for (p, s) in ins.iter().enumerate() {
-                    let (w0, w1) = t.pieces[p];
-                    let (k, stride) = (t.k(p), s.stride);
-                    s.write(|buf| {
-                        buf.chunks_mut(stride).enumerate().for_each(|(r, row)| {
-                            let g = tile * t.m + r;
-                            if g < total {
-                                let (a, i) = row_of(g);
-                                expand(&a.row(i)[w0..w1], &mut row[..k]);
-                            } else {
-                                row[..k].fill(0);
-                            }
-                        })
-                    })?;
-                }
-                split.expand += t0.elapsed().as_secs_f64();
-                let t0 = Instant::now();
-                let (call, cpu) = coreml::predict_surfaces(&m.model, &inputs, &outputs)?;
-                split.predict_cpu += cpu;
-                split.predict += call;
-                split.calls += 1;
-                let lo = tile * t.m;
-                let hi = (lo + t.m).min(total);
-                // Every piece's partial counts into a row while the row is in cache.
-                coreml::Surface::read_all(outs, |data| {
-                    for (r, out) in counts[lo * n..hi * n].chunks_mut(n).enumerate() {
-                        for (s, d) in outs.iter().zip(data) {
-                            if !add_counts(out, &d[r * s.stride..r * s.stride + n]) {
-                                bad.store(true, Ordering::Relaxed);
-                            }
-                        }
+            let slots: Vec<Slot> = held
+                .chunks(2 * np)
+                .map(|set| {
+                    let (ins, outs) = set.split_at(np);
+                    Slot {
+                        ins,
+                        outs,
+                        inputs: in_names.iter().map(String::as_str).zip(ins).collect(),
+                        outputs: m.outputs.iter().map(String::as_str).zip(outs).collect(),
                     }
-                })?;
-                split.sum += t0.elapsed().as_secs_f64() - call;
-                if bad.load(Ordering::Relaxed) {
-                    return Err("an output was not an exact count".to_string());
-                }
-            }
-            Ok(())
+                })
+                .collect();
+            let tiler = Tiler { t, total, row_of };
+            let (c0, host0) = (process_cpu(), split.expand_cpu + split.sum_cpu);
+            let r = if depth == 1 {
+                (|| {
+                    for tile in 0..tiles {
+                        tiler.fill(&slots[0], tile, split)?;
+                        let (call, _) = coreml::predict_surfaces(&m.model, &slots[0].inputs, &slots[0].outputs)?;
+                        split.predict += call;
+                        split.calls += 1;
+                        tiler.drain(&slots[0], tile, counts, split)?;
+                    }
+                    Ok(())
+                })()
+            } else {
+                split.overlap = true;
+                tiler.pipeline(&m.model, &slots, tiles, counts, split)
+            };
+            split.predict_cpu += (process_cpu() - c0 - (split.expand_cpu + split.sum_cpu - host0)).max(0.0);
+            r
         })();
         self.give(held);
         r
@@ -508,11 +542,11 @@ impl Ane {
         total: usize,
         row_of: &(dyn Fn(usize) -> (&'b Bits, usize) + Sync),
         counts: &mut [u32],
+        tiles: usize,
         split: &mut Split,
     ) -> Result<(), String> {
         let t = &m.template;
         let n = t.n;
-        let tiles = split.tiles;
         for first in (0..tiles).step_by(MAX_BATCH) {
             let t0 = Instant::now();
             let last = (first + MAX_BATCH).min(tiles);
@@ -572,6 +606,128 @@ impl Ane {
             }
         }
         Ok(())
+    }
+}
+
+/// One set of a tile's surfaces: the pieces' inputs and outputs, and the same by feature name.
+struct Slot<'s> {
+    ins: &'s [coreml::Surface],
+    outs: &'s [coreml::Surface],
+    inputs: Vec<(&'s str, &'s coreml::Surface)>,
+    outputs: Vec<(&'s str, &'s coreml::Surface)>,
+}
+
+/// A submission's rows as tiles of a model's template: what expands a tile into a slot and decodes its counts.
+struct Tiler<'a, 'b> {
+    t: &'a Template,
+    total: usize,
+    row_of: &'a (dyn Fn(usize) -> (&'b Bits, usize) + Sync),
+}
+
+impl Tiler<'_, '_> {
+    /// Expands tile `tile`'s rows in place into `slot`'s input surfaces (rows past the end are zero).
+    fn fill(&self, slot: &Slot, tile: usize, split: &mut Split) -> Result<(), String> {
+        let (t0, c0) = (Instant::now(), thread_cpu());
+        let t = self.t;
+        for (p, s) in slot.ins.iter().enumerate() {
+            let (w0, w1) = t.pieces[p];
+            let (k, stride) = (t.k(p), s.stride);
+            s.write(|buf| {
+                buf.chunks_mut(stride).enumerate().for_each(|(r, row)| {
+                    let g = tile * t.m + r;
+                    if g < self.total {
+                        let (a, i) = (self.row_of)(g);
+                        expand(&a.row(i)[w0..w1], &mut row[..k]);
+                    } else {
+                        row[..k].fill(0);
+                    }
+                })
+            })?;
+        }
+        split.expand += t0.elapsed().as_secs_f64();
+        split.expand_cpu += thread_cpu() - c0;
+        Ok(())
+    }
+
+    /// Adds tile `tile`'s partial counts, read from `slot`'s output surfaces, into `counts`.
+    fn drain(&self, slot: &Slot, tile: usize, counts: &mut [u32], split: &mut Split) -> Result<(), String> {
+        let (t0, c0) = (Instant::now(), thread_cpu());
+        let n = self.t.n;
+        let lo = tile * self.t.m;
+        let hi = (lo + self.t.m).min(self.total);
+        let outs = slot.outs;
+        // Every piece's partial counts into a row while the row is in cache.
+        let good = coreml::Surface::read_all(outs, |data| {
+            let mut good = true;
+            for (r, out) in counts[lo * n..hi * n].chunks_mut(n).enumerate() {
+                for (s, d) in outs.iter().zip(data) {
+                    good &= add_counts(out, &d[r * s.stride..r * s.stride + n]);
+                }
+            }
+            good
+        })?;
+        split.sum += t0.elapsed().as_secs_f64();
+        split.sum_cpu += thread_cpu() - c0;
+        if good { Ok(()) } else { Err("an output was not an exact count".to_string()) }
+    }
+
+    /// The tiles as a pipeline over `slots`: a predictor thread takes `(slot, tile)` in order and hands back each
+    /// result; this thread fills a free slot, and when none is free, waits for the oldest prediction, decodes it,
+    /// and so frees its slot. Both channels hold at most `slots.len()` items, which is all that can be in flight, so
+    /// neither thread ever blocks on a send.
+    fn pipeline(&self, model: &coreml::Obj, slots: &[Slot], tiles: usize, counts: &mut [u32], split: &mut Split) -> Result<(), String> {
+        use std::sync::mpsc::sync_channel;
+        type Done = (usize, usize, Result<(f64, f64), String>);
+        std::thread::scope(|s| {
+            let (jobs, job_rx) = sync_channel::<(usize, usize)>(slots.len());
+            let (done_tx, done) = sync_channel::<Done>(slots.len());
+            s.spawn(move || {
+                while let Ok((i, tile)) = job_rx.recv() {
+                    let r = coreml::predict_surfaces(model, &slots[i].inputs, &slots[i].outputs);
+                    if done_tx.send((i, tile, r)).is_err() {
+                        break;
+                    }
+                }
+            });
+            // The oldest prediction: waited for, decoded; its slot is free again.
+            let retire = |counts: &mut [u32], split: &mut Split| -> Result<usize, String> {
+                let t0 = Instant::now();
+                let (i, tile, r) = done
+                    .recv_timeout(PREDICT_WAIT)
+                    .map_err(|_| format!("a prediction did not finish within {} s", PREDICT_WAIT.as_secs()))?;
+                split.wait += t0.elapsed().as_secs_f64();
+                let (call, _) = r?;
+                split.predict += call;
+                split.calls += 1;
+                self.drain(&slots[i], tile, counts, split)?;
+                Ok(i)
+            };
+            let r = (|| {
+                let mut free: Vec<usize> = (0..slots.len()).rev().collect();
+                let mut in_flight = 0;
+                for tile in 0..tiles {
+                    let i = match free.pop() {
+                        Some(i) => i,
+                        None => {
+                            in_flight -= 1;
+                            retire(counts, split)?
+                        }
+                    };
+                    self.fill(&slots[i], tile, split)?;
+                    jobs.send((i, tile)).map_err(|_| "the predictor thread stopped".to_string())?;
+                    in_flight += 1;
+                }
+                while in_flight > 0 {
+                    in_flight -= 1;
+                    retire(counts, split)?;
+                }
+                Ok(())
+            })();
+            // The predictor ends once the jobs it was sent are done (at most `slots.len()`); the scope joins it
+            // before the slots go back to the pool.
+            drop(jobs);
+            r
+        })
     }
 }
 
@@ -669,6 +825,16 @@ impl Backend for Ane {
     }
 
     fn submit(&self, ks: &[&Kernel]) -> Result<Vec<Output>, String> {
+        self.submit_split(ks).map(|(o, split)| {
+            split.score();
+            o
+        })
+    }
+}
+
+impl Ane {
+    /// `submit`, with where its time went.
+    pub fn submit_split(&self, ks: &[&Kernel]) -> Result<(Vec<Output>, Split), String> {
         // Group the launches by model, keeping each one's place.
         let mut groups: Vec<([u8; 32], Arc<Model>, Vec<usize>)> = Vec::new();
         let mut outs: Vec<Option<Output>> = vec![None; ks.len()];
@@ -691,13 +857,15 @@ impl Backend for Ane {
                 None => groups.push((key, m, vec![i])),
             }
         }
+        let mut split = Split { surfaces: true, ..Default::default() };
         for (_, m, ids) in &groups {
             let sub: Vec<&Kernel> = ids.iter().map(|&i| ks[i]).collect();
-            for (&i, o) in ids.iter().zip(self.run_model(m, &sub)?) {
+            for (&i, o) in ids.iter().zip(self.run_model(m, &sub, &mut split)?) {
                 outs[i] = Some(o);
             }
         }
-        Ok(outs.into_iter().map(|o| o.expect("every launch ran")).collect())
+        *self.last.lock().unwrap() = split;
+        Ok((outs.into_iter().map(|o| o.expect("every launch ran")).collect(), split))
     }
 }
 
