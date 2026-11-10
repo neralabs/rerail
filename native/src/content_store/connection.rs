@@ -310,6 +310,25 @@ impl ThreadConnection {
 /// A connection's page cache at rest, in KiB.
 pub(super) const CACHE_KIB: i64 = 1_024;
 
+/// When profiling, each statement of a store connection is reported to the profile, which counts the ones a wave's
+/// thread runs while waves are under way as hazards (decision 0104: no wave waits for SQL).
+fn trace_for_hazards(connection: &Connection) {
+    use rusqlite::ffi;
+    unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
+        if event == ffi::SQLITE_TRACE_PROFILE as u32 {
+            // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
+            let (text, ns) = unsafe { (std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())).to_string_lossy(), *x.cast::<i64>() as u64) };
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            super::hazards::sql_in_wave("store", &text, ns);
+        }
+        0
+    }
+    if super::hazards::on() {
+        // SAFETY: the callback keeps no state; the connection is live.
+        unsafe { ffi::sqlite3_trace_v2(connection.handle(), ffi::SQLITE_TRACE_PROFILE as u32, Some(trace), std::ptr::null_mut()) };
+    }
+}
+
 /// SQL functions every connection gets, beside the store's own: the engine's, set as it loads.
 static CONNECTION_FUNCTIONS: std::sync::OnceLock<fn(&Connection) -> rusqlite::Result<()>> = std::sync::OnceLock::new();
 
@@ -320,6 +339,7 @@ pub fn set_connection_functions(install: fn(&Connection) -> rusqlite::Result<()>
 }
 
 pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
+    trace_for_hazards(connection);
     connection.set_prepared_statement_cache_capacity(128);
     connection.busy_handler(Some(wait_for_writer))?;
     // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the

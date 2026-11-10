@@ -14,7 +14,10 @@ fn types_resolves_names_bases_members_and_annotations_by_symbol() {
     std::fs::write(src.join("pkg/__init__.py"), "from pkg.m import C as Exported\n").unwrap();
     std::fs::write(src.join("pkg/m.py"), "class B:\n    def run(self) -> int:\n        return 1\n    size: int = 0\n    again = run\n\nclass C(B):\n    def own(self) -> 'B':\n        return self\n\nAlias = C\nDotted = pkg.m.B\nimport pkg.m\n").unwrap();
     std::fs::write(src.join("pkg/star.py"), "from pkg.m import *\n").unwrap();
-    std::fs::write(src.join("n.py"), "from pkg import Exported\nimport pkg.m\nfrom pkg.star import B\n\nlimit: int = 3\n\ndef f(c: Exported, d: pkg.m.B) -> None:\n    pass\n\ndef g(u: B | None) -> list[B] | None:\n    pass\n").unwrap();
+    // A module with `__all__`: `import *` binds what it lists, a private name too, and nothing else.
+    std::fs::write(src.join("pkg/listed.py"), "from pkg.m import B, C\n_p = 1\n__all__ = ['B']\n__all__ += ['_p']\n").unwrap();
+    std::fs::write(src.join("o.py"), "from pkg.listed import *\n").unwrap();
+    std::fs::write(src.join("n.py"), "from pkg import Exported\nimport pkg.m\nfrom pkg.star import B\n\nlimit: int = 3\n\ndef f(c: Exported, d: pkg.m.B) -> None:\n    pass\n\ndef g(u: B | None) -> list[B] | None:\n    pass\n\ndef k(u: 'B | None') -> None:\n    pass\n").unwrap();
     let out = dir.join("out");
     let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
@@ -55,6 +58,8 @@ v(s, d) :- types__vtype(s, _, d).
     assert!(b.contains(&"pkg\tExported\tpkg.m.C".to_owned()), "{b:?}");
     assert!(b.contains(&"n\tlimit\tn.limit".to_owned()), "{b:?}");
     assert!(b.contains(&"n\tB\tpkg.m.B".to_owned()), "through `from pkg.m import *`: {b:?}");
+    assert!(b.contains(&"o\tB\tpkg.m.B".to_owned()) && b.contains(&"o\t_p\tpkg.listed._p".to_owned()), "as `__all__` lists: {b:?}");
+    assert!(!b.iter().any(|l| l.starts_with("o\tC\t")), "not in `__all__`: {b:?}");
     assert_eq!(rows("k"), ["pkg.m.C\t0\tpkg.m.B"]);
     let a = rows("a");
     assert!(a.contains(&"pkg.m.C\trun\tpkg.m.B.run\tpkg.m.B".to_owned()), "inherited: {a:?}");
@@ -71,6 +76,7 @@ v(s, d) :- types__vtype(s, _, d).
     assert!(!s.contains(&"n.f\t0\tc\t".to_owned()) && !s.contains(&"n.f\t1\td\t".to_owned()), "{s:?}");
     // A union: each alternative's head, None as builtins.None.
     assert!(s.contains(&"n.g\t0\tu\tpkg.m.B".to_owned()) && s.contains(&"n.g\t0\tu\tbuiltins.None".to_owned()), "{s:?}");
+    assert!(s.contains(&"n.k\t0\tu\tpkg.m.B".to_owned()) && s.contains(&"n.k\t0\tu\tbuiltins.None".to_owned()), "a quoted union: {s:?}");
     let r = rows("r");
     assert!(r.contains(&"n.g\tlist[B] | None\tbuiltins.None".to_owned()), "{r:?}");
     assert!(r.contains(&"pkg.m.C.own\t'B'\tpkg.m.B".to_owned()), "a quoted forward reference: {r:?}");
@@ -130,7 +136,7 @@ fn types_gives_type_parameters_their_map_through_bases_and_the_returns_naming_th
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(
         src.join("g.py"),
-        "from typing import Generic, TypeVar\n\nT = TypeVar(\"T\")\nK = TypeVar(\"K\")\nV = TypeVar(\"V\")\n\nclass It(Generic[T]):\n    def __next__(self) -> T: ...\n\nclass Map(Generic[K, V]):\n    def get(self, k: K) -> V | None: ...\n    def values(self) -> It[V]: ...\n    def any(self) -> object: ...\n\nclass Dict(Map[K, V]):\n    pass\n\nclass Names(Map[str, T]):\n    pass\n",
+        "from typing import Generic, TypeVar\n\nT = TypeVar(\"T\")\nK = TypeVar(\"K\")\nV = TypeVar(\"V\")\n\nclass It(Generic[T]):\n    def __next__(self) -> T: ...\n\nclass Map(Generic[K, V]):\n    def get(self, k: K) -> V | None: ...\n    def values(self) -> It[V]: ...\n    def pairs(self) -> Map[K, It[V] | None]: ...\n    def any(self) -> object: ...\n\nclass Dict(Map[K, V]):\n    pass\n\nclass Names(Map[str, T]):\n    pass\n",
     )
     .unwrap();
     let out = dir.join("out");
@@ -168,7 +174,8 @@ ro(f) :- types__ropen(f).
     assert!(tm.contains(&"g.Dict\t1\tg.Map\tg.V".to_owned()) && tm.contains(&"g.Names\t0\tg.Map\tg.V".to_owned()), "{tm:?}");
     assert!(!tm.iter().any(|r| r.starts_with("g.Names\t") && r.ends_with("\tg.K")), "str fixes K: {tm:?}");
     assert_eq!(rows("rv"), ["g.It.__next__\tg.T", "g.Map.get\tg.V"]);
-    assert_eq!(rows("rg"), ["g.Map.values\tg.It\t0\tg.V"]);
+    // A generic whose other argument holds a union inside brackets: its arguments are read off its tree.
+    assert_eq!(rows("rg"), ["g.Map.pairs\tg.Map\t0\tg.K", "g.Map.values\tg.It\t0\tg.V"]);
     // `object` is a name no module read binds (no builtins here): open; a type variable is not.
     assert_eq!(rows("ro"), ["g.Map.any"]);
     let _ = std::fs::remove_dir_all(&dir);

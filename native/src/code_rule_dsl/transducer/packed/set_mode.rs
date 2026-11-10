@@ -7,72 +7,14 @@
 //! own labels; `Fired` is a task's emitted labels. Every backend keeps the first freedom (a task
 //! ends once every label fired); the host's executors (the interpreter, the micro walk) also prune
 //! by reach.
-use super::{EMIT, FORK, GOTO, STOP, split};
 
-/// Each pc's reachable labels, for a program of at most 64 distinct emitted labels.
-#[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) struct Reach {
-    /// The program's emitted labels, ascending: a label's bit is its index.
-    labels: Vec<u16>,
-    /// Per pc: the bits of the labels some path from it can emit.
-    masks: Vec<u64>,
-}
+// The analysis is the compiler crate's (`rerail_compiler::set_mode`).
+pub(in crate::code_rule_dsl) use rerail_compiler::set_mode::*;
 
-impl Reach {
-    /// `words`' reach, or None where the program emits more than 64 labels (no pruning).
-    pub(in crate::code_rule_dsl) fn of(words: &[u32]) -> Option<Self> {
-        let mut labels = words.iter().map(|&word| split(word)).filter(|(op, ..)| *op == EMIT).map(|(.., label)| label).collect::<Vec<_>>();
-        labels.sort_unstable();
-        labels.dedup();
-        if labels.len() > 64 {
-            return None;
-        }
-        let bit = |label: u16| 1_u64 << labels.binary_search(&label).expect("an emitted label");
-        let mut masks = vec![0_u64; words.len()];
-        // Backward to a fixpoint: a pc reaches what its successors reach (loops by `GOTO`).
-        loop {
-            let mut changed = false;
-            for pc in (0..words.len()).rev() {
-                let (op, _, operand) = split(words[pc]);
-                let at = |target: usize| masks.get(target).copied().unwrap_or(0);
-                let mask = match op {
-                    STOP => 0,
-                    EMIT => bit(operand),
-                    GOTO => at(usize::from(operand)),
-                    FORK => at(pc + 1) | at(usize::from(operand)),
-                    _ => at(pc + 1),
-                };
-                if mask != masks[pc] {
-                    masks[pc] = mask;
-                    changed = true;
-                }
-            }
-            if !changed {
-                return Some(Self { labels, masks });
-            }
-        }
-    }
-
-    /// Every label's bits.
-    pub(in crate::code_rule_dsl) fn all(&self) -> u64 {
-        if self.labels.len() == 64 { u64::MAX } else { (1 << self.labels.len()) - 1 }
-    }
-
-    /// `label`'s bit.
-    pub(in crate::code_rule_dsl) fn bit(&self, label: u16) -> u64 {
-        self.labels.binary_search(&label).map_or(0, |index| 1 << index)
-    }
-
-    /// Whether a path at `pc` can still emit a label not in `fired`.
-    pub(in crate::code_rule_dsl) fn live(&self, pc: u16, fired: u64) -> bool {
-        self.masks.get(usize::from(pc)).is_some_and(|mask| mask & !fired != 0)
-    }
-
-    /// The program's emitted labels.
-    pub(in crate::code_rule_dsl) fn labels(&self) -> &[u16] {
-        &self.labels
-    }
-}
+// The tests read the transducer's names as they did when this file held the code.
+#[cfg(test)]
+#[allow(unused_imports)]
+use super::*;
 
 #[cfg(test)]
 mod tests {

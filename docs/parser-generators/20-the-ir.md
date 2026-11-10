@@ -458,8 +458,8 @@ state S':  ',' -> leaf ...            ; S without its close
 
 ## 9. The ladder: thirteen languages, one keyword to nested data with comments
 
-The ladder is thirteen Bitlex files, in
-`native/src/code_rule_dsl/transducer/packed/bitlex_ladder/`. The languages are made
+The ladder is thirteen Bitlex files, in `native/crates/compiler/bitlex_ladder/`
+(the compiler crate's, with its tests). The languages are made
 up, so that no step is a known format. Each step adds one construct to the step
 before:
 

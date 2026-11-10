@@ -217,8 +217,14 @@ impl ContentStore {
         })
     }
 
-    /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them.
+    /// `put_stat_blob`, queued behind the run (decision 0102).
+    pub fn queue_stat_blob(&self, plan: [u8; 32], blob: Vec<u8>) {
+        self.write_back("the kept statistics", blob.len(), vec![(stat_blob_key(&plan), None)], Box::new(move |store| store.put_stat_blob(plan, &blob)));
+    }
+
+    /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them; a queued write of them first.
     pub fn stat_blob(&self, plan: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
+        self.settle(&stat_blob_key(&plan));
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let kept: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stat_blob'", [], |r| r.get(0))?;
         if kept == 0 {
@@ -726,4 +732,9 @@ mod tests;
 /// `bytes` as lower-case hex, as SQLite's `unhex` reads it.
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// What a write of plan `plan`'s statistics is queued under (`write_back`).
+fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
+    super::write_back::Key::of(&[b"stat_blob", plan])
 }

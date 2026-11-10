@@ -1,0 +1,16 @@
+.policy "waves-flow-returns" revision 1
+.description "An if statement from which control can reach a return: statement successors, as a closure."
+.language python
+.mode steer
+.scope include "**/*"
+// Control flow between statements: the next statement of a block, and an if's first statement of each branch. A
+// block's statements are a chain; an if forks, so the reach graph is not one chain.
+.decl wl_succ(s: node, t: node)
+wl_succ(s, t) :- kind(b, "block"), child(b, s, i), child(b, t, j), j = i + 1.
+wl_succ(s, t) :- kind(s, "if_statement"), field(s, "consequence", b), child(b, t, 0).
+wl_succ(s, t) :- kind(s, "if_statement"), field(s, "alternative", a), field(a, "body", b), child(b, t, 0).
+.decl wl_flows(s: node, t: node)
+wl_flows(s, t) :- wl_succ(s, t).
+wl_flows(s, u) :- wl_flows(s, t), wl_succ(t, u).
+.violation WL1(at: node) code "WL1" "control can reach a return from this if"
+WL1(s) :- kind(s, "if_statement"), wl_flows(s, t), kind(t, "return_statement").

@@ -819,6 +819,240 @@ fn the_analysis_phase_infers_a_library_constructors_type_variables_from_its_argu
 }
 
 #[test]
+fn the_analysis_phase_binds_a_library_context_managers_type_variable_from_the_wrapped_return() {
+    // calls_p3 over a miniature contextlib: `cm(func: Callable[P, It[T]]) -> Callable[P, Cm[T]]`, and Cm's parameter
+    // is its `Enter[T, bool | None]` base's (its first base, `Base[Gen[T, S]]`, nests a generic). `opened()` holds a
+    // Cm of V (the workspace function returns `It[V]`), so `with opened() as v` binds v to a V and `v.run()` targets
+    // V.run.
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-cm");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\ntyping: 3.0-\ncm: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\nclass bool: ...\n").unwrap();
+    std::fs::write(
+        lib.join("typing.pyi"),
+        "class _SpecialForm: ...\nGeneric: _SpecialForm\nProtocol: _SpecialForm\nCallable: _SpecialForm\ndef TypeVar(name: str) -> object: ...\ndef ParamSpec(name: str) -> object: ...\n_T = TypeVar(\"_T\")\nclass It(Protocol[_T]):\n    def __next__(self) -> _T: ...\n",
+    )
+    .unwrap();
+    std::fs::write(
+        lib.join("cm.pyi"),
+        "from typing import Callable, Generic, ParamSpec, Protocol, TypeVar, It\n_T = TypeVar(\"_T\")\n_S = TypeVar(\"_S\")\n_E = TypeVar(\"_E\")\n_P = ParamSpec(\"_P\")\nclass Enter(Protocol[_T, _E]):\n    def __enter__(self) -> _T: ...\nclass Gen(It[_T], Generic[_T, _S]): ...\nclass Base(Generic[_T]): ...\nclass Cm(Base[Gen[_T, _S]], Enter[_T, bool | None]): ...\ndef cm(func: Callable[_P, It[_T]]) -> Callable[_P, Cm[_T]]: ...\n",
+    )
+    .unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "from typing import It\nfrom cm import cm\nclass V:\n    def run(self) -> int: ...\n@cm\ndef opened() -> It[V]: ...\ndef f() -> None:\n    with opened() as v:\n        v.run()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let at_line = |cell: &str| line(&src, starts[cell]);
+    let targets = read("call_target");
+    let to: Vec<u64> = targets.lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
+    assert!(to.contains(&9), "v.run() through Cm's _T bound by opened's It[V]: {targets}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_analysis_phase_rules_out_an_overload_whose_none_parameter_is_given_a_literal() {
+    // calls_p3 over a miniature builtins: `setdefault(self, key, default: None = None) -> _VT | None` and
+    // `setdefault(self, key, default: _VT) -> _VT` both fit two arguments, but `[]` is no None, so
+    // `d.setdefault(k, []).append(v)` runs the second, holds a `list[V]`, and its `append` is list's, not open.
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-none");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\ntyping: 3.0-\n").unwrap();
+    std::fs::write(
+        lib.join("typing.pyi"),
+        "class _SpecialForm: ...\nGeneric: _SpecialForm\ndef TypeVar(name: str) -> object: ...\ndef overload(f: object) -> object: ...\n",
+    )
+    .unwrap();
+    std::fs::write(
+        lib.join("builtins.pyi"),
+        "from typing import Generic, TypeVar, overload\n_T = TypeVar(\"_T\")\n_KT = TypeVar(\"_KT\")\n_VT = TypeVar(\"_VT\")\nclass object: ...\nclass str: ...\nclass list(Generic[_T]):\n    def append(self, x: _T, /) -> None: ...\nclass dict(Generic[_KT, _VT]):\n    @overload\n    def setdefault(self, key: _KT, default: None = None, /) -> _T | None: ...\n    @overload\n    def setdefault(self, key: _KT, default: _VT, /) -> _VT: ...\n",
+    )
+    .unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "class V: ...\ndef f(k: str, v: V) -> None:\n    d: dict[str, list[V]] = {}\n    d.setdefault(k, []).append(v)\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let open: Vec<u64> = read("call_open").lines().map(|l| line(&src, starts[l.split('\t').next().unwrap()])).collect();
+    assert!(!open.contains(&4), "setdefault(k, []) runs the overload with a default, append is list's: {}", read("call_open"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_analysis_phase_reads_a_library_generic_base_as_known() {
+    // calls_p3 over a miniature typeshed: `class A(Cm[None])`, a library generic base written as a subscript, is a
+    // known base, so `A()` runs A's own `__init__` and `A().go()` targets A.go; neither is open.
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-gbase");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\ntyping: 3.0-\nbox: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\n").unwrap();
+    std::fs::write(lib.join("typing.pyi"), "class _SpecialForm: ...\nGeneric: _SpecialForm\ndef TypeVar(name: str) -> object: ...\n").unwrap();
+    std::fs::write(
+        lib.join("box.pyi"),
+        "from typing import Generic, TypeVar\n_T = TypeVar(\"_T\")\nclass Cm(Generic[_T]):\n    def __enter__(self) -> _T: ...\n",
+    )
+    .unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "from box import Cm\nclass A(Cm[None]):\n    def __init__(self) -> None: ...\n    def go(self) -> int: ...\ndef f() -> None:\n    A().go()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    assert_eq!(read("call_open"), "", "A() and A().go() of a class with a library generic base");
+    assert_eq!(read("call_target").lines().count(), 2, "{}", read("call_target"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
+    // calls_p3: `await load()` holds what `async def load() -> V` declares, `await make()` what make returns (a V),
+    // so both `run()` calls target V.run; the calls of load and make, coroutines, are not awaited values.
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-await");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\n").unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "class V:\n    def run(self) -> int: ...\nasync def load() -> V: ...\nasync def make():\n    return V()\nasync def f() -> None:\n    v = await load()\n    v.run()\n    w = await make()\n    w.run()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let at_line = |cell: &str| line(&src, starts[cell]);
+    let targets = read("call_target");
+    let to: Vec<u64> = targets.lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
+    assert!(to.contains(&8) && to.contains(&10), "v.run() and w.run() through the awaited values: {targets}");
+    let open: Vec<u64> = read("call_open").lines().map(|l| at_line(l.split('\t').next().unwrap())).collect();
+    assert!(!open.contains(&8) && !open.contains(&10), "{}", read("call_open"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_session_maintains_the_typing_phase_from_struct_s_delta() {
+    // P2 (types.rr) in a session: an edit to one workspace file changes struct's rows for that file only, and the
+    // typing phase's run takes that delta: it maintains the strata the delta reaches, not every stratum, and its
+    // exports are a full run's.
+    use crate::code_rule_dsl::logic::plan::corpus::session;
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p2-session");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\ntyping: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\nclass str:\n    def upper(self) -> str: ...\n").unwrap();
+    std::fs::write(lib.join("typing.pyi"), "class _SpecialForm: ...\nGeneric: _SpecialForm\ndef TypeVar(name: str) -> object: ...\n").unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(ws.join("a.py"), "class A:\n    def run(self) -> int: ...\n").unwrap();
+    std::fs::write(ws.join("b.py"), "from a import A\nclass B(A):\n    def go(self) -> str: ...\n").unwrap();
+    let reader = r#"
+.decl types__binds(m: symbol, x: symbol, d: symbol)
+.decl types__anc(c: symbol, a: symbol)
+.decl types__attr(c: symbol, x: symbol, d: symbol, k: symbol)
+.decl types__rtype(f: symbol, a: symbol, d: symbol)
+.decl binds(m: symbol, x: symbol, d: symbol)
+binds(m, x, d) :- types__binds(m, x, d).
+.decl anc(c: symbol, a: symbol)
+anc(c, a) :- types__anc(c, a).
+.decl attr(c: symbol, x: symbol, d: symbol, k: symbol)
+attr(c, x, d, k) :- types__attr(c, x, d, k).
+.decl rtype(f: symbol, a: symbol, d: symbol)
+rtype(f, a, d) :- types__rtype(f, a, d).
+.output binds, anc, attr, rtype
+"#;
+    let out = dir.join("out");
+    let _one = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = || corpus::run_with_options(&[reader], &ws, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({})).unwrap();
+    let dump = || -> Vec<Vec<String>> {
+        ["binds", "anc", "attr", "rtype"].iter().map(|r| {
+            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            v.sort();
+            v
+        }).collect()
+    };
+    let types = |r: &corpus::Report| -> (Option<(usize, usize)>, (usize, usize, usize), Option<String>) {
+        let p = r.phase_runs.iter().find(|p| p.name == "types").expect("the typing phase ran");
+        (p.report.cross_strata, p.report.cross_maintained, p.full_because.clone())
+    };
+    session::start(&dir.join("session")).unwrap();
+    let cold = run();
+    println!("P2 cold: {:?}", types(&cold));
+    std::fs::write(ws.join("b.py"), "from a import A\nclass B(A):\n    def go(self) -> str: ...\nclass C(B): ...\n").unwrap();
+    let edited = run();
+    let (strata, maintained, why) = types(&edited);
+    println!("P2 edited: strata {strata:?}, maintained {maintained:?}, in full because {why:?}");
+    let kept = dump();
+    assert!(kept[1].iter().any(|l| l == "b.C\ta.A"), "C's ancestors through the edit: {:?}", kept[1]);
+    // A second edit, then none: each run's exports are kept by the granules that changed (`keep_in_session`), and
+    // the unchanged run reads them back from the phase store.
+    std::fs::write(ws.join("a.py"), "class A:\n    def run(self) -> int: ...\nclass Z: ...\n").unwrap();
+    let _ = run();
+    let second = dump();
+    assert!(second[1].iter().any(|l| l == "b.C\ta.A") && second[0].iter().any(|l| l.starts_with("a\tZ\t")), "{second:?}");
+    let unchanged = run();
+    let how: Vec<String> = unchanged.phase_runs.iter().map(|p| format!("{} {:?} {:?} {:?}", p.name, p.report.cross_strata, p.full_because, p.report.phases.iter().map(|x| x.0).collect::<Vec<_>>())).collect();
+    assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none()), "the typing phase kept as it was: {how:?}");
+    assert_eq!(dump(), second, "read back from the phase store");
+    let full = session::full(run);
+    assert_eq!(second, dump(), "the session's maintained typing phase against a full run");
+    let _ = full;
+    let (run_, all) = strata.expect("the typing phase's run is a session's");
+    assert!(maintained.0 > 0, "strata maintained from struct's delta: {maintained:?}");
+    assert!(run_ < all, "the edit runs the strata its delta reaches, {run_} of {all}");
+    assert_eq!(why, None, "maintained by the session, not run in full");
+    let types_local = edited.phase_runs.iter().find(|p| p.name == "types").unwrap().report.phases.iter().find(|p| p.0 == "local").map_or(0.0, |p| p.1 + p.2);
+    assert!(types_local < 0.05, "a phase reading no document has no file-local part: {types_local:.2} s");
+    session::stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_class_decorator_declared_type_t_to_type_t_keeps_the_class() {
     // `deco(cls: type[T]) -> type[T]` gives back the class it decorates, whatever its body returns (an unknown
     // `wrap(cls)`): A stays A, so B's base is known and `b.m()` targets A.m. Only `wrap(cls)` is unknown.
@@ -1332,6 +1566,87 @@ ats(s, p, l) :- struct__at(s, p, l).
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// t28 step 7 (decision 0083 §2): the typing phase (types.rr) in a session over `RERAIL_PYTHON_CALLS_ROOT`, copied,
+/// edited a file at a time (`RERAIL_SPIKE_EDITS`, as O125's). Each edit runs the reader of every types export in the
+/// session, then in full; the exports must be equal. Prints each phase's CPU, its strata run and maintained, and where
+/// its CPU went.
+#[test]
+#[ignore = "a spike: minutes over the 84-file corpus with typeshed"]
+fn spike_t28_a_session_maintains_the_typing_phase() {
+    use crate::code_rule_dsl::logic::plan::corpus::session;
+    let given = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").expect("RERAIL_PYTHON_CALLS_ROOT"));
+    let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
+    let base = std::env::temp_dir().join(format!("rerail-t28-{}", std::process::id()));
+    let (root, out) = (base.join("src"), base.join("out"));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    assert!(std::process::Command::new("cp").arg("-R").arg(&given).arg(&root).status().unwrap().success());
+    // The reader: every export of types.rr handed on as an output.
+    let types = crate::code_rule_dsl::logic::rr::parse(&program("types")).unwrap();
+    let exports = crate::code_rule_dsl::logic::plan::corpus::phases::declared(&types).unwrap().exports;
+    let mut reader = String::new();
+    for e in &exports {
+        let cols = &types.decls[e];
+        let decl = cols.iter().map(|(c, t)| format!("{c}: {t}")).collect::<Vec<_>>().join(", ");
+        let vars = (0..cols.len()).map(|i| format!("v{i}")).collect::<Vec<_>>().join(", ");
+        reader.push_str(&format!(".decl types__{e}({decl})\n.decl out_{e}({decl})\nout_{e}({vars}) :- types__{e}({vars}).\n.output out_{e}\n"));
+    }
+    let run = || corpus::run_with_options(&[&reader], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let dump = || -> BTreeMap<String, Vec<String>> {
+        exports.iter().map(|e| {
+            let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("out_{e}.csv"))).unwrap_or_default().lines().map(str::to_owned).collect();
+            v.sort();
+            (e.clone(), v)
+        }).collect()
+    };
+    let show = |what: &str, r: &corpus::Report| {
+        for p in &r.phase_runs {
+            let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
+            let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
+            let changed: usize = p.exports.iter().map(|e| e.2 + e.3).sum();
+            println!("T28 {what}: {} {cpu:.2} s CPU, bookkeeping {:.2} s; strata {:?}, maintained {:?}; export rows changed {changed}; {}; parts: {}",
+                p.name, p.bookkeeping, p.report.cross_strata, p.report.cross_maintained, p.full_because.as_deref().map_or("kept or maintained".to_owned(), |w| format!("full run: {w}")), parts.join(", "));
+        }
+        println!("T28 {what}: the reader's run: {:.2} s", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>());
+    };
+    session::start(&base.join("session")).unwrap();
+    show("cold", &run());
+    show("unchanged", &run());
+    let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
+    for edit in edits.split(',') {
+        let (file, change): (&str, fn(&str) -> String) = match edit {
+            "E1" => ("l1100_exceptions/exceptions.py", |s| format!("{s}\n\ndef _o125_probe() -> None:\n    pass\n")),
+            "E2" => ("l1100_exceptions/exceptions.py", |s| format!("# o125\n{s}")),
+            "E3" => ("l2055_lazy_result/lazy_reads.py", |s| {
+                let mut lines: Vec<&str> = s.lines().collect();
+                let at = lines.iter().position(|l| l.starts_with("def _lazy_result_to_seq")).unwrap();
+                lines.insert(at + 1, "    _o125 = 1");
+                lines.join("\n") + "\n"
+            }),
+            other => panic!("unknown edit {other}"),
+        };
+        let path = root.join(file);
+        let before = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, change(&before)).unwrap();
+        show(edit, &run());
+        let kept = dump();
+        // The full run: no session, a phase store of its own.
+        let store = std::env::var("RERAIL_TAPE_CACHE").expect("RERAIL_TAPE_CACHE");
+        let full_store = format!("{store}.full");
+        let _ = std::fs::remove_file(format!("{full_store}.phases"));
+        // SAFETY: the spike's thread is the only one running between runs.
+        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
+        let full = session::full(run);
+        unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &store) };
+        show(&format!("{edit} full"), &full);
+        let derived = dump();
+        let differ: Vec<String> = exports.iter().filter(|e| kept[*e] != derived[*e]).map(|e| format!("{e} ({} kept, {} derived)", kept[e].len(), derived[e].len())).collect();
+        println!("T28 {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
+    }
+    session::stop();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// O125 (decision 0083, spike 1): delete-and-rederive on calls.rr's cross-file fixpoint. A session (0077) keeps the
 /// cross-file part; each edit (`RERAIL_SPIKE_EDITS`: E1 append to exceptions.py, E2 a comment at its top, E3 a
 /// statement in an early body of lazy_reads.py) is run through the session, then without it, and the outputs are
@@ -1542,6 +1857,8 @@ fn spike_o125_replay() {
     let keep = |step: usize, what: &str| {
         if let Some(p) = &profile {
             let _ = std::fs::copy(p.join("native.tsv"), p.join(format!("native-{step:02}-{what}.tsv")));
+            let _ = std::fs::copy(p.join("spans.tsv"), p.join(format!("spans-{step:02}-{what}.tsv")));
+            let _ = std::fs::copy(p.join("profile.txt"), p.join(format!("profile-{step:02}-{what}.txt")));
         }
     };
     let phase = |r: &corpus::Report, name: &str| -> f64 { r.phases.iter().filter(|p| p.0 == name).map(|p| p.1 + p.2).sum() };

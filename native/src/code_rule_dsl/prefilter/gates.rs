@@ -138,6 +138,7 @@ fn bit_files(gates: &[Gate], term_files: &BTreeMap<&str, BTreeSet<i64>>, uncover
         forms.iter().enumerate().filter_map(|(g, f)| Some((g, f.as_ref()?.as_ref()?))).flat_map(|(g, d)| d.iter().map(move |c| (g, c.iter().copied().collect()))).collect();
     let mut by_bits: Vec<Option<BTreeSet<i64>>> = vec![None; gates.len()];
     if !conjuncts.is_empty() {
+        let h = crate::code_rule_dsl::logic::lanes::prof::host("bit product (prefilter)", "encode: files x terms, conjuncts x terms as bits");
         let terms: BTreeMap<&str, usize> = conjuncts.iter().flat_map(|(_, c)| c.iter().copied()).collect::<BTreeSet<_>>().into_iter().enumerate().map(|(i, t)| (t, i)).collect();
         let files: Vec<i64> = batch.iter().copied().collect();
         let row_of: BTreeMap<i64, usize> = files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
@@ -163,9 +164,10 @@ fn bit_files(gates: &[Gate], term_files: &BTreeMap<&str, BTreeSet<i64>>, uncover
             b: rerail_accel::Bits::new(conjuncts.len(), words, b).fixed(),
             min: Some(min.into()),
         };
-        let lanes = crate::code_rule_dsl::logic::lanes::executor();
-        match lanes.run(rerail_accel::Batch(vec![rerail_accel::Launch::new(k)])) {
+        drop(h);
+        match crate::code_rule_dsl::logic::lanes::prof::run("bit product (prefilter)", rerail_accel::Batch(vec![rerail_accel::Launch::new(k)])) {
             Ok((mut done, _)) => {
+                let _h = crate::code_rule_dsl::logic::lanes::prof::host("bit product (prefilter)", "decode: pairs into each gate's file set");
                 crate::code_rule_dsl::prof::count("gates.bit_product", 1);
                 let rerail_accel::Output::Pairs(pairs) = done.remove(0).out else { unreachable!("a bit product with min gives pairs") };
                 for (g, _) in &conjuncts {
