@@ -3,119 +3,33 @@
  * `rerail packs add|remove` each hold this lock, so two sessions' set-ups, or a set-up and a `rerail packs add`, never
  * run npm in the one prefix together, and a put-back never undoes another process's install.
  */
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import { installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
-import { heldOnWindows, nameTaken } from "../engine/file-replace.js";
-import { processState } from "../engine/process-liveness.js";
+import { withHomeLock } from "../engine/native/file-lock.js";
 
 /** How long to wait for another change to the packs to end: several npm installs, each fetching from the registry. */
 export const PACKS_LOCK_WAIT_MS = 5 * 60_000;
-/** A lock older than this is left from a process that never released it, even if its pid now names another process. */
-const STALE_LOCK_MS = 30 * 60_000;
-/** A lock file with no owner yet is being written; one still empty after this was left by a process that died. */
-const UNWRITTEN_LOCK_MS = 10_000;
-const POLL_MS = 250;
-
-interface LockOwner {
-  readonly pid: number;
-  readonly token: string;
-  readonly at: number;
-}
 
 export interface PacksLockOptions {
   /** How long to wait for another holder: `PACKS_LOCK_WAIT_MS` unless given. */
   readonly waitMs?: number;
   /** Waits between tries. */
   readonly sleep?: (ms: number) => Promise<void>;
-  /** Whether process `pid` is running. */
-  readonly running?: (pid: number) => boolean;
-  readonly now?: () => number;
-  /** The platform whose errors for a lock file being deleted count as the lock being held; this process's by default. */
-  readonly platform?: NodeJS.Platform;
-}
-
-/** Whether `pid` runs, as any user. */
-function processRunning(pid: number): boolean {
-  return processState(pid) !== "gone";
-}
-
-function readOwner(lock: string): LockOwner | undefined {
-  try {
-    const owner = JSON.parse(readFileSync(lock, "utf8")) as Partial<LockOwner>;
-    return typeof owner.pid === "number" && typeof owner.token === "string" && typeof owner.at === "number" ? owner as LockOwner : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /**
- * Creates the lock file only if there is none (`wx`); false when another process holds it, or on Windows is still
- * deleting it as it lets go.
- */
-function tryTake(lock: string, owner: LockOwner, platform: NodeJS.Platform): boolean {
-  try {
-    writeFileSync(lock, JSON.stringify(owner), { flag: "wx" });
-    return true;
-  } catch (error) {
-    if (nameTaken(error, platform)) return false;
-    throw error;
-  }
-}
-
-/** Whether the lock as it is now was left by a holder that is gone. */
-function abandoned(lock: string, owner: LockOwner | undefined, running: (pid: number) => boolean, now: number): boolean {
-  if (owner !== undefined) return !running(owner.pid) || now - owner.at > STALE_LOCK_MS;
-  try {
-    return now - statSync(lock).mtimeMs > UNWRITTEN_LOCK_MS;
-  } catch {
-    // Released between the try and this look.
-    return false;
-  }
-}
-
-/**
- * Removes the abandoned lock `owner` left, unless another process took it over meanwhile; true when the next try may
- * take it. On Windows a file another process is deleting reads as no owner while `stat` still sees its age, and
- * removing it fails: false then, so the caller waits for that delete to end.
- */
-function takeOver(lock: string, owner: LockOwner | undefined, platform: NodeJS.Platform): boolean {
-  if (readOwner(lock)?.token !== owner?.token) return true;
-  try {
-    rmSync(lock, { force: true });
-    return true;
-  } catch (error) {
-    if (heldOnWindows(error, platform)) return false;
-    throw error;
-  }
-}
-
-/**
- * Runs `action` holding the lock on `home`'s packs (`packs/.lock`), waiting while another process holds it. A lock
- * whose process is gone is taken over. Throws, naming the holder, when it is still held after the wait.
+ * Runs `action` holding the lock on `home`'s packs (`locks/packs.lock`, `withHomeLock`), waiting while another process
+ * holds it. Throws, naming the holder, when it is still held after the wait.
  */
 export async function withPacksLock<T>(home: string, action: () => Promise<T>, options: PacksLockOptions = {}): Promise<T> {
   const prefix = installedPacksPrefix(home);
   mkdirSync(prefix, { recursive: true });
-  const lock = join(prefix, ".lock");
-  const waitMs = options.waitMs ?? PACKS_LOCK_WAIT_MS;
-  const sleep = options.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)));
-  const running = options.running ?? processRunning;
-  const now = options.now ?? Date.now;
-  const platform = options.platform ?? process.platform;
-  const token = randomUUID();
-  for (let waited = 0; !tryTake(lock, { pid: process.pid, token, at: now() }, platform); waited += POLL_MS) {
-    const owner = readOwner(lock);
-    if (abandoned(lock, owner, running, now()) && takeOver(lock, owner, platform)) continue;
-    if (waited >= waitMs) {
-      throw new Error(`Another Rerail process (${owner === undefined ? "starting" : `pid ${owner.pid}`}) is changing the rule packs in ${prefix}; try again once it is done.`);
-    }
-    await sleep(POLL_MS);
-  }
-  try {
-    return await action();
-  } finally {
-    if (readOwner(lock)?.token === token) rmSync(lock, { force: true });
-  }
+  return await withHomeLock(home, {
+    name: "packs",
+    waitMs: options.waitMs ?? PACKS_LOCK_WAIT_MS,
+    sleep: options.sleep,
+    busy: holder => new Error(
+      `Another Rerail process (${holder === undefined ? "starting" : `pid ${holder.pid}`}) is changing the rule packs in ${prefix}; try again once it is done.`,
+    ),
+  }, action);
 }

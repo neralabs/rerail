@@ -1,1 +1,0 @@
-Sessions starting the daemon at the same moment no longer launch two daemons for one Rerail home: a start that finds the start lock another start has just made, before that start has written its lease, now waits for it instead of taking it for abandoned.

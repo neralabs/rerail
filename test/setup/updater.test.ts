@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -17,27 +17,12 @@ import { ENTRY_POINTS } from "../../src/engine/index.js";
 import type { NpmRunner } from "../../src/runtime/index.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
-
-vi.mock("node:fs/promises", { spy: true });
-const { mkdir: realMkdir, readFile: realReadFile, rm: realRm } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+import { raceForLock, raceSize, sourceModule } from "../support/processes/lock-race.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  vi.mocked(mkdir).mockReset();
-  vi.mocked(readFile).mockReset();
-  vi.mocked(rm).mockReset();
   await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
 });
-
-/** The next update lock folder create fails with `code`, as Windows fails it while another update deletes that folder. */
-function failNextLockCreate(code: string): void {
-  let failed = false;
-  vi.mocked(mkdir).mockImplementation(async (...args: Parameters<typeof mkdir>) => {
-    if (failed || !String(args[0]).endsWith("update.lock")) return await realMkdir(...args);
-    failed = true;
-    throw Object.assign(new Error(`${code}: operation not permitted, mkdir '${String(args[0])}'`), { code, syscall: "mkdir" });
-  });
-}
 
 class FakeRegistry implements PackageRegistry {
   readonly resolvedChannels: string[] = [];
@@ -66,6 +51,9 @@ async function fixture(): Promise<{ home: string; packageRoot: string }> {
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
   return { home: join(root, "home"), packageRoot };
 }
+
+/** The engine as a Rerail whose engine does not load has it. */
+const noEngine = (): never => { throw new Error("Unsupported platform or missing native addon: rerail_engine.node"); };
 
 async function assertPackageIdentity(installation: Installation): Promise<void> {
   const manifest = JSON.parse(await readFile(join(installation.packageRoot, "package.json"), "utf8")) as Record<
@@ -381,142 +369,101 @@ describe("ManagedUpdater", () => {
     await expect(updater.update()).rejects.toThrow("health check failed");
   });
 
-  it("refuses a live lease regardless of the lock directory age", async () => {
+  it.each([
+    ["the OS lock", {}],
+    ["the folder lock, where its engine does not load", { lockEngine: noEngine }],
+  ])("says another update is running while one holds %s, and runs once it lets go", async (_lock, engine) => {
     const { home, packageRoot } = await fixture();
     const registry = new FakeRegistry("1.1.0");
-    await mkdir(join(home, "update.lock"), { recursive: true });
-    await writeFile(
-      join(home, "update.lock", "lease.json"),
-      JSON.stringify({
-        owner: "another-updater",
-        expiresAt: "2026-09-01T12:15:00.000Z",
-      }),
-    );
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, validateInstallation: assertPackageIdentity, ...engine });
+    const holding = Promise.withResolvers<void>();
+    const mayEnd = Promise.withResolvers<void>();
+    const running = new ManagedUpdater({
+      home,
+      packageRoot,
+      packageVersion: "1.0.0",
+      registry: { resolveVersion: async () => { holding.resolve(); await mayEnd.promise; return "1.0.0"; }, installVersion: async () => {} },
+      validateInstallation: async () => {},
+      ...engine,
+    }).update();
+    await holding.promise;
+
+    await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
+    expect(registry.installedVersions).toEqual([]);
+    mayEnd.resolve();
+    await running;
+    await updater.update();
+    expect(registry.installedVersions).toEqual(["1.1.0"]);
+  });
+
+  it("where its engine does not load, holds the folder lock while it runs and leaves none behind", async () => {
+    const { home, packageRoot } = await fixture();
+    const registry = new FakeRegistry("1.1.0");
+    const held: string[][] = [];
     const updater = new ManagedUpdater({
       home,
       packageRoot,
       packageVersion: "1.0.0",
       registry,
-      now: () => new Date("2026-09-01T12:00:00.000Z"),
-      validateInstallation: assertPackageIdentity,
-    });
-
-    await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
-    expect(registry.installedVersions).toEqual([]);
-    await expect(readFile(join(home, "update.lock", "lease.json"), "utf8")).resolves.toContain("another-updater");
-  });
-
-  describe("finding the lock of an update whose lease has expired", () => {
-    const clock = { now: () => new Date("2026-09-01T12:00:00.000Z") };
-
-    /** update.lock as an update that never let go left it, its lease an hour past. */
-    async function expiredLock(home: string): Promise<string> {
-      const lockPath = join(home, "update.lock");
-      await mkdir(lockPath, { recursive: true });
-      await writeFile(join(lockPath, "lease.json"), JSON.stringify({ owner: "gone-updater", expiresAt: "2026-09-01T11:00:00.000Z" }));
-      return lockPath;
-    }
-
-    /** The next removal of the lock fails as `removal` has it, or removes it and lets `meanwhile` run before it returns. */
-    function onLockRemoval(lockPath: string, removal: { meanwhile: () => Promise<void> } | { fails: string }): void {
-      vi.mocked(rm).mockImplementationOnce(async (...args: Parameters<typeof rm>) => {
-        expect(args[0]).toBe(lockPath);
-        if ("fails" in removal) {
-          throw Object.assign(new Error(`${removal.fails}: operation not permitted, rmdir '${String(args[0])}'`), { code: removal.fails, syscall: "rmdir" });
-        }
-        await realRm(...args);
-        await removal.meanwhile();
-      });
-    }
-
-    it("clears it and runs", async () => {
-      const { home, packageRoot } = await fixture();
-      await expiredLock(home);
-      const registry = new FakeRegistry("1.1.0");
-      const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, validateInstallation: assertPackageIdentity, ...clock });
-
-      await updater.update();
-      expect(registry.installedVersions).toEqual(["1.1.0"]);
-    });
-
-    it("says another update is running when another update clearing it at the same time takes the lock first", async () => {
-      const { home, packageRoot } = await fixture();
-      const lockPath = await expiredLock(home);
-      const registry = new FakeRegistry("1.1.0");
-      const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, ...clock });
-      onLockRemoval(lockPath, { meanwhile: async () => { await realMkdir(lockPath); } });
-
-      await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
-      expect(registry.installedVersions).toEqual([]);
-    });
-
-    it.each(["EPERM", "EACCES", "EBUSY"])("on Windows, says another update is running when %s says another update is deleting it", async code => {
-      const { home, packageRoot } = await fixture();
-      const lockPath = await expiredLock(home);
-      const registry = new FakeRegistry("1.1.0");
-      const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, platform: "win32", ...clock });
-      onLockRemoval(lockPath, { fails: code });
-
-      await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
-      expect(registry.installedVersions).toEqual([]);
-    });
-  });
-
-  it("does not release a lease replaced by another owner", async () => {
-    const { home, packageRoot } = await fixture();
-    const updater = new ManagedUpdater({
-      home,
-      packageRoot,
-      packageVersion: "1.0.0",
-      registry: new FakeRegistry("1.1.0"),
-      now: () => new Date("2026-09-01T12:00:00.000Z"),
+      lockEngine: noEngine,
       validateInstallation: async (installation) => {
+        held.push(await readdir(join(home, "locks", "update-without-engine")));
         await assertPackageIdentity(installation);
-        await writeFile(
-          join(home, "update.lock", "lease.json"),
-          JSON.stringify({
-            owner: "different-updater",
-            expiresAt: "2026-09-01T12:15:00.000Z",
-          }),
-        );
       },
     });
 
     await updater.update();
-    await expect(readFile(join(home, "update.lock", "lease.json"), "utf8")).resolves.toContain("different-updater");
+    expect(held).toEqual([[expect.stringMatching(/^owner-[0-9a-f-]+\.json$/u)]]);
+    expect(await readdir(join(home, "locks"))).toEqual([]);
   });
 
-  it.each(["EPERM", "EACCES", "EBUSY"])("on Windows, takes %s for another update that is letting go of the lock, not a failure of its own", async code => {
-    const { home, packageRoot } = await fixture();
-    const registry = new FakeRegistry("1.1.0");
-    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, platform: "win32" });
-    failNextLockCreate(code);
-
-    await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
-    expect(registry.installedVersions).toEqual([]);
-  });
-
-  it("on Windows, takes a lease file another update is deleting for that update letting go of the lock", async () => {
+  it.each([
+    ["no lease, as an update killed before it wrote one left it", undefined],
+    ["an empty lease, as an update killed while it wrote one left it", ""],
+  ])("runs past the update.lock folder with %s", async (_left, lease) => {
     const { home, packageRoot } = await fixture();
     await mkdir(join(home, "update.lock"), { recursive: true });
+    if (lease !== undefined) await writeFile(join(home, "update.lock", "lease.json"), lease);
     const registry = new FakeRegistry("1.1.0");
-    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, platform: "win32" });
-    vi.mocked(readFile).mockImplementation(async (...args: Parameters<typeof readFile>) => {
-      if (!String(args[0]).endsWith("lease.json")) return await realReadFile(...args);
-      throw Object.assign(new Error(`EPERM: operation not permitted, open '${String(args[0])}'`), { code: "EPERM", syscall: "open" });
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, validateInstallation: assertPackageIdentity });
+
+    await updater.update();
+    expect(registry.installedVersions).toEqual(["1.1.0"]);
+  });
+});
+
+describe("updates racing for the lock of one killed while it held it", () => {
+  it.each([
+    ["the OS lock", ""],
+    ["the folder lock, where their engine does not load", `lockEngine: () => { throw new Error("no engine"); },`],
+  ])("take %s one at a time, and every other says another update is running", async (_lock, engine) => {
+    const { home, packageRoot } = await fixture();
+    const size = raceSize({ processes: 8, rounds: 4 });
+
+    const race = await raceForLock({
+      take: `import { ManagedUpdater } from ${JSON.stringify(sourceModule("src/setup/updater.ts"))};
+const checked = new Error("checked for a newer version");
+const take = async (inside, role) => {
+  const updater = new ManagedUpdater({
+    home: ${JSON.stringify(home)},
+    packageRoot: ${JSON.stringify(packageRoot)},
+    packageVersion: "1.0.0",
+    // The racers' clock is an hour past the killed update's: its lock is as one killed long ago left it, whatever it records.
+    now: () => new Date(Date.now() + (role === "racer" ? 60 * 60_000 : 0)),
+    registry: { resolveVersion: async () => { await inside(); throw checked; }, installVersion: async () => {} },
+    validateInstallation: async () => {},
+    ${engine}
+  });
+  await updater.update().catch(error => { if (error !== checked) throw error; });
+};`,
+      busy: /^Another Rerail update is already running/u,
+      ...size,
     });
 
-    await expect(updater.update()).rejects.toThrow("Another Rerail update is already running");
-    expect(registry.installedVersions).toEqual([]);
-  });
-
-  it("fails at once on EPERM elsewhere, where it means the home refuses this process", async () => {
-    const { home, packageRoot } = await fixture();
-    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.1.0"), platform: "linux" });
-    failNextLockCreate("EPERM");
-
-    await expect(updater.update()).rejects.toMatchObject({ code: "EPERM" });
-  });
+    expect(race).toMatchObject({ overlaps: 0, errors: [] });
+    expect(race.ran).toBeGreaterThan(0);
+    expect(race.ran + race.busy).toBe(size.processes * size.rounds);
+  }, 600_000);
 });
 
 describe("ManagedUpdater.install (setup bootstrap)", () => {

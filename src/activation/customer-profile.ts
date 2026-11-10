@@ -8,10 +8,10 @@ import {
   verify as verifySignature,
   type webcrypto,
 } from "node:crypto";
-import { readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
-import { heldOnWindows, nameTaken, replaceFile } from "../engine/file-replace.js";
+import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { replaceFile } from "../engine/file-replace.js";
+import { withHomeLock } from "../engine/native/file-lock.js";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import type { DeviceSecretStore } from "./device-keystore.js";
 import { deviceSecretStore } from "./device-keystore.js";
@@ -217,87 +217,23 @@ export const PROFILES_DIR = "profiles";
 /** In the Rerail home: the name of the active profile. */
 export const ACTIVE_PROFILE_FILE = "active-profile";
 
-/** In a profile's lock folder: the activation that holds it. */
-const PROFILE_LOCK_OWNER_FILE = "owner.json";
 /** How long an activation waits for another to let go of the profile's lock. */
 const PROFILE_LOCK_WAIT_MS = 5_000;
-const PROFILE_LOCK_POLL_MS = 10;
-/**
- * A lock taken longer ago than this was left by a process that never let go, even if its pid now names another
- * process. An activation writes a few files and one device secret, which on macOS may wait on a Keychain prompt.
- */
-const PROFILE_LOCK_STALE_MS = 10 * 60_000;
-/**
- * A lock folder with no owner is being made: its activation writes the owner just after the folder. One with none
- * after this was left by an activation that died in between, or by an older Rerail, which wrote none.
- */
-const PROFILE_LOCK_UNOWNED_MS = 10_000;
-
-const profileLockOwnerSchema = z.object({ pid: z.number().int(), token: z.string().min(1), at: z.number() });
-type ProfileLockOwner = z.infer<typeof profileLockOwnerSchema>;
 
 export interface ProfileStoreOptions {
-  /** Whose errors for a lock folder being deleted count as the lock being held; this process's by default. */
-  readonly platform?: NodeJS.Platform;
   /** Waits between tries while another activation holds the profile's lock. */
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
-async function readProfileLockOwner(lockPath: string): Promise<ProfileLockOwner | undefined> {
-  try {
-    return profileLockOwnerSchema.parse(JSON.parse(await readFile(join(lockPath, PROFILE_LOCK_OWNER_FILE), "utf8")));
-  } catch {
-    // None yet, half written, or on Windows deleted with its folder as the holder lets go.
-    return undefined;
-  }
-}
-
-function processRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM: it runs, as another user.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-/** Whether the profile lock at `lockPath`, held by `owner` when last read, was left by an activation that is gone. */
-async function profileLockAbandoned(lockPath: string, owner: ProfileLockOwner | undefined): Promise<boolean> {
-  if (owner !== undefined) return !processRunning(owner.pid) || Date.now() - owner.at > PROFILE_LOCK_STALE_MS;
-  // With no owner written into it, the folder's time is when it was made. No folder: let go since the try.
-  const changedAt = await stat(lockPath).then(info => info.mtimeMs, () => undefined);
-  return changedAt !== undefined && Date.now() - changedAt > PROFILE_LOCK_UNOWNED_MS;
-}
-
-/**
- * Removes the abandoned lock `owner` left, unless another activation took it over meanwhile; true when the next try may
- * take it. False on Windows while another process is deleting that folder already, so the caller waits for the delete.
- */
-async function takeOverProfileLock(lockPath: string, owner: ProfileLockOwner | undefined, platform: NodeJS.Platform): Promise<boolean> {
-  if ((await readProfileLockOwner(lockPath))?.token !== owner?.token) return true;
-  try {
-    await rm(lockPath, { recursive: true, force: true });
-    return true;
-  } catch (error) {
-    if (heldOnWindows(error, platform)) return false;
-    throw error;
-  }
-}
-
 export class CustomerProfileStore {
   private readonly profilesRoot: string;
-  private readonly locksRoot: string;
   private readonly activeProfilePath: string;
-  private readonly platform: NodeJS.Platform;
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly sleep: ((ms: number) => Promise<void>) | undefined;
 
   constructor(private readonly home: string, options: ProfileStoreOptions = {}) {
     this.profilesRoot = join(home, PROFILES_DIR);
-    this.locksRoot = join(this.profilesRoot, ".locks");
     this.activeProfilePath = join(home, ACTIVE_PROFILE_FILE);
-    this.platform = options.platform ?? process.platform;
-    this.sleep = options.sleep ?? (async ms => { await sleep(ms); });
+    this.sleep = options.sleep;
   }
 
   private profileDirectory(profileName: string): string {
@@ -306,50 +242,17 @@ export class CustomerProfileStore {
   }
 
   /**
-   * Runs `operation` holding the profile's lock (`profiles/.locks/<name>.lock`), waiting while another activation holds
-   * it. A lock whose activation is gone is taken over.
+   * Runs `operation` holding the profile's lock (`locks/profile-<name>.lock`, `withHomeLock`), waiting while another
+   * activation holds it.
    */
   private async withProfileLock<T>(profileName: string, operation: () => Promise<T>): Promise<T> {
     assertProfileName(profileName);
-    await mkdir(this.locksRoot, { recursive: true, mode: 0o700 });
-    const lockPath = join(this.locksRoot, `${profileName}.lock`);
-    const token = randomUUID();
-    await this.takeProfileLock(lockPath, profileName, token);
-    try {
-      return await operation();
-    } finally {
-      // An activation held past PROFILE_LOCK_STALE_MS may find its lock taken over: then it is another's to remove.
-      if ((await readProfileLockOwner(lockPath))?.token === token) await rm(lockPath, { recursive: true, force: true });
-    }
-  }
-
-  /** Makes the profile's lock folder and writes this activation into it as the owner, waiting while another holds it. */
-  private async takeProfileLock(lockPath: string, profileName: string, token: string): Promise<void> {
-    const deadline = Date.now() + PROFILE_LOCK_WAIT_MS;
-    while (!(await this.makeLockFolder(lockPath))) {
-      const owner = await readProfileLockOwner(lockPath);
-      if (await profileLockAbandoned(lockPath, owner) && await takeOverProfileLock(lockPath, owner, this.platform)) continue;
-      if (Date.now() >= deadline) throw new Error(`Timed out waiting for Rerail profile lock: ${profileName}`);
-      await this.sleep(PROFILE_LOCK_POLL_MS);
-    }
-    const owner: ProfileLockOwner = { pid: process.pid, token, at: Date.now() };
-    try {
-      await writeFile(join(lockPath, PROFILE_LOCK_OWNER_FILE), JSON.stringify(owner), { mode: 0o600 });
-    } catch (error) {
-      await rm(lockPath, { recursive: true, force: true });
-      throw error;
-    }
-  }
-
-  /** Makes the lock folder; false when another activation holds it, or on Windows is still deleting it as it lets go. */
-  private async makeLockFolder(lockPath: string): Promise<boolean> {
-    try {
-      await mkdir(lockPath, { mode: 0o700 });
-      return true;
-    } catch (error) {
-      if (nameTaken(error, this.platform)) return false;
-      throw error;
-    }
+    return await withHomeLock(this.home, {
+      name: `profile-${profileName}`,
+      waitMs: PROFILE_LOCK_WAIT_MS,
+      sleep: this.sleep,
+      busy: () => new Error(`Timed out waiting for Rerail profile lock: ${profileName}`),
+    }, operation);
   }
 
   private async optionalFile(path: string): Promise<string | undefined> {

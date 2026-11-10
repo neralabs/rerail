@@ -1,1 +1,0 @@
-Two `rerail update` runs that find the lock of an update that crashed no longer fail with "EEXIST: file already exists" (or "EPERM: operation not permitted" on Windows): the one that does not get the lock says another update is already running.

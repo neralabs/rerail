@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo } from "node:net";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -171,7 +171,7 @@ describe("Rerail daemon control", () => {
     expect(existsSync(stateFile)).toBe(true);
     await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, posix))
       .rejects.toThrow(/alive but not answering/);
-    expect(existsSync(join(home, "start.lock"))).toBe(false);
+    expect(await withStartLock(home, async () => "the start lock is free")).toBe("the start lock is free");
   });
 
   it("stops an unresponsive live daemon pid and clears its state file", async () => {
@@ -229,55 +229,6 @@ describe("Rerail daemon control", () => {
     }
   });
 
-  it("reclaims a start lock whose owner is dead or whose lease has expired", async () => {
-    const lockPath = join(home, "start.lock");
-    await mkdir(lockPath, { recursive: true });
-    await writeFile(join(lockPath, "lease.json"), JSON.stringify({ pid: DEAD_PID, expiresAt: Date.now() + 60_000 }));
-    // Dead owner: the lock is reclaimed and the (unresponsive) lookup still runs to its refusal.
-    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: process.pid, url: "http://127.0.0.1:1/" })));
-    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, posix))
-      .rejects.toThrow(/alive but not answering/);
-    expect(existsSync(lockPath)).toBe(false);
-
-    // Live owner but expired lease: also reclaimed, so a crashed-but-still-running starter cannot wedge the home.
-    await mkdir(lockPath, { recursive: true });
-    await writeFile(join(lockPath, "lease.json"), JSON.stringify({ pid: process.pid, expiresAt: Date.now() - 1 }));
-    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, posix))
-      .rejects.toThrow(/alive but not answering/);
-    expect(existsSync(lockPath)).toBe(false);
-  });
-
-  it("renews its start lease while the operation runs, and only removes a lease it still owns", async () => {
-    const leasePath = join(home, "start.lock", "lease.json");
-    const readLease = async (): Promise<{ pid: number; expiresAt: number }> =>
-      JSON.parse(await readFile(leasePath, "utf8")) as { pid: number; expiresAt: number };
-
-    // A rebuild longer than the lease: the expiry keeps moving forward, so no other starter reclaims the lock.
-    const timing = { leaseMs: 200, renewMs: 40 };
-    const seen: number[] = [];
-    await withStartLock(home, async () => {
-      seen.push((await readLease()).expiresAt);
-      await new Promise(resolve => setTimeout(resolve, 300));
-      const lease = await readLease();
-      seen.push(lease.expiresAt);
-      expect(lease.pid).toBe(process.pid);
-      expect(lease.expiresAt).toBeGreaterThan(Date.now());
-    }, timing);
-    const [first, renewed] = seen;
-    expect(first).toBeDefined();
-    expect(renewed).toBeGreaterThan(first ?? Number.POSITIVE_INFINITY);
-    expect(existsSync(leasePath)).toBe(false);
-
-    // Another live starter took the lock while we ran (it judged our lease stale): leave its lease in place.
-    const other = { pid: process.ppid, expiresAt: Date.now() + 60_000 };
-    await withStartLock(home, async () => {
-      await writeFile(leasePath, JSON.stringify(other));
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }, timing);
-    expect(await readLease()).toEqual(other);
-    await removeFolder(join(home, "start.lock"));
-  });
-
   it("finds a live daemon through its state file", async () => {
     const daemon = await RerailDaemon.start({
       version: "0.0.0-test",
@@ -307,6 +258,8 @@ describe("Rerail daemon control", () => {
     try {
       expect(repaired).toEqual([packageRoot]);
       expect(running.started).toBe(true);
+      // The daemon it launched holds none of the start's handles, the lock among them.
+      expect(await withStartLock(home, async () => "the start lock is free")).toBe("the start lock is free");
     } finally {
       await stopDaemon(home);
     }
@@ -317,7 +270,7 @@ describe("Rerail daemon control", () => {
       { dev: true, port: 0 },
     )).rejects.toBe(failure);
     expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
-    expect(existsSync(join(home, "start.lock"))).toBe(false);
+    expect(await withStartLock(home, async () => "the start lock is free")).toBe("the start lock is free");
   });
 
   it("shows only this start's output when the daemon exits before it is ready, not earlier runs' log", async () => {

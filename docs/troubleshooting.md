@@ -173,9 +173,10 @@ cannot be installed offline.
 `rerail update` stops the same way. Both run your own `npm` with your `~/.npmrc`, so a registry mirror set there
 works for Rerail and its rule packs.
 
-A failed install removes what it staged and its lock. Ctrl-C while set-up or `rerail update` installs leaves the
-lock, and the next run says `Another Rerail update is already running` for up to 15 minutes. If nothing else is
-installing, delete `~/.rerail/update.lock` and run again.
+A failed install removes what it staged. The update lock is free the moment the set-up or `rerail update` holding it
+ends, Ctrl-C included, so `Another Rerail update is already running` means one is installing now. A Rerail whose engine
+does not load holds the folder `~/.rerail/locks/update-without-engine` instead; if one was cut short and the message
+stays with nothing installing, delete that folder and run again.
 
 </details>
 

@@ -21,7 +21,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
-import { FOLDER_REMOVAL_RETRIES, heldOnWindows, nameTaken, removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
+import { FOLDER_REMOVAL_RETRIES, removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
+import { LOCKS_DIR, withHomeLock, type LockEngine } from "../engine/native/file-lock.js";
 import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
@@ -40,12 +41,12 @@ export const VERSIONS_DIR = "versions";
 export const CURRENT_LINK = "current";
 /** In the Rerail home: the folder holding the launcher. */
 export const LAUNCHER_DIR = "bin";
-/** In the Rerail home: the lock an update holds. */
+/** The lock an update holds, `locks/update.lock` in the Rerail home. */
+const UPDATE_LOCK = "update";
+/** In the Rerail home: the folder Rerail before `locks/` held as the update lock, which uninstall removes. */
 export const UPDATE_LOCK_DIR = "update.lock";
 
 const UPDATE_STATE_VERSION = 1;
-const LOCK_LEASE_MS = 15 * 60 * 1_000;
-const LOCK_RENEWAL_MS = LOCK_LEASE_MS / 3;
 const EVENT_HEALTH_TIMEOUT_MS = 15_000;
 const STAGING_RENAME_RETRY_MS = 10_000;
 
@@ -95,11 +96,8 @@ export interface ManagedUpdaterOptions {
   repairInstallation?: (packageRoot: string) => Promise<SqliteRepairResult>;
   /** Stops a daemon running from a package root before its SQLite binding is rebuilt in place; tests substitute it. */
   stopDaemonUsing?: (packageRoot: string) => Promise<void>;
-}
-
-interface UpdateLockLease {
-  owner: string;
-  expiresAt: string;
+  /** Loads the engine for the update lock; tests make it fail, as it does where the engine does not load. */
+  lockEngine?: () => LockEngine;
 }
 
 function assertChannel(channel: string): void {
@@ -528,6 +526,7 @@ export class ManagedUpdater {
   private readonly repair: (packageRoot: string) => Promise<SqliteRepairResult>;
   private readonly stopDaemonUsing: (packageRoot: string) => Promise<void>;
   private readonly platform: NodeJS.Platform;
+  private readonly lockEngine: (() => LockEngine) | undefined;
 
   constructor(options: ManagedUpdaterOptions) {
     this.home = options.home ?? defaultRerailHome();
@@ -542,6 +541,7 @@ export class ManagedUpdater {
     this.validate = options.validateInstallation ?? validateManagedInstallation;
     this.repair = options.repairInstallation ?? repairManagedInstallation;
     this.stopDaemonUsing = options.stopDaemonUsing ?? (async packageRoot => await stopDaemonFrom(this.home, packageRoot, this.platform));
+    this.lockEngine = options.lockEngine;
   }
 
   /** The version of the package this updater runs from; what `install()` activates by default. */
@@ -652,95 +652,18 @@ export class ManagedUpdater {
     }
   }
 
-  private async readLockLease(lockPath: string): Promise<UpdateLockLease | undefined> {
-    try {
-      const value = JSON.parse(await readFile(join(lockPath, "lease.json"), "utf8")) as unknown;
-      if (typeof value !== "object" || value === null) return undefined;
-      const lease = value as Record<string, unknown>;
-      if (typeof lease.owner !== "string" || typeof lease.expiresAt !== "string") return undefined;
-      if (!Number.isFinite(Date.parse(lease.expiresAt))) return undefined;
-      return { owner: lease.owner, expiresAt: lease.expiresAt };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    }
-  }
-
-  private async renewLockLease(lockPath: string, owner: string): Promise<void> {
-    const lease = await this.readLockLease(lockPath);
-    if (lease?.owner !== owner) throw new Error("Rerail update lock ownership was lost");
-    const next: UpdateLockLease = {
-      owner,
-      expiresAt: new Date(this.now().getTime() + LOCK_LEASE_MS).toISOString(),
-    };
-    await writeFile(join(lockPath, "lease.json"), `${JSON.stringify(next)}\n`, { mode: 0o600 });
-  }
-
-  private async releaseLock(lockPath: string, owner: string): Promise<void> {
-    const lease = await this.readLockLease(lockPath);
-    if (lease?.owner === owner) await rm(lockPath, { recursive: true, force: true });
-  }
-
-  /** Makes the update lock folder; false when another update holds it, or on Windows is still deleting it as it lets go. */
-  private async makeLockFolder(lockPath: string): Promise<boolean> {
-    try {
-      await mkdir(lockPath, { mode: 0o700 });
-      return true;
-    } catch (error) {
-      if (nameTaken(error, this.platform)) return false;
-      throw error;
-    }
-  }
-
-  /** Takes the update lock, clearing one whose lease has expired; throws when another update holds it. */
-  private async takeLock(lockPath: string): Promise<void> {
-    const running = (): Error => new Error("Another Rerail update is already running");
-    if (await this.makeLockFolder(lockPath)) return;
-    // On Windows a lease being deleted with its folder cannot be read: that update is letting go.
-    const lease = await this.readLockLease(lockPath).catch((readError: unknown) => {
-      if (heldOnWindows(readError, this.platform)) return undefined;
-      throw readError;
-    });
-    if (lease === undefined || Date.parse(lease.expiresAt) > this.now().getTime()) throw running();
-    // Another update clearing the same expired lock at once may be deleting it too (Windows refuses this removal then),
-    // or may make the folder again before this update does: either way that update holds the lock now.
-    try {
-      await rm(lockPath, { recursive: true, force: true });
-    } catch (error) {
-      if (heldOnWindows(error, this.platform)) throw running();
-      throw error;
-    }
-    if (!(await this.makeLockFolder(lockPath))) throw running();
-  }
-
+  /**
+   * Runs `operation` holding the update lock (`locks/update.lock`, `withHomeLock`); throws at once while another update
+   * holds it. `rerail update` is how a person replaces a Rerail whose engine does not load, so where this one's does not,
+   * the update takes the folder lock that works without it.
+   */
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    const lockPath = join(this.home, UPDATE_LOCK_DIR);
-    const owner = randomUUID();
-    await mkdir(this.home, { recursive: true, mode: 0o700 });
-    await this.takeLock(lockPath);
-    await writeFile(
-      join(lockPath, "lease.json"),
-      `${JSON.stringify({
-        owner,
-        expiresAt: new Date(this.now().getTime() + LOCK_LEASE_MS).toISOString(),
-      } satisfies UpdateLockLease)}\n`,
-      { mode: 0o600 },
-    );
-    let renewalFailure: Error | undefined;
-    const renewal = setInterval(() => {
-      void this.renewLockLease(lockPath, owner).catch((error) => {
-        renewalFailure ??= error as Error;
-      });
-    }, LOCK_RENEWAL_MS);
-    renewal.unref();
-    try {
-      const result = await operation();
-      if (renewalFailure !== undefined) throw renewalFailure;
-      return result;
-    } finally {
-      clearInterval(renewal);
-      await this.releaseLock(lockPath, owner);
-    }
+    return await withHomeLock(this.home, {
+      name: UPDATE_LOCK,
+      engine: this.lockEngine,
+      withoutEngine: "folder",
+      busy: () => new Error("Another Rerail update is already running"),
+    }, operation);
   }
 
   async status(): Promise<UpdateStatus> {
@@ -891,12 +814,18 @@ export class ManagedUpdater {
   async install(version = this.packageVersion): Promise<UpdateResult> {
     parseSemver(version);
     // A failed install leaves no folder of its own behind (set-up says nothing was changed): `versions/`, and the
-    // home itself on a first install, go again when this run made them and they are still empty.
-    const created = [this.versionsRoot, this.home].filter(path => !existsSync(path));
+    // home itself on a first install, go again when this run made them and they are still empty. So does `locks/`
+    // with the update lock in it, the one place Rerail removes a lock file: a home with no `locks/` has had no lock
+    // taken in it, so only another install starting at the same moment could be waiting for that lock.
+    const locks = join(this.home, LOCKS_DIR);
+    const created = [this.versionsRoot, locks, this.home].filter(path => !existsSync(path));
     try {
       return await this.withLock(async () => await this.adopt(await this.materializeVersion(version)));
     } catch (error) {
-      for (const path of created) await rmdir(path).catch(() => undefined);
+      for (const path of created) {
+        if (path === locks) await rm(path, { recursive: true, force: true }).catch(() => undefined);
+        else await rmdir(path).catch(() => undefined);
+      }
       throw error;
     }
   }
