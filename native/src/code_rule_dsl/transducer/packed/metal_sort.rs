@@ -269,7 +269,10 @@ pub(super) struct Pass<'a> {
 
 impl<'a> Pass<'a> {
     pub(super) fn new(command: &'a CommandBufferRef) -> Pass<'a> {
-        Pass { command, encoder: command.new_compute_command_encoder(), dispatches: Cell::new(0) }
+        let encoder = command.new_compute_command_encoder();
+        // Named: the launch budget's record reads the encoder's label, and an unnamed one's is nil.
+        encoder.set_label("rows");
+        Pass { command, encoder, dispatches: Cell::new(0) }
     }
 
     /// The dispatches encoded so far.

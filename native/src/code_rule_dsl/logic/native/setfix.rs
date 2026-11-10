@@ -788,7 +788,9 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         }
         // The seed joins on the device, in one batch, when the stratum was placed there (decision 0095, step 4).
         #[cfg(target_os = "macos")]
-        let on_device = !seeded && comp.device.is_some() && {
+        let tried = !seeded && comp.device.is_some();
+        #[cfg(target_os = "macos")]
+        let on_device = tried && {
             let plans = comp.device.as_ref().expect("device plans");
             let tp = Instant::now();
             let c0 = cpu_now();
@@ -824,7 +826,7 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
         #[cfg(not(target_os = "macos"))]
         let on_device = false;
         #[cfg(target_os = "macos")]
-        if !on_device && comp.device.is_some() {
+        if tried && !on_device {
             // The seeds were parsed without the CPU's indexes: parse them again with them.
             drop(syms);
             drop(guard);
