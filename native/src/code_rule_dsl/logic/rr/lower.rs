@@ -1611,19 +1611,23 @@ impl Lowerer {
         // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too.
         {
             let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
+            let inputs: BTreeSet<&String> = self.prog.inputs.iter().collect();
             for (rel, cols) in &self.prog.decls {
-                if !heads.contains(rel) && !self.prog.inputs.iter().any(|i| i == rel) && !self.prog.natives.contains_key(rel) {
+                if !heads.contains(rel) && !inputs.contains(rel) && !self.prog.natives.contains_key(rel) {
                     for i in 0..cols.len() {
                         columns.insert((rel.clone(), i), BTreeSet::new());
                     }
                 }
             }
         }
+        // Each derived relation's rules, in order: one pass, not one over every rule per relation.
+        let mut by_head: BTreeMap<&String, Vec<&Rule>> = BTreeMap::new();
+        for r in &self.prog.rules {
+            by_head.entry(&r.head.rel).or_default().push(r);
+        }
         loop {
             let mut found = BTreeMap::new();
-            let heads: BTreeSet<&String> = self.prog.rules.iter().map(|r| &r.head.rel).collect();
-            for rel in heads {
-                let rules: Vec<&Rule> = self.prog.rules.iter().filter(|r| &r.head.rel == rel).collect();
+            for (&rel, rules) in &by_head {
                 for i in 0..rules[0].head.args.len() {
                     let each: Option<Vec<BTreeSet<SpanIn>>> = rules.iter().map(|r| match r.head.args.get(i) {
                         Some(Term::Var(x)) => binder(&r.body, x, &columns),

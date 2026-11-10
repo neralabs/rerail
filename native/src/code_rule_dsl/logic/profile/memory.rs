@@ -45,6 +45,27 @@ impl Counters {
     }
 }
 
+/// The footprint's high-water mark as a span reads it at its open and close: read again only when a millisecond
+/// has passed since the last read, else the last value. A read is a system call (about a microsecond, more on a
+/// loaded machine) and a run opens and closes millions of tiny spans; between two reads the mark can rise only by
+/// what a millisecond allocates, which the next read charges to the span then open.
+pub(super) fn peak_sampled() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::LazyLock;
+    static START: LazyLock<std::time::Instant> = LazyLock::new(std::time::Instant::now);
+    static LAST: AtomicU64 = AtomicU64::new(u64::MAX);
+    static PEAK: AtomicU64 = AtomicU64::new(0);
+    let now = START.elapsed().as_micros() as u64;
+    let last = LAST.load(Ordering::Relaxed);
+    if last != u64::MAX && now.saturating_sub(last) < 1000 {
+        return PEAK.load(Ordering::Relaxed);
+    }
+    LAST.store(now, Ordering::Relaxed);
+    let peak = footprint().1;
+    PEAK.fetch_max(peak, Ordering::Relaxed);
+    PEAK.load(Ordering::Relaxed)
+}
+
 /// The process's physical footprint now and its high-water mark, in bytes (0 where unknown).
 pub(super) fn footprint() -> (u64, u64) {
     #[cfg(target_os = "macos")]

@@ -1485,8 +1485,18 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
     let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "number".to_owned());
     let (mut located, mut blocked) = (Vec::new(), Vec::new());
     let mut rules = std::mem::take(&mut prog.rules);
+    // How many rules of a file-local head read each relation (not their own): a target read so is blocked. Kept as
+    // the rules change (a located relation's rules move to `<rel>_at`, no file-local head), not counted again per
+    // target over every rule.
+    let reads = |rule: &Rule| -> BTreeSet<String> { rule.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|a| *a != rule.head.rel).collect() };
+    let mut readers: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for rule in rules.iter().filter(|r| local.contains(r.head.rel.as_str())) {
+        for a in reads(rule) {
+            *readers.entry(a).or_default() += 1;
+        }
+    }
     for rel in &targets {
-        let read_locally = rules.iter().any(|r| local.contains(r.head.rel.as_str()) && r.head.rel != *rel && r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == *rel)));
+        let read_locally = readers.get(rel).is_some_and(|&n| n > 0);
         let Some(cols) = prog.decls.get(rel).cloned().filter(|_| !read_locally && !prog.lattice.contains_key(rel)) else {
             blocked.push(rel.clone());
             continue;
@@ -1537,9 +1547,25 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
         let vars: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("__c{i}"))).collect();
         let mut args = vec![Term::Wild];
         args.extend(vars.iter().cloned());
+        for rule in rules.iter().filter(|r| r.head.rel == *rel && local.contains(r.head.rel.as_str())) {
+            for a in reads(rule) {
+                if let Some(n) = readers.get_mut(&a) {
+                    *n -= 1;
+                }
+            }
+        }
         rules.retain(|r| r.head.rel != *rel);
+        for rule in made.iter().filter(|r| local.contains(r.head.rel.as_str())) {
+            for a in reads(rule) {
+                *readers.entry(a).or_default() += 1;
+            }
+        }
         rules.extend(made);
-        rules.push(Rule { head: Atom { rel: rel.clone(), args: vars, neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: at, args, neg: false, gated: false })] });
+        let read_at = Rule { head: Atom { rel: rel.clone(), args: vars, neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: at, args, neg: false, gated: false })] };
+        for a in reads(&read_at) {
+            *readers.entry(a).or_default() += 1;
+        }
+        rules.push(read_at);
         located.push(rel.clone());
     }
     prog.rules = rules;
