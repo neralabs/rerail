@@ -10,6 +10,9 @@ mod facts;
 // Wired to the findings layer in a later slice; until then only tests call it.
 #[allow(dead_code)]
 mod findings;
+// The relational pools' hook slots; they are compiled for tests only, as the pools are.
+#[cfg(test)]
+mod hooks;
 mod identifier;
 mod import_target;
 mod json;

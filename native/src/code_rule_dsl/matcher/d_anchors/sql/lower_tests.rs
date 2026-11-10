@@ -437,9 +437,9 @@ fn single_reader_projection_pipelines_stream_without_private_row_copies() {
         Arc,
         atomic::{AtomicU64, Ordering},
     };
-    let store = super::super::store::Store::temporary().unwrap();
+    let mut store = super::super::store::Store::temporary().unwrap();
     store.db.execute_batch("CREATE TABLE points(fid INTEGER,pre INTEGER); INSERT INTO points SELECT 1,value FROM generate_series(0,4095,1)").unwrap();
-    let measure = |layers: usize| {
+    let mut measure = |layers: usize| {
         let mut ctes = vec!["p0(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM points)".into()];
         for i in 1..=layers {
             ctes.push(format!(
@@ -458,6 +458,7 @@ fn single_reader_projection_pipelines_stream_without_private_row_copies() {
         let observed = ticks.clone();
         store
             .db
+            .connection_mut()
             .progress_handler(
                 100,
                 Some(move || {
@@ -483,9 +484,9 @@ fn single_reader_projection_pipelines_stream_without_private_row_copies() {
 
 #[test]
 fn physical_ownership_preserves_streaming_projection_boundaries() {
-    let store = super::super::store::Store::temporary().unwrap();
+    let mut store = super::super::store::Store::temporary().unwrap();
     store.db.execute_batch("CREATE TABLE points(fid INTEGER,pre INTEGER); INSERT INTO points SELECT 1,value FROM generate_series(0,4095,1)").unwrap();
-    let measure = |layers: usize| {
+    let mut measure = |layers: usize| {
         let mut ctes = vec!["p0(fid,pre) AS MATERIALIZED (SELECT fid,pre FROM points)".into()];
         for i in 1..=layers {
             ctes.push(format!(
@@ -511,6 +512,7 @@ fn physical_ownership_preserves_streaming_projection_boundaries() {
         let observed = ticks.clone();
         store
             .db
+            .connection_mut()
             .progress_handler(
                 100,
                 Some(move || {
@@ -538,7 +540,7 @@ fn alternatives_do_not_repeatedly_materialize_a_growing_union() {
         atomic::{AtomicU64, Ordering},
     };
     let measure = |count: u16| {
-        let store = super::super::store::Store::temporary().unwrap();
+        let mut store = super::super::store::Store::temporary().unwrap();
         store
             .db
             .execute_batch(&format!(
@@ -578,6 +580,7 @@ fn alternatives_do_not_repeatedly_materialize_a_growing_union() {
         let observed = ticks.clone();
         store
             .db
+            .connection_mut()
             .progress_handler(
                 100,
                 Some(move || {

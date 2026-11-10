@@ -196,7 +196,7 @@ fn explains_ctas_before_release_without_spending_work_or_executing_body() {
         std::process::id(),
         SERIAL.fetch_add(1, Ordering::Relaxed)
     ));
-    let connection = Connection::open_in_memory().unwrap();
+    let mut connection = Connection::open_in_memory().unwrap();
     // SAFETY: the profiler drops before its connection.
     let profiler = unsafe { Profiler::new(&connection, &directory) }.unwrap();
     profiler.context(json!({"scope":"relational", "clauseId":"c", "path":"a.py"}));

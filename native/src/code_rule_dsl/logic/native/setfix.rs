@@ -110,7 +110,7 @@ fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
     let key = conn.path().unwrap_or_default().to_owned();
     let mut syms = SYMS.lock().unwrap();
     let atoms = crate::content_store::atoms::Atoms::for_connection(conn);
-    // A store created again at the same path has new atoms (`Atoms::for_database`, checked by `Atoms::install`).
+    // A store created again at the same path has new atoms (`Atoms::for_database`, checked by `Atoms::attach`).
     if let Some(s) = syms.get(&key) && Arc::ptr_eq(&s.read().unwrap().atoms, &atoms) {
         return Ok(Arc::clone(s));
     }
@@ -132,10 +132,10 @@ pub(in crate::code_rule_dsl) fn intern_batch<'a>(conn: &Connection, texts: impl 
 
 /// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`@dot`: `a.b`, `"" . b` is `b`) over `conn`'s symbols: the planner's SQL holds symbols
 /// as atoms (decision 0009), and these are the only places it reads or makes their text. NULL gives NULL. Also
-/// registers `atoms` and the store's commit hook on `conn` (decision 0049).
+/// registers `atoms` on `conn` (decision 0049; its opener registered the store's commit hook, `Atoms::install`).
 pub fn register_symbols(conn: &Connection) -> Result<()> {
     use rusqlite::functions::FunctionFlags;
-    crate::content_store::atoms::Atoms::install(conn)?;
+    crate::content_store::atoms::Atoms::attach(conn)?;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     let syms = symbols(conn)?;
     let s = Arc::clone(&syms);
@@ -1233,7 +1233,7 @@ unsafe impl VTabCursor for RelCursor {
         let s = self.store.read().unwrap();
         let r = &s.rels[self.rel];
         let v = r.row(self.ids[self.pos] as usize)[i as usize];
-        ctx.set_result(&v)
+        ctx.set_result(v)
     }
     fn rowid(&self) -> Result<i64> { Ok(self.ids[self.pos] as i64) }
 }
@@ -1663,7 +1663,7 @@ unsafe impl VTabCursor for DerivedCursor {
     fn eof(&self) -> bool { self.rel.as_ref().is_none_or(|r| self.id >= r.len()) }
     fn column(&self, ctx: &mut VContext, i: c_int) -> Result<()> {
         let rel = self.rel.as_ref().expect("a filtered cursor");
-        match rel.row(self.id).get(i as usize) { Some(v) => ctx.set_result(v), None => ctx.set_result(&rusqlite::types::Null) }
+        match rel.row(self.id).get(i as usize) { Some(v) => ctx.set_result(v), None => ctx.set_result(rusqlite::types::Null) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.id as i64) }
 }
@@ -2198,7 +2198,7 @@ pub fn columns_source_measured(columns: Vec<String>, values: Vec<Option<Vec<i64>
 }
 /// The table `schema.name` read once into memory, every column (`None`: not a table of integers).
 pub fn table_source(conn: &Connection, schema: &str, name: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
-    let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().into_iter().map(str::to_owned).collect();
+    let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().map(str::to_owned).collect();
     let need: Vec<&str> = columns.iter().map(String::as_str).collect();
     stored_table(conn, schema, name, &need)
 }
@@ -2213,7 +2213,7 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
         Some(t) => t?,
         None => {
             // The columns' names, from the statement (prepared, not run).
-            let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().into_iter().map(str::to_owned).collect();
+            let columns: Vec<String> = conn.prepare(&format!("SELECT * FROM {schema}.{}", crate::code_rule_dsl::logic::sql::ident(name))).ok()?.column_names().map(str::to_owned).collect();
             let k = columns.len();
             let t = Arc::new(Stored::new(columns, (0..k).map(|_| std::sync::OnceLock::new()).collect()));
             STORED.lock().unwrap().insert(key.clone(), Some(t.clone()));

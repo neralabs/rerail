@@ -87,7 +87,7 @@ regex-syntax = "=0.8.11"
 # Held at 0.40.2, not main's 0.41.1: 0.41 registers hooks (`progress_handler`, `commit_hook`,
 # `rollback_hook`, `authorizer`) through `&mut Connection`, and the engine installs them on connections its
 # statements share.
-rusqlite = { version = "=0.40.2", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
 fallible-iterator = "0.3"
 # Native Python grammar validation, pinned to the source oracle version (3.13).
 # `core.rr`'s `syntax_error` for Python: a parser that follows CPython's grammar (Ruff's), since tree-sitter
@@ -150,7 +150,7 @@ metal = "0.33.0"
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 # Tests count SQLite VM steps (`Connection::progress_handler`) to bound statement work; G's
 # positional search index (test-only) reads `rarray`.
-rusqlite = { version = "=0.40.2", features = ["bundled", "limits", "hooks", "array"] }
+rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
 # Temporary files in tests copied from P and D (P pins it as a dependency).
 tempfile = "=3.27.0"
 

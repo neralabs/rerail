@@ -12,15 +12,15 @@ fn unique_incremental_support_preserves_unchanged_heads_and_empty_transitions() 
     e.connection().execute_batch("CREATE TEMP TRIGGER forbid_r_insert BEFORE INSERT ON r BEGIN SELECT RAISE(ABORT,'unchanged r'); END;
         CREATE TEMP TRIGGER forbid_r_delete BEFORE DELETE ON r BEGIN SELECT RAISE(ABORT,'unchanged r'); END;").unwrap();
     e.apply_changes(json!([{"name":"event","delete":[[1,1,4]],"insert":[[1,1,6]]}]).to_string(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT n FROM __sql_state_r_heads"),json!([[1]]));
+    assert_eq!(rows(&mut e,"SELECT n FROM __sql_state_r_heads"),json!([[1]]));
     e.connection().execute_batch("DROP TRIGGER forbid_r_insert; DROP TRIGGER forbid_r_delete;").unwrap();
     for patch in [json!([{"name":"event","delete":[[1,1,6]]}]),json!([{"name":"event","insert":[[1,1,9]]}]),json!([{"name":"owner","delete":[[1]],"insert":[[3]]}])] {
         e.apply_changes(patch.to_string(),None).unwrap();
         let (_directory,mut oracle)=executor();oracle.cold_oracle=true;
-        for (name,cols) in [("event",&["id","g","v"][..]),("owner",&["g"][..])] {bind(&mut oracle,name,cols,rows(&e,&format!("SELECT * FROM {name}")));}
+        for (name,cols) in [("event",&["id","g","v"][..]),("owner",&["g"][..])] {bind(&mut oracle,name,cols,rows(&mut e,&format!("SELECT * FROM {name}")));}
         oracle.run(p.into(),"python".into(),None).unwrap();
-        assert_eq!(rows(&e,"SELECT * FROM r ORDER BY c0"),rows(&oracle,"SELECT * FROM r ORDER BY c0"));
-        assert_eq!(rows(&e,"SELECT count(*) FROM __sql_state_r_heads WHERE n<>1"),json!([[0]]));
+        assert_eq!(rows(&mut e,"SELECT * FROM r ORDER BY c0"),rows(&mut oracle,"SELECT * FROM r ORDER BY c0"));
+        assert_eq!(rows(&mut e,"SELECT count(*) FROM __sql_state_r_heads WHERE n<>1"),json!([[0]]));
     }
 }
 
@@ -30,7 +30,7 @@ fn bind(e: &mut CodeRuleSqlExecutor, name: &str, columns: &[&str], values: Value
     e.bind_relation(json!({"name":name,"columns":columns,"rows":values}).to_string())
         .unwrap();
 }
-fn cold(e: &CodeRuleSqlExecutor) {
+fn cold(e: &mut CodeRuleSqlExecutor) {
     let (_directory, mut oracle) = executor();
     oracle.cold_oracle = true;
     for (name, columns) in [("event", &["id", "g", "v"][..]), ("owner", &["g"][..])] {
@@ -44,7 +44,7 @@ fn cold(e: &CodeRuleSqlExecutor) {
     oracle.run(PROGRAM.into(), "python".into(), None).unwrap();
     for name in ["stats", "totals"] {
         let sql = format!("SELECT * FROM {name} ORDER BY c0");
-        assert_eq!(rows(e, &sql), rows(&oracle, &sql));
+        assert_eq!(rows(e, &sql), rows(&mut oracle, &sql));
     }
 }
 
@@ -70,11 +70,11 @@ fn shared_scalar_summaries_preserve_bags_empty_groups_extrema_and_sparse_edits()
     );
     e.run(PROGRAM.into(), "python".into(), None).unwrap();
     assert_eq!(
-        rows(&e, "SELECT * FROM stats WHERE c0=17"),
+        rows(&mut e, "SELECT * FROM stats WHERE c0=17"),
         json!([[17, 3, 17, 3, 7]])
     );
     assert_eq!(
-        rows(&e, "SELECT * FROM totals WHERE c0=2000"),
+        rows(&mut e, "SELECT * FROM totals WHERE c0=2000"),
         json!([[2000, 0, 0]])
     );
     let explanation: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
@@ -102,9 +102,9 @@ fn shared_scalar_summaries_preserve_bags_empty_groups_extrema_and_sparse_edits()
         assert_eq!(report["programs"][0]["refreshed_strata"], json!([]));
         assert_eq!(report["programs"][0]["reducer_groups"], 1, "{report}");
         assert!(work.data_scans.get() < 100, "{work:?}");
-        cold(&e);
+        cold(&mut e);
     }
-    let before = rows(&e, "SELECT * FROM stats WHERE c0=17");
+    let before = rows(&mut e, "SELECT * FROM stats WHERE c0=17");
     e.connection().execute_batch("CREATE TEMP TRIGGER stop_summary BEFORE INSERT ON stats BEGIN SELECT RAISE(ABORT,'stop combined'); END").unwrap();
     let patch = json!([{"name":"event","insert":[[7000,17,2]]}]);
     assert!(
@@ -113,12 +113,12 @@ fn shared_scalar_summaries_preserve_bags_empty_groups_extrema_and_sparse_edits()
             .reason
             .contains("stop combined")
     );
-    assert_eq!(rows(&e, "SELECT * FROM stats WHERE c0=17"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM stats WHERE c0=17"), before);
     e.connection()
         .execute_batch("DROP TRIGGER stop_summary")
         .unwrap();
     e.apply_changes(patch.to_string(), None).unwrap();
-    cold(&e);
+    cold(&mut e);
 }
 
 #[test]
@@ -140,15 +140,15 @@ fn combined_sums_keep_wide_unused_totals_and_defer_overflow_until_lookup() {
             .reason
             .contains("overflow")
     );
-    assert_eq!(rows(&e, "SELECT * FROM owner ORDER BY g"), json!([[0]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM owner ORDER BY g"), json!([[0]]));
     e.apply_changes(
         json!([{"name":"event","delete":[[2,1,max]]},{"name":"owner","insert":[[1]]}]).to_string(),
         None,
     )
     .unwrap();
-    cold(&e);
+    cold(&mut e);
     assert_eq!(
-        rows(&e, "SELECT * FROM stats WHERE c0=1"),
+        rows(&mut e, "SELECT * FROM stats WHERE c0=1"),
         json!([[1, 1, max, max, max]])
     );
 }
@@ -176,8 +176,8 @@ fn shared_extrema_probe_large_groups_and_global_summaries_keep_empty_contracts()
             "{work:?}"
         );
         assert_eq!(
-            rows(&e, "SELECT c1,c2,c3,c4 FROM stats"),
-            rows(&e, "SELECT count(*),sum(v),min(v),max(v) FROM event")
+            rows(&mut e, "SELECT c1,c2,c3,c4 FROM stats"),
+            rows(&mut e, "SELECT count(*),sum(v),min(v),max(v) FROM event")
         );
     }
     let (_directory, mut global) = executor();
@@ -190,8 +190,8 @@ fn shared_extrema_probe_large_groups_and_global_summaries_keep_empty_contracts()
     ] {
         global.apply_changes(patch.to_string(), None).unwrap();
     }
-    assert_eq!(rows(&global, "SELECT * FROM totals"), json!([[0, 0]]));
-    assert_eq!(rows(&global, "SELECT * FROM stats"), json!([]));
+    assert_eq!(rows(&mut global, "SELECT * FROM totals"), json!([[0, 0]]));
+    assert_eq!(rows(&mut global, "SELECT * FROM stats"), json!([]));
 }
 
 #[test]
@@ -226,12 +226,12 @@ fn explain_reports_proofs_rejections_and_catalog_updates_without_profiling() {
         2
     );
     let catalog = rows(
-        &e,
+        &mut e,
         "SELECT json_extract(analysis,'$.logical.rules[0].scalars.families[0].members') FROM rr_analysis",
     );
     assert_eq!(catalog, json!([["[0,1,2,3]"]]));
     e.reset().unwrap();
-    assert_eq!(rows(&e, "SELECT count(*) FROM rr_analysis"), json!([[0]]));
+    assert_eq!(rows(&mut e, "SELECT count(*) FROM rr_analysis"), json!([[0]]));
     let p = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl out(g:number,v:min<>) widen 3\nout(g,v) :- event(_,g,v), n=count : {owner(_)}, n>0.\nout(g,v) :- event(g,_,v), n=count : {owner(_)}, n>0.\n.output out\n";
     e.run(p.into(), "python".into(), None).unwrap();
     let explain: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
@@ -243,7 +243,7 @@ fn explain_reports_proofs_rejections_and_catalog_updates_without_profiling() {
     );
     assert_eq!(
         rows(
-            &e,
+            &mut e,
             "SELECT n FROM __sql_state_out_heads WHERE c0=0 AND c1=7"
         ),
         json!([[2]])
@@ -257,7 +257,7 @@ fn catalog_explain_refreshes_when_fact_edits_extend_recursive_plans() {
     bind(&mut e,"root",&["n"],json!([[0]]));
     let p = ".decl edge(a:number,b:number)\n.decl root(n:number)\n.input edge,root\n.decl distance(n:number,v:min<>) widen 3\ndistance(n,0) :- root(n).\ndistance(b,v+1) :- distance(a,v),edge(a,b).\n.output distance\n";
     e.run(p.into(), "python".into(), None).unwrap();
-    let first = rows(&e, "SELECT analysis FROM rr_analysis");
+    let first = rows(&mut e, "SELECT analysis FROM rr_analysis");
     let first: Value = serde_json::from_str(first[0][0].as_str().unwrap()).unwrap();
     e.apply_changes(
         json!([{"name":"edge","insert":[[1,2],[2,3],[3,4],[4,5]]}]).to_string(),
@@ -266,7 +266,7 @@ fn catalog_explain_refreshes_when_fact_edits_extend_recursive_plans() {
     .unwrap();
     let current: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
     assert_ne!(first["recursive"], current["executions"][0]["recursive"]);
-    let refreshed = rows(&e, "SELECT analysis FROM rr_analysis");
+    let refreshed = rows(&mut e, "SELECT analysis FROM rr_analysis");
     let refreshed: Value = serde_json::from_str(refreshed[0][0].as_str().unwrap()).unwrap();
     assert_eq!(refreshed, current["executions"][0]);
 }
@@ -278,7 +278,7 @@ fn cold_summaries_wait_for_upstream_strata_and_keep_multiple_supports() {
     bind(&mut e, "owner", &["id", "g"], json!([[0, 1], [1, 1], [2, 2], [3, 3]]));
     let p = ".decl event(id:number,g:number,v:number)\n.decl owner(id:number,g:number)\n.input event,owner\n.decl copied(id:number,g:number,v:number)\ncopied(id,g,v) :- event(id,g,v).\n.decl filtered(id:number,g:number,v:number)\nfiltered(id,g,v) :- copied(id,g,v), v>4.\n.decl out(g:number,n:number,s:number)\nout(g,n,s) :- owner(_,g), n=count : {filtered(_,g,_)}, s=sum v : {filtered(_,g,v)}.\n.decl checked(g:number,s:number)\nchecked(g,s) :- owner(_,g), n=count : {filtered(_,g,_)}, s=n+1.\n.output out,checked\n";
     e.run(p.into(), "python".into(), None).unwrap();
-    assert_eq!(rows(&e,"SELECT * FROM out ORDER BY c0"),json!([[1,1,6],[2,1,9],[3,0,0]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM out ORDER BY c0"),json!([[1,1,6],[2,1,9],[3,0,0]]));
     let explanation: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
     let retained = explanation["executions"][0]["retained"].as_array().unwrap();
     let out = retained.iter().find(|s|s["relation"]=="out").unwrap();
@@ -297,12 +297,12 @@ fn cold_summaries_wait_for_upstream_strata_and_keep_multiple_supports() {
         let (_directory, mut oracle) = executor();
         oracle.cold_oracle=true;
         for (name, columns) in [("event", &["id","g","v"][..]),("owner", &["id","g"][..])] {
-            bind(&mut oracle,name,columns,rows(&e,&format!("SELECT * FROM {name}")));
+            bind(&mut oracle,name,columns,rows(&mut e,&format!("SELECT * FROM {name}")));
         }
         oracle.run(p.into(),"python".into(),None).unwrap();
         for output in ["out","checked"] {
             let query=format!("SELECT * FROM {output} ORDER BY c0");
-            assert_eq!(rows(&e,&query),rows(&oracle,&query));
+            assert_eq!(rows(&mut e,&query),rows(&mut oracle,&query));
         }
     }
 }
@@ -328,5 +328,5 @@ fn disjoint_producers_elide_support_grouping_and_keep_every_dirty_arm() {
     state.ready=true;
     e.executions[0].reductions=Some(states);
     e.apply_changes(json!([{"name":"event","delete":[[1]],"insert":[[4]]}]).to_string(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT * FROM out ORDER BY c0,c1"),json!([[1,2],[1,3],[1,4],[2,2],[2,3],[2,4]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM out ORDER BY c0,c1"),json!([[1,2],[1,3],[1,4],[2,2],[2,3],[2,4]]));
 }

@@ -304,13 +304,10 @@ impl Atoms {
 
     /// Registers the `atoms` virtual table on `connection` and, for a database on disk, the commit
     /// hook that refuses a commit writing it while atoms are pending that the transaction did not
-    /// append.
-    pub(crate) fn install(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
-        let atoms = match connection.path().filter(|path| !path.is_empty()) {
-            Some(path) => Atoms::for_database(Path::new(path), Atoms::identity(connection)?),
-            None => Arc::clone(&MEMORY),
-        };
-        vtab::install(connection, &atoms)?;
+    /// append. Called where the connection is opened, which owns it: SQLite's hooks are set through
+    /// `&mut Connection`. Code handed the connection later registers the table alone (`attach`).
+    pub(crate) fn install(connection: &mut Connection) -> rusqlite::Result<Arc<Atoms>> {
+        let atoms = Atoms::attach(connection)?;
         if atoms.owns(connection) {
             // SAFETY: the handle is only read by the hooks, which run on this connection.
             let handle = unsafe { connection.handle() } as usize;
@@ -332,6 +329,17 @@ impl Atoms {
             }))?;
             connection.rollback_hook(Some(move || flushed.store(false, Ordering::Relaxed)))?;
         }
+        Ok(atoms)
+    }
+
+    /// Registers the `atoms` virtual table on `connection`, whose opener registered the commit hook
+    /// (`install`).
+    pub(crate) fn attach(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
+        let atoms = match connection.path().filter(|path| !path.is_empty()) {
+            Some(path) => Atoms::for_database(Path::new(path), Atoms::identity(connection)?),
+            None => Arc::clone(&MEMORY),
+        };
+        vtab::install(connection, &atoms)?;
         Ok(atoms)
     }
 

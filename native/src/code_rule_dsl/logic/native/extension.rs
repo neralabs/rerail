@@ -247,7 +247,7 @@ unsafe impl VTabCursor for ResultCursor {
     fn next(&mut self) -> Result<()> { self.pos += 1; self.skip(); Ok(()) }
     fn eof(&self) -> bool { self.pos >= self.end }
     fn column(&self, ctx: &mut VContext, i: c_int) -> Result<()> {
-        if i == 0 { ctx.set_result(&(self.pos as i64)) } else { ctx.set_result(&self.vals[self.pos]) }
+        if i == 0 { ctx.set_result(self.pos as i64) } else { ctx.set_result(self.vals[self.pos]) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.pos as i64) }
 }

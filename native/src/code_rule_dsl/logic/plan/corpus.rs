@@ -1796,9 +1796,11 @@ fn run_observed(
             &own_store
         }
     };
-    let db = Connection::open(&path)?;
+    let mut db = Connection::open(&path)?;
     // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk.
     db.execute_batch("PRAGMA synchronous=OFF")?;
+    // Its own store's atoms, guarded at commit (decision 0049); a shared cache's are the cache's.
+    crate::content_store::atoms::Atoms::install(&mut db)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
@@ -3225,8 +3227,9 @@ fn run_observed(
         let (db_path, x_path, kept_in, world_in) = (path.clone(), cross_path.clone(), kept.clone(), world_inputs);
         let decls = load.decls.clone();
         let cone = scope.spawn(move || -> Result<Vec<(String, Vec<Vec<i64>>)>> {
-            let db2 = Connection::open(&db_path)?;
+            let mut db2 = Connection::open(&db_path)?;
             db2.execute_batch("PRAGMA synchronous=OFF")?;
+            crate::content_store::atoms::Atoms::install(&mut db2)?;
             db2.execute("ATTACH ?1 AS x", [x_path.to_string_lossy()])?;
             db2.execute_batch("ATTACH ':memory:' AS s; CREATE TABLE s.stat_docrange(d INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER);")?;
             crate::code_rule_dsl::logic::native::register(&db2)?;

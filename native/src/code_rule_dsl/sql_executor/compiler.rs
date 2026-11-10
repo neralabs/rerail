@@ -4,7 +4,7 @@ impl CodeRuleSqlExecutor {
     /// Lower and emit a program. Its SQL producers' steps are added last; their relations are
     /// returned beside the program, each with the session inputs its query reads.
     pub(super) fn compile(
-        &self,
+        &mut self,
         mut program: front::Program,
         dialect: &str,
     ) -> Result<(plan::emit::Emitted, BTreeMap<String, Vec<String>>)> {
@@ -132,7 +132,7 @@ impl CodeRuleSqlExecutor {
                 .db
                 .prepare(&format!("SELECT * FROM {}", quote(name)))
                 .map_err(error)?;
-            let columns = statement.column_names();
+            let columns: Vec<&str> = statement.column_names().collect();
             if columns.len() != lowered.program.decls[name].len() {
                 return Err(error(format!(
                     "{name}: input arity differs from its declaration"
@@ -174,7 +174,7 @@ impl CodeRuleSqlExecutor {
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
         walks::optimize(&mut emitted);
         emitted.program.lattice_operations = lattice_operations;
-        let other = producers::steps(&self.db, &mut emitted, &program, &producers)?;
+        let other = producers::steps(self.db.connection_mut(), &mut emitted, &program, &producers)?;
         // A table a query reads that is a session input is watched under the input's own name.
         let inputs = |name: &String| {
             self.inputs

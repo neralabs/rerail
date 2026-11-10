@@ -652,7 +652,7 @@ unsafe impl VTabCursor for RelCursor {
         let s = self.store.read().unwrap();
         let r = &s.rels[self.rel];
         let v = r.row(self.ids[self.pos] as usize)[i as usize];
-        if r.types[i as usize] == b's' { ctx.set_result(&SYMS.read().unwrap().names[v as usize].as_str()) } else { ctx.set_result(&v) }
+        if r.types[i as usize] == b's' { ctx.set_result(SYMS.read().unwrap().names[v as usize].as_str()) } else { ctx.set_result(v) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.ids[self.pos] as i64) }
 }

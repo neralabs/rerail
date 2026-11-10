@@ -26,7 +26,7 @@ pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     (dir, executor)
 }
 
-pub(super) fn rows(executor: &CodeRuleSqlExecutor, sql: &str) -> Value {
+pub(super) fn rows(executor: &mut CodeRuleSqlExecutor, sql: &str) -> Value {
     serde_json::from_str::<Value>(&executor.query(sql.to_owned(), None, None).unwrap()).unwrap()["rows"].clone()
 }
 
@@ -64,20 +64,20 @@ fn recursive_rules_lower_to_sql_and_run_in_waves_over_virtual_facts() {
     assert!(run["waves"].as_u64().unwrap() > 1);
     assert_eq!(
         rows(
-            &executor,
+            &mut executor,
             "SELECT c0, c1 FROM reach WHERE c0 = 1 ORDER BY c1"
         ),
         json!([[1, 2], [1, 3], [1, 4]])
     );
     assert!(
-        rows(&executor, "SELECT count(*) FROM wave_delta WHERE rows > 0")[0][0]
+        rows(&mut executor, "SELECT count(*) FROM wave_delta WHERE rows > 0")[0][0]
             .as_u64()
             .unwrap()
             > 1
     );
     assert_eq!(
         rows(
-            &executor,
+            &mut executor,
             "SELECT count(*) FROM sqlite_schema WHERE name = 'edge'"
         ),
         json!([[0]])
@@ -85,7 +85,7 @@ fn recursive_rules_lower_to_sql_and_run_in_waves_over_virtual_facts() {
     // A second SQL program can consume the first program's materialized result.
     executor.run(".decl reach(x: number, y: number)\n.input reach\n.decl ends(x: number)\nends(y) :- reach(1, y).\n.output ends\n".into(), "python".into(), None).unwrap();
     assert_eq!(
-        rows(&executor, "SELECT c0 FROM ends ORDER BY c0"),
+        rows(&mut executor, "SELECT c0 FROM ends ORDER BY c0"),
         json!([[2], [3], [4]])
     );
     // Rebinding invalidates all derived rows but keeps the SQL connection and native modules.
@@ -96,7 +96,7 @@ fn recursive_rules_lower_to_sql_and_run_in_waves_over_virtual_facts() {
             .is_err()
     );
     executor.run(CLOSURE.into(), "python".into(), None).unwrap();
-    assert_eq!(rows(&executor, "SELECT * FROM reach"), json!([[9, 10]]));
+    assert_eq!(rows(&mut executor, "SELECT * FROM reach"), json!([[9, 10]]));
 }
 
 #[test]
@@ -111,12 +111,12 @@ fn core_facts_are_queryable_with_atoms_and_can_feed_rule_sql() {
         )
         .unwrap();
     assert_eq!(
-        rows(&executor, "SELECT sym_text(path) FROM doc"),
+        rows(&mut executor, "SELECT sym_text(path) FROM doc"),
         json!([["a.py"]])
     );
     assert_eq!(
         rows(
-            &executor,
+            &mut executor,
             "SELECT sym_text(s) FROM name WHERE sym_text(s) = 'hello'"
         ),
         json!([["hello"]])
@@ -124,7 +124,7 @@ fn core_facts_are_queryable_with_atoms_and_can_feed_rule_sql() {
     let program = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n.decl functions(n: node)\nfunctions(n) :- node(_, n, \"function_definition\", _, _).\n.output functions\n";
     executor.run(program.into(), "python".into(), None).unwrap();
     assert_eq!(
-        rows(&executor, "SELECT count(*) FROM functions"),
+        rows(&mut executor, "SELECT count(*) FROM functions"),
         json!([[1]])
     );
     // A failed binding does not replace the previous fact snapshot or its successful outputs.
@@ -137,7 +137,7 @@ fn core_facts_are_queryable_with_atoms_and_can_feed_rule_sql() {
             .is_err()
     );
     assert_eq!(
-        rows(&executor, "SELECT count(*) FROM functions"),
+        rows(&mut executor, "SELECT count(*) FROM functions"),
         json!([[1]])
     );
     executor
@@ -146,12 +146,12 @@ fn core_facts_are_queryable_with_atoms_and_can_feed_rule_sql() {
         )
         .unwrap();
     assert_eq!(
-        rows(&executor, "SELECT sym_text(path) FROM doc"),
+        rows(&mut executor, "SELECT sym_text(path) FROM doc"),
         json!([["b.py"]])
     );
     executor.run(program.into(), "python".into(), None).unwrap();
     assert_eq!(
-        rows(&executor, "SELECT count(*) FROM functions"),
+        rows(&mut executor, "SELECT count(*) FROM functions"),
         json!([[0]])
     );
 }
@@ -173,15 +173,15 @@ counts(k, n) :- allowed(k, _), n = count : { allowed(k, _) }.
     executor.run(program.into(), "python".into(), None).unwrap();
     assert_eq!(
         rows(
-            &executor,
+            &mut executor,
             "SELECT c0, sym_text(c1) FROM allowed ORDER BY c1"
         ),
         json!([[1, "hello"], [1, "world"]])
     );
-    assert_eq!(rows(&executor, "SELECT * FROM counts"), json!([[1, 2]]));
+    assert_eq!(rows(&mut executor, "SELECT * FROM counts"), json!([[1, 2]]));
     assert_eq!(
         rows(
-            &executor,
+            &mut executor,
             "SELECT sym_text(sym_atom('é')), lower('É'), sha256('abc')"
         ),
         json!([[
@@ -224,9 +224,9 @@ fn queries_are_parameterized_bounded_and_failures_do_not_publish_partial_results
             .is_err()
     );
     executor.run(CLOSURE.into(), "python".into(), None).unwrap();
-    assert_eq!(rows(&executor, "SELECT count(*) FROM reach"), json!([[6]]));
+    assert_eq!(rows(&mut executor, "SELECT count(*) FROM reach"), json!([[6]]));
     executor.run(CLOSURE.into(), "python".into(), None).unwrap();
-    assert_eq!(rows(&executor, "SELECT count(*) FROM reach"), json!([[6]]));
+    assert_eq!(rows(&mut executor, "SELECT count(*) FROM reach"), json!([[6]]));
 }
 
 #[test]
@@ -241,8 +241,8 @@ fn sessions_isolate_bindings_and_reject_invalid_relation_shapes() {
     .unwrap();
     edge(&mut first, json!([[1, 2]]));
     edge(&mut second, json!([[7, 8]]));
-    assert_eq!(rows(&first, "SELECT * FROM edge"), json!([[1, 2]]));
-    assert_eq!(rows(&second, "SELECT * FROM edge"), json!([[7, 8]]));
+    assert_eq!(rows(&mut first, "SELECT * FROM edge"), json!([[1, 2]]));
+    assert_eq!(rows(&mut second, "SELECT * FROM edge"), json!([[7, 8]]));
     for invalid in [
         json!({"name":"edge", "columns":["x"], "rows":[[1]]}),
         json!({"name":"wave_step", "columns":["x"], "rows":[]}),
@@ -252,7 +252,7 @@ fn sessions_isolate_bindings_and_reject_invalid_relation_shapes() {
     ] {
         assert!(first.bind_relation(invalid.to_string()).is_err());
     }
-    assert_eq!(rows(&first, "SELECT * FROM edge"), json!([[1, 2]]));
+    assert_eq!(rows(&mut first, "SELECT * FROM edge"), json!([[1, 2]]));
 }
 
 #[test]
@@ -265,7 +265,7 @@ fn rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding() {
         .run_file(file.to_string_lossy().into_owned(), "python".into(), None)
         .unwrap();
     assert_eq!(
-        rows(&executor, "SELECT count(*) FROM functions"),
+        rows(&mut executor, "SELECT count(*) FROM functions"),
         json!([[1]])
     );
 }
@@ -298,9 +298,9 @@ fn duplicate_facts_are_sets_and_flat_lattice_conflicts_become_top() {
     edge(&mut executor, json!([[1, 2], [1, 2], [1, 3]]));
     let program = ".decl edge(a: number, b: number)\n.input edge\n .decl size(k: number, n: number)\nsize(k, n) :- edge(k, _), n = count : { edge(k, _) }.\n.decl joined(k: number, v: flat<>)\njoined(k, v) :- edge(k, v).\n.output size, joined\n";
     executor.run(program.into(), "python".into(), None).unwrap();
-    assert_eq!(rows(&executor, "SELECT * FROM size"), json!([[1, 2]]));
+    assert_eq!(rows(&mut executor, "SELECT * FROM size"), json!([[1, 2]]));
     assert_eq!(
-        rows(&executor, "SELECT * FROM joined"),
+        rows(&mut executor, "SELECT * FROM joined"),
         json!([[1, wire::integer(super::super::logic::native::TOP)]])
     );
 }
@@ -336,7 +336,7 @@ fn corpus_sql_mode_matches_native_rule_execution() {
 
 #[test]
 fn unsupported_lattices_fail_explicitly_and_query_created_symbols_survive_close() {
-    let (dir, executor) = executor();
+    let (dir, mut executor) = executor();
     let unsupported = ".lattice custom<number> { Lub -> @custom }\n.decl v(k: number, x: custom<>) widen 2\nv(1, 2).\n.output v\n";
     let failure = executor
         .lower(unsupported.into(), "python".into())
@@ -359,9 +359,9 @@ fn unsupported_lattices_fail_explicitly_and_query_created_symbols_survive_close(
             )
             .is_err()
     );
-    let value = rows(&executor, "SELECT sym_atom('extension-persisted-symbol')");
+    let value = rows(&mut executor, "SELECT sym_atom('extension-persisted-symbol')");
     drop(executor);
-    let reopened = CodeRuleSqlExecutor::new(
+    let mut reopened = CodeRuleSqlExecutor::new(
         dir.path()
             .join("content.sqlite")
             .to_string_lossy()
@@ -369,7 +369,7 @@ fn unsupported_lattices_fail_explicitly_and_query_created_symbols_survive_close(
     )
     .unwrap();
     assert_eq!(
-        rows(&reopened, &format!("SELECT sym_text({})", value[0][0])),
+        rows(&mut reopened, &format!("SELECT sym_text({})", value[0][0])),
         json!([["extension-persisted-symbol"]])
     );
 }
@@ -391,12 +391,12 @@ fn stored_core_facts_bind_without_source_files_and_rebinding_refreshes_them() {
     std::fs::remove_file(source.join("a.py")).unwrap();
     executor.bind_stored("/stored".into(), None).unwrap();
     assert_eq!(
-        rows(&executor, "SELECT sym_text(path) FROM doc"),
+        rows(&mut executor, "SELECT sym_text(path) FROM doc"),
         json!([["a.py"]])
     );
     assert_eq!(
         rows(
-            &executor,
+            &mut executor,
             "SELECT sym_text(s) FROM name WHERE sym_text(s) = 'stored'"
         ),
         json!([["stored"]])
@@ -406,7 +406,7 @@ fn stored_core_facts_bind_without_source_files_and_rebinding_refreshes_them() {
             .bind_stored("/stored".into(), Some(vec!["missing.py".into()]))
             .is_err()
     );
-    assert_eq!(rows(&executor, "SELECT count(*) FROM doc"), json!([[1]]));
+    assert_eq!(rows(&mut executor, "SELECT count(*) FROM doc"), json!([[1]]));
     std::fs::write(source.join("a.py"), "def refreshed():\n    pass\n").unwrap();
     let root =
         crate::code_rule_dsl::facts::observe::roots::directory_root(&executor.store, &source)
@@ -419,14 +419,14 @@ fn stored_core_facts_bind_without_source_files_and_rebinding_refreshes_them() {
         .unwrap();
     assert_eq!(
         rows(
-            &executor,
+            &mut executor,
             "SELECT sym_text(s) FROM name WHERE sym_text(s) = 'refreshed'"
         ),
         json!([["refreshed"]])
     );
     assert_eq!(
         rows(
-            &executor,
+            &mut executor,
             "SELECT count(*) FROM name WHERE sym_text(s) = 'stored'"
         ),
         json!([[0]])
@@ -441,26 +441,26 @@ fn the_catalog_lists_rules_relations_and_plans_and_names_their_columns() {
     edge(&mut executor, json!([[1, 2], [2, 3]]));
     executor.run(CLOSURE.into(), "python".into(), None).unwrap();
     assert_eq!(
-        rows(&executor, "SELECT name, kind, arity, output, view FROM rr_relation ORDER BY name"),
+        rows(&mut executor, "SELECT name, kind, arity, output, view FROM rr_relation ORDER BY name"),
         json!([["edge", "input", 2, 0, "rr_rel_edge"], ["reach", "derived", 2, 1, "rr_rel_reach"]])
     );
     assert_eq!(
-        rows(&executor, "SELECT relation, ord, name FROM rr_column WHERE relation = 'reach' ORDER BY ord"),
+        rows(&mut executor, "SELECT relation, ord, name FROM rr_column WHERE relation = 'reach' ORDER BY ord"),
         json!([["reach", 0, "src"], ["reach", 1, "dst"]])
     );
     // Typed views read the positional relations under their declared column names.
     assert_eq!(
-        rows(&executor, "SELECT src, dst FROM rr_rel_reach WHERE src = 1 ORDER BY dst"),
+        rows(&mut executor, "SELECT src, dst FROM rr_rel_reach WHERE src = 1 ORDER BY dst"),
         json!([[1, 2], [1, 3]])
     );
-    assert_eq!(rows(&executor, "SELECT count(*) FROM rr_rel_edge"), json!([[2]]));
+    assert_eq!(rows(&mut executor, "SELECT count(*) FROM rr_rel_edge"), json!([[2]]));
     // Which rules read `edge`, and through which literal.
     assert_eq!(
-        rows(&executor, "SELECT r.ord, a.ord, a.kind FROM rr_atom a JOIN rr_rule r USING (rule) WHERE a.relation = 'edge' ORDER BY r.ord"),
+        rows(&mut executor, "SELECT r.ord, a.ord, a.kind FROM rr_atom a JOIN rr_rule r USING (rule) WHERE a.relation = 'edge' ORDER BY r.ord"),
         json!([[0, 0, "atom"], [1, 1, "atom"]])
     );
     assert!(
-        rows(&executor, "SELECT count(*) FROM rr_plan WHERE output = 'reach' AND sql LIKE '%delta_reach%'")[0][0]
+        rows(&mut executor, "SELECT count(*) FROM rr_plan WHERE output = 'reach' AND sql LIKE '%delta_reach%'")[0][0]
             .as_u64()
             .unwrap()
             > 0
@@ -470,8 +470,8 @@ fn the_catalog_lists_rules_relations_and_plans_and_names_their_columns() {
     assert!(executor.run(".decl rr_relation(a: number)\nrr_relation(1).\n.output rr_relation\n".into(), "python".into(), None).is_err());
     assert!(executor.run(".decl rr_rel_x(a: number)\nrr_rel_x(1).\n.output rr_rel_x\n".into(), "python".into(), None).is_err());
     executor.reset().unwrap();
-    assert_eq!(rows(&executor, "SELECT count(*) FROM rr_relation"), json!([[0]]));
-    assert_eq!(rows(&executor, "SELECT count(*) FROM temp.sqlite_schema WHERE name = 'rr_rel_reach'"), json!([[0]]));
+    assert_eq!(rows(&mut executor, "SELECT count(*) FROM rr_relation"), json!([[0]]));
+    assert_eq!(rows(&mut executor, "SELECT count(*) FROM temp.sqlite_schema WHERE name = 'rr_rel_reach'"), json!([[0]]));
 }
 
 #[test]
@@ -504,15 +504,15 @@ core_owned(r) :- owner(r, "core").
 .output wide, core_owned
 "#;
     executor.run(program.into(), "python".into(), None).unwrap();
-    assert_eq!(rows(&executor, "SELECT src, n FROM rr_rel_fanout ORDER BY src"), json!([[1, 4], [2, 2], [3, 1]]));
-    assert_eq!(rows(&executor, "SELECT src FROM rr_rel_wide"), json!([[1]]));
-    assert_eq!(rows(&executor, "SELECT sym_text(rel) FROM rr_rel_core_owned"), json!([["reach"]]));
+    assert_eq!(rows(&mut executor, "SELECT src, n FROM rr_rel_fanout ORDER BY src"), json!([[1, 4], [2, 2], [3, 1]]));
+    assert_eq!(rows(&mut executor, "SELECT src FROM rr_rel_wide"), json!([[1]]));
+    assert_eq!(rows(&mut executor, "SELECT sym_text(rel) FROM rr_rel_core_owned"), json!([["reach"]]));
     assert_eq!(
-        rows(&executor, "SELECT name, kind FROM rr_relation WHERE name IN ('owner', 'fanout') ORDER BY name"),
+        rows(&mut executor, "SELECT name, kind FROM rr_relation WHERE name IN ('owner', 'fanout') ORDER BY name"),
         json!([["fanout", "sql"], ["owner", "sql"]])
     );
     assert_eq!(
-        rows(&executor, "SELECT reads FROM rr_plan WHERE output = 'fanout'"),
+        rows(&mut executor, "SELECT reads FROM rr_plan WHERE output = 'fanout'"),
         json!([["[\"reach\"]"]])
     );
     // Tuple maintenance recomputes a producer's stratum when what it reads changes, and maintains
@@ -521,15 +521,15 @@ core_owned(r) :- owner(r, "core").
     let change = json!([{"name": "edge", "insert": [[5, 6]], "delete": []}]).to_string();
     let report: Value = serde_json::from_str(&executor.apply_changes(change, None).unwrap()).unwrap();
     assert_eq!(report["programs"].as_array().unwrap().len(), 1, "{report}");
-    assert_eq!(rows(&executor, "SELECT src, n FROM rr_rel_fanout ORDER BY src"), json!([[1, 5], [2, 2], [3, 1], [5, 1]]));
-    assert_eq!(rows(&executor, "SELECT src FROM rr_rel_wide"), json!([[1]]));
+    assert_eq!(rows(&mut executor, "SELECT src, n FROM rr_rel_fanout ORDER BY src"), json!([[1, 5], [2, 2], [3, 1], [5, 1]]));
+    assert_eq!(rows(&mut executor, "SELECT src FROM rr_rel_wide"), json!([[1]]));
     let change = json!([{"name": "limits", "insert": [[2]], "delete": [[3]]}]).to_string();
     executor.apply_changes(change, None).unwrap();
-    assert_eq!(rows(&executor, "SELECT src FROM rr_rel_wide ORDER BY src"), json!([[1], [2]]));
+    assert_eq!(rows(&mut executor, "SELECT src FROM rr_rel_wide ORDER BY src"), json!([[1], [2]]));
     // The same result as running the program afresh.
-    let fresh = rows(&executor, "SELECT src FROM rr_rel_wide ORDER BY src");
+    let fresh = rows(&mut executor, "SELECT src FROM rr_rel_wide ORDER BY src");
     executor.run(program.into(), "python".into(), None).unwrap();
-    assert_eq!(rows(&executor, "SELECT src FROM rr_rel_wide ORDER BY src"), fresh);
+    assert_eq!(rows(&mut executor, "SELECT src FROM rr_rel_wide ORDER BY src"), fresh);
     // Recursion through a producer is refused.
     let cycle = r#"
 .decl a(x: number)
@@ -575,28 +575,28 @@ named(n, x) :- def(n, x), x = "g".
     // `def` is handed on as rows; `named`, a file-local output, as its rendered lines. `dup` reads
     // across files and is not in the memo.
     assert_eq!(bound, json!({"files": 2, "relations": {"def": "rows", "named": "lines"}}));
-    assert_eq!(rows(&executor, "SELECT sym_text(named.x) FROM named JOIN def USING (n)"), json!([["g"]]));
+    assert_eq!(rows(&mut executor, "SELECT sym_text(named.x) FROM named JOIN def USING (n)"), json!([["g"]]));
     // A point lookup on a node decodes only that node's document.
     assert_eq!(
-        rows(&executor, "SELECT sym_text(x) FROM def WHERE n = (SELECT max(n) FROM named)"),
+        rows(&mut executor, "SELECT sym_text(x) FROM def WHERE n = (SELECT max(n) FROM named)"),
         json!([["g"]])
     );
     // A node names its document (`n >> 32`), which `corpus_document` maps to the file's path.
     assert_eq!(
-        rows(&executor, "SELECT sym_text(d.path), sym_text(x) FROM def JOIN corpus_document d ON d.doc = n >> 32 ORDER BY 1, 2"),
+        rows(&mut executor, "SELECT sym_text(d.path), sym_text(x) FROM def JOIN corpus_document d ON d.doc = n >> 32 ORDER BY 1, 2"),
         json!([["a.py", "f"], ["b.py", "f"], ["b.py", "g"]])
     );
     // The bound rows are ordinary inputs: rules run over them.
     executor
         .run(".decl def(n: node, x: symbol)\n.input def\n.decl shared(x: symbol)\nshared(x) :- def(a, x), def(b, x), a != b.\n.output shared\n".into(), "python".into(), None)
         .unwrap();
-    assert_eq!(rows(&executor, "SELECT sym_text(x) FROM rr_rel_shared"), json!([["f"]]));
+    assert_eq!(rows(&mut executor, "SELECT sym_text(x) FROM rr_rel_shared"), json!([["f"]]));
     assert!(executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["nope".into()])).is_err());
     // A frame that does not decode fails the statement that needs it, naming the file; a lookup
     // into another document does not decode it, so it still answers.
-    let a_node = rows(&executor, "SELECT min(n) FROM def JOIN corpus_document d ON d.doc = n >> 32 WHERE sym_text(d.path) LIKE '%a.py'")[0][0]["integer"].as_str().unwrap().to_owned();
+    let a_node = rows(&mut executor, "SELECT min(n) FROM def JOIN corpus_document d ON d.doc = n >> 32 WHERE sym_text(d.path) LIKE '%a.py'")[0][0]["integer"].as_str().unwrap().to_owned();
     // Only this run's entry: its path, the root's plan, and b.py's content (unique to this run).
-    let b = rows(&executor, "SELECT sym_text(path) FROM corpus_document WHERE sym_text(path) LIKE '%b.py'")[0][0].as_str().unwrap().to_owned();
+    let b = rows(&mut executor, "SELECT sym_text(path) FROM corpus_document WHERE sym_text(path) LIKE '%b.py'")[0][0].as_str().unwrap().to_owned();
     let root = std::fs::canonicalize(&dir).unwrap().to_string_lossy().into_owned();
     let plan = "(SELECT m.plan_digest FROM corpus_manifests m JOIN corpus_roots r USING (root_id) WHERE r.path = ?2 ORDER BY m.last_run DESC LIMIT 1)";
     // The newest source at that path under the plan: this run's content.
@@ -610,7 +610,7 @@ named(n, x) :- def(n, x), x = "g".
     let changed = corrupt(1);
     assert_eq!(changed, 1);
     executor.bind_corpus(dir.to_string_lossy().into_owned(), Some(vec!["def".into()])).unwrap();
-    assert_eq!(rows(&executor, &format!("SELECT count(*) FROM def WHERE n = {a_node}")), json!([[1]]));
+    assert_eq!(rows(&mut executor, &format!("SELECT count(*) FROM def WHERE n = {a_node}")), json!([[1]]));
     let err = executor.query("SELECT count(*) FROM def".into(), None, None).unwrap_err().to_string();
     assert!(err.contains("b.py") && err.contains("does not decode"), "{err}");
     // The store is shared with other tests: put the entry back.

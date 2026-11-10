@@ -16,7 +16,7 @@ fn nonrecursive_lattice_walks_keep_aggregate_and_negative_blocks_incremental() {
             .flatten()
             .all(|q| q.ctes.is_empty())
     );
-    let call = rows(&e, "SELECT c0 FROM score ORDER BY c0")[0][0].clone();
+    let call = rows(&mut e, "SELECT c0 FROM score ORDER BY c0")[0][0].clone();
     for insert in [true, false, true, false] {
         let patch = if insert {
             json!([{"name":"blocked","insert":[[call]]}])
@@ -37,12 +37,12 @@ fn nonrecursive_lattice_walks_keep_aggregate_and_negative_blocks_incremental() {
             &mut fresh,
             "blocked",
             &["n"],
-            rows(&e, "SELECT * FROM blocked"),
+            rows(&mut e, "SELECT * FROM blocked"),
         );
         fresh.run(p.into(), "python".into(), None).unwrap();
         assert_eq!(
-            rows(&e, "SELECT * FROM score ORDER BY c0"),
-            rows(&fresh, "SELECT * FROM score ORDER BY c0")
+            rows(&mut e, "SELECT * FROM score ORDER BY c0"),
+            rows(&mut fresh, "SELECT * FROM score ORDER BY c0")
         );
     }
 }
@@ -54,7 +54,7 @@ fn recursive_dependencies_that_cross_partition_keys_match_fresh_execution() {
     bind(&mut e, "owner", &["g"], json!([[17], [18]]));
     let p = ".decl seed(g:number,v:number)\n.decl owner(g:number)\n.input seed,owner\n.decl amount(g:number,v:max<>) widen 20\n.decl item(g:number,v:number)\nitem(g,v) :- seed(g,v).\nitem(g,v) :- amount(g,v), v < 2.\namount(g,n) :- owner(g), n=count : {item(_,_)}.\n.output amount,item\n";
     e.run(p.into(), "python".into(), None).unwrap();
-    let before = rows(&e, "SELECT c1 FROM amount WHERE c0=18");
+    let before = rows(&mut e, "SELECT c1 FROM amount WHERE c0=18");
     for patch in [
         json!([{"name":"owner","delete":[[17]]}]),
         json!([{"name":"seed","delete":[[17,42]],"insert":[[19,47]]}]),
@@ -62,19 +62,19 @@ fn recursive_dependencies_that_cross_partition_keys_match_fresh_execution() {
     ] {
         e.apply_changes(patch.to_string(), None).unwrap();
         compare(
-            &e,
+            &mut e,
             p,
             &[("seed", &["g", "v"]), ("owner", &["g"])],
             "SELECT * FROM amount ORDER BY c0",
         );
         compare(
-            &e,
+            &mut e,
             p,
             &[("seed", &["g", "v"]), ("owner", &["g"])],
             "SELECT * FROM item ORDER BY c0,c1",
         );
     }
-    assert_ne!(rows(&e, "SELECT c1 FROM amount WHERE c0=18"), before);
+    assert_ne!(rows(&mut e, "SELECT c1 FROM amount WHERE c0=18"), before);
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn recursive_iterations_restore_simultaneous_sql_changes_and_retry_atomically() 
     let producer = ".decl source(id:number,g:number,a:number,b:number,w:number)\n.decl active(g:number)\n.input source,active\n.decl weighted(g:number,a:number,b:number,w:min<>) widen 20\nweighted(g,a,b,w) :- source(_,g,a,b,w).\n.decl root(g:number)\nroot(g) :- active(g).\n.output weighted,root\n";
     e.run(producer.into(), "python".into(), None).unwrap();
     e.run(PATHS.into(), "python".into(), None).unwrap();
-    let initial = rows(&e, "SELECT * FROM distance ORDER BY c0,c1");
+    let initial = rows(&mut e, "SELECT * FROM distance ORDER BY c0,c1");
     let patch = json!([{"name":"source","delete":[[1,17,0,1,5],[2,17,1,2,3]],"insert":[[4,17,0,1,9],[5,17,1,2,1]]},{"name":"active","delete":[[17]]}]);
     e.connection().execute_batch("CREATE TEMP TRIGGER stop_old_recursive BEFORE DELETE ON distance WHEN OLD.c0=17 BEGIN SELECT RAISE(ABORT,'stop old recursive input'); END").unwrap();
     assert!(
@@ -99,9 +99,9 @@ fn recursive_iterations_restore_simultaneous_sql_changes_and_retry_atomically() 
             .reason
             .contains("stop old recursive input")
     );
-    assert_eq!(rows(&e, "SELECT * FROM distance ORDER BY c0,c1"), initial);
+    assert_eq!(rows(&mut e, "SELECT * FROM distance ORDER BY c0,c1"), initial);
     assert_eq!(
-        rows(&e, "SELECT * FROM root ORDER BY c0"),
+        rows(&mut e, "SELECT * FROM root ORDER BY c0"),
         json!([[17], [18]])
     );
     e.connection()
@@ -128,19 +128,19 @@ fn recursive_iterations_restore_simultaneous_sql_changes_and_retry_atomically() 
             &mut fresh,
             "source",
             &["id", "g", "a", "b", "w"],
-            rows(&e, "SELECT * FROM source"),
+            rows(&mut e, "SELECT * FROM source"),
         );
         bind(
             &mut fresh,
             "active",
             &["g"],
-            rows(&e, "SELECT * FROM active"),
+            rows(&mut e, "SELECT * FROM active"),
         );
         fresh.run(producer.into(), "python".into(), None).unwrap();
         fresh.run(PATHS.into(), "python".into(), None).unwrap();
         assert_eq!(
-            rows(&e, "SELECT * FROM distance ORDER BY c0,c1"),
-            rows(&fresh, "SELECT * FROM distance ORDER BY c0,c1")
+            rows(&mut e, "SELECT * FROM distance ORDER BY c0,c1"),
+            rows(&mut fresh, "SELECT * FROM distance ORDER BY c0,c1")
         );
     }
 }
@@ -164,11 +164,11 @@ fn recursive_counts_wake_full_queries_and_retract_independent_cycles() {
     let p = ".decl seed(g:number,v:number)\n.decl owner(g:number)\n.input seed,owner\n.decl amount(g:number,v:max<>) widen 20\n.decl item(g:number,v:number)\nitem(g,v) :- seed(g,v).\nitem(g,v) :- amount(g,v), v < 4.\namount(g,n) :- owner(g), n=count : {item(g,_)}.\n.output amount,item\n";
     e.run(p.into(), "python".into(), None).unwrap();
     assert_eq!(
-        rows(&e, "SELECT * FROM amount WHERE c0=17"),
+        rows(&mut e, "SELECT * FROM amount WHERE c0=17"),
         json!([[17, 5]])
     );
     assert_eq!(
-        rows(&e, "SELECT * FROM item WHERE c0=17 ORDER BY c1"),
+        rows(&mut e, "SELECT * FROM item WHERE c0=17 ORDER BY c1"),
         json!([[17, 0], [17, 1], [17, 2], [17, 3], [17, 42]])
     );
     assert!(!e.executions[0].temporal.is_empty());
@@ -195,13 +195,13 @@ fn recursive_counts_wake_full_queries_and_retract_independent_cycles() {
         assert!(work.data_scans.get() < 1000, "{work:?}");
         e.set_limits("{}".into()).unwrap();
         compare(
-            &e,
+            &mut e,
             p,
             &[("seed", &["g", "v"]), ("owner", &["g"])],
             "SELECT * FROM amount ORDER BY c0",
         );
         compare(
-            &e,
+            &mut e,
             p,
             &[("seed", &["g", "v"]), ("owner", &["g"])],
             "SELECT * FROM item ORDER BY c0,c1",
@@ -212,7 +212,7 @@ fn bind(e: &mut CodeRuleSqlExecutor, name: &str, columns: &[&str], rows: Value) 
     e.bind_relation(json!({"name":name,"columns":columns,"rows":rows}).to_string())
         .unwrap();
 }
-fn all(e: &CodeRuleSqlExecutor, sql: &str) -> Value {
+fn all(e: &mut CodeRuleSqlExecutor, sql: &str) -> Value {
     let result: Value =
         serde_json::from_str(&e.query(sql.into(), None, Some(300000)).unwrap()).unwrap();
     assert_eq!(result["truncated"], false);
@@ -233,11 +233,11 @@ fn recursive_widening_retracts_top_with_a_nonleading_partition_and_preserves_oth
     e.run(p.into(), "python".into(), None).unwrap();
     assert!(!e.executions[0].temporal.is_empty());
     assert_eq!(
-        rows(&e, "SELECT c2 < -1000000 FROM distance WHERE c0=1 AND c1=1"),
+        rows(&mut e, "SELECT c2 < -1000000 FROM distance WHERE c0=1 AND c1=1"),
         json!([[1]])
     );
     let other = rows(
-        &e,
+        &mut e,
         "SELECT * FROM __sql_changes_distance WHERE c1=2 ORDER BY c0",
     );
     for patch in [
@@ -256,13 +256,13 @@ fn recursive_widening_retracts_top_with_a_nonleading_partition_and_preserves_oth
         assert!(report["programs"][0]["recursive_frames"].as_u64().unwrap() > 0);
         assert_eq!(
             rows(
-                &e,
+                &mut e,
                 "SELECT * FROM __sql_changes_distance WHERE c1=2 ORDER BY c0"
             ),
             other
         );
         compare(
-            &e,
+            &mut e,
             p,
             &[("root", &["g"]), ("weighted", &["g", "a", "b", "w"])],
             "SELECT * FROM distance ORDER BY c0,c1",
@@ -270,7 +270,7 @@ fn recursive_widening_retracts_top_with_a_nonleading_partition_and_preserves_oth
     }
 }
 const PATHS: &str = ".decl root(g:number)\n.decl weighted(g:number,a:number,b:number,w:number)\n.input root,weighted\n.decl distance(g:number,n:number,v:min<>) widen 100\ndistance(g,0,0) :- root(g).\ndistance(g,b,d+w) :- distance(g,a,d), weighted(g,a,b,w).\n.output distance\n";
-fn compare(e: &CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], query: &str) {
+fn compare(e: &mut CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], query: &str) {
     let (_d, mut fresh) = executor();
     fresh.cold_oracle=true;
     for (name, columns) in inputs {
@@ -282,7 +282,7 @@ fn compare(e: &CodeRuleSqlExecutor, p: &str, inputs: &[(&str, &[&str])], query: 
         );
     }
     fresh.run(p.into(), "python".into(), None).unwrap();
-    assert_eq!(all(e, query), all(&fresh, query));
+    assert_eq!(all(e, query), all(&mut fresh, query));
 }
 
 #[test]
@@ -337,12 +337,12 @@ fn partitioned_recursive_lattices_remove_cycles_with_bounded_work_and_match_fres
         assert!(work.data_scans.get() < 1000, "{work:?}");
         eprintln!("recursive partition: {work:?}");
         e.set_limits("{}".into()).unwrap();
-        compare(&e, PATHS, &inputs, "SELECT * FROM distance ORDER BY c0,c1");
+        compare(&mut e, PATHS, &inputs, "SELECT * FROM distance ORDER BY c0,c1");
     }
-    let before = rows(&e, "SELECT * FROM distance ORDER BY c0,c1");
+    let before = rows(&mut e, "SELECT * FROM distance ORDER BY c0,c1");
     let patch = json!([{"name":"weighted","insert":[[17,0,1,1]]}]);
     assert!(e.apply_changes(patch.to_string(), Some(1)).is_err());
-    assert_eq!(rows(&e, "SELECT * FROM distance ORDER BY c0,c1"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM distance ORDER BY c0,c1"), before);
     e.connection().execute_batch("CREATE TEMP TRIGGER stop_recursive BEFORE INSERT ON distance BEGIN SELECT RAISE(ABORT,'stop recursive'); END").unwrap();
     let patch = json!([{"name":"weighted","insert":[[17,0,1,1]]}]);
     assert!(
@@ -351,12 +351,12 @@ fn partitioned_recursive_lattices_remove_cycles_with_bounded_work_and_match_fres
             .reason
             .contains("stop recursive")
     );
-    assert_eq!(rows(&e, "SELECT * FROM distance ORDER BY c0,c1"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM distance ORDER BY c0,c1"), before);
     e.connection()
         .execute_batch("DROP TRIGGER stop_recursive")
         .unwrap();
     e.apply_changes(patch.to_string(), None).unwrap();
-    compare(&e, PATHS, &inputs, "SELECT * FROM distance ORDER BY c0,c1");
+    compare(&mut e, PATHS, &inputs, "SELECT * FROM distance ORDER BY c0,c1");
 }
 
 #[test]
@@ -378,13 +378,13 @@ fn constant_facts_and_nonmonotone_rules_share_retained_support() {
             "{report}"
         );
         compare(
-            &e,
+            &mut e,
             p,
             &[("event", &["g", "v"])],
             "SELECT * FROM least ORDER BY c0",
         );
         compare(
-            &e,
+            &mut e,
             p,
             &[("event", &["g", "v"])],
             "SELECT * FROM total ORDER BY c0",

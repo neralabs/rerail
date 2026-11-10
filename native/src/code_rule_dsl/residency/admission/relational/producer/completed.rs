@@ -114,8 +114,8 @@ impl Source for CompletedSource {
     fn column(&self, row: usize, c: usize, ctx: &mut Context) -> rusqlite::Result<()> {
         match c {
             0 => ctx.set_result(&self.paths[self.output.files[row] as usize]),
-            1 => ctx.set_result(&i64::from(self.output.roots[row])),
-            _ => ctx.set_result(&i64::from(self.output.nodes[row])),
+            1 => ctx.set_result(i64::from(self.output.roots[row])),
+            _ => ctx.set_result(i64::from(self.output.nodes[row])),
         }
     }
     fn charge(&self, n: usize) -> rusqlite::Result<()> {
