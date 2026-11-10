@@ -242,7 +242,6 @@ pub(super) fn prepare(
             let stmt = w.db.prepare(&sql).map_err(error)?;
             let columns = stmt
                 .column_names()
-                .into_iter()
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
             names.insert(

@@ -1,0 +1,365 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up029-unnecessary-builtin-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove imports of Python 3 builtins from compatibility shims such as builtins, six and io; the names are already available without importing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-builtin-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "shadowed": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "any": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "kind": "block",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "any": [
+                              {
+                                "kind": "function_definition"
+                              },
+                              {
+                                "kind": "class_definition"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "follows": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "kind": "function_definition"
+                            },
+                            {
+                              "kind": "class_definition"
+                            }
+                          ],
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "name",
+                            "kind": "identifier",
+                            "pattern": "$J",
+                            "compare": {
+                              "left": "J",
+                              "op": "eq",
+                              "right": "N"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": {
+                              "any": [
+                                {
+                                  "kind": "function_definition"
+                                },
+                                {
+                                  "kind": "class_definition"
+                                },
+                                {
+                                  "kind": "lambda"
+                                },
+                                {
+                                  "kind": "list_comprehension"
+                                },
+                                {
+                                  "kind": "set_comprehension"
+                                },
+                                {
+                                  "kind": "dictionary_comprehension"
+                                },
+                                {
+                                  "kind": "generator_expression"
+                                }
+                              ]
+                            },
+                            "any": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "function_definition"
+                                  },
+                                  {
+                                    "kind": "class_definition"
+                                  }
+                                ],
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "name",
+                                  "kind": "identifier",
+                                  "pattern": "$J",
+                                  "compare": {
+                                    "left": "J",
+                                    "op": "eq",
+                                    "right": "N"
+                                  }
+                                }
+                              },
+                              {
+                                "any": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "kind": "dotted_name"
+                                  }
+                                ],
+                                "pattern": "$J",
+                                "binds": {},
+                                "compare": {
+                                  "left": "J",
+                                  "op": "eq",
+                                  "right": "N"
+                                },
+                                "not": {
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "kind": "assignment",
+                                    "not": {
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "regex": "^=$"
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "identifier",
+                                "pattern": "$J",
+                                "compare": {
+                                  "left": "J",
+                                  "op": "eq",
+                                  "right": "N"
+                                },
+                                "inside": {
+                                  "stopBy": "neighbor",
+                                  "any": [
+                                    {
+                                      "kind": "global_statement"
+                                    },
+                                    {
+                                      "kind": "nonlocal_statement"
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          },
+                          "not": {
+                            "kind": "type_parameter"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "precedes": {
+                        "stopBy": "end",
+                        "matches": "alias-binding"
+                      }
+                    },
+                    {
+                      "follows": {
+                        "stopBy": "end",
+                        "matches": "alias-binding"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "alias-binding": {
+              "follows": {
+                "stopBy": "end",
+                "regex": "^import$"
+              },
+              "any": [
+                {
+                  "kind": "dotted_name",
+                  "pattern": "$J",
+                  "compare": {
+                    "left": "J",
+                    "op": "eq",
+                    "right": "N"
+                  }
+                },
+                {
+                  "kind": "aliased_import",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "alias",
+                    "pattern": "$J",
+                    "compare": {
+                      "left": "J",
+                      "op": "eq",
+                      "right": "N"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "import_from_statement",
+            "any": [
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "module_name",
+                      "kind": "dotted_name",
+                      "regex": "^(builtins|six\\s*\\.\\s*moves\\s*\\.\\s*builtins)$"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "wildcard_import"
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "dotted_name",
+                          "regex": "^(ascii|bytes|chr|dict|filter|hex|input|int|isinstance|list|map|max|min|next|object|oct|open|pow|range|round|str|super|zip)$",
+                          "pattern": "$N",
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^import$"
+                          },
+                          "not": {
+                            "matches": "shadowed"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "module_name",
+                      "kind": "dotted_name",
+                      "regex": "^(io)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "dotted_name",
+                      "regex": "^(open)$",
+                      "pattern": "$N",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      },
+                      "not": {
+                        "matches": "shadowed"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "module_name",
+                      "kind": "dotted_name",
+                      "regex": "^(six)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "dotted_name",
+                      "regex": "^(callable|next)$",
+                      "pattern": "$N",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      },
+                      "not": {
+                        "matches": "shadowed"
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "module_name",
+                      "kind": "dotted_name",
+                      "regex": "^(six\\s*\\.\\s*moves)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "dotted_name",
+                      "regex": "^(filter|input|map|range|zip)$",
+                      "pattern": "$N",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      },
+                      "not": {
+                        "matches": "shadowed"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP029",
+        "message": "Remove the names Python 3 already provides as builtins from this import, and the whole statement if nothing else remains. Keep it only if the code must still run on Python 2.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP029"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -5,7 +5,7 @@
 //! rows; the regex runs once per distinct text, as `match` runs once per distinct string.
 //!
 //! Over a `source` or `src_line` span the captures are spans, and the batch makes them (`rx_span`,
-//! `facts::vtab::syntax::core_rr`); this is the symbol form.
+//! `facts::vtab::syntax`'s `Extra`, over the spans `source` and `src_line` give); this is the symbol form.
 
 use regex::Regex;
 

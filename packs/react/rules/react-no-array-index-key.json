@@ -1,0 +1,635 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-array-index-key",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a stable id from the item, not the array index, as a list key; index keys mix up state and rendering when items are reordered, inserted or removed.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "index-key",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier",
+                    "pattern": "$I",
+                    "all": [
+                      {
+                        "pattern": "$R"
+                      },
+                      {
+                        "matches": "key-slot"
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^key$",
+                    "pattern": "$I",
+                    "all": [
+                      {
+                        "pattern": "$R"
+                      },
+                      {
+                        "inside": {
+                          "matches": "props-arg"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "identifier",
+                    "pattern": "$I",
+                    "matches": "template-part"
+                  },
+                  {
+                    "kind": "identifier",
+                    "pattern": "$I",
+                    "matches": "binary-leaf"
+                  },
+                  {
+                    "kind": "identifier",
+                    "pattern": "$I",
+                    "matches": "to-string-object"
+                  },
+                  {
+                    "kind": "identifier",
+                    "pattern": "$I",
+                    "all": [
+                      {
+                        "pattern": "$R"
+                      },
+                      {
+                        "matches": "string-argument"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "matches": "index-call"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "index-param": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$I"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "required_parameter"
+                    },
+                    {
+                      "kind": "optional_parameter"
+                    }
+                  ],
+                  "has": {
+                    "field": "pattern",
+                    "kind": "identifier",
+                    "pattern": "$I"
+                  },
+                  "not": {
+                    "has": {
+                      "field": "value",
+                      "regex": "[\\s\\S]"
+                    }
+                  }
+                }
+              ]
+            },
+            "callback-index-2": {
+              "any": [
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "generator_function"
+                }
+              ],
+              "has": {
+                "field": "parameters",
+                "has": {
+                  "nthChild": {
+                    "position": 2,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "index-param"
+                }
+              }
+            },
+            "callback-index-3": {
+              "any": [
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "generator_function"
+                }
+              ],
+              "has": {
+                "field": "parameters",
+                "has": {
+                  "nthChild": {
+                    "position": 3,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "index-param"
+                }
+              }
+            },
+            "children-object": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^Children$"
+                },
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "object",
+                    "kind": "identifier",
+                    "regex": "^React$"
+                  }
+                }
+              ]
+            },
+            "children-callee": {
+              "any": [
+                {
+                  "kind": "member_expression",
+                  "has": {
+                    "field": "property",
+                    "kind": "property_identifier",
+                    "regex": "^(?:map|forEach)$"
+                  }
+                },
+                {
+                  "kind": "subscript_expression",
+                  "has": {
+                    "field": "index",
+                    "kind": "identifier",
+                    "regex": "^(?:map|forEach)$"
+                  }
+                }
+              ],
+              "has": {
+                "field": "object",
+                "matches": "children-object"
+              }
+            },
+            "index-call": {
+              "kind": "call_expression",
+              "any": [
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "children-callee"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "has": {
+                          "nthChild": {
+                            "position": 2,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          },
+                          "matches": "callback-index-2"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "member_expression",
+                        "has": {
+                          "field": "property",
+                          "kind": "property_identifier",
+                          "regex": "^(?:every|filter|find|findIndex|flatMap|forEach|map|some)$"
+                        }
+                      },
+                      {
+                        "kind": "subscript_expression",
+                        "has": {
+                          "field": "index",
+                          "kind": "identifier",
+                          "regex": "^(?:every|filter|find|findIndex|flatMap|forEach|map|some)$"
+                        }
+                      }
+                    ],
+                    "not": {
+                      "matches": "children-callee"
+                    }
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "has": {
+                          "nthChild": {
+                            "position": 1,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          },
+                          "matches": "callback-index-2"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "has": {
+                    "field": "function",
+                    "any": [
+                      {
+                        "kind": "member_expression",
+                        "has": {
+                          "field": "property",
+                          "kind": "property_identifier",
+                          "regex": "^(?:reduce|reduceRight)$"
+                        }
+                      },
+                      {
+                        "kind": "subscript_expression",
+                        "has": {
+                          "field": "index",
+                          "kind": "identifier",
+                          "regex": "^(?:reduce|reduceRight)$"
+                        }
+                      }
+                    ]
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "has": {
+                          "nthChild": {
+                            "position": 1,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          },
+                          "matches": "callback-index-3"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "create-clone": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "member_expression",
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^(?:createElement|cloneElement)$"
+                      }
+                    },
+                    {
+                      "kind": "subscript_expression",
+                      "has": {
+                        "field": "index",
+                        "kind": "identifier",
+                        "regex": "^(?:createElement|cloneElement)$"
+                      }
+                    }
+                  ],
+                  "has": {
+                    "field": "object",
+                    "kind": "identifier",
+                    "regex": "^React$"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "import_specifier",
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "import_statement",
+                          "has": {
+                            "field": "source",
+                            "kind": "string",
+                            "value": {
+                              "eq": "react"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "props-slot": {
+              "nthChild": {
+                "position": 2,
+                "ofRule": {
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              "inside": {
+                "kind": "arguments",
+                "inside": {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "matches": "create-clone"
+                  }
+                }
+              }
+            },
+            "props-arg": {
+              "kind": "object",
+              "any": [
+                {
+                  "matches": "props-slot"
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "props-slot"
+                  }
+                }
+              ]
+            },
+            "key-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "jsx_expression",
+                    "inside": {
+                      "kind": "jsx_attribute",
+                      "has": {
+                        "kind": "property_identifier",
+                        "regex": "^key$"
+                      }
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "pair",
+                    "field": "value",
+                    "has": {
+                      "field": "key",
+                      "any": [
+                        {
+                          "kind": "property_identifier",
+                          "regex": "^key$"
+                        },
+                        {
+                          "kind": "computed_property_name",
+                          "has": {
+                            "kind": "identifier",
+                            "regex": "^key$"
+                          }
+                        }
+                      ]
+                    },
+                    "inside": {
+                      "matches": "props-arg"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "key-slot"
+                  }
+                }
+              ]
+            },
+            "binary-leaf": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "binary_expression",
+                    "not": {
+                      "has": {
+                        "field": "operator",
+                        "regex": "^(?:&&|\\|\\||\\?\\?)$"
+                      }
+                    },
+                    "any": [
+                      {
+                        "pattern": "$R",
+                        "matches": "key-slot"
+                      },
+                      {
+                        "matches": "binary-leaf"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "binary-leaf"
+                  }
+                }
+              ]
+            },
+            "template-part": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "template_substitution",
+                    "inside": {
+                      "kind": "template_string",
+                      "pattern": "$R",
+                      "matches": "key-slot"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "template-part"
+                  }
+                }
+              ]
+            },
+            "to-string-object": {
+              "any": [
+                {
+                  "inside": {
+                    "kind": "member_expression",
+                    "field": "object",
+                    "not": {
+                      "has": {
+                        "kind": "optional_chain"
+                      }
+                    },
+                    "has": {
+                      "field": "property",
+                      "regex": "^toString$"
+                    },
+                    "inside": {
+                      "kind": "call_expression",
+                      "field": "function",
+                      "not": {
+                        "has": {
+                          "kind": "optional_chain"
+                        }
+                      },
+                      "pattern": "$R",
+                      "matches": "key-slot"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "to-string-object"
+                  }
+                }
+              ]
+            },
+            "string-argument": {
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "kind": "arguments",
+                    "inside": {
+                      "kind": "call_expression",
+                      "not": {
+                        "has": {
+                          "kind": "optional_chain"
+                        }
+                      },
+                      "has": {
+                        "field": "function",
+                        "kind": "identifier",
+                        "regex": "^String$"
+                      },
+                      "matches": "key-slot"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "kind": "parenthesized_expression",
+                    "matches": "string-argument"
+                  }
+                }
+              ]
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.R",
+        "code": "react/no-array-index-key",
+        "message": "Key this element by a stable id from the item instead of the array index; keep the index only for a static list that is never reordered, filtered or inserted into.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-array-index-key"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-array-index-key"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noArrayIndexKey"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

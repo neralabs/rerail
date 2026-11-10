@@ -40,7 +40,7 @@ it.each([false, true])("gates all clauses together in snapshots, decisions, page
       execFileSync("git", ["init", "--quiet"], { cwd: root });
       execFileSync("git", ["add", "a.py", "b.py"], { cwd: root });
       execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "aggregate fixture"], { cwd: root });
-      await workspace.enableStorageAsync(root, join(root, "results.sqlite"));
+      await workspace.enableStorageAsync(root, join(root, "results.sqlite"), { files: [], folders: [] });
       workspace.setDocumentResidencyLimit(0);
     }
     workspace.addCodeRule(rule);

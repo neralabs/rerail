@@ -955,6 +955,8 @@ fn benchmark_python_calls_program_corpus() {
         if library(&f) { ("<library>".to_owned(), 0) } else { let s = at[n].0; let l = line_of(&f, s); (f, l) }
     };
     let open: BTreeSet<(String, usize, usize)> = rows("call_open").iter().map(|r| key(&r[0])).collect();
+    // The analysis phase (calls_p3) names no library node: a call that reaches a library's callable is `call_lib`.
+    let lib_calls: BTreeSet<(String, usize, usize)> = if out.join("call_lib.csv").exists() { rows("call_lib").iter().map(|r| key(&r[0])).collect() } else { BTreeSet::new() };
     let mut named: BTreeMap<(String, usize, usize), BTreeSet<(String, u64)>> = BTreeMap::new();
     for r in rows("call_target") {
         let t = target(&r[1]);
@@ -1017,7 +1019,7 @@ fn benchmark_python_calls_program_corpus() {
                 }
                 *tally.entry("both decided").or_default() += 1;
                 let lib = ("<library>".to_owned(), 0);
-                let reaches_library = named.get(&k).is_some_and(|d| d.contains(&lib)) || classes.get(&k).is_some_and(|c| c.contains(&lib));
+                let reaches_library = named.get(&k).is_some_and(|d| d.contains(&lib)) || classes.get(&k).is_some_and(|c| c.contains(&lib)) || lib_calls.contains(&k);
                 let mut defs = named.get(&k).cloned().unwrap_or_default();
                 let mut cls = classes.get(&k).cloned().unwrap_or_default();
                 defs.remove(&lib);
@@ -1063,6 +1065,45 @@ fn benchmark_python_calls_program_corpus() {
             println!("    {e}");
         }
     }
+}
+
+/// t26's first experiment: which rows of `calls_cx`'s run its outputs read. The liveness rules
+/// (`logic::liveness`) are added to the program and run with it over `RERAIL_PYTHON_CALLS_ROOT` with
+/// `RERAIL_PYTHON_TYPESHED`. Printed per relation, most dead rows first: rows, live, keys (first column) and live
+/// keys, and the rows about loaded documents (typeshed's stubs) and the live ones among them.
+#[test]
+#[ignore = "a spike: minutes over the 84-file corpus with typeshed"]
+fn spike_liveness_of_the_calls_program() {
+    use crate::code_rule_dsl::logic::liveness;
+    let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
+    let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
+    let text = format!("{}\n{JEDI_SPANS}", program(&calls_name()));
+    let prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap();
+    let live = liveness::program(&prog);
+    println!("liveness: {} rules over {} relations", live.rules.len(), live.decls.len());
+    let text = format!("{text}\n{}", crate::code_rule_dsl::logic::rr::print(&live).unwrap());
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("liveness");
+    let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
+    let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
+    println!("{} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    let counts = liveness::read_counts(&std::fs::read_to_string(out.join(format!("{}.csv", liveness::COUNTS))).unwrap());
+    let _ = std::fs::remove_dir_all(&out);
+    let get = |m: &BTreeMap<String, u64>, w: &str| m.get(w).copied().unwrap_or(0);
+    let mut rows: Vec<(&String, &BTreeMap<String, u64>)> = counts.iter().collect();
+    rows.sort_by_key(|(r, m)| (std::cmp::Reverse(get(m, "rows") - get(m, "live").min(get(m, "rows"))), (*r).clone()));
+    println!("{:<28} {:>9} {:>9} {:>6} {:>9} {:>9} {:>9} {:>9}", "relation", "rows", "live", "live%", "keys", "live keys", "library", "lib live");
+    let mut total = [0u64; 6];
+    for (rel, m) in &rows {
+        let v: Vec<u64> = liveness::MEASURES.iter().map(|w| get(m, w)).collect();
+        for (t, x) in total.iter_mut().zip(&v) {
+            *t += x;
+        }
+        if v[0] == 0 {
+            continue;
+        }
+        println!("{:<28} {:>9} {:>9} {:>5.1}% {:>9} {:>9} {:>9} {:>9}", rel, v[0], v[1], 100.0 * v[1] as f64 / v[0] as f64, v[2], v[3], v[4], v[5]);
+    }
+    println!("{:<28} {:>9} {:>9} {:>5.1}% {:>9} {:>9} {:>9} {:>9}", "total", total[0], total[1], 100.0 * total[1] as f64 / total[0].max(1) as f64, total[2], total[3], total[4], total[5]);
 }
 
 /// Spike for decision 0083 §1–3: P1, `struct.rr`, as a phase in its own fact space over the workspace and the library
@@ -1141,10 +1182,15 @@ ats(s, p, l) :- struct__at(s, p, l).
         let _ = std::fs::remove_file(format!("{full_store}.phases"));
         // SAFETY: the spike's thread is the only one running between runs.
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
-        let r = run();
+        let r = crate::code_rule_dsl::logic::plan::corpus::session::full(&run);
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &kept_store) };
         r
     };
+    // `RERAIL_SPIKE_SESSION`: the runs are a session's (decision 0063), as the explorer's are; the full runs are not.
+    let session = std::env::var_os("RERAIL_SPIKE_SESSION").is_some();
+    if session {
+        crate::code_rule_dsl::logic::plan::corpus::session::start(&out.with_extension("session")).unwrap();
+    }
     show("cold", &run());
     show("unchanged", &run());
     let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
@@ -1169,6 +1215,10 @@ ats(s, p, l) :- struct__at(s, p, l).
         let derived = dump();
         let differ: Vec<String> = outputs.iter().filter(|r| kept[*r] != derived[*r]).map(|r| format!("{r} ({} kept, {} derived)", kept[r].len(), derived[r].len())).collect();
         println!("PHASE {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
+    }
+    if session {
+        crate::code_rule_dsl::logic::plan::corpus::session::stop();
+        let _ = std::fs::remove_dir_all(out.with_extension("session"));
     }
     let _ = std::fs::remove_dir_all(&out);
 }
@@ -1392,11 +1442,26 @@ fn spike_o125_replay() {
     if spans_on {
         crate::code_rule_dsl::logic::profile::set(true);
     }
+    // `O125_DECISIONS=<topic text>`: each step's decisions under topics holding the text, with how often.
+    let decided = std::cell::RefCell::new(crate::code_rule_dsl::logic::profile::decisions());
     let show_spans = |step: usize| {
         if !spans_on {
             return;
         }
+        if let Ok(topic) = std::env::var("O125_DECISIONS") {
+            let now = crate::code_rule_dsl::logic::profile::decisions_since(&decided.borrow());
+            for ((t, text), n) in now.iter().filter(|((t, _), _)| t.contains(topic.as_str())) {
+                println!("o125d {step:02} {n:>7} {t}: {text}");
+            }
+            *decided.borrow_mut() = crate::code_rule_dsl::logic::profile::decisions();
+        }
         let spans = crate::code_rule_dsl::logic::profile::spans();
+        // `O125_SPANS_TSV=<dir>`: the step's whole session tree, `<dir>/spans-<step>.tsv` (path, calls, CPU s).
+        if let Some(dir) = std::env::var_os("O125_SPANS_TSV") {
+            let rows: String = spans.iter().filter(|(p, _)| p.contains("session/") || std::env::var_os("O125_SPANS_ALL").is_some()).map(|(p, t)| format!("{p}\t{}\t{:.4}\n", t.calls, t.total)).collect();
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(PathBuf::from(dir).join(format!("spans-{step:02}.tsv")), rows);
+        }
         let mut by: BTreeMap<String, f64> = BTreeMap::new();
         for (path, t) in spans.iter() {
             let Some((_, rest)) = path.split_once("session/") else { continue };

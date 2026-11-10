@@ -16,12 +16,12 @@ fn isolated_scalar_paths_keep_private_state_out_of_sql_schema_and_recover_after_
         let p=format!("{prefix}{rule}.output out\n");
         e.run(p.clone(),"python".into(),None).unwrap();
         assert!(e.executions[0].temporal.contains_key(&0));
-        let before=rows(&e,query);
+        let before=rows(&mut e,query);
         e.set_limits(json!({"max_steps":1}).to_string()).unwrap();
         assert!(e.apply_changes(json!([{"name":"event","insert":[[99,1,99]]}]).to_string(),None).is_err());
         e.set_limits("{}".into()).unwrap();
-        assert_eq!(rows(&e,query),before);
-        assert_eq!(rows(&e,"SELECT count(*) FROM event WHERE id=99"),json!([[0]]));
+        assert_eq!(rows(&mut e,query),before);
+        assert_eq!(rows(&mut e,"SELECT count(*) FROM event WHERE id=99"),json!([[0]]));
         for patch in [
             json!([{"name":"event","delete":[[1,1,3]],"insert":[[4,1,11]]}]),
             json!([{"name":"event","delete":[[2,1,7],[3,2,9],[4,1,11]]}]),
@@ -29,14 +29,14 @@ fn isolated_scalar_paths_keep_private_state_out_of_sql_schema_and_recover_after_
             json!([{"name":"owner","insert":[[3]]}]),
         ] {
             e.apply_changes(patch.to_string(),None).unwrap();
-            assert_eq!(rows(&e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'"),json!([[0]]),"{rule}");
+            assert_eq!(rows(&mut e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'"),json!([[0]]),"{rule}");
             let (_dir,mut oracle)=executor();
             oracle.cold_oracle=true;
             for (name,columns) in [("event",json!(["id","g","v"])),("owner",json!(["g"]))] {
-                oracle.bind_relation(json!({"name":name,"columns":columns,"rows":rows(&e,&format!("SELECT * FROM {name}"))}).to_string()).unwrap();
+                oracle.bind_relation(json!({"name":name,"columns":columns,"rows":rows(&mut e,&format!("SELECT * FROM {name}"))}).to_string()).unwrap();
             }
             oracle.run(p.clone(),"python".into(),None).unwrap();
-            assert_eq!(rows(&e,query),rows(&oracle,query),"{rule}");
+            assert_eq!(rows(&mut e,query),rows(&mut oracle,query),"{rule}");
         }
     }
 }
@@ -58,7 +58,7 @@ fn independent_summary_transitions_consumers_and_wave_folds_share_one_phase() {
         let trace = e.executions[0].temporal[&0].explain();
         let phases = trace["frames"].as_array().unwrap().iter().map(|f|f["phase_batches"].as_u64().unwrap()).sum::<u64>();
         assert_eq!(phases,1,"Independent summaries, consumers, and folds need one common phase: {trace}");
-        super::temporal::check(&e,p,&[("seed",&["id","g","v"]),("owner",&["g"]),("blocked",&["g"])],&["totals","allowed"]);
+        super::temporal::check(&mut e,p,&[("seed",&["id","g","v"]),("owner",&["g"]),("blocked",&["g"])],&["totals","allowed"]);
     }
 }
 
@@ -68,11 +68,11 @@ fn standalone_scalar_jobs_use_native_retained_support_without_private_ddl() {
     e.bind_relation(json!({"name":"seed","columns":["v"],"rows":[[1],[2],[3]]}).to_string()).unwrap();
     e.run(".decl seed(v:number)\n.input seed\n.decl total(n:number)\ntotal(n) :- n=count : {seed(_)}.\n.output total\n".into(),"python".into(),None).unwrap();
     assert!(e.executions[0].temporal.contains_key(&0));
-    assert_eq!(rows(&e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_*' AND type='table'"),json!([[0]]));
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_*' AND type='table'"),json!([[0]]));
     for (patch, expected) in [(json!([{"name":"seed","delete":[[1],[2],[3]]}]),json!([[0]])),
         (json!([{"name":"seed","insert":[[5],[7]]}]),json!([[2]]))] {
         e.apply_changes(patch.to_string(),None).unwrap();
-        assert_eq!(rows(&e,"SELECT * FROM total"),expected);
+        assert_eq!(rows(&mut e,"SELECT * FROM total"),expected);
     }
 }
 
@@ -84,7 +84,7 @@ fn builtin_lattice_scalar_supports_keep_counts_retractions_and_readonly_storage(
         e.bind_relation(json!({"name":"blocked","columns":["g"],"rows":[]}).to_string()).unwrap();
         let p=format!(".decl seed(id:number,g:number,v:number)\n.decl blocked(g:number)\n.input seed,blocked\n.decl r(g:number,v:{lattice}<>) widen 4\nr(g,v) :- seed(_,g,v), !blocked(g).\nr(g,v) :- r(g,v).\n.output r\n");
         e.run(p.clone(),"python".into(),None).unwrap();
-        assert_eq!(rows(&e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_*' AND type='table'"),json!([[0]]));
+        assert_eq!(rows(&mut e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_*' AND type='table'"),json!([[0]]));
         for patch in [
             json!([{"name":"blocked","insert":[[1]]}]),
             json!([{"name":"seed","delete":[[1,1,3]]}]),
@@ -93,7 +93,7 @@ fn builtin_lattice_scalar_supports_keep_counts_retractions_and_readonly_storage(
             json!([{"name":"seed","insert":[[4,1,9],[5,1,9],[6,2,11]]}]),
         ] {
             e.apply_changes(patch.to_string(),None).unwrap();
-            super::temporal::check(&e,&p,&[("seed",&["id","g","v"]),("blocked",&["g"])],&["r"]);
+            super::temporal::check(&mut e,&p,&[("seed",&["id","g","v"]),("blocked",&["g"])],&["r"]);
         }
     }
 }
@@ -110,10 +110,10 @@ fn staged_predecessors_keep_secondary_probes_for_sparse_consumers() {
     let root = a["result_root"].as_str().unwrap();
     let source = crate::code_rule_dsl::facts::vtab::bound_source(e.connection(),root).unwrap();
     assert!(source.indexed(1),"Staged values must retain the declared probe on the group column");
-    assert_eq!(rows(&e,"SELECT count(*) FROM c"),json!([[100]]));
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM c"),json!([[100]]));
     e.apply_changes(json!([{"name":"wanted","insert":[[8]]}]).to_string(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT count(*) FROM c"),json!([[200]]));
-    assert_eq!(rows(&e,"SELECT count(*) FROM c WHERE c0%100 NOT IN(7,8)"),json!([[0]]));
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM c"),json!([[200]]));
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM c WHERE c0%100 NOT IN(7,8)"),json!([[0]]));
 }
 
 #[test]
@@ -122,15 +122,15 @@ fn isolated_checked_phases_preserve_overflow_rollback_and_retry() {
     e.bind_relation(json!({"name":"seed","columns":["n","v"],"rows":[[1,3]]}).to_string()).unwrap();
     let p = ".decl seed(n:number,v:number)\n.input seed\n.decl out(n:number,v:flat<>)\nout(n,@flat_bin(\"*\",v,2)) :- seed(n,v).\nout(n,v) :- out(n,v).\n.output out\n";
     e.run(p.into(),"python".into(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT * FROM out"),json!([[1,6]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM out"),json!([[1,6]]));
     assert!(e.explain_value().to_string().contains("isolated_checked_support_phase"));
     let patch = json!([{"name":"seed","delete":[[1,3]],"insert":[[1,i64::MIN]]}]);
     let error = e.apply_changes(patch.to_string(),None).unwrap_err();
     assert!(error.reason.contains("overflow"),"{error}");
-    assert_eq!(rows(&e,"SELECT * FROM seed"),json!([[1,3]]));
-    assert_eq!(rows(&e,"SELECT * FROM out"),json!([[1,6]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM seed"),json!([[1,3]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM out"),json!([[1,6]]));
     e.apply_changes(json!([{"name":"seed","delete":[[1,3]],"insert":[[1,4]]}]).to_string(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT * FROM out"),json!([[1,8]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM out"),json!([[1,8]]));
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn acyclic_pipeline_preserves_deltas_across_sql_batch_boundaries() {
     for patch in [json!([{"name":"seed","delete":[[1]]}]),json!([{"name":"seed","delete":[[2]]}]),json!([{"name":"seed","insert":[[7],[9]]}])] {
         e.apply_changes(patch.to_string(),None).unwrap();
         for rel in ["r0","r44","r89"] {
-            assert_eq!(rows(&e,&format!("SELECT * FROM {rel} ORDER BY c0")), rows(&e,"SELECT * FROM seed ORDER BY v"));
+            assert_eq!(rows(&mut e,&format!("SELECT * FROM {rel} ORDER BY c0")), rows(&mut e,"SELECT * FROM seed ORDER BY v"));
         }
     }
     let explained = e.executions[0].temporal[&0].explain();
@@ -163,7 +163,7 @@ fn collapsed_acyclic_chains_keep_sparse_edits_bounded() {
     let p = ".decl seed(v:number)\n.input seed\n.decl a(v:number)\na(v) :- seed(v).\n.decl b(v:number)\nb(v) :- a(v).\n.decl c(v:number)\nc(v) :- b(v).\n.output a,b,c\n";
     e.run(p.into(),"python".into(),None).unwrap();
     assert!(e.executions[0].temporal[&0].frames() <= 2);
-    assert_eq!(rows(&e, "SELECT name FROM temp.sqlite_schema WHERE name GLOB '__it*' AND type='table'"), json!([]));
+    assert_eq!(rows(&mut e, "SELECT name FROM temp.sqlite_schema WHERE name GLOB '__it*' AND type='table'"), json!([]));
     e.set_limits(json!({"max_steps":30000}).to_string()).unwrap();
     for patch in [json!([{"name":"seed","delete":[[9999]]}]), json!([{"name":"seed","insert":[[10001]]}])] {
         let (result, work) = super::scaling::profile(&mut e, |e| e.apply_changes(patch.to_string(),None));
@@ -172,7 +172,7 @@ fn collapsed_acyclic_chains_keep_sparse_edits_bounded() {
         eprintln!("Sparse acyclic edit: {} VM steps, {} scanned rows",work.vm.get(),work.data_scans.get());
     }
     e.set_limits(json!({}).to_string()).unwrap();
-    assert_eq!(rows(&e,"SELECT count(*),max(c0) FROM c"),json!([[10000,10001]]));
+    assert_eq!(rows(&mut e,"SELECT count(*),max(c0) FROM c"),json!([[10000,10001]]));
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn acyclic_stages_share_sql_dependencies_and_preserve_incremental_set_semantics(
     e.run(p.into(), "python".into(), None).unwrap();
     let trace = &e.executions[0].temporal[&0];
     assert!(trace.frames() <= 4, "Acyclic dependency depth must not become wave depth: {}", trace.explain());
-    assert_eq!(rows(&e, "SELECT * FROM total"), json!([[2]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[2]]));
     for patch in [
         json!([{"name":"seed","delete":[[1,7]]}]),
         json!([{"name":"blocked","insert":[[7]]}]),
@@ -194,7 +194,7 @@ fn acyclic_stages_share_sql_dependencies_and_preserve_incremental_set_semantics(
         json!([{"name":"blocked","delete":[[7]]}]),
     ] {
         e.apply_changes(patch.to_string(), None).unwrap();
-        super::temporal::check(&e, p, &[("seed", &["id","v"]), ("blocked", &["v"])], &["a","b","c","d","total"]);
+        super::temporal::check(&mut e, p, &[("seed", &["id","v"]), ("blocked", &["v"])], &["a","b","c","d","total"]);
     }
     assert!(e.executions[0].temporal[&0].explain()["acyclic_stages"]["c"]["proven"].as_bool().unwrap());
 }
@@ -214,7 +214,7 @@ fn suspended_contexts_keep_external_scalar_journals_until_reactivation() {
         (json!([{"name":"owner","insert":[[1]]}]),json!([[1,0]])),
     ] {
         e.apply_changes(patch.to_string(),None).unwrap();
-        assert_eq!(rows(&e,"SELECT * FROM amount ORDER BY c0"),expected);
+        assert_eq!(rows(&mut e,"SELECT * FROM amount ORDER BY c0"),expected);
     }
 }
 
@@ -233,8 +233,8 @@ fn positive_scalar_sources_restore_identical_inputs_and_later_deltas() {
         (json!([{"name":"seed","insert":[[1,13]]}]),json!([[1,3],[2,1]]),json!([[2,11]])),
     ] {
         e.apply_changes(patch.to_string(),None).unwrap();
-        assert_eq!(rows(&e,"SELECT * FROM amount ORDER BY c0"),amount);
-        assert_eq!(rows(&e,"SELECT * FROM single ORDER BY c0,c1"),single);
+        assert_eq!(rows(&mut e,"SELECT * FROM amount ORDER BY c0"),amount);
+        assert_eq!(rows(&mut e,"SELECT * FROM single ORDER BY c0,c1"),single);
     }
 }
 
@@ -247,14 +247,14 @@ fn empty_native_inputs_clear_nonscalar_caches_without_losing_scalar_cursors() {
     e.run(p.into(),"python".into(),None).unwrap();
     let (result,work)=super::scaling::profile(&mut e,|e|e.apply_file_changes(json!({"delete":(0..1000).map(|i|format!("f{i}.py")).collect::<Vec<_>>()} ).to_string(),None));
     result.unwrap();
-    assert_eq!(rows(&e,"SELECT count(*) FROM labels"),json!([[0]]));
-    assert_eq!(rows(&e,"SELECT * FROM total"),json!([[0]]));
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM labels"),json!([[0]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM total"),json!([[0]]));
     assert!(!work.sql.borrow().keys().any(|sql|sql.starts_with("DELETE FROM __sql_state")&&sql.contains("_r0_contexts WHERE (c0,c1)")),"exactly empty native inputs must not delete nonscalar contexts one key at a time");
     let trace=e.executions[0].temporal[&0].explain();
     assert!(trace["frames"].as_array().unwrap().iter().any(|f|f["operators"].as_array().unwrap().iter().any(|o|o["empty_positive_body"]==true)));
     e.apply_file_changes(json!({"upsert":[{"path":"restored.py","language":"python","source":"def restored(x):\n    return x\n"}]}).to_string(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT sym_text(c0) FROM labels ORDER BY 1"),json!([["restored.!"],["x.!"]]));
-    assert_eq!(rows(&e,"SELECT * FROM total"),json!([[3]]));
+    assert_eq!(rows(&mut e,"SELECT sym_text(c0) FROM labels ORDER BY 1"),json!([["restored.!"],["x.!"]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM total"),json!([[3]]));
 }
 
 
@@ -272,18 +272,18 @@ fn large_waves_batch_frozen_inputs_and_roll_back_later_failures() {
     e.run(program.clone(), "python".into(), None).unwrap();
     let trace = &e.executions[0].temporal[&0];
     assert!(trace.explain()["frames"].as_array().unwrap().iter().any(|f|f["phase_batches"].as_u64().unwrap()>1));
-    assert_eq!(rows(&e,"SELECT * FROM total"),json!([[2]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM total"),json!([[2]]));
     // This dependent program fails only after every earlier cache batch publishes.
     e.run(".decl total(n:number)\n.input total\n.decl guard(v:number)\nguard((n-2)+9223372036854775807) :- total(n).\n.output guard\n".into(),"python".into(),None).unwrap();
     assert!(e.apply_changes(json!([{"name":"seed","insert":[[3]]}]).to_string(),None).is_err());
-    assert_eq!(rows(&e,"SELECT * FROM r89 ORDER BY c0"),json!([[1],[2]]));
-    assert_eq!(rows(&e,"SELECT * FROM total"),json!([[2]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM r89 ORDER BY c0"),json!([[1],[2]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM total"),json!([[2]]));
     e.apply_changes(json!([{"name":"seed","delete":[[1],[2]]}]).to_string(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT * FROM total"),json!([[0]]));
-    assert_eq!(rows(&e,"SELECT * FROM r0"),json!([]));
+    assert_eq!(rows(&mut e,"SELECT * FROM total"),json!([[0]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM r0"),json!([]));
     e.apply_changes(json!([{"name":"seed","insert":[[7]]}]).to_string(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT * FROM r89"),json!([[7]]));
-    assert_eq!(rows(&e,"SELECT * FROM total"),json!([[1]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM r89"),json!([[7]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM total"),json!([[1]]));
 }
 
 
@@ -302,14 +302,14 @@ fn overlapping_replacements_use_set_differences_without_quadratic_old_row_scans(
     ]).to_string(),None));
     result.unwrap();
     assert!(work.data_scans.get()<100_000,"dense key reconciliation must avoid per-key scans: {work:?}");
-    assert_eq!(rows(&e,"SELECT count(*) FROM r"),json!([[2048]]));
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM r"),json!([[2048]]));
     assert!(e.explain_value().to_string().contains("materialized key difference"));
     e.connection().execute_batch("DROP TRIGGER unchanged_r_delete; DROP TRIGGER unchanged_r_insert").unwrap();
     e.apply_changes(json!([
         {"name":"lefts","delete":(1024..2048).map(|i|vec![i,i]).collect::<Vec<_>>()},
         {"name":"rights","delete":(0..1024).map(|i|vec![i,i]).collect::<Vec<_>>()}
     ]).to_string(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT count(*) FROM r"),json!([[0]]));
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM r"),json!([[0]]));
 }
 
 #[test]
@@ -320,27 +320,27 @@ fn intermediate_facades_keep_indexes_cross_program_deltas_and_failure_rollback()
     let program=".decl seed(id:number,v:number)\n.input seed\n.decl mid(v:number,id:number)\nmid(v,id) :- seed(id,v).\n.decl out(v:number)\nout(v) :- mid(v,_).\n.output out\n";
     e.run(program.into(),"python".into(),None).unwrap();
     assert!(e.versions.owns("mid"));
-    assert_eq!(rows(&e,"SELECT count(*) FROM temp.sqlite_schema WHERE name='mid'"),json!([[0]]));
+    assert_eq!(rows(&mut e,"SELECT count(*) FROM temp.sqlite_schema WHERE name='mid'"),json!([[0]]));
     e.create_index("mid".into(),vec![1]).unwrap();
-    assert_eq!(rows(&e,"SELECT * FROM mid WHERE c1=2"),json!([[7,2]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM mid WHERE c1=2"),json!([[7,2]]));
     e.run(".decl mid(v:number,id:number)\n.input mid\n.decl total(n:number)\ntotal(n) :- n=count : {mid(_,_)}.\n.output total\n".into(),"python".into(),None).unwrap();
     e.run(".decl total(n:number)\n.input total\n.decl guard(v:number)\nguard((n-3)+9223372036854775807) :- total(n).\n.output guard\n".into(),"python".into(),None).unwrap();
     assert!(e.apply_changes(json!([{"name":"seed","insert":[[4,11]]}]).to_string(),None).is_err());
-    assert_eq!(rows(&e,"SELECT * FROM mid ORDER BY c1"),json!([[7,1],[7,2],[9,3]]));
-    assert_eq!(rows(&e,"SELECT * FROM total"),json!([[3]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM mid ORDER BY c1"),json!([[7,1],[7,2],[9,3]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM total"),json!([[3]]));
     for (patch,mid,out,total) in [
         (json!([{"name":"seed","delete":[[1,7]]}]),json!([[7,2],[9,3]]),json!([[7],[9]]),2),
         (json!([{"name":"seed","delete":[[2,7],[3,9]]}]),json!([]),json!([]),0),
         (json!([{"name":"seed","insert":[[5,13]]}]),json!([[13,5]]),json!([[13]]),1),
     ] {
         e.apply_changes(patch.to_string(),None).unwrap();
-        assert_eq!(rows(&e,"SELECT * FROM mid ORDER BY c1"),mid);
-        assert_eq!(rows(&e,"SELECT * FROM out ORDER BY c0"),out);
-        assert_eq!(rows(&e,"SELECT * FROM total"),json!([[total]]));
+        assert_eq!(rows(&mut e,"SELECT * FROM mid ORDER BY c1"),mid);
+        assert_eq!(rows(&mut e,"SELECT * FROM out ORDER BY c0"),out);
+        assert_eq!(rows(&mut e,"SELECT * FROM total"),json!([[total]]));
     }
-    assert_eq!(rows(&e,"SELECT c0 FROM mid WHERE c1=5"),json!([[13]]));
+    assert_eq!(rows(&mut e,"SELECT c0 FROM mid WHERE c1=5"),json!([[13]]));
     e.run(program.into(),"python".into(),None).unwrap();
-    assert_eq!(rows(&e,"SELECT * FROM mid"),json!([[13,5]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM mid"),json!([[13,5]]));
 }
 
 #[test]
@@ -372,29 +372,29 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
         }
         assert_eq!(
             rows(
-                &e,
+                &mut e,
                 "SELECT count(*) FROM temp.sqlite_schema WHERE name IN('names','projected','total')"
             ),
             json!([[3]])
         );
         e.create_index("projected".into(), vec![1]).unwrap();
         let public = rows(
-            &e,
+            &mut e,
             "SELECT rootpage FROM temp.sqlite_schema WHERE name='projected'",
         );
         e.run(".decl total(n:number)\n.input total\n.decl guarded(v:number)\nguarded((n-3)+9223372036854775807) :- total(n).\n.output guarded\n".into(),"python".into(),None).unwrap();
-        let old_guard = rows(&e, "SELECT * FROM guarded");
+        let old_guard = rows(&mut e, "SELECT * FROM guarded");
         // The second program fails after the first program has published its new public roots.
         assert!(
             e.apply_changes(json!([{"name":"seed","insert":[[3,11]]}]).to_string(), None)
                 .is_err()
         );
-        assert_eq!(rows(&e, "SELECT * FROM total"), json!([[3]]));
+        assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[3]]));
         assert_eq!(
-            rows(&e, "SELECT * FROM names ORDER BY c0"),
+            rows(&mut e, "SELECT * FROM names ORDER BY c0"),
             json!([[7], [9]])
         );
-        assert_eq!(rows(&e, "SELECT * FROM guarded"), old_guard);
+        assert_eq!(rows(&mut e, "SELECT * FROM guarded"), old_guard);
         if recursive {
             assert!(
                 e.apply_changes(
@@ -403,9 +403,9 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
                 )
                 .is_err()
             );
-            assert_eq!(rows(&e, "SELECT count(*) FROM seed"), json!([[3]]));
+            assert_eq!(rows(&mut e, "SELECT count(*) FROM seed"), json!([[3]]));
             assert_eq!(
-                rows(&e, "SELECT * FROM names ORDER BY c0"),
+                rows(&mut e, "SELECT * FROM names ORDER BY c0"),
                 json!([[7], [9]])
             );
         }
@@ -419,17 +419,17 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
             (json!([{"name":"seed","insert":[[3,11]]}]), json!([[11]])),
         ] {
             e.apply_changes(patch.to_string(), None).unwrap();
-            assert_eq!(rows(&e, "SELECT * FROM names ORDER BY c0"), expected);
+            assert_eq!(rows(&mut e, "SELECT * FROM names ORDER BY c0"), expected);
             assert_eq!(
                 rows(
-                    &e,
+                    &mut e,
                     "SELECT rootpage FROM temp.sqlite_schema WHERE name='projected'"
                 ),
                 public
             );
             assert_eq!(
                 rows(
-                    &e,
+                    &mut e,
                     "SELECT count(*) FROM temp.sqlite_schema WHERE name='__sql_index_projected_1'"
                 ),
                 json!([[1]])
@@ -437,7 +437,7 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
             let (_cold_dir, mut cold) = executor();
             cold.cold_oracle = true;
             cold.bind_relation(
-                json!({"name":"seed","columns":["id","v"],"rows":rows(&e,"SELECT * FROM seed")})
+                json!({"name":"seed","columns":["id","v"],"rows":rows(&mut e,"SELECT * FROM seed")})
                     .to_string(),
             )
             .unwrap();
@@ -447,7 +447,7 @@ fn projections_and_mixed_scalars_use_one_retained_graph_with_exact_supports() {
                 "SELECT * FROM projected ORDER BY c0,c1",
                 "SELECT * FROM total",
             ] {
-                assert_eq!(rows(&e, sql), rows(&cold, sql), "{sql}");
+                assert_eq!(rows(&mut e, sql), rows(&mut cold, sql), "{sql}");
             }
         }
     }

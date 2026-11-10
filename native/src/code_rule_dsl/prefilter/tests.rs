@@ -55,6 +55,7 @@ pub(in crate::code_rule_dsl) fn matcher(rule: &serde_json::Value, lang: GrammarD
         conflicts: None,
         captures: Default::default(),
         calls: None,
+        instances: None,
         documents: None,
         side: crate::code_rule_dsl::compile::documents::Side::Host,
     };

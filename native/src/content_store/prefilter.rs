@@ -157,6 +157,17 @@ impl ContentStore {
         value
     }
 
+    /// Sets the progress handler of this thread's store connection, which `candidate_transaction` runs on
+    /// (`None`: removes it). The anchor lab counts a candidate statement's VM steps with it.
+    #[cfg(test)]
+    pub(crate) fn candidate_progress<F>(&self, steps: i32, handler: Option<F>) -> StoreResult<()>
+    where
+        F: FnMut() -> bool + Send + 'static,
+    {
+        self.connection.lock().expect("content store mutex poisoned").progress_handler(steps, handler)?;
+        Ok(())
+    }
+
     /// Copies the prefilter rows of `tapes`, the store-wide counts and the regex vocabulary into a
     /// new store at `path`, for the anchor lab (`code_rule_dsl::prefilter::lab`). Tapes keep their
     /// identity and grammar but not their bytes, which candidate SQL never reads.

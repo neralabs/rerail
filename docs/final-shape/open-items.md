@@ -1375,16 +1375,27 @@ oracles and messages; the census counts 100.
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
 Lowered now (decision 0046, reader section): `.violation` at a node, a span or a `@place`; `code "X"`,
-`code {c} in "re"`, `tag` and `suppress` lines; `match` captures, arithmetic, the string functions, Soufflé's
-`cat`/`max`/`min`/`to_number`/`to_float`/`%`, floats; `sum` and `join` (and aggregates over terms, inside
-terms, and compared with each other); `.input` with parameters; `within`, `within_stop`, `nearest` (a named
-ancestor negated too), `inside` and `has` over kind sets and over node-valued sets; `precedes_stop`; negated
-conjunctions (a helper relation); `must, may`; `unset`; recursion that makes values bounded by the tree, a
-count, a shrinking text or a function between rows (`front::cycles`); `dfs_first` and `dfs_first_memo`, computed natively over the edge relation (`logic::native::dfs_first`), so `data-layer/lazy-architecture.rr` lowers (944 rules). Still refused by name (census of
-2026-11-06, clauses alone): `ordered by` (37 clauses: eslint-one-var, the owner-code sketch), `@place` as a
-value outside a `.violation`'s head (3 clauses, 12 files), `~` patterns
-(1), `mean`, `=> edits`. `UnboundedValueCycle` still stops 15 library clauses (73 files) whose bound is not
-one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`).
+`code {c} in "re"`, `tag` and `suppress` lines (`suppress TOOL "rule", … [over {c}]`, and `fix [safe] F "title"`,
+kept as findings-layer settings and not applied yet); `match` captures, `match_all` and `match_group`,
+arithmetic, the string functions, Soufflé's `cat` (any arity)/`max`/`min`/`to_number`/`to_float`/`%`, floats;
+`@lower` as Unicode lowercase; `@dot("", b) = b`; `sum` (0 of nothing) and `join x by k sep "s"` (the distinct
+rows of its value and keys; no `sep` joins as they are; `""` of nothing), aggregates over terms, inside terms,
+and compared with each other; `.input` with parameters; `within`, `within_stop`, `nearest` (a named ancestor
+negated too), `inside` and `has` over kind sets and over node-valued sets (`has` tests the set on the
+descendant); `precedes_stop`; `!within_stop`, `!split_dot`, `split_dot` at the last dot only; negated
+conjunctions and disjunctions (a helper relation per alternative); `must, may`; `unset`; recursion that makes
+values bounded by the tree, a count, a shrinking text or a function between rows (`front::cycles`). A place is
+the loc value `-2 - (path << 32 | line)`; its finding is at that path and line. A function with no value gives
+no row. Still refused by name (census of 2026-11-06, clauses alone): `ordered by` (37 clauses: eslint-one-var,
+the owner-code sketch), `@place` as a value outside a `.violation`'s head (3 clauses, 12 files),
+`dfs_first`/`dfs_first_memo` (2), `~` patterns (1), `mean`, `=> edits`, a `.violation` at a span the engine does
+not make (regex-capture spans: noqa-sec-ratchet, ruff TD00x; tokens), and `!within_stop`, `!precedes_stop` or
+`!split_dot` with a node unnamed. `UnboundedValueCycle` still stops 15 library clauses (73 files) whose bound is
+not one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`;
+pyflakes' `negate`/`number`). `hand_written_rules_lowering_report` (with `RERAIL_RR_REPORT_EXTRA`) on
+`final-rerail-shape-lowering` before this merge: 118 files, 75 lower; More-ergonomic-rule-syntax's 949 packs, 393.
+`dfs_first` and `dfs_first_memo` are now computed natively over the edge relation (`logic::native::dfs_first`), so
+`data-layer/lazy-architecture.rr` lowers (944 rules); they are no longer refused.
 **Closure:** list step 30.
 
 ## O74. Translated programs declare the base relations themselves
@@ -1404,28 +1415,36 @@ reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/gene
 
 ## O76. Base relations and inputs the engine does not make yet
 
-Hand-written rules read relations the engine does not make yet: `parsed` and `string_annotation` (strings
-parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
-(`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
-since reading it is not written. **Closure:** these relations are built natively and the files are read. (`option`, `option_item`, `file` and
-`package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.) 2026-11-07: `parsed` is
-made (decision 0055); `string_annotation` is still empty. 2026-11-07, after the data-layer engine merge
-(ca930d974): repository files are read (`corpus::inputs`: JSON, YAML, JSON Lines, TSV, lines, `dir=` inputs, and
-`input_error` rows for missing or malformed files). The revision and stamped-artifact readers are still not written.
+Hand-written rules read relations the engine did not make: `parsed` and `string_annotation` (strings parsed as
+code) were read as empty, each named in the profile. 2026-11-07: `parsed` is made as guest documents of the chunk,
+asked for in rounds (decision 0055); `string_annotation` is made natively from Ruff's table
+(`facts::vtab::syntax::annotation`), nested annotations found in their outer annotation's guest. `option`,
+`option_item`, `file` and `package*` are made too (decision 0046). After the data-layer engine merge (ca930d974):
+repository files are read (`corpus::inputs`: JSON, YAML, JSON Lines, TSV, lines, `dir=` inputs, and `input_error`
+rows for missing or malformed files). The revision and stamped-artifact readers are still not written.
 
 ## O77. Lowering shortcuts in `.rr`
 
 - A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
   text test. Over a `source` or `src_line` span, captures are spans (`rx_span`, decision 0054); on a node they
-  are still symbols (O80).
+  are still symbols. `match_all("re", sp, m)` and `match_group` (three and five arguments) are relations of each
+  regex's matches in the batch's spans (`logic::strings::as_relations`, `facts::vtab::syntax`).
 - `unset(x)` is the id -1. Its text is "" (`text(x, t)` of it lowers to `t = ""`), and `!unset(x)` is
   `x != -1` (decision 0046). Inside an aggregate, `nearest` or `ast` it is still refused.
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
   `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
   path has no range read yet.
-- `earlier` and `visit_index` are preorder, not CPython's ast order.
-- The value-cycle check (`front::cycles`) accepts the bounds decision 0046 lists; a bound it does not know is
-  refused, never run.
+- `earlier` compares `visit_index`, CPython's `ast.NodeVisitor` order (`facts::vtab::syntax::tree`), made for
+  Python documents only (O80).
+- The value-cycle check (`front::cycles`) accepts the bounds decision 0046 lists (parts of values, values from
+  lower strata, guarded counters, keys moving one way along document order or shortening a string); a bound it
+  does not know is refused, never run. It cannot see an involution such as pyflakes' `negate`, whose values stay
+  two per input.
+- An axis over a set of nodes or of derived kinds, and `precedes_stop`, are recursions over `child`, not the
+  transducer's tape pass.
+- `join` reads its symbol columns through the symbol table's text (`sym_text`), so a kind or field atom as a
+  join value or key would read the wrong text; no library join uses one.
+- `@place` needs symbols stored as atoms: text-mode SQL refuses it by name.
 **Closure:** each is lowered as `core.rr` describes, or the description changed.
 
 ## O78. Where the `.rr` library and rules differ from the recorded findings
@@ -1470,24 +1489,28 @@ tokens have no field.
 
 ## O80. `core.rr` base relations not made yet, or made with a bound (decision 0046)
 
-- `parsed` and `string_annotation` (O76) are still read as empty. A string parsed as code needs its tree grafted
-  into the batch's node space, on demand (rrlab answers requests in rounds); not built. 2026-11-07: `parsed`
-  is made, as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` is not.
+- `parsed` is made as guest documents of the chunk asked for in rounds (decision 0055); `string_annotation` (O76)
+  natively, from Ruff's table (`facts::vtab::syntax::annotation`). A guest is parsed as `( … )` and judged by
+  CPython's module grammar, where W asked `ast.parse(value, mode="eval")`: the two can differ (`(yield x)`).
 - `match_all`, and `match` captures as spans, are made over `source` and `src_line` spans (`rx_span`, one scan
   per file and pattern) and over symbols (a native relation): decision 0054. 2026-11-08: over a node of a kind
   and over an earlier capture too, each distinct text matched once per batch (decision 0081); a node bound to no kind is still
-  refused, and the scan is per distinct text, not chunked (O122).
-  (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
+  refused, and the scan is per distinct text, not chunked (O122). `match_all("re", sp, m)` and `match_group` over any
+  span are relations the batches make (O77). (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as
+  an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
-- `syntax_error` for Python is CPython's grammar's verdict, from Ruff's parser (`ruff_python_parser` 0.0.10, the
-  last on the pinned toolchain; 2026-11-07), not tree-sitter's; compile-time errors CPython's compiler raises after
-  parsing (`return` outside a function) are not checked, and its cost on the full corpus is not measured yet. A
-  document with one is withheld in `core.rr`'s shape (no facts but `doc`, its path and `syntax_error`), and `.on syntax_error report CODE
-  [at line 1]` and `.on input_error report CODE` report (2026-11-07); T's shape keeps every document.
+- `syntax_error(d, l, msg)` for Python is CPython 3.13's `ast.parse` verdict (`cpython::syntax`, through
+  `facts::vtab::syntax::python_syntax`, Ruff's parser `ruff_python_parser` 0.0.10, the last on the pinned
+  toolchain), not tree-sitter's; compile-time errors CPython's compiler raises after parsing (`return` outside a
+  function) are not checked. `cpython_syntax_error` is the same verdict under the converter's name. A document with
+  one is withheld in `core.rr`'s shape (no facts but `doc`, its path and `syntax_error`), and `.on syntax_error
+  report CODE [at line 1]` and `.on input_error report CODE` report (2026-11-07); T's shape keeps every document;
+  the tape's `syntax_error(d)` is tree-sitter's ERROR/MISSING.
 - `static_value` is `value`: file-local constants are not followed.
 - `tsconfig*`, `package_export`, `git_*`, `signed_list` and `list_len` are not read. `input_error` has its
   `missing` rows (a `.input` file that is absent, decision 0054); the other kinds wait on reading files (O76).
-- `earlier` and `visit_index` are preorder, not CPython's ast order (as O77).
+- `earlier` compares `visit_index`, CPython's `ast.NodeVisitor` order, made for Python documents only
+  (`facts::vtab::syntax::tree`); other languages have no `visit_index` row, so no `earlier` row.
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
 
 
@@ -3256,10 +3279,28 @@ list (`READ_PERMISSION_SCENARIO_KEYS`), a decorator that replaces a class with a
 or an enum. `data_layer_testing/` holds the first two; `test-budget` reads it. The two files left read enums of
 `data_layer` itself (`DelegationCapability`, `BranchTipMaterialization`), which the scope leaves open.
 
-**Left.** A run of `test-budget`'s scope over the whole of `conform/` (expected near the model's 1,131); enums
-outside the scope (O-names-cost). Known
-differences from the model: a nested Test class reached through two parents counts once (the owner is a node, not
-a path).
+**Measured (2026-11-09), `test-budget`'s scope** (`conform/`, `data_layer_testing/`, the root's files; 1,601
+files): 1,127 of 1,143 exact, total 13,585; 262 s user + 4.6 s sys, load 90–130. The four files where the rules and
+the model differ read an enum defined outside the scope (`MatchProducerFamily` in `l1470_matching_contracts/`,
+`BranchTipMaterialization` and two more in `data_layer/`); each is reported open and counted as 1.
+
+**Beyond the model (2026-11-09).** Lists a function builds by `append`/`extend`/`+=` under `for` loops, helpers
+with several returns (the largest), function-local names, and `range` bounds given as `len(x)`.
+`test_speculative_publication_scenarios.py` (pytest 66, model 13) and `test_branches.py` (18, model 8) are now
+exact. The same scope run with them: 1,129 of 1,143 exact, total 13,648; 208 s user + 4.2 s sys, load 20–60; the
+only files below the model are the four enum files above. A list built by introspection (`test_phase1_case_matrix.py`, 819) has no length; it stays in
+`collect_disabled`.
+
+**The enums need only their documents (2026-11-09).** A scoped run of the four files, plus each enum's re-export
+chain (`data_layer/matching.py` → `l5250_matching/__init__.py` → `l1470_matching_contracts/graph_producer_models.py`;
+`data_layer/versioned_schema.py` → `l7000_versioned_schema/compatibility.py` → `…/versioned_schema.py`;
+`l1500_llm/delegation_consent.py`), counts all four exactly (22, 12, 25, 40): no rule change.
+
+**Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Through the `values` phase
+(O-names-cost) the four enum files count exactly on a 212-file root; over the whole workspace that waits on the
+phase's cold cost. Expected over the whole
+workspace: 1,133 of 1,143, once names over the whole workspace fit the budget (O-names-cost). Known difference from
+the model: a nested Test class reached through two parents counts once (the owner is a node, not a path).
 
 ## O-names-cost. Name resolution costs about 75 ms of CPU per file
 
@@ -3270,6 +3311,67 @@ nearly all of that is `qn`, which reads `look`: the LEGB walk of every name refe
 
 The run over `conform/` (1,418 files) also peaked at 3.8 GB RSS, in the parse workers and the cross-file part,
 against the 1 GB budget.
+
+**Progress (2026-11-09).** `python/pytest-collect.rr` no longer reads `sym_of`: its own lookup (`pc_sym`) is asked
+only for the expressions the count needs (`pc_symq`), at module level, through `live_def`, `live_asg`, `ibind` and
+the from-import chain, with no LEGB walk. The 133-file sample went from 28 s to 10.4 s. Rewriting the lookup over
+`parsed_in` guest parses was slower (68 s, and past 2 min) and was dropped. The library-wide `sym_of` is still
+whole-relation: `export_query(q) :- qn(_, q)` in `imports.rr` and `resolve_export`'s identity rule ask for every
+name.
+
+Memory, on the 1,601-file run of `test-budget`'s scope: the engine reports a peak RSS of 3,770 MB in the parse and
+batch workers and the cross part, and 1,184 MB in the local part, against the 1 GB budget. Not yet looked into.
+(`/usr/bin/time -l`'s "peak memory footprint", 1,245,496, is the same in every run, the smallest included: it is
+the wrapper's, in bytes, not the engine's.)
+
+**Spikes (2026-11-09) toward reading the enums' documents.**
+- A, the whole workspace (no scope): stopped at 20 min, 527 s user + 11 s sys at load 108–150, unfinished.
+- B, loads along import chains (`load` inside the fixpoint): the cone of requests may read per-file exports only
+  ("reads base relation node"), so the node-level demand cannot drive loads. A per-file, symbol-keyed demand
+  (the names a document's decorators import, chained over `ifrom`) loaded 76 documents for the four enum files
+  and counted all four exactly; each loaded document ran the whole per-file part (22.7 s over 285 files).
+- `struct` (P1) costs about 3 ms per file on the 133-file sample against 72–80 ms for `pytest-collect`; over the
+  whole workspace it did not finish in 115 s at load 80.
+- Direction (to decide): module- and class-level values as written in P1, evaluated across files after P2
+  (`len`, `int`, enum members, by symbol); `pytest-collect` reads them for imported names, and runs on the
+  checked files only.
+- `values` prototyped (`cabb761ad`; typing/programs/values.rr, exports `len(q, n)`): exact on the fixture in both
+  scopes. Over the whole workspace (2026-11-09, the four enum files checked, struct and values over all 9,010
+  documents) it did not finish in 1,500 s: 1,803 s user + 33 s sys, load 11–33 at the start and about 20 at the
+  end. The values phase's store was still being written when it stopped, so the four counts were not read.
+- Profiled (2026-11-09) on samples of the workspace's directories (149, 601 and 2,063 files; 10.4 MB at 601,
+  33.6 MB at 2,063, against 137.9 MB in all), each phase alone (`struct` reused from the run before through the
+  phase record), CPU user + sys at load 8–23. Two rules grew with the square of the workspace, both fixed:
+  - `v_name` of an assigned name joined from `struct__binds` (every assignment in the workspace: 15,820 rows at
+    601 files) to the chunk's wanted names, 1.57 M pairs for 239 matches; the planner priced `v_nq` at 0.35 rows.
+    Now the name and its module come first (`v_idn`), and the binds are probed on both. `v_dom`, the whole
+    workspace's symbols remade in every chunk, is gone: an attribute's symbol is checked against struct's three
+    exports directly.
+  - In `python/lengths`: `len_num` (0..100000) counted up by a recursion of 100,001 steps in every chunk, now one
+    join of digits; `len_plain`'s count made a view of every child edge (295 k rows for 116 lists), now only the
+    asked lists'; parentheses went through `python/ast`'s `unparen`, made for every node, now one `child` step as
+    asked. 149 files: 7.7 s to 5.2 s. Fixture and outputs unchanged (325 rows at 149 files, 1,573 at 601).
+- After the fixes both phases are linear: from 601 to 2,063 files `struct` took 27.8 s to 122 s and `values`
+  19.8 s to 66 s, every span growing alike (parsing too). Over the whole workspace that is about 500 s and 270 s.
+  Half of `values` (34.6 of 66 s) is parsing and projecting its documents again, as every phase does; then
+  `len_num` (0.24 s a chunk, now the domain's join), `posarg` (every call's arguments) and `v_asg`. Peak RSS 578 MB.
+  The tape is memoized across phases and runs (the tape cache): with it on, three phases over 596 files read
+  1,788 documents and parsed 591 (1.75 s). What each phase repeats is the tape's restore (0.7 ms a document), its
+  facts (2 ms) and the batch's projection, the largest; the projection's string table (SipHash) and three
+  per-node `wants` lookups took a fifth to a quarter of it, fixed (`bc4c60651`). Every measurement above and the
+  1,500 s run had the tape cache off (`RERAIL_TAPE_CACHE=off`).
+  `values` keeps reading every document: a phase's exports are keyed by its own inputs, so any reader reuses them;
+  reading only what one reader's documents import would key them by the reader.
+- Whole workspace, tape cache on, cold (2026-11-09 15:03, load 93–138): `struct` ended and was recorded at 13
+  minutes (218,783 granules; tapes for 8,986 files); `values` had not ended at 1,800 s (1,327 s CPU). A warm rerun
+  reuses both.
+- The values phase as `test-budget` would read it, on a root of 212 files (2026-11-09, load 31–35): the four enum
+  files, their conftests, each enum's re-export chain (19 files), and `data_layer_testing/` and the root's files
+  (`pcE.rr`'s scope). `struct` and `values` run over all 212; `pytest-collect` reads `values__len`. All four exact
+  (22, 12, 25, 40), none open. Cold 25.0 s CPU (318 MB peak RSS); phases reused 13.9 s; with the per-file memo on,
+  19.4 s then 5.6 s. `test_fts_versioned_isolation.py`'s 12 needs `data_layer_testing`: its `TestFTSBranchIsolation`
+  is replaced by a function (`@requires_capabilities`, `pc_replaced`); without the decorator's document the class
+  counts 21 more (its fixture's 7 scenarios, now read through `values`, times three tests).
 
 **Worked around.** `test-budget` reads `conform/`, `data_layer_testing/` and the root's files only. A case list or enum
 imported from outside is then open, counted as 1.
@@ -3317,3 +3419,11 @@ on the next run, with the same code. Suspect: the shared default tape cache (O14
 After the merges of 2026-11-08 (`0078ba091`, with the collection rules), 2026-11-09 00:15: `3988 303 298 0`, 55.6 s
 CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 **Closure:** the cause found, or twenty runs on an isolated store all `3988 303 298 0`.
+
+## O-parse-single-splat. A list of one `*` element loses its `list_splat` node
+
+**Seen (2026-11-09).** In `A = [*range(4)]` the list's one child is a `call` whose text is `*range(4)`: no
+`list_splat` node. `[1, *range(2, 5)]` has its `list_splat`. `python/lengths` then counts `[*range(4)]` as one
+element. Not yet traced (parser or tape); the `values` fixture uses `[0, *range(4)]`.
+
+**Closure:** `[*x]` and `(*x,)` keep their `list_splat` node, with a test.

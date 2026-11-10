@@ -1,0 +1,49 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d301-escape-sequence-in-docstring",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Make docstrings that contain backslashes raw strings; a backslash in a plain string starts an escape sequence and can change the text.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "escape-sequence-in-docstring",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "string",
+            "regex": "^[uU]?['\"]",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "regex": "^(?:[^\\\\]|\\\\[\\r\\nuUN]|\\\\\"\"\"|\\\\'''|\\\\\"\\\\\"\\\\\"|\\\\'\\\\'\\\\')*\\\\(?:[^\\r\\nuUN\"']|\"(?:$|[^\"\\\\]|\"(?:$|[^\"])|\\\\(?:$|[^\"]|\"(?:$|[^\\\\]|\\\\(?:$|[^\"]))))|'(?:$|[^'\\\\]|'(?:$|[^'])|\\\\(?:$|[^']|'(?:$|[^\\\\]|\\\\(?:$|[^'])))))"
+            },
+            "inside": {
+              "stopBy": { "not": { "kind": "parenthesized_expression" } },
+              "kind": "expression_statement",
+              "nthChild": { "position": 1, "ofRule": { "not": { "kind": "comment" } } },
+              "not": { "has": { "stopBy": "neighbor", "regex": "^,$" } },
+              "any": [
+                { "inside": { "stopBy": "neighbor", "kind": "module" } },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": { "stopBy": "neighbor", "any": [{ "kind": "function_definition" }, { "kind": "class_definition" }] }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "D301",
+        "message": "Add an `r` prefix (replacing any `u`) so backslashes stay literal, writing each `\\\\` as one `\\`; keep the plain string if an escape like `\\t` or `\\x41` must take effect.",
+        "suppress": { "noqa": { "codes": ["D301"] } }
+      }
+    }
+  ]
+}

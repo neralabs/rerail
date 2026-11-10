@@ -2851,3 +2851,56 @@ The verification scope covers this SQL extension and its complete sessions. It d
 3. Reduce statement preparation and CTE expansion costs at the remaining bounded phase boundaries.
 4. Extend composition across checked regions separated by opaque producer boundaries. Reduce repeated public schema preparation without changing producer visibility.
 5. Repeat matched CPU comparisons before a performance acceptance claim. Complete-session parity alone does not establish whole-product acceptance.
+
+### Integration, recursive SQL loops, and opaque producer gates (2026-11-10)
+
+The preceding implementation is committed as `8b580c9c0`.
+This stage merges `origin/tbelanger/final-rerail-shape-integration` at `5a3935474` before changing execution strategies.
+All builds and test runs use development profiles and nice level 19, as required by the integrated `AGENTS.md`.
+
+#### Integration compatibility
+
+Integration updates SQLite through rusqlite 0.41.1 and makes hook registration require a mutable connection owner.
+The merge preserves native private roots while adopting the new budget and authorizer ownership rules.
+Private-root inspection uses the integer verification reader while its native scope remains active.
+Public query checks retain their execution budgets.
+
+Two initial SQL regressions hit the newer SQLite CTE expansion guard.
+Phase preparation now measures repeated CTE dependencies, with multiplicity, instead of counting only definitions and result arms.
+The conservative dependency budget leaves room for key journals and outer folds.
+Its cost appears in SQL preparation profiling. Explain includes the configured budget.
+An early fold boundary must publish and rebind every remaining staged key before discarding SQL definitions.
+Otherwise, a later fold can refer to an obsolete CTE name.
+The batch journal also avoids retaining the same immutable key root twice.
+The complete-job execution allowance remains 100.
+
+Integration verification passes 168 SQL-executor tests, fourteen shared-analysis tests, and twelve SQL-profiler tests.
+One profiler child remains ignored as a standalone test. Its parent invokes it and passes.
+The long pipeline, corpus, and combined scalar regressions also pass individually.
+The updated preparation bounds require at most three dependent stages and an estimated expansion cost below 20,000 before each append.
+The estimate counts repeated phase references and dependencies inside checked query CTEs.
+It is a preparation heuristic, not a count of SQLite cursors or necessary rule waves.
+
+#### Required changes and comparison
+
+1. Remove producer schema preparation through repeated temporary relation declarations.
+   Use temporary native schema sources for missing logical relations and typed aliases.
+   Preserve SQLite dependency resolution, type views, existing relations, and cleanup after preparation errors.
+2. Represent opaque producer steps as explicit retained operators at their resolved dependency gates.
+   Keep checked regions in the retained graph when an opaque producer is present.
+   Preserve frozen producer inputs and SQL visibility for declared result tables.
+   Track early public publication so final publication does not repeat writes or trigger callbacks twice.
+3. Compare component scheduling with one recursive SQL statement on the measured set components.
+   Carry immutable relation-version references between iterations.
+   Keep rule joins, projections, negative probes, and novelty tests in SQL.
+   Native functions can collect rows and construct storage roots. They must not submit nested rule SQL to disguise statement counts.
+4. Select the production path from those comparisons and preserve incremental edits.
+   Keep existing lattice, checked-effect, and widening paths until equivalent semantics and sparse work bounds are established.
+   A cold-only improvement must not reintroduce duplicate cold and retained evaluation.
+5. Repeat complete snapshot and file-change sessions, including failure, rollback, retry, unchanged publication, deletion, and restoration.
+   Compare all logical relations against the independent cold oracle.
+   Measure submission counts and unprofiled CPU separately. Commit each completed change.
+
+The kernel comparison must report seeds, productive feedback, final empty-frontier detection, SQL work, native storage CPU, and preparation costs.
+The 52 and 140 feedback-frame counts remain algorithm observations, not minimum iteration counts.
+The mixed opaque-producer fixture remains a separate acceptance case. A recursive kernel alone cannot remove its fallback overhead.

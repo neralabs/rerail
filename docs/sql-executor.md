@@ -652,7 +652,8 @@ SQL ANALYZE applies to SQL-owned relations. Native sources supply their own card
 Opaque producers still prevent whole-program retained composition, so mixed programs can require substantially more SQL submissions.
 
 The explain output includes `dependency_components`, `acyclic_stages`, `acyclic_sql_depth_bound`, and per-operator `common_wave_phase` decisions.
-Dependent incremental batches currently contain at most four stages because SQLite expands nested CTE references during preparation.
+Dependent incremental batches currently contain at most three stages because SQLite expands nested CTE references during preparation.
+The phase also bounds an estimated dependency expansion cost. SQL preparation profiles report this cost, and explain reports the budget.
 Result-arm bounds can introduce further SQL batches. These boundaries retain immutable roots and pending signed deltas.
 Closing and inactive history frames carry native roots without SQL. Equal versions and synchronized cursors permit complete frame reuse.
 

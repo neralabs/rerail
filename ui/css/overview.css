@@ -5,18 +5,18 @@
 .rollup{margin:16px 0 20px}
 .rollup .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 .rollhead{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:16px}
-.rollhead h2{font-size:20px;letter-spacing:-.01em;line-height:28px;color:var(--header-primary);margin:0;font-weight:500}
+.rollhead h2{font-size:20px;letter-spacing:-.01em;line-height:28px;color:var(--header);margin:0;font-weight:500}
 .rollhead .rangectl{margin-left:auto}
 
-/* Each tile is a way in: History, Sessions, History, the rule packs. */
-.tile{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--nera-card-shadow);padding:14px 16px;min-width:0;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:border-color .12s,box-shadow .12s}
-.tile:hover{border-color:var(--brand)}
+/* Each tile lands on the list that produced its number: By rule (steered), By session (with violations), By rule, the rule packs. */
+.tile{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--card-shadow);padding:14px 16px;min-width:0;text-align:left;font:inherit;color:inherit;cursor:pointer;transition:border-color .12s,box-shadow .12s}
+.tile:hover{border-color:var(--brand-border)}
 .tile:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
 .tile .k{font-size:13px;font-weight:500;color:var(--brand-foreground)}
 .tile .v{font-size:30px;font-weight:400;line-height:1.15;margin-top:6px;color:var(--brand-foreground);letter-spacing:-.01em;font-variant-numeric:proportional-nums}
 .tile .v small{font-size:13px;font-weight:400;color:var(--muted-foreground);letter-spacing:0;margin-left:2px}
 .tile .s{font-size:12px;color:var(--muted-foreground);margin-top:4px}
-/* With the sheet open (about 1000px left for content in the capped frame) the tiles go two-up. */
+/* With the sheet open the tiles go two-up, as the rows go compact: the page reads as narrowed beside the sheet. */
 body[data-panel="open"] .rollup .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
 @media (max-width:760px){.rollup .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
@@ -26,26 +26,13 @@ body[data-panel="open"] .rollup .tiles{grid-template-columns:repeat(2,minmax(0,1
 .ovlists > section > .ghead{margin-bottom:12px}
 .ovlists > section > .ghead h2{font-size:20px;letter-spacing:-.01em;line-height:28px}
 
-/* Column heads: the long label where there is room, "Violations" where the column is crowded. */
-.ov .colhead{display:grid;grid-template-columns:minmax(0,1fr) minmax(96px,max-content) 34px;gap:0 48px;white-space:nowrap;padding:0 15px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);text-align:right}
-.ov .colhead > span:first-child{text-align:left}
-.ov .colhead > span:last-child{display:flex;justify-content:center;width:34px}
-.ov .colhead span.short{display:none}
-body[data-panel="open"] .ov .colhead{grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 34px;gap:0 14px}
-body[data-panel="open"] .ov .colhead span.long{display:none}
-body[data-panel="open"] .ov .colhead span.short{display:inline}
-@media (max-width:1100px){
-  .ov .colhead{grid-template-columns:minmax(0,1fr) minmax(40px,max-content) 34px;gap:0 14px}
-  .ov .colhead span.long{display:none}
-  .ov .colhead span.short{display:inline}
-}
 .ovtop .row{cursor:pointer}
 .ovtop .row:hover{background:var(--subtle)}
 
-/* Recent sessions: the session, then Violations logged and Steered. */
-.ov .colhead.srhead{grid-template-columns:minmax(0,1fr) 120px 64px;gap:0 16px}
+/* Recent sessions: the session, then its violations; the same shape as History by session. */
+.ov .colhead.srhead{grid-template-columns:minmax(0,1fr) 120px;gap:0 16px}
 .ov .colhead.srhead > span:last-child{display:block;width:auto;text-align:right}
-.sesrow{display:grid;grid-template-columns:minmax(0,1fr) 120px 64px;column-gap:16px;align-items:center;width:100%;padding:11px 14px;border-top:1px solid var(--border);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.sesrow{display:grid;grid-template-columns:minmax(0,1fr) 120px;column-gap:16px;align-items:center;width:100%;padding:11px 14px;border-top:1px solid var(--border);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .sesrow:first-child{border-top:0}
 .sesrow:hover{background:var(--subtle)}
 .sesrow .l{display:flex;flex-direction:column;gap:3px;min-width:0}

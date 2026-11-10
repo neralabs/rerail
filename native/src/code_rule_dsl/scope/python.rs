@@ -1,6 +1,6 @@
 //! Python bindings and references, after Ruff's `Checker` visitor.
 
-use super::options::{DEFAULT_PYTHON_MINOR, python_builtins};
+use super::options::python_builtins;
 use super::{
     Access, Binding, BuildError, Builder, Form, Grammar, Import, ImportKind, NodeRef, Origin,
     Reading, Reference, ScopeKind, ScopeTable, Site, VALUE,
@@ -313,10 +313,7 @@ impl<'b, 'd> Visitor<'b, 'd> {
             py: python(),
             future_annotations: reading.deferred_annotations || reading.stub,
             stub: reading.stub,
-            minor: match reading.python_minor {
-                0 => DEFAULT_PYTHON_MINOR,
-                minor => minor,
-            },
+            minor: reading.target_minor(),
             deferred_globals: Vec::new(),
             until: None,
             unpacked: Vec::new(),

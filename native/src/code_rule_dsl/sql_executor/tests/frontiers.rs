@@ -5,7 +5,7 @@ fn bind(e: &mut CodeRuleSqlExecutor, name: &str, columns: &[&str], values: Value
         .unwrap();
 }
 
-fn private_schema(e: &CodeRuleSqlExecutor) -> Value {
+fn private_schema(e: &mut CodeRuleSqlExecutor) -> Value {
     rows(
         e,
         "SELECT name FROM temp.sqlite_schema WHERE name GLOB 'new_*' OR name GLOB 'delta_*' OR name GLOB '__sql_changes_*' OR name GLOB '__rr_update_*' OR name GLOB '__sql_state_*' OR name IN('wave_step','wave_read','wave_pending','wave_after','wave_document') ORDER BY name",
@@ -23,21 +23,21 @@ fn cold_closure_uses_native_frontiers_through_failure_edits_and_reset() {
     );
     let p = ".decl edge(src:number,dst:number)\n.input edge\n.decl reach(a:number,b:number)\nreach(a,b) :- edge(a,b).\nreach(a,c) :- reach(a,b),edge(b,c).\n.output reach\n";
     e.run(p.into(), "python".into(), None).unwrap();
-    assert_eq!(private_schema(&e), json!([]));
+    assert_eq!(private_schema(&mut e), json!([]));
     for patch in [
         json!([{"name":"edge","delete":[[2,3]]}]),
         json!([{"name":"edge","insert":[[2,3]]}]),
     ] {
-        let before = rows(&e, "SELECT * FROM reach ORDER BY c0,c1");
+        let before = rows(&mut e, "SELECT * FROM reach ORDER BY c0,c1");
         assert!(e.apply_changes(patch.to_string(), Some(1)).is_err());
-        assert_eq!(rows(&e, "SELECT * FROM reach ORDER BY c0,c1"), before);
+        assert_eq!(rows(&mut e, "SELECT * FROM reach ORDER BY c0,c1"), before);
         e.apply_changes(patch.to_string(), None).unwrap();
-        assert_eq!(private_schema(&e), json!([]));
+        assert_eq!(private_schema(&mut e), json!([]));
     }
-    assert_eq!(rows(&e, "SELECT count(*) FROM reach"), json!([[6]]));
+    assert_eq!(rows(&mut e, "SELECT count(*) FROM reach"), json!([[6]]));
     e.reset().unwrap();
     e.run(p.into(), "python".into(), None).unwrap();
-    assert_eq!(private_schema(&e), json!([]));
+    assert_eq!(private_schema(&mut e), json!([]));
 }
 
 #[test]
@@ -65,30 +65,30 @@ fn opaque_producer_gates_merges_and_widening_match_independent_sql_frontiers() {
         "SELECT * FROM __sql_changes_distance ORDER BY c0",
         "SELECT * FROM wave_delta WHERE rows>0 ORDER BY wave,rel",
     ] {
-        assert_eq!(rows(&e, sql), rows(&oracle, sql), "{sql}");
+        assert_eq!(rows(&mut e, sql), rows(&mut oracle, sql), "{sql}");
     }
-    assert_eq!(private_schema(&e), json!([]));
+    assert_eq!(private_schema(&mut e), json!([]));
     let patch = json!([{"name":"edge","delete":[[2,1,1]]}]).to_string();
-    let before = rows(&e, "SELECT * FROM distance ORDER BY c0");
+    let before = rows(&mut e, "SELECT * FROM distance ORDER BY c0");
     assert!(e.apply_changes(patch.clone(), Some(1)).is_err());
-    assert_eq!(rows(&e, "SELECT * FROM distance ORDER BY c0"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM distance ORDER BY c0"), before);
     e.apply_changes(patch, None).unwrap();
     bind(
         &mut oracle,
         "edge",
         &["a", "b", "w"],
-        rows(&e, "SELECT * FROM edge"),
+        rows(&mut e, "SELECT * FROM edge"),
     );
     oracle.run(p.into(), "python".into(), None).unwrap();
     assert_eq!(
-        rows(&e, "SELECT * FROM distance ORDER BY c0"),
-        rows(&oracle, "SELECT * FROM distance ORDER BY c0")
+        rows(&mut e, "SELECT * FROM distance ORDER BY c0"),
+        rows(&mut oracle, "SELECT * FROM distance ORDER BY c0")
     );
     assert_eq!(
-        rows(&e, "SELECT * FROM __sql_changes_distance ORDER BY c0"),
-        rows(&oracle, "SELECT * FROM __sql_changes_distance ORDER BY c0")
+        rows(&mut e, "SELECT * FROM __sql_changes_distance ORDER BY c0"),
+        rows(&mut oracle, "SELECT * FROM __sql_changes_distance ORDER BY c0")
     );
-    assert_eq!(private_schema(&e), json!([]));
+    assert_eq!(private_schema(&mut e), json!([]));
 }
 
 #[test]
@@ -100,14 +100,14 @@ fn opaque_producers_keep_generated_projections_native_across_document_edits() {
     e.bind_snapshot(snapshot.clone()).unwrap();
     e.run(program.clone(), "python".into(), None).unwrap();
     let query = "SELECT name FROM temp.sqlite_schema WHERE name GLOB '__sql_*' AND type='table'";
-    assert_eq!(rows(&e, query), json!([]));
+    assert_eq!(rows(&mut e, query), json!([]));
     let patch=json!({"upsert":[{"path":"a.py","language":"python","source":"def g():\n    x = 2\n    return x\n"}]}).to_string();
     assert!(e.apply_file_changes(patch.clone(), Some(1)).is_err());
     e.apply_file_changes(patch, None).unwrap();
-    assert_eq!(rows(&e, query), json!([]));
+    assert_eq!(rows(&mut e, query), json!([]));
     e.apply_snapshot(snapshot, None).unwrap();
-    assert_eq!(rows(&e, query), json!([]));
+    assert_eq!(rows(&mut e, query), json!([]));
     e.reset().unwrap();
     e.run(program, "python".into(), None).unwrap();
-    assert_eq!(rows(&e, query), json!([]));
+    assert_eq!(rows(&mut e, query), json!([]));
 }

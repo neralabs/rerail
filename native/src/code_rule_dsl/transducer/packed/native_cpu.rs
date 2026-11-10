@@ -66,7 +66,7 @@ impl<T> Drop for DemandZeroRegion<T> {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(unix)]
 impl<T> DemandZeroRegion<T> {
     fn new(count: usize) -> Result<Self, Error> {
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -119,7 +119,7 @@ impl<T> DerefMut for DemandZeroRegion<T> {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(unix)]
 impl<T> Drop for DemandZeroRegion<T> {
     fn drop(&mut self) {
         unsafe {
@@ -130,6 +130,36 @@ impl<T> Drop for DemandZeroRegion<T> {
             );
             libc::munmap(self.pointer.as_ptr().cast(), self.mapped_bytes);
         }
+    }
+}
+
+// Windows: committed VirtualAlloc pages are demand-zero, as an anonymous mapping's are.
+#[cfg(windows)]
+impl<T> DemandZeroRegion<T> {
+    fn new(count: usize) -> Result<Self, Error> {
+        use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
+        let mapped_bytes = count
+            .checked_mul(mem::size_of::<T>())
+            .map(|bytes| bytes.max(1))
+            .ok_or(Error::BackendCapacity)?;
+        // SAFETY: a fresh region at an address the system picks; null on failure.
+        let raw = unsafe { VirtualAlloc(std::ptr::null(), mapped_bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE) };
+        let pointer = NonNull::new(raw.cast::<T>()).ok_or(Error::BackendCapacity)?;
+        Ok(Self {
+            pointer,
+            count,
+            mapped_bytes,
+            marker: PhantomData,
+        })
+    }
+}
+
+#[cfg(windows)]
+impl<T> Drop for DemandZeroRegion<T> {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::Memory::{MEM_RELEASE, VirtualFree};
+        // SAFETY: the region `new` reserved; MEM_RELEASE frees the whole reservation (size 0).
+        unsafe { VirtualFree(self.pointer.as_ptr().cast(), 0, MEM_RELEASE) };
     }
 }
 

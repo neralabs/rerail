@@ -32,7 +32,8 @@ import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rul
 import { readGitBlobs, runGit } from "../engine/git.js";
 import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { repositories } from "../engine/storage/schema.js";
-import { setRepositoryStarted } from "../runtime/repository-start.js";
+import { tableColumns } from "../engine/storage/table-probe.js";
+import { setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
 
 export const SCAN_SCHEMA = "rerail.scan/1";
 
@@ -130,9 +131,12 @@ function nulList(text: string): string[] {
   return text.split("\0").filter(entry => entry.length > 0);
 }
 
-/** Changed files against `against` (the working tree, staged changes included) plus untracked files, sorted. */
+/**
+ * Changed files against `against` (the working tree, staged changes included) plus untracked files, sorted. With
+ * `--no-renames` a rename is its new path, and Git needs no blob it would fetch to detect one: lazy fetch is off.
+ */
 function diffPaths(root: string, against: string): string[] {
-  const changed = nulList(git(root, ["diff", "--name-only", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"]));
+  const changed = nulList(git(root, ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"]));
   const untracked = nulList(git(root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]));
   return [...new Set([...changed, ...untracked])].sort((left, right) => left.localeCompare(right));
 }
@@ -231,8 +235,7 @@ function openHomeDatabase(databasePath: string): RerailDatabase | undefined {
 function homeIsEligible(home: RerailDatabase, root: string): boolean {
   const checkout = lookupCheckout(home, root);
   if (checkout === undefined) return false;
-  const status = checkoutStatus(home, checkout);
-  return status.started && status.setUp;
+  return stateOf(checkoutStatus(home, checkout)) === "started";
 }
 
 /**
@@ -246,14 +249,12 @@ const CONFIGURATION_TABLES = ["rules", "rule_catalog_identities", "repositories"
  * the scan's database seeded: the scan then runs on the home's configuration without ever writing the home's file.
  */
 function copyTables(home: RerailDatabase, scratch: RerailDatabase, tables: readonly string[]): void {
-  const columnsOf = (database: RerailDatabase, table: string): string[] =>
-    (database.$client.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(column => column.name);
   scratch.$client.pragma("foreign_keys = OFF");
   try {
     scratch.$client.transaction(() => {
       for (const table of tables) {
-        const theirs = new Set(columnsOf(home, table));
-        const columns = columnsOf(scratch, table).filter(column => theirs.has(column));
+        const theirs = new Set(tableColumns(home.$client, table));
+        const columns = tableColumns(scratch.$client, table).filter(column => theirs.has(column));
         if (columns.length === 0) continue;
         const list = columns.map(column => `"${column}"`).join(", ");
         const insert = scratch.$client.prepare(`INSERT OR REPLACE INTO ${table} (${list}) VALUES (${columns.map(() => "?").join(", ")})`);
@@ -354,154 +355,199 @@ function position(line: number, column: number): ScanPosition {
   return { line: line + 1, column: column + 1 };
 }
 
-/** Runs one headless scan. Throws on bad input (not a checkout, unknown ref); an audit that fails is `status: "failed"`. */
-export async function runHeadlessScan(options: HeadlessScanOptions): Promise<ScanReport> {
-  const startedAt = Date.now();
-  const scanId = randomUUID();
+/** The checkout `options.repo` is in, once the options that depend on the scope are checked. */
+function scanRoot(options: HeadlessScanOptions): string {
   const requested = realpathSync(resolve(options.repo));
   const top = gitMaybe(requested, ["rev-parse", "--show-toplevel"]);
   if (top === null) throw new Error(`${requested} is not inside a Git checkout`);
   const root = realpathSync(top);
   if (options.base !== undefined && options.scope !== "git-diff") throw new Error("--base applies only to --scope git-diff");
   if (options.paths !== undefined && options.scope !== "repository") throw new Error("--path and --paths-from apply only to --scope repository");
+  return root;
+}
 
-  const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
-  const packs = installedPackIds(options.packs);
-  const home = openHomeDatabase(homeDatabase);
-  let useHome: boolean;
+function homeIsScanConfiguration(options: HeadlessScanOptions, home: RerailDatabase | undefined, root: string, packs: readonly string[]): boolean {
   try {
-    useHome = home !== undefined && options.rulesRef === undefined && packs.length === 0 && homeIsEligible(home, root);
+    return home !== undefined && options.rulesRef === undefined && packs.length === 0 && homeIsEligible(home, root);
   } catch (error) {
     home?.$client.close();
     throw error;
   }
+}
+
+/** `run` with a scratch folder that holds the scan's own content store, restoring the environment and removing the folder after. */
+async function withScanScratch<T>(home: RerailDatabase | undefined, run: (scratch: string) => Promise<T>): Promise<T> {
   const scratch = mkdtempSync(join(tmpdir(), "rerail-scan-"));
   const previousStore = process.env.RERAIL_CONTENT_STORE_PATH;
   // The machine-wide content store belongs to the daemon; this process keeps its own, thrown away after.
   if (previousStore === undefined || previousStore === "") process.env.RERAIL_CONTENT_STORE_PATH = join(scratch, "content.sqlite");
   try {
-    // The scan's own database, always: the home's is only read, and closed before the scan runs.
-    const databasePath = join(scratch, "rerail.sqlite");
-    const refRules = options.rulesRef === undefined ? undefined : await rulesAtRef(root, options.rulesRef, scratch);
-    let refRuleIds: Set<string>;
-    try {
-      refRuleIds = prepareScratchDatabase(databasePath, root, home, useHome, packs, refRules, options.ruleDocuments);
-    } finally {
-      home?.$client.close();
-    }
-    const repository = repositoryOf(databasePath, root);
-
-    let base: ScanReport["base"] = null;
-    let paths: string[] | null = null;
-    if (options.paths !== undefined) {
-      paths = [...new Set(options.paths.map(path => path.replace(/^\.\//u, "")).filter(path => path.length > 0))]
-        .filter(path => existsSync(join(root, path)))
-        .sort((left, right) => left.localeCompare(right));
-    } else if (options.scope === "git-diff") {
-      if (options.base === undefined) {
-        paths = diffPaths(root, gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]) === null ? git(root, ["hash-object", "-t", "tree", "/dev/null"]).trim() : "HEAD");
-      } else {
-        const mergeBase = gitMaybe(root, ["merge-base", options.base, "HEAD"]);
-        if (mergeBase === null) throw new Error(`--base ${options.base} has no merge base with HEAD in ${root}`);
-        base = { ref: options.base, mergeBase };
-        paths = diffPaths(root, mergeBase);
-      }
-    }
-
-    const audits: Array<AuditInput & { result?: AuditResult }> = [];
-    const recorder: AuditRecorder = {
-      start(input) { audits.push({ ...input, paths: [...input.paths] }); return String(audits.length - 1); },
-      finish(auditId, result) { audits[Number(auditId)]!.result = result; },
-      // Progress is not a result: an audit that never finishes stays `interrupted`, and the scan fails.
-      progress(auditId, result) { audits[Number(auditId)]!.result = { status: "interrupted", ...result }; },
-      interrupt() {},
-    };
-    const catalogs = new CheckoutCatalogs(databasePath);
-    const owners = new CheckoutOwners();
-    const router = new CheckoutCodeRuleRouter({
-      sessionRoot: root,
-      startingCheckout: startingCheckout(owners, root).checkoutRoot,
-      owners,
-      catalogs,
-      steerDelivery: { requestSteer: async () => undefined },
-      audits: recorder,
-      followGitignore: catalogs.followsGitignore(root),
-    });
-    const sessionId = `scan-${scanId}`;
-    try {
-      await router.openWorkspace(sessionId);
-      if (paths === null) await router.audit(sessionId, { scope: "repository", mode: "log" });
-      else if (paths.length > 0) await router.audit(sessionId, { scope: "touched-files", mode: "log", paths });
-    } finally {
-      await router.close();
-      catalogs.close();
-    }
-
-    const rules = new Map<string, ScanRule>();
-    for (const audit of audits)
-      for (const provenance of audit.ruleProvenance ?? []) if (!rules.has(provenance.ruleId)) rules.set(provenance.ruleId, ruleOf(provenance, refRuleIds, options.rulesRef));
-    const sources = new Map<string, Buffer | undefined>();
-    const readSource = (path: string): Buffer | undefined => {
-      if (!sources.has(path)) {
-        try { sources.set(path, readFileSync(join(root, path))); } catch { sources.set(path, undefined); }
-      }
-      return sources.get(path);
-    };
-    const violations = audits.flatMap(audit => audit.result?.violations ?? []).map((violation): ScanViolation => ({
-      ruleId: violation.ruleId,
-      payloadHash: rules.get(violation.ruleId)?.payloadHash ?? null,
-      mode: violation.mode,
-      code: violation.code,
-      clauseId: violation.clauseId,
-      path: violation.path ?? null,
-      start: violation.span === undefined ? null : position(violation.span.startLine, violation.span.startColumn),
-      end: violation.span === undefined ? null : position(violation.span.endLine, violation.span.endColumn),
-      message: violation.message,
-      fingerprint: violationFingerprint(violation, readSource),
-    }));
-    // Identical matches of one rule in one file share a text: the second and later take their ordinal too, in the
-    // engine's report order, so every finding of a scan has its own fingerprint.
-    const seen = new Map<string, number>();
-    for (const violation of violations) {
-      const count = seen.get(violation.fingerprint) ?? 0;
-      seen.set(violation.fingerprint, count + 1);
-      if (count > 0) violation.fingerprint = createHash("sha256").update(`${violation.fingerprint}\0${count}`).digest("hex").slice(0, 32);
-    }
-    const failures = [...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
-      code: failure.code,
-      message: failure.message,
-      path: failure.path ?? null,
-      ruleId: failure.ruleId ?? null,
-    }))];
-    const completed = audits.every(audit => audit.result?.status === "completed") && (audits.length > 0 || paths?.length === 0);
-    return {
-      schema: SCAN_SCHEMA,
-      scanId,
-      tool: { name: "rerail", version: options.version },
-      startedAt,
-      finishedAt: Date.now(),
-      repository,
-      checkout: {
-        path: root,
-        head: gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]),
-        ref: gitMaybe(root, ["symbolic-ref", "--quiet", "HEAD"]),
-      },
-      scope: options.scope,
-      base,
-      paths,
-      rulesSource: options.rulesRef !== undefined ? { kind: "ref", ref: options.rulesRef } : useHome ? { kind: "home" } : { kind: "worktree" },
-      status: completed ? "completed" : "failed",
-      rules: [...rules.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
-      violations,
-      failures,
-      summary: { violations: violations.length, failures: failures.length },
-    };
+    return await run(scratch);
   } finally {
     if (home?.$client.open === true) home.$client.close();
     if (previousStore === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
     else process.env.RERAIL_CONTENT_STORE_PATH = previousStore;
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
+function scanTarget(options: HeadlessScanOptions, root: string): { base: ScanReport["base"]; paths: string[] | null } {
+  if (options.paths !== undefined) {
+    const paths = [...new Set(options.paths.map(path => path.replace(/^\.\//u, "")).filter(path => path.length > 0))]
+      .filter(path => existsSync(join(root, path)))
+      .sort((left, right) => left.localeCompare(right));
+    return { base: null, paths };
+  }
+  if (options.scope !== "git-diff") return { base: null, paths: null };
+  if (options.base === undefined) {
+    return { base: null, paths: diffPaths(root, gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]) === null ? git(root, ["hash-object", "-t", "tree", "/dev/null"]).trim() : "HEAD") };
+  }
+  const mergeBase = gitMaybe(root, ["merge-base", options.base, "HEAD"]);
+  if (mergeBase === null) throw new Error(`--base ${options.base} has no merge base with HEAD in ${root}`);
+  return { base: { ref: options.base, mergeBase }, paths: diffPaths(root, mergeBase) };
+}
+
+type ScanAudit = AuditInput & { result?: AuditResult };
+
+/** Runs the audits of one session over `paths` (or the whole repository), recording them rather than storing them. */
+async function runScanAudits(databasePath: string, root: string, sessionId: string, paths: readonly string[] | null): Promise<ScanAudit[]> {
+  const audits: ScanAudit[] = [];
+  const recorder: AuditRecorder = {
+    start(input) { audits.push({ ...input, paths: [...input.paths] }); return String(audits.length - 1); },
+    finish(auditId, result) { audits[Number(auditId)]!.result = result; },
+    // Progress is not a result: an audit that never finishes stays `interrupted`, and the scan fails.
+    progress(auditId, result) { audits[Number(auditId)]!.result = { status: "interrupted", ...result }; },
+    interrupt() {},
+  };
+  const catalogs = new CheckoutCatalogs(databasePath);
+  const owners = new CheckoutOwners();
+  const router = new CheckoutCodeRuleRouter({
+    sessionRoot: root,
+    startingCheckout: startingCheckout(owners, root).checkoutRoot,
+    owners,
+    catalogs,
+    steerDelivery: { requestSteer: async () => undefined },
+    audits: recorder,
+    followGitignore: catalogs.followsGitignore(root),
+  });
+  try {
+    await router.openWorkspace(sessionId);
+    if (paths === null) await router.audit(sessionId, { scope: "repository", mode: "log" });
+    else if (paths.length > 0) await router.audit(sessionId, { scope: "touched-files", mode: "log", paths: [...paths] });
+  } finally {
+    await router.close();
+    catalogs.close();
+  }
+  return audits;
+}
+
+function scanRules(audits: readonly ScanAudit[], refRuleIds: ReadonlySet<string>, rulesRef: string | undefined): Map<string, ScanRule> {
+  const rules = new Map<string, ScanRule>();
+  for (const audit of audits)
+    for (const provenance of audit.ruleProvenance ?? []) if (!rules.has(provenance.ruleId)) rules.set(provenance.ruleId, ruleOf(provenance, refRuleIds, rulesRef));
+  return rules;
+}
+
+function scanSourceReader(root: string): (path: string) => Buffer | undefined {
+  const sources = new Map<string, Buffer | undefined>();
+  return (path: string): Buffer | undefined => {
+    if (!sources.has(path)) {
+      try { sources.set(path, readFileSync(join(root, path))); } catch { sources.set(path, undefined); }
+    }
+    return sources.get(path);
+  };
+}
+
+function scanViolations(audits: readonly ScanAudit[], rules: ReadonlyMap<string, ScanRule>, root: string): ScanViolation[] {
+  const readSource = scanSourceReader(root);
+  const violations = audits.flatMap(audit => audit.result?.violations ?? []).map((violation): ScanViolation => ({
+    ruleId: violation.ruleId,
+    payloadHash: rules.get(violation.ruleId)?.payloadHash ?? null,
+    mode: violation.mode,
+    code: violation.code,
+    clauseId: violation.clauseId,
+    path: violation.path ?? null,
+    start: violation.span === undefined ? null : position(violation.span.startLine, violation.span.startColumn),
+    end: violation.span === undefined ? null : position(violation.span.endLine, violation.span.endColumn),
+    message: violation.message,
+    fingerprint: violationFingerprint(violation, readSource),
+  }));
+  // Identical matches of one rule in one file share a text: the second and later take their ordinal too, in the
+  // engine's report order, so every finding of a scan has its own fingerprint.
+  const seen = new Map<string, number>();
+  for (const violation of violations) {
+    const count = seen.get(violation.fingerprint) ?? 0;
+    seen.set(violation.fingerprint, count + 1);
+    if (count > 0) violation.fingerprint = createHash("sha256").update(`${violation.fingerprint}\0${count}`).digest("hex").slice(0, 32);
+  }
+  return violations;
+}
+
+function scanRulesSource(rulesRef: string | undefined, useHome: boolean): ScanReport["rulesSource"] {
+  if (rulesRef !== undefined) return { kind: "ref", ref: rulesRef };
+  return useHome ? { kind: "home" } : { kind: "worktree" };
+}
+
+/** Runs the scan in its scratch folder and reports it: the scan's own database, always, with the home's only read and closed before the scan runs. */
+async function scanReport(
+  scratch: string, options: HeadlessScanOptions,
+  { root, home, useHome, packs, scanId, startedAt }: { root: string; home: RerailDatabase | undefined; useHome: boolean; packs: readonly string[]; scanId: string; startedAt: number },
+): Promise<ScanReport> {
+  const databasePath = join(scratch, "rerail.sqlite");
+  const refRules = options.rulesRef === undefined ? undefined : await rulesAtRef(root, options.rulesRef, scratch);
+  let refRuleIds: Set<string>;
+  try {
+    refRuleIds = prepareScratchDatabase(databasePath, root, home, useHome, packs, refRules, options.ruleDocuments);
+  } finally {
+    home?.$client.close();
+  }
+  const repository = repositoryOf(databasePath, root);
+  const { base, paths } = scanTarget(options, root);
+  const audits = await runScanAudits(databasePath, root, `scan-${scanId}`, paths);
+  const rules = scanRules(audits, refRuleIds, options.rulesRef);
+  const violations = scanViolations(audits, rules, root);
+  const failures = [...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
+    code: failure.code,
+    message: failure.message,
+    path: failure.path ?? null,
+    ruleId: failure.ruleId ?? null,
+  }))];
+  const completed = audits.every(audit => audit.result?.status === "completed") && (audits.length > 0 || paths?.length === 0);
+  return {
+    schema: SCAN_SCHEMA,
+    scanId,
+    tool: { name: "rerail", version: options.version },
+    startedAt,
+    finishedAt: Date.now(),
+    repository,
+    checkout: {
+      path: root,
+      head: gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]),
+      ref: gitMaybe(root, ["symbolic-ref", "--quiet", "HEAD"]),
+    },
+    scope: options.scope,
+    base,
+    paths,
+    rulesSource: scanRulesSource(options.rulesRef, useHome),
+    status: completed ? "completed" : "failed",
+    rules: [...rules.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
+    violations,
+    failures,
+    summary: { violations: violations.length, failures: failures.length },
+  };
+}
+
+/** Runs one headless scan. Throws on bad input (not a checkout, unknown ref); an audit that fails is `status: "failed"`. */
+export async function runHeadlessScan(options: HeadlessScanOptions): Promise<ScanReport> {
+  const startedAt = Date.now();
+  const scanId = randomUUID();
+  const root = scanRoot(options);
+  const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
+  const packs = installedPackIds(options.packs);
+  const home = openHomeDatabase(homeDatabase);
+  const useHome = homeIsScanConfiguration(options, home, root, packs);
+  return withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, scanId, startedAt }));
 }
 
 /** One line per violation, then a summary: the text `rerail scan` prints without `--json`. */

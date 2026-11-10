@@ -1,0 +1,136 @@
+// python/lengths: how many elements an expression evaluates to, from its syntax, on demand.
+//
+// Interface
+//   len_want(e)      the includer asks for e's length (and the library asks for what it depends on)
+//   len_val(e, v)    the includer says name e stands for value v (a constant it resolved): v is asked for, and its
+//                    lengths are e's
+//   len_of(e, k)     e evaluates to k elements; several rows are several readings (both arms of an `if`, a name
+//                    bound twice); the includer may add rows (a name's length it knows another way)
+//   len_size(e, k)   the largest reading
+//   len_call(e, f)   e is a call of the name or method f (for the includer's own call rules)
+//   len_int(a, n)    a is the integer literal n (an argument, or the right of a binary operator)
+//   len_num(n)       the lengths there may be: 0 to 100000
+//
+// Literals (with `*` splats, folded in source order), dicts without `**`, `+`, `* n`, comprehensions (the product
+// of their `for` clauses; an `if` makes it an upper bound), `a if c else b`, and calls of list/tuple/sorted/set/
+// frozenset/reversed/enumerate, range (literal or len() bounds), zip (the shortest), product, and d.keys()/
+// values()/items(). A missing row is unknown.
+//
+// The demand never reads a length, so lengths stay outside its recursion. A name's value may be anywhere, so the
+// recursion does not move along the tree: every length is one of len_num's, and a cycle of definitions stops there.
+// Internal relations start `len_`.
+#include "python/ast.rr"
+#include "python/calls.rr"
+#include "python/names.rr"
+
+.decl len_want(e: node)
+.decl len_val(e: node, v: node)
+len_want(v) :- len_val(_, v).
+len_of(e, k) :- len_val(e, v), len_of(v, k).
+.decl len_of(e: node, k: number)
+.decl len_num(n: number)
+// Made in one join of digits, not counted up (a recursion of 100001 steps).
+.decl len_digit(d: number)
+len_digit(0). len_digit(1). len_digit(2). len_digit(3). len_digit(4).
+len_digit(5). len_digit(6). len_digit(7). len_digit(8). len_digit(9).
+len_num(100000).
+len_num(a * 10000 + b * 1000 + c * 100 + d * 10 + e) :- len_digit(a), len_digit(b), len_digit(c), len_digit(d),
+    len_digit(e).
+
+// Parentheses: one level at a time, as asked (python/ast's unparen is made for every node).
+len_want(x) :- len_want(e), kind(e, "parenthesized_expression"), child(e, x, _), !kind(x, "comment").
+len_of(e, k) :- len_want(e), kind(e, "parenthesized_expression"), child(e, x, _), !kind(x, "comment"), len_of(x, k).
+
+// List, tuple and set literals: the plain elements, plus each `*xs`'s length, folded in source order.
+.decl len_seq(l: node)
+len_seq(l) :- len_want(l), (kind(l, "list") ; kind(l, "tuple") ; kind(l, "set")).
+.decl len_plain(l: node, n: number)
+// (len_seq in the count too, so that its view holds the asked lists only, not every child edge.)
+len_plain(l, n) :- len_seq(l),
+    n = count : { len_seq(l), child(l, e, _), !kind(e, "comment"), !kind(e, "list_splat") }.
+.decl len_splat(l: node, s: node, j: number)
+len_splat(l, s, j) :- len_seq(l), child(l, s, _), kind(s, "list_splat"),
+    j = count : { child(l, s2, _), kind(s2, "list_splat"), s2 < s }.
+.decl len_nsplat(l: node, n: number)
+len_nsplat(l, n) :- len_seq(l), n = count : { child(l, s, _), kind(s, "list_splat") }.
+len_want(x) :- len_seq(l), child(l, s, _), kind(s, "list_splat"), child(s, x, 0).
+.decl len_lit(l: node, j: number, k: number)
+len_lit(l, 0, k) :- len_plain(l, k).
+len_lit(l, j + 1, t) :- len_lit(l, j, k), j < 100000, len_splat(l, s, j), child(s, x, 0), len_of(x, w), t = k + w, len_num(t).
+len_of(l, k) :- len_lit(l, n, k), len_nsplat(l, n).
+// A dict literal: its pairs, unknown with a `**` spread.
+len_of(l, n) :- len_want(l), kind(l, "dictionary"), count : { child(l, s, _), kind(s, "dictionary_splat") } = 0,
+    n = count : { child(l, s, _), kind(s, "pair") }.
+
+// a + b, and a * n with a literal n.
+len_want(l) :- len_want(e), kind(e, "binary_operator"), field(e, "left", l).
+len_want(r) :- len_want(e), kind(e, "binary_operator"), op(e, "+"), field(e, "right", r).
+len_of(e, t) :- len_want(e), kind(e, "binary_operator"), op(e, "+"), field(e, "left", l), field(e, "right", r),
+    len_of(l, a), len_of(r, b), t = a + b, len_num(t).
+len_of(e, t) :- len_want(e), kind(e, "binary_operator"), op(e, "*"), field(e, "left", l), field(e, "right", r),
+    len_int(r, n), len_of(l, a), t = a * n, len_num(t).
+
+// A comprehension: the product of its `for` clauses' lengths. An `if` clause makes it an upper bound.
+.decl len_comp(e: node)
+len_comp(e) :- len_want(e), (kind(e, "list_comprehension") ; kind(e, "set_comprehension") ;
+    kind(e, "generator_expression") ; kind(e, "dictionary_comprehension")).
+.decl len_gen(e: node, g: node, j: number)
+len_gen(e, g, j) :- len_comp(e), child(e, g, _), kind(g, "for_in_clause"),
+    j = count : { child(e, g2, _), kind(g2, "for_in_clause"), g2 < g }.
+.decl len_ngen(e: node, n: number)
+len_ngen(e, n) :- len_comp(e), n = count : { child(e, g, _), kind(g, "for_in_clause") }.
+len_want(it) :- len_comp(e), child(e, g, _), kind(g, "for_in_clause"), field(g, "right", it).
+.decl len_cf(e: node, j: number, k: number)
+len_cf(e, 0, 1) :- len_comp(e).
+len_cf(e, j + 1, t) :- len_cf(e, j, k), j < 100000, len_gen(e, g, j), field(g, "right", it), len_of(it, w), t = k * w,
+    len_num(t).
+len_of(e, k) :- len_cf(e, n, k), len_ngen(e, n), n > 0.
+
+// `a if c else b`: either arm.
+len_want(x) :- len_want(e), kind(e, "conditional_expression"), (child(e, x, 0) ; child(e, x, 2)).
+len_of(e, k) :- len_want(e), kind(e, "conditional_expression"), (child(e, x, 0) ; child(e, x, 2)), len_of(x, k).
+
+// Calls, by the called name: list/tuple/sorted/set/frozenset/reversed/enumerate of one argument; range of
+// literals or len(); zip (the shortest); product (the product); d.keys()/values()/items(); and a workspace function
+// by the lengths of what it returns.
+.decl len_call(e: node, f: symbol)
+len_call(e, f) :- len_want(e), kind(e, "call"), callee(e, h), kind(h, "identifier"), text(h, f).
+len_call(e, f) :- len_want(e), kind(e, "call"), callee(e, h), attr_of(h, _, f).
+.decl len_npos(e: node, n: number)
+len_npos(e, n) :- len_call(e, _), n = count : { posarg(e, _, _) }.
+.decl len_one(e: node, a: node)
+len_one(e, a) :- len_call(e, _), len_npos(e, 1), posarg(e, 0, a).
+len_one(e, a) :- len_call(e, _), field(e, "arguments", a), kind(a, "generator_expression").
+.decl len_wrapf(f: symbol)
+len_wrapf("list"). len_wrapf("tuple"). len_wrapf("sorted"). len_wrapf("set"). len_wrapf("frozenset").
+len_wrapf("reversed"). len_wrapf("enumerate").
+len_want(a) :- len_call(e, f), len_wrapf(f), posarg(e, 0, a).
+len_want(a) :- len_call(e, f), len_wrapf(f), field(e, "arguments", a), kind(a, "generator_expression").
+len_of(e, k) :- len_call(e, f), len_wrapf(f), len_one(e, a), len_of(a, k).
+.decl len_int(a: node, n: number)
+len_int(a, n) :- len_want(e), (posarg(e, _, a) ; field(e, "right", a)), kind(a, "integer"), text(a, t), n = to_number(t).
+// range's bounds: integer literals, or `len(x)` of a sequence with a length.
+.decl len_ival(a: node, n: number)
+len_ival(a, n) :- len_call(e, "range"), posarg(e, _, a), len_int(a, n).
+len_want(x) :- len_call(e, "range"), posarg(e, _, a), kind(a, "call"), callee(a, h), text(h, "len"), posarg(a, 0, x).
+len_ival(a, n) :- len_call(e, "range"), posarg(e, _, a), kind(a, "call"), callee(a, h), text(h, "len"),
+    posarg(a, 0, x), len_of(x, n).
+len_of(e, t) :- len_call(e, "range"), len_npos(e, 1), posarg(e, 0, a), len_ival(a, n), t = max(n, 0), len_num(t).
+len_of(e, t) :- len_call(e, "range"), len_npos(e, 2), posarg(e, 0, x), len_ival(x, a), posarg(e, 1, y),
+    len_ival(y, b), t = max(b - a, 0), len_num(t).
+len_of(e, t) :- len_call(e, "range"), len_npos(e, 3), posarg(e, 0, x), len_ival(x, a), posarg(e, 1, y),
+    len_ival(y, b), posarg(e, 2, z), len_ival(z, s), s > 0, t = max((b - a + s - 1) / s, 0), len_num(t).
+len_want(a) :- len_call(e, f), (f = "zip" ; f = "product"), posarg(e, _, a).
+.decl len_zf(e: node, i: number, k: number)
+len_zf(e, 1, w) :- len_call(e, f), (f = "zip" ; f = "product"), posarg(e, 0, a), len_of(a, w).
+len_zf(e, i + 1, t) :- len_call(e, "zip"), len_zf(e, i, k), i < 100000, posarg(e, i, a), len_of(a, w), t = min(k, w),
+    len_num(t).
+len_zf(e, i + 1, t) :- len_call(e, "product"), len_zf(e, i, k), i < 100000, posarg(e, i, a), len_of(a, w), t = k * w,
+    len_num(t).
+len_of(e, k) :- len_zf(e, n, k), len_npos(e, n).
+len_want(o) :- len_call(e, f), (f = "keys" ; f = "values" ; f = "items"), callee(e, h), attr_of(h, o, _).
+len_of(e, k) :- len_call(e, f), (f = "keys" ; f = "values" ; f = "items"), len_npos(e, 0), callee(e, h),
+    attr_of(h, o, _), len_of(o, k).
+
+.decl len_size(e: node, k: number)
+len_size(e, k) :- len_of(e, _), k = max n : { len_of(e, n) }.

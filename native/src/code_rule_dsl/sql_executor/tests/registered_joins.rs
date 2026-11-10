@@ -31,9 +31,9 @@ fn registered_join_rotations_and_composite_keys_match_full_reduction() {
         };
         e.apply_changes(patch.to_string(), None).unwrap();
         assert_eq!(
-            rows(&e, "SELECT * FROM mask ORDER BY c0,c1"),
+            rows(&mut e, "SELECT * FROM mask ORDER BY c0,c1"),
             rows(
-                &e,
+                &mut e,
                 "SELECT g,h,test_join_bits(v) FROM event GROUP BY g,h ORDER BY g,h"
             ),
             "iteration {iteration}"
@@ -46,7 +46,7 @@ fn registered_join_rotations_and_composite_keys_match_full_reduction() {
             json!([[0]])
         );
     }
-    let deletion = rows(&e, "SELECT * FROM event");
+    let deletion = rows(&mut e, "SELECT * FROM event");
     e.apply_changes(
         json!([{"name":"event","delete":deletion}]).to_string(),
         None,
@@ -73,8 +73,8 @@ fn index_rows(e: &CodeRuleSqlExecutor, sql: &str) -> Value {
     let _scope=e.versions.activate(frame["native_scope"].as_u64().unwrap() as usize).unwrap();
     assert!(!crate::code_rule_dsl::facts::vtab::bound_source(e.connection(),nodes).unwrap().writable());
     let query=sql.replace("__sql_state_mask_join_nodes",nodes).replace("__sql_state_mask_join_roots",roots);
-    assert_eq!(rows(e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'"),json!([[0]]));
-    rows(e,&query)
+    assert_eq!(json!(e.verification_rows("SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'").unwrap()),json!([[0]]));
+    json!(e.verification_rows(&query).unwrap())
 }
 
 impl Aggregate<i64, i64> for Bits {
@@ -123,8 +123,8 @@ fn registered_joins_update_logarithmic_summary_paths_and_restore_after_errors() 
         );
         e.set_limits("{}".into()).unwrap();
         assert_eq!(
-            rows(&e, "SELECT * FROM mask"),
-            rows(&e, "SELECT g,test_join_bits(v) FROM event GROUP BY g")
+            rows(&mut e, "SELECT * FROM mask"),
+            rows(&mut e, "SELECT g,test_join_bits(v) FROM event GROUP BY g")
         );
         assert!(
             index_rows(&e, "SELECT max(height) FROM __sql_state_mask_join_nodes")[0][0]
@@ -133,7 +133,7 @@ fn registered_joins_update_logarithmic_summary_paths_and_restore_after_errors() 
                 < 25
         );
     }
-    let before = rows(&e, "SELECT * FROM mask");
+    let before = rows(&mut e, "SELECT * FROM mask");
     e.connection().execute_batch("CREATE TEMP TRIGGER fail_summary BEFORE INSERT ON mask BEGIN SELECT RAISE(ABORT,'stop summary'); END").unwrap();
     assert!(
         e.apply_changes(
@@ -144,7 +144,7 @@ fn registered_joins_update_logarithmic_summary_paths_and_restore_after_errors() 
         .reason
         .contains("stop summary")
     );
-    assert_eq!(rows(&e, "SELECT * FROM mask"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM mask"), before);
     e.connection()
         .execute_batch("DROP TRIGGER fail_summary")
         .unwrap();
@@ -154,13 +154,13 @@ fn registered_joins_update_logarithmic_summary_paths_and_restore_after_errors() 
     )
     .unwrap();
     assert_eq!(
-        rows(&e, "SELECT * FROM mask"),
-        rows(&e, "SELECT g,test_join_bits(v) FROM event GROUP BY g")
+        rows(&mut e, "SELECT * FROM mask"),
+        rows(&mut e, "SELECT g,test_join_bits(v) FROM event GROUP BY g")
     );
     e.reset().unwrap();
     assert_eq!(
         rows(
-            &e,
+            &mut e,
             "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_mask_join_*'"
         ),
         json!([[0]])

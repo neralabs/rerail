@@ -2,11 +2,11 @@ name: Release pull request
 
 # On every push to main: releases core if main's package.json names a version not released yet, then opens or updates
 # the "Release" pull request with everything releasable (scripts/release/release-version.mjs):
-#   - packs: with changesets pending, `npm run version:packs`, each pack's version and CHANGELOG.md, written by
-#     changesets (docs/pack-format.md, "Release");
+#   - packs: with changesets pending, `npm run version:packs` for each pack's version, and each CHANGELOG.md's section
+#     for it, written from pack.json and the changesets (docs/pack-format.md, "Release");
 #   - core: when anything core ships has changed since its last `v*` tag, the next patch version in package.json and
-#     package-lock.json, and CHANGELOG.md's unreleased section dated as that version (docs/distribution-model.md,
-#     "Release channels").
+#     package-lock.json, and CHANGELOG.md's section for that version, its unreleased lead and the entries pending in
+#     .changelog/ by change type, whose files it deletes (docs/release.md, "Release notes").
 # Merging it is the release: release-packs.yml publishes the packs, and this workflow's tag job tags core's version
 # `v<version>`, whose push starts release.yml, which builds and publishes core. With nothing releasable, an open
 # Release pull request is closed.
@@ -40,14 +40,14 @@ jobs:
     steps:
       - id: app-token
         name: Get the neralabs-ci app token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -72,7 +72,7 @@ jobs:
     steps:
       - id: app-token
         name: Get the neralabs-ci app token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -80,7 +80,7 @@ jobs:
           permission-pull-requests: write
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false

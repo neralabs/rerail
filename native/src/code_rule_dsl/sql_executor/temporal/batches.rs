@@ -47,7 +47,8 @@ impl Batches {
                     local.push(source);
                 } else if let Some(version) = store.available(&source) {
                     if version.len() > 0 {
-                        self.keys.entry(r.clone()).or_default().push(version);
+                        let roots=self.keys.entry(r.clone()).or_default();
+                        if !roots.iter().any(|old|old.same(&version)) {roots.push(version);}
                     }
                 } else {
                     return Err(error("wave key journal has no immutable native source"));

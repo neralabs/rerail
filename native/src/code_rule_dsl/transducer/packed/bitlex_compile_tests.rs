@@ -195,6 +195,58 @@ fn later_masks_equal_the_evaluator_on_every_executor() {
     }
 }
 
+/// Numbers (`number`): planes of a place, carried back and forth, subtracted and compared, in a
+/// fixed point too; each mask equals the evaluator's, which holds the numbers whole.
+const NUMBERS: &str = r#"
+lexer numbers
+class tick = '`'
+mask last  = tick & ~next(tick)
+number end = back_fill(last, ~tick, position)
+number rem = end - position
+mask long  = tick & at_least(rem, 3)
+number n   = fill(long, long, rem)
+mask close = tick & at_least(rem, n) & ~long
+mask over  = above(n, rem)
+mask far   = at_least(position, 1000) & ~at_least(position, 66000)
+mask odd   = above(end, 65537)
+rounds until settled {
+  carry h  = empty
+  mask o   = long & ~h
+  number m = fill(o, o, rem)
+  mask c   = tick & at_least(rem, m) & ~o
+  mask f   = fill(o, c)
+  next h   = prev(f)
+}
+"#;
+
+#[test]
+fn numbers_equal_the_evaluator_on_every_executor() {
+    let names = ["long", "close", "over", "far", "odd", "o", "c", "f"];
+    let stmts = ::bitlex::syntax::parse(NUMBERS).expect("parses");
+    let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
+    assert!(compiled.rows.contains("position 6") && !compiled.rows.contains("position 5"), "planes from bit 6 are the block's place\n{}", compiled.rows);
+    let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
+    let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let mut cases = inputs();
+    let fences = |n: usize| {
+        let mut v = Vec::new();
+        for k in 0..n {
+            v.extend(std::iter::repeat_n(b'`', 1 + k * 7 % 9));
+            v.extend(std::iter::repeat_n(b'x', k * 13 % 70));
+        }
+        v
+    };
+    cases.extend([b"a````b``c`````d````e`````".to_vec(), b"````````".to_vec(), fences(60), [vec![b'.'; 65_530], fences(40)].concat()]);
+    for bytes in cases {
+        let want = evaluated(&stmts, &bytes, &names);
+        for (executor, got) in Executors::new(&p).run(&bytes, false).0 {
+            for (k, name) in names.iter().enumerate() {
+                assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes", bytes.len());
+            }
+        }
+    }
+}
+
 /// The whole of `json.bitlex`: on every input and every executor, a file the evaluator rejects
 /// falls back, and for one that neither rejects, each row's masks equal the evaluator's: the
 /// tree section's starts, ends and facts, and each token kind's starts and last bytes.
@@ -1043,9 +1095,11 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
-    // reorder, and its only loop heads are the stream's and the masks').
+    // reorder). Its loop heads are the stream's and the masks', and the table's final pass's
+    // two (parents and extras: a record and a pop a step).
     assert!(!tier2.wraps);
-    assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
+    assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block | native_cpu_shape::Step::Node)), "{:?}", tier2.heads);
+    assert_eq!(tier2.heads.iter().filter(|h| h.1 == native_cpu_shape::Step::Node).count(), 2, "the final pass's loops alone: {:?}", tier2.heads);
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs()[0].run_files(&[f]).remove(0);

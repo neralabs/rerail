@@ -624,6 +624,8 @@ impl Lower {
             }
             Condition::Relation { inner, direction, recursive } if self.tree => self.related_on_tape(scope, inner, *direction, *recursive),
             Condition::Relation { inner, .. } => self.related(scope, inner),
+            // A root gate (main's `Condition::RootGate`): the whole scope, inexact, as an unanchored relation is.
+            Condition::RootGate { .. } => Ok(Set { exact: false, ..scope }),
         }?;
         selected.exact &= plan.exact;
         if let Some(kinds) = kinds {
@@ -798,7 +800,8 @@ pub(super) fn anchored(plan: &AnchorPlan) -> bool {
             Condition::Always
             | Condition::Text { .. }
             | Condition::Not(_)
-            | Condition::Relation { .. } => false,
+            | Condition::Relation { .. }
+            | Condition::RootGate { .. } => false,
         }
 }
 fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Statistics, tree: bool) -> Statement {

@@ -68,18 +68,16 @@ fn run(policy: &str) {
         }
     };
     let run_statement = |store: &ContentStore, statement: &lower::Statement, counter: &Arc<AtomicU64>, emit: &mut dyn FnMut(usize)| {
+        let observed = Arc::clone(counter);
         store
-            .candidate_transaction(statement.writes(), |db| {
-                let observed = Arc::clone(counter);
-                db.progress_handler(STEP, Some(move || {
-                    observed.fetch_add(1, Ordering::Relaxed);
-                    false
-                }))?;
-                let result = execute::rows(db, statement, &mut |qid, _, _| emit(qid));
-                db.progress_handler(0, None::<fn() -> bool>)?;
-                result
-            })
+            .candidate_progress(STEP, Some(move || {
+                observed.fetch_add(1, Ordering::Relaxed);
+                false
+            }))
             .unwrap();
+        let result = store.candidate_transaction(statement.writes(), |db| execute::rows(db, statement, &mut |qid, _, _| emit(qid)));
+        store.candidate_progress(0, None::<fn() -> bool>).unwrap();
+        result.unwrap();
     };
     let mut databases: Vec<_> = std::fs::read_dir(&captures)
         .unwrap()

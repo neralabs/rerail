@@ -4,6 +4,8 @@
 //! The code-rule runtime will call this module through coarse Rust operations.
 
 pub(crate) mod atoms;
+#[cfg(target_os = "macos")]
+mod accel_models;
 // Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
 mod bounded_insert;
@@ -33,6 +35,7 @@ pub(crate) use postings::segment_positions;
 #[allow(dead_code)]
 pub(crate) mod prefilter;
 pub(crate) use prefilter::TapePrefilter;
+mod private_files;
 mod publication;
 mod read_cache;
 mod reclamation;
@@ -78,7 +81,6 @@ use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 #[cfg(test)]
@@ -320,6 +322,13 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SourceId(i64);
+
+impl SourceId {
+    /// An id a record of this store kept (`raw`; a kept statistics blob, decision 0096 §2). A source collected since reads as absent: a lookup finds nothing.
+    pub fn from_raw(id: i64) -> Self {
+        SourceId(id)
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TapeId(i64);
@@ -622,12 +631,17 @@ pub struct ContentStore {
 
 impl Drop for ContentStore {
     /// Appends the atoms still pending (decision 0049 §4.3); another handle or the next open
-    /// writes them if this fails, and nothing durable names them meanwhile.
+    /// writes them if this fails, and nothing durable names them meanwhile. The store's last
+    /// handle then closes the process's connections to its file: the arena outlives it (the
+    /// planner's symbols keep it), its file stays closed until next read.
     fn drop(&mut self) {
         if self.atoms.pending()
             && let Err(error) = self.immediate_transaction(|_| Ok(()))
         {
             eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
+        }
+        if self.connection.close() {
+            self.atoms.release_reader();
         }
     }
 }
@@ -639,23 +653,23 @@ impl ContentStore {
     }
 
     pub fn open(path: &Path) -> StoreResult<Self> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
+        private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
-        let created = retry_busy(&mut BusyRetries::default(), || {
+        let identity = retry_busy(&mut BusyRetries::default(), || {
             Self::initialize(&mut connection)
         })?;
         drop(connection);
+        // Compiled Neural Engine models are facts of this store (decision 0098 §3).
+        #[cfg(target_os = "macos")]
+        rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
         Ok(Self {
             database_path: path.to_path_buf(),
-            connection: ThreadConnection {
-                database_path: path.to_path_buf(),
-            },
+            connection: ThreadConnection::new(path.to_path_buf(), identity),
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             decompressed_cache: Mutex::new(DecompressedReadCache::new(
                 DEFAULT_READ_CACHE_BYTES,
@@ -663,8 +677,8 @@ impl ContentStore {
             )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
-            // A store just created replaces any atoms this process held for a file at its path.
-            atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
+            // A store created again at its path, by this process or another, has atoms of its own.
+            atoms: atoms::Atoms::for_database(path, Some(identity)),
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
             lease: Default::default(),

@@ -576,16 +576,16 @@ impl Source for Nodes {
         let span = self.facts.packed.span(id);
         match &self.columns[c].1 {
             Column::Path => ctx.set_result(&self.path),
-            Column::Id => ctx.set_result(&i64::from(id)),
+            Column::Id => ctx.set_result(i64::from(id)),
             Column::SubtreeEnd => {
-                ctx.set_result(&i64::from(self.facts.packed.subtree_end[id as usize]))
+                ctx.set_result(i64::from(self.facts.packed.subtree_end[id as usize]))
             }
-            Column::Start => ctx.set_result(&(span.start as i64)),
-            Column::End => ctx.set_result(&(span.end as i64)),
-            Column::Parent => ctx.set_result(&self.facts.packed.parent(id).map(i64::from)),
-            Column::Kind => ctx.set_result(&self.facts.packed.kind(id)),
-            Column::Line => ctx.set_result(&(self.facts.lines.line(span.start) as i64)),
-            Column::Text => ctx.set_result(&if self
+            Column::Start => ctx.set_result(span.start as i64),
+            Column::End => ctx.set_result(span.end as i64),
+            Column::Parent => ctx.set_result(self.facts.packed.parent(id).map(i64::from)),
+            Column::Kind => ctx.set_result(self.facts.packed.kind(id)),
+            Column::Line => ctx.set_result(self.facts.lines.line(span.start) as i64),
+            Column::Text => ctx.set_result(if self
                 .empty_text_kinds
                 .iter()
                 .any(|k| k == self.facts.packed.kind(id))
@@ -597,36 +597,36 @@ impl Source for Nodes {
                     .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
                 text
             }),
-            Column::Ordinal => ctx.set_result(&(ordinal as i64)),
+            Column::Ordinal => ctx.set_result(ordinal as i64),
             Column::Owner(o) => {
-                ctx.set_result(&(o.values[row] != packed::NONE).then_some(i64::from(o.values[row])))
+                ctx.set_result((o.values[row] != packed::NONE).then_some(i64::from(o.values[row])))
             }
             Column::ParentStart | Column::ParentEnd | Column::ParentKind => {
                 let parent = self.facts.packed.parent(id);
                 match self.columns[c].1 {
                     Column::ParentStart => {
-                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).start as i64))
+                        ctx.set_result(parent.map(|p| self.facts.packed.span(p).start as i64))
                     }
                     Column::ParentEnd => {
-                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).end as i64))
+                        ctx.set_result(parent.map(|p| self.facts.packed.span(p).end as i64))
                     }
-                    _ => ctx.set_result(&parent.map(|p| self.facts.packed.kind(p).to_owned())),
+                    _ => ctx.set_result(parent.map(|p| self.facts.packed.kind(p).to_owned())),
                 }
             }
             Column::Field(field, part) => {
                 let value = self.facts.fields.get(id, *field);
                 match part {
-                    0 => ctx.set_result(&value.map(i64::from)),
-                    1 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).start as i64)),
-                    2 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).end as i64)),
-                    3 => ctx.set_result(&value.map(|n| self.facts.packed.kind(n).to_owned())),
+                    0 => ctx.set_result(value.map(i64::from)),
+                    1 => ctx.set_result(value.map(|n| self.facts.packed.span(n).start as i64)),
+                    2 => ctx.set_result(value.map(|n| self.facts.packed.span(n).end as i64)),
+                    3 => ctx.set_result(value.map(|n| self.facts.packed.kind(n).to_owned())),
                     _ => {
                         let text = value.map(|n| doc.transducer_text_str(n));
                         if let Some(text) = text {
                             source::charge(&self.meter.work, text.len().div_ceil(256))
                                 .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
                         }
-                        ctx.set_result(&text)
+                        ctx.set_result(text)
                     }
                 }
             }

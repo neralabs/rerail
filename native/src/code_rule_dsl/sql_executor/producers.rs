@@ -99,7 +99,7 @@ pub(super) fn take(program: &mut front::Program) -> Result<Vec<Producer>> {
 /// counts as the relations that view reads. Each query must give its declaration's columns.
 /// Per producer: the wave relations it reads, and every other table or view it reads (lowercased),
 /// which tuple maintenance watches for changes.
-fn resolve(db: &Database, emitted: &plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<Vec<(Vec<String>, Vec<String>)>> {
+fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<Vec<(Vec<String>, Vec<String>)>> {
     use rusqlite::hooks::{AuthAction, Authorization};
     let tables: BTreeMap<String, String> =
         emitted.program.relations.iter().map(|(r, _)| (r.to_ascii_lowercase(), r.clone())).collect();
@@ -129,7 +129,7 @@ fn resolve(db: &Database, emitted: &plan::emit::Emitted, program: &front::Progra
         for p in producers {
             let seen = Arc::new(parking_lot::Mutex::new(BTreeSet::<String>::new()));
             let record = Arc::clone(&seen);
-            db.authorizer(Some(move |context: rusqlite::hooks::AuthContext<'_>| {
+            db.connection_mut().authorizer(Some(move |context: rusqlite::hooks::AuthContext<'_>| {
                 if let AuthAction::Read { table_name, .. } = context.action {
                     record.lock().insert(table_name.to_ascii_lowercase());
                 }
@@ -137,7 +137,7 @@ fn resolve(db: &Database, emitted: &plan::emit::Emitted, program: &front::Progra
             }))
             .map_err(error)?;
             let prepared = db.prepare(&format!("SELECT * FROM ({})", p.query)).map(|s| s.column_count());
-            db.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>).map_err(error)?;
+            db.connection_mut().authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>).map_err(error)?;
             let width = prepared.map_err(|e| error(format!("{}: SQL producer query: {e}", p.rel)))?;
             if width != program.decls[&p.rel].len() {
                 return Err(error(format!("{}: the query gives {width} columns, the declaration {}", p.rel, program.decls[&p.rel].len())));
@@ -191,7 +191,7 @@ fn downstream(program: &front::Program, producers: &[Producer], reads: &[Vec<Str
 
 /// Add each producer's step to the emitted program, and the typed views its query may read.
 /// Returns what each producer reads beyond the wave relations (`resolve`), by producer.
-pub(super) fn steps(db: &Database, emitted: &mut plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<BTreeMap<String, Vec<String>>> {
+pub(super) fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &front::Program, producers: &[Producer]) -> Result<BTreeMap<String, Vec<String>>> {
     if producers.is_empty() {
         return Ok(BTreeMap::new());
     }

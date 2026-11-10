@@ -9,6 +9,7 @@ struct Definition {
     sql: String,
     materialized: bool,
     width: usize,
+    expansion: usize,
 }
 
 enum Keys {
@@ -41,8 +42,29 @@ pub(super) struct Phase {
     read_arms: usize,
 }
 impl Phase {
+    // Reserve preparation headroom for key journals, output arms, and outer folds.
+    pub const EXPANSION_BUDGET: usize = 20000;
     pub fn arm_bound(&self) -> usize {
         self.read_arms
+    }
+    /// SQLite expands references behind materialization fences during preparation.
+    /// Count the dependency graph with multiplicity, rather than only its definitions.
+    pub fn expansion_cost(&self) -> usize {
+        self.outputs.iter().fold(0usize,|cost,output| {
+            let cost=cost.saturating_add(self.source_expansion(&output.source));
+            if let Keys::Query(keys)=&output.keys {cost.saturating_add(self.source_expansion(keys))} else {cost}
+        })
+    }
+    fn source_expansion(&self,source:&str)->usize {
+        let mut cost=1usize;
+        for word in source.split(|c:char| !(c.is_ascii_alphanumeric() || c=='_')) {
+            if let Some(id)=word.strip_prefix("__rr_phase_").and_then(|id|id.parse::<usize>().ok()) {
+                if let Some(definition)=self.definitions.get(id) {cost=cost.saturating_add(definition.expansion);}
+            } else if word.eq_ignore_ascii_case("SELECT") || word.eq_ignore_ascii_case("JOIN") || word.eq_ignore_ascii_case("FROM") {
+                cost=cost.saturating_add(1);
+            }
+        }
+        cost
     }
     pub fn defines(&self, name: &str) -> bool {
         name.strip_prefix("__rr_phase_")
@@ -51,6 +73,36 @@ impl Phase {
     }
     pub fn relation(&mut self, width: usize, query: &str) -> String {
         self.define(width, query, "MATERIALIZED")
+    }
+    pub fn checked_relation(&mut self,width:usize,query:&select::Query)->String {
+        fn block_cost(block:&select::Select,ctes:&BTreeMap<String,usize>)->usize {
+            use super::super::logic::sql::sql_ast::SqlExpression as E;
+            let mut cost=1usize;
+            for item in &block.from {
+                cost=cost.saturating_add(1);
+                if let select::Relation::Cte(name)=&item.relation {
+                    cost=cost.saturating_add(ctes.get(name).copied().unwrap_or(1));
+                }
+            }
+            for expression in block.columns.iter().map(|(e,_)|e).chain(&block.predicates)
+                .chain(block.from.iter().flat_map(|i|match &i.join {select::Join::On(on)=>on.as_slice(),_=>&[]})) {
+                expression.visit(&mut |e| {
+                    if let E::Scalar(q) | E::Exists {query:q,..}=e {
+                        cost=cost.saturating_add(block_cost(q,ctes));
+                    }
+                });
+            }
+            cost
+        }
+        let mut ctes=BTreeMap::new();
+        for cte in &query.ctes {
+            let cost=cte.arms.iter().fold(0usize,|sum,arm|sum.saturating_add(block_cost(arm,&ctes)));
+            ctes.insert(cte.name.clone(),cost);
+        }
+        let name=self.relation(width,&query.render());
+        let definition=self.definitions.last_mut().unwrap();
+        definition.expansion=definition.expansion.saturating_add(block_cost(&query.body,&ctes));
+        name
     }
     /// Projections, set operations, and pure aggregates over frozen inputs.
     /// Checked rule expressions and native functions stay behind `relation` fences.
@@ -63,7 +115,9 @@ impl Phase {
             .map(|i| format!("c{i}"))
             .collect::<Vec<_>>()
             .join(",");
+        let expansion=self.source_expansion(query);
         self.definitions.push(Definition {
+            expansion,
             sql: format!("{name}({columns}) AS {hint} ({query})"),
             materialized: hint == "MATERIALIZED",
             width,
@@ -210,7 +264,7 @@ impl Phase {
                 .join(","),
             reads.arms.join(" UNION ALL ")
         );
-        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>(),"publication":self.outputs.iter().map(|o|json!({"table":o.table,"previous_rows":o.old.len(),"strategy":if o.old.len()==0{"bulk empty root"}else if matches!(o.keys,Keys::Replace){"bulk replacement"}else{"validated patch; affected-key density selects bulk rebuilding"}})).collect::<Vec<_>>(),"logicalAnalyses":self.analyses,"outputProtocol":{"sqlArms":reads.arms.len(),"logicalReads":reads.logical_reads}}));
+        let _context = w.profile_scope(||json!({"stage":"fused relational phase","phaseOutputs":self.outputs.iter().map(|o|&o.table).collect::<Vec<_>>(),"publication":self.outputs.iter().map(|o|json!({"table":o.table,"previous_rows":o.old.len(),"strategy":if o.old.len()==0{"bulk empty root"}else if matches!(o.keys,Keys::Replace){"bulk replacement"}else{"validated patch; affected-key density selects bulk rebuilding"}})).collect::<Vec<_>>(),"logicalAnalyses":self.analyses,"outputProtocol":{"sqlArms":reads.arms.len(),"logicalReads":reads.logical_reads,"dependencyExpansionCost":self.expansion_cost()}}));
         // Delta-first CROSS JOINs and primary-key probes fix the sparse access
         // paths. Reuse preparation across wave scopes while xFilter reads their
         // current immutable roots; rows and expressions are never cached here.
@@ -226,10 +280,11 @@ impl Phase {
                         ("definitions".into(), self.definitions.len() as i64),
                         ("output_arms".into(), reads.arms.len() as i64),
                         ("logical_reads".into(), reads.logical_reads as i64),
+                        ("dependency_expansion_cost".into(), self.expansion_cost().min(i64::MAX as usize) as i64),
                     ],
                 )
             });
-            let prepared = w.db.prepare_cached(&sql).map_err(error);
+            let prepared = w.db.prepare_cached(&sql).map_err(|e|error(format!("{e}; dependency expansion cost {}, definitions {}, result arms {}",self.expansion_cost(),self.definitions.len(),reads.arms.len())));
             if let Some(operation) = operation {
                 operation.finish_unobserved();
             }

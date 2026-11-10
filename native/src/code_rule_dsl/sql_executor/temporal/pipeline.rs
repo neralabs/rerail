@@ -11,7 +11,7 @@ pub(super) struct Pipeline {
 impl Pipeline {
     // SQLite expands CTE references during preparation even behind materialized
     // fences. Bound dependent incremental graphs separately from result arms.
-    pub const MAX_DEPTH: usize = 4;
+    pub const MAX_DEPTH: usize = 3;
     pub fn depth(&self, inputs: &BTreeSet<String>) -> usize {
         inputs.iter().filter_map(|r| self.depths.get(r)).copied().max().unwrap_or(0)
     }

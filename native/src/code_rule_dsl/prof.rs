@@ -45,12 +45,58 @@ fn process_cpu() -> Duration {
 }
 
 /// The process's CPU time so far (user + sys).
-#[cfg(not(target_family = "wasm"))]
+#[cfg(unix)]
 fn process_cpu() -> Duration {
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let time = |t: libc::timeval| Duration::from_secs(t.tv_sec as u64) + Duration::from_micros(t.tv_usec as u64);
     time(usage.ru_utime) + time(usage.ru_stime)
+}
+
+/// The process's CPU time so far (user + kernel).
+#[cfg(windows)]
+fn process_cpu() -> Duration {
+    let (user, kernel) = windows_cpu(false);
+    user + kernel
+}
+
+/// Windows: the (user, kernel) CPU time of the calling thread (`thread`) or of the process, from
+/// `GetThreadTimes` / `GetProcessTimes`; zero if the call fails.
+#[cfg(windows)]
+pub(crate) fn windows_cpu(thread: bool) -> (Duration, Duration) {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, GetProcessTimes, GetThreadTimes};
+    let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: the pseudo-handles name the calling thread and process, and every out-pointer is a FILETIME.
+    let got = unsafe {
+        if thread {
+            GetThreadTimes(GetCurrentThread(), &mut created, &mut exited, &mut kernel, &mut user)
+        } else {
+            GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut kernel, &mut user)
+        }
+    };
+    if got == 0 {
+        return (Duration::ZERO, Duration::ZERO);
+    }
+    // FILETIME counts 100 ns ticks.
+    let time = |t: FILETIME| Duration::from_nanos(((u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime)) * 100);
+    (time(user), time(kernel))
+}
+
+/// Windows: the process's peak working set (its resident high-water mark), in bytes; 0 if the call fails.
+#[cfg(windows)]
+pub(crate) fn windows_peak_working_set() -> u64 {
+    use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    // SAFETY: PROCESS_MEMORY_COUNTERS is plain integers, so all-zero is valid.
+    let mut counters = unsafe { std::mem::zeroed::<PROCESS_MEMORY_COUNTERS>() };
+    counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    // SAFETY: the pseudo-handle names this process, and `cb` is the size of the struct written.
+    if unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) } == 0 {
+        return 0;
+    }
+    counters.PeakWorkingSetSize as u64
 }
 
 /// Prints the stages' times under `title` and clears them.
@@ -132,13 +178,15 @@ pub(in crate::code_rule_dsl) fn peak(stage: &str) {
         // No resident-set counter on wasm32: its peak reads 0.
         #[cfg(target_family = "wasm")]
         let mb = 0;
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(unix)]
         let mb = {
             let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
             unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
             // macOS reports bytes; Linux, kilobytes.
             if cfg!(target_os = "macos") { usage.ru_maxrss as usize >> 20 } else { usage.ru_maxrss as usize >> 10 }
         };
+        #[cfg(windows)]
+        let mb = (windows_peak_working_set() >> 20) as usize;
         let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let entry = stages.entry(format!("peak_mb.{stage}")).or_default();
         entry.1 = entry.1.max(mb);

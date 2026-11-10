@@ -1,13 +1,39 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl bool_args(g: node)
+.decl bool_counted(g: node, c: node)
+.decl bool_field(s: symbol)
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, field, text, line, syntax_error
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl or_empty_ctor(s: symbol)
+.decl or_empty_field(s: symbol)
+.decl or_empty_left(n: node)
+.decl or_empty_right(r: node)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, text, line, syntax_error, child, op, value, value_type_of, node_text
+.output violation
+bool_field("auxiliary_query").
+bool_field("relation_role").
+bool_field("source_tables").
+or_empty_ctor("dict").
+or_empty_ctor("frozenset").
+or_empty_ctor("list").
+or_empty_ctor("set").
+or_empty_ctor("tuple").
+or_empty_field("auxiliary_query").
+or_empty_field("relation_role").
+or_empty_field("source_tables").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -22,5 +48,15 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
-violation("data-layer-unknown-contract-defaults", "not", "UNKNOWN_AS_FALSY", p, l) :- node(_, n, "not_operator", _, _), field(n, "argument", v3), node(_, v3, "attribute", _, _), field(v3, "attribute", v4), node(_, v4, "identifier", _, _), text(v4, v5), (v5 = "auxiliary_query" ; v5 = "relation_role" ; v5 = "source_tables"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+violation("data-layer-unknown-contract-defaults", "not", "UNKNOWN_AS_FALSY", p, l) :- node(_, n, "not_operator", _, _), field(n, "argument", v1), node(_, v1, "attribute", _, _), field(v1, "attribute", v2), node(_, v2, "identifier", _, _), text(v2, v3), (v3 = "auxiliary_query" ; v3 = "relation_role" ; v3 = "source_tables"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+or_empty_left(n) :- node(_, n, "boolean_operator", _, _), op(n, "or"), field(n, "left", a), node(_, a, "attribute", _, _), field(a, "attribute", x), node(_, x, "identifier", _, _), text(x, s), or_empty_field(s).
+or_empty_right(r) :- node(_, r, "tuple", _, _), node_text(r, s), match("\\((?:\\s|#[^\\n]*(?:\\n|$))*\\)", s).
+or_empty_right(r) :- node(_, r, "list", _, _), node_text(r, s), match("\\[(?:\\s|#[^\\n]*(?:\\n|$))*\\]", s).
+or_empty_right(r) :- node(_, r, "dictionary", _, _), node_text(r, s), match("\\{(?:\\s|#[^\\n]*(?:\\n|$))*\\}", s).
+or_empty_right(r) :- node(_, r, "string", _, _), value(r, ""), value_type_of(r, "str").
+or_empty_right(r) :- node(_, r, "call", _, _), field(r, "function", f), node(_, f, "identifier", _, _), text(f, s), or_empty_ctor(s), field(r, "arguments", g), node_text(g, t), match("\\((?:\\s|#[^\\n]*(?:\\n|$))*\\)", t).
+violation("data-layer-unknown-contract-defaults", "or-empty", "UNKNOWN_DEFAULTED", p, l) :- or_empty_left(n), field(n, "right", r), or_empty_right(r), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+bool_counted(g, c) :- node(_, x, "call", _, _), field(x, "arguments", g), child(g, c, _), !node(_, c, "keyword_argument", _, _).
+bool_args(g) :- node(_, x, "call", _, _), field(x, "arguments", g), child(g, a, _), node(_, a, "attribute", _, _), field(a, "attribute", y), node(_, y, "identifier", _, _), text(y, s), bool_field(s), k = count : { bool_counted(g, _) }, k = 1.
+violation("data-layer-unknown-contract-defaults", "bool", "UNKNOWN_AS_FALSY", p, l) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "identifier", _, _), text(f, "bool"), field(n, "arguments", g), bool_args(g), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

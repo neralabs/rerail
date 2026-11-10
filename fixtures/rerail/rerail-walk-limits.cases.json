@@ -1,0 +1,86 @@
+{
+  "caught": [
+    {
+      "path": "src/engine/code-rule/code-rule-bridge.ts",
+      "content": "import { readGitBlobs } from \"../git.js\";\nimport { sourceLanguageOfPath } from \"./code-rule-languages.js\";\n\n\nconst MAX_SOURCE_BYTES = 1_000_000;\n/** Paths observed per wave; on network or virtualised mounts each lstat/read is a round trip, so latency, not bandwidth, bounds the walk. */\nconst OBSERVATION_CONCURRENCY = 16;\nconst IGNORED_DIRECTORIES = new Set([\n  \".git\", \".hg\", \".svn\", \".rerail\", \".venv\", \"__pycache__\", \"node_modules\", \"dist\", \"build\", \".next\",\n  \".turbo\", \"coverage\", \"target\", \"vendor\",\n]);\n"
+    },
+    {
+      "path": "src/cli/rule-draft.ts",
+      "content": "import { IGNORED_DIRECTORIES, languageFor } from \"../engine/code-rule/code-rule-enforcer.js\";\n\n/** How many repository matches the report shows; the count covers every match. */\nconst REPOSITORY_EXAMPLES = 5;\n/** The same bounds a repository scan walks with. */\nconst REPOSITORY_MAX_FILES = 100_000;\nconst REPOSITORY_MAX_FILE_BYTES = 32_000_000;\nconst REPOSITORY_MAX_SOURCE_BYTES = 512 * 1024 * 1024;\n"
+    },
+    {
+      "path": "src/engine/catalog/eslint-record.ts",
+      "content": "/** The host's ignored directories. */\nconst IGNORED = new Set([\".git\", \".hg\", \".svn\", \".rerail\", \".venv\", \"__pycache__\", \"node_modules\", \"dist\", \"build\", \".next\", \".turbo\", \"coverage\", \"target\", \"vendor\"]);\n"
+    },
+    {
+      "path": "src/engine/catalog/package-walk.ts",
+      "content": "for (const entry of await readdir(folder, { withFileTypes: true })) {\n  if (entry.isDirectory() && (entry.name === \"node_modules\" || entry.name.startsWith(\".\"))) continue;\n  pending.push(join(folder, entry.name));\n}\n"
+    },
+    {
+      "path": "src/engine/audit/skipped-folders.ts",
+      "content": "const SKIPPED: readonly string[] = ['dist', 'build', 'node_modules'];\nconst SKIPPED_FOLDER = /^(?:node_modules|dist|\\.git)$/u;\n"
+    },
+    {
+      "path": "src/engine/native/index-options.ts",
+      "content": "export const options = {\n  maxFiles: 100_000,\n  maxSourceBytes: 512 * 1024 * 1024,\n  maxFileBytes: 32_000_000,\n};\n"
+    },
+    {
+      "path": "src/engine/audit/walk-budget.ts",
+      "content": "const WALK_FILE_LIMIT: number = 100000;\nconst SOURCE_BYTES_BUDGET = 536_870_912;\n"
+    },
+    {
+      "path": "src/engine/audit/folder-switch.ts",
+      "content": "switch (entry.name) {\n  case \"node_modules\":\n  case \".git\":\n    continue;\n}\n"
+    },
+    {
+      "path": "src/engine/audit/walk-caps.ts",
+      "content": "const REPOSITORY_FILE_CAP = 100_000;\nconst SOURCE_BYTES_CEILING = 512 << 20;\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/engine/catalog/rule-pack-matcher.ts",
+      "content": "import { IGNORED_DIRECTORIES } from \"../code-rule/code-rule-enforcer.js\";\n\nfor (const entry of readableEntries(directory)) {\n  const path = join(directory, entry.name);\n  if (entry.isFile()) files.push(relative(root, path).split(sep).join(\"/\"));\n  else if (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name) && !FIXTURE_DIRECTORIES.has(entry.name)) pending.push(path);\n}\n"
+    },
+    {
+      "path": "src/cli/setup-cli.ts",
+      "content": "/** What npm and the rule pack store put in the packs prefix, with the lock a pack change holds. */\nconst RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set([\"node_modules\", \"package.json\", \"package-lock.json\", \"staging\", \".lock\"]);\n"
+    },
+    {
+      "path": "src/engine/catalog/eslint-flat-config.ts",
+      "content": "const MAX_STEPS = 100_000;\nconst MAX_VALUES = 100_000;\n"
+    },
+    {
+      "path": "src/engine/catalog/repository-lint-config.ts",
+      "content": "const MAX_CONFIG_BYTES = 1024 * 1024;\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-catalog.ts",
+      "content": "return join(installedPacksPrefix(home), \"node_modules\", \"@neralabs\");\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-enforcer.ts",
+      "content": "const AUDIT_MAX_FILES = 100_000;\nexport const IGNORED_DIRECTORIES = new Set([\n  \".git\",\n  \"node_modules\",\n  \"__pycache__\",\n]);\n"
+    },
+    {
+      "path": "test/engine/code-rule/walk.test.ts",
+      "content": "const ignored = new Set([\"node_modules\", \"dist\"]);\n"
+    },
+    {
+      "path": "src/engine/catalog/dependency-path.ts",
+      "content": "const inDependency = path.split(\"/\").some(segment => segment === \"node_modules\");\n"
+    },
+    {
+      "path": "src/engine/catalog/bracket-scan.ts",
+      "content": "if (text.startsWith(\"[\")) parts.push(join(root, \"node_modules\"), join(root, \"dist\"));\n"
+    },
+    {
+      "path": "src/engine/catalog/transcript-lines.ts",
+      "content": "const MAX_LINES_PER_FILE = 100_000;\n"
+    },
+    {
+      "path": "src/engine/audit/walk-report.ts",
+      "content": "report(entry.name === \"node_modules\", verbose && kind === \"build\");\n"
+    }
+  ]
+}

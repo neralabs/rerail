@@ -91,8 +91,7 @@ pub(super) fn fields(db: &rusqlite::Connection, r: &Rel) -> Result<Vec<String>> 
         .prepare(&format!("SELECT * FROM {} LIMIT 0", r.render()))
         .map_err(error)?
         .column_names()
-        .iter()
-        .map(|s| s.to_string())
+        .map(str::to_owned)
         .collect())
 }
 /// A delta has positional columns even when the original source exposes native column names.

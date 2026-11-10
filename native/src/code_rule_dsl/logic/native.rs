@@ -33,7 +33,8 @@ pub(in crate::code_rule_dsl) mod extension;
 pub(in crate::code_rule_dsl) use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols};
 /// The set engine's component calls, made in process by the planner (no SQL statement each).
 pub(in crate::code_rule_dsl) mod component {
-    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, adopt, adopted, close, columns_source, derived, forget_derived, forget_inputs_of, held, live, materialize, open, pending, release, reprobe, run, step_counts, table_source, unindex};
+    pub(in crate::code_rule_dsl) use super::setfix::lab;
+    pub(in crate::code_rule_dsl) use super::setfix::{InRel, add, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_empty, live, materialize, open, pending, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe, run, step_counts, table_source, tables_built, unindex};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -364,14 +365,15 @@ unsafe impl VTabCursor for ResultCursor {
     fn next(&mut self) -> Result<()> { self.pos += 1; self.skip(); Ok(()) }
     fn eof(&self) -> bool { self.pos >= self.end }
     fn column(&self, ctx: &mut VContext, i: c_int) -> Result<()> {
-        if i == 0 { ctx.set_result(&self.vals.0[self.pos]) } else { ctx.set_result(&self.vals.1[self.pos]) }
+        if i == 0 { ctx.set_result(self.vals.0[self.pos]) } else { ctx.set_result(self.vals.1[self.pos]) }
     }
     fn rowid(&self) -> Result<i64> { Ok(self.pos as i64) }
 }
 
-/// Registers the functions and virtual tables on `db`, `atoms` and the store's commit hook among them (decision 0049).
+/// Registers the functions and virtual tables on `db`, `atoms` among them (decision 0049; its opener registered the
+/// store's commit hook, `Atoms::install`).
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
-    crate::content_store::atoms::Atoms::install(db)?;
+    crate::content_store::atoms::Atoms::attach(db)?;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     db.create_scalar_function(c"flat_bin", 3, det, |ctx| {
         let o: String = ctx.get(0)?;

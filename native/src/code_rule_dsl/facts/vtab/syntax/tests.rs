@@ -33,7 +33,7 @@ pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
         .enumerate()
         .map(|(d, (path, source))| {
             let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None, module: None }
+            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
         })
         .collect()
 }
@@ -234,18 +234,27 @@ fn modules_and_packages_follow_t() {
     assert_eq!(module("src/lib.rs"), "crate");
 }
 
-/// One document of `source` in `label`'s dialect, keyed `key`.
+/// One document of `source` in `label`'s dialect, keyed `key`, with its tape (W's values read it).
 fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
-    let Built::Facts(facts) = core::build(&file).unwrap() else { panic!("{path} did not parse") };
+    let Some((facts, tape)) = core::build_with_tape(&file).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
-    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, guest: None, module: None }
+    Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, file)), guest: None, module: None }
 }
 
-/// `core.rr`'s relations of `docs`, each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself.
+/// `core.rr`'s relations of `docs` for a program that includes `core.rr` and reads them (`Projection::of`'s shape
+/// and reads), each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself. The relations made
+/// for what a program reads are the batch's (`Extra`'s W's values, source lines and places, `tree`'s `op_at` and
+/// `visit_index`), the others `core_rr`'s.
 fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
     let store = ContentStore::open(&temp("core")).unwrap();
-    let sources = shaped(&store, docs, &Projection::core()).unwrap();
+    let reads = [
+        "node", "text", "comment", "op", "op_at", "str", "strprefix", "value", "value_type", "name", "spread", "next_sibling", "syntax_error",
+        "src_line", "line_count", "str_part", "first_token", "last_token", "token_before", "token_after", "child", "line", "end_line", "col",
+        "visit_index", "ast_depth",
+    ];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let sources = shaped(&store, docs, &projection).unwrap();
     let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
     let read = |name: &str| -> Vec<Vec<i64>> {
         let s = source(name);
@@ -413,9 +422,9 @@ fn within_holds_exactly_the_contained_pairs() {
     for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
         let path = format!("broken{at}.py");
         let facts = facts(&path, source);
-        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, guest: None, module: None });
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None });
     }
-    let (batch, _, _) = Batch::build(&store, docs, &Projection::default(), false).unwrap();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
     // (document, local, size, depth, start, end) of node row r.
@@ -468,7 +477,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     use crate::code_rule_dsl::facts::core::kind_atom;
     let store = ContentStore::open(&temp("axes")).unwrap();
     let docs: Vec<Document> = documents().into_iter().take(4).collect();
-    let (batch, _, _) = Batch::build(&store, docs, &Projection::default(), false).unwrap();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
     // (document, local, size) and kind atom of node row r.
@@ -560,9 +569,26 @@ fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     let ast = Projection { reads: Some(["syntax_error".into()].into()), ..Projection::core() };
     shaped(&store, vec![doc.clone()], &ast).unwrap();
     let verdict = doc.facts.python_syntax.get().expect("demanded verdict");
-    assert!(verdict.is_some());
+    assert!(matches!(verdict, Ok(Some(_))));
     shaped(&store, vec![doc.clone()], &ast).unwrap();
     assert!(std::ptr::eq(verdict, doc.facts.python_syntax.get().unwrap()), "the tape owns one shared verdict");
+}
+
+/// Where `ast.parse` raises no `SyntaxError` (a format spec's escape it cannot decode raises `UnicodeDecodeError`),
+/// W's worker fails its batch: so does a batch reading CPython's verdict or facts of that document.
+#[test]
+#[cfg(feature = "python-syntax-error")]
+fn a_raising_ast_parse_fails_the_batch() {
+    let store = ContentStore::open(&temp("python-raises")).unwrap();
+    for read in ["syntax_error", "cpython_syntax_error", "literal_json", "dump_sha256"] {
+        let doc = document(0, "a.py", "python", "x = f\"{y:\\x}\"\n");
+        let projection = Projection { reads: Some([read.into()].into()), ..Projection::core() };
+        let Err(error) = shaped(&store, vec![doc], &projection) else { panic!("{read}: the batch fails") };
+        assert!(error.to_string().contains("a.py: CPython's ast.parse raises UnicodeDecodeError: 'unicodeescape' codec"), "{read}: {error}");
+    }
+    let doc = document(0, "a.py", "python", "x = f\"{y:\\x}\"\n");
+    let text = Projection { reads: Some(["source".into(), "text".into()].into()), ..Projection::core() };
+    assert!(shaped(&store, vec![doc], &text).is_ok(), "a text read needs no verdict");
 }
 
 /// Literal values and positions are one demanded producer; a names-only rule must not build either table.
@@ -612,5 +638,23 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
         let has_text = |loc| (0..text.len()).any(|row| text.value(row, 0) == loc);
         assert_eq!(has_text(relation("source").value(0, 1)), source_needed, "source: {body}");
         assert_eq!(has_text(relation("src_line").value(0, 2)), line_needed, "line: {body}");
+    }
+}
+
+/// Node ids per definition (`DefIds`) stay below `SPAN`, the bit `Extra`'s span ids carry: with the most units a
+/// document may have, every slot (and the positions' `SPANS`) with its largest index is under bit 31, so no node's id
+/// equals a span's. One unit more is `Unnumbered::Units`, and the document keeps preorder ids.
+#[test]
+fn definition_slots_stay_below_the_span_bit() {
+    let keys: Vec<String> = std::iter::once(String::new()).chain((1..SPANS).map(|i| format!(".f{i}#0"))).collect();
+    assert_eq!(unit_slots(&keys), Err(Unnumbered::Units(SPANS as usize)));
+    let keys = &keys[..SPANS as usize - 1];
+    let slots = unit_slots(keys).unwrap();
+    assert_eq!(slots[0], 0);
+    assert_eq!(slots.iter().copied().collect::<BTreeSet<u32>>().len(), keys.len(), "slots are distinct");
+    let top = (1 << INDEX_BITS) - 1;
+    for slot in slots.into_iter().chain([SPANS]) {
+        assert!(slot <= SPANS, "slot {slot}");
+        assert_eq!((slot << INDEX_BITS | top) & SPAN, 0, "slot {slot}");
     }
 }

@@ -163,7 +163,7 @@ impl Names {
                 digest.update([0]);
             }
         }
-        let digest = format!("{:x}", digest.finalize())[..16].to_owned();
+        let digest = crate::lower_hex(&digest.finalize())[..16].to_owned();
         Self { dialect, catalog, kinds, digest }
     }
 
@@ -280,6 +280,10 @@ pub(super) fn block_rows(out: &mut String, at: usize, block: &block::BlockProgra
     let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     for (t, table) in block.tables.iter().enumerate() {
         let _ = writeln!(out, "  block {at} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
+    }
+    // `block N rows C P S`: a row program's columns, parameters and sets (`block::RowShape`).
+    if let Some(shape) = block.rows {
+        let _ = writeln!(out, "  block {at} rows {} {} {}", shape.columns, shape.params, shape.sets);
     }
     for (value, op) in block.ops.iter().enumerate() {
         let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
@@ -701,6 +705,10 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             let f: u16 = line.number("#")?;
             parts.readings.provisional.push(f);
         }
+        "extra" => {
+            let k: u16 = line.number("#")?;
+            parts.readings.extras.push(k);
+        }
         "long" => {
             index(line, parts.longs.len(), "long")?;
             parts.longs.push(line.number("")?);
@@ -786,6 +794,13 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
                     program.output_delays.resize(k, u8::MAX);
                     program.output_delays.push(own.unwrap_or(u8::MAX));
                 }
+            } else if first == "rows" {
+                // `block N rows C P S`: a row program, before its operations.
+                if !program.ops.is_empty() || program.rows.is_some() {
+                    return Err(format!("block {at} rows after the operations"));
+                }
+                let (columns, params, sets): (u16, u16, u16) = (line.number("")?, line.number("")?, line.number("")?);
+                program.rows = Some(block::RowShape { columns, params, sets });
             } else if first == "delay" {
                 // `block N delay D`: the outputs are D bytes late (`block::BlockProgram::delay`).
                 let d: u64 = line.number("")?;
@@ -1109,7 +1124,7 @@ pub(super) fn switch_rows(out: &mut String, at: usize, s: &stream::ByteSwitch) {
 }
 
 /// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,
-/// `reading N field #F as #G`; then `provisional #F`.
+/// `reading N field #F as #G`; then `provisional #F`; then `extra #K`, the extras' kinds.
 pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
     use std::fmt::Write as _;
     for (at, r) in readings.maps.iter().enumerate() {
@@ -1132,6 +1147,9 @@ pub(super) fn reading_rows(out: &mut String, readings: &stream::Readings) {
     }
     for f in &readings.provisional {
         let _ = writeln!(out, "  provisional #{f}");
+    }
+    for k in &readings.extras {
+        let _ = writeln!(out, "  extra #{k}");
     }
 }
 

@@ -197,11 +197,13 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
     Some((f.text(id).to_owned(), Placement::Copied { delta: i64::from(start), within: node }))
 }
 
-/// The guests' makers' state for one chunk: the run's language, the hosts' numberings, the guests made, and the keys
-/// taken.
+/// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
+/// the keys taken.
 #[derive(Default)]
 pub(super) struct Guests {
     run: &'static str,
+    /// The run's projection: its node ids are what requests name (`syntax::numbering`).
+    shape: syntax::Shape,
     numbering: HashMap<u32, syntax::Numbering>,
     made: HashSet<(i64, String)>,
     asked: HashSet<Request>,
@@ -217,9 +219,9 @@ pub(super) struct Guests {
 }
 
 impl Guests {
-    /// For a run over `run`'s files (a dialect label).
-    pub(super) fn new(run: &'static str) -> Self {
-        Self { run, ..Self::default() }
+    /// For a run over `run`'s files (a dialect label) in `shape`.
+    pub(super) fn new(run: &'static str, shape: syntax::Shape) -> Self {
+        Self { run, shape, ..Self::default() }
     }
 
     /// Each value document's files.
@@ -316,6 +318,7 @@ impl Guests {
             core: format!("{}#guest:{grammar_name}:{at}", host.core),
             digest: core::digest(&facts),
             facts: Arc::new(facts),
+            tape: None,
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
         }))
@@ -344,6 +347,7 @@ impl Guests {
             core: format!("#value:{grammar_name}:{key}"),
             digest: core::digest(&facts),
             facts: Arc::new(facts),
+            tape: None,
             guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
             // A value is no module's: its text is a rule's, not a file's.
             module: None,
@@ -382,7 +386,7 @@ impl Guests {
 
     fn numbering(&mut self, host: &Document) -> Result<&syntax::Numbering, String> {
         if !self.numbering.contains_key(&host.key) {
-            let ids = syntax::numbering(host).map_err(|e| e.to_string())?;
+            let ids = syntax::numbering(host, self.shape).map_err(|e| e.to_string())?;
             self.numbering.insert(host.key, ids);
         }
         Ok(&self.numbering[&host.key])

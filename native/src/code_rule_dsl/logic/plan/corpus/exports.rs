@@ -75,6 +75,11 @@ impl Exports {
         added
     }
 
+    /// How many rows export `rel` holds.
+    pub(super) fn len(&self, rel: &str) -> usize {
+        self.rels.get(rel).map_or(0, |h| h.source.as_ref().map_or_else(|| h.len(), |s| s.len()))
+    }
+
     /// Export `rel`'s rows so far, copied, as a source of columns `c0…`: for a reader that starts while chunks may
     /// still add (the cone of requests, decision 0065 §2a, whose loads go through the chunk path).
     pub(super) fn snapshot(&self, rel: &str, width: usize) -> Arc<dyn Source> {
@@ -85,6 +90,17 @@ impl Exports {
             _ => vec![Some(Vec::new()); width],
         };
         crate::code_rule_dsl::logic::native::component::columns_source(names, values)
+    }
+
+    /// Each of export `rel`'s rows held so far, read where it is held (`width` columns).
+    pub(super) fn each_row(&self, rel: &str, width: usize, mut f: impl FnMut(Vec<i64>)) {
+        match self.rels.get(rel) {
+            Some(Held { source: Some(s), .. }) => (0..s.len()).for_each(|r| f((0..width).map(|c| s.value(r, c)).collect())),
+            Some(Held { source: None, columns, .. }) if columns.len() >= width => {
+                (0..columns.first().map_or(0, Vec::len)).for_each(|r| f(columns[..width].iter().map(|col| col[r]).collect()))
+            }
+            _ => {}
+        }
     }
 
     /// Export `rel`'s rows held so far whose column `at` is a node of one of `documents` (`memo::document_of`):

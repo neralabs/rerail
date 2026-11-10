@@ -116,11 +116,11 @@ fn versioned_reducer_state_matches_fresh_sql_across_sparse_edits_and_forks() {
         let report = maintenance::maintain(&mut work, &mut run, &mut changes, 1024).unwrap();
         assert_eq!(report["refreshed_strata"], json!([]));
         assert!(report["context_rows"].as_u64().unwrap() < 3);
-        let actual = super::super::tests::rows(&engine, "SELECT * FROM result WHERE c0=16");
-        let expected = super::super::tests::rows(
-            &engine,
-            "SELECT 16,count(*),sum(v),min(v),max(v) FROM event WHERE g=17 HAVING count(*)>0",
-        );
+        // Read without `query`, whose step budget needs the connection mutably: `work` borrows it.
+        let actual = engine.verification_rows("SELECT * FROM result WHERE c0=16").unwrap();
+        let expected = engine
+            .verification_rows("SELECT 16,count(*),sum(v),min(v),max(v) FROM event WHERE g=17 HAVING count(*)>0")
+            .unwrap();
         assert_eq!(actual, expected);
         assert!(saved.same(&native.version("saved_heads")));
         assert!(fork_before.same(&native.version("fork_result")));

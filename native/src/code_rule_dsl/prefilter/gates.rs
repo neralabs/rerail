@@ -80,10 +80,123 @@ impl Gate {
     }
 }
 
+/// The most conjunctions a gate's disjunctive form may have for the bit product; a gate past it keeps the set form.
+const MAX_CONJUNCTS: usize = 256;
+
+impl Gate {
+    /// The gate as a disjunction of conjunctions of terms: `Some(None)` for every file, `None` when it has more than
+    /// `MAX_CONJUNCTS`. Its files are then the uncovered files and every file holding all of some conjunction's terms:
+    /// a term's files include the uncovered ones, and intersection and union distribute over them.
+    fn dnf(&self) -> Option<Option<Vec<Vec<&str>>>> {
+        match self {
+            Gate::All => Some(None),
+            Gate::Term(term) => Some(Some(vec![vec![term.as_str()]])),
+            Gate::And(gates) => {
+                let mut all: Option<Vec<Vec<&str>>> = None;
+                for gate in gates {
+                    let Some(part) = gate.dnf()? else { continue };
+                    all = Some(match all {
+                        None => part,
+                        Some(left) => {
+                            if left.len() * part.len() > MAX_CONJUNCTS {
+                                return None;
+                            }
+                            left.iter().flat_map(|a| part.iter().map(move |b| a.iter().chain(b).copied().collect())).collect()
+                        }
+                    });
+                }
+                Some(all)
+            }
+            Gate::Or(gates) => {
+                let mut all = Vec::new();
+                for gate in gates {
+                    let Some(part) = gate.dnf()? else { return Some(None) };
+                    all.extend(part);
+                    if all.len() > MAX_CONJUNCTS {
+                        return None;
+                    }
+                }
+                Some(Some(all))
+            }
+        }
+    }
+}
+
+/// Each gate's files, as `Gate::files` gives them, by the `bit product` form (decision 0098 §1): the batch's files as
+/// rows of bits over the gates' terms, against the gates' conjunctions as rows of bits, each pair kept when the file
+/// has all of the conjunction's terms (`min`, the conjunction's size). One launch for every plan of the batch, placed
+/// by the run's executor; the conjunctions are a fixed relation (the pack's rules), which the Neural Engine holds as
+/// its model's constant. A gate whose disjunctive form is too large keeps the set form. `RERAIL_PREFILTER_BITS=off`:
+/// the set form for every gate.
+fn bit_files(gates: &[Gate], term_files: &BTreeMap<&str, BTreeSet<i64>>, uncovered: &BTreeSet<i64>, batch: &BTreeSet<i64>) -> Vec<Option<BTreeSet<i64>>> {
+    let forms: Vec<Option<Option<Vec<Vec<&str>>>>> = if std::env::var("RERAIL_PREFILTER_BITS").is_ok_and(|v| v == "off") {
+        vec![None; gates.len()]
+    } else {
+        gates.iter().map(Gate::dnf).collect()
+    };
+    let conjuncts: Vec<(usize, BTreeSet<&str>)> =
+        forms.iter().enumerate().filter_map(|(g, f)| Some((g, f.as_ref()?.as_ref()?))).flat_map(|(g, d)| d.iter().map(move |c| (g, c.iter().copied().collect()))).collect();
+    let mut by_bits: Vec<Option<BTreeSet<i64>>> = vec![None; gates.len()];
+    if !conjuncts.is_empty() {
+        let terms: BTreeMap<&str, usize> = conjuncts.iter().flat_map(|(_, c)| c.iter().copied()).collect::<BTreeSet<_>>().into_iter().enumerate().map(|(i, t)| (t, i)).collect();
+        let files: Vec<i64> = batch.iter().copied().collect();
+        let row_of: BTreeMap<i64, usize> = files.iter().enumerate().map(|(i, &f)| (f, i)).collect();
+        let words = terms.len().div_ceil(64);
+        let mut a = vec![0u64; files.len() * words];
+        for (term, &col) in &terms {
+            for file in term_files.get(term).into_iter().flatten() {
+                if let Some(&row) = row_of.get(file) {
+                    a[row * words + col / 64] |= 1 << (col % 64);
+                }
+            }
+        }
+        let mut b = vec![0u64; conjuncts.len() * words];
+        for (j, (_, c)) in conjuncts.iter().enumerate() {
+            for t in c {
+                let col = terms[t];
+                b[j * words + col / 64] |= 1 << (col % 64);
+            }
+        }
+        let min: Vec<u32> = conjuncts.iter().map(|(_, c)| c.len() as u32).collect();
+        let k = rerail_accel::Kernel::BitProduct {
+            a: rerail_accel::Bits::new(files.len(), words, a),
+            b: rerail_accel::Bits::new(conjuncts.len(), words, b).fixed(),
+            min: Some(min.into()),
+        };
+        let lanes = crate::code_rule_dsl::logic::lanes::executor();
+        match lanes.run(rerail_accel::Batch(vec![rerail_accel::Launch::new(k)])) {
+            Ok((mut done, _)) => {
+                crate::code_rule_dsl::prof::count("gates.bit_product", 1);
+                let rerail_accel::Output::Pairs(pairs) = done.remove(0).out else { unreachable!("a bit product with min gives pairs") };
+                for (g, _) in &conjuncts {
+                    by_bits[*g] = Some(uncovered.clone());
+                }
+                for (i, j) in pairs {
+                    let g = conjuncts[j as usize].0;
+                    by_bits[g].as_mut().expect("its gate's set").insert(files[i as usize]);
+                }
+            }
+            // The set form is exact: a lane's failure leaves the gates to it, and is counted.
+            Err(_) => crate::code_rule_dsl::prof::count("gates.bit_product_failed", 1),
+        }
+    }
+    gates
+        .iter()
+        .zip(forms)
+        .zip(by_bits)
+        .map(|((gate, form), bits)| match (form, bits) {
+            (Some(None), _) => None,
+            (Some(Some(_)), Some(files)) => Some(files),
+            _ => gate.files(term_files, uncovered),
+        })
+        .collect()
+}
+
 /// `plan`'s gate under `statistics`.
 fn gate(plan: &AnchorPlan, lang: u32, statistics: &Statistics, seen: &mut HashSet<usize>) -> Gate {
     match &plan.condition {
-        Condition::Always | Condition::Text { .. } | Condition::Not(_) => Gate::All,
+        // A root gate (main's `Condition::RootGate`) is every root of its scope away from the file's root: no gate.
+        Condition::Always | Condition::Text { .. } | Condition::Not(_) | Condition::RootGate { .. } => Gate::All,
         Condition::Pattern(required) if required.is_empty() => Gate::All,
         Condition::Pattern(required) => match &required[statistics.choose(lang, required).0].value {
             Required::Terminal(_, term) => Gate::Term(term.clone()),
@@ -140,6 +253,10 @@ fn identity(plan: &AnchorPlan, lang: u32) -> PlanId {
                 walk(inner, hash, seen);
             }
             Condition::Utility(_) => hash.update(b"again"),
+            Condition::RootGate { kind, gated } => {
+                hash.update(format!("rootgate{kind}").as_bytes());
+                walk(gated, hash, seen);
+            }
         }
     }
     let mut hash = Sha256::new();
@@ -217,7 +334,7 @@ pub(super) fn select(db: &Connection, lang: u32, plans: &[&AnchorPlan], files: &
             }
         }
     }
-    let per_plan = gates.iter().map(|gate| gate.files(&term_files, &uncovered)).collect::<Vec<_>>();
+    let per_plan = bit_files(&gates, &term_files, &uncovered, &batch);
     let any = per_plan.iter().try_fold(BTreeSet::new(), |mut all, files| {
         all.extend(files.as_ref()?);
         Some(all)
@@ -236,4 +353,40 @@ pub(super) fn observe(db: &Connection, gated: &Gated, candidates: &[usize], node
         crate::code_rule_dsl::stats::plans::observe(db, *id, backend, found as f64 / f64::from(nodes), ns_per_plan / roots)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bit product gives every gate the files the set form gives it: random gates of terms, over random files.
+    #[test]
+    fn the_bit_product_selects_the_set_forms_files() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let terms: Vec<String> = (0..12).map(|t| format!("t{t}")).collect();
+        fn make(depth: u32, terms: &[String], next: &mut dyn FnMut(u64) -> u64) -> Gate {
+            match if depth == 0 { 0 } else { next(4) } {
+                0 | 1 => if next(10) == 0 { Gate::All } else { Gate::Term(terms[next(terms.len() as u64) as usize].clone()) },
+                2 => Gate::And((0..1 + next(3)).map(|_| make(depth - 1, terms, next)).collect()),
+                _ => Gate::Or((0..1 + next(3)).map(|_| make(depth - 1, terms, next)).collect()),
+            }
+        }
+        let gates: Vec<Gate> = (0..200).map(|_| make(3, &terms, &mut next)).collect();
+        let batch: BTreeSet<i64> = (0..300).collect();
+        let mut term_files: BTreeMap<&str, BTreeSet<i64>> = BTreeMap::new();
+        for t in &terms {
+            term_files.insert(t.as_str(), batch.iter().copied().filter(|_| next(3) == 0).collect());
+        }
+        let uncovered: BTreeSet<i64> = batch.iter().copied().filter(|_| next(20) == 0).collect();
+        let want: Vec<Option<BTreeSet<i64>>> = gates.iter().map(|g| g.files(&term_files, &uncovered)).collect();
+        let got = bit_files(&gates, &term_files, &uncovered, &batch);
+        assert_eq!(got, want);
+        assert!(gates.iter().filter(|g| matches!(g.dnf(), Some(Some(_)))).count() > 100, "most gates take the bit product");
+    }
 }

@@ -1,0 +1,36 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-store-reads-in-documents",
+  "revision": 1,
+  "mode": "log",
+  "description": "Read a stored file's source or tape only through the workspace document contract, not by calling the content store from other engine code.",
+  "scope": {
+    "include": [
+      "native/src/**/*.rs"
+    ],
+    "exclude": [
+      "native/src/content_store/**",
+      "native/src/*/workspace/documents.rs",
+      "**/tests.rs",
+      "**/*_tests.rs",
+      "**/test_support.rs",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "store-content-read",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)^(?:[^/\\n]|/[^/\\n])*?(?:\\.|\\bContentStore::)(?:get_source\\(\\s*[^)\\s]|get_sources_bulk\\(|get_sources_by_hash_bulk\\(|get_tape\\(|get_tape_with_status\\(|get_tapes_bulk\\(|file_documents_bulk\\()",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "STORE_READ_OUTSIDE_DOCUMENTS",
+        "anchor": "witness.span",
+        "message": "Load this file's source or tape through a function in workspace/documents.rs, adding one there if none fits, instead of calling the store here. Leave the facts graph's own tape storage alone."
+      }
+    }
+  ]
+}

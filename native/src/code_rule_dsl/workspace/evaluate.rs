@@ -19,28 +19,33 @@ use crate::code_rule_dsl::eval::{
     WitnessError, document_matcher, file_language, grammar_matcher, witness_from_match,
     witnesses_from_match,
 };
+use crate::code_rule_dsl::import_target::ViewSlot;
+use crate::code_rule_dsl::import_target::fs::View;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::parsed_by_forte;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::{FileGates, FileScopeSlot, GrammarMatcher, UtilLimit};
 #[cfg(not(all(test, feature = "p-anchor-corpus")))]
-use crate::code_rule_dsl::matcher::{FileAnchorIndex, Selection};
+use crate::code_rule_dsl::matcher::{AnchorPlan, FileAnchorIndex, Selection};
 use crate::code_rule_dsl::model::{
     ClauseKind, CompiledCodeRule, FILE_BUDGET_EXCEEDED, FileInput, INPUT_LIMIT, Metrics, Query,
     RegexSource, WITNESS_LIMIT,
 };
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
-use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading, UNREAD};
+use crate::code_rule_dsl::scope::ScopeTable;
+use crate::code_rule_dsl::soundness::{SYNTAX_ERRORS, SyntaxErrors, SyntaxReading, UNREAD};
+use crate::code_rule_dsl::value::names;
 use crate::code_rule_dsl::violations::{Captures, Witness};
 use crate::code_rule_dsl::{query, tape, violations};
-use crate::content_store::HashKey;
+use crate::content_store::{CandidateCatalogIdentity, HashKey, StoredLocalResult};
 use crate::{WORK_POOL, WORKER_THREADS};
 use ast_grep_core::AstGrep as Root;
 use ast_grep_language::LanguageExt;
 use napi::Result;
 use rayon::prelude::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -186,153 +191,35 @@ pub(super) struct JobContext<'a> {
     /// P's anchor corpus (the `p-anchor-corpus` path, open item O20).
     #[cfg(all(test, feature = "p-anchor-corpus"))]
     pub(super) anchor_corpus: &'a Arc<crate::code_rule_dsl::matcher::Corpus>,
+    /// What import targets resolve among (`import_target::fs::View`), where a clause reads them.
+    pub(super) import_view: Option<&'a Arc<View>>,
+    /// The clauses that read import targets: their results are never stored.
+    pub(super) import_clauses: &'a HashSet<ClauseId>,
 }
 
 type Evaluated = Vec<(String, FileState, Result<Metrics>)>;
+
+/// The stored local results of an apply's files, by source hash and result context.
+type ResultManifest = HashMap<(HashKey, HashKey), Arc<Vec<StoredLocalResult>>>;
+
+/// What the store holds for an apply's jobs, read in one batch before any job runs.
+struct Prefetched {
+    result_manifest: ResultManifest,
+    stored_documents: documents::StoredDocuments,
+}
 
 /// Restores what the store holds for each job and evaluates the rest: serially for a few files,
 /// on the worker pool for more.
 #[cfg(not(all(test, feature = "p-anchor-corpus")))]
 pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<Evaluated> {
     let catalog = candidate_catalog(context.code_rules)?;
-    let result_manifest = match context.storage.filter(|_| REUSE_LOCAL_RESULTS) {
-        Some(storage) => {
-            let keys = jobs
-                .iter()
-                .map(|job| {
-                    (
-                        HashKey::from_sha256_digest(job.file.source_digest),
-                        result_context(&job.file),
-                    )
-                })
-                .collect::<Vec<_>>();
-            #[cfg(test)]
-            if TEST_STORAGE_PREFETCH_FAILURE.replace(false) {
-                return Err(invalid("injected local-result storage failure"));
-            }
-            storage
-                .store
-                .local_check_results_by_key(&keys, catalog)
-                .map_err(|error| invalid(error.to_string()))?
-        }
-        None => HashMap::new(),
-    };
-    // The storage contract's batch request: every job's stored source and tapes.
-    let stored_documents = match context.storage {
-        Some(storage) => {
-            let source_hashes = jobs
-                .iter()
-                .map(|job| HashKey::from_sha256_digest(job.file.source_digest))
-                .collect::<Vec<_>>();
-            documents::prefetch(&storage.store, &source_hashes)?
-        }
-        None => documents::StoredDocuments::default(),
+    let prefetched = Prefetched {
+        result_manifest: prefetch_results(jobs, context, catalog)?,
+        stored_documents: prefetch_documents(jobs, context)?,
     };
     let jobs = std::mem::take(jobs);
     let work = |job: Job, grammars: &mut BTreeMap<String, Arc<tape::Grammar>>| {
-        let Job {
-            path,
-            mut file,
-            consumes,
-            crossfile,
-        } = job;
-        let closed = context.closed;
-        let work = check_closed(closed).and_then(|()| {
-            #[cfg(feature = "code-rule-profile")]
-            let _worker_profile = profile::WorkerProfile::start();
-            let storage_started = Instant::now();
-            #[cfg(feature = "code-rule-profile")]
-            let _storage_read_timer = profile::PhaseTimer::start(profile::Phase::StoreRead);
-            if let Some(storage) = context.storage {
-                let source_hash = HashKey::from_sha256_digest(file.source_digest);
-                let result_key = (source_hash, result_context(&file));
-                let persisted = result_manifest
-                    .get(&result_key)
-                    .map(|results| results.as_slice());
-                if context.summarize {
-                    CrossFileScheduler::restore_summary(&mut file, persisted.unwrap_or_default());
-                }
-                restore_persisted_file(
-                    &stored_documents,
-                    storage.store.as_ref(),
-                    &mut file,
-                    grammars,
-                    context.code_rules,
-                    persisted,
-                    source_hash,
-                )?;
-                // A stored file whose source was dropped is read back only for an adapter
-                // consumer pass the store did not answer.
-                let unanswered = (!file.candidates.ast.is_empty() && !file.selector_skipped)
-                    || !file.candidates.regex.is_empty();
-                if unanswered && file.input.source.is_empty() && file.stored.is_some() {
-                    let stored = stored_documents
-                        .objects
-                        .get(&source_hash)
-                        .ok_or_else(|| invalid(format!("{path} is not in the store")))?;
-                    let source = storage
-                        .store
-                        .get_source(stored.source)
-                        .map_err(|error| invalid(error.to_string()))?;
-                    file.input.source = Arc::new(
-                        String::from_utf8(source)
-                            .map_err(|_| invalid(format!("stored {path} is not UTF-8")))?,
-                    );
-                }
-            }
-            #[cfg(feature = "code-rule-profile")]
-            drop(_storage_read_timer);
-            let storage_read_nanoseconds = storage_started.elapsed().as_nanos() as u64;
-            // The shared steps' budget grows with the file; each clause has its own allowance.
-            let budget = MatchBudget::work(closed, file_work_budget(file.input.source.len()));
-            let transient = file.transient_failure && crossfile.is_some();
-            // A consumers' pass, or a pass over the clauses the store did not answer, runs some of
-            // the file's clauses only.
-            let partial = crossfile.is_some() || !file.restored_result_ids.is_empty();
-            #[cfg(test)]
-            let consumer_budget = crossfile.is_some().then(|| {
-                super::TEST_CLAUSE_WORK_BUDGET.replace(
-                    super::TEST_CONSUMER_CLAUSE_WORK_BUDGET
-                        .get()
-                        .or(super::TEST_CLAUSE_WORK_BUDGET.get()),
-                )
-            });
-            let _consumer = CrossFileScheduler::install(crossfile);
-            let mut restored = None;
-            let evaluated = evaluate_file(
-                &mut file,
-                context.code_rules,
-                grammars,
-                closed,
-                partial,
-                &budget,
-                &mut restored,
-            );
-            #[cfg(test)]
-            if let Some(previous) = consumer_budget {
-                super::TEST_CLAUSE_WORK_BUDGET.set(previous);
-            }
-            let mut metrics = evaluated?;
-            // A consumers' pass after a transient evaluation of the file stays transient.
-            file.transient_failure |= transient;
-            if context.summarize {
-                CrossFileScheduler::summarize_file(
-                    &mut file,
-                    grammars,
-                    closed,
-                    &mut metrics,
-                    consumes,
-                    restored,
-                )?;
-                // The summary's own work spends the file's budget too: a summary it cut short is
-                // opaque, this workspace's alone.
-                file.transient_failure |= budget.shared_spent();
-            }
-            metrics.storage_read_nanoseconds = storage_read_nanoseconds;
-            Ok(metrics)
-        });
-        CrossFileScheduler::retain_scopes(&mut file, consumes);
-        (path, file, work)
+        run_job(job, grammars, context, &prefetched)
     };
     Ok(if jobs.len() < WORKER_THREADS {
         let mut grammars = BTreeMap::new();
@@ -348,15 +235,13 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     })
 }
 
-/// Restores what the store holds for each job and evaluates the rest: serially for a few files,
-/// on the worker pool for more.
-/// P's: every file's stored state is read first, then its document published to the anchor
-/// corpus and the corpus prepared for all rules, before workers consume any candidates (the
-/// `p-anchor-corpus` path, open item O20).
-#[cfg(all(test, feature = "p-anchor-corpus"))]
-pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<Evaluated> {
-    let catalog = candidate_catalog(context.code_rules)?;
-    let result_manifest = match context.storage.filter(|_| REUSE_LOCAL_RESULTS) {
+/// The stored local results of every job, where the store's results are reused.
+fn prefetch_results(
+    jobs: &[Job],
+    context: &JobContext<'_>,
+    catalog: CandidateCatalogIdentity,
+) -> Result<ResultManifest> {
+    Ok(match context.storage.filter(|_| REUSE_LOCAL_RESULTS) {
         Some(storage) => {
             let keys = jobs
                 .iter()
@@ -377,9 +262,15 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 .map_err(|error| invalid(error.to_string()))?
         }
         None => HashMap::new(),
-    };
-    // The storage contract's batch request: every job's stored source and tapes.
-    let stored_documents = match context.storage {
+    })
+}
+
+/// The storage contract's batch request: every job's stored source and tapes.
+fn prefetch_documents(
+    jobs: &[Job],
+    context: &JobContext<'_>,
+) -> Result<documents::StoredDocuments> {
+    Ok(match context.storage {
         Some(storage) => {
             let source_hashes = jobs
                 .iter()
@@ -388,55 +279,32 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
             documents::prefetch(&storage.store, &source_hashes)?
         }
         None => documents::StoredDocuments::default(),
+    })
+}
+
+/// Restores what the store holds for each job and evaluates the rest: serially for a few files,
+/// on the worker pool for more.
+/// P's: every file's stored state is read first, then its document published to the anchor
+/// corpus and the corpus prepared for all rules, before workers consume any candidates (the
+/// `p-anchor-corpus` path, open item O20).
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<Evaluated> {
+    let catalog = candidate_catalog(context.code_rules)?;
+    let prefetched = Prefetched {
+        result_manifest: prefetch_results(jobs, context, catalog)?,
+        stored_documents: prefetch_documents(jobs, context)?,
     };
     let mut storage_times = Vec::with_capacity(jobs.len());
     for job in jobs.iter_mut() {
-        let path = &job.path;
-        let file = &mut job.file;
         let storage_started = Instant::now();
         #[cfg(feature = "code-rule-profile")]
         let _storage_read_timer = profile::PhaseTimer::start(profile::Phase::StoreRead);
         if let Some(storage) = context.storage {
-            let source_hash = HashKey::from_sha256_digest(file.source_digest);
-            let result_key = (source_hash, result_context(file));
-            let persisted = result_manifest
-                .get(&result_key)
-                .map(|results| results.as_slice());
-            if context.summarize {
-                CrossFileScheduler::restore_summary(file, persisted.unwrap_or_default());
-            }
-            restore_persisted_file(
-                &stored_documents,
-                storage.store.as_ref(),
-                file,
-                &mut BTreeMap::new(),
-                context.code_rules,
-                persisted,
-                source_hash,
-            )?;
-            // A stored file whose source was dropped is read back only for an adapter
-            // consumer pass the store did not answer.
-            let unanswered = (!file.candidates.ast.is_empty() && !file.selector_skipped)
-                || !file.candidates.regex.is_empty();
-            if unanswered && file.input.source.is_empty() && file.stored.is_some() {
-                let stored = stored_documents
-                    .objects
-                    .get(&source_hash)
-                    .ok_or_else(|| invalid(format!("{path} is not in the store")))?;
-                let source = storage
-                    .store
-                    .get_source(stored.source)
-                    .map_err(|error| invalid(error.to_string()))?;
-                file.input.source = Arc::new(
-                    String::from_utf8(source)
-                        .map_err(|_| invalid(format!("stored {path} is not UTF-8")))?,
-                );
-            }
+            restore_job(&job.path, &mut job.file, &mut BTreeMap::new(), context, storage, &prefetched)?;
         }
         #[cfg(feature = "code-rule-profile")]
         drop(_storage_read_timer);
-        let storage_read_nanoseconds = storage_started.elapsed().as_nanos() as u64;
-        storage_times.push(storage_read_nanoseconds);
+        storage_times.push(storage_started.elapsed().as_nanos() as u64);
     }
     prepare_candidates(jobs, context)?;
     let jobs = std::mem::take(jobs);
@@ -448,66 +316,12 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
             consumes,
             crossfile,
         } = job;
-        let closed = context.closed;
         let _corpus =
             crate::code_rule_dsl::matcher::CorpusSlot::install(Arc::clone(context.anchor_corpus));
-        let work = check_closed(closed).and_then(|()| {
+        let work = check_closed(context.closed).and_then(|()| {
             #[cfg(feature = "code-rule-profile")]
             let _worker_profile = profile::WorkerProfile::start();
-            // The shared steps' budget grows with the file; each clause has its own allowance.
-            let budget = match file.prepared.as_mut().and_then(|p| p.context.take()) {
-                Some(context) => MatchBudget::resume(context),
-                None => MatchBudget::work(closed, file_work_budget(file.input.source.len())),
-            };
-            let preparation_metrics = file
-                .prepared
-                .as_mut()
-                .map(|p| std::mem::take(&mut p.metrics))
-                .unwrap_or_default();
-            let transient = file.transient_failure && crossfile.is_some();
-            // A consumers' pass, or a pass over the clauses the store did not answer, runs some of
-            // the file's clauses only.
-            let partial = crossfile.is_some() || !file.restored_result_ids.is_empty();
-            #[cfg(test)]
-            let consumer_budget = crossfile.is_some().then(|| {
-                super::TEST_CLAUSE_WORK_BUDGET.replace(
-                    super::TEST_CONSUMER_CLAUSE_WORK_BUDGET
-                        .get()
-                        .or(super::TEST_CLAUSE_WORK_BUDGET.get()),
-                )
-            });
-            let _consumer = CrossFileScheduler::install(crossfile);
-            let mut restored = None;
-            let evaluated = evaluate_file(
-                &mut file,
-                context.code_rules,
-                grammars,
-                closed,
-                partial,
-                &budget,
-                &mut restored,
-            );
-            #[cfg(test)]
-            if let Some(previous) = consumer_budget {
-                super::TEST_CLAUSE_WORK_BUDGET.set(previous);
-            }
-            let mut metrics = evaluated?;
-            metrics.merge(preparation_metrics);
-            // A consumers' pass after a transient evaluation of the file stays transient.
-            file.transient_failure |= transient;
-            if context.summarize {
-                CrossFileScheduler::summarize_file(
-                    &mut file,
-                    grammars,
-                    closed,
-                    &mut metrics,
-                    consumes,
-                    restored,
-                )?;
-                // The summary's own work spends the file's budget too: a summary it cut short is
-                // opaque, this workspace's alone.
-                file.transient_failure |= budget.shared_spent();
-            }
+            let mut metrics = evaluate_job(&mut file, consumes, crossfile, grammars, context)?;
             metrics.storage_read_nanoseconds = storage_read_nanoseconds;
             Ok(metrics)
         });
@@ -528,6 +342,206 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                 .collect()
         })
     })
+}
+
+/// Restores and evaluates one job's file unless the workspace closed, then keeps the scopes its
+/// consumers' pass reads.
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+fn run_job(
+    job: Job,
+    grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
+    context: &JobContext<'_>,
+    prefetched: &Prefetched,
+) -> (String, FileState, Result<Metrics>) {
+    let Job {
+        path,
+        mut file,
+        consumes,
+        crossfile,
+    } = job;
+    let work = check_closed(context.closed).and_then(|()| {
+        restore_and_evaluate(
+            &path, &mut file, consumes, crossfile, grammars, context, prefetched,
+        )
+    });
+    CrossFileScheduler::retain_scopes(&mut file, consumes);
+    (path, file, work)
+}
+
+/// Restores what the store holds for the job's file, then evaluates it.
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+fn restore_and_evaluate(
+    path: &str,
+    file: &mut FileState,
+    consumes: bool,
+    crossfile: Option<CrossFileConsumer>,
+    grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
+    context: &JobContext<'_>,
+    prefetched: &Prefetched,
+) -> Result<Metrics> {
+    #[cfg(feature = "code-rule-profile")]
+    let _worker_profile = profile::WorkerProfile::start();
+    let storage_started = Instant::now();
+    #[cfg(feature = "code-rule-profile")]
+    let _storage_read_timer = profile::PhaseTimer::start(profile::Phase::StoreRead);
+    if let Some(storage) = context.storage {
+        restore_job(path, file, grammars, context, storage, prefetched)?;
+    }
+    #[cfg(feature = "code-rule-profile")]
+    drop(_storage_read_timer);
+    let storage_read_nanoseconds = storage_started.elapsed().as_nanos() as u64;
+    let mut metrics = evaluate_job(file, consumes, crossfile, grammars, context)?;
+    metrics.storage_read_nanoseconds = storage_read_nanoseconds;
+    Ok(metrics)
+}
+
+/// Restores the call summary, results and documents the store holds for `file`, and reads back
+/// its source where a pass still needs it.
+fn restore_job(
+    path: &str,
+    file: &mut FileState,
+    grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
+    context: &JobContext<'_>,
+    storage: &StorageContext,
+    prefetched: &Prefetched,
+) -> Result<()> {
+    let source_hash = HashKey::from_sha256_digest(file.source_digest);
+    let result_key = (source_hash, result_context(file));
+    let persisted = prefetched
+        .result_manifest
+        .get(&result_key)
+        .map(|results| results.as_slice());
+    if context.summarize {
+        CrossFileScheduler::restore_summary(file, persisted.unwrap_or_default());
+    }
+    restore_persisted_file(
+        &prefetched.stored_documents,
+        storage.store.as_ref(),
+        file,
+        grammars,
+        context.code_rules,
+        persisted,
+        source_hash,
+    )?;
+    // A stored file whose source was dropped is read back only for an adapter consumer pass the
+    // store did not answer.
+    if needs_stored_source(file) {
+        let stored = prefetched
+            .stored_documents
+            .objects
+            .get(&source_hash)
+            .ok_or_else(|| invalid(format!("{path} is not in the store")))?;
+        file.input.source = Arc::new(documents::stored_source(&storage.store, stored, path)?);
+    }
+    Ok(())
+}
+
+/// Whether the store left some of `file`'s candidates unanswered and dropped its source.
+fn needs_stored_source(file: &FileState) -> bool {
+    let unanswered = (!file.candidates.ast.is_empty() && !file.selector_skipped)
+        || !file.candidates.regex.is_empty();
+    unanswered && file.input.source.is_empty() && file.stored.is_some()
+}
+
+/// Evaluates the job's file under its consumers' pass and the import view, then summarizes its
+/// calls.
+fn evaluate_job(
+    file: &mut FileState,
+    consumes: bool,
+    crossfile: Option<CrossFileConsumer>,
+    grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
+    context: &JobContext<'_>,
+) -> Result<Metrics> {
+    let closed = context.closed;
+    // The shared steps' budget grows with the file; each clause has its own allowance. A file
+    // prepared before the workers ran (the `p-anchor-corpus` path) goes on with its preparation's.
+    let budget = match file.prepared.as_mut().and_then(|p| p.context.take()) {
+        Some(context) => MatchBudget::resume(context),
+        None => MatchBudget::work(closed, file_work_budget(file.input.source.len())),
+    };
+    let preparation_metrics = file
+        .prepared
+        .as_mut()
+        .map(|p| std::mem::take(&mut p.metrics))
+        .unwrap_or_default();
+    let transient = file.transient_failure && crossfile.is_some();
+    // A consumers' pass, or a pass over the clauses the store did not answer, runs some of the
+    // file's clauses only.
+    let partial = crossfile.is_some() || !file.restored_result_ids.is_empty();
+    #[cfg(test)]
+    let consumer_budget = crossfile.is_some().then(|| {
+        super::TEST_CLAUSE_WORK_BUDGET.replace(
+            super::TEST_CONSUMER_CLAUSE_WORK_BUDGET
+                .get()
+                .or(super::TEST_CLAUSE_WORK_BUDGET.get()),
+        )
+    });
+    let _consumer = CrossFileScheduler::install(crossfile);
+    let _view = ViewSlot::install(context.import_view.cloned());
+    let mut restored = None;
+    let evaluated = evaluate_file(
+        file,
+        context.code_rules,
+        grammars,
+        closed,
+        partial,
+        &budget,
+        &mut restored,
+    );
+    #[cfg(test)]
+    if let Some(previous) = consumer_budget {
+        super::TEST_CLAUSE_WORK_BUDGET.set(previous);
+    }
+    let mut metrics = evaluated?;
+    metrics.merge(preparation_metrics);
+    mark_import_clauses_unstored(file, context.import_clauses);
+    // A consumers' pass after a transient evaluation of the file stays transient.
+    file.transient_failure |= transient;
+    summarize_calls(
+        file,
+        grammars,
+        context,
+        &mut metrics,
+        consumes,
+        restored,
+        &budget,
+    )?;
+    Ok(metrics)
+}
+
+/// What a target resolves to depends on more than the file: no store may answer it.
+fn mark_import_clauses_unstored(file: &mut FileState, import_clauses: &HashSet<ClauseId>) {
+    for id in &file.candidates.ast {
+        if import_clauses.contains(id) {
+            file.unstored.insert(*id);
+        }
+    }
+}
+
+/// Extracts the file's call summary where a code rule holds `calls` terms.
+fn summarize_calls(
+    file: &mut FileState,
+    grammars: &mut BTreeMap<String, Arc<tape::Grammar>>,
+    context: &JobContext<'_>,
+    metrics: &mut Metrics,
+    consumes: bool,
+    restored: Option<tape::TapeDoc>,
+    budget: &MatchBudget,
+) -> Result<()> {
+    if context.summarize {
+        CrossFileScheduler::summarize_file(
+            file,
+            grammars,
+            context.closed,
+            metrics,
+            consumes,
+            restored,
+        )?;
+        // The summary's own work spends the file's budget too: a summary it cut short is opaque,
+        // this workspace's alone.
+        file.transient_failure |= budget.shared_spent();
+    }
+    Ok(())
 }
 
 /// Evaluates `file`'s candidates. `restored` receives the document its AST clauses were read on,
@@ -612,16 +626,36 @@ pub(super) fn evaluate_file(
     for &id in &file.candidates.regex {
         let code_rule = &code_rules[id.0];
         let clause = &code_rule.clauses[id.1];
-        let ClauseKind::Forbid(Query::Regex {
-            regex,
-            source,
-            options,
-        }) = &clause.kind
-        else {
-            unreachable!()
-        };
         let witnesses = file.witnesses.entry(id).or_default();
         witnesses.clear();
+        let limits = &code_rule.capabilities.limits;
+        let (regex, source, options) = match &clause.kind {
+            ClauseKind::Forbid(Query::Regex {
+                regex,
+                source,
+                options,
+            }) => (regex, source, options),
+            // The file itself is the witness: no content is read, so no source cap applies.
+            ClauseKind::Forbid(Query::File) => {
+                if limits.max_files == 0 {
+                    file.failures
+                        .insert(id, (INPUT_LIMIT, "file input budget exceeded"));
+                } else if !file.failures.contains_key(&id) {
+                    witnesses.push(Witness {
+                        sql_violation: None,
+                        path: file.input.path.clone(),
+                        span: None,
+                        captures: Captures::default(),
+                        message: None,
+                        fix: None,
+                        ignored: false,
+                    });
+                    metrics.witnesses += 1;
+                }
+                continue;
+            }
+            _ => unreachable!("a regex candidate is a regex or file forbid"),
+        };
         if options
             .paths
             .as_ref()
@@ -629,7 +663,6 @@ pub(super) fn evaluate_file(
         {
             continue;
         }
-        let limits = &code_rule.capabilities.limits;
         if file.input.source.len() > limits.max_source_bytes || limits.max_files == 0 {
             file.failures
                 .insert(id, (INPUT_LIMIT, "file input budget exceeded"));
@@ -638,23 +671,23 @@ pub(super) fn evaluate_file(
         if file.failures.contains_key(&id) {
             continue;
         }
-        let haystack: &str = match source {
-            RegexSource::Content => &file.input.source,
-            RegexSource::Path => &file.input.path,
-        };
-        let path_lines = LineTable::new(&file.input.path, Terminators::Eslint);
-        let span = |start, end| match source {
-            RegexSource::Content => lines
-                .as_ref()
-                .expect("eligible content has line table")
-                .span(start, end),
-            RegexSource::Path => path_lines.span(start, end),
+        let (haystack, offset) = query::regex_haystack(source, &file.input);
+        // A path match lies in no source text: its witness has no span.
+        let span = |start: usize, end: usize| match source {
+            RegexSource::Content => Some(
+                lines
+                    .as_ref()
+                    .expect("eligible content has line table")
+                    .span(start + offset, end + offset),
+            ),
+            RegexSource::Path => None,
         };
         // Each clause scans under its own allowance, so one clause's matches spend none of
         // another's; the file's clause-work ceiling bounds them together.
         let Some(((matches, complete), ran)) = work.run(haystack.len(), || {
             query::regex_query_matches(
                 regex,
+                source,
                 haystack,
                 options,
                 limits.max_witnesses.saturating_add(1),
@@ -674,7 +707,7 @@ pub(super) fn evaluate_file(
             let context = &haystack[matched.context];
             let span = |start, end| {
                 let mut result = span(offset + start, offset + end);
-                if let Some(line) = matched.line {
+                if let (Some(line), Some(result)) = (matched.line, result.as_mut()) {
                     result.start_line = line;
                     result.end_line = line;
                     result.start_column = start;
@@ -1003,47 +1036,11 @@ fn evaluate_document(
     settled: &mut [bool],
 ) -> Result<()> {
     let errors = SyntaxErrors::of_doc(&doc);
-    if !errors.is_empty() {
-        match errors.reading(lines, file.input.source.len()) {
-            // No AST clause runs on a document the parser did not read, sound or not; the failure
-            // reports `file.syntax` in place of its static message (`results::failure_message`).
-            SyntaxReading::Unread(message) => {
-                // A whole-file syntax gate (`invalid_syntax`) reads the errors as content.
-                for &(slot, grammar) in slots {
-                    if grammar.invalid_syntax.is_none() {
-                        file.failures
-                            .entry(file.candidates.ast[slot])
-                            .or_insert(("source-incomplete", UNREAD));
-                    }
-                }
-                file.syntax.get_or_insert(message);
-            }
-            SyntaxReading::Partial(message) => {
-                file.syntax.get_or_insert(message);
-            }
-        }
-    }
+    record_syntax_reading(file, slots, &errors, lines);
     let root = Root::doc(doc.clone());
     // The gates' file facts are read once for the document, whichever candidate reads them.
     let gates = FileGates::new(&file.input, root.root());
-    for &(slot, grammar) in slots {
-        let id = file.candidates.ast[slot];
-        // A clause reads around its document's errors, or, crossing to the file's other document,
-        // every document's. A file the query's file gates exclude matches nothing, errors or not.
-        let read = if grammar.crosses {
-            file_errors
-        } else {
-            &errors
-        };
-        if !file.failures.contains_key(&id)
-            && grammar.invalid_syntax.is_none()
-            && read.incomplete(grammar)
-            && gates.admit(grammar)
-        {
-            file.failures
-                .insert(id, ("source-incomplete", "file has syntax errors"));
-        }
-    }
+    fail_incomplete_candidates(&mut file.failures, &file.candidates.ast, slots, &gates, &errors, file_errors);
     #[cfg(test)]
     pause_at_test_phase("restored-doc", &file.input.source);
     // A document's node and utility visits grow with it (`Limits::visits_for`).
@@ -1114,27 +1111,9 @@ fn evaluate_document(
         if !runs[position] {
             return Some(Arc::from([]));
         }
-        #[cfg(feature = "code-rule-profile")]
-        let _selection_timer = profile::PhaseTimer::start(profile::Phase::Selection);
-        let selection = index.select(&slots[position].1.anchors);
-        #[cfg(feature = "code-rule-profile")]
-        profile::record_selection(
-            match &selection {
-                Selection::All => index.len(),
-                Selection::Roots(roots) => roots.len(),
-            },
-            matches!(selection, Selection::All),
-        );
-        match selection {
-            Selection::All => None,
-            Selection::Roots(roots) => Some(
-                roots
-                    .iter()
-                    .map(|&ordinal| index.node(ordinal).node_id() as u32)
-                    .collect(),
-            ),
-        }
-    };    #[cfg(all(test, feature = "p-anchor-corpus"))]
+        select_roots(&index, &slots[position].1.anchors)
+    };
+    #[cfg(all(test, feature = "p-anchor-corpus"))]
     let select = |position: usize| -> Option<Arc<[u32]>> {
         if !runs[position] {
             return Some(Arc::from([]));
@@ -1183,26 +1162,116 @@ fn evaluate_document(
     for (&(slot, _), ran) in slots.iter().zip(ran) {
         settled[slot] = ran;
     }
-    // The file keeps the tables every document's evaluation built.
-    let tables = scopes.tables();
-    if !tables.is_empty() {
-        match &mut file.scopes {
-            Some((revision, known)) if *revision == file.source_revision => {
-                for table in tables {
-                    if !known.iter().any(|known| {
-                        known.language == table.language && known.reading == table.reading
-                    }) {
-                        known.push(table);
-                    }
-                }
-            }
-            scopes => *scopes = Some((file.source_revision, tables)),
-        }
-    }
+    keep_scope_tables(file, scopes.tables());
     metrics.ast_match_nanoseconds += match_started.elapsed().as_nanos() as u64;
     #[cfg(test)]
     pass_deadline_at_test_phase("checks-done");
     Ok(())
+}
+
+/// Records the syntax errors of a document the candidate clauses `slots` read.
+fn record_syntax_reading(
+    file: &mut FileState,
+    slots: &[(usize, &GrammarMatcher)],
+    errors: &SyntaxErrors,
+    lines: &Arc<LineTable>,
+) {
+    if !errors.is_empty() {
+        match errors.reading(lines, file.input.source.len()) {
+            // No AST clause runs on a document the parser did not read, sound or not; the failure
+            // reports `file.syntax` in place of its static message (`results::failure_message`).
+            SyntaxReading::Unread(message) => {
+                // A whole-file syntax gate (`invalid_syntax`) reads the errors as content.
+                for &(slot, grammar) in slots {
+                    if grammar.invalid_syntax.is_none() {
+                        file.failures
+                            .entry(file.candidates.ast[slot])
+                            .or_insert(("source-incomplete", UNREAD));
+                    }
+                }
+                file.syntax.get_or_insert(message);
+            }
+            SyntaxReading::Partial(message) => {
+                file.syntax.get_or_insert(message);
+            }
+        }
+    }
+}
+
+/// Fails the candidate clauses `slots` that are unsound around the syntax errors they read.
+fn fail_incomplete_candidates(
+    failures: &mut BTreeMap<ClauseId, LocalFailure>,
+    candidates: &[ClauseId],
+    slots: &[(usize, &GrammarMatcher)],
+    gates: &FileGates<'_, '_, tape::TapeDoc>,
+    errors: &SyntaxErrors,
+    file_errors: &SyntaxErrors,
+) {
+    for &(slot, grammar) in slots {
+        let id = candidates[slot];
+        // A clause reads around its document's errors, or, crossing to the file's other document,
+        // every document's. A file the query's file gates exclude matches nothing, errors or not.
+        let read = if grammar.crosses { file_errors } else { errors };
+        if !failures.contains_key(&id)
+            && grammar.invalid_syntax.is_none()
+            && read.incomplete(grammar)
+            && gates.admit(grammar)
+        {
+            failures.insert(id, ("source-incomplete", SYNTAX_ERRORS));
+        }
+    }
+}
+
+/// The node ids of the roots `index` selects for a clause's anchor `plan`; `None` for every root.
+#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+fn select_roots(
+    index: &FileAnchorIndex<'_, tape::TapeDoc>,
+    plan: &AnchorPlan,
+) -> Option<Arc<[u32]>> {
+    #[cfg(feature = "code-rule-profile")]
+    let _selection_timer = profile::PhaseTimer::start(profile::Phase::Selection);
+    let selection = index.select(plan);
+    #[cfg(feature = "code-rule-profile")]
+    profile::record_selection(
+        match &selection {
+            Selection::All => index.len(),
+            Selection::Roots(roots) => roots.len(),
+        },
+        matches!(selection, Selection::All),
+    );
+    match selection {
+        Selection::All => None,
+        Selection::Roots(roots) => Some(
+            roots
+                .iter()
+                .map(|&ordinal| index.node(ordinal).node_id() as u32)
+                .collect(),
+        ),
+    }
+}
+
+/// The file keeps the tables every document's evaluation built.
+fn keep_scope_tables(file: &mut FileState, tables: Vec<Arc<ScopeTable>>) {
+    if !tables.is_empty() {
+        match &mut file.scopes {
+            Some((revision, known)) if *revision == file.source_revision => {
+                merge_scope_tables(known, tables);
+            }
+            scopes => *scopes = Some((file.source_revision, tables)),
+        }
+    }
+}
+
+/// Adds to `known` each of `tables` whose language and reading it lacks.
+fn merge_scope_tables(known: &mut Vec<Arc<ScopeTable>>, tables: Vec<Arc<ScopeTable>>) {
+    for table in tables {
+        if !known
+            .iter()
+            .any(|known| known.language == table.language && known.reading == table.reading)
+        {
+            known.push(table);
+        }
+    }
 }
 
 /// Parses `file`'s source and keeps its documents (its tape and the ones it derives) for this
@@ -1218,90 +1287,118 @@ pub(super) fn encode_tape(
     // Parser and the only native tree are scoped to this one source revision.
     // Neither can overlap with the restored document during selection.
     let interrupted = || closed.load(Ordering::Relaxed) || matcher_budget_exhausted();
-    let image = if language == GrammarDialect::Blade {
-        // Forte's step budget bounds the parse; closing the workspace or the matcher budget
-        // interrupts the view and the encoding.
-        #[cfg(feature = "code-rule-profile")]
-        let _native_owner = profile::NativeOwner::start();
-        #[cfg(feature = "code-rule-profile")]
-        let parse_timer = profile::PhaseTimer::start(profile::Phase::Parse);
-        let parse_started = Instant::now();
-        let parsed = parse_tree(file.input.source.as_bytes());
-        #[cfg(feature = "code-rule-profile")]
-        drop(parse_timer);
-        metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;
-        // Forte stopping at a limit says nothing about the template: no tape, and no clause runs.
-        let tree = match parsed {
-            Ok(tree) => tree,
-            Err(error) => return Ok(Err((FILE_BUDGET_EXCEEDED, error.message()))),
-        };
-        #[cfg(test)]
-        pause_at_test_phase("native-tree", &file.input.source);
-        #[cfg(feature = "code-rule-profile")]
-        let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
-        match tape::TapeImage::encode_blade(&tree, grammar, &file.input.source, &interrupted) {
-            Ok(image) => Some(Ok(image)),
-            Err(tape::TemplateError::Parser(error)) => {
-                return Ok(Err((FILE_BUDGET_EXCEEDED, error.message())));
-            }
-            Err(tape::TemplateError::Encode(error)) => Some(Err(error)),
+    let image = if parsed_by_forte(language) {
+        match encode_forte_image(file, grammar, &interrupted, metrics) {
+            Ok(image) => Some(image),
+            Err(failure) => return Ok(Err(failure)),
         }
     } else if language == GrammarDialect::Rr {
         // A `.rr` file: the rule engine's own parser (decision 0061).
         tape::TapeImage::parse(grammar, &file.input.source, &interrupted)
     } else {
-        #[cfg(feature = "code-rule-profile")]
-        let _native_owner = profile::NativeOwner::start();
-        let mut parser = Parser::new();
-        parser
-            .set_language(&language.get_ts_language())
-            .map_err(|error| invalid(error.to_string()))?;
-        // The family's parse input (a PHP file's view, `php_view`); the tape reads the source.
-        let parsed =
-            crate::code_rule_dsl::language::adapter::parse_input(language, &file.input.source);
-        let bytes = parsed.as_bytes();
-        let mut input = |offset: usize, _: Point| &bytes[offset..];
-        let mut progress = |_: &tree_sitter::ParseState| {
-            if interrupted() {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        };
-        #[cfg(feature = "code-rule-profile")]
-        let parse_timer = profile::PhaseTimer::start(profile::Phase::Parse);
-        let parse_started = Instant::now();
-        let parsed = parser.parse_with_options(
-            &mut input,
-            None,
-            Some(ParseOptions::new().progress_callback(&mut progress)),
-        );
-        #[cfg(feature = "code-rule-profile")]
-        drop(parse_timer);
-        metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;
-        match parsed {
-            None => None,
-            // Damaged trees are taped too: ERROR and MISSING nodes stay on the tape,
-            // so their regions are rederived from each restored document.
-            Some(tree) => {
-                #[cfg(test)]
-                pause_at_test_phase("native-tree", &file.input.source);
-                #[cfg(feature = "code-rule-profile")]
-                let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
-                let encoded = tape::TapeImage::encode(
-                    tree.root_node(),
-                    grammar,
-                    &file.input.source,
-                    &interrupted,
-                );
-                #[cfg(feature = "code-rule-profile")]
-                drop(_encode_timer);
-                drop(tree);
-                Some(encoded)
-            }
+        encode_tree_sitter_image(file, language, grammar, &interrupted, metrics)?
+    };
+    Ok(keep_tape(file, image))
+}
+
+/// Parses `file`'s template with Forte and encodes its tape. `Err(failure)` where Forte stopped
+/// at a limit.
+fn encode_forte_image(
+    file: &FileState,
+    grammar: &Arc<tape::Grammar>,
+    interrupted: &impl Fn() -> bool,
+    metrics: &mut Metrics,
+) -> std::result::Result<std::result::Result<tape::FileImage, String>, LocalFailure> {
+    // Forte's step budget bounds the parse; closing the workspace or the matcher budget
+    // interrupts the view and the encoding.
+    #[cfg(feature = "code-rule-profile")]
+    let _native_owner = profile::NativeOwner::start();
+    #[cfg(feature = "code-rule-profile")]
+    let parse_timer = profile::PhaseTimer::start(profile::Phase::Parse);
+    let parse_started = Instant::now();
+    let parsed = parse_tree(file.input.source.as_bytes());
+    #[cfg(feature = "code-rule-profile")]
+    drop(parse_timer);
+    metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;
+    // Forte stopping at a limit says nothing about the template: no tape, and no clause runs.
+    let tree = match parsed {
+        Ok(tree) => tree,
+        Err(error) => return Err((FILE_BUDGET_EXCEEDED, error.message())),
+    };
+    #[cfg(test)]
+    pause_at_test_phase("native-tree", &file.input.source);
+    #[cfg(feature = "code-rule-profile")]
+    let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
+    match tape::TapeImage::encode_blade(&tree, grammar, &file.input.source, interrupted) {
+        Ok(image) => Ok(Ok(image)),
+        Err(tape::TemplateError::Parser(error)) => Err((FILE_BUDGET_EXCEEDED, error.message())),
+        Err(tape::TemplateError::Encode(error)) => Ok(Err(error)),
+    }
+}
+
+/// Parses `file`'s source with tree-sitter and encodes its tape. `None` where the parse was
+/// interrupted.
+fn encode_tree_sitter_image(
+    file: &FileState,
+    language: GrammarDialect,
+    grammar: &Arc<tape::Grammar>,
+    interrupted: &impl Fn() -> bool,
+    metrics: &mut Metrics,
+) -> Result<Option<std::result::Result<tape::FileImage, String>>> {
+    #[cfg(feature = "code-rule-profile")]
+    let _native_owner = profile::NativeOwner::start();
+    let mut parser = Parser::new();
+    parser
+        .set_language(&language.get_ts_language())
+        .map_err(|error| invalid(error.to_string()))?;
+    // The family's parse input (a PHP file's view, `php_view`); the tape reads the source.
+    let parsed = crate::code_rule_dsl::language::adapter::parse_input(language, &file.input.source);
+    let bytes = parsed.as_bytes();
+    let mut input = |offset: usize, _: Point| &bytes[offset..];
+    let mut progress = |_: &tree_sitter::ParseState| {
+        if interrupted() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
         }
     };
-    Ok(match image {
+    #[cfg(feature = "code-rule-profile")]
+    let parse_timer = profile::PhaseTimer::start(profile::Phase::Parse);
+    let parse_started = Instant::now();
+    let parsed = parser.parse_with_options(
+        &mut input,
+        None,
+        Some(ParseOptions::new().progress_callback(&mut progress)),
+    );
+    #[cfg(feature = "code-rule-profile")]
+    drop(parse_timer);
+    metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;
+    Ok(match parsed {
+        None => None,
+        // Damaged trees are taped too: ERROR and MISSING nodes stay on the tape,
+        // so their regions are rederived from each restored document.
+        Some(tree) => {
+            #[cfg(test)]
+            pause_at_test_phase("native-tree", &file.input.source);
+            #[cfg(feature = "code-rule-profile")]
+            let _encode_timer = profile::PhaseTimer::start(profile::Phase::TapeEncode);
+            let encoded =
+                tape::TapeImage::encode(tree.root_node(), grammar, &file.input.source, interrupted);
+            #[cfg(feature = "code-rule-profile")]
+            drop(_encode_timer);
+            drop(tree);
+            Some(encoded)
+        }
+    })
+}
+
+/// Keeps `image` as `file`'s tape for this source revision. `Err(failure)` where the parse ran
+/// out of time (`None`) or the tape could not be encoded.
+fn keep_tape(
+    file: &mut FileState,
+    image: Option<std::result::Result<tape::FileImage, String>>,
+) -> std::result::Result<(), LocalFailure> {
+    match image {
         None => Err((FILE_BUDGET_EXCEEDED, "file parsing time budget exceeded")),
         Some(Err(_)) => Err((
             if matcher_budget_observed() {
@@ -1315,7 +1412,7 @@ pub(super) fn encode_tape(
             file.tape = Some((file.source_revision, image));
             Ok(())
         }
-    })
+    }
 }
 
 /// How a clause's run under its allowance (`ClauseWork::run`) ended.
@@ -1420,6 +1517,7 @@ fn evaluate_clauses(
             // a `rerail-ignore` naming the code rule always does.
             let honour_suppressions = code_rule.scope.honours_suppressions_at(&file.input.path);
             let ignorable = violations::names_rerail_ignore(violation, &target.root());
+            names::take_unavailable();
             let Some((result, ran)) = work.run(file.input.source.len(), || {
                 let roots = select(position);
                 // An anchor selection of no roots leaves nothing for the clause to match.
@@ -1572,6 +1670,13 @@ fn evaluate_clauses(
                         .entry(id)
                         .or_insert(("budget-exceeded", CLAUSE_WORK_BUDGET_EXCEEDED));
                 }
+            }
+            // A `\N{...}` escape the malformed names table could not answer read as unknown: the
+            // clause has no verdict of its own, and the engine's build is at fault, not the file.
+            if names::take_unavailable() {
+                file.failures
+                    .insert(id, ("adapter-error", names::TABLE_UNAVAILABLE));
+                file.unstored.insert(id);
             }
         }
         Ok(())

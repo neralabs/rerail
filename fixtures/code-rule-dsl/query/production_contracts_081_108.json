@@ -1339,19 +1339,11 @@
             "captures": {},
             "clauseId": "contract",
             "code": "SQL",
-            "id": "sha256:1d2bca5f17d76eae8f815821b014601a9fb062ff126734774e1e25334b5a9997",
+            "id": "sha256:9124b46768d36fb6052e3429ecfc2bf271bdeef341a2f17f5aa28d10ce94b145",
             "message": "contract",
             "mode": "block",
             "path": "test_contract.py",
             "ruleId": "sql-contract-clause-forbid-path-regex",
-            "span": {
-              "endByte": 4,
-              "endColumn": 4,
-              "endLine": 0,
-              "startByte": 0,
-              "startColumn": 0,
-              "startLine": 0
-            },
             "variables": {}
           }
         ]

@@ -51,8 +51,7 @@ fn fields(db: &rusqlite::Connection, r: &Rel) -> Result<Vec<String>> {
         .prepare(&format!("SELECT * FROM {} LIMIT 0", r.render()))
         .map_err(error)?
         .column_names()
-        .iter()
-        .map(|c| c.to_string())
+        .map(str::to_owned)
         .collect())
 }
 fn source(table: &str, columns: &[String]) -> Rel {

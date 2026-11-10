@@ -30,6 +30,13 @@ export const LANGUAGE_REGISTRY = /* registry */ [
     "suppressions": [
       "noqa",
       "nosec"
+    ],
+    "fragments": [
+      {
+        "name": "annotation",
+        "dialect": "python",
+        "start": "expression"
+      }
     ]
   },
   {

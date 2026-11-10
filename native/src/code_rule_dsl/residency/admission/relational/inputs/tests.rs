@@ -28,14 +28,14 @@ fn fill(sink: &mut Sink<'_>, count: usize, source: &Arc<String>) {
         captures.set_typed_projection(projection);
         let witness = sink.emit(Witness {
             path: "a.py".into(),
-            span: Span {
+            span: Some(Span {
                 start_byte: 0,
                 end_byte: 2,
                 start_line: 1,
                 end_line: 1,
                 start_column: 0,
                 end_column: 1,
-            },
+            }),
             captures,
             message: None,
             fix: None,

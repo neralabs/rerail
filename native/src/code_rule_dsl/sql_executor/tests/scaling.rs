@@ -18,11 +18,11 @@ fn walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs() {
             .all(|q| q.ctes.is_empty())
     );
     let calls = rows(
-        &e,
+        &mut e,
         "SELECT n FROM node WHERE kind_name('python',kind)='call' ORDER BY n",
     );
     let functions = rows(
-        &e,
+        &mut e,
         "SELECT n FROM node WHERE kind_name('python',kind)='function_definition' ORDER BY n",
     );
     let call = calls[0][0].clone();
@@ -33,7 +33,7 @@ fn walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs() {
         json!([[function]]),
         json!([]),
     ] {
-        let old = rows(&e, "SELECT * FROM blocked");
+        let old = rows(&mut e, "SELECT * FROM blocked");
         let patch = json!([{"name":"blocked","delete":old,"insert":values}]);
         let report = change(&mut e, patch);
         assert_eq!(
@@ -47,9 +47,9 @@ fn walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs() {
         bind(&mut fresh, "marks", &["n", "v"], json!([]));
         fresh.run(p.into(), "python".into(), None).unwrap();
         let query = "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0";
-        assert_eq!(rows(&e, query), rows(&fresh, query));
+        assert_eq!(rows(&mut e, query), rows(&mut fresh, query));
     }
-    let before = rows(&e, "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0");
+    let before = rows(&mut e, "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0");
     assert_eq!(before.as_array().unwrap().len(), 2);
     for patch in [
         json!([{"name":"marks","insert":[[call,7]]}]),
@@ -62,7 +62,7 @@ fn walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs() {
             "{report}"
         );
         assert_eq!(
-            rows(&e, "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0"),
+            rows(&mut e, "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0"),
             before
         );
     }
@@ -75,7 +75,7 @@ fn walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs() {
             .contains("stop walk")
     );
     assert_eq!(
-        rows(&e, "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0"),
+        rows(&mut e, "SELECT c0,sym_text(c1),c2 FROM owns ORDER BY c0"),
         before
     );
     e.connection()
@@ -88,7 +88,7 @@ fn walks_with_negative_and_aggregate_seed_and_output_match_fresh_runs() {
         "{report}"
     );
     assert_eq!(
-        rows(&e, "SELECT sym_text(c1) FROM owns"),
+        rows(&mut e, "SELECT sym_text(c1) FROM owns"),
         json!([["changed"]])
     );
 }
@@ -180,7 +180,7 @@ fn bind(e: &mut CodeRuleSqlExecutor, name: &str, columns: &[&str], values: Value
     e.bind_relation(json!({"name":name,"columns":columns,"rows":values}).to_string())
         .unwrap();
 }
-fn ordered(e: &CodeRuleSqlExecutor, table: &str) -> Value {
+fn ordered(e: &mut CodeRuleSqlExecutor, table: &str) -> Value {
     let width = e
         .connection()
         .prepare(&format!("SELECT * FROM {table} LIMIT 0"))
@@ -250,8 +250,8 @@ fn wide_old_sql_joins_use_indexed_deletion_rows_and_rollback_restores_them() {
         "{work:?}"
     );
     assert_eq!(report["programs"][1]["outputs"]["joined"]["deleted"], 1);
-    assert_eq!(rows(&e, "SELECT count(*) FROM kept0"), json!([[20000]]));
-    assert_eq!(rows(&e, "SELECT count(*) FROM joined"), json!([[20000]]));
+    assert_eq!(rows(&mut e, "SELECT count(*) FROM kept0"), json!([[20000]]));
+    assert_eq!(rows(&mut e, "SELECT count(*) FROM joined"), json!([[20000]]));
     // Fail halfway through restoring old SQL inputs. Earlier restored tables must roll back too.
     e.connection().execute_batch("CREATE TEMP TRIGGER reject_old_sql BEFORE INSERT ON kept7 WHEN NEW.c0=17 BEGIN SELECT RAISE(ABORT,'stop old SQL restoration'); END").unwrap();
     let err = e
@@ -260,11 +260,11 @@ fn wide_old_sql_joins_use_indexed_deletion_rows_and_rollback_restores_them() {
     assert!(err.reason.contains("stop old SQL restoration"), "{err}");
     for r in &names {
         assert_eq!(
-            rows(&e, &format!("SELECT c0 FROM {r} WHERE c0=17")),
+            rows(&mut e, &format!("SELECT c0 FROM {r} WHERE c0=17")),
             json!([[17]])
         );
     }
-    assert_eq!(rows(&e, "SELECT c0 FROM joined WHERE c0=17"), json!([[17]]));
+    assert_eq!(rows(&mut e, "SELECT c0 FROM joined WHERE c0=17"), json!([[17]]));
     e.connection()
         .execute_batch("DROP TRIGGER reject_old_sql")
         .unwrap();
@@ -273,11 +273,11 @@ fn wide_old_sql_joins_use_indexed_deletion_rows_and_rollback_restores_them() {
         json!([{"name":"item","delete":[[17]],"insert":[[20002]]}]),
     );
     assert_eq!(
-        rows(&e, "SELECT c0 FROM kept0 EXCEPT SELECT c0 FROM joined"),
+        rows(&mut e, "SELECT c0 FROM kept0 EXCEPT SELECT c0 FROM joined"),
         json!([])
     );
     assert_eq!(
-        rows(&e, "SELECT c0 FROM joined EXCEPT SELECT c0 FROM kept0"),
+        rows(&mut e, "SELECT c0 FROM joined EXCEPT SELECT c0 FROM kept0"),
         json!([])
     );
 }
@@ -300,14 +300,14 @@ fn simultaneous_lattice_replacements_restore_old_and_current_unique_keys() {
         json!([{"name":"event","delete":[[2,10,2],[4,10,1]],"insert":[[5,30,1]]}]),
     ] {
         change(&mut e, patch);
-        let expected = rows(&e, "SELECT k,min(v) FROM event GROUP BY k ORDER BY k");
+        let expected = rows(&mut e, "SELECT k,min(v) FROM event GROUP BY k ORDER BY k");
         for r in ["lefts", "rights", "current"] {
-            assert_eq!(ordered(&e, r), expected, "{r}");
+            assert_eq!(ordered(&mut e, r), expected, "{r}");
         }
         assert_eq!(
-            ordered(&e, "paired"),
+            ordered(&mut e, "paired"),
             rows(
-                &e,
+                &mut e,
                 "SELECT k FROM event GROUP BY k HAVING min(v)=1 ORDER BY k"
             )
         );
@@ -342,11 +342,11 @@ fn computed_correlations_retain_indexes_and_match_fresh_execution() {
             &mut fresh,
             "event",
             &["id", "g", "v"],
-            rows(&e, "SELECT * FROM event"),
+            rows(&mut e, "SELECT * FROM event"),
         );
-        bind(&mut fresh, "owner", &["g"], rows(&e, "SELECT * FROM owner"));
+        bind(&mut fresh, "owner", &["g"], rows(&mut e, "SELECT * FROM owner"));
         fresh.run(program.into(), "python".into(), None).unwrap();
-        assert_eq!(ordered(&e, "result"), ordered(&fresh, "result"));
+        assert_eq!(ordered(&mut e, "result"), ordered(&mut fresh, "result"));
     }
 }
 
@@ -382,7 +382,7 @@ fn computed_context_keys_probe_an_expression_index() {
     assert_eq!(report["programs"][0]["refreshed_strata"], json!([]));
     assert!(work.data_scans.get() < 1000, "{work:?}");
     eprintln!("computed key work: {work:?}");
-    assert_eq!(rows(&e, "SELECT * FROM result WHERE c0=1"), json!([[1, 1]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM result WHERE c0=1"), json!([[1, 1]]));
 }
 
 #[test]
@@ -413,11 +413,11 @@ fn lattice_candidates_retract_extrema_top_and_duplicate_support_without_refresh(
             &mut fresh,
             "event",
             &["id", "g", "v"],
-            rows(&e, "SELECT * FROM event"),
+            rows(&mut e, "SELECT * FROM event"),
         );
         fresh.run(program.into(), "python".into(), None).unwrap();
         for r in ["low", "high", "flat", "global"] {
-            assert_eq!(ordered(&e, r), ordered(&fresh, r), "{r}");
+            assert_eq!(ordered(&mut e, r), ordered(&mut fresh, r), "{r}");
         }
     }
 }
@@ -488,17 +488,17 @@ owns(p,o) :- node(d,n,"call",_,_), doc(d,p,_), nearest(n,a,scope), field(a,"name
         let walks=e.executions[0].objects.iter().filter(|(name,_)|name.starts_with("__sql_walk_")).map(|(name,_)|name).collect::<Vec<_>>();
         assert!(!walks.is_empty());
         assert!(walks.iter().all(|name|e.versions.owns(name)));
-        assert_eq!(rows(&e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_walk_*' OR name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'"),json!([[0]]));
+        assert_eq!(rows(&mut e,"SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_walk_*' OR name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'"),json!([[0]]));
         let (_fresh_dir, mut fresh) = executor();
         fresh.bind_snapshot(snapshot(&files)).unwrap();
         fresh.run(program.into(), "python".into(), None).unwrap();
         let query = "SELECT sym_text(c0),sym_text(c1) FROM owns ORDER BY 1,2";
-        assert_eq!(rows(&e, query), rows(&fresh, query));
+        assert_eq!(rows(&mut e, query), rows(&mut fresh, query));
     }
     e.reset().unwrap();
     assert_eq!(
         rows(
-            &e,
+            &mut e,
             "SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_walk_*'"
         ),
         json!([[0]])
@@ -533,8 +533,8 @@ fn warm_lattice_extrema_use_key_indexes_over_a_large_group() {
     assert_eq!(report["programs"][0]["refreshed_strata"], json!([]));
     assert!(work.data_scans.get() < 1000, "{work:?}");
     eprintln!("lattice work: {work:?}");
-    assert_eq!(rows(&e, "SELECT * FROM low"), json!([[1, 1]]));
-    assert_eq!(rows(&e, "SELECT * FROM high"), json!([[1, 99999]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM low"), json!([[1, 1]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM high"), json!([[1, 99999]]));
     // An error after support mutation must restore the support tables and the folded result.
     e.connection().execute_batch("CREATE TEMP TRIGGER reject_lattice BEFORE INSERT ON low BEGIN SELECT RAISE(ABORT,'stop lattice fold'); END").unwrap();
     assert!(
@@ -546,12 +546,12 @@ fn warm_lattice_extrema_use_key_indexes_over_a_large_group() {
         .reason
         .contains("stop lattice fold")
     );
-    assert_eq!(rows(&e, "SELECT * FROM low"), json!([[1, 1]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM low"), json!([[1, 1]]));
     e.connection()
         .execute_batch("DROP TRIGGER reject_lattice")
         .unwrap();
     change(&mut e, json!([{"name":"event","delete":[[1,1,1]]}]));
-    assert_eq!(rows(&e, "SELECT * FROM low"), json!([[1, 2]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM low"), json!([[1, 2]]));
 }
 
 #[test]
@@ -607,8 +607,8 @@ fn registered_lattice_joins_retract_candidates_without_refresh() {
         let report = change(&mut e, patch);
         assert_eq!(report["programs"][0]["refreshed_strata"], json!([]));
         assert_eq!(
-            ordered(&e, "peak"),
-            rows(&e, "SELECT g,max(v) FROM event GROUP BY g ORDER BY g")
+            ordered(&mut e, "peak"),
+            rows(&mut e, "SELECT g,max(v) FROM event GROUP BY g ORDER BY g")
         );
     }
 }

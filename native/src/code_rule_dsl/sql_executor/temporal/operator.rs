@@ -361,7 +361,7 @@ impl Operator {
     }
     pub(super) fn append_kernel(&self, phase: &mut super::super::phase::Phase, width: usize) -> String {
         let query = self.run.emitted.queries[0].as_ref().unwrap();
-        let evaluated = phase.relation(width, &query.render());
+        let evaluated = phase.checked_relation(width, query);
         let present = (0..width).map(|c|format!("c{c} IS NOT NULL")).collect::<Vec<_>>().join(" AND ");
         // Preserve INSERT OR IGNORE's NULL-head behavior before bulk validation.
         phase.view(width, &format!("SELECT * FROM {evaluated} WHERE {present}"))

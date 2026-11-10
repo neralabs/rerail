@@ -438,10 +438,14 @@ pub(in crate::code_rule_dsl) fn admit_docs(docs: &[crate::code_rule_dsl::tape::T
     resident(&digests)
 }
 
-/// The room a resident source takes: its bytes, 16-byte aligned, at least 16.
+/// The room a resident source takes: its bytes and `SOURCE_MARGIN`, 16-byte aligned.
 fn source_room(len: usize) -> usize {
-    aligned(len.max(1))
+    aligned(len.max(1) + SOURCE_MARGIN)
 }
+
+/// Readable bytes past each source in its slab: tier 2 reads its words in place, a token's text
+/// in 8-byte loads up to 64 bytes past the file's end (masked by its length).
+pub(in crate::code_rule_dsl) const SOURCE_MARGIN: usize = 64;
 
 /// Files' bytes resident as sources, in order: hits by SHA-256 from the residency, misses copied
 /// into slabs once (the one copy a file's bytes take on their way to the device). The slabs of
@@ -703,6 +707,8 @@ pub(in crate::code_rule_dsl) fn drop_all() {
     }
     crate::code_rule_dsl::transducer::packed::metal_backend::drop_pipelines();
     crate::code_rule_dsl::transducer::packed::metal_blocks::drop_all();
+    #[cfg(target_os = "macos")]
+    rerail_accel::gpu::shared::drop_idle();
     crate::code_rule_dsl::transducer::packed::drop_label_pipelines();
     crate::code_rule_dsl::prof::count("residency.dropped", 1);
 }

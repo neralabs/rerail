@@ -1,0 +1,184 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-try004-type-check-without-type-error",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Raise TypeError instead of a general-purpose built-in exception when a type check fails; callers can then tell a wrong type from a bad value.",
+  "scope": {
+    "include": ["**/*"],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "type-check-without-type-error",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "check-fn": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": {
+                    "global": ["isinstance", "issubclass", "callable"],
+                    "import": ["builtins.isinstance", "builtins.issubclass", "builtins.callable"]
+                  },
+                  "not": { "pattern": "$FN", "matches": "rebound-in-if" }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "check-fn" } }
+              ]
+            },
+            "rebound-in-if": {
+              "kind": "identifier",
+              "not": { "resolves": { "imported": ["builtins"], "seenBefore": true } },
+              "inside": {
+                "stopBy": { "kind": "if_statement" },
+                "kind": "if_statement",
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      { "kind": "block", "inside": { "stopBy": "neighbor", "any": [{ "kind": "function_definition" }, { "kind": "class_definition" }] } },
+                      { "kind": "parameters" },
+                      { "kind": "type_parameter" },
+                      { "kind": "lambda" },
+                      { "kind": "list_comprehension" },
+                      { "kind": "set_comprehension" },
+                      { "kind": "dictionary_comprehension" },
+                      { "kind": "generator_expression" }
+                    ]
+                  },
+                  "any": [{ "kind": "identifier" }, { "kind": "dotted_name" }],
+                  "binds": {},
+                  "pattern": "$BOUND",
+                  "compare": { "left": "FN", "op": "eq", "right": "BOUND" }
+                }
+              }
+            },
+            "type-test": {
+              "any": [
+                { "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "check-fn" } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "type-test" } },
+                {
+                  "any": [{ "kind": "not_operator" }, { "kind": "unary_operator" }],
+                  "has": { "stopBy": "neighbor", "field": "argument", "matches": "type-test" }
+                },
+                {
+                  "kind": "boolean_operator",
+                  "all": [
+                    { "has": { "stopBy": "neighbor", "field": "left", "matches": "type-test" } },
+                    { "has": { "stopBy": "neighbor", "field": "right", "matches": "type-test" } }
+                  ]
+                }
+              ]
+            },
+            "exception-ref": {
+              "any": [
+                {
+                  "any": [{ "kind": "identifier" }, { "kind": "attribute" }],
+                  "resolves": {
+                    "global": [
+                      "ArithmeticError", "AssertionError", "AttributeError", "BufferError", "EOFError",
+                      "Exception", "ImportError", "LookupError", "MemoryError", "NameError",
+                      "ReferenceError", "RuntimeError", "SyntaxError", "SystemError", "ValueError"
+                    ]
+                  }
+                },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "exception-ref" } }
+              ]
+            },
+            "raised": {
+              "any": [
+                { "matches": "exception-ref" },
+                { "kind": "call", "has": { "stopBy": "neighbor", "field": "function", "matches": "exception-ref" } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "raised" } }
+              ]
+            },
+            "control-flow": {
+              "any": [
+                { "kind": "return_statement" },
+                { "kind": "break_statement" },
+                { "kind": "continue_statement" }
+              ]
+            },
+            "leaves-block": {
+              "any": [
+                { "matches": "control-flow" },
+                {
+                  "not": { "any": [{ "kind": "function_definition" }, { "kind": "class_definition" }] },
+                  "has": {
+                    "stopBy": { "any": [{ "kind": "function_definition" }, { "kind": "class_definition" }] },
+                    "matches": "control-flow"
+                  }
+                }
+              ]
+            },
+            "not-type-test": { "not": { "has": { "stopBy": "neighbor", "field": "condition", "matches": "type-test" } } },
+            "untyped-if": {
+              "any": [
+                { "kind": "if_statement", "matches": "not-type-test" },
+                {
+                  "any": [{ "kind": "elif_clause" }, { "kind": "else_clause" }],
+                  "inside": { "stopBy": "neighbor", "kind": "if_statement", "matches": "not-type-test" }
+                }
+              ]
+            },
+            "nested-ok": {
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "block",
+                  "inside": { "stopBy": "neighbor", "matches": "untyped-if" }
+                }
+              }
+            },
+            "chain": {
+              "any": [
+                { "kind": "if_statement", "matches": "nested-ok", "has": { "stopBy": "neighbor", "field": "condition", "matches": "type-test" } },
+                {
+                  "any": [{ "kind": "elif_clause" }, { "kind": "else_clause" }],
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "if_statement",
+                    "matches": "nested-ok",
+                    "has": { "stopBy": "neighbor", "field": "condition", "matches": "type-test" }
+                  },
+                  "not": {
+                    "follows": { "stopBy": "end", "kind": "elif_clause", "matches": "not-type-test" }
+                  }
+                }
+              ]
+            },
+            "typed-branch": {
+              "any": [
+                { "kind": "if_statement" },
+                { "kind": "else_clause" },
+                { "kind": "elif_clause", "has": { "stopBy": "neighbor", "field": "condition", "matches": "type-test" } }
+              ],
+              "matches": "chain"
+            }
+          },
+          "rule": {
+            "kind": "raise_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "raised",
+              "not": { "inside": { "stopBy": "neighbor", "kind": "raise_statement", "field": "cause" } }
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": { "stopBy": "neighbor", "matches": "typed-branch" }
+            },
+            "not": { "follows": { "stopBy": "end", "matches": "leaves-block" } }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TRY004",
+        "message": "Raise `TypeError` here: the failed type check is a wrong-type error, not a bad value. Leave it if callers already catch this exception or it is part of the public API.",
+        "suppress": { "noqa": { "codes": ["TRY004"] } }
+      }
+    }
+  ]
+}

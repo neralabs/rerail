@@ -31,8 +31,9 @@ use std::sync::Arc;
 
 /// The pointer's schema (program text and plan to document): bumped when its meaning changes.
 const POINTER: u32 = 101;
-/// The document facts' schema: bumped when the encoding or the facts' meaning changes.
-const FACTS: u32 = 102;
+/// The document facts' schema: bumped when the encoding or the facts' meaning changes (103: `match_all`'s regexes and
+/// the f-string markers, `prepared_match` and `prepared_marker`).
+const FACTS: u32 = 103;
 
 /// The path a lookup names. The entries read no path (`path_dependent: false`); the store keeps them under none.
 const PATH: &str = "rerail/prepared";
@@ -79,6 +80,9 @@ pub(super) fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_interned_atom", &["k:int", "i:int", "s:sym", "atom:int"]),
         ("prepared_test", &["k:int", "rel:sym", "op:sym"]),
         ("prepared_test_pattern", &["k:int", "i:int", "pattern:sym"]),
+        // The vocabulary's `match_all` regexes (their sources) and `fstring_template` markers, in order.
+        ("prepared_match", &["k:int", "regex:sym"]),
+        ("prepared_marker", &["k:int", "marker:sym"]),
         // The split (`file_local::programs`): its programs are `split_local` and `split_cross`.
         ("prepared_split", &["ok:int"]),
         ("prepared_export", &["k:int", "rel:sym"]),
@@ -181,6 +185,12 @@ pub(super) fn facts_of(prepared: &Prepared) -> Facts {
             row("prepared_test_pattern", vec![n(k), n(i), s(pattern)]);
         }
     }
+    for (k, re) in prepared.vocabulary.matches.iter().enumerate() {
+        row("prepared_match", vec![n(k), s(re.as_str())]);
+    }
+    for (k, marker) in prepared.vocabulary.markers.iter().enumerate() {
+        row("prepared_marker", vec![n(k), s(marker)]);
+    }
     facts
 }
 
@@ -276,7 +286,13 @@ pub(super) fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prep
     }
     let vocabulary = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests' vocabulary".into());
-        Vocabulary::from_specs(&relations, specs)?
+        let mut vocabulary = Vocabulary::from_specs(&relations, specs)?;
+        vocabulary.matches = indexed(facts, "prepared_match")?
+            .iter()
+            .map(|(_, r)| regex::Regex::new(&text(&r[0])?).map(Arc::new).map_err(bad))
+            .collect::<Result<_, String>>()?;
+        vocabulary.markers = list("prepared_marker")?;
+        vocabulary
     };
     let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
         true => {
@@ -398,10 +414,9 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     Ok(prepared_of(&facts, dialect).ok().map(|p| (p, documents)))
 }
 
-/// Stores `prepared` as the program `key` names under `source`: its documents, one a part (`PART_ROWS`), and each
-/// one's tape, the facts read off those tapes, and the pointer to the documents. A program a part of whose tape does
-/// not give back the facts written is not stored, and `None` says so; else the documents' sources, which the run's
-/// manifest names so collection keeps them.
+/// Stores `prepared` as the program `key` names under `source`: its documents, one a part (`PART_ROWS`), each one's
+/// facts, and the pointer to the documents; the documents' sources, which the run's manifest names so collection
+/// keeps them. A document's tape is made when its facts are read and the store has lost them.
 pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], prepared: &Prepared) -> StoreResult<Option<Vec<SourceId>>> {
     super::memo::off();
     let facts = facts_of(prepared);
@@ -410,9 +425,13 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     for part in parts(&facts) {
         let text = program_facts::document(&part, &schema()).map_err(invalid)?;
         let document = super::memo::source(store, &text)?;
-        if document_facts(store, document, Some(&text))?.as_ref() != Some(&part) {
-            return Ok(None);
-        }
+        // The facts read off the document are the part (`a_prepared_program_reads_back_from_its_facts_and_its_tape`
+        // checks the text gives them back): kept as its facts, so the text is not parsed here. A store that lost
+        // them reads them off the tape again (`document_facts`).
+        let set = facts_plan();
+        let encoded = program_facts::encode(&part);
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, encoded.len() as u64);
+        store.put_facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: encoded }], &[])?;
         let digest: [u8; 32] = Sha256::digest(text.as_bytes()).into();
         entry.extend_from_slice(&digest);
         documents.push(document);
@@ -495,7 +514,7 @@ mod tests {
         let (from, first) = run();
         assert_eq!(from, "prepared");
         assert_eq!(first.len(), 3, "{first:?}");
-        super::super::prepared_cache().lock().unwrap().clear();
+        super::super::with_prepared(|kept| kept.clear());
         let (from, second) = run();
         assert_eq!(from, "store", "the program is read from the store");
         assert_eq!(second, first);
@@ -517,7 +536,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "from typing import List\nx: List[int] = []\n").unwrap();
         super::super::run(&program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-        let prepared = super::super::prepared_cache().lock().unwrap().values().find(|p| p.prog.rules.iter().any(|r| r.head.rel.contains("violation") || !r.body.is_empty())).cloned().expect("a prepared program");
+        let prepared = super::super::with_prepared(|kept| kept.values().find(|p| p.prog.rules.iter().any(|r| r.head.rel.contains("violation") || !r.body.is_empty())).cloned()).expect("a prepared program");
         let facts = super::facts_of(&prepared);
         let dialect = prepared.lowered.dialect;
         let back = super::prepared_of(&facts, dialect).unwrap();
@@ -525,6 +544,8 @@ mod tests {
         assert_eq!(format!("{:?}", back.prog), format!("{:?}", prepared.prog), "the front program");
         assert_eq!(format!("{:?}", back.lowered.program), format!("{:?}", prepared.lowered.program), "the lowered program");
         assert_eq!(back.lowered.domains, prepared.lowered.domains);
+        let matches = |p: &super::Prepared| p.vocabulary.matches.iter().map(|re| re.as_str().to_owned()).collect::<Vec<_>>();
+        assert_eq!((matches(&back), &back.vocabulary.markers), (matches(&prepared), &prepared.vocabulary.markers), "the match_all regexes and f-string markers");
         assert_eq!((back.sets, back.demanded, back.pushed, back.located, back.merged, back.interned), (prepared.sets.clone(), prepared.demanded.clone(), prepared.pushed.clone(), prepared.located.clone(), prepared.merged, prepared.interned.clone()));
         assert_eq!(back.vocabulary.specs, prepared.vocabulary.specs);
         assert_eq!(format!("{:?}", back.split.local), format!("{:?}", prepared.split.local), "the split's local program");
@@ -532,7 +553,7 @@ mod tests {
         assert_eq!((&back.split.exports, &back.split.base, &back.split.locations, &back.split.same_doc), (&prepared.split.exports, &prepared.split.base, &prepared.split.locations, &prepared.split.same_doc));
         // Every prepared program the process holds splits back the same: which one is found above varies with the
         // tests that run beside this one.
-        let all: Vec<super::Prepared> = super::super::prepared_cache().lock().unwrap().values().cloned().collect();
+        let all: Vec<super::Prepared> = super::super::with_prepared(|kept| kept.values().cloned().collect());
         for p in &all {
             let b = super::prepared_of(&super::facts_of(p), p.lowered.dialect).unwrap();
             assert_eq!((&b.split.exports, &b.split.base, &b.split.locations, &b.split.same_doc), (&p.split.exports, &p.split.base, &p.split.locations, &p.split.same_doc));

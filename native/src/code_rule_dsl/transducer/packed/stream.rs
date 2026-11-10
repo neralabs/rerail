@@ -51,11 +51,13 @@ pub(in crate::code_rule_dsl) struct Reading {
 pub(in crate::code_rule_dsl) struct Readings {
     pub(super) maps: Vec<Reading>,
     pub(super) provisional: Vec<u16>,
+    /// The extras' kinds (`extra K`): a node of one is flagged an extra in the table (comments).
+    pub(super) extras: Vec<u16>,
 }
 
 impl Readings {
     pub(super) fn is_empty(&self) -> bool {
-        self.maps.is_empty() && self.provisional.is_empty()
+        self.maps.is_empty() && self.provisional.is_empty() && self.extras.is_empty()
     }
 }
 

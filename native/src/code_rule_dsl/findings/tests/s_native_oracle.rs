@@ -180,7 +180,7 @@ impl<'a> Native<'a> {
                         );
                         if !grammar.applies
                             || !grammar.file.as_ref().is_none_or(|condition| {
-                                condition.holds(path, file.module.as_deref(), None)
+                                condition.holds(path, file.module.as_deref(), None, &file.source)
                             })
                             || !gates.admit(grammar)
                             || !grammar.admits_source(
@@ -265,7 +265,7 @@ fn anchor_plans(
         let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else {
             continue;
         };
-        for grammar in matchers {
+        for grammar in matchers.iter() {
             let key = Arc::as_ptr(&grammar.anchors) as usize;
             if by_matcher.contains_key(&key) {
                 continue;

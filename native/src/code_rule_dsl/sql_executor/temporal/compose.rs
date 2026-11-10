@@ -115,7 +115,8 @@ impl Frame {
             let spec = &relations[r];
             if phase.arm_bound() > 0
                 && (phase.arm_bound() + op.phase_arms.max(4) + overlays.len() + 1 + pipeline.changes.len()*2 >= 470
-                    || pipeline.depth(&op.run.inputs) >= super::pipeline::Pipeline::MAX_DEPTH)
+                    || pipeline.depth(&op.run.inputs) >= super::pipeline::Pipeline::MAX_DEPTH
+                    || phase.expansion_cost() >= phase::Phase::EXPANSION_BUDGET)
             {
                 pipeline.retain_from(id, &last_reads);
                 let slots = pipeline.stage(&mut phase, w, store)?;
@@ -359,6 +360,7 @@ impl Frame {
         }
         if batches.cache_batches > 0
             || phase.arm_bound() + touched.values().filter(|q| !q.is_empty()).count() * 6 >= 480
+            || phase.expansion_cost() >= phase::Phase::EXPANSION_BUDGET
         {
             batches.cache(
                 &mut phase,
@@ -370,6 +372,7 @@ impl Frame {
             )?;
             w.reducer_groups += summaries.finish(w, &batches.counts)?;
             w.rewind(batch_mark)?;
+            batch_mark=w.mark();
             batches.bind(&mut touched, w, store)?;
             overlays.clear();
         }
@@ -377,7 +380,16 @@ impl Frame {
             if touched[r].is_empty() {
                 continue;
             }
-            if phase.arm_bound() + 6 >= 480 {
+            if phase.expansion_cost() >= phase::Phase::EXPANSION_BUDGET {
+                // Remaining folds can still reference this phase's staged caches and keys.
+                // Publish and rebind those roots before discarding its SQL definitions.
+                batches.cache(&mut phase,&mut touched,relations,w,store,&key_set_decisions)?;
+                w.reducer_groups += summaries.finish(w, &batches.counts)?;
+                w.rewind(batch_mark)?;
+                batch_mark=w.mark();
+                batches.bind(&mut touched,w,store)?;
+                overlays.clear();
+            } else if phase.arm_bound() + 6 >= 480 {
                 batches.execute(&mut phase, w, &key_set_decisions)?;
                 w.reducer_groups += summaries.finish(w, &batches.counts)?;
             }

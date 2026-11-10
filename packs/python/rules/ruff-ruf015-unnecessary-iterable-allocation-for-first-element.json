@@ -1,0 +1,521 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf015-unnecessary-iterable-allocation-for-first-element",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Take the first item with next and iter instead of building a whole list or tuple only to index it; the full collection is allocated for one element.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "zero": {
+            "any": [
+              {
+                "kind": "integer",
+                "value": {
+                  "type": "int",
+                  "eq": 0
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "zero"
+                }
+              }
+            ]
+          },
+          "list-callee": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "list",
+                    "tuple"
+                  ],
+                  "import": [
+                    "builtins.list",
+                    "builtins.tuple"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "list-callee"
+                }
+              }
+            ]
+          },
+          "comp-arg": {
+            "any": [
+              {
+                "kind": "generator_expression"
+              },
+              {
+                "kind": "list_comprehension"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "comp-arg"
+                }
+              }
+            ]
+          },
+          "list-call": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "list-callee"
+                }
+              },
+              {
+                "has": {
+                  "field": "arguments",
+                  "any": [
+                    {
+                      "kind": "generator_expression"
+                    },
+                    {
+                      "kind": "argument_list",
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[\\[\\](),]$"
+                              },
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "keyword_argument"
+                              },
+                              {
+                                "kind": "dictionary_splat"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "comp-target": {
+            "any": [
+              {
+                "kind": "list_comprehension"
+              },
+              {
+                "matches": "list-call",
+                "has": {
+                  "field": "arguments",
+                  "any": [
+                    {
+                      "kind": "generator_expression"
+                    },
+                    {
+                      "kind": "argument_list",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "comp-arg"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "comp-target"
+                }
+              }
+            ]
+          },
+          "plain-target": {
+            "any": [
+              {
+                "kind": "list",
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^[\\[\\](),]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 1,
+                  "max": 1
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "regex": "^\\*"
+                }
+              },
+              {
+                "matches": "list-call",
+                "not": {
+                  "matches": "comp-target"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-target"
+                }
+              }
+            ]
+          },
+          "pop-of-comp": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "comp-target"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "attribute",
+                      "regex": "^pop$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "pop-of-comp"
+                }
+              }
+            ]
+          },
+          "first-comp": {
+            "pattern": "$W",
+            "any": [
+              {
+                "kind": "subscript",
+                "all": [
+                  {
+                    "has": {
+                      "field": "value",
+                      "matches": "comp-target"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "subscript",
+                      "matches": "zero"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "call",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "matches": "pop-of-comp"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "argument_list",
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[\\[\\](),]$"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "zero"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "first-comp-in-annotation": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "first-comp"
+                  },
+                  {
+                    "matches": "first-comp-in-annotation"
+                  }
+                ]
+              }
+            }
+          },
+          "pop-of-plain": {
+            "any": [
+              {
+                "kind": "attribute",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "plain-target"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "attribute",
+                      "regex": "^pop$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "pop-of-plain"
+                }
+              }
+            ]
+          },
+          "first-plain": {
+            "pattern": "$W",
+            "any": [
+              {
+                "kind": "subscript",
+                "all": [
+                  {
+                    "has": {
+                      "field": "value",
+                      "matches": "plain-target"
+                    }
+                  },
+                  {
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "subscript",
+                      "matches": "zero"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "call",
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "matches": "pop-of-plain"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "argument_list",
+                      "count": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[\\[\\](),]$"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        },
+                        "min": 1,
+                        "max": 1
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "zero"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "first-plain-in-annotation": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "first-plain"
+                  },
+                  {
+                    "matches": "first-plain-in-annotation"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "first-of-comprehension",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "first-comp"
+              },
+              {
+                "matches": "first-comp-in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.W",
+        "code": "RUF015",
+        "message": "Take the first item lazily with `next(...)` over a generator expression (or `next(iter(x))` for a plain copy of `x`) instead of building the list; an empty source then raises StopIteration.",
+        "each": "W",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF015"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "first-of-copy",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "matches": "first-plain"
+              },
+              {
+                "matches": "first-plain-in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.W",
+        "code": "RUF015",
+        "message": "Use `next(iter(x))` (just `next(x)` when x is already an iterator) instead of copying x into a list or tuple for one item; an empty x then raises StopIteration, not IndexError.",
+        "each": "W",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF015"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

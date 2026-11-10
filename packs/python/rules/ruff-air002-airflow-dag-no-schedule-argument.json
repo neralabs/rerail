@@ -1,0 +1,127 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-air002-airflow-dag-no-schedule-argument",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Give every Airflow Dag an explicit schedule; the implicit default changed from daily to none in Airflow 3, silently stopping Dags that relied on it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "dag-without-schedule",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "dag-site": {
+              "any": [
+                {
+                  "kind": "dotted_name",
+                  "regex": "^(DAG|dag)$",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_from_statement"
+                  }
+                },
+                {
+                  "kind": "aliased_import",
+                  "has": {
+                    "field": "name",
+                    "regex": "(^|\\.)\\s*(DAG|dag)$"
+                  }
+                }
+              ]
+            },
+            "dag-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "airflow"
+                    ],
+                    "prefix": true
+                  },
+                  "has": {
+                    "field": "attribute",
+                    "regex": "^(DAG|dag)$"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "airflow"
+                    ],
+                    "prefix": true
+                  },
+                  "all": [
+                    {
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "matches": "dag-site"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "dag-callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "dag-callee"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(schedule|schedule_interval|timetable)$"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "AIR002",
+        "message": "Pass an explicit `schedule=` to this Dag (`schedule=None` if it should only run when triggered); relying on the default changes behaviour between Airflow 2 and 3.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "AIR002"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

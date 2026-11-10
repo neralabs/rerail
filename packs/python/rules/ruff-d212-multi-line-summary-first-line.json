@@ -1,0 +1,120 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d212-multi-line-summary-first-line",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Start a multi-line docstring's summary right after the opening quotes, on the first line.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "multi-line-summary-first-line",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "doc-stmt": {
+              "kind": "expression_statement",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "module"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "doc-holder": {
+              "any": [
+                {
+                  "matches": "doc-stmt"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "doc-holder"
+                  }
+                }
+              ]
+            },
+            "docstring": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[bBfFtT]"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "doc-holder"
+              }
+            }
+          },
+          "rule": {
+            "matches": "docstring",
+            "regex": "^[uUrR]*(?:\"{3}|'{3})[\\r\\n]",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "regex": "\\S"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "D212",
+        "anchor": "witness.span",
+        "message": "Move this docstring's summary onto the line with the opening quotes, removing the line break after them.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D212"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

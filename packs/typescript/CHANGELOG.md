@@ -1,5 +1,40 @@
 # @neralabs/rerail-pack-typescript
 
+Every notable change to this rule pack, latest first. Each release says how many rules the pack ships, then lists its changes, rule by rule, under Added, Changed, Deprecated, Removed, Fixed and Security, as in [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); releases from before the pack's notes took that format list them without those headings. There are two differences: a heading reads `## <version> (<date>)` rather than `## [<version>] - <date>`, and changes waiting for the next release are [changesets](../../.changeset/README.md), so there is no `## Unreleased`.
+
+Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
+
+## 0.1.7 (2026-11-06)
+
+65 rules, 23 of them on by default.
+
+### Changed
+
+- The pack's npm page lists keywords: Rerail, its language and the tools it ports, so a search on npm finds it. Its rules are unchanged.
+
+## 0.1.6 (2026-11-04)
+
+65 rules, 23 of them on by default.
+
+### Fixed
+
+- `typescript-eslint-no-unused-expressions` now tells agents to rewrite a short-circuit call such as `a && f()` as an `if` that keeps its condition, and names the condition. Agents given the old message sometimes dropped the condition. What the rule reports is unchanged.
+
+## 0.1.5 (2026-11-04)
+
+65 rules, 23 of them on by default.
+
+- 41 new rules (38 from typescript-eslint and 3 from @vitest/eslint-plugin): 9 start in Steer, 1 in Log and 31 off.
+
+## 0.1.4
+
+### Patch Changes
+
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- d0dd309: README: internal ticket references removed; no rule changes.
+- 5976319: TypeScript pack: 3 more typescript-eslint 8.70.1 rules ship, all on: `no-empty-object-type`, `no-unsafe-declaration-merging` and `triple-slash-reference` (24 rules, 11 of them off). 12 more ports join the candidates. `no-restricted-types` is out of scope: at its default options it reports nothing. The README says why `no-magic-numbers` stays a candidate and why `init-declarations` can't match upstream's tests.
+- 211e8b5: The note on the port readiness recording in each `licenses/*/UPSTREAM.md` names the upstream licence file kept beside it (`LICENSE`) by its own name.
+
 ## 0.1.3
 
 ### Patch Changes
@@ -22,7 +57,7 @@
 
 - c5128c8: READMEs: JavaScript is parsed with the vendored, patched tree-sitter-javascript 0.25.0, and the patched tree-sitter-typescript reads vscode's import types, so the JavaScript and TypeScript packs declare no divergences (the eleven were files the grammars could not parse).
 - a0200c4: The package names the repository and directory it is published from, `neralabs/rerail` at `packs/<id>`.
-- 740cf08: One rule id style in every pack, before any pack is published: lowercase letters, digits and dashes, the same string as the rule's document file name and its port's id in `conformance.json`. JavaScript's `eslint:<rule>` and `unicorn:<rule>` ids become `eslint-<rule>` and `unicorn-<rule>`, with their documents renamed to match; TypeScript's `typescript-eslint:<rule>` become `typescript-eslint-<rule>`; Python's `python-conformance:<tool>-<rule>` become `<tool>-<rule>`; React's `react:no-array-index-key` becomes `react-no-array-index-key`; Next's probe documents are named for their ids; the complexity rules become `complexity-cyclomatic-<language>`. TypeScript's `no-explicit-any` candidate is converted from `tempo.policy/v1` to `rerail.policy/v1` and moves to `candidates/rules/`. The JavaScript and TypeScript packs say how many of their rules start on.
+- 740cf08: One rule id style in every pack, before any pack is published: lowercase letters, digits and dashes, the same string as the rule's document file name and its port's id in `conformance.json`. JavaScript's `eslint:<rule>` and `unicorn:<rule>` ids become `eslint-<rule>` and `unicorn-<rule>`, with their documents renamed to match; TypeScript's `typescript-eslint:<rule>` become `typescript-eslint-<rule>`; Python's `python-conformance:<tool>-<rule>` become `<tool>-<rule>`; React's `react:no-array-index-key` becomes `react-no-array-index-key`; Next's probe documents are named for their ids; the complexity rules become `complexity-cyclomatic-<language>`. TypeScript's `no-explicit-any` candidate is converted from the older policy format to `rerail.policy/v1` and moves to `candidates/rules/`. The JavaScript and TypeScript packs say how many of their rules start on.
 - 2ce6ed7: TypeScript pack: `typescript-eslint-no-unused-expressions` no longer reports `as`/`satisfies` type tests whose type is a name with two or more dots (`z.email() satisfies z.core.$ZodStringFormatTypes;`), matching typescript-eslint. `x as A.B.C;` around a non-call is still reported, as upstream does.
 - d91a72b: `typescript-eslint-class-literal-property-style` now tells an agent to check for subclasses that override a getter as an accessor before turning it into a readonly field, since that change breaks the override with TS2611.
 - ea66164: TypeScript pack: `typescript-eslint-consistent-generic-constructors` (candidate) tells agents to keep a generic type annotation when the project compiles with `isolatedDeclarations` and the declaration is exported, where moving the type arguments to the constructor fails tsc with TS9010.

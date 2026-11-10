@@ -514,6 +514,9 @@ impl Lowering {
             Semantic::Resolves(resolves) => !super::semantic::flow(resolves.language),
             // A label's view has no host path to read.
             Semantic::FilePath(_) => return Err(Unsupported(name)),
+            // A gap to a capture (`to: capture.L`) reads a binding another leaf makes: the fact's
+            // producer runs with no captures, so the gap would never hold.
+            Semantic::Layout(layout) if layout.reads().next().is_some() => return Err(Unsupported("layout reads a capture")),
             Semantic::Value(_) | Semantic::Layout(_) | Semantic::Arguments(_) => false,
             Semantic::Binding(test) => {
                 if test.occurrence.is_some() {
@@ -581,6 +584,7 @@ fn semantic_name(semantic: &super::Semantic) -> &'static str {
         Semantic::Layout(_) => "layout",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
+        Semantic::ImportTarget(_) => "importTarget",
     }
 }
 

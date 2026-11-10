@@ -226,6 +226,19 @@ describe("audit controls", () => {
     controls.close(); sessionStore.close();
   });
 
+  it("lists a staged rename's new path in a git-diff audit", async () => {
+    const { root, controls, sessionStore } = await fixture();
+    await writeFile(join(root, ".gitignore"), "rerail.sqlite*\n");
+    await writeFile(join(root, "before.ts"), "export const value = 1;\n");
+    execFileSync("git", ["init"], { cwd: root });
+    execFileSync("git", ["add", ".gitignore", "before.ts"], { cwd: root });
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "baseline"], { cwd: root });
+    execFileSync("git", ["mv", "before.ts", "after.ts"], { cwd: root });
+
+    expect(controls.requestAudit("a", { scope: "git-diff" }).paths).toEqual(["after.ts"]);
+    controls.close(); sessionStore.close();
+  });
+
   it("lists the own files of a dirty submodule and a recorded nested checkout, and leaves any other nested repository a folder", async () => {
     const { root, controls, sessionStore } = await fixture();
     const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "-c", "protocol.file.allow=always", ...args], { cwd, stdio: "pipe" });
