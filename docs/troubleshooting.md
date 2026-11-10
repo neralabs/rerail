@@ -286,6 +286,16 @@ On Windows, the hook works from a profile folder with a space or non-ASCII lette
 
 </details>
 
+### Windows: Codex or Cursor cannot run a Rerail command
+
+```text
+Unexpected token '"C:\Users\me\.rerail\current\dist\cli\cli.js"' in expression or statement.
+```
+
+Codex and Cursor run commands in PowerShell on Windows. Rerail 0.1.3 and earlier wrote their commands as
+`"<node>" "<cli.js>" …`, which PowerShell reads as a string followed by a word it refuses. Later releases write
+`& '<node>' '<cli.js>' …`. Run `rerail update`, then open a new session.
+
 ### `Couldn’t connect …: … is not plain JSON`
 
 ```text
@@ -385,9 +395,73 @@ shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in t
 If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
 that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.
 
+### Windows: a build from a checkout records nothing
+
+```text
+Model: checksum mismatch (config.json)
+```
+
+`rerail status` says this, and every hook of Rerail built from a Git checkout (`just rerail-dev --install-bridge`, or a
+daemon run from the checkout) fails with `model artifact checksum mismatch for config.json`. Git for Windows checks
+text files out with CRLF line breaks unless told otherwise, and `model/manifest.json` pins the bytes of
+`model/config.json` and `model/tokenizer.json`. The installed package is not affected.
+
+A checkout of a commit whose `.gitattributes` marks both files `-text` writes them as stored. In a checkout made
+before, have Git write them again, then stop the daemon; the next session event starts it with the model:
+
+```sh
+git rm -q --cached model/config.json model/tokenizer.json
+git checkout HEAD -- model/config.json model/tokenizer.json
+rerail daemon stop
+```
+
+[Developing on Windows](../CONTRIBUTING.md#developing-on-windows) covers the rest of the checkout's line endings.
+
 ## Daemon and dashboard
 
 The daemon is the background process every checkout and coding agent on the computer shares; it serves the dashboard.
+
+### Windows: a terminal window keeps opening and takes focus
+
+While a coding agent works, a Windows Terminal window opens every few seconds and takes the keyboard focus. With
+several sessions busy it opens almost without pause.
+
+Rerail 0.1.3 and earlier start the daemon with no console. Each Git command the daemon runs then gets a console window
+of its own, which Windows 11 opens in Windows Terminal. The release after 0.1.3 starts the daemon with a console that
+has no window, and every program the daemon runs shares it. Update while no coding agent session is working, since a
+session's next event starts the daemon again:
+
+```sh
+rerail daemon stop
+rerail update
+```
+
+The next session event starts the new daemon.
+
+<details>
+<summary>Until you can update</summary>
+
+Start the daemon under a hidden console yourself, in PowerShell. Its Git commands then share that console and open
+no window:
+
+```powershell
+$rerail = "$env:USERPROFILE\.rerail"
+& "$rerail\bin\rerail.cmd" daemon stop
+$env:RERAIL_HOME = $rerail
+$node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+Start-Process cmd.exe -WindowStyle Hidden -WorkingDirectory $rerail -ArgumentList "/c `"`"$node`" `"$rerail\current\dist\cli\daemon-entry.js`" --state-file `"$rerail\daemon.json`" >> `"$rerail\daemon.log`" 2>&1`""
+```
+
+Run it while no coding agent session is working: a hook that finds no daemon starts one the old way. This lists one
+daemon when it worked:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -like '*daemon-entry.js*'
+```
+
+The windows come back after a sign-out, a restart or `rerail daemon start`, until you update.
+
+</details>
 
 ### The daemon keeps running after `/rerail-stop`
 
