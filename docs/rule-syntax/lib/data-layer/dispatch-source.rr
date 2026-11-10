@@ -86,17 +86,17 @@ sd_scope(n,"<module>") :- sd_hit(n,_,_), !nearest(n,_,sd_scope_kind), !sd_decora
 sd_extent(n,0,a,b) :- node(_,n,k,a,b), k!="dotted_name".
 sd_extent(n,layer,a,b) :- node(_,n,"dotted_name",a,_), py_ast_attribute(n,_,layer),
     child(n,c,i), i=last-layer, last=max j : {child(n,_,j)}, node(_,c,_,_,b).
-.decl sd_event(n: node, layer: number, code: symbol, scope: symbol, expression: symbol, normalized: symbol, line: number, order: number)
-sd_event(n,layer,code,scope,expression,normal,l,i) :- sd_hit(n,layer,code), docof(n,d), sd_selected(d), sd_scope(n,scope),
+.decl sd_event(d: number, n: node, layer: number, code: symbol, scope: symbol, expression: symbol, normalized: symbol, line: number, order: number)
+sd_event(d,n,layer,code,scope,expression,normal,l,i) :- sd_hit(n,layer,code), docof(n,d), sd_selected(d), sd_scope(n,scope),
     sd_extent(n,layer,a,b), source(d,sp), text(sp,src), expression=@byte_slice(src,a,b), sd_whitespace(w),
     normal=@replace_all(@replace_all(expression,w," "),"^ +| +$",""), line(n,l), visit_index(n,i),
     (code!="SPD005";sd_document(d,p),sd_base(p)).
-.decl sd_occurrence(n: node, layer: number, code: symbol, count: number)
-sd_occurrence(n,k,c,prev+1) :- sd_event(n,k,c,s,e,normal,l,i),docof(n,d),
-    prev=count : {sd_event(m,j,c,s,e2,normal,l2,i2),docof(m,d),(l2<l;l2=l,e2<e;l2=l,e2=e,i2<i;l2=l,e2=e,i2=i,j<k)}.
+.decl sd_occurrence(d: number,n: node, layer: number, code: symbol, count: number)
+sd_occurrence(d,n,k,c,prev+1) :- sd_event(d,n,k,c,s,e,normal,l,i),
+    prev=count : {sd_event(d,m,j,c,s,e2,normal,l2,i2),(l2<l;l2=l,e2<e;l2=l,e2=e,i2<i;l2=l,e2=e,i2=i,j<k)}.
 .violation Dispatch(at: span, code_value: symbol, scope: symbol, expression: symbol, occurrence: number, inventory: symbol, message: symbol, document: symbol) code {code_value} "{message}"
 Dispatch(@place(p,l),c,s,e,occ,cat(c,"|",p,"|",s,"|",normal,"|occurrence=",to_string(occ)),message,document) :-
-    sd_event(n,k,c,s,e,normal,l,_), sd_occurrence(n,k,c,occ), docof(n,d), sd_document(d,p), sd_message(c,message),doc(d,document,_).
+    sd_event(d,n,k,c,s,e,normal,l,_), sd_occurrence(d,n,k,c,occ), sd_document(d,p), sd_message(c,message),doc(d,document,_).
 .violation DispatchNonempty(at: span) code "DISPATCH_NONEMPTY" "inventory is not empty"
 DispatchNonempty(@place("",0)) :- option("entryPoint","inventory_is_empty"), option_item("dispatchInventory",_,_).
 .violation DispatchUnapproved(at: span, ordinal: number) code "DISPATCH_UNAPPROVED" "unapproved finding"

@@ -2703,19 +2703,25 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/dispatch-source.rr",
-      "sha256": "2c4f2219e6745ace313713fb70a4a09b633d9e02583e74b81b1fe4efd8b56f83",
+      "sha256": "6b3b4703a101304161835a8bb93e4cb807d632dc7133b498120eb79245f2ed86",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/dispatch-provenance.rr",
-      "sha256": "16ac75f5387601b75270e5cb9654ce78d016da8ecb7228834d0fadb6cf7feefa",
+      "sha256": "ffab430dc827709c1b3bfd41504d375a179fcc5a9b04acafba0df65e84c0c5a9",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     },
     {
       "destination": "docs/rule-syntax/lib/python/number-key.rr",
       "sha256": "f58df4d26c27a7496ce0dc3b13bd4da4ec24f1dcbdf90881dd357cadbc5f3c16",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/bytes-key.rr",
+      "sha256": "19904c3077935462e0d9ec4ef24696c431ddcacd14a0c82f261ed3acc124548e",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
@@ -4536,7 +4542,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "0c13ee90a80fce420c980132b3207902073d75a93a3c0b55ddbef05a042f62a1"
+        "sha256": "d0fc8d9eae51e4358d7b330d7c6500036480b77e257d9c13523c54412add3f7e"
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
@@ -4556,7 +4562,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/strings/tests.rs",
-        "sha256": "132662be13c6c810202877f68984a5c0ae9b54f6cade99eacdef46382e5f562f"
+        "sha256": "30a50305aad8c2b38fa7da74bf6f219385345a25e2a8a86b3a30eaf0b497a4c0"
       },
       {
         "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
@@ -4617,9 +4623,9 @@
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
       "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
-      "engineCommit": "f0738cee496d24b7493bda96e8a6ba34dd82d61b",
+      "engineCommit": "f0dd12a881f227204a16612933545c272165e9a4",
       "sourceTrees": {
-        "native": "3bb04a4091d666d3f35f3a61231839d6c1e269fc",
+        "native": "547f1d007d8b995638ff6f86a4fc3e41235ad5a0",
         "accel": "c1cee95408206eb36c760b1db94154751cf5b5b7",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
@@ -4627,17 +4633,17 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "f0738cee496d24b7493bda96e8a6ba34dd82d61b",
+      "engineCommit": "f0dd12a881f227204a16612933545c272165e9a4",
       "upstreamCommit": "ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2",
       "sourceTrees": {
-        "native": "3bb04a4091d666d3f35f3a61231839d6c1e269fc",
+        "native": "547f1d007d8b995638ff6f86a4fc3e41235ad5a0",
         "accel": "c1cee95408206eb36c760b1db94154751cf5b5b7",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-75b4bdf18cbea8de",
-      "sha256": "75b4bdf18cbea8de41d03996c83f692235b6f5f6c6d449f5de283d08225d425e",
+      "path": ".rerail/modern-engine-alignment/cli-ee5dbadb317ff96f",
+      "sha256": "ee5dbadb317ff96f526d238d2e0f4cd097188b71af6e9358e0ea5255cb3651d3",
       "command": [
         "cargo",
         "build",
@@ -4650,7 +4656,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 163.616
+      "seconds": 107.527
     }
   },
   "engineSourceSnapshots": [

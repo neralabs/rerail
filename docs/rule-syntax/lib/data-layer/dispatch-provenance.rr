@@ -1,6 +1,7 @@
 // Executor provenance follows the linter's module preparation and lexical event walk.
 // This policy remains a draft until the full source contract passes.
 #include "python/number-key.rr"
+#include "python/bytes-key.rr"
 .decl sdp_base(n: node)
 sdp_base(n) :- docof(n,d), sd_document(d,p), sd_base(p), !syntax_error(d,_,_).
 .decl sdp_frame(n: node, f: node)
@@ -13,22 +14,46 @@ sdp_local(f,@nfkc(name)) :- expr_ctx(n,"store"), ast_name(n,name), sdp_frame(n,f
 .decl sdp_many(f: node, name: symbol)
 sdp_many(f,name) :- sdp_local(f,name), count : {expr_ctx(n,"store"),ast_name(n,raw),@nfkc(raw)=name,sdp_frame(n,f)} > 1.
 
-// Types and annotations. The source's preparatory sets are module-wide.
+// The initial class/import pass is breadth first and precedes assignment aliases.
+// A later import or class must not retroactively change an earlier class's bases.
+.decl sdp_before(a: node,b: node)
+sdp_before(a,b) :- (kind(a,"class_definition");kind(a,"import_from_statement")),kind(b,"class_definition"),
+    docof(a,d),docof(b,d),py_ast_depth(a,ad),py_ast_depth(b,bd),visit_index(a,ai),visit_index(b,bi),(ad<bd;ad=bd,ai<bi).
+.decl sdp_initial(d: number,name: symbol,at: node)
+sdp_initial(d,@nfkc(name),i) :- kind(i,"import_from_statement"),docof(i,d),field(i,"name",n),kind(n,"dotted_name"),text(n,name),suffix("BackendExecutor",@nfkc(name)).
+sdp_initial(d,@nfkc(alias),i) :- kind(i,"import_from_statement"),docof(i,d),field(i,"name",n),kind(n,"aliased_import"),
+    field(n,"name",nm),text(nm,name),suffix("BackendExecutor",@nfkc(name)),field(n,"alias",al),text(al,alias).
+sdp_initial(d,@nfkc(name),c) :- kind(c,"class_definition"),docof(c,d),def_name(c,name),field(c,"superclasses",args),child(args,a,_),sdp_initial_ann(c,a).
+.decl sdp_ann_child(e: node,c: node)
+sdp_ann_child(e,c) :- (kind(e,"type");kind(e,"parenthesized_expression")),child(e,c,0).
+sdp_ann_child(e,c) :- (kind(e,"binary_operator");kind(e,"union_type")),op(e,"|"),child(e,c,_).
+sdp_ann_child(e,c) :- kind(e,"subscript"),field(e,"value",h),sd_terminal(h,name),
+    (name="Annotated";name="Awaitable";name="Coroutine";name="Optional"),field(e,"subscript",c).
+sdp_ann_child(e,c) :- kind(e,"generic_type"),child(e,h,0),sd_terminal(h,name),
+    (name="Annotated";name="Awaitable";name="Coroutine";name="Optional"),child(e,tp,1),child(tp,c,0),!child(tp,_,1).
+.decl sdp_ann_suffix(e: node)
+sdp_ann_suffix(e) :- sd_terminal(e,name),suffix("BackendExecutor",name).
+sdp_ann_suffix(e) :- str_const(e,raw),compact=@replace_all(raw," ",""),match("(?:[^|]*\\|)*[^|]*BackendExecutor(?:\\|[^|]*)*",compact).
+.decl sdp_initial_ann(at: node,e: node)
+.decl sdp_initial_need(at: node,e: node)
+sdp_initial_need(at,e) :- kind(at,"class_definition"),field(at,"superclasses",args),child(args,e,_).
+sdp_initial_need(at,c) :- sdp_initial_need(at,e),sdp_ann_child(e,c).
+sdp_initial_ann(at,e) :- sdp_initial_need(at,e),sdp_ann_suffix(e).
+sdp_initial_ann(at,e) :- sdp_initial_need(at,e),docof(at,d),sdp_initial(d,name,prior),sdp_before(prior,at),sd_terminal(e,name).
+sdp_initial_ann(at,e) :- sdp_initial_need(at,e),docof(at,d),sdp_initial(d,name,prior),sdp_before(prior,at),
+    str_const(e,raw),compact=@replace_all(raw," ",""),contains(cat("|",name,"|"),cat("|",compact,"|")).
+sdp_initial_ann(at,e) :- sdp_initial_need(at,e),sdp_ann_child(e,c),sdp_initial_ann(at,c).
+
+// The subsequent assignment and owner preparation is a positive fixed point.
 .decl sdp_type(d: number,name: symbol)
 sdp_type(d,"BackendExecutor") :- doc(d,_,_).
-sdp_type(d,@nfkc(alias)) :- rifrom(s,alias,_,raw),docof(s,d),suffix("BackendExecutor",@nfkc(raw)).
-sdp_type(d,@nfkc(name)) :- kind(c,"class_definition"),docof(c,d),def_name(c,name),field(c,"superclasses",args),child(args,a,_),sdp_ann(a).
+sdp_type(d,name) :- sdp_initial(d,name,_).
 sdp_type(d,@nfkc(name)) :- assign_target(a,t),docof(a,d),ast_name(t,name),assign_value(a,raw),unparen(raw,v),ast_name(v,value),sdp_type(d,@nfkc(value)).
 .decl sdp_ann(e: node)
 sdp_ann(e) :- sd_terminal(e,name),docof(e,d),(sdp_type(d,name);suffix("BackendExecutor",name)).
-sdp_ann(e) :- str_const(e,raw), compact=@replace_all(raw," ",""), match("(?:[^|]*\\|)*[^|]*BackendExecutor(?:\\|[^|]*)*",compact).
+sdp_ann(e) :- sdp_ann_suffix(e).
 sdp_ann(e) :- str_const(e,raw),docof(e,d),compact=@replace_all(raw," ",""),sdp_type(d,name),contains(cat("|",name,"|"),cat("|",compact,"|")).
-sdp_ann(e) :- (kind(e,"type");kind(e,"parenthesized_expression")),child(e,c,0),sdp_ann(c).
-sdp_ann(e) :- (kind(e,"binary_operator");kind(e,"union_type")),op(e,"|"),child(e,c,_),sdp_ann(c).
-sdp_ann(e) :- kind(e,"subscript"),field(e,"value",h),sd_terminal(h,name),
-    (name="Annotated";name="Awaitable";name="Coroutine";name="Optional"),field(e,"subscript",s),sdp_ann(s).
-sdp_ann(e) :- kind(e,"generic_type"),child(e,h,0),sd_terminal(h,name),
-    (name="Annotated";name="Awaitable";name="Coroutine";name="Optional"),child(e,tp,1),child(tp,s,0),!child(tp,_,1),sdp_ann(s).
+sdp_ann(e) :- sdp_ann_child(e,c),sdp_ann(c).
 .decl sdp_factory(d: number,name: symbol)
 sdp_factory(d,"_create_backend_executor") :- doc(d,_,_).
 sdp_factory(d,@nfkc(name)) :- kind(f,"function_definition"),docof(f,d),def_name(f,name),field(f,"return_type",a),sdp_ann(a).
@@ -55,7 +80,13 @@ sdp_selected(e,v) :- kind(e,"subscript"),field(e,"value",raw),unparen(raw,c),kin
 sdp_const_key(e,key) :- kind(e,k),(k="integer";k="float";k="true";k="false"),node(d,e,_,a,b),
     source(d,sp),text(sp,src),token=@byte_slice(src,a,b),key=@python_number_key(token).
 sdp_const_key(e,cat("s:",s)) :- str_const(e,s).
-sdp_const_key(e,cat("b:",@unparse(e))) :- ast_constant(e),string_form(e,"bytes").
+.decl sdp_bytes_piece(e: node,key: symbol)
+sdp_bytes_piece(e,key) :- kind(e,"string"),string_form(e,"bytes"),node(d,e,_,a,b),source(d,sp),text(sp,src),
+    key=@python_bytes_key(@byte_slice(src,a,b)).
+sdp_const_key(e,cat("b:",hex)) :- sdp_bytes_piece(e,hex).
+sdp_const_key(e,cat("b:",hex)) :- kind(e,"concatenated_string"),
+    count : {child(e,c,_),!kind(c,"comment"),!sdp_bytes_piece(c,_)}=0,
+    hex=join piece by i sep "" : {child(e,c,i),sdp_bytes_piece(c,piece)}.
 sdp_const_key(e,"none") :- kind(e,"none").
 sdp_const_key(e,"ellipsis") :- kind(e,"ellipsis").
 .decl sdp_dep(e: node, v: node)
@@ -124,27 +155,63 @@ sdp_pre(e) :- sdp_self_attr(e).
 sdp_pre(e) :- ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),!kind(f,"module"),sdp_owners(f,name),!sdp_many(f,name).
 sdp_pre(e) :- sdp_dep(e,v),sdp_pre(v).
 
-// Runtime state is demanded only at linter event sites and assignment RHSs.
-.decl sdp_need(at: node,e: node)
-sdp_need(a,v) :- sdp_assignment(a,_,v),sdp_base(a).
-sdp_need(n,v) :- sdp_base(n),kind(n,"attribute"),field(n,"object",raw),unparen(raw,v).
-sdp_need(n,n) :- sdp_base(n),kind(n,"subscript").
-sdp_need(n,v) :- sdp_base(n),kind(n,"call"),sd_arg(n,_,v).
-sdp_need(n,v) :- sdp_base(n),kind(n,"call"),field(n,"arguments",args),child(args,k,_),kind(k,"keyword_argument"),field(k,"value",raw),unparen(raw,v).
-sdp_need(n,v) :- sdp_base(n),(kind(n,"return_statement");kind(n,"yield")),child(n,raw,0),unparen(raw,v).
-sdp_need(n,v) :- sdp_base(n),sd_operand(n,v).
-sdp_need(at,v) :- sdp_need(at,e),sdp_dep(e,v).
-.decl sdp_last(at: node, f: node, name: symbol, a: node)
-sdp_last(at,f,name,a) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_write(a,f,name,_),visit_index(a,i),visit_index(at,j),i<j,
-    i=max k : {sdp_write(w,f,name,_),visit_index(w,k),k<j}.
+// Assignment targets are visited sequentially by the source collector. A slot
+// records that intra-event order without a scalar callback or a scheduler.
+.decl sdp_plain_write(at: node, slot: number, f: node, name: symbol, value: node)
+sdp_plain_write(a,slot,f,@nfkc(name),value) :- sdp_assignment(a,t,v),!kind(a,"named_expression"),
+    sdp_unpack(t,v,nt,value),sdp_target(nt,n),ast_name(n,name),sdp_frame(n,f),visit_index(n,slot).
+.decl sdp_runtime_write(at: node, slot: number, f: node, name: symbol, value: node)
+sdp_runtime_write(a,slot,f,name,value) :- sdp_plain_write(a,slot,f,name,value).
+.decl sdp_runner(at: node, slot: number, f: node, name: symbol)
+sdp_runner(a,slot,f,@nfkc(name)) :- assign_target(a,t),kind(t,k),(k="pattern_list";k="tuple_pattern";k="tuple"),
+    child(t,n,1),ast_name(n,name),sdp_frame(n,f),assign_value(a,raw),unparen(raw,v),sd_callee(v,"_pipeline_runner_args"),
+    last=max i : {sdp_plain_write(a,i,_,_,_)},slot=last+1.
+sdp_runtime_write(a,slot,f,name,v) :- sdp_runner(a,slot,f,name),assign_value(a,v).
+
+// Runtime state is demanded only at linter events and actual assignment RHSs.
+.decl sdp_need(at: node, slot: number, e: node)
+sdp_need(a,0,v) :- sdp_assignment(a,_,v),sdp_base(a).
+sdp_need(a,slot,v) :- sdp_runtime_write(a,slot,_,_,v),sdp_base(a).
+sdp_need(n,0,v) :- sdp_base(n),kind(n,"attribute"),field(n,"object",raw),unparen(raw,v).
+sdp_need(n,0,n) :- sdp_base(n),kind(n,"subscript").
+sdp_need(n,0,v) :- sdp_base(n),kind(n,"call"),sd_arg(n,_,v).
+sdp_need(n,0,v) :- sdp_base(n),kind(n,"call"),field(n,"arguments",args),child(args,k,_),kind(k,"keyword_argument"),field(k,"value",raw),unparen(raw,v).
+sdp_need(n,0,v) :- sdp_base(n),(kind(n,"return_statement");kind(n,"yield")),child(n,raw,0),unparen(raw,v).
+sdp_need(n,0,v) :- sdp_base(n),sd_operand(n,v).
+sdp_need(n,0,v) :- sdp_base(n),kind(n,"match_statement"),field(n,"subject",raw),unparen(raw,v).
+sdp_need(at,slot,v) :- sdp_need(at,slot,e),sdp_dep(e,v).
+.decl sdp_prior_write(at: node, slot: number, f: node, name: symbol, w: node, ws: number, wi: number)
+sdp_prior_write(at,slot,f,name,w,ws,wi) :- sdp_need(at,slot,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),
+    sdp_runtime_write(w,ws,f,name,_),visit_index(w,wi),visit_index(at,ai),(wi<ai;wi=ai,ws<slot).
+.decl sdp_last(at: node, slot: number, f: node, name: symbol, w: node, ws: number)
+sdp_last(at,slot,f,name,w,ws) :- sdp_prior_write(at,slot,f,name,w,ws,wi),
+    wi=max i : {sdp_prior_write(at,slot,f,name,_,_,i)},
+    ws=max j : {sdp_prior_write(at,slot,f,name,w,j,wi)}.
+.decl sdp_state(at: node, slot: number, e: node)
+sdp_state(at,slot,e) :- sdp_need(at,slot,e),sdp_seed(e).
+sdp_state(at,slot,e) :- sdp_need(at,slot,e),sdp_self_attr(e).
+sdp_state(at,slot,e) :- sdp_need(at,slot,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),!kind(f,"module"),sdp_owners(f,name),!sdp_local(f,name).
+sdp_state(at,slot,e) :- sdp_need(at,slot,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_owners(f,name),!sdp_many(f,name).
+sdp_state(at,slot,e) :- sdp_need(at,slot,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_owners(f,name),!sdp_last(at,slot,f,name,_,_).
+sdp_state(at,slot,e) :- sdp_need(at,slot,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),
+    sdp_last(at,slot,f,name,w,ws),sdp_runtime_write(w,ws,f,name,v),sdp_state(w,ws,v).
+sdp_state(at,slot,e) :- sdp_need(at,slot,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),
+    sdp_last(at,slot,f,name,w,ws),sdp_runner(w,ws,f,name).
+sdp_state(at,slot,e) :- sdp_need(at,slot,e),sdp_dep(e,v),sdp_state(at,slot,v).
+
+// Match bindings only add aliases. An intervening ordinary write is a static
+// barrier, so eligibility needs no aggregate over recursively derived owners.
+.decl sdp_match_binding(m: node, f: node, name: symbol, subject: node)
+sdp_match_binding(m,f,@nfkc(name),v) :- kind(m,"match_statement"),field(m,"subject",raw),unparen(raw,v),
+    py_capture(n),!sdp_mapping_rest(n),within(n,m),nearest(n,m,"match_statement"),text(n,name),sdp_frame(n,f).
+.decl sdp_match_candidate(at: node, slot: number, e: node, m: node, subject: node)
+sdp_match_candidate(at,slot,e,m,v) :- sdp_need(at,slot,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_local(f,name),
+    sdp_match_binding(m,f,name,v),earlier(m,at),!sdp_last(at,slot,f,name,_,_).
+sdp_match_candidate(at,slot,e,m,v) :- sdp_need(at,slot,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_local(f,name),
+    sdp_match_binding(m,f,name,v),earlier(m,at),sdp_last(at,slot,f,name,w,_),earlier(w,m).
+sdp_state(at,slot,e) :- sdp_match_candidate(at,slot,e,m,v),sdp_state(m,0,v).
 .decl sdp_run(at: node,e: node)
-sdp_run(at,e) :- sdp_need(at,e),sdp_seed(e).
-sdp_run(at,e) :- sdp_need(at,e),sdp_self_attr(e).
-sdp_run(at,e) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),!kind(f,"module"),sdp_owners(f,name),!sdp_local(f,name).
-sdp_run(at,e) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_owners(f,name),!sdp_many(f,name).
-sdp_run(at,e) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_owners(f,name),!sdp_last(at,f,name,_).
-sdp_run(at,e) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_last(at,f,name,a),sdp_write(a,f,name,v),sdp_run(a,v).
-sdp_run(at,e) :- sdp_need(at,e),sdp_dep(e,v),sdp_run(at,v).
+sdp_run(at,e) :- sdp_state(at,0,e).
 
 // The closed executor API yields ordinary result objects; undeclared surfaces carry ownership.
 .decl sdp_hit(n: node)
@@ -164,7 +231,7 @@ sdp_reflection(n,o,lookup) :- kind(n,"call"),field(n,"function",raw),unparen(raw
 sdp_allowed_lookup(n) :- sdp_reflection(n,_,lookup),str_const(lookup,name),sdp_api(name).
 sdp_hit(n) :- sdp_base(n),sdp_reflection(n,o,_),sdp_run(n,o),!sdp_allowed_lookup(n).
 sdp_hit(n) :- sdp_base(n),kind(n,"call"),sd_arg(n,0,_),field(n,"function",raw),unparen(raw,f),!kind(f,"attribute"),
-    !sdp_allowed_consumer(n),sdp_need(n,v),sdp_run(n,v).
+    !sdp_allowed_consumer(n),sdp_need(n,0,v),sdp_run(n,v).
 .decl sdp_allowed_consumer(n: node)
 sdp_allowed_consumer(n) :- sd_callee(n,name),(sdp_consumer(name);sdp_reflective(name);name="cast").
 sd_hit(n,0,"SPD005") :- sdp_hit(n).

@@ -19,6 +19,11 @@ def main():
     source=args.source.absolute();compare(git(source,'rev-parse','HEAD'),PIN)
     sys.path[:0]=[str(source),str(source/'scripts')]
     module=importlib.import_module('scripts.lint_serverplan_dispatch_architecture')
+    from data_layer_audit.native_guard import codes
+    original_codes=codes({'serverplan_dispatch_architecture':module});fallbacks=[]
+    def guard(frame,event,_arg):
+        if event=='call' and frame.f_code in original_codes and not original_codes[frame.f_code][2]:
+            fallbacks.append(frame.f_code.co_qualname);raise AssertionError('Original semantics executed: '+frame.f_code.co_qualname)
     original=source/'scripts/lint_serverplan_dispatch_architecture.py'
     baseline=read_json(args.baseline);compare(baseline['passed'],True)
     compare(baseline['sourcePin'],PIN);compare(baseline['sourceSha256'],sha(original.read_bytes()))
@@ -30,7 +35,9 @@ def main():
     execute=execute_native if args.mode=='snapshot' else execute_workspace
     paths=[Path(__file__),*[Path(__file__).with_name(n) for n in ['dispatch_contract.py','replay.py','migration.py','dto.py']]]
     hashes={p.relative_to(ROOT).as_posix():sha(p.read_bytes()) for p in paths}
-    native=execute(args.engine.absolute(),ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr',files,options)
+    sys.setprofile(guard)
+    try:native=execute(args.engine.absolute(),ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr',files,options)
+    finally:sys.setprofile(None)
     groups={f['path']:[] for f in files}
     for diagnostic in native['diagnostics']:
         if diagnostic['code'] not in {'SPD001','SPD002','SPD003','SPD004','SPD005'}:raise ValueError('Unexpected batch result: '+diagnostic['code'])
@@ -38,13 +45,15 @@ def main():
     rows=[]
     for i,c in selected:
         diagnostics=sorted(groups[f'case-{i}.py'],key=lambda r:(r['line'],r['code'],r['parameters']['expression'],r['parameters']['occurrence']))
-        values=tuple(module.Finding(r['code'],Path(c['path']),r['line'],r['parameters']['scope'],r['parameters']['expression'],r['message'],r['parameters']['occurrence']) for r in diagnostics)
+        sys.setprofile(guard)
+        try:values=tuple(module.Finding(r['code'],Path(c['path']),r['line'],r['parameters']['scope'],r['parameters']['expression'],r['message'],r['parameters']['occurrence']) for r in diagnostics)
+        finally:sys.setprofile(None)
         actual=dict(value=canonical(values));expected=baseline['cases'][i]['expected']
         rows.append(dict(input=c,expected=expected,actual=actual,passed=actual==expected))
     for name,digest in hashes.items():compare(digest,sha((ROOT/name).read_bytes()))
     report=dict(format='rerail.dispatch-batch-contract/v1',admitted=False,sourcePin=PIN,mode=args.mode,
         engineSha256=sha(args.engine.read_bytes()),harnessFiles=hashes,baselineSha256=sha(args.baseline.read_bytes()),
-        part=args.part,parts=args.parts,totalCases=len(corpus),cases=rows,native=native,passed=all(r['passed'] for r in rows))
+        part=args.part,parts=args.parts,totalCases=len(corpus),cases=rows,native=native,semanticFallbacks=fallbacks,passed=all(r['passed'] for r in rows) and not fallbacks)
     write_json(args.out,report)
     print(dict(cases=len(rows),failed=sum(not r['passed'] for r in rows),passed=report['passed']))
     raise SystemExit(0 if report['passed'] else 1)

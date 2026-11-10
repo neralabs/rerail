@@ -1,0 +1,3 @@
+// Hexadecimal bytes from one valid Python bytes literal token. The decoder
+// preserves raw prefixes, escaped bytes, and universal newline handling.
+.functor python_bytes_key(source: symbol): symbol
