@@ -18,6 +18,7 @@ import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { removeFolder } from "../support/remove-folder.js";
+import { steerLatitude } from "../support/steers.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -717,7 +718,7 @@ describe("Rerail session restore", () => {
         content: [
           "Rerail has guidance for this Bash call:",
           "- Ask before force-pushing. [acme:no-force-push]",
-          "Follow it, or tell the user in one line why you won't and run `rerail feedback acme:no-force-push '<that line>'`.",
+          steerLatitude("claude-code", "acme:no-force-push", { kind: "tool", tool: "Bash" }),
         ].join("\n"),
         ruleIds: ["acme:no-force-push"],
         rules: [{ id: "acme:no-force-push", state: "steered" }],

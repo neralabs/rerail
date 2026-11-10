@@ -15,6 +15,7 @@ import {
 import { RerailRuntime, type RerailRuntimeOptions } from "../../src/runtime/runtime.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { testCodeRuleCatalog } from "../support/repository-rules.js";
+import { steerLatitude } from "../support/steers.js";
 import { literal } from "../support/text-patterns.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-steer-strategy-");
@@ -112,7 +113,13 @@ describe("The rewind steer strategy", () => {
           toolCallId: "w1",
           rewound: ["created.py"],
           ruleIds: ["test:needle"],
-          content: expect.stringMatching(/^Rerail rolled back these files because the edit breaks the rule below: `created\.py`, which the edit created, is deleted\. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the user in one line why\.\n\nRerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't and run `rerail feedback test:needle '<that line>'`\.$/u),
+          content: [
+            "Rerail rolled back these files because the edit breaks the rule below: `created.py`, which the edit created, is deleted. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the user in one line why.",
+            "",
+            "Rerail found 1 problem in your last edit:",
+            "- created.py:1:1 — No needle [test:needle]",
+            steerLatitude(host, "test:needle"),
+          ].join("\n"),
         })]);
         await expect(readFile(join(session.root, "created.py"))).rejects.toThrow(/ENOENT/u);
         expect(await session.turnEnd()).toEqual([]);
@@ -370,7 +377,7 @@ describe("The message steer strategy", () => {
       expect(deliveries).toEqual([{
         sessionId: "strategy", requested: "steer", mechanism: "native-queue", ruleIds: ["test:needle"], strategy: "message", toolCallId: "w1",
         rules: [{ id: "test:needle", state: "steered", origin: "From your rule library." }],
-        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't and run `rerail feedback test:needle '<that line>'`\.$/u),
+        content: ["Rerail found 1 problem in your last edit:", "- created.py:1:1 — No needle [test:needle]", steerLatitude("omp", "test:needle")].join("\n"),
       }]);
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");
     } finally {
@@ -399,7 +406,13 @@ describe("The subagent steer strategy", () => {
       expect(deliveries).toEqual([expect.objectContaining({
         strategy: "subagent",
         toolCallId: "w1",
-        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't and run `rerail feedback test:needle '<that line>'`\.\n\nThis note comes from Rerail, not the user, and your task is unchanged\. Hand the fix to a subagent with the `rerail_fix` tool/u),
+        content: expect.stringMatching(new RegExp(`^${literal([
+          "Rerail found 1 problem in your last edit:",
+          "- created.py:1:1 — No needle [test:needle]",
+          steerLatitude("pi", "test:needle"),
+          "",
+          "This note comes from Rerail, not the user, and your task is unchanged. Hand the fix to a subagent with the `rerail_fix` tool",
+        ].join("\n"))}`, "u")),
       })]);
       expect(deliveries[0]).not.toHaveProperty("rewound");
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");

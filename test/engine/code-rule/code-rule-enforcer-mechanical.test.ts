@@ -108,6 +108,7 @@ async function fixture({ codeRules = [needleCodeRule(1)], ...options }: {
   audits?: AuditRecorder;
   codeRules?: readonly CodeRule[];
   timingLog?: (line: string) => void;
+  steerShell?: "posix" | "git-bash" | "powershell";
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "rerail-enforcer-"));
   roots.push(root);
@@ -1018,7 +1019,8 @@ describe("mechanical code rule regressions", () => {
         forbid: { ast: { language: "typescript", rule: { pattern: "console.log($ARG)" } } },
       }],
     });
-    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [fixing] });
+    // The steer's command is written for sh, as for an agent off Windows, on every machine.
+    const { root, enforcer, requestSteer } = await fixture({ audits: recorder, codeRules: [fixing], steerShell: "posix" });
     try {
       const source = "export function App() {\n  console.log(user);\n  return <main />;\n}\n";
       await mkdir(join(root, "web"));
