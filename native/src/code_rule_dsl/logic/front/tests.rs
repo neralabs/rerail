@@ -201,3 +201,28 @@ fn components_in_t_order() {
          isasync | reaches_open"
     );
 }
+
+/// Two components each closed by a negation: `strata` names the first, `unstratified` both (demand's split drops
+/// both in one round).
+#[test]
+fn every_unstratified_component_is_named() {
+    let prog = super::parse(
+        "
+        .decl e(x: node)
+        .decl a(x: node)
+        .decl b(x: node)
+        .decl c(x: node)
+        .decl d(x: node)
+        .input e
+        .output a, c
+        a($x) :- e($x), !b($x).
+        b($x) :- e($x), a($x).
+        c($x) :- e($x), !d($x).
+        d($x) :- e($x), c($x).
+        ",
+    )
+    .unwrap();
+    assert!(strata(&prog).is_err());
+    let all = unstratified(&prog);
+    assert_eq!(all.len(), 2, "{all:?}");
+}
