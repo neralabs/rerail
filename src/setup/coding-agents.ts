@@ -17,6 +17,7 @@ import {
   type Harness,
   type RegistrationChange,
 } from "./harness-registration.js";
+import { CURRENT_LINK } from "./updater.js";
 
 /** The names people see for each coding agent `--agents` takes. */
 export const CODING_AGENT_NAMES: Readonly<Record<Harness, string>> = {
@@ -40,7 +41,7 @@ export function codingAgentHome(): string {
 
 /** Registrations point at `<rerail home>/current` once set-up has run; before that, at the running package. */
 export function registrationRoot(rerailHome: string, packageRoot: string): string {
-  const current = join(rerailHome, "current");
+  const current = join(rerailHome, CURRENT_LINK);
   return existsSync(join(current, "package.json")) ? current : packageRoot;
 }
 
