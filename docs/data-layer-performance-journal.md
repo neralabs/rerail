@@ -10964,3 +10964,25 @@ Dispatch remains a draft. Supplied-fact reporting, CLI contracts, persistent upd
 and final admission remain open. The 100-port migration remains active.
 Final advanced to `72a3a658b` during this fixed cohort. The live alignment audit correctly refuses fresh migration admission until that merge.
 The recorded observations above belong to the immutable `883458148` engine cohort. They do not certify the newer engine.
+
+### Final 72a3 engine refresh, 2026-11-10
+
+Merged Final `72a3a658b` in merge commit `24a26ca28` after preserving the previous cohort's results.
+The merge adopts Final's run-wide worker pool and scheduling changes. It required no conflict resolution.
+The current root engine builds successfully. The unit build took 98.236 seconds elapsed.
+The optimized build took 258.931 seconds, including a shared Cargo lock wait. Compilation remains separate from execution.
+
+Focused native tests pass: two load-identity tests, seven filesystem tests, 17 string tests, seven session tests,
+three worker-pool tests, and one literal-fact test. One pre-existing session helper remains ignored.
+Both APIs pass all 49 unchanged original dispatch tests, 298 scanner cases, 43 repository cases, and 47 Finding projection cases.
+The scanner corpus includes 203 positive cases per API. The repository corpus includes 30 positive cases per API.
+Complete original scan observations match with no semantic Python fallback. Five shared production alias checks also pass.
+The tooling suite passes 375 tests. The live engine-alignment inventory audit passes.
+
+[The current progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-alignment-final72-progress.json.gz)
+retains all 18 native reports, source recordings, 21 consumed programs, 12 harness files, build provenance, and test logs.
+The receipt verifies complete shard membership, unchanged original test outcomes, current program bytes, and one engine digest.
+No full-repository cold benchmark ran.
+
+Dispatch remains a draft. Supplied-fact reporting, CLI contracts, persistent updates, behavior-removal controls,
+and final admission remain open. No additional rule was admitted. The inventory remains 11 accepted ports, 85 drafts, and four absent translations.

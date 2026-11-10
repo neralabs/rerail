@@ -3680,6 +3680,10 @@
           {
             "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-finding-final883-progress.json.gz",
             "sha256": "fb4f26f0e932b358efdbcb1f148d26cce23f9d8fcd0e0cd6e30f485b31e06c5e"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-alignment-final72-progress.json.gz",
+            "sha256": "b5eb4c23e7324873e62901bbf3c51dd9a71c330aa0984df6fd13d10e9861d065"
           }
         ],
         "findingProjectionCasesPerAPI": 47
@@ -4413,8 +4417,8 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "883458148f17615605f62c774b0f4e7140bb7fa8",
-    "status": "Final 883 merged; immutable root CLI validates dispatch scanner and repository contracts through both APIs. Full migration remains open.",
+    "upstreamCommit": "72a3a658b33d4e2a28dbf838b8075d05c56703ef",
+    "status": "Final 72a3 merged and rebuilt. Dispatch original, scanner, repository, and Finding projection contracts pass through both APIs. Full migration remains open.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4530,7 +4534,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "268eba5d534206136f1106647a77797cbd42181d24fcfda65c36a434a9d98b24"
+        "sha256": "a4cf3f19700d0c9f11762620cd2f85c5daa02252436275caa27da9da8beac7d8"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
@@ -4658,28 +4662,28 @@
     ],
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "883458148f17615605f62c774b0f4e7140bb7fa8",
-      "engineCommit": "78209723ace4c957997398dbeeec111a2923bb9f",
+      "upstreamCommit": "72a3a658b33d4e2a28dbf838b8075d05c56703ef",
+      "engineCommit": "24a26ca28ae3e4dbc3732a17314fbcc974b5a65d",
       "sourceTrees": {
-        "native": "515a4d638a9b38e285d374839298d9dab250877b",
-        "accel": "ffcbdd15465ec562972956b66b327c630f94ecb4",
+        "native": "0db9fa13ec9dd7255d4bd3f2d2d6e35eb99fa2b6",
+        "accel": "860da0ad8c49ae31fd4bb93494d4f123e83fe957",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       }
     },
     "cliArtifact": {
-      "engineCommit": "78209723ace4c957997398dbeeec111a2923bb9f",
-      "upstreamCommit": "883458148f17615605f62c774b0f4e7140bb7fa8",
+      "engineCommit": "24a26ca28ae3e4dbc3732a17314fbcc974b5a65d",
+      "upstreamCommit": "72a3a658b33d4e2a28dbf838b8075d05c56703ef",
       "sourceTrees": {
-        "native": "515a4d638a9b38e285d374839298d9dab250877b",
-        "accel": "ffcbdd15465ec562972956b66b327c630f94ecb4",
+        "native": "0db9fa13ec9dd7255d4bd3f2d2d6e35eb99fa2b6",
+        "accel": "860da0ad8c49ae31fd4bb93494d4f123e83fe957",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-6ff32bfe769b6bbe",
-      "sha256": "6ff32bfe769b6bbe8f1509e6436f277b2480ab2ff3d8ef0404c2332961fe2879",
+      "path": ".rerail/modern-engine-alignment/cli-ab2ba15045bdd870",
+      "sha256": "ab2ba15045bdd87017b1e017fc8af6686c50f160de6f8f6963a76288146f4707",
       "command": [
         "cargo",
         "build",
@@ -4692,7 +4696,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 154.359
+      "seconds": 258.931
     }
   },
   "engineSourceSnapshots": [
