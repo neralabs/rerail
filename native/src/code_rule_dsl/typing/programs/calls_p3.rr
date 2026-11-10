@@ -448,6 +448,17 @@ rret(f, "inst", k) :- rann(f, t), !isasync(f), aleaf(t, m), aself(m), method(f, 
 .decl cret(c: node, w: symbol, k: node)
 cret(c, w, k) :- cfn(c, e, f), rret(f, w, k), !rgen(f, _).
 pv(c, w, s) :- cret(c, w, k), anc(s, k), docof(c, d9), docof(s, e9), rr_cx_reach(d9, e9).
+// awaitf(w, c, f): `await c`, where call c runs the async def f (not an async generator, which is not awaited). Its
+// value is what f returns, declared (`async def f() -> K`: the coroutine's result, not the call's) or returned.
+.decl awaitf(w: node, c: node, f: node)
+awaitf(w, c, f) :- kind(w, "await"), child(w, c, 0), cfn(c, _, f), isasync(f), !isgen(f).
+.decl aclosed(f: node)
+aclosed(f) :- rann(f, t), !aopen(t), isasync(f).
+.decl aret(f: node, w: symbol, k: node)
+aret(f, "inst", k) :- rann(f, t), isasync(f), ainst(t, k).
+aret(f, "cls", k) :- rann(f, t), isasync(f), acls(t, k).
+cret(w, k, c) :- awaitf(w, _, f), aret(f, k, c).
+pv(w, k, v) :- awaitf(w, _, f), fret(f, k, v).
 
 // ---- generics (t21 §5.1, first version) --------------------------------------------------------------------------
 // A class's type parameters, by position: `Generic[K, V]` (or `Protocol[T]`) among its bases, else the type variables
@@ -1161,7 +1172,7 @@ tracked("boolean_operator"). tracked("assignment"). tracked("named_expression").
 // Values that are no workspace callable and whose methods are no workspace definition: literals and operators on them.
 tracked("integer"). tracked("float"). tracked("string"). tracked("concatenated_string"). tracked("true"). tracked("false").
 tracked("none"). tracked("subscript"). tracked("for_statement"). tracked("as_pattern_target"). tracked("list"). tracked("dictionary"). tracked("set"). tracked("tuple"). tracked("list_comprehension").
-tracked("dictionary_comprehension"). tracked("set_comprehension"). tracked("comparison_operator"). tracked("not_operator").
+tracked("await"). tracked("dictionary_comprehension"). tracked("set_comprehension"). tracked("comparison_operator"). tracked("not_operator").
 .decl iattr(t: node, c: node, a: symbol)
 iattr(t, c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "inst", c).
 iattr(t, c, a) :- field(_, "left", t), kind(t, "attribute"), attr_of(t, o, a), pv(o, "cls", c).
@@ -1283,6 +1294,11 @@ vopen(n) :- vpos(n), attr_of(n, o, _), lv(o, "fn", _).
 // A name an import binds to a library's value no symbol gives (an alias, `x = y` in a stub).
 vopen(n) :- vpos(n), qn(n, q), lres(q, d), !wsown(d), !lv(n, _, _), !pv(n, _, _).
 vopen(c) :- vpos(c), cfn(c, e, f), isasync(f).
+// `await c`: what the async def c runs returns (as a sync call's value); any other awaited value is open.
+vopen(w) :- vpos(w), kind(w, "await"), !awaitf(w, _, _).
+vopen(w) :- vpos(w), awaitf(w, c, _), callee(c, e), vopen(e).
+vopen(w) :- vpos(w), awaitf(w, _, f), !aclosed(f), retval(f, r), !retparam(f, _, r), vopen(r).
+vopen(w) :- vpos(w), awaitf(w, _, f), !aclosed(f), retparam(f, _, _).
 vopen(c) :- vpos(c), cfn(c, e, f), !rclosed(f), isgen(f).
 vopen(c) :- vpos(c), cfn(c, e, f), !rclosed(f), retval(f, r), !retparam(f, _, r), vopen(r).
 vopen(c) :- vpos(c), cfn(c, e, f), !rclosed(f), retparam(f, i, _), !posarg(c, i, _).
