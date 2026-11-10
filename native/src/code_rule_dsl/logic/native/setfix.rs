@@ -236,7 +236,10 @@ struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i64>, 
              /// The kept relation it started as (`InRel::delta_since`).
              from: Option<Origin>,
              /// Each row's level (decision 0090: `lbase` plus the wave that pushed it), while every row has one.
-             level: Vec<u32>, lbase: u32 }
+             level: Vec<u32>, lbase: u32,
+             /// Whether its rows get levels: only a relation of a recursive stratum reads them (`open`), and at 4
+             /// bytes a row they are not held for the others.
+             leveled: bool }
 
 /// The kept relation (by address) a maintained relation started as, and how its rows follow from that one's.
 #[derive(Clone)]
@@ -251,7 +254,7 @@ impl Rel {
     fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         let idx = (0..k).map(|c| Index { cols: vec![c], table: HashTable::new(), next: Vec::new() }).collect();
-        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None, level: Vec::new(), lbase: 0 }
+        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None, level: Vec::new(), lbase: 0, leveled: true }
     }
     /// A relation that starts as `old` (a kept one: its rows, dedup set and indexes, copied as memory, not hashed
     /// again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the first wave's
@@ -299,7 +302,7 @@ impl Rel {
         }
         let level = if old.has_levels() { old.level.clone() } else { Vec::new() };
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n });
-        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead, summaries: Default::default(), from, level, lbase: 0 })
+        Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), set: set.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, dead, ndead, summaries: Default::default(), from, level, lbase: 0, leveled: true })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -351,7 +354,7 @@ impl Rel {
         let id = self.n as u32;
         self.data.extend_from_slice(row);
         // A relation started from a kept one without levels has none (`has_levels` then says so).
-        if self.level.len() == self.n {
+        if self.leveled && self.level.len() == self.n {
             self.level.push(self.lbase + self.wave + 1);
         }
         self.n += 1;
@@ -738,6 +741,30 @@ pub fn open_spec(conn: &Connection, spec: &ComponentSpec) -> Result<String> {
         }
     }
     let _multi = crate::code_rule_dsl::logic::profile::span(|| "open: indexes".into());
+    // Levels only where they are read: a relation on a cycle of the component's rules (a recursive stratum's), one
+    // of a levels line, or one started from a kept relation with levels. The others hold none.
+    {
+        let n = rels.len();
+        let mut next: Vec<Vec<usize>> = vec![Vec::new(); n];
+        // A seed probe (`SEED`) reads no relation of the component.
+        for p in probes.iter().filter(|p| p.delta < n) { next[p.delta].push(p.head); }
+        for e in edges.iter().filter(|e| e.src < n) { next[e.src].push(e.head); }
+        let mut keep = vec![false; n];
+        for ln in &levels.lines { for r in [ln.cand, ln.chk, ln.held, ln.gone, ln.live] { keep[r] = true; } }
+        for r in 0..n {
+            if keep[r] || (rels[r].n > 0 && rels[r].level.len() == rels[r].n) { keep[r] = true; continue; }
+            // Whether `r` reaches itself.
+            let mut seen = vec![false; n];
+            let mut stack = next[r].clone();
+            while let Some(x) = stack.pop() {
+                if x == r { keep[r] = true; break; }
+                if !std::mem::replace(&mut seen[x], true) { stack.extend(next[x].iter().copied()); }
+            }
+        }
+        for (r, keep) in rels.iter_mut().zip(keep) {
+            if !keep { r.leveled = false; r.level = Vec::new(); }
+        }
+    }
     // Rows this run pushes go above every kept row's level in the component (`Rel::level`).
     let lbase = rels.iter().filter(|r| r.level.len() == r.n).flat_map(|r| r.level.iter().copied()).max().unwrap_or(0);
     for r in &mut rels { r.lbase = lbase; }
