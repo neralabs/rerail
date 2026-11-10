@@ -296,6 +296,9 @@ impl Atoms {
                 let state = unsafe { ffi::sqlite3_txn_state(handle as *mut ffi::sqlite3, c"main".as_ptr()) };
                 if state == ffi::SQLITE_TXN_WRITE {
                     eprintln!("rerail: atoms: a commit that writes the store without its pending atoms was refused (decision 0049)");
+                    if std::env::var_os("RERAIL_ATOMS_BACKTRACE").is_some() {
+                        eprintln!("{}", std::backtrace::Backtrace::force_capture());
+                    }
                     return true;
                 }
                 false
