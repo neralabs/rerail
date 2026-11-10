@@ -83,6 +83,7 @@ pub(super) struct Job {
     pub shared: Arc<Shared>,
     pub explain: Value,
     pub units: f64,
+    pub scheduler: Arc<Scheduler>,
 }
 // Field order is intentional: the callback must drop before its connection.
 struct Database {
@@ -230,11 +231,16 @@ impl Program for Job {
     fn run(&self, _: Lane) -> std::result::Result<ProgramOutput, String> {
         let result = self
             .execute()
-            .map_err(|e| format!("SQL group {}: {e}", self.id));
-        if result.is_err() {
-            self.shared.cancelled.store(true, Ordering::Release);
+            .map_err(|e| format!("SQL group {}: {e}", self.id))
+            .and_then(|rows| {
+                let rows = Results(rows);
+                self.scheduler.finished(self.id, &rows)?;
+                Ok(Arc::new(rows) as ProgramOutput)
+            });
+        if let Err(message) = &result {
+            self.scheduler.failed(message.clone());
         }
-        result.map(|rows| Arc::new(Results(rows)) as ProgramOutput)
+        result
     }
 }
 impl Job {

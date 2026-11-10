@@ -11,6 +11,7 @@ pub(super) struct Group {
     pub inputs: BTreeSet<String>,
     pub outputs: Vec<(String, usize)>,
     pub cost: usize,
+    partitioned: bool,
 }
 pub(super) struct Plan {
     pub groups: Vec<Group>,
@@ -212,12 +213,15 @@ impl Plan {
         for component in components {
             let whole = Group::default().fits(&component, request);
             if let Some(cost) = whole {
-                let target = if groups.len() < parallel {
+                let target = if groups.iter().filter(|g| !g.partitioned).count() < parallel
+                    && groups.len() < request.max_submissions
+                {
                     None
                 } else {
                     groups
                         .iter()
                         .enumerate()
+                        .filter(|(_, g)| !g.partitioned || groups.len() >= request.max_submissions)
                         .filter_map(|(id, g)| g.fits(&component, request).map(|cost| (id, cost)))
                         .min_by_key(|&(id, _)| groups[id].cost)
                 };
@@ -233,10 +237,14 @@ impl Plan {
                 }
             } else {
                 let mut chunk = Group::default();
+                chunk.partitioned = true;
                 for id in component {
                     if chunk.fits(&[id], request).is_none() && !chunk.nodes.is_empty() {
                         groups.push(chunk);
-                        chunk = Group::default();
+                        chunk = Group {
+                            partitioned: true,
+                            ..Group::default()
+                        };
                     }
                     let cost = chunk.fits(&[id], request).ok_or_else(|| {
                         format!(
@@ -299,6 +307,7 @@ impl Plan {
     pub fn explain(&self, request: &Request) -> Value {
         json!({"executor":"sql","plannedSubmissions":self.groups.len(),"submissionAllowance":request.max_submissions,
             "maxDependencyExpansion":MAX_EXPANSION,"maxOutputArms":MAX_ARMS,
+            "scheduling":"Release each successor when its dependencies finish; unrelated groups do not form a wave barrier",
             "policy":"Fuse connected operators; export cut edges once; schedule independent read-only groups on the shared pool",
             "groups":self.groups.iter().enumerate().map(|(id,g)|json!({"id":id,"executor":"sql",
                 "nodes":g.nodes.iter().map(|&id|&request.nodes[id].name).collect::<Vec<_>>(),

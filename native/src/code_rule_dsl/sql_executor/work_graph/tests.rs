@@ -490,3 +490,127 @@ fn ten_thousand_regions_and_512_operators_fit_four_submissions() {
         start.elapsed().as_secs_f64()
     );
 }
+
+#[test]
+fn successors_run_before_an_unrelated_group_finishes() {
+    if rerail_accel::exec::threads() < 2 {
+        return;
+    }
+    struct Gate {
+        released: Arc<AtomicBool>,
+        observed: Arc<AtomicBool>,
+        wait: bool,
+    }
+    impl Source for Gate {
+        fn columns(&self) -> Vec<String> {
+            vec!["v".into()]
+        }
+        fn len(&self) -> usize {
+            1
+        }
+        fn indexed(&self, _: usize) -> bool {
+            false
+        }
+        fn estimated_matches(&self, _: usize, _: bool) -> usize {
+            1
+        }
+        fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+            None
+        }
+        fn value(&self, _: usize, _: usize) -> i64 {
+            if self.wait {
+                let start = Instant::now();
+                while !self.released.load(Ordering::Acquire)
+                    && start.elapsed() < Duration::from_secs(5)
+                {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                self.observed
+                    .store(self.released.load(Ordering::Acquire), Ordering::Release);
+            } else {
+                self.released.store(true, Ordering::Release);
+            }
+            1
+        }
+    }
+    let released = Arc::new(AtomicBool::new(false));
+    let observed = Arc::new(AtomicBool::new(false));
+    let sources = BTreeMap::from([
+        (
+            "slow_input".into(),
+            Arc::new(Gate {
+                released: released.clone(),
+                observed: observed.clone(),
+                wait: true,
+            }) as Arc<dyn Source>,
+        ),
+        (
+            "stamp".into(),
+            Arc::new(Gate {
+                released,
+                observed: observed.clone(),
+                wait: false,
+            }) as Arc<dyn Source>,
+        ),
+    ]);
+    let mut nodes = vec![node("stage_0", "SELECT 1", 1, &[])];
+    for n in 1..240 {
+        let prior = format!("stage_{}", n - 1);
+        nodes.push(if n == 180 {
+            node(
+                &format!("stage_{n}"),
+                &format!("SELECT c0+v FROM {prior} CROSS JOIN stamp"),
+                1,
+                &[&prior, "stamp"],
+            )
+        } else {
+            node(
+                &format!("stage_{n}"),
+                &format!("SELECT c0+1 FROM {prior}"),
+                1,
+                &[&prior],
+            )
+        });
+    }
+    nodes.push(node(
+        "independent",
+        "SELECT v FROM slow_input",
+        1,
+        &["slow_input"],
+    ));
+    let graph = request(nodes.clone(), &["stage_239", "independent"], 3);
+    let plan = planner::Plan::new(&graph, &sources, 2).unwrap();
+    assert_eq!(plan.groups.len(), 3);
+    assert!(
+        plan.groups
+            .iter()
+            .find(|g| g.outputs.iter().any(|(n, _)| n == "independent"))
+            .unwrap()
+            .dependencies
+            .is_empty()
+    );
+    let constrained = request(nodes, &["stage_239", "independent"], 2);
+    assert_eq!(
+        planner::Plan::new(&constrained, &sources, 2)
+            .unwrap()
+            .groups
+            .len(),
+        2,
+        "A smaller allowance may trade independence for fusion"
+    );
+    let controller = rerail_accel::Executor::sql_only();
+    let result = controller
+        .spawn("SQL graph coordinator test", 0.0, move || {
+            assert!(rerail_accel::exec::on_pool());
+            execute(graph, sources, &runtime::Limits::default(), None)
+        })
+        .wait()
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.submissions, 3);
+    assert_eq!(result.rows["stage_239"].rows, vec![vec![Some(240)]]);
+    assert!(
+        observed.load(Ordering::Acquire),
+        "A completed dependency must release its successor while unrelated SQL is still running"
+    );
+}

@@ -686,6 +686,8 @@ pub struct Running {
     tag: &'static str,
     report: Report,
     cpu0: f64,
+    /// Replies polled by a dependency scheduler before it joins this batch.
+    replies: Vec<Got>,
 }
 
 
@@ -1001,7 +1003,7 @@ impl Executor {
                 }
             }
         }
-        Ok(Running { claims, take, hosts, tag, report: Report::default(), cpu0 })
+        Ok(Running { claims, take, hosts, tag, report: Report::default(), cpu0, replies: vec![] })
     }
 
 
@@ -1022,11 +1024,18 @@ impl Executor {
 }
 
 impl Running {
+    /// Whether every launch replied, without blocking or consuming its result.
+    /// Dependency schedulers can release successors before an unrelated batch finishes.
+    pub fn ready(&mut self) -> bool {
+        while let Ok(reply) = self.take.try_recv() { self.replies.push(reply); }
+        self.replies.iter().map(|(_, ids, _)| ids.len()).sum::<usize>() == self.claims.kernels.len()
+    }
     /// Waits for every launch: each one's output, in the batch's order, and the batch's report. Meanwhile the
     /// caller runs free launches itself: the cores' that the pool has not reached, and those of a lane behind its
     /// plan (decision 0100 §11).
     pub fn wait(self) -> Result<(Vec<Done>, Report), String> {
-        let Running { claims, take, hosts, tag, mut report, cpu0 } = self;
+        let Running { claims, take, hosts, tag, mut report, cpu0, replies } = self;
+        let mut replies = replies.into_iter();
         let asked = Instant::now();
         let on_pool = on_pool();
         let n = claims.kernels.len();
@@ -1057,7 +1066,7 @@ impl Running {
             }
         };
         while got < n {
-            match take.try_recv() {
+            match replies.next().map(Ok).unwrap_or_else(|| take.try_recv()) {
                 Ok(g) => {
                     store(g, &mut got);
                     // More to wait for: the job last run did not hold up the batch's end.

@@ -3298,5 +3298,28 @@ Remaining integration work:
    The existing head-only component comparison cannot replace that state or justify a second evaluation pass.
 3. Extend one operation's statement admission across owner setup, transactions, publication, worker groups, and failures.
    Keep the complete-session target at 100 submissions; rejecting or splitting a graph does not establish that target.
-4. Replace level-wide waits when a successor can overlap an unrelated running group. Evaluate worker connection and preparation reuse.
+4. Evaluate worker connection and preparation reuse after the completion-driven dispatch change below.
 5. Repeat complete corpus, snapshot/file-change, opaque producer, failure/retry, and warm replay checks against the independent oracle.
+
+
+### Release SQL successors from worker completions (2026-11-10)
+
+The initial graph executor waited for every group at a dependency level.
+That imposed an extra barrier: a completed group could not release its successor while an unrelated group still ran.
+It also counted preparation cuts as parallel bins, sometimes packing independent work behind a dependent cut.
+
+The shared executor now exposes nonblocking batch readiness without discarding replies, errors, or scoreboard results.
+SQL worker completions publish private cut roots and enqueue ready successors immediately.
+They do this after SQLite closes its cursor and connection, outside every SQL callback.
+The controller can help a long SQL job without holding up successor dispatch on other workers.
+Independent components keep their independence when capacity allows. A smaller statement allowance can still require fusion.
+Failure and unwinding cancel and join all submitted groups before the owner can change inputs.
+
+A two-worker regression verifies that a successor releases an unrelated blocked reader before that reader times out.
+Its controller also runs on the shared pool. The same graph can fuse to two statements when its allowance requires that tradeoff.
+The complete debug SQL suite passes 186 tests, with two ignored subprocess helpers.
+The accelerator suite passes 43 unit tests and eleven integration tests, including readiness and existing device dispatch.
+Broader integration checks also corrected two old four-lane test arrays and the array-kernel wave's hardware-only assertion.
+The separate SQL program tests continue to cover the SQL lane.
+
+This removes an avoidable dispatch barrier. It does not migrate retained recursive rule state into the new physical planner.

@@ -168,6 +168,7 @@ The planner combines connected nodes into materialized CTEs. Shared intermediate
 It cuts a graph when its preparation estimate or output-arm count reaches the configured bound.
 Only cut edges and requested outputs leave SQLite. Native code stores those rows without evaluating rule expressions.
 Independent groups run on the existing `RERAIL_THREADS` pool. Each worker owns its connection and reads pinned inputs.
+Worker completions release successors immediately, without waiting for unrelated groups.
 The session owner waits for every worker before it can change those inputs.
 
 The default submission allowance is 100 for the complete graph. A smaller allowance combines independent work when it fits.
