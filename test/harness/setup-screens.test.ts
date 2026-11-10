@@ -250,7 +250,8 @@ describe("T3 / C3 ask before reading", () => {
 
   it("quotes a repo path the shell would split, and uses the given set-up command", () => {
     const text = renderReadRepoQuestion({ repoName: "it's mine", repoPath: "/tmp/it's mine", setupCommand: "npx rerail setup" }, "agent");
-    expect(text).toContain("1. npx rerail setup --answer yes --repo '/tmp/it'\\''s mine'");
+    // Quoted for the shell of the platform set-up runs on: single quotes for sh, double quotes on Windows.
+    expect(text).toContain(`1. npx rerail setup --answer yes --repo ${shellQuote("/tmp/it's mine")}`);
   });
 
   it("quotes a Windows path with double quotes, as cmd.exe runs it, and leaves a plain word alone", () => {

@@ -16,6 +16,7 @@ import { directoryPackStore, repositoryPackVersions } from "../support/directory
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 import { stubUserHome } from "../support/user-home.js";
+import { shellQuote } from "../../src/harness/index.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
 const TS_PACKS = ["typescript"];
@@ -237,7 +238,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     stubUserHome(join(setup.root, "user"));
     const io = { lane: "agent" as const, say: (text: string) => { said.push(text); }, close: () => {} };
     expect(await runSetupCommand(["--repository", "--database", other, "--repo", worktree], setup.context, io)).toBe(0);
-    expect(said.join("\n")).toContain(`setup --relay --database ${other} --repository --answer start --repo ${worktree}`);
+    expect(said.join("\n")).toContain(`setup --relay --database ${shellQuote(other)} --repository --answer start --repo ${shellQuote(worktree)}`);
   });
 
   it("carries `start --agents` through every answer, so set-up connects only the coding agents named", async () => {

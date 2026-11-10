@@ -27,6 +27,7 @@ import { installPack, removeInstalledPacks } from "../support/installed-packs.js
 import { attachPacks, fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { removeFixtures, TS_PACKS, fixture, gitRepository, agentIo, request, selected, enabledRules, startRows, expectUntouched, failStarts, SETUP_TIMEOUT_MS, TYPESCRIPT, offerReview } from "../support/repository-setup.js";
 import { stubUserHome } from "../support/user-home.js";
+import { shellQuote } from "../../src/harness/index.js";
 
 afterEach(async () => {
   readsRepository.mockClear();
@@ -43,7 +44,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const asked = agentIo();
     expect(await runSetup(asked, request(setup, environment))).toEqual({ status: "waiting" });
     expect(asked.text()).toContain("Find rule packs for acme-api?");
-    expect(asked.text()).toContain(`rerail setup --answer yes --repo ${setup.repo}`);
+    expect(asked.text()).toContain(`rerail setup --answer yes --repo ${shellQuote(setup.repo)}`);
     expectUntouched(setup);
     expect(existsSync(setup.databasePath)).toBe(false);
 
@@ -254,7 +255,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const recommended = agentIo();
     expect(await runSetup(recommended, request(setup, environment, { repo: other }))).toEqual({ status: "waiting" });
     expect(recommended.text()).toContain("Scanned landing-page.");
-    expect(recommended.text()).toContain(`rerail setup --answer start --repo ${other}`);
+    expect(recommended.text()).toContain(`rerail setup --answer start --repo ${shellQuote(other)}`);
     expectUntouched(setup, other);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: other }));
