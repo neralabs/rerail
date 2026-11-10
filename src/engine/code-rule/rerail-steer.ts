@@ -119,13 +119,15 @@ export const WINDOWS_FEEDBACK_COMMAND_HINT = "echo '<that line>' | rerail feedba
 const POWERSHELL_UTF8 = "$OutputEncoding = [Text.UTF8Encoding]::new();";
 
 /**
- * The command in PowerShell, which Codex and Cursor run on Windows: the line piped in as UTF-8, past cmd.exe as in Git
- * Bash. PowerShell reads ‘ ’ ‚ ‛ as single quotes too, and a quote inside a single-quoted string is written twice.
+ * How to record a declined line in PowerShell, which Codex and Cursor run on Windows: three lines, the agent's line in
+ * a here-string between `@'` and `'@`, piped in as UTF-8, past cmd.exe as in Git Bash. A single-quoted line would end
+ * at any quote in it, since PowerShell reads ' ‘ ’ ‚ ‛ all as single quotes, and the rest of the line would run as a
+ * command. PowerShell reads nothing inside a here-string; it ends one only at a line that starts with a quote and `@`,
+ * which the space before the line rules out. `rerail feedback` trims the space.
  */
-export const POWERSHELL_FEEDBACK_COMMAND_HINT = `${POWERSHELL_UTF8} '<that line>' | rerail feedback <rule-id> -`;
-
-/** What the agent must do to its line in the PowerShell command: no quote of it may end the string. */
-const POWERSHELL_QUOTES = "each ' and ’ in the line written twice";
+function powershellFeedback(rule: string): string {
+  return `three PowerShell lines: \`${POWERSHELL_UTF8} @'\`, a space and the line, then \`'@ | rerail feedback ${rule} -\``;
+}
 
 /**
  * The shell a coding agent runs the commands a steer names in: sh or bash off Windows (`posix`); on Windows Git Bash for
@@ -141,24 +143,24 @@ export function steerShell(host: RerailHost | undefined, platform: NodeJS.Platfo
 
 /**
  * How the session-start note tells the agent to record a declined steer's line, in its shell: the command, and the stdin
- * form for a line with a quote in it. PowerShell has no heredoc; it takes a here-string, a line ending `@'` and a line
- * starting `'@`, whose text it never reads.
+ * form for a line with a quote in it; in PowerShell, which has no heredoc, the here-string form for every line.
  */
 function feedbackHowTo(host: RerailHost, platform: NodeJS.Platform): string {
   switch (steerShell(host, platform)) {
     case "posix": return `\`${FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
     case "git-bash": return `\`${WINDOWS_FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
-    case "powershell":
-      return `\`${POWERSHELL_FEEDBACK_COMMAND_HINT}\`, ${POWERSHELL_QUOTES} (or a line \`${POWERSHELL_UTF8} @'\`, the line, then `
-        + "`'@ | rerail feedback <rule-id> -`, which takes the line as written)";
+    case "powershell": return powershellFeedback("<rule-id>");
   }
 }
 
-const FEEDBACK_COMMANDS: Readonly<Record<SteerShell, string>> = {
-  "posix": FEEDBACK_COMMAND_HINT,
-  "git-bash": WINDOWS_FEEDBACK_COMMAND_HINT,
-  "powershell": POWERSHELL_FEEDBACK_COMMAND_HINT,
-};
+/** How a steer's last line tells the agent to record its line for `rule`, in `shell`. */
+function feedbackAction(shell: SteerShell, rule: string): string {
+  switch (shell) {
+    case "posix": return `run \`${FEEDBACK_COMMAND_HINT.replace("<rule-id>", rule)}\``;
+    case "git-bash": return `run \`${WINDOWS_FEEDBACK_COMMAND_HINT.replace("<rule-id>", rule)}\``;
+    case "powershell": return `record that line with ${powershellFeedback(rule)}`;
+  }
+}
 
 /**
  * What the agent may do about it: fix it (follow it, for a tool call's guidance) or say why not, and record that line
@@ -172,8 +174,7 @@ function steerLatitude(trigger: SteerTrigger, findings: readonly SteerFinding[],
   const verb = trigger.kind === "tool" ? "Follow" : "Fix";
   const ids = new Set(findings.map(finding => finding.ruleId));
   const rule = ids.size === 1 && SHELL_SAFE_RULE_ID.test(findings[0]!.ruleId) ? findings[0]!.ruleId : "<rule-id>";
-  const command = FEEDBACK_COMMANDS[shell].replace("<rule-id>", rule);
-  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and run \`${command}\`${shell === "powershell" ? `, with ${POWERSHELL_QUOTES}` : ""}.`;
+  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and ${feedbackAction(shell, rule)}.`;
 }
 
 /**

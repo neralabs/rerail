@@ -18,6 +18,7 @@ import {
   seenCodingAgents,
 } from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { powershellLiteral } from "../engine/command-line.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
@@ -411,7 +412,7 @@ function isRerailHomeEntry(name: string): boolean {
  */
 export function cleanupCommand(path: string, link: boolean, platform: NodeJS.Platform = process.platform): string {
   if (platform !== "win32") return `rm -rf ${shellQuote(path, platform)}`;
-  const powershell = `'${path.replaceAll("'", "''")}'`;
+  const powershell = powershellLiteral(path);
   return link ? `[System.IO.Directory]::Delete(${powershell})` : `Remove-Item -LiteralPath ${powershell} -Recurse -Force`;
 }
 

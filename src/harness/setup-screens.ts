@@ -1,4 +1,5 @@
 import { ADAPTER_CAPABILITIES, type CommandSigil, type RerailHost } from "../engine/adapter-contract.js";
+import { powershellLiteral } from "../engine/command-line.js";
 import type { SetupOption, SetupOptionInput, SetupQuestion, SetupQuestionId } from "./setup-step.js";
 import { RERAIL_BRAND_FOREGROUND } from "../presentation/terminal-brand.generated.js";
 import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
@@ -148,14 +149,6 @@ const SHELL_SAFE = /^[\w@%+=:,./~-]+$/;
 export function shellQuote(value: string, platform: NodeJS.Platform = process.platform): string {
   if (SHELL_SAFE.test(value)) return value;
   return platform === "win32" ? `"${value}"` : `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-/**
- * A PowerShell single-quoted literal: `$`, backticks, `%` and spaces stay as they are; a quote inside is doubled, and
- * PowerShell reads ‘ ’ ‚ ‛ as single quotes too.
- */
-export function powershellLiteral(value: string): string {
-  return `'${value.replace(/['‘-‛]/gu, "$&$&")}'`;
 }
 
 /** What PowerShell reads as one plain word: no `@`, `,`, `$`, quote or other character it gives a meaning to. */

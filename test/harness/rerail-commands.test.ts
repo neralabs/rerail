@@ -30,4 +30,10 @@ describe("/rerail-show-me's write", () => {
     expect(powershell).toContain("`Set-Content -NoNewline -LiteralPath '<file>' -Value @'` … `'@`");
     expect(showMeInstructions({ cli: "rerail", sigil: "$", write: "shell" })).toContain("`cat > '<file>' <<'EOF'` … `EOF`");
   });
+
+  // PowerShell ends a single-quoted string at any of the five, so a checkout path holding one must have it written twice.
+  it.each(["'", "‘", "’", "‚", "‛"])("tells the agent in PowerShell to write each %s in the file's path twice", quote => {
+    const powershell = showMeInstructions({ cli: "& 'node' 'cli.js'", sigil: "$", write: "shell", shell: "powershell" });
+    expect(powershell).toMatch(new RegExp(`each [^.]*${quote}[^.]* in \`<file>\` written twice`, "u"));
+  });
 });

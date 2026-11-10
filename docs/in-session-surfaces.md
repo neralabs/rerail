@@ -143,7 +143,7 @@ Repository text (paths, captured code, fixes) is cleaned: control and invisible 
 
 </details>
 
-The latitude closes it: ``Fix it, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.`` On Windows the command pipes the line in instead, which cmd.exe never parses: ``echo '<that line>' | rerail feedback <rule-id> -`` in Git Bash, and for Codex and Cursor, which run PowerShell there, ``$OutputEncoding = [Text.UTF8Encoding]::new(); '<that line>' | rerail feedback <rule-id> -`` with each `'` and `’` in the line written twice, since Windows PowerShell 5.1 otherwise pipes every character outside ASCII as a `?`. `rerail feedback` keeps the reason on this computer ([Steer feedback](reference.md#steer-feedback)).
+The latitude closes it: ``Fix it, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.`` On Windows the command pipes the line in instead, which cmd.exe never parses: ``echo '<that line>' | rerail feedback <rule-id> -`` in Git Bash, and for Codex and Cursor, which run PowerShell there, three lines: ``$OutputEncoding = [Text.UTF8Encoding]::new(); @'``, a space and the line, then ``'@ | rerail feedback <rule-id> -``. PowerShell reads nothing inside that here-string, so no quote in the line can end it and run the rest as a command, and the first line has Windows PowerShell 5.1 pipe UTF-8, where it otherwise pipes every character outside ASCII as a `?`. `rerail feedback` keeps the reason on this computer ([Steer feedback](reference.md#steer-feedback)).
 
 <details>
 <summary>Latitude variants and modes</summary>

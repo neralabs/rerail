@@ -28,7 +28,8 @@ import {
 import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettingsEntries } from "./settings-entries-store.js";
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
-import { andList, powershellLiteral, shellQuote } from "../harness/setup-screens.js";
+import { andList, shellQuote } from "../harness/setup-screens.js";
+import { powershellLiteral } from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -408,9 +409,9 @@ export function windowsCmdHookCommand(node: string, hook: string): string {
 
 /**
  * The same order for Codex on Windows, which hands a hook's command to PowerShell (`-Command`): there the `cmd` form's
- * nested double quotes split at a space in the profile path. A single-quoted literal keeps spaces, `$`, backticks and
- * `%` as they are; a quote inside is doubled, and PowerShell reads ‘ ’ ‚ ‛ as single quotes too. `$LASTEXITCODE` starts
- * at 1 so the hook still fails when neither node runs, and `exit` passes on the hook's own exit code.
+ * nested double quotes split at a space in the profile path. A single-quoted literal (`powershellLiteral`) keeps spaces,
+ * `$`, backticks and `%` as they are. `$LASTEXITCODE` starts at 1 so the hook still fails when neither node runs, and
+ * `exit` passes on the hook's own exit code.
  */
 function powershellHookCommand(context: HookCommandContext, executable: string): string {
   const node = powershellLiteral(context.nodePath);

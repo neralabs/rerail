@@ -381,6 +381,13 @@ describe("rerail install --root", () => {
     expect(cleanupCommand("/home/o'neil/.rerail/versions", false, "linux")).toBe(String.raw`rm -rf '/home/o'\''neil/.rerail/versions'`);
   });
 
+  // PowerShell ends a single-quoted string at any of the five; written twice, each stands for itself.
+  it.each(["'", "\u2018", "\u2019", "\u201A", "\u201B"])("writes %s in a Windows cleanup path twice, so the path stays one PowerShell string", quote => {
+    const path = String.raw`C:\Users\O${quote}Neil\.rerail\versions`;
+    expect(cleanupCommand(path, false, "win32")).toBe(String.raw`Remove-Item -LiteralPath 'C:\Users\O${quote}${quote}Neil\.rerail\versions' -Recurse -Force`);
+    expect(cleanupCommand(path, true, "win32")).toBe(String.raw`[System.IO.Directory]::Delete('C:\Users\O${quote}${quote}Neil\.rerail\versions')`);
+  });
+
   it("keeps rules and history when another checkout registered with --root is removed", async () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);

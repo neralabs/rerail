@@ -70,16 +70,40 @@ describe("Rerail steer text", () => {
     expect(steerShell("codex", "linux")).toBe("posix");
   });
 
-  it("in PowerShell pipes the line as UTF-8 with its quotes doubled, so Windows PowerShell 5.1 keeps every character", () => {
-    // PowerShell 5.1 pipes ASCII by default, every other character a `?`, and reads ‘ ’ ‚ ‛ as single quotes too.
+  it("in PowerShell pipes the line in as UTF-8 from a here-string, so Windows PowerShell 5.1 keeps every character", () => {
+    // PowerShell 5.1 pipes ASCII by default, every other character a `?`.
     for (const host of ["codex", "cursor"] as const) expect(steerShell(host, "win32")).toBe("powershell");
     const latitude = steerBlock({ kind: "edit" }, [finding()], "powershell").split("\n").at(-1);
-    expect(latitude).toBe("Fix it, or tell the user in one line why you won't and run "
-      + "`$OutputEncoding = [Text.UTF8Encoding]::new(); '<that line>' | rerail feedback ts:no-any -`, with each ' and ’ in the line written twice.");
+    expect(latitude).toBe("Fix it, or tell the user in one line why you won't and record that line with three PowerShell lines: "
+      + "`$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, a space and the line, then `'@ | rerail feedback ts:no-any -`.");
     const note = sessionStartNote(undefined, "codex", "s", { setUp: true, ruleCount: 1 }, "win32");
-    expect(note).toContain("`$OutputEncoding = [Text.UTF8Encoding]::new(); '<that line>' | rerail feedback <rule-id> -`");
-    expect(note).toContain("a line `$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, the line, then `'@ | rerail feedback <rule-id> -`");
+    expect(note).toContain("record that line with three PowerShell lines: `$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, a space and the line, "
+      + "then `'@ | rerail feedback <rule-id> -`, and carry on.");
     expect(sessionStartNote(undefined, "claude-code", "s", { setUp: true, ruleCount: 1 }, "win32")).not.toContain("$OutputEncoding");
+  });
+
+  /**
+   * The script an agent writes from the PowerShell feedback form in `text`: the form's first and last line, with a space
+   * and the agent's `line` between them.
+   */
+  function powershellFeedbackScript(text: string, line: string): string[] {
+    const form = /`(\$OutputEncoding[^`]*)`, a space and the line, then `([^`]*)`/u.exec(text);
+    return form === null ? [] : [form[1]!, ` ${line}`, form[2]!];
+  }
+
+  // PowerShell reads all five as single quotes, so a line in a single-quoted string ends at the first one.
+  it.each(["'", "‘", "’", "‚", "‛"])("in PowerShell keeps a declined line holding %s out of the agent's shell", quote => {
+    const line = `${quote}@ won${quote}t fix: it is ${quote}generated${quote}; Remove-Item -Recurse ~`;
+    const note = sessionStartNote(undefined, "codex", "s", { setUp: true, ruleCount: 1 }, "win32");
+    const latitude = steerBlock({ kind: "edit" }, [finding()], "powershell").split("\n").at(-1)!;
+    for (const [text, rule] of [[latitude, "ts:no-any"], [note, "<rule-id>"]] as const) {
+      const script = powershellFeedbackScript(text, line);
+      // The line sits in a here-string, which PowerShell reads as text. It ends only at a line that starts with one
+      // of the five and `@`, which the space before the line rules out.
+      expect(script[0]).toMatch(/@'$/u);
+      expect(script[2]).toBe(`'@ | rerail feedback ${rule} -`);
+      expect(script.slice(1, -1).filter(body => /^['‘-‛]@/u.test(body))).toEqual([]);
+    }
   });
 
   it("writes a tool call's guidance as one finding with no place, its later lines under it", () => {
@@ -220,9 +244,9 @@ describe("Rerail steer text", () => {
     for (const host of ["codex", "cursor"] as const) {
       const note = sessionStartNote(undefined, host, "s", rules, "win32");
       expect(note).not.toContain("<<");
-      expect(note).toContain("record that line with `$OutputEncoding = [Text.UTF8Encoding]::new(); '<that line>' | rerail feedback <rule-id> -`, "
-        + "each ' and ’ in the line written twice (or a line `$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, the line, then "
-        + "`'@ | rerail feedback <rule-id> -`, which takes the line as written)");
+      expect(note).toContain("record that line with three PowerShell lines: `$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, a space and the line, "
+        + "then `'@ | rerail feedback <rule-id> -`, and carry on.");
+      expect(note).not.toContain("'<that line>'");
     }
     expect(sessionStartNote(undefined, "claude-code", "s", rules, "win32"))
       .toContain("record that line with `echo '<that line>' | rerail feedback <rule-id> -` (a line with a ' in it: `rerail feedback <rule-id> - <<'LINE'`, the line, then `LINE`)");
