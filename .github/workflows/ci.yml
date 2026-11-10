@@ -615,15 +615,16 @@ jobs:
         run: npm test -- --shard=${{ matrix.shard }}/2
 
   # The unit suite on Windows, the one job that runs it there: paths, shells, process starts and file locks behave
-  # differently on Windows, and every other test job runs on Linux or macOS. Gated as the unit job is, and reads the
-  # same test data: the pack-test-data action saves and restores its cache entry cross-OS, so this job restores the
-  # entry the test-data job saved on Linux, verified against the locks as on Linux. The build job's engine is Linux's,
-  # so the job builds its own: restored from the cache keyed by the build job's inputs on this OS, and on a miss built
-  # (about 9 minutes) and saved straight away, so a failing test run still keeps it. It takes no cargo cache:
-  # release-cache.yml's for this target is keyed by files checked out with CRLF line ends, which this checkout's are
-  # not. The package is built here too, which takes seconds.
+  # differently on Windows, and every other test job runs on Linux or macOS. Two shards, as on Linux, so CI result waits
+  # about 9 minutes for Windows rather than 14. Gated as the unit job is, and reads the same test data: the
+  # pack-test-data action saves and restores its cache entry cross-OS, so each shard restores the entry the test-data
+  # job saved on Linux, verified against the locks as on Linux. The build job's engine is Linux's, so the shards use a
+  # Windows one: restored from the cache keyed by the build job's inputs on this OS, and on a miss built by each shard
+  # (about 9 minutes, side by side) and saved straight away, so a failing test run still keeps it; the shard that saves
+  # second finds the key taken and saves nothing. No cargo cache: release-cache.yml's for this target is keyed by files
+  # checked out with CRLF line ends, which this checkout's are not. The package is built here too, which takes seconds.
   unit-windows:
-    name: Unit tests (Windows)
+    name: Unit tests (Windows, ${{ matrix.shard }}/2)
     needs: test-data
     if: >-
       ${{
@@ -631,10 +632,14 @@ jobs:
         (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
       }}
     runs-on: windows-2025
-    # About 14 minutes when the cache holds the engine and 23 when the job builds it; the tests take 11 of them.
-    timeout-minutes: 40
+    # A shard takes about 9 minutes when the cache holds the engine and 18 when it builds it; its tests take 5 to 6.
+    timeout-minutes: 30
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     defaults:
       run:
         shell: bash
@@ -703,15 +708,15 @@ jobs:
       - name: Build the package
         run: npm run build:js
 
-      # As in the unit job, with a temporary folder spelt in full. The runner's TEMP is an 8.3 short path
-      # (C:\Users\RUNNER~1\...); Rerail records a checkout by its full path, and the tests build the paths they expect
-      # from the temporary folder as given, so about 40 of them fail on the spelling alone. runner.temp is a full path.
+      # As in the unit job, with TEMP and TMP at runner.temp, a long path. The runner's TEMP is an 8.3 short path
+      # (C:\Users\RUNNER~1\...), and Rerail's tests compare long paths: Rerail records a checkout by its long path, and
+      # the tests expect the temporary folder's path as given, so 42 of them fail on the spelling alone.
       - name: Unit tests
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-        run: npm test
+        run: npm test -- --shard=${{ matrix.shard }}/2
 
   # The dashboard in Chromium over seeded scenario databases (e2e/README.md). Each worker runs the daemon from source
   # (`--dev` serves ui/ as committed), which needs the build's native engine. Runs when the e2e filter matches.
