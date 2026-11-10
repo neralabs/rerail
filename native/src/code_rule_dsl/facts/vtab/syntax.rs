@@ -43,6 +43,7 @@ pub(crate) const WITHIN: &str = "within";
 /// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
 pub(crate) const SPAN_WITHIN: &str = "span_within";
 mod core_rr;
+mod stored_spike;
 pub(crate) mod normalized;
 mod python_order;
 mod python_syntax;
@@ -1673,6 +1674,7 @@ pub(crate) fn with_nearest(
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+    let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
@@ -1699,10 +1701,31 @@ pub(crate) fn with_nearest(
         };
         out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members))));
     }
+    // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
+    if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {
+        let viewed: BTreeSet<&str> = views(&batch).iter().map(|(n, _)| *n).collect();
+        let read: Vec<(String, Arc<dyn Source>, stored_spike::Kind)> = out
+            .iter()
+            .filter(|(n, _)| projection.wants(n))
+            .filter_map(|(n, s)| {
+                let kind = if rows_named.contains(n) { stored_spike::Kind::Rows } else if viewed.contains(n.as_str()) { stored_spike::Kind::View } else { return None };
+                Some((n.clone(), Arc::clone(s), kind))
+            })
+            .collect();
+        let keys: Vec<u32> = batch.docs.iter().map(|p| p.key).collect();
+        drop(_nearest);
+        stored_spike::run(&db, &read, &keys);
+        return Ok(out_with_within(out, &batch));
+    }
     // Containment (decision 0050): made per looked-up node, so a program that never reads it pays nothing.
-    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree))));
-    out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Span))));
-    Ok(out)
+    Ok(out_with_within(out, &batch))
+}
+
+/// `out` with containment's two relations (decision 0050).
+fn out_with_within(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>) -> Vec<(String, Arc<dyn Source>)> {
+    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Tree))));
+    out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Span))));
+    out
 }
 
 /// The planner's statistics of `source` (`stat_col`'s rows, ndv, sq and sqd per column, `sqd` by
