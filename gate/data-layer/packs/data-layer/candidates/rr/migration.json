@@ -2711,12 +2711,61 @@
       "batch": 1,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-grammar-surface.json",
       "legacySha256": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
       "ruleSha256": "bc49ec9a25e4d37d45da01b1d640d87d2af984451f888f30109413f7b546ec03",
       "migrationProgress": {
-        "status": "draft",
-        "remaining": "Complete first-ten cohort refresh and admission. The shared project helper used by the CLI still sorts and validates model DTOs in Python; move that work to native projection before full-native admission."
+        "status": "full-contract-passed",
+        "remaining": "Global migration remains open; the other draft ports and absent translations require their own full admission.",
+        "verifiedNativeExecutions": 634
+      },
+      "evidence": {
+        "assertions": 9,
+        "positives": 6,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "bc49ec9a25e4d37d45da01b1d640d87d2af984451f888f30109413f7b546ec03",
+        "engineCommit": "8ef73b3b2e632b58a084dce0cd2b69d2e16b1a35",
+        "corpusSha256": "fe0a4f5ef814d9a2b0864e34d323243e2986fcd789db890d0e890fd18fb4ead6",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "f67f15aeb0d8acc147eb4c26d8f7fdbf162340eda334bf829ffd5041b5ce7782",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-surface-final041-native-snapshot.json",
+            "sha256": "33b58a3e316dd49cc6840ea67a9fafdfade97a06c6bc7297f680d470a0636958"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-surface-final041-native-workspace.json",
+            "sha256": "f331f2cef041445e23510037fab6fc5a06a6e270779b5caf1c1c86069bbbadf1"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-surface-full-contract-final041.json.gz",
+            "sha256": "d80df8664e99a155afe6780a7c186c650067331be8a683adbf39abb505763950"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-model-projection-final041.json.gz",
+            "sha256": "228b3469c38b98624be3e0b9c38c153db594a5e7db703c4f25af6353a8726e8d"
+          }
+        ],
+        "supplemental": {
+          "nativeExecutions": 634,
+          "originalCasesPerAPI": 9,
+          "reporterCases": 197,
+          "projectionCases": 206,
+          "productionCases": 20,
+          "persistentSteps": 14,
+          "cliCases": 33,
+          "controls": 6,
+          "fullMigrationAcceptance": false
+        },
+        "scope": "All original Surface assertions through both APIs, recorded reporter/model/CLI contracts, production discovery, and persistent updates. This is not equivalence for arbitrary Python runtime objects."
       }
     },
     {

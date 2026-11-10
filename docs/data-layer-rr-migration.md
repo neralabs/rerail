@@ -97,7 +97,9 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory has **two accepted ports, 93 drafts, and five absent translations**.
+The current inventory has **three accepted ports, 92 drafts, and five absent translations**.
+`serverplan_grammar_surface` passes the fixed original-inventory gate on Final `04173bf00`.
+Its two acceptance receipts verify 634 unique native executions, including every original assertion through both APIs.
 `impl_direct_execution` has complete recorded-contract acceptance on Final `bc83f6ae8`, including all original linter and shared-ratchet tests.
 Its checkpoint validates 1,277 native executions, including detector positives, CLI actions, production, and persistent updates.
 `execution_authority_bypass` retains historical acceptance on Final `04e3b5b83`; revalidation on the newest engine remains open.
@@ -117,8 +119,11 @@ Its [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-surface-sup
 The [nine-reporter refresh](../gate/data-layer/fixtures/host/data-layer-port/rr-nine-supplied-fact-reporters-final957.json.gz) verifies 153 native executions on the same Final 957 cohort.
 Together, these two receipts verify 450 native executions. All 229 tooling tests pass.
 The original Surface plugin positive now calls the native reporter; its earlier adapter assembled findings in Python.
-The CLI's shared project helper still sorts and validates model DTOs in Python. Move that work to native projection before full-native admission.
-The complete first-ten cohort refresh and per-rule admission remain open. None of these ten drafts is newly admitted.
+The CLI's shared project helper now validates, coerces, orders, and renders model values in native rules.
+The frontend only constructs passive typed DTOs; it rejects missing native coercion.
+The [projection checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-model-projection-final041.json.gz) covers all 206 projection cases and 33 CLI cases.
+The [Surface admission checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-surface-full-contract-final041.json.gz) refreshes all reporter, original-suite, production, and update checks on the same engine.
+Surface is newly admitted. The other first-ten ports still need their own complete cohort refresh and admission.
 The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.

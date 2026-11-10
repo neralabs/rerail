@@ -10342,3 +10342,15 @@ Generation tests reject divergence between them. It does not define a second eng
 Production and update checks pass on Final 041. The full supplied-reporter corpus is being refreshed before Surface admission.
 Final advanced to `ec3cfe1b7` during this cohort. Results remain bound to the frozen Final 041 engine.
 
+# Surface full-contract admission, 2026-11-10
+
+The fixed independent-inventory gate now admits `serverplan_grammar_surface` on Final `04173bf00`.
+All nine original cases pass through both APIs. Six recorded detector observations are positive.
+The reporter and projection receipts contain 634 unique native executions after counting shared original-suite runs once.
+They cover 197 reporter cases, 206 projection cases, 20 production cases, 14 persistent steps, 33 CLI cases, and six controls.
+All 245 tooling tests pass. Admission tests reject mixed engine cohorts, changed policies, and missing original assertions.
+
+The inventory is three accepted ports, 92 drafts, and five absent translations.
+This is one rule's recorded-contract admission. The full 100-rule migration remains unfinished.
+Final `ec3cfe1b7` advanced during acceptance and will be merged after this cohort is committed.
+
