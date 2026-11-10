@@ -1051,6 +1051,20 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
+
+  it("reports no deletions for a worktree removed while its own walk ran, with no other walk between", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const walk = holdDiscovery("directories", join(worktree, "src"));
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    git(root, "worktree", "remove", worktree);
+    roots.length = 0;
+    walk.release();
+    await bridge.settleWorktreeWalk();
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
 });
 
 describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
