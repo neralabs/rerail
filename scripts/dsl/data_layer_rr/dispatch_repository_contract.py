@@ -86,9 +86,19 @@ def observe(module,case):
             inventory=canonical(inventory),stdout=stdout.getvalue().replace(str(root),'$ROOT'),stderr=stderr.getvalue().replace(str(root),'$ROOT'))
 
 
+def raise_read_error(rows,root):
+    errors=[r for r in rows if r['code']=='SDR_IO_ERROR']
+    if not errors:return
+    if len(errors)!=1:raise ValueError('Multiple native inventory errors')
+    error=errors[0];p=error['parameters']
+    if p['io_kind']=='InvalidUtf8':
+        raise UnicodeDecodeError('utf-8',bytes.fromhex(p['bytes_hex']),p['start'],p['end'],p['reason'])
+    raise OSError(p['errno'],p['detail'],str(root/error['path']))
+
+
 def decode(module,native):
     rows=native['diagnostics']
-    allowed={'DL_FILE','DL_META','SDR_CONFIG','SDR_SEQUENCE','SDR_SCOPE','SDR_FACT','SDR_REPORT','SDR_OUTPUT','SDR_INVENTORY'}
+    allowed={'DL_FILE','DL_META','SDR_CONFIG','SDR_SEQUENCE','SDR_SCOPE','SDR_FACT','SDR_REPORT','SDR_OUTPUT','SDR_INVENTORY','SDR_IO_ERROR'}
     if any(r['code'] not in allowed for r in rows):raise ValueError('Unexpected repository contract rows')
     config={}
     for r in rows:
@@ -118,6 +128,7 @@ def decode(module,native):
     scope={k:scope[k] for k in ['directories','explicit_files','include_tests','broad_repo_scope']}
     metadata={r['parameters']['key']:r['parameters']['value'] for r in rows if r['code']=='DL_META'}
     root=Path(metadata['root'])
+    raise_read_error(rows,root)
     files=sorted((r['parameters'] for r in rows if r['code']=='DL_FILE'),key=lambda p:p['path_order'])
     if len({p['path'] for p in files})!=len(files):raise ValueError('Duplicate selected file')
     facts={Path(p['path']):({extractor['extractor_id']:[]} if p['fact_present'] else {}) for p in files}
@@ -135,7 +146,7 @@ def decode(module,native):
     output=sorted((r['parameters'] for r in rows if r['code']=='SDR_OUTPUT'),key=lambda p:p['ordinal'])
     stdout=''.join(r['text'] for r in output if r['channel']=='stdout')
     stderr=''.join(r['text'] for r in output if r['channel']=='stderr')
-    inventory=tuple(p['value'] for p in sorted((r['parameters'] for r in rows if r['code']=='SDR_INVENTORY'),key=lambda p:p['ordinal']))
+    inventory=tuple(p['value'] for p in sorted((r['parameters'] for r in rows if r['code']=='SDR_INVENTORY'),key=lambda p:(p['ordinal'],p['fragment'])))
     return dict(selectedFiles=[p['path'] for p in files],facts=canonical(facts,root),findings=canonical(tuple(findings),root),
         violations=canonical(violations,root),plugin=canonical(dict(**plugin,file_scope=scope,required_facts=(extractor,)),root),
         inventory=canonical(inventory),stdout=stdout.replace(str(root),'$ROOT'),stderr=stderr.replace(str(root),'$ROOT'))

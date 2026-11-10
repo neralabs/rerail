@@ -57,21 +57,30 @@ def native(engine,module,root,case,mode,surface):
     cohort=read_json(ROOT/MANIFEST)['engineSource'];verify_source_cohort(ROOT,cohort);verify_engine_artifact(ROOT,cohort,engine)
     options={} if surface=='policy' else dict(entryPoint='_production_contract')
     if 'signature' in case:options['dispatchSignature']=case['signature']
-    if mode=='snapshot':options['inputFiles']=[p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()]
+    resources=[]
+    if mode=='snapshot':
+        buffers=[]
+        for p in root.rglob('*'):
+            if not p.is_file():continue
+            name=p.relative_to(root).as_posix()
+            try:p.read_text(encoding='utf-8')
+            except (OSError,UnicodeDecodeError) as error:resources.append(dict(path=name,bufferError=type(error).__name__))
+            else:buffers.append(name)
+        options['inputFiles']=buffers
     execution=None
     with tempfile.TemporaryDirectory(prefix='dispatch-io-query-') as temporary:
         base=Path(temporary);write_json(base/'options.json',options)
         run=subprocess.run([str(engine),'run-rr',str(policy),str(root),str(base/'out'),str(base/'options.json')],capture_output=True,text=True,timeout=100)
         if run.returncode:return dict(error=exception(RuntimeError(run.stderr),root),stdout='',stderr=''),dict(returncode=run.returncode,stderr=run.stderr.replace(str(root),'$ROOT'),requestedPolicySha256=sha(policy.read_bytes()))
-        execution=json.loads(run.stdout);execution['programInputs']=program_inputs(execution['programInputs'])
+        execution=json.loads(run.stdout);execution['programInputs']=program_inputs(execution['programInputs']);execution['diskResources']=resources
     try:
         if surface=='reporter':
             from dispatch_repository_contract import decode
             result=decode(module,execution);value=dict(value=result['violations'],stdout=result['stdout'],stderr=result['stderr'])
         else:
             rows=execution['diagnostics']
-            # Passive DTO assembly. Error construction will consume typed native
-            # error rows once the missing production contract is implemented.
+            from dispatch_repository_contract import raise_read_error
+            raise_read_error(rows,root)
             values=[module.StructuredViolation(module.LINTER_NAME,r['code'],root/r['path'],r['line'],r['message'],'hard-fail') for r in rows]
             value=dict(value=canonical(values,root),stdout='',stderr='')
     except BaseException as error:value=dict(error=exception(error,root),stdout='',stderr='')
