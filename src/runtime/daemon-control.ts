@@ -607,6 +607,31 @@ async function readStartLockLease(leasePath: string): Promise<StartLockLease | u
   return await readFile(leasePath, "utf8").then(text => JSON.parse(text) as StartLockLease).catch(() => undefined);
 }
 
+/** Whether a start still holds the lock: its lease names a live process and has not expired. Any other lock is stale. */
+function isLiveLease(lease: StartLockLease | undefined, machine: DaemonMachine): lease is StartLockLease {
+  return lease !== undefined && processAlive(lease.pid, machine.kill) && lease.expiresAt >= Date.now();
+}
+
+/** Makes the start lock's folder at `lockPath`: a stale lock in the way is removed, a held one waited for. */
+async function takeStartLock(lockPath: string, leasePath: string, machine: DaemonMachine): Promise<void> {
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  for (;;) {
+    try {
+      await mkdir(lockPath, { mode: 0o700 });
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const lease = await readStartLockLease(leasePath);
+      if (!isLiveLease(lease, machine)) {
+        await rm(lockPath, { recursive: true, force: true });
+        continue;
+      }
+      if (Date.now() > deadline) throw new Error(`Another Rerail start (pid ${lease.pid}) is still in progress`);
+      await sleep(POLL_INTERVAL_MS);
+    }
+  }
+}
+
 export async function withStartLock<T>(
   home: string,
   operation: () => Promise<T>,
@@ -615,23 +640,7 @@ export async function withStartLock<T>(
 ): Promise<T> {
   const lockPath = join(home, START_LOCK_DIR);
   const leasePath = join(lockPath, "lease.json");
-  const deadline = Date.now() + START_TIMEOUT_MS;
-  for (;;) {
-    try {
-      await mkdir(lockPath, { mode: 0o700 });
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const lease = await readStartLockLease(leasePath);
-      const stale = lease === undefined || !processAlive(lease.pid, machine.kill) || lease.expiresAt < Date.now();
-      if (stale) {
-        await rm(lockPath, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() > deadline) throw new Error(`Another Rerail start (pid ${lease.pid}) is still in progress`);
-      await sleep(POLL_INTERVAL_MS);
-    }
-  }
+  await takeStartLock(lockPath, leasePath, machine);
   // Replaced whole, never rewritten in place: a rewrite truncates first, and a starter that read the empty file
   // between would take the lease for stale and remove the lock this start still holds.
   const writeLease = async (): Promise<void> => {
@@ -869,19 +878,26 @@ export interface LaunchedDaemon {
 }
 
 function daemonArguments(control: DaemonControl, options: DaemonLaunchOptions, stateFile: string): string[] {
-  const args = [
+  const publicHosts = options.publicHosts?.length ? options.publicHosts.join(",") : undefined;
+  return [
     join(control.packageRoot, ENTRY_POINTS.daemon),
     "--state-file", stateFile,
     "--workspace-root", resolve(options.cwd ?? process.cwd()),
+    ...optionArguments("--dev", options.dev),
+    ...optionArguments("--host", options.host),
+    ...optionArguments("--allow-remote", options.allowRemote),
+    ...optionArguments("--public-host", publicHosts),
+    ...optionArguments("--tls-cert", options.tls?.certFile),
+    ...optionArguments("--tls-key", options.tls?.keyFile),
+    ...optionArguments("--insecure-http", options.insecureHttp),
+    ...optionArguments("--port", options.port),
   ];
-  if (options.dev) args.push("--dev");
-  if (options.host !== undefined) args.push("--host", options.host);
-  if (options.allowRemote) args.push("--allow-remote");
-  if (options.publicHosts !== undefined && options.publicHosts.length > 0) args.push("--public-host", options.publicHosts.join(","));
-  if (options.tls !== undefined) args.push("--tls-cert", options.tls.certFile, "--tls-key", options.tls.keyFile);
-  if (options.insecureHttp === true) args.push("--insecure-http");
-  if (options.port !== undefined) args.push("--port", String(options.port));
-  return args;
+}
+
+/** A daemon option as arguments: the flag alone for `true`, the flag and its value for a value, nothing when unset. */
+function optionArguments(flag: string, value: string | number | boolean | undefined): string[] {
+  if (value === undefined || value === false) return [];
+  return value === true ? [flag] : [flag, String(value)];
 }
 
 /** A Node process to start detached, with NUL stdin and its stdout and stderr appended to `logFile`. */
@@ -962,7 +978,17 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions,
   const logOffset = await stat(logFile).then(info => info.size, () => 0);
   const args = daemonArguments(control, options, stateFile);
   const { pid, exitReason } = launchDaemonProcess(control, { args, env, logFile }, machine);
+  return { started: true, daemon: await readyDaemon({ pid, exitReason }, { stateFile, logFile, logOffset, platform: machine.platform }) };
+}
 
+/**
+ * The daemon `launched` started, once its state file names it and it answers its probe as itself. A launch that exits
+ * first, or does not answer within `START_TIMEOUT_MS`, fails with what it wrote to the log from `logOffset` on.
+ */
+async function readyDaemon(
+  { pid, exitReason }: LaunchedDaemon,
+  { stateFile, logFile, logOffset, platform }: { stateFile: string; logFile: string; logOffset: number; platform: NodeJS.Platform },
+): Promise<RunningDaemon> {
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const exit = exitReason();
@@ -970,14 +996,22 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions,
       const output = await tailFile(logFile, logOffset, 20);
       throw new Error(`Rerail daemon ${exit} before it was ready${output === "" ? "." : `:\n${output}`}`);
     }
-    const state = await readDaemonState(stateFile, machine.platform);
-    if (state !== undefined && state.pid === pid) {
-      const probe = await probeDaemon(state);
-      if (probe.status === "ok" && probe.health.pid === state.pid) return { started: true, daemon: { state, health: probe.health } };
-    }
+    const daemon = await answeringDaemon(stateFile, pid, platform);
+    if (daemon !== undefined) return daemon;
     await sleep(POLL_INTERVAL_MS);
   }
   throw new Error(`Rerail daemon did not become ready within ${START_TIMEOUT_MS / 1_000}s; see ${logFile}`);
+}
+
+/**
+ * The daemon `pid` once the state file, read for `platform`, names it and it answers its probe as itself; undefined
+ * until then.
+ */
+async function answeringDaemon(stateFile: string, pid: number | undefined, platform: NodeJS.Platform): Promise<RunningDaemon | undefined> {
+  const state = await readDaemonState(stateFile, platform);
+  if (state === undefined || state.pid !== pid) return undefined;
+  const probe = await probeDaemon(state);
+  return probe.status === "ok" && probe.health.pid === state.pid ? { state, health: probe.health } : undefined;
 }
 
 let autostartAttempted = false;
@@ -1064,6 +1098,18 @@ async function requestDaemonShutdown(state: DaemonState): Promise<boolean> {
   }
 }
 
+/** Asks the daemon `state` records to shut down: SIGTERM, or on Windows a shutdown request, SIGTERM only if it is refused. */
+async function askDaemonToStop(state: DaemonState, machine: DaemonMachine): Promise<void> {
+  if (machine.platform !== "win32" || !(await requestDaemonShutdown(state))) signalDaemon(state.pid, "SIGTERM", machine);
+}
+
+/** Whether the process `alive` watches is gone within `ms`, polling while it runs. */
+async function goneWithin(alive: () => boolean, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (alive() && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
+  return !alive();
+}
+
 /**
  * Stops the daemon `home` records: SIGTERM on macOS and Linux, which runs its shutdown; on Windows, where no signal
  * reaches a handler, a shutdown request (`requestDaemonShutdown`) first. Either way a daemon still running after
@@ -1083,15 +1129,11 @@ export type FoundDaemon = Exclude<DaemonLookup, { status: "absent" }>;
 export async function stopFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine = THIS_MACHINE): Promise<void> {
   const pid = found.state.pid;
   const alive = (): boolean => processAlive(pid, machine.kill);
-  if (machine.platform !== "win32" || !(await requestDaemonShutdown(found.state))) signalDaemon(pid, "SIGTERM", machine);
-  const deadline = Date.now() + STOP_TIMEOUT_MS;
-  while (alive() && Date.now() < deadline) await sleep(POLL_INTERVAL_MS);
-  if (alive()) {
+  await askDaemonToStop(found.state, machine);
+  if (!(await goneWithin(alive, STOP_TIMEOUT_MS))) {
     signalDaemon(pid, "SIGKILL", machine);
-    const killDeadline = Date.now() + KILL_TIMEOUT_MS;
-    while (alive() && Date.now() < killDeadline) await sleep(POLL_INTERVAL_MS);
     // The state file stays, so a later stop can find the process again.
-    if (alive()) throw new Error(stillRunningMessage(pid, machine.platform));
+    if (!(await goneWithin(alive, KILL_TIMEOUT_MS))) throw new Error(stillRunningMessage(pid, machine.platform));
   }
   // The daemon removes its own state file and main-instance record on a clean shutdown; one killed, as Windows
   // always does, leaves both behind, and a record naming a pid Windows reuses would keep the uninstall from the cache.
