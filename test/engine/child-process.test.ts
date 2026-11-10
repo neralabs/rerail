@@ -76,6 +76,20 @@ describe("the child-process helper", () => {
       expect(calls.every(hidesWindow)).toBe(true);
     }
   });
+
+  it.runIf(process.platform === "win32")("refuses on Windows, through every starter, a program named without its folder, and starts nothing", async () => {
+    // A name no folder holds, so a starter that let it through would start nothing either, and open no window.
+    const bare = "rerail-test-no-such-program";
+    const starters = [
+      () => spawn(bare, []), () => spawnSync(bare, []), () => execFile(bare, []), () => execFileSync(bare, []),
+      () => spawnShown(bare, [], { stdio: "ignore" }),
+    ];
+    for (const start of starters) expect(start).toThrow(/absolute path/u);
+    await expect(promisify(execFile)(bare, [])).rejects.toThrow(/absolute path/u);
+    for (const start of [childProcess.spawn, childProcess.spawnSync, childProcess.execFile, childProcess.execFileSync]) {
+      expect(vi.mocked(start)).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe("spawnShown", () => {
