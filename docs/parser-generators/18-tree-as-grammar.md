@@ -80,6 +80,14 @@ tree json {
   98K. The words were not most of the code: tier 2 keeps about 20 state variables in SSA,
   and each block where paths meet carries all of them. A shared body is such a block for
   hundreds of places.
+
+- **State in memory where few words touch it.** Tier 2 keeps in SSA only the state every
+  token uses: the cursors, the token's start, end and limit, the node count, the open and
+  return depths. The supertype count, pending extras, wraps, the moved node, dropped records
+  and a shared arm's target and shift are slots of the stack frame, read and written where
+  used. On `.rr`, with shared arms, tier 2 goes from 246K instructions to 202K, and its stack
+  loads and stores from 98K to 43K (the slots' own included): both below the 261K and 66K
+  before shared arms.
 - **Every token is a leaf node,** as before; `skip` bytes are in none.
 - The root spans the file from its first token to the file's end, as tree-sitter's does
   (trailing whitespace included).
