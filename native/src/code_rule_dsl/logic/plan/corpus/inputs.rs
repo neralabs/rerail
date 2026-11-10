@@ -820,6 +820,30 @@ mod tests {
     }
 
     #[test]
+    fn typed_python_values_preserve_nonfinite_numbers_and_nested_repr_in_one_read() {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
+.decl rendered(key: symbol, value: symbol)
+.input rendered(IO=json, filename="values.json", path="/*", projection="python-value-str")
+.decl converted(key: symbol, value: symbol, error_type: symbol, detail: symbol)
+.input converted(IO=json, filename="values.json", path="/*", projection="python-value-int")
+"#).unwrap();
+        let source = r#"{"nan":["float","7ff8000000000000"],"inf":["float","7ff0000000000000"],"negative_zero":["float","8000000000000000"],"nested":["dict",[["x",["list",[["float","fff0000000000000"],["str","NaN"]]]]]],"integer":["int","1208925819614629174706176"]}"#;
+        let mut reads = 0;
+        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.to_owned()) }, &mut |_| panic!("artifact"), &mut |_| panic!("base"), &mut Vec::new()).unwrap();
+        assert_eq!(reads,1);
+        let rendered = [["nan","nan"],["inf","inf"],["negative_zero","-0.0"],
+            ["nested","{'x': [-inf, 'NaN']}"],["integer","1208925819614629174706176"]]
+            .into_iter().map(|r|r.into_iter().map(|s|Value::Str(s.into())).collect::<Vec<_>>()).collect::<Vec<_>>();
+        assert_eq!(program.facts["rendered"],rendered);
+        let rows=&program.facts["converted"];
+        assert_eq!(rows[0],vec![Value::Str("nan".into()),Value::Str("".into()),Value::Str("ValueError".into()),Value::Str("cannot convert float NaN to integer".into())]);
+        assert_eq!(rows[1][2],Value::Str("OverflowError".into()));
+        assert_eq!(rows[2][1],Value::Str("0".into()));
+        assert_eq!(rows[3][2],Value::Str("TypeError".into()));
+        assert_eq!(rows[4][1],Value::Str("1208925819614629174706176".into()));
+    }
+
+    #[test]
     fn python_integer_projection_preserves_coercions_errors_and_shared_decode() {
         let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
 .decl converted(key: symbol, value: symbol, error_type: symbol, detail: symbol)
