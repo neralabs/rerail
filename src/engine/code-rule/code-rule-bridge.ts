@@ -833,6 +833,18 @@ export class CodeRuleBridge {
     this.#rewindable.delete(toolCallId);
   }
 
+  /**
+   * Finishes calls begun whose result will not come, as that result would: the person refused the call and the host
+   * sent no result, or the result was lost while the daemon was down. Each edit is checked against what its call
+   * captured, so a refused call is checked for nothing and what a call did write is checked as its result would have
+   * it. A pending call's paths are kept out of every source walk; from here on walks check them again. A command's
+   * writes are left to the next walk.
+   */
+  async finishUnanswered(toolCallIds: readonly string[]): Promise<void> {
+    for (const toolCallId of toolCallIds) this.#commands.delete(toolCallId);
+    for (const toolCallId of toolCallIds) await this.finish(toolCallId);
+  }
+
   /** Whether a steer at `revision` over `scope` is the check of the call's finished edit, from `finish` until `release`. */
   checks(toolCallId: string, revision: number, scope: readonly string[]): boolean {
     const rewindable = this.#rewindable.get(toolCallId);

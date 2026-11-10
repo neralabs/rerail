@@ -7,7 +7,7 @@ import { runCodexHook } from "../src/hosts/codex/index.js";
 import { RerailDaemon } from "../src/daemon/index.js";
 import { runCursorHook } from "../src/hosts/cursor/index.js";
 import { type AdapterDelivery, parseConversationRule } from "../src/engine/index.js";
-import { awaitCodeRulesOpen } from "./support/code-rules-open.js";
+import { awaitCodeRulesOpen, awaitCodeRulesOpenThrough } from "./support/code-rules-open.js";
 import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRule } from "./support/contract-code-rule.js";
 import { cursorRelayed, steerLine, steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
@@ -244,9 +244,14 @@ describe("engine service", () => {
       await writeFile(join(root, "api/route.py"), "def route(cursor):\n    cursor.execute('SELECT 1')\n");
       service = await startEngineService(options);
       // The restarted runtime takes the session back at its next event and reopens its evaluator; a result that
-      // arrived during that open would go on without code rules.
+      // arrived during that open would go on without code rules. The wait probes with a read, not a turn end: Codex
+      // sends no Stop between a call and its result, and a Stop finishes the calls still waiting for theirs.
       await ingestEngineEvent(engine, { kind: "user-prompt", eventId: "reattach", sessionId: session.sessionId, session, text: "go on" });
-      await awaitCodeRulesOpen(engine, session);
+      await awaitCodeRulesOpenThrough(session.sessionId, async probe => {
+        const read = { toolCallId: `open-probe:${probe}`, sessionId: session.sessionId, session, toolName: "read" };
+        await ingestEngineEvent(engine, { kind: "call", eventId: `open-probe-call:${probe}`, ...read, input: { path: "api/route.py" } });
+        await ingestEngineEvent(engine, { kind: "result", eventId: `open-probe-result:${probe}`, ...read, output: "" });
+      });
       const deliveries = await ingestEngineEvent(engine, {
         kind: "result",
         eventId: "result",

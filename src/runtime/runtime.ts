@@ -941,6 +941,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (event.kind === "turn-end") {
       // The source walk checks the shell writes it finds as generated edits, so the boundary waits from its start.
       await this.#waitingForEditChecks(state, yields, async () => {
+        // Before the walk, which checks their files again from here on.
+        if (yields) await this.#settleUnresolvedCalls(state);
         const walkStartedAt = performance.now();
         await bridge?.checkpoint("turn");
         this.#reportSlowTurnEndWait(event.sessionId, "the source walk", walkStartedAt);
@@ -962,6 +964,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     deliveries.push(...(state.eventDeliveries.get(event.eventId) ?? []));
     state.eventDeliveries.delete(event.eventId);
     return deliveries;
+  }
+
+  /**
+   * Finishes the calls still waiting for their result when the agent yields, as their results would: none will come.
+   * Claude Code asks before a write and sends no PostToolUse when the person refuses it, and a hook's result is lost
+   * while the daemon is down. A pending call keeps its files out of every source walk, so a shell write to one went
+   * unchecked for the session's life, and a reopen began the call again from the ledger. Each is checked against what
+   * it captured and closed in the ledger; a result that comes after all checks nothing. An evaluator still opening
+   * begins the calls it restores from the ledger once open, so they wait for the next yield.
+   */
+  async #settleUnresolvedCalls(state: RuntimeSessionState): Promise<void> {
+    if (state.codeRuleOpening) return;
+    const calls = state.pendingCodeRuleCalls.splice(0);
+    if (calls.length === 0) return;
+    await state.codeRuleBridge?.finishUnanswered(calls.map(call => call.id));
+    for (const call of calls) await this.#append(state, { type: "policy-result", toolCallId: call.id });
   }
 
   /** Runs `wait` as a boundary waiting for the session's edit checks: the steers they produce meanwhile ride its answer. */
@@ -1034,10 +1052,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * The end of an OMP or Pi agent's run, which their turn end is not (they end a turn at every model call). Waits, as
-   * a turn end does, for the session's edit checks within `NATIVE_EDIT_CHECK_MS`, then answers with the steers still
-   * pending and the digest of the findings no earlier boundary waited for. Findings that arrive later wait for the
-   * session's next yield.
+   * The end of an OMP or Pi agent's run, which their turn end is not (they end a turn at every model call). Finishes
+   * the calls still waiting for their result, as a hook host's stop does; waits, as a turn end does, for the session's
+   * edit checks within `NATIVE_EDIT_CHECK_MS`, then answers with the steers still pending and the digest of the
+   * findings no earlier boundary waited for. Findings that arrive later wait for the session's next yield.
    */
   yieldDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
     if (this.#stopped()) return Promise.resolve([]);
@@ -1045,7 +1063,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const state = this.#sessions.get(sessionId);
       if (state === undefined || this.#stopped()) return [];
       const bridge = state.codeRuleReady ? state.codeRuleBridge : undefined;
-      await this.#waitingForEditChecks(state, true, () => this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS));
+      await this.#waitingForEditChecks(state, true, async () => {
+        await this.#settleUnresolvedCalls(state);
+        await this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS);
+      });
       const deliveries = await this.#collectPendingSteers(state);
       const digest = await this.#takeMissedDigest(state);
       if (digest !== undefined) deliveries.push(digest);
