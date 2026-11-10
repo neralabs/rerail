@@ -70,16 +70,32 @@ describe("Claude Code one-shot hook", () => {
       stop_hook_active: false,
       last_assistant_message: "Done.",
     }, options)).toEqual({});
-    // A Stop after a Stop hook kept the turn going is a turn end of its own, not a duplicate of the first.
-    expect(await runClaudeHook({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true, last_assistant_message: "Fixed." }, options)).toEqual({});
 
     expect(eventRows(root, ["session-start", "user-prompt", "call", "turn-end"])).toEqual([
       ["claude-session:SessionStart", "session-start"],
       ["claude-session:prompt:p1", "user-prompt"],
       ["claude-session:tool-call:tool-1", "call"],
       ["claude-session:turn:p1", "turn-end"],
-      ["claude-session:turn:p1:continued", "turn-end"],
     ]);
+  });
+
+  it("records each Stop of a turn other Stop hooks keep going as a turn end of its own, and one Stop delivered twice once", async () => {
+    const root = await temporaryDirectory();
+    const options = hookOptions(root);
+    const common = { session_id: "claude-session", cwd: root, hook_event_name: "Stop", prompt_id: "p1" };
+    await runClaudeHook({ session_id: "claude-session", cwd: root, hook_event_name: "SessionStart", source: "startup" }, options);
+    await runClaudeHook({ ...common, stop_hook_active: false, last_assistant_message: "Done." }, options);
+    await runClaudeHook({ ...common, stop_hook_active: true, last_assistant_message: "Fixed the test." }, options);
+    await runClaudeHook({ ...common, stop_hook_active: true, last_assistant_message: "Goal met." }, options);
+    await runClaudeHook({ ...common, stop_hook_active: true, last_assistant_message: "Goal met." }, options);
+
+    const turnEnds = eventRows(root, ["turn-end"]).map(([eventId]) => eventId);
+    expect(turnEnds).toEqual([
+      "claude-session:turn:p1",
+      expect.stringMatching(/^claude-session:turn:p1:continued:/),
+      expect.stringMatching(/^claude-session:turn:p1:continued:/),
+    ]);
+    expect(new Set(turnEnds).size).toBe(3);
   });
 
   it("ignores hook events the adapter does not model without touching storage", async () => {

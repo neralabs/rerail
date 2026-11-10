@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { steers, type RuleMode } from "./catalog/rule-mode.js";
 
 /** Every coding agent Rerail works with. */
@@ -181,6 +181,18 @@ export function hookText(host: string) {
       return typeof value === "string" && value.trim() !== "" ? value : undefined;
     },
   };
+}
+
+/**
+ * What tells a `Stop` that ends a turn a Stop hook kept going (`stop_hook_active`) from the first one, and each such
+ * continuation from the next, in a turn-end event id. Neither coding agent counts continuations, so one is told apart
+ * by the final message it ended on: the same `Stop` delivered twice keeps one id, and a continuation that ends on the
+ * very message an earlier continuation of the turn ended on is taken for that one.
+ */
+export function stopContinuation(stopHookActive: unknown, lastAssistantMessage: unknown): string {
+  if (stopHookActive !== true) return "";
+  const text = typeof lastAssistantMessage === "string" ? lastAssistantMessage : "";
+  return `:continued:${createHash("sha256").update(text).digest("hex").slice(0, 16)}`;
 }
 
 type ContextualAdapterEvent = {
