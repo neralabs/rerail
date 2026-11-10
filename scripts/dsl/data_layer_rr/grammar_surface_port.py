@@ -99,9 +99,13 @@ def install(suite, module):
 
     def plugin():
         def report(view):
-            return [StructuredViolation(linter_name=CHECK, code='SPG-' + str(hit.kind),
-                        path=module.ROOT / str(file.path), line=hit.line, message=str(hit.message))
-                    for file in project(view, spec).files for hit in file.grammar_surface_hits]
+            import json
+            from model_transport import encode_models
+            from surface_reporter_port import report_rows
+            bundles=[dict(path=str(path),value=bundle.facts.get(spec.extractor_id)) for path,bundle in view.files.items()]
+            rows=suite.native(CHECK,'_report_facts',[dict(path='reporter-facts.json',
+                source=json.dumps(dict(bundles=encode_models(bundles)),ensure_ascii=False))],dict(reportRoot=str(module.ROOT)))
+            return report_rows(rows,StructuredViolation)
         return LinterPlugin(CHECK, 'hard-fail', 'Deleted ServerPlan grammar helper surface',
                             FileScopeSpec(broad_repo_scope=True, include_tests=True), (spec,), report)
 

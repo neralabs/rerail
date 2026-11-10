@@ -10,7 +10,7 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 
 ## Active engine
 
-Build and develop the engine in this repository root. The active development cohort includes Final `d024fa208`.
+Build and develop the engine in this repository root. The active development cohort includes Final `957f13520`.
 The latest complete first-ten validation remains bound to Final `93cadec37`.
 The merged `d024fa208` cohort has a registered optimized CLI and focused engine, production-root, and CLI checks.
 The accepted direct-execution cohort includes Final `bc83f6ae8`.
@@ -110,7 +110,13 @@ It compares complete typed fact payloads and ordinary production findings, inclu
 The associated MCP module also passes its eight original cases through both APIs.
 Nine supplied-fact reporters now pass all 144 source-derived cases, including 87 positives, plus nine disabled-reporter controls.
 Their [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-nine-supplied-fact-reporters-finald024.json.gz) binds the registered Final d024 engine and consumed programs.
-The ServerPlan surface supplied-fact reporter, final cohort refresh, and per-rule admission remain open.
+The ServerPlan surface supplied-fact reporter now passes 197 source cases, including 124 expected validation errors and 69 finding-positive cases.
+Its [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-surface-supplied-facts-final957.json.gz) also verifies nine original cases through each API, 20 production cases, 14 persistent steps, and two controls.
+The [nine-reporter refresh](../gate/data-layer/fixtures/host/data-layer-port/rr-nine-supplied-fact-reporters-final957.json.gz) verifies 153 native executions on the same Final 957 cohort.
+Together, these two receipts verify 450 native executions. All 229 tooling tests pass.
+The original Surface plugin positive now calls the native reporter; its earlier adapter assembled findings in Python.
+The CLI's shared project helper still sorts and validates model DTOs in Python. Move that work to native projection before full-native admission.
+The complete first-ten cohort refresh and per-rule admission remain open. None of these ten drafts is newly admitted.
 The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.

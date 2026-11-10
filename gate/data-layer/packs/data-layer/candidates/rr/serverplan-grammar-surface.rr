@@ -249,3 +249,38 @@ Surface(@place(p,l),code,message,kind,name,depth,ordinal,witness,o0,o1,o2) :- pp
 pp_report(p,l,code,message,p,o0,"",o1,o0,o1,o2) :- ppe_Surface(p,l,o0,o1,o2,code,message,kind,name,depth,ordinal,witness,anchor), pp_run(), pp_fact_allowed(p), pp_report_allowed(p).
 .violation ProductionFact(at: span, path: symbol, path_order: symbol, order0: number, order1: number, order2: number, f_kind: symbol, f_line: number, f_symbol: symbol, f_message: symbol) code "DL_FACT" "production fact"
 ProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),o0,o1,o2,kind,l,name,message) :- ppe_Surface(p,l,o0,o1,o2,code,message,kind,name,depth,ordinal,witness,anchor), option("entryPoint","_production_contract"), pp_fact_allowed(p), pp_absolute(p,full).
+
+#include "data-layer/surface-supplied-facts.rr"
+sv_schema("ServerPlanFileFacts","path",0,"string",1,0,"").
+sv_schema("ServerPlanFileFacts","classes",1,"tuple",0,0,"ServerPlanClassFacts").
+sv_schema("ServerPlanFileFacts","functions",2,"tuple",0,0,"ServerPlanFunctionFacts").
+sv_schema("ServerPlanFileFacts","compile_methods",3,"tuple",0,0,"ServerPlanCompileMethodFacts").
+sv_schema("ServerPlanFileFacts","grammar_surface_hits",4,"tuple",0,0,"GrammarSurfaceHit").
+sv_schema("ServerPlanFileFacts","syntax_error",5,"string",0,1,"").
+sv_schema("ServerPlanClassFacts","name",0,"string",1,0,"").
+sv_schema("ServerPlanClassFacts","qualname",1,"string",1,0,"").
+sv_schema("ServerPlanClassFacts","line",2,"int",1,0,"").
+sv_schema("ServerPlanClassFacts","bases",3,"tuple",0,0,"string").
+sv_schema("ServerPlanClassFacts","decorators",4,"tuple",0,0,"string").
+sv_schema("ServerPlanClassFacts","is_step_subclass",5,"bool",0,0,"").
+sv_schema("ServerPlanFunctionFacts","name",0,"string",1,0,"").
+sv_schema("ServerPlanFunctionFacts","qualname",1,"string",1,0,"").
+sv_schema("ServerPlanFunctionFacts","line",2,"int",1,0,"").
+sv_schema("ServerPlanFunctionFacts","class_qualname",3,"string",0,1,"").
+sv_schema("ServerPlanFunctionFacts","is_async",4,"bool",0,0,"").
+sv_schema("ServerPlanFunctionFacts","decorators",5,"tuple",0,0,"string").
+sv_schema("ServerPlanFunctionFacts","return_annotation",6,"string",0,1,"").
+sv_schema("ServerPlanFunctionFacts","parameter_names",7,"tuple",0,0,"string").
+sv_schema("ServerPlanFunctionFacts","call_names",8,"tuple",0,0,"string").
+sv_schema("ServerPlanFunctionFacts","attr_refs",9,"tuple",0,0,"string").
+sv_schema("ServerPlanFunctionFacts","name_refs",10,"tuple",0,0,"string").
+sv_schema("ServerPlanFunctionFacts","assigned_names",11,"tuple",0,0,"string").
+sv_schema("ServerPlanFunctionFacts","string_constants",12,"tuple",0,0,"string").
+sv_schema("ServerPlanCompileMethodFacts","class_name",0,"string",1,0,"").
+sv_schema("ServerPlanCompileMethodFacts","class_qualname",1,"string",1,0,"").
+sv_schema("ServerPlanCompileMethodFacts","function_qualname",2,"string",1,0,"").
+sv_schema("ServerPlanCompileMethodFacts","line",3,"int",1,0,"").
+sv_schema("GrammarSurfaceHit","kind",0,"string",1,0,"").
+sv_schema("GrammarSurfaceHit","line",1,"int",1,0,"").
+sv_schema("GrammarSurfaceHit","symbol",2,"string",1,0,"").
+sv_schema("GrammarSurfaceHit","message",3,"string",1,0,"").

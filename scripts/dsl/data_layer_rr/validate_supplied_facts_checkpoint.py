@@ -63,7 +63,7 @@ def validate(receipt):
 def pack(work):
     from migration import ROOT, MANIFEST, read_json, sha
     source = (work/'expanded-source.json').read_text()
-    reports = [read_json(work/f'nine-reporters-{i}.json') for i in range(8)]
+    reports = [read_json(p) for p in sorted(work.glob('nine-reporters-*.json'))]
     controls = read_json(work/'nine-controls.json')
     receipt = dict(format='rerail.supplied-facts-checkpoint/v1', fullMigrationAcceptance=False,
         engineSource=read_json(ROOT/MANIFEST)['engineSource'], source=dict(text=source,sha256=sha(source.encode())),

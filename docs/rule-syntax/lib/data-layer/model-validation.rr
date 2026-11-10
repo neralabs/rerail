@@ -1,0 +1,73 @@
+// Validate the scalar and tuple fields of a root model and its child models.
+// Schema facts are generated from the pinned passive DTO definitions.
+.decl sv_schema(model: symbol, key: symbol, ordinal: number, kind: symbol, required: number, nullable: number, item: symbol)
+.decl sv_root_model(name: symbol)
+.decl sv_node(b: number, id: number, parent: number, key: symbol, ordinal: number)
+.input sv_node(IO=json,filename="reporter-facts.json",path="/bundles/*/nodes",records=true)
+.decl sv_kind(b: number, id: number, value: symbol)
+.input sv_kind(IO=json,filename="reporter-facts.json",path="/bundles/*/nodes/*/raw",projection="type")
+.decl sv_raw(b: number, id: number, value: symbol)
+.input sv_raw(IO=json,filename="reporter-facts.json",path="/bundles/*/nodes/*/raw",projection="json")
+.decl sv_text(b: number, id: number, value: symbol)
+.input sv_text(IO=json,filename="reporter-facts.json",path="/bundles/*/nodes/*/raw",projection="python-str")
+.decl sv_conversion(b: number, id: number, value: symbol, error_type: symbol, detail: symbol)
+.input sv_conversion(IO=json,filename="reporter-facts.json",path="/bundles/*/nodes/*/raw",projection="python-int")
+.decl sv_member(b: number, parent: number, key: symbol, child: number)
+sv_member(b,p,k,n) :- sv_node(b,n,p,k,_).
+.decl sv_root(b: number)
+sv_root(b) :- option("entryPoint","_report_facts"), sv_kind(b,0,"object").
+// A slot retains model field order and array positions separately from node IDs.
+.decl sv_root_slot(b: number, key: symbol, loc: symbol, order0: number, kind: symbol, required: number, nullable: number, item: symbol)
+sv_root_slot(b,k,cat("[",@json_str(k),"]"),i,t,r,nullable,item) :- sv_root(b), sv_root_model(model), sv_schema(model,k,i,t,r,nullable,item).
+.decl sv_slot(b: number, owner: number, key: symbol, loc: symbol, order0: number, order1: number, order2: number, kind: symbol, required: number, nullable: number, item: symbol)
+sv_slot(b,0,k,loc,i,-1,-1,t,r,nullable,item) :- sv_root_slot(b,k,loc,i,t,r,nullable,item).
+sv_slot(b,n,k,cat(@replace_all(loc,"\\]$",""),",",to_string(j),",",@json_str(k),"]"),i,j,pos,t,r,nullable,item) :- sv_root_slot(b,outer,loc,i,"tuple",_,_,model), model != "string", sv_member(b,0,outer,a), sv_kind(b,a,"array"), sv_node(b,n,a,_,j), sv_kind(b,n,"object"), sv_schema(model,k,pos,t,r,nullable,item).
+.decl sv_check(b: number, node: number, loc: symbol, order0: number, order1: number, order2: number, kind: symbol, nullable: number, item: symbol)
+sv_check(b,n,loc,i,j,k,t,nullable,item) :- sv_slot(b,owner,key,loc,i,j,k,t,_,nullable,item), sv_member(b,owner,key,n).
+.decl sv_float(b: number, node: number, digits: symbol, fractional: number, exponent: number)
+sv_float(b,n,cat(whole,frac),strlen(frac),to_number(exp)) :- sv_kind(b,n,"number"), sv_raw(b,n,v), match("-?(?<whole>[0-9]+)\\.(?<frac>[0-9]+)[eE](?<exp>[+-]?[0-9]+)",v).
+sv_float(b,n,cat(whole,frac),strlen(frac),0) :- sv_kind(b,n,"number"), sv_raw(b,n,v), match("-?(?<whole>[0-9]+)\\.(?<frac>[0-9]+)",v).
+sv_float(b,n,whole,0,to_number(exp)) :- sv_kind(b,n,"number"), sv_raw(b,n,v), match("-?(?<whole>[0-9]+)[eE](?<exp>[+-]?[0-9]+)",v).
+.decl sv_integral_float(b: number, node: number)
+sv_integral_float(b,n) :- sv_float(b,n,d,_,_), @replace_all(d,"0+$","") = "".
+sv_integral_float(b,n) :- sv_float(b,n,d,f,e), trimmed = @replace_all(d,"0+$",""), e >= f-strlen(d)+strlen(trimmed).
+.decl sv_integer(b: number, node: number, value: symbol)
+.decl sv_float_range(b: number, node: number)
+sv_float_range(b,n) :- sv_integral_float(b,n), sv_conversion(b,n,v,"",_), @decimal_cmp(v,"-9223372036854775808") >= 0, @decimal_cmp(v,"9223372036854775807") <= 0.
+sv_integer(b,n,v) :- sv_kind(b,n,"boolean"), sv_conversion(b,n,v,"",_).
+sv_integer(b,n,v) :- sv_kind(b,n,"number"), sv_raw(b,n,raw), @count_matches("[.eE]",raw) = 0, sv_conversion(b,n,v,"",_).
+sv_integer(b,n,v) :- sv_float_range(b,n), sv_conversion(b,n,v,"",_).
+sv_integer(b,n,v) :- sv_kind(b,n,"string"), sv_text(b,n,s), match("[\\x{0}-\\x{7f}]*",s), sv_conversion(b,n,v,"",_).
+sv_integer(b,n,@decimal_sub(@replace_all(whole,"_",""),"0")) :- sv_kind(b,n,"string"), sv_text(b,n,s), match("[ \\t\\r\\n]*(?<whole>[+-]?[0-9](?:_?[0-9])*)\\.0+[ \\t\\r\\n]*",s).
+.decl sv_valid(b: number, node: number, kind: symbol)
+sv_valid(b,n,"string") :- sv_kind(b,n,"string").
+sv_valid(b,n,"tuple") :- sv_kind(b,n,"array").
+sv_valid(b,n,"int") :- sv_integer(b,n,_).
+sv_valid(b,n,"bool") :- sv_kind(b,n,"boolean").
+sv_valid(b,n,"bool") :- sv_kind(b,n,"number"), sv_integer(b,n,v), (v = "0" ; v = "1").
+sv_valid(b,n,"bool") :- sv_kind(b,n,"string"), sv_text(b,n,v), match("(?i:0|1|off|on|f|t|false|true|n|y|no|yes)",v).
+.decl sv_error(b: number, order0: number, order1: number, order2: number, order3: number, loc: symbol, error_type: symbol, message: symbol, input_json: symbol)
+sv_error(b,i,j,k,-1,loc,"missing","Field required",raw) :- sv_slot(b,owner,key,loc,i,j,k,_,1,_,_), !sv_member(b,owner,key,_), sv_raw(b,owner,raw).
+.decl sv_invalid(b: number, node: number, loc: symbol, order0: number, order1: number, order2: number, kind: symbol)
+sv_invalid(b,n,loc,i,j,k,t) :- sv_check(b,n,loc,i,j,k,t,0,_), !sv_valid(b,n,t).
+sv_invalid(b,n,loc,i,j,k,t) :- sv_check(b,n,loc,i,j,k,t,1,_), !sv_kind(b,n,"null"), !sv_valid(b,n,t).
+sv_error(b,i,j,k,-1,loc,"string_type","Input should be a valid string",raw) :- sv_invalid(b,n,loc,i,j,k,"string"), sv_raw(b,n,raw).
+sv_error(b,i,j,k,-1,loc,"tuple_type","Input should be a valid tuple",raw) :- sv_invalid(b,n,loc,i,j,k,"tuple"), sv_raw(b,n,raw).
+sv_error(b,i,j,k,-1,loc,"int_type","Input should be a valid integer",raw) :- sv_invalid(b,n,loc,i,j,k,"int"), sv_kind(b,n,t), (t = "null" ; t = "array" ; t = "object"), sv_raw(b,n,raw).
+sv_error(b,i,j,k,-1,loc,"int_parsing","Input should be a valid integer, unable to parse string as an integer",raw) :- sv_invalid(b,n,loc,i,j,k,"int"), sv_kind(b,n,"string"), sv_raw(b,n,raw).
+sv_error(b,i,j,k,-1,loc,"int_from_float","Input should be a valid integer, got a number with a fractional part",raw) :- sv_invalid(b,n,loc,i,j,k,"int"), sv_kind(b,n,"number"), !sv_integral_float(b,n), sv_raw(b,n,raw).
+sv_error(b,i,j,k,-1,loc,"int_parsing_size","Unable to parse input string as an integer, exceeded maximum size",raw) :- sv_invalid(b,n,loc,i,j,k,"int"), sv_integral_float(b,n), !sv_float_range(b,n), sv_raw(b,n,raw).
+sv_error(b,i,j,k,-1,loc,"bool_type","Input should be a valid boolean",raw) :- sv_invalid(b,n,loc,i,j,k,"bool"), sv_kind(b,n,t), (t = "null" ; t = "array" ; t = "object"), sv_raw(b,n,raw).
+sv_error(b,i,j,k,-1,loc,"bool_type","Input should be a valid boolean",raw) :- sv_invalid(b,n,loc,i,j,k,"bool"), sv_kind(b,n,"number"), !sv_integer(b,n,_), sv_raw(b,n,raw).
+sv_error(b,i,j,k,-1,loc,"bool_parsing","Input should be a valid boolean, unable to interpret input",raw) :- sv_invalid(b,n,loc,i,j,k,"bool"), sv_kind(b,n,"string"), sv_raw(b,n,raw).
+sv_error(b,i,j,k,-1,loc,"bool_parsing","Input should be a valid boolean, unable to interpret input",raw) :- sv_invalid(b,n,loc,i,j,k,"bool"), sv_kind(b,n,"number"), sv_integer(b,n,_), sv_raw(b,n,raw).
+// Primitive tuple elements and child model elements retain their full locations.
+sv_error(b,i,j,k,pos,cat(@replace_all(loc,"\\]$",""),",",to_string(pos),"]"),"string_type","Input should be a valid string",raw) :- sv_check(b,n,loc,i,j,k,"tuple",_,"string"), sv_kind(b,n,"array"), sv_node(b,c,n,_,pos), !sv_kind(b,c,"string"), sv_raw(b,c,raw).
+sv_error(b,i,pos,-1,-1,cat(@replace_all(loc,"\\]$",""),",",to_string(pos),"]"),"model_type",cat("Input should be a valid dictionary or instance of ",model),raw) :- sv_root_slot(b,key,loc,i,"tuple",_,_,model), model != "string", sv_member(b,0,key,n), sv_kind(b,n,"array"), sv_node(b,c,n,_,pos), !sv_kind(b,c,"object"), sv_raw(b,c,raw).
+.decl sv_failed(b: number)
+sv_failed(b) :- sv_error(b,_,_,_,_,_,_,_,_).
+.decl sv_error_wire(b: number, order0: number, order1: number, order2: number, order3: number, plain: symbol, transport: symbol)
+sv_error_wire(b,i,j,k,l,e,e) :- sv_error(b,i,j,k,l,loc,t,m,raw), t != "model_type", e = cat("{\"type\":",@json_str(t),",\"loc\":",loc,",\"msg\":",@json_str(m),",\"input\":",raw,"}").
+sv_error_wire(b,i,j,k,l,e,transport) :- sv_error(b,i,j,k,l,loc,"model_type",m,raw), body = cat("{\"type\":\"model_type\",\"loc\":",loc,",\"msg\":",@json_str(m),",\"input\":",raw), e = cat(body,"}"), transport = cat(body,",\"ctx\":{\"class_name\":",@json_str(@replace_all(m,".*instance of ","")),"}}").
+.violation SuppliedModelError(at: span, error_json: symbol, reconstruction_json: symbol) code "SF_ERROR" "supplied model validation failed"
+SuppliedModelError(@place("",0),cat("{\"type\":\"pydantic_core._pydantic_core.ValidationError\",\"args\":[],\"details\":[",details,"]}"),cat("[",transport,"]")) :- first = min b : { sv_failed(b) }, details = join e by (i,j,k,l) sep "," : { sv_error_wire(first,i,j,k,l,e,_) }, transport = join e by (i,j,k,l) sep "," : { sv_error_wire(first,i,j,k,l,_,e) }.

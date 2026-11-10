@@ -4,6 +4,8 @@ import importlib
 import json
 from pathlib import Path
 import sys
+import tempfile
+import re
 
 from first_ten_supplied_facts import source_case
 from migration import ROOT, PIN, git, compare, read_json, write_json, sha
@@ -58,13 +60,13 @@ def cases():
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('command',choices=['source','native'])
+    parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('command',choices=['source','native','controls'])
     for name in ['source','engine','baseline','out']:parser.add_argument('--'+name,type=Path,required=name=='out')
     parser.add_argument('--part',type=int,default=0);parser.add_argument('--parts',type=int,default=1)
     args=parser.parse_args();assert 0<=args.part<args.parts
     dependencies=[Path(__file__),*[Path(__file__).with_name(n) for n in [
         'first_ten_supplied_facts.py','fact_transport.py','first_ten_production_contract.py','migration.py','replay.py']]]
-    if args.command=='native':
+    if args.command!='source':
         from surface_reporter_port import native_case
         dependencies += [Path(__file__).with_name(n) for n in ['model_transport.py','surface_reporter_port.py']]
     hashes={p.relative_to(ROOT).as_posix():sha(p.read_bytes()) for p in dependencies}
@@ -81,18 +83,31 @@ def main():
         baseline=read_json(args.baseline);compare(baseline['passed'],True);compare(baseline['sourcePin'],PIN)
         compare([r['input'] for r in baseline['cases']],cases())
         report.update(engineSha256=sha(args.engine.read_bytes()),baselineSha256=sha(args.baseline.read_bytes()))
-    for i in range(args.part,len(cases()),args.parts):
+    selections=list(range(args.part,len(cases()),args.parts)) if args.command!='controls' else [4,2]
+    for i in selections:
         case=cases()[i];row=dict(input=case)
         if args.command=='source':row['expected']=source_case(module,case)
         else:
             row['expected']=baseline['cases'][i]['expected']
-            try:row['actual'],row['execution']=native_case(args.engine,case)
+            try:
+                if args.command=='controls':
+                    path=ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr'
+                    text=path.read_text()
+                    if i==4:changed=text.replace('pp_config("findingSeverity","error").','pp_config("findingSeverity","disabled").')
+                    else:changed=re.sub(r'(?m)^(sv_schema\([^\n]+)\.$',r'\1 :- 0 = 1.',text)
+                    assert changed!=text
+                    with tempfile.TemporaryDirectory(prefix='surface-fact-control-',dir=ROOT/'.rerail') as folder:
+                        target=Path(folder)/'control.rr';target.write_text(changed)
+                        row['actual'],row['execution']=native_case(args.engine,case,target)
+                    row.update(mutatedPolicy=changed,originalPolicySha256=sha(text.encode()))
+                else:row['actual'],row['execution']=native_case(args.engine,case)
             except Exception as error:
                 row['nativeFailure']=f'{type(error).__name__}: {error}'
                 report['cases'].append(row);write_json(args.out,report);raise
-            row['passed']=json.dumps(row['expected'],sort_keys=True)==json.dumps(row['actual'],sort_keys=True)
+            same=json.dumps(row['expected'],sort_keys=True)==json.dumps(row['actual'],sort_keys=True)
+            row['passed']=same if args.command=='native' else not same
         report['cases'].append(row);write_json(args.out,report)
-        if args.command=='native':compare(row['passed'],True)
+        if args.command!='source':compare(row['passed'],True)
     for p,digest in hashes.items():compare(digest,sha((ROOT/p).read_bytes()))
     report['passed']=True;write_json(args.out,report)
     print(dict(cases=len(report['cases']),errors=sum('error' in r['expected'] for r in report['cases']),passed=True))

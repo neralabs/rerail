@@ -122,6 +122,9 @@ def main():
 
 
 def native_case(engine, case):
+    if case['check']=='serverplan_grammar_surface':
+        from surface_reporter_port import native_case as surface_case
+        return surface_case(engine,case)
     policy = ROOT/'gate/data-layer/packs/data-layer/candidates/rr'/(case['check'].replace('_', '-')+'.rr')
     execution = execute_workspace(engine, policy,
         [dict(path='reporter-facts.json', source=json.dumps(dict(bundles=encode_bundles(case['bundles'])), ensure_ascii=False))],

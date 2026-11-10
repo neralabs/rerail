@@ -1628,7 +1628,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "sha256": "be300ac3d3eef22652a386226404a21c7d266d0c5ac204b32da1b851c99a7ace",
+      "sha256": "bc49ec9a25e4d37d45da01b1d640d87d2af984451f888f30109413f7b546ec03",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_grammar_surface.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2600,6 +2600,16 @@
       "destination": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
       "origin": "authored",
       "sha256": "6f049ad9972b4529237efb98490e674d0c9176ab421841ec87a2c9a886084ede"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/model-validation.rr",
+      "origin": "authored",
+      "sha256": "4594b8ceb75a4f5d146c67f6f6da9546fe004e8bd8a296c279b0ea9c947c6493"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/surface-supplied-facts.rr",
+      "origin": "authored",
+      "sha256": "c82e6fa05bea05249b2c5514d535128f498bcb4eb826bc0f61712ec222358dac"
     }
   ],
   "rules": [
@@ -2682,7 +2692,11 @@
       "legacySha256": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-grammar-surface.rr",
-      "ruleSha256": "be300ac3d3eef22652a386226404a21c7d266d0c5ac204b32da1b851c99a7ace"
+      "ruleSha256": "bc49ec9a25e4d37d45da01b1d640d87d2af984451f888f30109413f7b546ec03",
+      "migrationProgress": {
+        "status": "draft",
+        "remaining": "Complete first-ten cohort refresh and admission. The shared project helper used by the CLI still sorts and validates model DTOs in Python; move that work to native projection before full-native admission."
+      }
     },
     {
       "check": "permission_error",
@@ -3816,7 +3830,7 @@
   "engineSource": {
     "checkout": ".",
     "upstreamCommit": "957f1352013cd1993a84e1ac97ae5a80ac18d68e",
-    "status": "Final 957f13520 merged without conflicts; existing generic extensions unchanged. Root artifact rebuild and current-cohort validation pending.",
+    "status": "Final 957f13520 root CLI registered. 125 focused engine tests pass (two existing helpers ignored). Nine reporter checkpoint: 153 native executions. Surface checkpoint: 297 native executions, including all nine original cases per API. Full first-ten refresh and admission remain open.",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
     "localRepairCommit": "25b580262",
     "localRepairPaths": [
@@ -4055,17 +4069,17 @@
       }
     },
     "cliArtifact": {
-      "engineCommit": "e7cf472c4cb0b0ba14cb7a719a9ea48b573a948a",
-      "upstreamCommit": "d024fa208a8067b46e7d0d8aa3bd82f7b0700311",
+      "engineCommit": "a51e3ecb498185dba6ce5f15f8c31e28ec25230d",
+      "upstreamCommit": "957f1352013cd1993a84e1ac97ae5a80ac18d68e",
       "sourceTrees": {
-        "native": "5448727abe710fa60b80b6dbe1684d107f93e49e",
-        "accel": "591103d408e3d642fc614716cc590b7a03b52100",
+        "native": "015cd67a676be0289ad44bdaf4df5a5cfbc6587f",
+        "accel": "875e8daa91a43d3e3b1f8bc6f710b7bf6379d663",
         "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
         "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
         "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
       },
-      "path": ".rerail/modern-engine-alignment/cli-b3c1bbbfaca58c25",
-      "sha256": "b3c1bbbfaca58c259ea2891c52575e1f69512db04376afc87dad662720416dad",
+      "path": ".rerail/modern-engine-alignment/cli-42fa8363b44ea304",
+      "sha256": "42fa8363b44ea304bd5661e07606327c5edb93215ccb40556c24096a59a27b6d",
       "command": [
         "cargo",
         "build",
@@ -4078,7 +4092,7 @@
         "--profile",
         "profiling"
       ],
-      "seconds": 210.359
+      "seconds": 203.563
     }
   },
   "engineSourceSnapshots": [

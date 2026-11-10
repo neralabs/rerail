@@ -10248,3 +10248,29 @@ It covers required nested fields, ignored-but-validated model fields, tuple elem
 The source receipt is `rr-surface-supplied-facts-source.json.gz`. It does not certify native parity.
 The first native positive failed before the reporter was implemented. The follow-up ladder also tests Unicode integer strings and float conversion limits.
 
+# Native Surface reporter and Final 957 acceptance, 2026-11-09
+
+Merged Final `957f13520` without conflicts. All 43 reviewed local engine extensions remain unchanged.
+The optimized root CLI build took 203.563 seconds. The root unit build took 200.953 seconds.
+The frozen CLI is `cli-42fa8363b44ea304`; the unit executable is `unit-cd974c1adfa7037d`.
+All 125 focused engine tests pass: 102 rule-language tests, 19 string tests, and four profiling tests.
+Two existing report/writer helpers remain ignored. All 229 tooling tests pass.
+
+The Surface supplied-fact reporter now validates its model fields in Datalog.
+Schema facts come from the five pinned DTO definitions. The native JSON reader supplies typed values and positions.
+The frontend constructs finding and exception DTOs from native output. It does not run source reporter decisions.
+The ladder found Unicode-string, large-float, Boolean-error, and exception-transport differences. The final corpus covers each repair.
+The original-suite adapter also used a Python reporting comprehension. Its replacement now calls the native reporter.
+
+The Surface receipt verifies 197 supplied cases, including 124 expected errors and 69 finding positives.
+It also verifies all nine original cases through both APIs, 20 production cases, 14 persistent steps, and two controls.
+Those groups contain 297 native executions. The refreshed nine-reporter receipt contains another 153.
+Both receipts bind source observations, current program bytes, harnesses, and the Final 957 artifact.
+Seven basic reporter cases and all 33 workspace CLI cases also pass outside those receipt totals.
+The new `production_subset.py` runner selects affected kernels without running other production rule batches.
+
+Full-native admission remains open. The CLI's shared project helper still sorts and validates model DTOs in Python.
+The complete first-ten production/update refresh and remaining 90 migrations are also unfinished.
+Final advanced to `04173bf00` during this frozen cohort. The live alignment check correctly requests another merge.
+These results certify Final 957; they do not certify that newer engine.
+

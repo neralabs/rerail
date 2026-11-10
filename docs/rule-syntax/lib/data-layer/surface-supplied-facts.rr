@@ -1,0 +1,22 @@
+#include "data-layer/supplied-facts.rr"
+#include "data-layer/model-validation.rr"
+sv_root_model("ServerPlanFileFacts").
+.decl ss_file(b: number, path: symbol)
+ss_file(b,p) :- sv_root(b), !sv_failed(_), sv_member(b,0,"path",n), sv_text(b,n,p).
+.decl ss_report_root(path: symbol)
+ss_report_root(root) :- option("reportRoot",root).
+ss_report_root(root) :- workspace_root(root), !option("reportRoot",_).
+.decl ss_joined(path: symbol, joined: symbol)
+ss_joined(p,cat(root,"/",p)) :- ss_file(_,p), !prefix("/",p), ss_report_root(root), !suffix("/",root).
+ss_joined(p,cat(root,p)) :- ss_file(_,p), !prefix("/",p), ss_report_root(root), suffix("/",root).
+.decl ss_event(b: number, ordinal: number, line_json: symbol, code: symbol, message: symbol)
+ss_event(b,-1,"1","SPG-SYNTAX",m) :- ss_file(b,_), sv_member(b,0,"syntax_error",n), sv_kind(b,n,"string"), sv_text(b,n,m).
+ss_event(b,i,line,cat("SPG-",kind),m) :- ss_file(b,_), sv_member(b,0,"grammar_surface_hits",a), sv_node(b,n,a,_,i), sv_member(b,n,"kind",kn), sv_text(b,kn,kind), sv_member(b,n,"line",ln), sv_integer(b,ln,line), sv_member(b,n,"message",mn), sv_text(b,mn,m).
+sf_active(b,i) :- ss_event(b,i,_,_,_).
+sf_line(b,i,line,line) :- ss_event(b,i,line,_,_).
+sf_code(b,i,c) :- ss_event(b,i,_,c,_).
+sf_message(b,i,m) :- ss_event(b,i,_,_,m).
+sf_path_input(b,i,p) :- ss_event(b,i,_,_,_), ss_file(b,p), prefix("/",p).
+sf_path_input(b,i,full) :- ss_event(b,i,_,_,_), ss_file(b,p), ss_joined(p,full).
+// Source sorts model paths before Path normalization, then syntax and hit order.
+sf_order(b,i,p,i,0,"","") :- ss_event(b,i,_,_,_), ss_file(b,p).
