@@ -152,3 +152,68 @@ fn levels_with_a_node_and_without_keep_apart() {
     let states = m.lines().filter(|l| l.starts_with("state ")).count();
     assert_eq!(states, 2 + 2 * 11, "{m}");
 }
+
+/// States of `machine(src)`, and its text.
+fn states(src: &str) -> (usize, String) {
+    let m = machine(src);
+    (m.lines().filter(|l| l.starts_with("state ")).count(), m)
+}
+
+#[test]
+fn remembered_words_share_their_states() {
+    // Three words, each a variable that a wrap gives back its own kind: written once per word,
+    // each word's state before its wrap acts apart (its tail, the same, is merged); remembered,
+    // one state, the wrap naming the level's word's kind (`as word`). In `.rr` the copies
+    // differ further on (a reading at an aggregate's `:`), so every state between does.
+    let copies = format!("tree t {{\n  node root = (item)*\n  choice item nested = a as v (wrap w f as a {TEN}) | b as v (wrap w f as b {TEN}) | c as v (wrap w f as c {TEN})\n}}");
+    let one = format!("tree t {{\n  node root = (item)*\n  choice item nested = a as v (wrap w f as a {TEN})\n}}");
+    let remembered = format!("tree t {{\n  node root = (item)*\n  remember word\n  choice word = a | b | c\n  choice item nested = word as v (wrap w f as word {TEN})\n}}");
+    let (copies, _) = states(&copies);
+    let (one, _) = states(&one);
+    let (remembered, m) = states(&remembered);
+    assert_eq!(remembered, one, "{m}");
+    assert_eq!(copies, one + 2, "{copies} states as copies, {one} as one word");
+    // Each arm that takes a word remembers its own kind (three words, from the root's start
+    // and from after an item); the wrap's moved node takes the level's word.
+    assert_eq!(m.matches(" remember ").count(), 6, "{m}");
+    assert!(m.contains(&format!(" as {} ", crate::stream_ir::REMEMBERED)), "{m}");
+}
+
+#[test]
+fn a_rule_that_takes_a_remembered_word_stays_inlined() {
+    // Used twice and long enough to be a call, but it takes a remembered word: a call's level
+    // would give its caller's word back when it ends, so it stays inlined.
+    let tail = format!("choice tail = word as v {TEN}");
+    let mut src = format!("tree t {{\n  node root = (p tail (wrap w f as word q) | r tail (wrap w f as word q))*\n  remember word\n  choice word = a | b\n  {tail}\n}}");
+    let tokens: Vec<String> = TOKENS.iter().map(|t| t.to_string()).collect();
+    assert_eq!(grammar::shared_names(&tree(&src), &tokens), NONE);
+    src = src.replace("remember word\n", "");
+    assert_eq!(grammar::shared_names(&tree(&src), &tokens), ["tail"]);
+}
+
+#[test]
+fn a_flag_guards_an_arm_in_the_levels_it_is_set_for() {
+    // `inner` after `p` runs with flag `nb`, after `q` without: its `b` arm is guarded, a test
+    // of the flag its level runs with; the call after `p` sets it.
+    let src = "tree t {\n  node root = (p with nb inner | q inner)*\n  flag nb\n  node inner nested = a [unless nb (b c)]\n}";
+    let (_, m) = states(src);
+    let guarded: Vec<&str> = m.lines().filter(|l| l.contains(" unless 0")).collect();
+    assert_eq!(guarded.len(), 1, "the `b` arm: {m}");
+    // Two calls of `inner` (after `p`, after `q`); only the one after `p` sets the flag.
+    let calls = m.lines().filter(|l| l.contains(" push ")).count();
+    let set = m.lines().filter(|l| l.contains(" push ") && l.contains(" with 0 call 0")).count();
+    assert_eq!((calls, set), (2, 1), "{m}");
+}
+
+#[test]
+fn a_flag_set_on_the_way_settles_a_first_tokens_guard() {
+    // `inner`'s first token is guarded: entered with the flag set, that arm is not there;
+    // entered with it clear, it is, unguarded.
+    let src = "tree t {\n  node root = (p with nb inner | q without nb inner)*\n  flag nb\n  node inner nested = unless nb a | b\n}";
+    let (_, m) = states(src);
+    assert!(!m.contains(" unless "), "every guard settled: {m}");
+    // After `p` only `b` enters `inner` (the arm on `a` is not there); after `q` both do.
+    let with = m.lines().filter(|l| l.contains(" with 0 call 0")).count();
+    let without = m.lines().filter(|l| l.contains(" without 0 call 0")).count();
+    assert_eq!((with, without), (1, 2), "{m}");
+}
