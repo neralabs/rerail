@@ -70,6 +70,7 @@ import {
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
+import { runRerailLanguageServer } from "../lsp/index.js";
 import { runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-cli.js";
 import { runScrubCommand } from "./scrub-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
@@ -885,6 +886,10 @@ async function main(): Promise<number> {
 async function runBeforeDispatch(args: readonly string[], manifest: PackageManifest): Promise<number | undefined> {
   const tooOld = refuseUnsupportedNode(args);
   if (tooOld !== undefined) return tooOld;
+  if (args[0] === "lsp") {
+    runRerailLanguageServer({ version: (await packageManifest(packageRoot)).version });
+    return 0;
+  }
   if (args[0] === "mcp-bridge") {
     if (args.length !== 1) throw new Error("mcp-bridge takes no arguments");
     await runRerailMcpBridge();
