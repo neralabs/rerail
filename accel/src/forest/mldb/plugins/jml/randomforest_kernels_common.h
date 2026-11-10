@@ -104,7 +104,9 @@ typedef enum WeightFormat {
 UKL_FUNCTION(v1,float,decodeWeight)(uint32_t bits, WeightFormat floatEncoding, float baseMultiplier,
                    ROBUFFER(float) table)
 {
-    if (floatEncoding == WF_INT_MULTIPLE || true) {
+    // Upstream forced this branch (`|| true`), so rows with table or float weights decoded as garbage on the
+    // device.
+    if (floatEncoding == WF_INT_MULTIPLE) {
         return bits * baseMultiplier;
     }
     else if (floatEncoding == WF_FLOAT) {
@@ -138,7 +140,7 @@ UKL_FUNCTION(v1,DecodedRow,getDecodedRow)(uint32_t rowNumber,
                    uint64_t mask,
                    uint32_t exampleMask,
                    uint32_t weightMask,
-                   uint32_t labelMask)
+                   uint64_t labelMask)
 {
     //*example = rowNumber;
     //*weight = weightMultiplier;
@@ -291,7 +293,9 @@ decompressRowsImpl)(ROBUFFER(uint64_t) rowData,
     uint64_t mask = createMask64(totalBits);
     uint32_t exampleMask = createMask32(exampleNumBits);
     uint32_t weightMask = createMask32(weightBits);
-    uint32_t labelMask = (1 << (weightBits + exampleNumBits));
+    // The label is above the weight and example bits, which with 32 weight bits (WF_FLOAT) is past bit 31: upstream
+    // shifted a 32 bit 1, so those labels were lost.
+    uint64_t labelMask = ((uint64_t)1 << (weightBits + exampleNumBits));
 
     for (uint32_t rowNumber = workerId;  rowNumber < numRows; rowNumber += numWorkers) {
 

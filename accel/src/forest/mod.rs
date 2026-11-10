@@ -44,6 +44,8 @@ pub mod compute_kernel_grid;
 pub mod randomforest_kernels_grid;
 #[path = "mldb/plugins/jml/randomforest.rs"]
 pub mod randomforest;
+#[path = "mldb/plugins/jml/randomforest_procedure.rs"]
+pub mod randomforest_procedure;
 #[cfg(test)]
 #[path = "mldb/plugins/jml/testing/rf_kernel_test.rs"]
 mod rf_kernel_test;

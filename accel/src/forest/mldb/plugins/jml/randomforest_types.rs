@@ -210,16 +210,37 @@ impl WeightEncoder {
         }
     }
 
+    /// The bits for `weight`. An int multiple is rounded to the nearest multiple (upstream truncated, so a weight
+    /// that is 3 multiples in exact arithmetic but 2.9999998 in float was encoded as 2); a table weight is its
+    /// place in the (sorted) table (upstream threw: never encoded).
     fn encode_weight_(&self, weight: f32) -> Result<u32, String> {
         match self.weight_format {
-            WeightFormat::WfIntMultiple => Ok((weight / self.weight_multiplier) as u32),
-            WeightFormat::WfTable => Err("WF_TABLE not encoding yet".into()),
+            WeightFormat::WfIntMultiple => {
+                let m = (weight / self.weight_multiplier).round();
+                if !(0.0..=u32::MAX as f32).contains(&m) {
+                    return Err(format!("weight {weight} is {m} multiples of {}", self.weight_multiplier));
+                }
+                Ok(m as u32)
+            }
+            WeightFormat::WfTable => {
+                let table = self.weight_format_table.data();
+                table.binary_search_by(|t| t.total_cmp(&weight)).map(|i| i as u32).map_err(|_| format!("weight {weight} is not in the weight table"))
+            }
             WeightFormat::WfFloat => Ok(weight.to_bits()),
         }
     }
 
+    /// The bits for `weight`: an error unless they fit the weight bits and decode to `weight` exactly (the check
+    /// upstream had commented out).
     pub fn encode_weight(&self, weight: f32) -> Result<u32, String> {
-        self.encode_weight_(weight)
+        let result = self.encode_weight_(weight)?;
+        if self.weight_bits < 32 && result >> self.weight_bits != 0 {
+            return Err(format!("weight {weight} encodes as {result}, wider than {} bits", self.weight_bits));
+        }
+        if self.decode_weight(result) != weight {
+            return Err(format!("weight {weight} encodes as {result}, which decodes as {}", self.decode_weight(result)));
+        }
+        Ok(result)
     }
 }
 

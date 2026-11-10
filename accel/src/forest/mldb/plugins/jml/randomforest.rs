@@ -1,5 +1,4 @@
-//! randomforest.h and randomforest.cc, in Rust (in progress: what is here has been cut from the .cc, the rest is
-//! still there).
+//! randomforest.h and randomforest.cc, in Rust.
 //!
 //! Mathieu Marquis Bolduc, 11 March 2016; Jeremy Barnes. Copyright (c) 2016 mldb.ai inc. This file is part of
 //! MLDB. Apache-2.0 (see the LICENSE at `accel/src/forest/mldb/`).
@@ -12,8 +11,8 @@
 //! bucket data moved there once) and `FeatureSamplingTrainerPartition` (the device memory pools; per tree, `init`
 //! fills the training info and the root's buckets, `scheduleTraining` enqueues every depth's kernels with no wait
 //! between them and copies the results out, and `finish` awaits them and builds the tree from the splits),
-//! `trainPartitionedEndToEnd`, `PartitionData::trainPartitioned` and `trainMultipleSamplings`. Still in the .cc:
-//! `reweightAndCompact`, the bag's rows and buckets.
+//! `trainPartitionedEndToEnd`, `PartitionData::trainPartitioned` and `trainMultipleSamplings`, and
+//! `reweightAndCompact` (a bag's rows and buckets).
 //!
 //! The device is Metal (the shared device); upstream's choice among OpenCL, Metal, the CPU and the comparing `MULTI`
 //! runtime is not kept, nor the `DEBUG_RF_KERNELS` checks of each kernel against the host (the grid kernels' test
@@ -29,8 +28,8 @@ use crate::forest::compute_kernel_metal::{alloc_uninitialized_array_sync, transf
 use crate::forest::dataset_feature_space::DatasetFeatureSpace;
 use crate::forest::memory_region::FrozenMemoryRegionT;
 use crate::forest::randomforest_kernels_grid::kernel;
-use crate::forest::bucket::WritableBucketList;
-use crate::forest::memory_region::MemorySerializer;
+use crate::forest::bucket::{BucketList, WritableBucketList};
+use crate::forest::memory_region::{MappedSerializer, MemorySerializer};
 use crate::forest::randomforest_recursive::{extract_tree, side_of, split_and_recurse_partitioned, test_all};
 use crate::forest::randomforest_types::*;
 use crate::forest::tree::{Ptr, Tree};
@@ -197,6 +196,11 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
             let buckets = &f.buckets;
             bucket_entry_bits.push(buckets.entry_bits as u32);
             feature_is_ordinal.push(f.ordinal as u32);
+            if !f.active {
+                // Never read: its buckets need not be in the bucket memory (a bag carries none).
+                bucket_memory_offsets.push(0);
+                continue;
+            }
             let p = buckets.storage.data().as_ptr() as usize;
             if p < base || p > base + bucket_memory.length() * 4 {
                 return Err("a feature's buckets are not in the bucket memory".into());
@@ -374,8 +378,14 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
     pub fn init(&mut self, feature_sampling: i32, feature_vector_sampling: i32, _debug_name: &str, active_features_in: &[i32]) -> Result<PartitionControlData, String> {
         let o = self.owner;
         let nf = o.nf as usize;
-        let mut data = PartitionControlData { active_features_in: active_features_in.to_vec(), bucket_numbers: vec![0], feature_is_active: vec![0; nf], active_feature_list: active_features_in.iter().map(|&f| f as u32).collect(), ..Default::default() };
-        let active_feature_set: BTreeSet<i32> = active_features_in.iter().copied().collect();
+        // In feature order: the kernels take the first of equal scores in this list's order, and the tree of a set of
+        // features should not depend on the order it is listed in (upstream took the bag's shuffle order, so ties
+        // went another way than in the recursive trainer).
+        let mut active_features_in = active_features_in.to_vec();
+        active_features_in.sort_unstable();
+        active_features_in.dedup();
+        let mut data = PartitionControlData { active_feature_list: active_features_in.iter().map(|&f| f as u32).collect(), active_features_in, bucket_numbers: vec![0], feature_is_active: vec![0; nf], ..Default::default() };
+        let active_feature_set: BTreeSet<i32> = data.active_features_in.iter().copied().collect();
         let num_active_features = data.active_feature_list.len() as u32;
         let mut num_active_buckets = 0u32;
         for i in 0..nf {
@@ -634,6 +644,110 @@ impl PartitionData {
         self.features.clear();
     }
 
+    /// A bag: the rows reweighted by `counts` (each row's weight times its count times `scale`) and compacted to those
+    /// with weight, numbered from zero, with the active features' buckets re-encoded over them in one block of
+    /// memory (one device transfer). The weights are encoded as int multiples of the smallest when every one is
+    /// exactly that, else as a table when there are fewer than 4096 of them, else as floats: the first format in
+    /// which each weight decodes as itself.
+    ///
+    /// Departures, each a fault upstream: the int-multiple check was disabled (`!isInt && false`), so every bag
+    /// was int multiples and weights that are not were rounded to them; the table's weight bits were those of zero
+    /// weights (it was never chosen); a row with a count but no weight was left out of the rows but not of the
+    /// buckets, so the two disagreed; the bucket lists were sized by the column's distinct values but written with
+    /// the feature's bucket count. Inactive features carry no buckets (upstream kept the old ones, outside the
+    /// bag's memory). The weights must total less than 2 (W32 accumulates them with 30 fraction bits).
+    pub fn reweight_and_compact(&self, counts: &[u32], scale: f64, serializer: &mut MemorySerializer) -> Result<PartitionData, String> {
+        let n = self.rows.row_count();
+        if counts.len() != n {
+            return Err(format!("{} counts for {n} rows", counts.len()));
+        }
+        let weight_of = |i: usize| (self.rows.get_weight(i) as f64 * counts[i] as f64 * scale) as f32;
+        let mut uniques = Vec::new();
+        let mut total = 0f64;
+        let mut keep = Vec::new();
+        for i in 0..n {
+            let w = weight_of(i);
+            if !(w >= 0.0) || !w.is_finite() {
+                return Err(format!("row {i}: weight {w}"));
+            }
+            if w != 0.0 {
+                keep.push(i);
+                uniques.push(w);
+                total += w as f64;
+            }
+        }
+        if keep.is_empty() {
+            return Err("no rows with weight".into());
+        }
+        if total >= 2.0 {
+            return Err(format!("the weights total {total}: they must total less than 2"));
+        }
+        uniques.sort_by(f32::total_cmp);
+        uniques.dedup();
+        let min_weight = uniques[0];
+        let int_multiple = || -> Option<WeightEncoder> {
+            let max_factor = (uniques[uniques.len() - 1] / min_weight).round();
+            if max_factor >= (1u64 << 32) as f32 {
+                return None;
+            }
+            let enc = WeightEncoder { weight_format: WeightFormat::WfIntMultiple, weight_multiplier: min_weight, weight_bits: 32 - (max_factor as u32).leading_zeros() as i32, ..Default::default() };
+            uniques.iter().all(|&w| enc.encode_weight(w).is_ok()).then_some(enc)
+        };
+        let weight_encoder = int_multiple().unwrap_or_else(|| {
+            if uniques.len() < 4096 {
+                // At most 16kb of table, in the cache.
+                let mut t = serializer.allocate_writable_t::<f32>(uniques.len(), 4);
+                t.data_mut().copy_from_slice(&uniques);
+                let bits = 32 - (uniques.len() as u32 - 1).leading_zeros() as i32;
+                WeightEncoder { weight_format: WeightFormat::WfTable, weight_format_table: serializer.freeze_t(&mut t), weight_bits: bits, weight_multiplier: 0.0 }
+            } else {
+                WeightEncoder { weight_format: WeightFormat::WfFloat, weight_bits: 32, ..Default::default() }
+            }
+        });
+        let num_non_zero = keep.len();
+        let mut src_rows = Rows { weight_encoder, ..Default::default() };
+        let mut writer = src_rows.get_row_writer(num_non_zero, num_non_zero, serializer, false, 1.0);
+        for (k, &i) in keep.iter().enumerate() {
+            writer.add_row_values(self.rows.get_row(i).label(), weight_of(i), k as u32)?;
+        }
+        src_rows = writer.freeze(serializer);
+
+        // The active features' buckets over the kept rows, each encoded on its own (in parallel), then in one block.
+        use rayon::prelude::*;
+        let lists: Vec<Option<(Vec<u32>, i32, i32)>> = self.features.par_iter().map(|f| {
+            if !f.active {
+                return None;
+            }
+            let mut s = MemorySerializer;
+            let mut bl = WritableBucketList::new(num_non_zero, f.buckets.num_buckets as u32, &mut s);
+            for &i in &keep {
+                bl.write(f.buckets.get(self.rows.get_example_num(i)));
+            }
+            let frozen = bl.freeze(&mut s);
+            Some((frozen.storage.data().to_vec(), frozen.entry_bits, frozen.num_buckets))
+        }).collect();
+        let words: usize = lists.iter().flatten().map(|l| l.0.len()).sum();
+        let mut block = serializer.allocate_writable_t::<u32>(words.max(1), 4096 /* page aligned */);
+        let mut spans = Vec::new();
+        let mut at = 0;
+        for l in &lists {
+            spans.push(l.as_ref().map(|l| {
+                block.data_mut()[at..at + l.0.len()].copy_from_slice(&l.0);
+                at += l.0.len();
+                (at - l.0.len(), l.0.len(), l.1, l.2)
+            }));
+        }
+        let bucket_memory = serializer.freeze_t(&mut block);
+        let features = self.features.iter().zip(spans).map(|(f, span)| {
+            let buckets = match span {
+                Some((start, len, entry_bits, num_buckets)) => BucketList { storage: FrozenMemoryRegionT::new(bucket_memory.raw().range(start * 4, (start + len) * 4)), entry_bits, num_buckets, num_entries: num_non_zero },
+                None => BucketList::default(),
+            };
+            Feature { active: f.active, ordinal: f.ordinal, info: f.info, buckets }
+        }).collect();
+        Ok(PartitionData { fs: self.fs.clone(), rows: src_rows, bucket_memory, features })
+    }
+
     /// Splits the rows between two datasets by the split, keeping the example numbers (so the buckets are shared).
     pub fn split_without_reindex(&self, feature_to_split_on: usize, split_value: i32, serializer: &mut MemorySerializer) -> [PartitionData; 2] {
         let f = &self.features[feature_to_split_on];
@@ -775,11 +889,10 @@ impl PartitionData {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use crate::forest::bucket::{BucketList, WritableBucketList};
     use crate::forest::dataset_feature_space::{ColumnInfo, FeatureType};
-    use crate::forest::memory_region::{FrozenMemoryRegion, MappedSerializer, MemorySerializer};
+    use crate::forest::memory_region::FrozenMemoryRegion;
     use crate::forest::randomforest_kernels as host;
 
     /// Rows with int-multiple weights (as the device decodes them) and the features given (bucket count, ordinal,
