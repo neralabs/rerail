@@ -1,6 +1,6 @@
 import { afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -9,7 +9,7 @@ import { watchRealAgentSettings } from "./user-home.js";
 const priorRerailHome = process.env.RERAIL_HOME;
 const priorContentStorePath = process.env.RERAIL_CONTENT_STORE_PATH;
 const priorUserHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-const priorGitConfig = join(homedir(), ".gitconfig");
+const priorGitConfig = { GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL };
 // The person's own agent settings, watched for this file's whole run: a test that writes a temp folder into them
 // fails the run rather than leaving the person's coding agents pointing at a folder that is about to be deleted.
 const realSettingsLeaks = watchRealAgentSettings(homedir(), tmpdir());
@@ -23,9 +23,14 @@ process.env.RERAIL_HOME = rerailHome;
 // USERPROFILE on Windows, so both are set; a test that moves the home uses stubUserHome, which moves both.
 process.env.HOME = userHome;
 process.env.USERPROFILE = userHome;
-// Git still reads the person's global settings (safe.directory, line endings) through a copy, so tests that run git in
-// this checkout behave as before, and a test that writes global settings changes only the copy.
-if (existsSync(priorGitConfig)) copyFileSync(priorGitConfig, join(userHome, ".gitconfig"));
+// Git, in a test and in the Rerail code it runs, reads no settings of the machine's or the person's: Git for Windows'
+// installer sets core.autocrlf=true for the whole machine, which wrote a test repository's LF files with CRLF. Its
+// global file is the test home's own, holding only an identity, so a commit needs no `-c user.name` and no machine's
+// name for one; a test that writes global settings changes only that file. Rerail itself honours the person's settings.
+const gitConfig = join(userHome, ".gitconfig");
+writeFileSync(gitConfig, "[user]\n\tname = Rerail test\n\temail = test@rerail.invalid\n");
+process.env.GIT_CONFIG_NOSYSTEM = "1";
+process.env.GIT_CONFIG_GLOBAL = gitConfig;
 // A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v1.sqlite`, shared by
 // every test file; each file gets its own (`contentStorePath` honours the override).
 process.env.RERAIL_CONTENT_STORE_PATH = join(contentStoreDirectory, "content.sqlite");
@@ -83,7 +88,7 @@ afterAll(async () => {
     else process.env.RERAIL_HOME = priorRerailHome;
     if (priorContentStorePath === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
     else process.env.RERAIL_CONTENT_STORE_PATH = priorContentStorePath;
-    for (const [name, value] of Object.entries(priorUserHome)) {
+    for (const [name, value] of Object.entries({ ...priorUserHome, ...priorGitConfig })) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
