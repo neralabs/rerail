@@ -285,6 +285,8 @@ mod token_local;
 #[cfg(test)]
 mod token_local_tests;
 #[cfg(test)]
+mod gating_tests;
+#[cfg(test)]
 mod bitlex_corpus_tests;
 #[cfg(test)]
 mod bitlex_ladder_tests;

@@ -423,7 +423,7 @@ pub(super) struct Sinks<'a> {
 pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c: &Consts, at: At<'_>) -> (Vec<Value>, Vec<Value>, usize, Vec<cranelift_codegen::ir::Block>) {
     let plan = &state.plan;
     let n = native.insts.len();
-    let lanes = Lanes::new(&mut *f, native, plan, at.base, at.i, !at.full, at.ascii, at.bytes, c.nibble);
+    let lanes = Lanes::new(&mut *f, native, plan, at.base, at.i, at.len, !at.full, at.ascii, at.bytes, c.nibble);
     // The block's row of slots, a loop parameter: each `Load` is one load at its slot's offset.
     let row = at.scratch;
     let mut e = Emit {
@@ -454,12 +454,7 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
             grouped[m] = Some(g);
         }
     }
-    let mut ran = vec![false; native.groups.len()];
     let regions = if at.full { plan.regions.len() } else { 0 };
-    let in_region = |x: usize| if regions > 0 { plan.region_of[x] } else { None };
-    let mut done = vec![false; n];
-    let mut emitted = vec![false; regions];
-    let mut gates = 0;
     // Each slot word to store (before the last pass), by the value that is it.
     let mut store_at: Vec<Vec<u16>> = vec![Vec::new(); n];
     let mut sink_at: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -476,81 +471,31 @@ pub(super) fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &St
             }
         }
     }
-    if regions == 0 {
-        demand_order(&mut e, &mut *f, &grouped, &store_at, &sink_at);
-        let rounds = std::mem::take(&mut e.rounds);
-        let (outputs, packed) = e.finish(&mut *f);
-        return (outputs, packed, 0, rounds);
-    }
-    loop {
-        // Every value outside the regions whose operands are made, in order; then the first
-        // region whose operands outside it are made.
-        let mut progress = true;
-        while progress {
-            progress = false;
-            for x in 0..n {
-                if !done[x] && grouped[x].is_none() && in_region(x).is_none_or(|r| emitted[r]) && native.insts[x].operands().iter().all(|&o| done[o]) {
-                    e.emit(&mut *f, x);
-                    done[x] = true;
-                    progress = true;
-                }
-            }
-            // A group whose members read, outside it, only values made.
-            for (g, group) in native.groups.iter().enumerate() {
-                if !ran[g] && group.members.iter().all(|&m| native.insts[m].operands().iter().all(|&o| done[o] || grouped[o] == Some(g))) {
-                    e.rounds(&mut *f, g);
-                    for &m in &group.members {
-                        done[m] = true;
-                    }
-                    ran[g] = true;
-                    progress = true;
-                }
-            }
-        }
-        let ready = (0..regions).find(|&r| {
-            let reg = &plan.regions[r];
-            !emitted[r] && done[reg.pre.unwrap_or(reg.gate)] && reg.members.iter().all(|&m| native.insts[m].operands().iter().all(|&o| done[o] || plan.region_of[o] == Some(r)))
-        });
-        match ready {
-            Some(r) => {
-                e.region(&mut *f, r);
-                gates += 1 + usize::from(plan.regions[r].pre.is_some());
-                for &m in &plan.regions[r].members {
-                    done[m] = true;
-                }
-                emitted[r] = true;
-            }
-            None if done.iter().all(|&d| d) => break,
-            None => {
-                // A region waiting on another's values after it: dissolved, its values computed
-                // in place without its branch. Regions are convex (`native_cpu_lanes::regions`),
-                // so this is a region whose gate is made in a later one.
-                let r = (0..regions).find(|&r| !emitted[r]).expect("a region left");
-                emitted[r] = true;
-            }
-        }
-    }
-    for x in 0..n {
-        e.store(&mut *f, x, &store_at[x]);
-        e.sink(&mut *f, x, &sink_at[x]);
-    }
+    let gates = demand_order(&mut e, &mut *f, &grouped, &store_at, &sink_at, regions);
     let rounds = std::mem::take(&mut e.rounds);
     let (outputs, packed) = e.finish(&mut *f);
     (outputs, packed, gates, rounds)
 }
 
-/// A body's values in the order they are needed (a body without gated regions): each just
-/// before the first value that reads it, a fixed point's loop just before its first member is
-/// read, from the values no other reads (the outputs, the carried ones), first to last. In the
+/// A body's values in the order they are needed: each just before the first value that reads
+/// it, a fixed point's loop just before its first member is read, a gated region (the first
+/// `regions` of the plan's, in a full block) just before the first value that reads what it
+/// gives, from the values no other reads (the outputs, the carried ones), first to last. In the
 /// program's order a value made early and read late lives through all between, and spills.
-/// Each slot word is stored where it is made.
-fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Option<usize>], store_at: &[Vec<u16>], sink_at: &[Vec<usize>]) {
+/// Each slot word is stored where it is made. A value on the vectors reads another's bytes, made
+/// on demand, not its mask: it waits on no value on the vectors (as `native_cpu_lanes::regions`
+/// plans). Gives the regions' branches.
+fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Option<usize>], store_at: &[Vec<u16>], sink_at: &[Vec<usize>], regions: usize) -> usize {
     let native = e.native;
+    let plan = &e.state.plan;
     let n = native.insts.len();
+    let needs = |o: usize, x: usize| !(plan.lanes[o] && plan.lanes[x]);
+    // Read by a value that makes it first: one on the vectors read only on the vectors (an output
+    // made a mask, say) is a root of its own.
     let mut read = vec![false; n];
     for (x, inst) in native.insts.iter().enumerate() {
         if e.live[x] {
-            for o in inst.operands() {
+            for o in inst.operands().into_iter().filter(|&o| needs(o, x)) {
                 read[o] = true;
             }
         }
@@ -559,9 +504,22 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
     enum Node {
         Value(usize),
         Group(usize),
+        Region(usize),
     }
+    #[derive(Clone, Copy, PartialEq)]
+    enum R {
+        Waiting,
+        Visiting,
+        Made,
+        /// Needed by a value it waits on (two regions each reading the other's): its values made
+        /// in place, without its branch.
+        Dissolved,
+    }
+    let mut region = vec![R::Waiting; regions];
+    let region_of = |x: usize, region: &[R]| plan.region_of[x].filter(|&r| r < regions && region[r] != R::Dissolved);
     let mut done = vec![false; n];
     let mut ran = vec![false; native.groups.len()];
+    let mut gates = 0;
     let mut stack: Vec<(Node, bool)> = Vec::new();
     for root in 0..n {
         if done[root] || (e.live[root] && read[root]) {
@@ -571,18 +529,19 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
         while let Some((node, ready)) = stack.pop() {
             match node {
                 Node::Value(x) if done[x] => {}
-                Node::Value(x) => match grouped[x] {
-                    Some(g) => stack.push((Node::Group(g), false)),
-                    None if ready => {
+                Node::Value(x) => match (grouped[x], region_of(x, &region)) {
+                    (Some(g), _) => stack.push((Node::Group(g), false)),
+                    (None, Some(r)) => stack.push((Node::Region(r), false)),
+                    (None, None) if ready => {
                         e.emit(&mut *f, x);
                         done[x] = true;
                         e.store(&mut *f, x, &store_at[x]);
                         e.sink(&mut *f, x, &sink_at[x]);
                     }
-                    None => {
+                    (None, None) => {
                         stack.push((node, true));
                         if e.live[x] {
-                            for o in native.insts[x].operands().into_iter().rev() {
+                            for o in native.insts[x].operands().into_iter().rev().filter(|&o| needs(o, x)) {
                                 stack.push((Node::Value(o), false));
                             }
                         }
@@ -608,9 +567,50 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
                         }
                     }
                 }
+                Node::Region(r) => match region[r] {
+                    R::Made => {}
+                    R::Dissolved => {
+                        // Its values, each as any other.
+                        for &m in plan.regions[r].members.iter().rev() {
+                            stack.push((Node::Value(m), false));
+                        }
+                    }
+                    R::Visiting if ready => {
+                        e.region(&mut *f, r);
+                        gates += 1 + usize::from(plan.regions[r].pre.is_some());
+                        region[r] = R::Made;
+                        for &m in &plan.regions[r].members {
+                            done[m] = true;
+                            e.store(&mut *f, m, &store_at[m]);
+                            e.sink(&mut *f, m, &sink_at[m]);
+                        }
+                    }
+                    R::Visiting => {
+                        // Needed while its operands are made: by one of them.
+                        region[r] = R::Dissolved;
+                        stack.push((node, false));
+                    }
+                    R::Waiting => {
+                        region[r] = R::Visiting;
+                        stack.push((node, true));
+                        let reg = &plan.regions[r];
+                        let mut need: Vec<usize> = vec![reg.pre.unwrap_or(reg.gate)];
+                        for &m in &reg.members {
+                            for o in native.insts[m].operands() {
+                                if plan.region_of[o] != Some(r) && needs(o, m) {
+                                    need.push(o);
+                                }
+                            }
+                        }
+                        for &o in need.iter().rev() {
+                            stack.push((Node::Value(o), false));
+                        }
+                    }
+                },
             }
         }
     }
+    gates
 }
 
 /// The values a body must make: the outputs, the carried ones (a known one's carry is a constant)
