@@ -1,23 +1,41 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/engine-proof.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/engine-pipe.js";
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
+
+// A TMPDIR longer than any socket path under it can be: a Unix socket path holds at most 107 bytes on Linux and 103 on
+// macOS, whose own TMPDIR (`/var/folders/<2>/<28>/T`) is 48 characters. Every test below passes whatever its length,
+// since each makes its Unix sockets under SOCKET_ROOT.
+const SOCKET_ROOT = "/tmp";
+const originalTmpdir = process.env.TMPDIR;
+let longTmpdir: string | undefined;
+beforeAll(() => {
+  if (process.platform === "win32") return;
+  longTmpdir = join(tmpdir(), "t".repeat(80));
+  mkdirSync(longTmpdir, { recursive: true });
+  process.env.TMPDIR = longTmpdir;
+});
+afterAll(() => {
+  if (originalTmpdir === undefined) delete process.env.TMPDIR;
+  else process.env.TMPDIR = originalTmpdir;
+  if (longTmpdir !== undefined) removeFolderSync(longTmpdir);
+});
 
 describe.runIf(process.platform !== "win32")("engine service socket directory", () => {
   const roots: string[] = [];
 
   async function temporaryRoot(): Promise<string> {
-    const root = await mkdtemp(join(tmpdir(), "rerail-socket-"));
+    const root = await mkdtemp(join(SOCKET_ROOT, "rerail-socket-"));
     roots.push(root);
     return root;
   }
@@ -170,6 +188,30 @@ describe.runIf(process.platform !== "win32")("engine service socket directory", 
     await expect(refusal).rejects.toThrow(new RegExp(`${owned}: it is owned by uid \\d+, not \\d+\\. Another user .*administrator must remove ${owned}`, "u"));
     await expect(refusal).rejects.toThrow(new RegExp(`${tooLong} is \\d+ bytes.*RERAIL_HOME`, "u"));
   });
+
+  /** A socket path under `root` of exactly `bytes` bytes. */
+  const pathOf = (root: string, bytes: number): string => join(root, "d".repeat(bytes - Buffer.byteLength(join(root, "d", "engine.sock")) + 1), "engine.sock");
+
+  // `sun_path` holds 108 bytes on Linux and 104 on macOS, each with the name's terminating NUL.
+  it.each([["linux", 107], ["darwin", 103]] as const)("takes a socket path of %s's longest, %i bytes, and skips one a byte longer", async (platform, limit) => {
+    const root = await temporaryRoot();
+    const fits = pathOf(root, limit);
+    expect(Buffer.byteLength(fits)).toBe(limit);
+    expect(await chooseEngineSocketPath([pathOf(root, limit + 1), fits], process.getuid!(), platform)).toBe(fits);
+  });
+
+  // Linux also binds a full 108-byte `sun_path` with no terminating NUL; Rerail stops a byte short, as for macOS.
+  it.runIf(process.platform === "linux")("binds a socket at the longest path Rerail takes on Linux, and Linux refuses one past sun_path", async () => {
+    const root = await temporaryRoot();
+    const listening = async (socketPath: string): Promise<void> => {
+      await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
+      const server = createServer();
+      await new Promise<void>((resolve, reject) => server.once("error", reject).listen(socketPath, resolve));
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    };
+    await expect(listening(pathOf(root, 107))).resolves.toBeUndefined();
+    await expect(listening(pathOf(join(root, "over"), 109))).rejects.toThrow(/EINVAL|ENAMETOOLONG/u);
+  });
 });
 
 describe("starting the engine on a pipe name another process holds", () => {
@@ -236,8 +278,11 @@ describe("starting the engine on a pipe name another process holds", () => {
 });
 
 describe("engine proof", () => {
+  /** A folder for the engine's socket: under SOCKET_ROOT off Windows, where a Unix socket path must stay short. */
+  const proofRoot = async (): Promise<string> => await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-engine-proof-"));
+
   it("is answered only by an engine holding the capability, and the challenge is all a holder sees", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-engine-proof-"));
+    const root = await proofRoot();
     const socketPath = process.platform === "win32"
       ? String.raw`\\.\pipe\rerail-proof-${process.pid}-${Date.now().toString(16)}`
       : join(root, "engine.sock");
@@ -255,7 +300,7 @@ describe("engine proof", () => {
   });
 
   it("refuses a holder whose answer is no proof, a multibyte one of the proof's length among them, without throwing", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-engine-proof-"));
+    const root = await proofRoot();
     const socketPath = process.platform === "win32"
       ? String.raw`\\.\pipe\rerail-proof-forged-${process.pid}-${Date.now().toString(16)}`
       : join(root, "engine.sock");
