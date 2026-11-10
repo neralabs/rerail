@@ -30,6 +30,10 @@ def cases():
     for name,data in [('invalid-start','6162ff6364'),('invalid-continuation','6162e228a16364'),
         ('truncated','6162e282'),('surrogate','eda080'),('overlong','c080'),('too-large','f4908080')]:
         rows.append(row(name,[dict(path=INVENTORY,bytesHex=data)]))
+    rows += [row('scan-fifo',[dict(path=INVENTORY,fifo=True)],action='scan'),
+        row('scan-directory',[dict(path=INVENTORY,directory=True)],action='scan'),
+        row('scan-unreadable',[file('entry\n')],action='scan',mode=0),
+        row('scan-invalid-utf8',[dict(path=INVENTORY,bytesHex='ff')],action='scan')]
     return rows
 
 
@@ -39,10 +43,16 @@ def exception(error,root):
     return result
 
 
-def observe(module,root,signature=None):
+def observe(module,root,signature=None,action=None):
     from scripts.lint_lib.fact_engine import FactEngine
     from scripts.lint_lib.fact_store import JsonFactStore
     from unittest.mock import patch
+    if action=='scan':
+        out,err=io.StringIO(),io.StringIO()
+        with redirect_stdout(out),redirect_stderr(err):
+            try:value=dict(value=canonical(module.scan_repository(root),root))
+            except BaseException as error:value=dict(error=exception(error,root))
+        return dict(value,stdout=out.getvalue(),stderr=err.getvalue())
     plugin=module.dispatch_architecture_plugin(root)
     engine=FactEngine(root=root,fact_store=JsonFactStore(root/'tmp/facts'),extractors=module.dispatch_fact_extractors(root),enable_fact_cache=False)
     view=engine.materialize((plugin,),max_workers=1);out,err=io.StringIO(),io.StringIO()
@@ -56,6 +66,7 @@ def native(engine,module,root,case,mode,surface):
     policy=ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr'
     cohort=read_json(ROOT/MANIFEST)['engineSource'];verify_source_cohort(ROOT,cohort);verify_engine_artifact(ROOT,cohort,engine)
     options={} if surface=='policy' else dict(entryPoint='_production_contract')
+    if case.get('action')=='scan':options=dict(entryPoint='_dispatch_scan_repository',env=['data-layer.dispatch.scan-only=true'])
     if 'signature' in case:options['dispatchSignature']=case['signature']
     resources=[]
     if mode=='snapshot':
@@ -74,7 +85,12 @@ def native(engine,module,root,case,mode,surface):
         if run.returncode:return dict(error=exception(RuntimeError(run.stderr),root),stdout='',stderr=''),dict(returncode=run.returncode,stderr=run.stderr.replace(str(root),'$ROOT'),requestedPolicySha256=sha(policy.read_bytes()))
         execution=json.loads(run.stdout);execution['programInputs']=program_inputs(execution['programInputs']);execution['diskResources']=resources
     try:
-        if surface=='reporter':
+        if case.get('action')=='scan':
+            rows=execution['diagnostics']
+            if any(r['code']!='DCLI_SCAN_FACT' for r in rows):raise ValueError('Unexpected native scan row')
+            values=sorted((r['parameters'] for r in rows),key=lambda p:(p['path'],p['line'],p['source_code'],p['expression'],p['visit_order'],p['layer']))
+            value=dict(value=canonical(tuple(module.Finding(p['source_code'],Path(p['path']),p['line'],p['scope'],p['expression'],p['message'],p['occurrence']) for p in values)),stdout='',stderr='')
+        elif surface=='reporter':
             from dispatch_repository_contract import decode
             result=decode(module,execution);value=dict(value=result['violations'],stdout=result['stdout'],stderr=result['stderr'])
         else:
@@ -109,11 +125,14 @@ def main():
     for i,case in enumerate(corpus):
         if baseline and i%a.parts!=a.part:continue
         with tempfile.TemporaryDirectory(prefix='dispatch-inventory-io-') as temporary:
-            root=Path(temporary).resolve();fixture(root,case['files'])
+            root=Path(temporary).resolve();fixture(root,[f for f in case['files'] if not f.get('fifo')])
+            for file in case['files']:
+                if file.get('fifo'):
+                    fifo_target=root/file['path'];fifo_target.parent.mkdir(parents=True,exist_ok=True);os.mkfifo(fifo_target)
             if 'mode' in case:(root/INVENTORY).chmod(case['mode'])
             row=dict(input=case)
             try:
-                if not baseline:row['expected']=observe(module,root,case.get('signature'))
+                if not baseline:row['expected']=observe(module,root,case.get('signature'),case.get('action'))
                 else:
                     sys.setprofile(guard)
                     try:actual,execution=native(a.engine.absolute(),module,root,case,a.mode,a.surface)

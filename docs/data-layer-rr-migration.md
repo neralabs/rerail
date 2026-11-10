@@ -3129,3 +3129,43 @@ Ten normal cases pass, including missing files, dangling links, symlink loops, a
 The next implementation extends the existing repository input reader with typed read errors.
 It will share its existing read cache and preserve the exact offending bytes only when an error consumer needs them.
 Dispatch remains a draft. No Linear ticket was created.
+
+### Native production inventory errors and scanner controls, 2026-11-10
+
+Merged Final's JSON-language support in `a57527d47`, then its compiler integration `af8fee707` in `a2812b53a`.
+The second merge retains Final's cached planning choices and compiler-crate architecture.
+It also retains the local Boolean normalization guard and both sets of program-fact regression tests.
+The optimized root CLI build took 282.397 seconds elapsed. Its frozen executable is `e881b006c25f1d92…`.
+
+The shared file reader now exposes typed OS and UTF-8 errors. It retains exact bytes, offsets, and failure categories.
+`file_error` shares `file_line`'s read and phase-0 bytes. One vocabulary operation handles each complete error demand batch.
+Repository `.input` readers use the same codec and expose `input_read_error`.
+They retain error bytes only when an error consumer needs them. Their dependency digest includes changed error bytes.
+Dispatch reads the inventory through this demanded producer. It no longer loads the inventory as a document.
+The rules select error precedence and messages. The adapter constructs passive exceptions from native fields.
+
+The [validated checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-dispatch-inventory-finalaf8-progress.json.gz) covers 23 cases through each API.
+Every fixture contains a real scanner positive. The cases retain exact directory, permission, and malformed UTF-8 failures.
+They also cover missing files, links, normal inventories, and scan-only calls with inaccessible inventories.
+The scan-only FIFO witness passes without opening the FIFO. An unwanted read would exceed its bounded command timeout.
+
+Snapshot tests send every valid UTF-8 file buffer. Files that cannot form text buffers remain physical disk resources.
+No assertion is excluded. The receipt requires their errors to appear in native `SDR_IO_ERROR` rows.
+A matching Python exception without that native row fails validation.
+
+Seven removal controls pass through each API. They disable each scanner family and the native directory and UTF-8 error paths.
+The controls preserve the other families and require successful native execution before comparing the changed results.
+Two additional standalone policy probes also reproduce the directory and UTF-8 errors.
+The checkpoint validates 62 native executions and retains mutations, source recordings, consumed programs, harnesses, and build identities.
+The tooling suite passes 389 tests and 165 subtests in 11.66 seconds elapsed.
+
+Before the integration merge, the unit build from `8881e5653` passed 27 input-reader, eight filesystem, and 105 rule-lowering tests.
+Two existing rule-lowering tests remain ignored. These unit results retain that earlier source identity.
+The input-reader and filesystem source files are byte-identical in the merged tree.
+The earlier unit build took 185.834 seconds; its setup log records the failed metadata refresh before compilation.
+The merged CLI received a successful fresh adoption audit before its build and artifact registration.
+
+The full dispatch regression refresh is running under `.rerail/dispatch-af8-regression`.
+Fresh full regression evidence and original-inventory admission remain open. Dispatch remains a draft.
+The inventory remains 11 accepted ports, 85 drafts, and four absent translations.
+No full-repository cold benchmark ran. No Linear ticket was created.
