@@ -157,6 +157,42 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2016 Max Brunsfeld", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "MIT"
 
+# tree-sitter 0.27.1 from crates.io, vendored with Rerail's patch (native/vendor/tree-sitter-0.27.1/PATCHES.md); its
+# src/unicode/ is ICU's and its src/wasm-stdlib/libc/ musl's. ICU's headers name the terms at
+# unicode.org/copyright.html, now the Unicode License v3 (src/unicode/LICENSE is ICU's earlier notice).
+[[annotations]]
+path = "native/vendor/tree-sitter-0.27.1/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2018 Max Brunsfeld", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "native/vendor/tree-sitter-0.27.1/src/unicode/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2016 and later Unicode, Inc. and others"
+SPDX-License-Identifier = "Unicode-3.0"
+
+[[annotations]]
+path = "native/vendor/tree-sitter-0.27.1/src/wasm-stdlib/libc/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2005-2020 Rich Felker, et al."
+SPDX-License-Identifier = "MIT"
+
+# block 0.1.6 from crates.io, vendored with Rerail's patch (native/vendor/block-0.1.6/RERAIL_PATCH.md).
+[[annotations]]
+path = "native/vendor/block-0.1.6/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["Steven Sheldon", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "MIT"
+
+# Rerail's own, as the rest of docs/rule-syntax/: Ruff ERA001's pragma regex in it quotes `SPDX-License-Identifier:`,
+# which REUSE would read as the file's tag.
+[[annotations]]
+path = "docs/rule-syntax/packs/python/ruff-era001-commented-out-code.rr"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Nera Software Inc."
+SPDX-License-Identifier = "Apache-2.0"
+
 # node-semver 7.8.5, ported to Rust (semver/mod.rs, provenance in semver/UPSTREAM.md); its subset() and new Range() answers recorded by
 # scripts/generate/semver/semver-subset-cases.mjs.
 [[annotations]]
