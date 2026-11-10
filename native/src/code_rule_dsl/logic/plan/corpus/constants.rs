@@ -262,8 +262,10 @@ mod tests {
         let text=format!(r#".language python
 .scope include "primary.py"
 #include "core.rr"
+.decl asked(path: symbol)
+asked(".").
 .decl seen(value: symbol)
-seen(value) :- dir_entry(".",value,0).
+seen(value) :- asked(path),dir_entry(path,value,0).
 .decl answer(value: number)
 answer(1) :- doc(_,"primary.py",_),seen({}).
 .output answer

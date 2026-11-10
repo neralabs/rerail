@@ -1,5 +1,6 @@
 """Record ordered dynamic-loading repository results, including positive files."""
 from dto import canonical
+import os
 from replay import write_fixture
 
 CHECK='dynamic_module_loading'
@@ -37,11 +38,23 @@ def cases(_module):
         case('content-order',[file('impl/a.py','__import__("os")\nimport_module("x")\n'),file('impl/b.py')]),
         case('safe-between-positives',[file('impl/a.py'),file('impl/b.py','x=1\n'),file('impl/c.py')]),
     ]
+    rows.extend([
+        case('invalid-utf8-between-positives',[file('impl/a.py'),dict(path='impl/b.py',bytesHex='ff'),file('impl/c.py')]),
+        case('allowlisted-fifo-not-opened',[dict(path='impl/allowed.py',fifo=True),file('impl/positive.py')],allowed=['impl/allowed.py']),
+        case('tab-and-percent-paths',[file('impl/a\tb.py'),file('impl/%0A.py'),file('impl/a\rb.py')]),
+        case('alias-and-target-occurrences',[file('impl/base.py'),dict(path='impl/alias.py',symlink='base.py')]),
+    ])
     return rows
 
 
 def exercise(module,case,temporary):
-    root=temporary/'root';root.mkdir();write_fixture(root,case['files'])
+    root=temporary/'root';root.mkdir()
+    write_fixture(root,[dict(path=f['path'],source='') if 'bytesHex' in f else f for f in case['files'] if not f.get('fifo')])
+    for f in case['files']:
+        path=root/f['path']
+        if 'bytesHex' in f:path.write_bytes(bytes.fromhex(f['bytesHex']))
+        if f.get('fifo'):path.parent.mkdir(parents=True,exist_ok=True);os.mkfifo(path)
+
     previous=list(module.ALLOWLISTED_FILES)
     if 'allowed' in case:module.ALLOWLISTED_FILES[:]=case['allowed']
     try:

@@ -4745,7 +4745,7 @@
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
-        "sha256": "8a6376dee589280a254b4eb1322658f451de9a51949df60a29cc9cd05d87fce4",
+        "sha256": "b5e8b994bc2125c04a227e7f87e48eab8c227b4cba43fb8fd8aba742d637827f",
         "reason": "Preserve tab, newline, CR, NUL and literal escape markers across the folded-constant output boundary; witnessed by dynamic discovery source corpus."
       }
     ],
