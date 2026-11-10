@@ -57,9 +57,16 @@ async_allowed_probe(t) :- option("line", t), match("(?s:.*)(?:_update_fts_polyfi
 AllowedProbe(@place("input.py", 1)) :- option("entryPoint", "is_allowed_line"), async_allowed_probe(_).
 
 .violation PathProbe(at: span) code "ASYNC_EXCLUDED" "excluded path"
-PathProbe(@place("input.py", 1)) :- option("entryPoint", "should_exclude"), option("path", t), match("(?s:.*)(?:/tests/)(?s:.*)", t).
-PathProbe(@place("input.py", 1)) :- option("entryPoint", "should_exclude"), option("path", t), match("(?s:.*)(?:lint_hasattr_async\\.py(?:\\z|\\n\\z))(?s:.*)", t).
-PathProbe(@place("input.py", 1)) :- option("entryPoint", "should_exclude"), option("path", t), match("(?s:.*)(?:__pycache__)(?s:.*)", t).
+.decl async_path(p: symbol)
+async_path(p) :- option("entryPoint","should_exclude"), option("path",p).
+async_path(p) :- option("entryPoint","_async_prepare"), option_item("asyncPaths",_,p).
+.decl async_excluded(p: symbol)
+async_excluded(t) :- async_path(t), match("(?s:.*)(?:/tests/)(?s:.*)", t).
+async_excluded(t) :- async_path(t), match("(?s:.*)(?:lint_hasattr_async\\.py(?:\\z|\\n\\z))(?s:.*)", t).
+async_excluded(t) :- async_path(t), match("(?s:.*)(?:__pycache__)(?s:.*)", t).
+PathProbe(@place("input.py",1)) :- option("entryPoint","should_exclude"), async_excluded(_).
+.violation AsyncRead(at: span, ordinal: number, path: symbol) code "ASYNC_READ" "read source"
+AsyncRead(@place("",0),i,p) :- option("entryPoint","_async_prepare"), option_item("asyncPaths",i,p), !async_excluded(p).
 .decl async_line(d: number, l: number, t: symbol)
 async_line(d, l, t) :- async_selected(d), split_line(d, l, t), !match("(?s)[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]*#.*", t), !async_allowed(d, l).
 
@@ -175,3 +182,11 @@ sf_strict("method_name").
 sf_excluded(b) :- sf_bundle(b,p), workspace_root(root), match("(?s:.*)(?:/tests/)(?s:.*)",cat(root,"/",p)).
 sf_excluded(b) :- sf_bundle(b,p), workspace_root(root), match("(?s:.*)(?:lint_hasattr_async\\.py(?:\\z|\\n\\z))(?s:.*)",cat(root,"/",p)).
 sf_excluded(b) :- sf_bundle(b,p), workspace_root(root), match("(?s:.*)(?:__pycache__)(?s:.*)",cat(root,"/",p)).
+
+.decl async_config(value: symbol)
+async_config("{\"extractor_id\": \"hasattr_async.violations\", \"schema_version\": \"1\", \"implementation_version\": \"hasattr-async-v3\", \"parser_mode\": \"source\", \"source_triggers\": [\"hasattr\", \"getattr\"], \"source_trigger_groups\": [[\"_async\"]], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"942ef25b58f9b7af\"}").
+.violation AsyncConfig(at: span, value: symbol) code "ASYNC_CONFIG" "extractor configuration"
+AsyncConfig(@place("",0),v) :- option("entryPoint","_async_configuration"), async_config(v).
+.violation AsyncFact(at: span, line: number, kind_order: number, value_json: symbol) code "ASYNC_FACT" "source fact"
+AsyncFact(@place(p,l),l,0,cat("{\"line\":",to_string(l),",\"pattern_type\":\"hasattr\",\"method_name\":",@json_str(method),"}")) :- option("entryPoint","_async_facts"), ppe_Asynchasattr(p,l,_,_,_,method).
+AsyncFact(@place(p,l),l,1,cat("{\"line\":",to_string(l),",\"pattern_type\":\"getattr\",\"method_name\":",@json_str(method),"}")) :- option("entryPoint","_async_facts"), ppe_Asyncgetattr(p,l,_,_,_,method).

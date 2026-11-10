@@ -105,13 +105,18 @@ def install(suite, module, check):
             root, dirs = module.resolve_root_and_dirs(args, default_dirs=None)
             if args.dirs is None:
                 dirs = module._default_directories(root)
-            rows = []
+            rows = [];candidates=[]
+            native_batch=all(getattr(getattr(module,name),'_rerail_native_check',None)==check for name in ['check_file','should_exclude'])
             for directory in dirs:
                 path = root / directory
                 if path.exists():
                     for item in path.rglob('*.py'):
-                        if not module.should_exclude(item):
+                        if native_batch:candidates.append(item)
+                        elif not module.should_exclude(item):
                             rows.extend((item.relative_to(root), *issue) for issue in module.check_file(item))
+            if native_batch:
+                from hasattr_port import check_files
+                rows=[(p.relative_to(root),*issue) for p,*issue in check_files(suite,module,candidates)]
             options = columns(rows, ['File', 'Line', 'Pattern', 'Method'])
         return emit(suite, check, options)
     suite.replace(module, 'cli_main', cli_main)

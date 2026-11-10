@@ -194,8 +194,13 @@ async_production_hidden(d) :- doc(d,p,_), suffix("lint_hasattr_async.py",p).
     text += '\n.violation AllowedProbe(at: span) code "ASYNC_ALLOWED" "allowed capability check"\n'
     text += 'AllowedProbe(@place("input.py", 1)) :- option("entryPoint", "is_allowed_line"), async_allowed_probe(_).\n'
     text += '\n.violation PathProbe(at: span) code "ASYNC_EXCLUDED" "excluded path"\n'
+    text += '.decl async_path(p: symbol)\nasync_path(p) :- option("entryPoint","should_exclude"), option("path",p).\n'
+    text += 'async_path(p) :- option("entryPoint","_async_prepare"), option_item("asyncPaths",_,p).\n.decl async_excluded(p: symbol)\n'
     for pattern in original.EXCLUDE_PATTERNS:
-        text += f'PathProbe(@place("input.py", 1)) :- option("entryPoint", "should_exclude"), option("path", t), match({quote(search(re.compile(pattern)))}, t).\n'
+        text += f'async_excluded(t) :- async_path(t), match({quote(search(re.compile(pattern)))}, t).\n'
+    text += 'PathProbe(@place("input.py",1)) :- option("entryPoint","should_exclude"), async_excluded(_).\n'
+    text += '.violation AsyncRead(at: span, ordinal: number, path: symbol) code "ASYNC_READ" "read source"\n'
+    text += 'AsyncRead(@place("",0),i,p) :- option("entryPoint","_async_prepare"), option_item("asyncPaths",i,p), !async_excluded(p).\n'
     text += '.decl async_line(d: number, l: number, t: symbol)\n'
     text += f'async_line(d, l, t) :- async_selected(d), split_line(d, l, t), !match({quote("(?s)" + space + "*#.*")}, t), !async_allowed(d, l).\n'
     for kind, pattern in [('hasattr', original.HASATTR_ASYNC_PATTERN), ('getattr', original.GETATTR_ASYNC_PATTERN)]:
@@ -211,7 +216,16 @@ async_production_hidden(d) :- doc(d,p,_), suffix("lint_hasattr_async.py",p).
         text += f'Probe{kind}(@place("input.py", 1), method) :- option("entryPoint", "pattern_search"), option("patternOrdinal", {quote(kind)}), option("patternText", t), match({quote(regex)}, t).\n'
     from data_layer_rr_cli import cli_suffix
     from data_layer_rr_production import production
-    return production(source, 'hasattr_async', (text + cli_suffix(source, 'hasattr_async')))
+    from dataclasses import asdict
+    result=production(source, 'hasattr_async', (text + cli_suffix(source, 'hasattr_async')))
+    payload=json.dumps(asdict(original.HASATTR_ASYNC_EXTRACTOR),ensure_ascii=False)
+    result+='\n.decl async_config(value: symbol)\nasync_config('+json.dumps(payload)+').\n'
+    result+='.violation AsyncConfig(at: span, value: symbol) code "ASYNC_CONFIG" "extractor configuration"\n'
+    result+='AsyncConfig(@place("",0),v) :- option("entryPoint","_async_configuration"), async_config(v).\n'
+    result+='.violation AsyncFact(at: span, line: number, kind_order: number, value_json: symbol) code "ASYNC_FACT" "source fact"\n'
+    for i,kind in enumerate(['hasattr','getattr']):
+        result+=f'AsyncFact(@place(p,l),l,{i},cat("{{\\"line\\":",to_string(l),",\\"pattern_type\\":\\"{kind}\\",\\"method_name\\":",@json_str(method),"}}")) :- option("entryPoint","_async_facts"), ppe_Async{kind}(p,l,_,_,_,method).\n'
+    return result
 
 
 def no_blanket_grammar_bypass(source, target, header):

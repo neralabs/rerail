@@ -214,14 +214,16 @@ class Suite:
         actual_source_result = canonical(result, root)
         observation.update(expectedSourceResult=original['sourceResult'], actualSourceResult=actual_source_result)
         compare(original['sourceResult'], actual_source_result)
-        empty_backend_read=(check=='backend_type_strings' and entry=='check_file' and not files
-                            and original['sourceResult']==[] and actual_source_result==[] and original['findings']==[])
+        # A recorded empty list fully specifies this I/O result, even when the
+        # older recorder withheld its redundant normalized finding list.
+        empty_file_read=(check in {'backend_type_strings','hasattr_async'} and entry=='check_file' and not files
+                         and original['sourceResult']==[] and actual_source_result==[] and original.get('findings',[])==[])
         empty_inspection=(check=='no_source_inspection' and entry=='find_violations' and not files
                           and original['sourceResult']==[] and actual_source_result==[] and original['findings']==[])
-        if original.get('retained_reason') and not (empty_backend_read or empty_inspection):
+        if original.get('retained_reason') and not (empty_file_read or empty_inspection):
             observation['status'] = 'source-result-passed; legacy normalized DTO unavailable'
             return
-        if check == 'backend_type_strings' and not empty_backend_read and any(row['code'] == 'BTS_SKIPPED' for row in
+        if check == 'backend_type_strings' and not empty_file_read and any(row['code'] == 'BTS_SKIPPED' for row in
                 (self.calls[-1]['diagnostics'] if native_diagnostics is None else native_diagnostics)):
             scope = dict(include=[], exclude=[])
         compare_inputs(original, files, scope)
@@ -261,8 +263,9 @@ class Suite:
         else:
             actual = (normalize_two(check, result, root, files) if check in {'admin_async_purity', 'async_executor', 'dynamic_module_loading', 'classvar_check', 'type_safety_patterns', 'forwardref', 'unresolved_forward_refs', 'conn_or_txn_union', 'async_patterns', 'async_sync_boundary'}
                       else normalize(check, entry, result, root, files))
-        observation.update(expected=original['findings'], actual=actual, status='passed')
-        compare(original['findings'], actual)
+        expected=[] if empty_file_read else original['findings']
+        observation.update(expected=expected, actual=actual, status='passed')
+        compare(expected, actual)
 
     def admin_files(self, module, root):
         files = []
@@ -277,6 +280,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check=='hasattr_async':
+            from hasattr_port import scan
+            return scan(self,entry,arguments)
         if check=='no_source_inspection':
             from inspection_port import scan
             return scan(self,entry,module,arguments)
@@ -491,24 +497,6 @@ class Suite:
             if entry == 'scan_file_content':
                 return [dict(file_path=r['path'], line=r['line'], message=r['message']) for r in rows]
             return [f"  {r['path']}:{r['line']}: {r['message']}" if r['line'] else f"  {r['path']}: {r['message']}" for r in rows]
-        if check == 'hasattr_async':
-            if entry in {'is_allowed_line', 'should_exclude'}:
-                options = dict(line=arguments['line']) if entry == 'is_allowed_line' else dict(path=str(arguments['path']))
-                rows = self.native(check, entry, [dict(path='input.py', source='')], options)
-                code = 'ASYNC_ALLOWED' if entry == 'is_allowed_line' else 'ASYNC_EXCLUDED'
-                if len(rows) > 1 or any(r['code'] != code for r in rows):
-                    raise AssertionError('Invalid native helper Boolean')
-                return bool(rows)
-            if 'source' in arguments:
-                source = arguments['source']
-            else:
-                try:
-                    source = path.read_text()
-                except Exception:
-                    return []
-            rows = self.native(check, entry, [dict(path=path.name, source=source)])
-            rows.sort(key=lambda r: (r['line'], 0 if r['code'] == 'hasattr' else 1))
-            return [(r['line'], r['code'], r['parameters']['method']) for r in rows]
         if check == 'permission_error':
             from permission_port import scan_file
             return scan_file(self, module, entry, path, arguments.get('source'), arguments.get('tree'))
@@ -574,6 +562,9 @@ class Suite:
             if check=='no_source_inspection':
                 from inspection_port import install
                 install(self,module)
+            if check=='hasattr_async':
+                from hasattr_port import install
+                install(self,module)
             if check in {'backend_type_strings', 'hasattr_async'}:
                 from text_cli_port import install
                 install(self, module, check)
@@ -602,7 +593,7 @@ class Suite:
                         result = self.scan(check, entry, module, values)
                         self.compare_original(check, entry, module, args, kwargs, result)
                         return result
-                    if check=='backend_type_strings' and entry=='check_file':run._rerail_native_check=check
+                    if check=='backend_type_strings' and entry=='check_file' or check=='hasattr_async' and entry in {'check_file','should_exclude'}:run._rerail_native_check=check
                     return run
                 self.replace(owner, parts[-1], wrapper(check, entry, module, original, signature))
 

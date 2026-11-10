@@ -1435,7 +1435,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
-      "sha256": "3e76103b1d12df4e1b800efa14b905b90cc32b8f683082497aaf554b42f42200",
+      "sha256": "972c1406ab45993556d95c8bf77d8eb53fcca21573b8d845fa27e87727873288",
       "origin": "authored",
       "upstreamPath": "scripts/lint_hasattr_async.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2918,7 +2918,7 @@
       "legacySha256": "ca10f10fb53277ead5302d5b08e70696bd89d0c454ea8c328006c9148a461208",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/hasattr-async.rr",
-      "ruleSha256": "3e76103b1d12df4e1b800efa14b905b90cc32b8f683082497aaf554b42f42200"
+      "ruleSha256": "972c1406ab45993556d95c8bf77d8eb53fcca21573b8d845fa27e87727873288"
     },
     {
       "check": "no_source_inspection",
