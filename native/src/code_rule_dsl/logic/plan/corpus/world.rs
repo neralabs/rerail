@@ -85,6 +85,9 @@ impl World {
                 }
             }
         }
+        // What the requests may read is watched (decision 0105): a directory listed or a file read that the
+        // journal says is unchanged is not statted.
+        super::observe(|o| o.watch(&roots));
         World { roots, root: root.to_path_buf(), budget, ..World::default() }
     }
 
@@ -138,6 +141,12 @@ impl World {
             out.insert(p.clone());
         }
         out
+    }
+
+    /// The document a load of `asked` gave earlier in this run, if any: a load asked again is answered alike.
+    pub(super) fn loaded_as(&self, asked: &str) -> Option<Loaded> {
+        let path = self.allowed(asked)?;
+        self.loads.get(path.to_string_lossy().as_ref()).cloned()
     }
 
     pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {

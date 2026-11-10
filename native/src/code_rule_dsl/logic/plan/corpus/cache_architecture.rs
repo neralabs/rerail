@@ -39,7 +39,7 @@ const NOT_CACHES: &[&str] = &[
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
-    "x", "rows", "keys", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
+    "x", "rows", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
 /// The relations' own storage between runs: every relation's rows as frames (notes/t33, K1). A cache's rows are
@@ -54,8 +54,8 @@ const NOT_YET_MOVED: &[&str] = &[
     "vocabulary_pending", "vocabulary_predicate", "vocabulary_term", "tree_pages", "kind_size", "search_index_sets",
     // The per-file memo and its plans.
     "facts_results", "facts_plan_sets", "facts_completions", "compiled_plans", "compiled_plan_reads", "plan_feedback",
-    // A phase's per-document rows and its run record.
-    "phase_granules", "phase_cones", "phase_record", "export_versions", "store_epoch", "run_record",
+    // The whole run's record.
+    "run_record",
     // The cross part's memo, statistics, checks, completed trees.
     "cross_blocks", "cross_components", "cross_rows", "stat_blob", "fact_stats", "fact_value_stats", "corpus_stats",
     "local_check_results", "context_check_results", "candidate_catalogs", "candidate_checks", "completed_directory_reuse",
@@ -95,7 +95,6 @@ fn every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved() {
 const FRESHNESS_CALLS: &[(&str, &str, usize)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "inputs::still(", 1),
     ("code_rule_dsl/logic/plan/corpus.rs", ".still(", 2),
-    ("code_rule_dsl/logic/plan/corpus/phases.rs", "unchanged_phase(", 1),
     ("code_rule_dsl/logic/plan/corpus/reuse.rs", "unchanged(programs", 1),
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "file.unchanged(", 1),
     ("code_rule_dsl/facts.rs", "derivation_valid(", 1),

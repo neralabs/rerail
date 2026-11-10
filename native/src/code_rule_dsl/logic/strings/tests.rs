@@ -253,3 +253,39 @@ fn sqlite_functions_as_sqlite_has_them() {
         assert_eq!(eval("sql_cast_int", &[s], &[]), sql("SELECT CAST(?1 AS INTEGER)", &[&s]), "cast({s:?})");
     }
 }
+
+/// Many batches' text tests at once, as jobs of one thread pool (a corpus run's file batches): each tests its new
+/// strings on the pool while the others wait to. Holding the vocabulary's lock across that search hung the run: a
+/// pool thread that took a piece of one batch's search, waiting in it, ran another batch's job, which waited on the
+/// lock the first batch held, so neither piece finished.
+#[test]
+fn batches_test_their_strings_at_once_on_one_pool() {
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
+        for round in 0..4u32 {
+            let vocabulary = Vocabulary::from_specs(&["strtest_0".to_owned()], vec![("prefix".to_owned(), vec!["item_1".to_owned()])]).unwrap();
+            let (passed, expected) = (std::sync::Mutex::new(0usize), std::sync::Mutex::new(0usize));
+            pool.scope(|s| {
+                for batch in 0..96u32 {
+                    let (vocabulary, passed, expected) = (&vocabulary, &passed, &expected);
+                    s.spawn(move |_| {
+                        // Each batch's strings are new to the vocabulary, and enough that the search splits across the pool.
+                        // Made on the pool first, as a batch's facts are: a thread waiting here takes other batches' jobs.
+                        use rayon::prelude::*;
+                        let symbols: Vec<u32> = (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect();
+                        let strings: Vec<String> = symbols.par_iter().map(|s| format!("item_{s}")).collect();
+                        let rows = vocabulary.rows(&strings, &symbols);
+                        *passed.lock().unwrap() += rows[0].len();
+                        *expected.lock().unwrap() += strings.iter().filter(|s| s.starts_with("item_1")).count();
+                    });
+                }
+            });
+            let _ = done.send((passed.into_inner().unwrap(), expected.into_inner().unwrap()));
+        }
+    });
+    for _ in 0..4 {
+        let (passed, expected) = wait.recv_timeout(std::time::Duration::from_secs(120)).expect("the batches' text tests hung");
+        assert_eq!(passed, expected);
+    }
+}

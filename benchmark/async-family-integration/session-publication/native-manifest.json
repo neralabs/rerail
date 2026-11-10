@@ -1,0 +1,12 @@
+{
+  "binary": "/Users/jeremy/orca/artifacts/async-family-comparison/session-publication-5ea1d2f75/verified-tests",
+  "sha256": "7531055138d25c2588f7f5828a6d599e984e4b4193def5c2563d229bed546a3a",
+  "corpus": "/Users/jeremy/orca/artifacts/async-family-comparison/corpus-fce4dc72",
+  "environment": {
+    "RUST_MIN_STACK": "67108864",
+    "RERAIL_THREADS": "4",
+    "RERAIL_COMPOSE": "0",
+    "RERAIL_SHARED_CORPUS": "/Users/jeremy/orca/artifacts/async-family-comparison/session-publication-5ea1d2f75/verified-native-job/corpus",
+    "RERAIL_TAPE_CACHE": "/Users/jeremy/orca/artifacts/async-family-comparison/session-publication-5ea1d2f75/verified-native-job/facts.sqlite"
+  }
+}

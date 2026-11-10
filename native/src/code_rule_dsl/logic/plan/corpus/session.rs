@@ -33,13 +33,6 @@ pub(in crate::code_rule_dsl) struct Session {
     /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
     /// per cross program (`retain::key`): a run's passes are different programs, and one would take the other's place.
     pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
-    /// Each phase export a run read, as bound: its version (`phases::Versioned`), the relation of atoms and its
-    /// statistics. A run reading the same version binds it as it is: no row is interned or measured again.
-    pub(super) phased: Mutex<std::collections::HashMap<String, (u64, PhasedSource)>>,
-    /// Each phase's exports as its last run in the session kept them (`phases::keep`), with their versions in the
-    /// phase store then: a later run of the phase diffs its rows against these in memory, and reads and writes only
-    /// the granules whose rows changed.
-    pub(super) phase_rows: Mutex<std::collections::HashMap<String, (std::collections::BTreeMap<String, u64>, std::sync::Arc<super::phases::Rows>)>>,
     /// Each output file a run of the session wrote: the program's cross-file key and its rows. A later run of that
     /// program whose output stratum is clean leaves the file as it is.
     pub(super) written: Mutex<std::collections::HashMap<PathBuf, ([u8; 32], usize)>>,
@@ -49,9 +42,6 @@ pub(in crate::code_rule_dsl) struct Session {
     generation: u64,
 }
 
-/// A phase export bound as a relation, with its statistics, and the counts they are read from: the next version's
-/// delta patches them (decision 0096 §3).
-pub(super) type PhasedSource = (std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>, std::sync::Arc<crate::code_rule_dsl::logic::plan::statkeep::RelStats>);
 
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -76,8 +66,6 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         store,
         memo: Default::default(),
         cross: Default::default(),
-        phased: Mutex::new(Default::default()),
-        phase_rows: Mutex::new(Default::default()),
         written: Mutex::new(Default::default()),
         stats: Mutex::new(Default::default()),
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
