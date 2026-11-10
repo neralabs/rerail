@@ -280,7 +280,8 @@ fn changes_of(programs: &[&str], root: &Path, typing: &Typing, options: &serde_j
     if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1) {
         return Ok(None);
     }
-    let changed: Vec<String> = docs.iter().filter(|d| world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
+    // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
+    let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
     const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
     Ok((inputs::still(&prog, root, &read) && world::World::new(root, &prog).still(&requests)).then_some(changed))
@@ -1984,6 +1985,42 @@ fn run_observed(
     // itself (decision 0046); relations no rule reads are not made.
     let projection = syntax::Projection::of(&prog, read.clone());
     crate::code_rule_dsl::logic::profile::decision("base relations", || format!("{:?} shape (decision 0046)", projection.shape));
+    // A run that reads nothing of its documents builds none: every relation its outputs need, through any rule, is
+    // derived, given as facts (an earlier phase's exports, the run's constants) or a native function. A main
+    // program over phase exports alone (`defs(q, k) :- struct__def(q, k)`) built and projected every document
+    // for nothing: a third of the documents' cost of struct and values run with such a program. Anything else that
+    // might read them (T's facts, requests' loads, guests, text or AST patterns) keeps them.
+    {
+        let p = &lowered.program;
+        let not_of_documents = |rel: &str| {
+            p.rules.iter().any(|r| r.head.rel == rel) || p.facts.contains_key(rel) || p.natives.contains_key(rel) || phased.contains_key(rel) || phase_versions.contains_key(rel)
+        };
+        let needs = front::needed(p, p.outputs.clone());
+        let why: Option<String> = if t.is_some() {
+            Some("T's facts".into())
+        } else if loading.is_some() {
+            Some("requests' loads".into())
+        } else if slice.is_some() || reads_guests {
+            Some("guests".into())
+        } else if !p.rx_spans.is_empty() || !p.ast_patterns.is_empty() {
+            Some("text or AST patterns".into())
+        } else {
+            needs.iter().find(|rel| !not_of_documents(rel)).map(|rel| format!("{rel} is read"))
+        };
+        let reads_documents = why.is_some();
+        if let Some(why) = &why {
+            crate::code_rule_dsl::logic::profile::decision("documents", || format!("built: {why}"));
+        }
+        if !reads_documents && !docs.is_empty() {
+            crate::code_rule_dsl::logic::profile::decision("documents", || format!("none built: no rule reads a relation of the {} documents", docs.len()));
+            // Still listed in what the run consulted, without a digest: the workspace's files are what they were
+            // (a file added or gone runs it again), but no edit of one changes what it derives (`changes_of`).
+            let dropped: BTreeSet<String> = docs.drain(..).map(|(_, p)| p).collect();
+            for c in consulted.iter_mut().filter(|c| c.0 == "doc" && dropped.contains(&c.1)) {
+                c.2.clear();
+            }
+        }
+    }
     // T's corpus statistics, read once: each chunk plans with them and its sources' own, measured in memory, and the
     // cross-file part with them and the chunks' totals. Without T, every chunk measures its own (`Own`).
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "statistics read or measured".into()));
@@ -4193,7 +4230,7 @@ fn run_observed(
                         hashed.push(rel.to_owned());
                         Some(delta)
                     };
-                    let maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
+                    let mut maintained = maintain::rewrite(&cut, cell.as_ref(), &cross, &mut answer)?;
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_entries} inputs' deltas read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
                         None => format!("no kept documents: {} inputs' deltas found by hashing their documents", hashed.len()),
@@ -4203,6 +4240,23 @@ fn run_observed(
                         eprintln!("O125 input deltas: {} documents changed ({read} rows in their entries), {from_entries} from entries ({from_entries_rows} rows), by hashing {hashed:?}", changes.as_ref().map_or(0, Vec::len));
                     }
                     drop(s);
+                    // What the session keeps for the next run is stored, never inlined into its readers (decision
+                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old` ("no such
+                    // table: py_f", inlined into `py_true` and `py_false`). So are the measurement aids' deltas.
+                    // `RERAIL_SESSION_INLINE=on` inlines as a full run does, to compare (as above).
+                    if !std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on") {
+                        let aids = ["RERAIL_SPIKE_DELTA", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_CROSS_VERIFY"].iter().any(|v| std::env::var_os(v).is_some());
+                        let program = &mut maintained.program.program;
+                        let mut stored: BTreeSet<String> = cut.derived(&cross.program)?.into_iter().chain(wanted.iter().cloned()).collect();
+                        if aids {
+                            stored.extend(program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).cloned());
+                        }
+                        for rel in stored {
+                            let q = program.qualifiers.entry(rel).or_default();
+                            q.remove("inline");
+                            q.insert("no_inline".to_owned());
+                        }
+                    }
                     let part = &maintained.program;
                     step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules, {} old sources", maintained.maintained, maintained.recursive, maintained.derived_again, part.program.rules.len(), maintained.sources.len()));
                     let mut stats = cross_stats;
@@ -4231,6 +4285,21 @@ fn run_observed(
                             stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)));
                         } else {
                             let patched = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.patched(&rel, h)).filter(|p| p.tested == tested).cloned());
+                            // Not kept by delta yet: counted from the engine's postings of it, in place of measuring it,
+                            // and patched by this run's delta (decision 0096 step 4): a relation's first count costs
+                            // about what a measure did, once.
+                            let patched = patched.or_else(|| {
+                                // Only a relation this run maintains (it has an overdelete): one derived again is measured.
+                                let of = rel.strip_suffix("__old")?;
+                                let h = held.as_ref().filter(|_| part.program.decls.contains_key(&format!("{of}__del")))?;
+                                let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
+                                let names = source.columns();
+                                // One the engine kept no index on (no later stratum read it) is measured: its count is
+                                // taken from this run's relation, made with its indexes.
+                                let stats = super::statkeep::RelStats::from_postings(names, h.rows() as i64, &mut |c, visit| h.each_posting(c, visit))?;
+                                let counts = constant_counts(Some(&tested), source.as_ref());
+                                Some(retain::Patched { at: Arc::as_ptr(h) as *const u8 as usize, stats, counts, tested: tested.clone() })
+                            });
                             if let (Some(h), Some(of)) = (&held, rel.strip_suffix("__old")) {
                                 bound_old.insert(of.to_owned(), (Arc::clone(h), patched.clone()));
                             }
@@ -4362,7 +4431,14 @@ fn run_observed(
                         .map(|rel| (rel, part.program.decls[rel].len()))
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| {
-                            let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten();
+                            // An output of a stratum maintained by levels (decision 0090) is still held with its rows' levels, which its
+                            // table does not keep: taken from the engine too.
+                            let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten()
+                                .or_else(|| {
+                                    // Only a relation this run maintained by levels (it has `h__gone`): any other the engine
+                                    // holds may be a copy left by an earlier run (a stratum that ran in SQL this time).
+                                    part.program.decls.contains_key(&format!("{rel}__gone")).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten().filter(|h| h.has_levels())
+                                });
                             let held = match held {
                                 Some(h) => h,
                                 None => {
@@ -4505,8 +4581,12 @@ fn run_observed(
                             None if new.delta_since(old).is_some() => new.live_rows().map(|live| {
                                 let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
                                 let names: Vec<String> = (0..*width).map(|c| super::sql_col(&name, c)).collect();
-                                let mut stats = super::statkeep::RelStats::paired(names.clone());
-                                stats.documents(&live, *width, 1);
+                                // From its postings, else its rows.
+                                let stats = super::statkeep::RelStats::from_postings(names.clone(), new.rows() as i64, &mut |c, visit| new.each_posting(c, visit)).unwrap_or_else(|| {
+                                    let mut stats = super::statkeep::RelStats::paired(names.clone());
+                                    stats.documents(&live, *width, 1);
+                                    stats
+                                });
                                 let tested = constants.get(name.as_str()).cloned().unwrap_or_default();
                                 let counts = constant_counts(Some(&tested), new.source(names).as_ref());
                                 retain::Patched { at: Arc::as_ptr(new) as *const u8 as usize, stats, counts, tested }

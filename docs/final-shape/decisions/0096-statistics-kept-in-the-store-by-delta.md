@@ -325,12 +325,22 @@ What steps 3 and 4 need:
   `sq`; a maintained relation's statistics keep a sketch of its (document, value) pairs for it
   (`RelStats::paired`, within 1.5× in `a_paired_relation_patched_by_rows_keeps_its_sum_within_documents`). A
   relation a run did not derive again keeps its statistics as it keeps its rows.
-- **What is left.** The first count of a maintained relation costs about 1 s at O125, once a session. The input
-  deltas' `__plus` and `__minus` are measured each run (0.27 s over 400 sources at O125): their rows are the
-  changed files', which the keeper counts anyway, so its per-file count could give them. The program's
-  analysis (pruning, lowering, splitting, 1.3 s) is kept by the process and read back by the store (decision
-  0073); a process serving two stores now keeps it for each, so it no longer prepares the program again on each
-  switch (O125 with `O125_FULL_EACH`).
+- **The first count.** A relation not yet kept by delta is counted from the engine's postings when it is first
+  bound as `r__old` (`RelStats::from_postings`, a hash a distinct value rather than a row), in place of being
+  measured. One the engine kept no index on (no later stratum of the cold run read it, so its indexes went) is
+  measured as before, and counted from this run's relation, rebuilt with its indexes. At O125 step 01 that is
+  0.54 s for 250 relations, 0.31 s measuring 32 and 0.20 s counting 19 of them: about 0.45 s more than measuring
+  alone, against about 1 s before. A survivors rule now starts in place when its delete set is a SQL table
+  (`kind` and `docof`, whose overdelete reads an input's delta): their 142 k rows were copied row by row each
+  step (0.20–0.23 s; now 0.03–0.07 s).
+- **The input deltas.** `__plus` and `__minus` are measured each run, in proportion to their rows: 0.27 s at O125
+  with preorder node ids, where an edit renumbers the file and its deltas run to about 75 k rows a side, and
+  0.002–0.010 s with per-definition ids. A file count can't give them, as it counts the whole file, old and new,
+  not the rows that differ. The fix is at the source: per-definition ids (decision 0090, "why a session's
+  maintenance deletes so much").
+- **The program's analysis** (pruning, lowering, splitting, 1.3 s) is kept by the process and read back by the
+  store (decision 0073). A process serving two stores now keeps it for each, so it no longer prepares the program
+  again on each switch (O125 with `O125_FULL_EACH`).
 
 The measurement aids stay: `RERAIL_STATS_SKEW`, `RERAIL_STATS_SKEW_LOG` and `RERAIL_STATS_SHADOW`. Each step's
 claim is checked by running them again.

@@ -26,7 +26,7 @@
 #include "core.rr"
 
 .phase types
-.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen
+.export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen, pgen, rcarg
 
 .decl struct__def(s: symbol, k: symbol)
 .decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
@@ -46,9 +46,9 @@ owner(s, s) :- struct__def(s, "module").
 owner(s, p) :- parent(s, p), struct__def(p, "module").
 owner(s, m) :- parent(s, p), !struct__def(p, "module"), owner(p, m).
 // parent(s, p): s is defined in p, by its symbol: made once, so the recursion above joins on p. `split_dot` gives
-// every split of s, so the last part is the one with no dot. Stored (`no_inline`, decision 0099): unfolded into the
-// recursion, each new owner row scanned every definition and split its symbol (445 M rows, 311 s on the 84 files).
-.decl parent(s: symbol, p: symbol) no_inline
+// every split of s, so the last part is the one with no dot. Stored (decision 0099, priced by the recursion's delta
+// plans): unfolded into the recursion, each new owner row would scan every definition and split its symbol.
+.decl parent(s: symbol, p: symbol)
 parent(s, p) :- struct__def(s, k), k != "module", split_dot(s, p, x), !contains(".", x).
 parent(s, p) :- struct__vann(s, _), split_dot(s, p, x), !contains(".", x).
 
@@ -134,7 +134,9 @@ gin(m, e, a, s) :- alt(m, e, a), match("^[A-Za-z_.]+\\[(?<s>[^\\[\\]]*)\\]$", a)
 .decl grest(m: symbol, e: symbol, a: symbol, j: number, s: symbol)
 grest(m, e, a, 0, s) :- gin(m, e, a, s).
 grest(m, e, a, j, r) :- grest(m, e, a, i, s), match("^[^,]*,\\s*(?<r>.*)$", s), succ(i, j).
-.decl garg(m: symbol, e: symbol, a: symbol, j: number, x: symbol)
+// Stored (`no_inline`, decision 0099): its readers join on x, which inlined is a regex's group, so no reader could
+// look x up (`nclass` read every `grest` row for each class: 2 M rows).
+.decl garg(m: symbol, e: symbol, a: symbol, j: number, x: symbol) no_inline
 garg(m, e, a, j, x) :- grest(m, e, a, j, s), match("^(?<x>[A-Za-z_][A-Za-z_0-9.]*)\\s*(,.*)?$", s).
 .decl succ(i: number, j: number)
 succ(0, 1). succ(1, 2). succ(2, 3). succ(3, 4). succ(4, 5).
@@ -173,6 +175,20 @@ rvar(f, y) :- struct__ret(f, a), owner(f, m), alt(m, a, x), tv(m, x, y).
 .decl rgen(f: symbol, k: symbol, j: number, y: symbol)
 rgen(f, k, j, y) :- struct__ret(f, a), owner(f, m), galt(m, a, s, h), hexpr(m, a, h, k), struct__def(k, "class"), garg(m, a, s, j, x),
     tv(m, x, y).
+// pgen(f, i, k, j, y): f's parameter i is declared a generic of class k whose j-th argument is the type variable y
+// (`frozenset.__new__(cls, iterable: Iterable[_T_co])`): a call binds y from its argument's generic value.
+.decl pgen(f: symbol, i: number, k: symbol, j: number, y: symbol)
+pgen(f, i, k, j, y) :- struct__param(f, i, _, a), a != "", owner(f, m), galt(m, a, s, h), hexpr(m, a, h, k), struct__def(k, "class"),
+    garg(m, a, s, j, x), tv(m, x, y).
+// rcarg(f, k, j, d): an alternative of f's declared return is a generic of class k whose j-th argument names the
+// class d (`dir() -> list[str]`: list's parameter 0 is a str).
+.decl rcarg(f: symbol, k: symbol, j: number, d: symbol)
+rcarg(f, k, j, d) :- struct__ret(f, a), owner(f, m), galt(m, a, s, h), hexpr(m, a, h, k), struct__def(k, "class"), garg(m, a, s, j, x),
+    nclass(m, x, d).
+// nclass(m, x, d): the name x, a generic's argument in module m, is the class d.
+.decl nclass(m: symbol, x: symbol, d: symbol)
+nclass(m, x, d) :- garg(m, _, _, _, x), !contains(".", x), binds(m, x, d), struct__def(d, "class").
+nclass(m, x, d) :- garg(m, _, _, _, x), !contains(".", x), !mbound(m, x), binds("builtins", x, d), struct__def(d, "class").
 // ropen(f): an alternative of f's declared return names no class, None nor type variable (`Any`, a special form): a
 // call of f may hold what no symbol names, whatever binds the type variables.
 .decl ropen(f: symbol)
