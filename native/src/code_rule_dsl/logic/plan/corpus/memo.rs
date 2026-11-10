@@ -85,7 +85,7 @@ fn plan(program: &[u8; 32]) -> FactsPlanSet {
 
 /// A digest of a program part: its rules, declarations, inputs and outputs as lowered, every fact, those the engine
 /// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it.
-pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
+pub(in crate::code_rule_dsl) fn program_digest(program: &crate::code_rule_dsl::logic::front::Program) -> [u8; 32] {
     let facts: std::collections::BTreeMap<&String, _> = program.facts.iter().collect();
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-program/v3\0");
@@ -93,7 +93,17 @@ pub(super) fn program_digest(program: &crate::code_rule_dsl::logic::front::Progr
     // What the batch makes for the part besides its rules' reads: the regex spans and AST patterns it matches
     // (O-stored-patterns).
     hash.update(format!("\n{:?}\n{:?}", program.rx_spans, program.ast_patterns).as_bytes());
-    hash.finalize().into()
+    let digest: [u8; 32] = hash.finalize().into();
+    // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
+    if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
+        let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
+        let text = format!(
+            "rules {:#?}\ndecls {:#?}\nfacts {:#?}\ninputs {:#?}\noutputs {:#?}\nrx_spans {:#?}\nast_patterns {:#?}\n",
+            program.rules, program.decls, facts, program.inputs, program.outputs, program.rx_spans, program.ast_patterns
+        );
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), text);
+    }
+    digest
 }
 
 /// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).

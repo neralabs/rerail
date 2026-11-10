@@ -80,9 +80,10 @@ The findings are identical to the baseline (`n_loaded.csv`).
 
 - Linux (inotify or fanotify do not keep a history; Watchman or a persistent watcher would be
   needed) and Windows (USN journal).
-- Other stat sources not yet on the journal:
-  - `World::allowed` canonicalizes each request;
-  - the K3 replay's stats;
-  - `git status` in Git work trees.
+- Built since: canonical paths (`Observer::canonical`, kept as `canonical:<path>` records) answer
+  `World::allowed` and the whole-run cutoff's checks with no `realpath` (comment edit: 475 → 1).
+  Git's file list is kept with the journal's cursor taken before the status; a later run reads
+  the status again only when a named path could change the list (a new or removed file, a
+  directory, `HEAD`, the index, refs, config, info or an ignore file).
 - A run whose edit makes the cone rerun as whole strata still costs ~30 s CPU. The stats are no
   longer the cost there (0104 step 4, the cone by delta).
