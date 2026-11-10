@@ -365,6 +365,12 @@ fn facts(heads: &[Head]) -> Option<Vec<(String, Vec<Value>)>> {
     heads
         .iter()
         .map(|h| {
+            // Load requests must remain executable rules. The corpus runner
+            // roots request rules and answers them inside its fixpoint; a
+            // ground request is still a request, not passive program data.
+            if h.rel == "load" {
+                return None;
+            }
             let row = h
                 .args
                 .iter()
