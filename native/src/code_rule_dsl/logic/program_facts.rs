@@ -874,6 +874,18 @@ mod tests {
         assert_eq!(super::super::plan::corpus::memo::program_digest(&back), super::super::plan::corpus::memo::program_digest(&prog));
     }
 
+    /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored
+    /// program is the program prepared, and its file-local part has the same memo key (`memo::program_digest`).
+    #[test]
+    fn a_relation_of_no_facts_reads_back_as_one() {
+        let mut prog = crate::code_rule_dsl::logic::front::Program::default();
+        prog.facts.insert("none".into(), Vec::new());
+        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)]]);
+        let mut facts = super::Facts::new();
+        super::write(&mut facts, "p", &prog);
+        assert_eq!(super::program(&facts, "p").unwrap().facts, prog.facts);
+    }
+
     /// The AST patterns a program matches survive its facts: a stored program read back (a prepared program,
     /// O-stored-patterns) still asks the batch for `ast_match` rows. Without them, a run that reuses it finds no
     /// pattern matches.

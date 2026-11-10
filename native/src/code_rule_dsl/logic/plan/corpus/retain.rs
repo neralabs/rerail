@@ -1058,7 +1058,7 @@ impl Retained {
                 puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types: k.rel.types().to_vec(), rows, n } });
             }
         }
-        store.queue_frames(was.space, puts, Vec::new(), Some(was.names.values().cloned().collect()));
+        store.queue_frames(was.space, puts, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token())));
         Ok(written)
     }
 }
