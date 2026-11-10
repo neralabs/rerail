@@ -42,6 +42,8 @@ class DispatchBatchingTests(unittest.TestCase):
         self.assertEqual(['A','B','A'],backend.calls[-1][2]['dispatchInventory'])
         self.assertEqual(['B'],backend.calls[-1][2]['dispatchApproved'])
         self.assertEqual(2,len(result));self.assertIs(first,result[0]);self.assertIs(last,result[1])
+        streamed=module.unapproved_findings((value for value in [first,middle,last]),frozenset({'B'}))
+        self.assertEqual(2,len(streamed));self.assertIs(first,streamed[0]);self.assertIs(last,streamed[1])
 
 
 if __name__=='__main__':unittest.main()
