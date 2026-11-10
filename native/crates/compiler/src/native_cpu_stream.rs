@@ -440,6 +440,35 @@ fn mask_scan(f: &mut FunctionBuilder<'_>, m: Mask, w: Value, bits: Value, refuse
     }
 }
 
+/// `SPAN m=1`'s search, a function of its own (`outline`): the next of the last-byte mask's
+/// bits after the last one taken, the bits of word `lw` not yet taken (`taken`), then a word
+/// (64 bytes) a turn. Parameters: the mask (its first word, stride, word count), `lw`, `taken`,
+/// the token's start and limit. Returns the token's end (the bit's byte, plus one), the bit's
+/// word and its bits left, and 1 when it refuses: no bit is left, or the bit is before the
+/// token's start or its end past its limit.
+fn span_last(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(Block, Step)>) {
+    let (first, stride, words, w, bits, start, limit) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
+    let refuse = f.create_block();
+    f.append_block_param(refuse, types::I64);
+    let (found, scan) = mask_scan(f, Mask { first, stride, words }, w, bits, refuse, 0, true);
+    heads.push((scan, Step::Block));
+    let (w, bits) = (f.block_params(found)[0], f.block_params(found)[1]);
+    let tz = f.ins().ctz(bits);
+    let at = f.ins().ishl_imm(w, 6);
+    let l = f.ins().iadd(at, tz);
+    let less = f.ins().iadd_imm(bits, -1);
+    let rest = f.ins().band(bits, less);
+    let before = f.ins().icmp(IntCC::UnsignedLessThan, l, start);
+    let e = f.ins().iadd_imm(l, 1);
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
+    let bad = f.ins().bor(before, past);
+    let bad = f.ins().uextend(types::I64, bad);
+    f.ins().return_(&[e, w, rest, bad]);
+    f.switch_to_block(refuse);
+    let one = f.ins().iconst(types::I64, 1);
+    f.ins().return_(&[start, p[3], p[4], one]);
+}
+
 /// A switch's runs: each maximal range of bytes with one target, as (first byte, block).
 fn runs(s: &ByteSwitch, word: &dyn Fn(u16) -> Block) -> Vec<(u32, Block)> {
     let mut out: Vec<(u32, u16)> = Vec::new();
@@ -496,7 +525,12 @@ fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, bu
     for _ in 0..returns {
         signature.returns.push(AbiParam::new(types::I64));
     }
-    let id = module.declare_function(name, Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+    let id = module.declare_function(name, Linkage::Local, &signature).map_err(|e| {
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+            eprintln!("tier 2's own function {name}: {e:?}");
+        }
+        Error::BackendFailure
+    })?;
     let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), signature.clone());
     let mut fctx = FunctionBuilderContext::new();
     let mut heads = Vec::new();
@@ -1013,6 +1047,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         // The node table's passes, outlined (`outline`): made where first called.
         let mut reorder_fn = None;
         let mut table_fn = None;
+        let mut span_fn = None;
         let w: Vec<Value> = if wrapping {
             [FRAME_BASE, FRAME_LAST, FRAME_LAST_BASE, HEAD, LINK, PLACE, OUT_KIND, OUT_FIELD, OUT_START, OUT_END, OUT_SIZE].iter().map(|&at| load(&mut f, at)).collect()
         } else {
@@ -1218,25 +1253,16 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
                     f.switch_to_block(find);
                     // The next of the mask's bits after the last one taken: the bits of word
                     // `lw` not yet taken (`taken`), then a word (64 bytes) at a time.
-                    let (w, bits) = (f.use_var(v.lw), f.use_var(v.taken));
-                    let (found, scan) = mask_scan(&mut f, Mask { first: lasts_p, stride: lasts_stride, words: nlasts }, w, bits, refuse, pc, true);
-                    heads.push((scan, Step::Block));
-                    let (w, bits) = (f.block_params(found)[0], f.block_params(found)[1]);
-                    let tz = f.ins().ctz(bits);
-                    let at = f.ins().ishl_imm(w, 6);
-                    let l = f.ins().iadd(at, tz);
-                    let less = f.ins().iadd_imm(bits, -1);
-                    let rest = f.ins().band(bits, less);
-                    f.def_var(v.taken, rest);
-                    f.def_var(v.lw, w);
-                    let start = f.use_var(v.start);
-                    let before = f.ins().icmp(IntCC::UnsignedLessThan, l, start);
-                    guard(&mut f, before, pc);
-                    let e = f.ins().iadd_imm(l, 1);
-                    let limit = f.use_var(v.limit);
-                    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, e, limit);
-                    guard(&mut f, past, pc);
-                    f.def_var(v.end, e);
+                    let (w, bits, start, limit) = (f.use_var(v.lw), f.use_var(v.taken), f.use_var(v.start), f.use_var(v.limit));
+                    if span_fn.is_none() {
+                        span_fn = Some(outline(&mut module, "tempo_stream_last", 7, 4, |f, p, heads| span_last(f, p, heads))?);
+                    }
+                    let (id, sig, _) = span_fn.as_ref().expect("made");
+                    let r = call_own(&mut f, *id, sig, &[lasts_p, lasts_stride, nlasts, w, bits, start, limit]);
+                    f.def_var(v.end, r[0]);
+                    f.def_var(v.lw, r[1]);
+                    f.def_var(v.taken, r[2]);
+                    guard(&mut f, r[3], pc);
                     let one = f.ins().iconst(types::I64, 1);
                     f.def_var(v.need, one);
                     f.ins().jump(fall, &[]);
@@ -1892,7 +1918,7 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         f.ins().return_(&[pc]);
         f.seal_all_blocks();
         f.finalize();
-        own = reorder_fn.into_iter().chain(table_fn).collect::<Vec<_>>();
+        own = reorder_fn.into_iter().chain(table_fn).chain(span_fn).collect::<Vec<_>>();
         let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
         shape = crate::native_cpu_shape::check(&context.func, &heads, &names);
     }
@@ -1913,11 +1939,21 @@ pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
         c.func = func;
         c.set_disasm(true);
         clif.push_str(&c.func.display().to_string());
-        crate::native_cpu_codegen::define_function(&mut module, fid, &mut c).map_err(|_| Error::BackendFailure)?;
+        crate::native_cpu_codegen::define_function(&mut module, fid, &mut c).map_err(|e| {
+            if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+                eprintln!("tier 2's own function: {e:?}");
+            }
+            Error::BackendFailure
+        })?;
         disassembly.push_str(&c.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
         module.clear_context(&mut c);
     }
-    module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
+    module.finalize_definitions().map_err(|e| {
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+            eprintln!("tier 2's module: {e:?}");
+        }
+        Error::BackendFailure
+    })?;
     let code = module.get_finalized_function(id);
     // SAFETY: `tempo_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };

@@ -1185,12 +1185,17 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns, no
-    // reorder). Its loop heads are the stream's and the masks'. The table's final pass
-    // (parents and extras) is a function of its own, called once: its loops are not the
-    // token loop's.
+    // reorder). Its loop heads are the stream's and `ACCEPT`'s check of the mask (once a
+    // file). The table's final pass (parents and extras)
+    // is a function of its own, called once, and so is `SPAN m=1`'s search of the last-byte
+    // mask, called at each such span lowered (one copy of a shared arm's): their loops are not
+    // the token loop's.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    assert_eq!(tier2.own_calls, 1, "the final pass's call alone");
+    let pushes: Vec<u16> = native.structural.iter().filter_map(|w| if let native_ir::StructuralOperation::Push { target } = w.operation { Some(target) } else { None }).collect();
+    let shared = native_cpu_stream::shared_runs(&native, &pushes);
+    let spans = native.structural.iter().enumerate().filter(|(pc, w)| !shared.skipped[*pc] && shared.at.get(pc).is_none_or(|&(b, _)| shared.bodies[b].start == *pc) && matches!(w.operation, native_ir::StructuralOperation::Span { last: true, .. })).count();
+    assert_eq!(tier2.own_calls, 1 + spans, "the final pass's call and the spans' searches alone");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);
