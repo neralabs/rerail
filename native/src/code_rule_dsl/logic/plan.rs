@@ -5616,7 +5616,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 made.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             Authorization::Allow
-        }));
+        }))?;
     }
     let _left_after = TempLeft { scope, made: std::sync::Arc::clone(&made_temp) };
     let mut old_views: HashMap<String, String> = HashMap::new();

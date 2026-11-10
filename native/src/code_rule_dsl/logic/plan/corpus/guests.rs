@@ -420,9 +420,9 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
         return Ok(hit.clone());
     }
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(key.2.clone()), None, None, "guest").map_err(|e| format!("{path}: {e:?}"))?;
-    // The cache is shared by every run on the machine: a store that refuses a write (full, or busy past its retries)
-    // parses without it. A source collected under the run is stored again with its tape (O95).
-    let built = match cache.map(|cache| core::build_cached(&file, cache)) {
+    // A guest is made in a wave, so no SQL is read or written for it (decision 0104): its tape is one this process
+    // queued, else it is parsed and its source and tape are the store's writer's, behind the run.
+    let built = match cache.map(|cache| core::build_in_wave(&file, cache, None, None, None)) {
         Some(Ok(built)) => Ok(built),
         Some(Err(_)) => {
             crate::code_rule_dsl::prof::count("guests.cache_failed", 1);
