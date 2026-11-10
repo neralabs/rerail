@@ -38,13 +38,39 @@ sd_root("l2070_batching").
 .decl sd_late(value: symbol)
 sd_late("impl/common/l2070_server_plan/backend_profiles.py").
 sd_late("impl/common/l2070_server_plan/backend_traits.py").
+.decl sdp_api(value: symbol)
+sdp_api("async_pipeline_execution_scope").
+sdp_api("get_lowering_context").
+sdp_api("native_pipeline_execution_receipt").
+sdp_api("pipeline_execution_scope").
+.decl sdp_consumer(value: symbol)
+sdp_consumer("PlanExecutor").
+sdp_consumer("run_executable_pipeline").
+sdp_consumer("run_executable_pipeline_async").
+.decl sdp_reflective(value: symbol)
+sdp_reflective("attrgetter").
+sdp_reflective("delattr").
+sdp_reflective("getattr").
+sdp_reflective("getattr_static").
+sdp_reflective("hasattr").
+sdp_reflective("setattr").
+sdp_reflective("vars").
+.decl sdp_forbidden(value: symbol)
+sdp_forbidden("__dict__").
+sdp_forbidden("_async_conn").
+sdp_forbidden("_conn").
+sdp_forbidden("native_pipeline").
+sdp_forbidden("native_pipeline_async").
 .decl sd_backend_pattern(value: symbol)
 sd_backend_pattern("(?:(?:[Dd](?:[Oo](?:[Ll](?:[Tt](?:[Dd](?:[Bb]))))))|(?:[Mm](?:[Aa](?:[Rr](?:[Ii](?:[Aa](?:[Dd](?:[Bb])))))))|(?:[Mm](?:[Oo](?:[Nn](?:[Gg](?:[Oo](?:[Dd](?:[Bb])))))))|(?:[Mm](?:[Yy](?:[Ss\u017f](?:[Qq](?:[Ll])))))|(?:[Nn](?:[Ee](?:[Oo](?:[4](?:[Jj])))))|(?:[Pp](?:[Oo](?:[Ss\u017f](?:[Tt](?:[Gg](?:[Rr](?:[Ee](?:[Ss\u017f])))))|[\ufb05\ufb06](?:[Gg](?:[Rr](?:[Ee](?:[Ss\u017f])))))))|(?:[Pp](?:[Oo](?:[Ss\u017f](?:[Tt](?:[Gg](?:[Rr](?:[Ee](?:[Ss\u017f](?:[Qq](?:[Ll])))))))|[\ufb05\ufb06](?:[Gg](?:[Rr](?:[Ee](?:[Ss\u017f](?:[Qq](?:[Ll])))))))))|(?:[Ss\u017f](?:[Qq](?:[Ll](?:[Ii](?:[Tt](?:[Ee])))))))").
+.decl sdp_factory_pattern(value: symbol)
+sdp_factory_pattern(".*(?:(?:[Bb](?:[Aa](?:[Cc](?:[Kk\u212a](?:[Ee](?:[Nn](?:[Dd](?:[_](?:[Ee](?:[Xx](?:[Ee](?:[Cc](?:[Uu](?:[Tt](?:[Oo](?:[Rr]))))))))))))))))).*").
 .decl sd_message(code: symbol, value: symbol)
 sd_message("SPD001","backend capability selection belongs at the late physical boundary").
 sd_message("SPD002","semantic dispatch must use typed plan contracts, not concrete step types").
 sd_message("SPD003","semantic dispatch must not compare runtime step type names").
 sd_message("SPD004","dialect presence must not select ServerPlan behavior; make the default lowering unconditional and implement backend variation with the existing _lower_xxx hook (or _compile_xxx only when preserving the same lowered step). A dialect may be consumed as a required value for syntax rendering after lowering, but its presence must not choose semantics, placement, compilation, fallback, or result handling").
+sd_message("SPD005","BaseServerPlan may use only the closed public executor-owned execution scope and orchestration contract; connection state, transport capabilities, and undeclared executor surfaces belong to the executor").
 .decl sd_base(value: symbol)
 sd_base("impl/common/l2070_server_plan/base_server_plan.py").
 .decl sd_whitespace(value: symbol)

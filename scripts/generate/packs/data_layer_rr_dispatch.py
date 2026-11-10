@@ -27,13 +27,17 @@ def generate(source,target,header):
     original=module(source,'serverplan_dispatch_architecture');text=api_scope(header('serverplan_dispatch_architecture',target))
     for relation,name in [('sd_family','_BACKEND_FAMILY_ATTRS'),('sd_backend_call','_BACKEND_CALLS'),
         ('sd_step_name','_STEP_TYPE_NAMES'),('sd_nonstep','_NON_DISPATCH_STEP_TYPES'),('sd_step_suffix','_STEP_TYPE_SUFFIXES'),
-        ('sd_root','_GENERIC_DIRS'),('sd_late','_LATE_BOUNDARY_FILES')]:
+        ('sd_root','_GENERIC_DIRS'),('sd_late','_LATE_BOUNDARY_FILES'),
+        ('sdp_api','_BASE_SERVER_PLAN_EXECUTOR_API'),('sdp_consumer','_BASE_SERVER_PLAN_EXECUTOR_CONSUMERS'),
+        ('sdp_reflective','_REFLECTIVE_ACCESS_CALLS'),('sdp_forbidden','_EXECUTOR_REACH_THROUGH_ATTRS')]:
         text+=f'.decl {relation}(value: symbol)\n'
         text+=''.join(f'{relation}({json.dumps(v)}).\n' for v in sorted(getattr(original,name)))
     text+='.decl sd_backend_pattern(value: symbol)\nsd_backend_pattern('+json.dumps(folded_pattern(original._BACKEND_LITERAL_VALUES))+').\n'
     messages={'SPD001':'backend capability selection belongs at the late physical boundary',
         'SPD002':'semantic dispatch must use typed plan contracts, not concrete step types',
-        'SPD003':'semantic dispatch must not compare runtime step type names','SPD004':original._DIALECT_PRESENCE_GUIDANCE}
+        'SPD003':'semantic dispatch must not compare runtime step type names','SPD004':original._DIALECT_PRESENCE_GUIDANCE,
+        'SPD005':original._EXECUTOR_REACH_THROUGH_GUIDANCE}
+    text+='.decl sdp_factory_pattern(value: symbol)\nsdp_factory_pattern('+json.dumps('.*'+folded_pattern({'backend_executor'})+'.*')+').\n'
     text+='.decl sd_message(code: symbol, value: symbol)\n'
     text+=''.join(f'sd_message({json.dumps(k)},{json.dumps(v)}).\n' for k,v in messages.items())
     text+='.decl sd_base(value: symbol)\nsd_base('+json.dumps(original._BASE_SERVER_PLAN_FILE)+').\n'

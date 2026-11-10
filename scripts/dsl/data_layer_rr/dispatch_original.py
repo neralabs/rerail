@@ -1,7 +1,9 @@
 """Run unchanged dispatch assertions and record complete source/native scan observations."""
 import argparse
 import importlib
+import json
 from pathlib import Path
+import select
 import subprocess
 import sys
 import pytest
@@ -19,17 +21,32 @@ def main():
     sys.path[:0]=[str(source),str(source/'scripts')];module=importlib.import_module('scripts.lint_serverplan_dispatch_architecture')
     from data_layer_audit.native_guard import codes
     original_codes=codes({'serverplan_dispatch_architecture':module});native=[];fallbacks=[]
+    worker=None
     if a.command=='native':
-        from replay import execute_native,execute_workspace
         from dispatch_port import install
-        execute=execute_native if a.mode=='snapshot' else execute_workspace
+        # Start the controlled transport before upstream installs its process audit
+        # hooks. Each request remains restricted to explicit temporary input files.
+        worker=subprocess.Popen([sys.executable,str(Path(__file__).with_name('replay.py')),
+            '--workspace-worker' if a.mode=='workspace' else '--worker',str(a.engine.absolute())],
+            cwd=ROOT,text=True,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         class Backend:
             def replace(self,owner,name,value):setattr(owner,name,value)
             def native(self,check,entry,files,options=None):
-                r=execute(a.engine.absolute(),ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr',files,dict(entryPoint=entry,**(options or {})))
+                request=dict(rule=str(ROOT/'gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr'),
+                    files=files,options=dict(entryPoint=entry,**(options or {})))
+                worker.stdin.write(json.dumps(request)+'\n');worker.stdin.flush()
+                if not select.select([worker.stdout],[],[],110)[0]:
+                    worker.kill();raise RuntimeError('Native dispatch assertion exceeded 110 seconds')
+                line=worker.stdout.readline()
+                if not line:raise RuntimeError('Native dispatch worker exited: '+worker.stderr.read())
+                reply=json.loads(line)
+                if 'error' in reply:raise RuntimeError(reply['error'])
+                compare(reply['executionMode'],a.mode);r=reply['result']
                 native.append(r);return r['diagnostics']
         install(Backend(),module,detectors=True);baseline=read_json(a.baseline)
         compare(baseline['exitCode'],0)
+        compare(baseline['sourcePin'],PIN)
+        compare(baseline['sourceFiles'],{name:sha((source/name).read_bytes()) for name in [test,script]})
     class Plugin:
         def __init__(self):self.item=None;self.cases={};self.collected=[];self.observations=[]
         def pytest_collection_modifyitems(self,items):self.collected=[i.nodeid for i in items];items[:]=items[a.part::a.parts]
@@ -51,11 +68,15 @@ def main():
             fallbacks.append(frame.f_code.co_qualname);raise AssertionError('Original semantics executed: '+frame.f_code.co_qualname)
     files=[Path(__file__),*[Path(__file__).with_name(n) for n in ['dispatch_port.py','migration.py','replay.py','dto.py']]]
     hashes={f.relative_to(ROOT).as_posix():sha(f.read_bytes()) for f in files}
-    code=int(pytest.main(['--rootdir',str(source),'-c',str(source/'pyproject.toml'),'-q',str(source/test)],plugins=[plugin]))
+    try:code=int(pytest.main(['--rootdir',str(source),'-c',str(source/'pyproject.toml'),'-q',str(source/test)],plugins=[plugin]))
+    finally:
+        if worker:
+            worker.stdin.close();worker.wait(timeout=10)
     report=dict(format='rerail.dispatch-original/v1',sourcePin=PIN,oracle=a.command=='source',mode=a.mode,exitCode=code,
         part=a.part,parts=a.parts,collected=plugin.collected,cases=plugin.cases,observations=plugin.observations,
         sourceFiles={name:sha((source/name).read_bytes()) for name in [test,script]},harnessFiles=hashes,semanticFallbacks=fallbacks,native=native,admitted=False)
     if a.command=='native':
+        compare(plugin.collected,baseline['collected'])
         report['engineSha256']=sha(a.engine.read_bytes())
         wanted=[r for r in baseline['observations'] if r['test'] in plugin.cases]
         report['observationsMatch']=wanted==plugin.observations

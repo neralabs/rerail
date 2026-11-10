@@ -2690,7 +2690,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
-      "sha256": "e8192c3b01e973efe5b4db8907a3b361d6fef8a6017d2ac47eb9e44de195eed8",
+      "sha256": "423ebfe71a5e94b0d59ed52f775b7db3ec6179a90acb1812684e644603f9e83c",
       "origin": "authored",
       "upstreamPath": "scripts/lint_serverplan_dispatch_architecture.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -2703,7 +2703,13 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/dispatch-source.rr",
-      "sha256": "704404b20e70b430cc0aac7e8fc72ea78a4adfeac42a1a98dead7b27dbda2120",
+      "sha256": "f177987439421038909d434827c3928fdf66ec1302cec7a9120aa5ac57094eda",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/dispatch-provenance.rr",
+      "sha256": "914938df25de3b4f6d1e9d6bf03283936f66264734fcb5678bcdc7aa23d6ea50",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
     }
@@ -3629,7 +3635,7 @@
       "legacySha256": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/serverplan-dispatch-architecture.rr",
-      "ruleSha256": "e8192c3b01e973efe5b4db8907a3b361d6fef8a6017d2ac47eb9e44de195eed8"
+      "ruleSha256": "423ebfe71a5e94b0d59ed52f775b7db3ec6179a90acb1812684e644603f9e83c"
     },
     {
       "check": "serverplan_quality",

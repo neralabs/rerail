@@ -1,4 +1,4 @@
-// General dispatch families. BaseServerPlan provenance remains an explicit unsupported scope.
+// General dispatch families and executor provenance. Migration admission remains pending.
 #include "python/ast-shape.rr"
 #include "python/source-range.rr"
 .decl sd_document(d: number, path: symbol)
@@ -7,6 +7,8 @@ sd_document(d,p) :- doc(d,p,_), !option("dispatchPath",_).
 .decl sd_selected(d: number)
 sd_selected(d) :- sd_document(d,p), sd_root(root), prefix(cat(root,"/"),p), !sd_late(p),
     !contains("/tests/",cat("/",p,"/")), !contains("/test/",cat("/",p,"/")), !syntax_error(d,_,_).
+sd_selected(d) :- sd_document(d,p),sd_base(p),!syntax_error(d,_,_).
+#include "data-layer/dispatch-provenance.rr"
 .decl sd_terminal(e: node, name: symbol)
 sd_terminal(e,@nfkc(n)) :- ast_name(e,n).
 sd_terminal(e,@nfkc(n)) :- kind(e,"attribute"), field(e,"attribute",a), text(a,n).
@@ -93,8 +95,6 @@ sd_occurrence(n,k,c,prev+1) :- sd_event(n,k,c,s,e,normal,l,i),
 .violation Dispatch(at: span, code_value: symbol, scope: symbol, expression: symbol, occurrence: number, inventory: symbol, message: symbol) code {code_value} "{message}"
 Dispatch(@place(p,l),c,s,e,occ,cat(c,"|",p,"|",s,"|",normal,"|occurrence=",to_string(occ)),message) :-
     sd_event(n,k,c,s,e,normal,l,_), sd_occurrence(n,k,c,occ), docof(n,d), sd_document(d,p), sd_message(c,message).
-.violation DispatchIncomplete(at: span) code "DISPATCH_INCOMPLETE" "BaseServerPlan executor provenance is not ported"
-DispatchIncomplete(@place(p,0)) :- sd_document(_,p), sd_base(p).
 .violation DispatchNonempty(at: span) code "DISPATCH_NONEMPTY" "inventory is not empty"
 DispatchNonempty(@place("",0)) :- option("entryPoint","inventory_is_empty"), option_item("dispatchInventory",_,_).
 .violation DispatchUnapproved(at: span, ordinal: number) code "DISPATCH_UNAPPROVED" "unapproved finding"

@@ -1,0 +1,153 @@
+// Executor provenance follows the linter's module preparation and lexical event walk.
+// This policy remains a draft until the full source contract passes.
+.decl sdp_base(n: node)
+sdp_base(n) :- docof(n,d), sd_document(d,p), sd_base(p), !syntax_error(d,_,_).
+.decl sdp_frame(n: node, f: node)
+sdp_frame(f,f) :- kind(f,"function_definition").
+sdp_frame(n,f) :- def_frame(n,f), !kind(n,"function_definition").
+sdp_frame(n,m) :- docof(n,d), kind(m,"module"), docof(m,d), !def_frame(n,_), !kind(n,"function_definition").
+.decl sdp_local(f: node, name: symbol)
+sdp_local(f,@nfkc(name)) :- sig_param(f,_,nm,_,k,_,_), (k="pos";k="posonly";k="kwonly"), text(nm,name).
+sdp_local(f,@nfkc(name)) :- expr_ctx(n,"store"), ast_name(n,name), sdp_frame(n,f).
+.decl sdp_many(f: node, name: symbol)
+sdp_many(f,name) :- sdp_local(f,name), count : {expr_ctx(n,"store"),ast_name(n,raw),@nfkc(raw)=name,sdp_frame(n,f)} > 1.
+
+// Types and annotations. The source's preparatory sets are module-wide.
+.decl sdp_type(name: symbol)
+sdp_type("BackendExecutor").
+sdp_type(@nfkc(alias)) :- rifrom(_,alias,_,raw), suffix("BackendExecutor",@nfkc(raw)).
+sdp_type(@nfkc(name)) :- kind(c,"class_definition"),def_name(c,name),field(c,"superclasses",args),child(args,a,_),sdp_ann(a).
+sdp_type(@nfkc(name)) :- assign_target(a,t),ast_name(t,name),assign_value(a,raw),unparen(raw,v),ast_name(v,value),sdp_type(@nfkc(value)).
+.decl sdp_ann(e: node)
+sdp_ann(e) :- sd_terminal(e,name), (sdp_type(name);suffix("BackendExecutor",name)).
+sdp_ann(e) :- str_const(e,raw), compact=@replace_all(raw," ",""), match("(?:[^|]*\\|)*[^|]*BackendExecutor(?:\\|[^|]*)*",compact).
+sdp_ann(e) :- str_const(e,raw), compact=@replace_all(raw," ",""), sdp_type(name), contains(cat("|",name,"|"),cat("|",compact,"|")).
+sdp_ann(e) :- (kind(e,"type");kind(e,"parenthesized_expression")),child(e,c,0),sdp_ann(c).
+sdp_ann(e) :- (kind(e,"binary_operator");kind(e,"union_type")),op(e,"|"),child(e,c,_),sdp_ann(c).
+sdp_ann(e) :- kind(e,"subscript"),field(e,"value",h),sd_terminal(h,name),
+    (name="Annotated";name="Awaitable";name="Coroutine";name="Optional"),field(e,"subscript",s),sdp_ann(s).
+sdp_ann(e) :- kind(e,"generic_type"),child(e,h,0),sd_terminal(h,name),
+    (name="Annotated";name="Awaitable";name="Coroutine";name="Optional"),child(e,tp,1),child(tp,s,0),sdp_ann(s).
+.decl sdp_factory(name: symbol)
+sdp_factory("_create_backend_executor").
+sdp_factory(@nfkc(name)) :- kind(f,"function_definition"),def_name(f,name),field(f,"return_type",a),sdp_ann(a).
+.decl sdp_seed(e: node)
+sdp_seed(e) :- sd_callee(e,name),(sdp_factory(name);sdp_type(name);sdp_factory_pattern(p),match(p,name)).
+sdp_seed(e) :- sd_callee(e,"cast"),sd_arg(e,0,a),sd_arg(e,1,_),sdp_ann(a).
+
+// One dependency says that an expression carries the ownership of a child.
+.decl sdp_item(e: node, i: number, v: node)
+sdp_item(e,i,v) :- (kind(e,"tuple");kind(e,"list");kind(e,"set");kind(e,"expression_list")),child(e,raw,i),!kind(raw,"comment"),unparen(raw,v).
+.decl sdp_pair(e: node, i: number, key: node, v: node)
+sdp_pair(e,i,k,v) :- kind(e,"dictionary"),child(e,p,i),kind(p,"pair"),field(p,"key",rawk),unparen(rawk,k),field(p,"value",raw),unparen(raw,v).
+.decl sdp_index(e: node, i: number)
+sdp_index(e,i) :- kind(e,"integer"),value(e,s),i=to_number(s).
+sdp_index(e,0) :- kind(e,"false").
+sdp_index(e,1) :- kind(e,"true").
+.decl sdp_selected(e: node, v: node)
+sdp_selected(e,v) :- kind(e,"subscript"),field(e,"value",raw),unparen(raw,c),(kind(c,"tuple");kind(c,"list")),
+    field(e,"subscript",rawi),unparen(rawi,idx),sdp_index(idx,i),sdp_item(c,i,v).
+sdp_selected(e,v) :- kind(e,"subscript"),field(e,"value",raw),unparen(raw,c),kind(c,"dictionary"),
+    field(e,"subscript",rawi),unparen(rawi,idx),str_const(idx,s),sdp_pair(c,i,k,v),str_const(k,s),
+    i=min j : {sdp_pair(c,j,k2,_),str_const(k2,s)}.
+.decl sdp_dep(e: node, v: node)
+sdp_dep(e,v) :- kind(e,"attribute"),field(e,"object",raw),unparen(raw,v).
+sdp_dep(e,v) :- (kind(e,"await");kind(e,"list_splat");kind(e,"unary_operator");kind(e,"not_operator")),child(e,raw,0),unparen(raw,v).
+sdp_dep(e,v) :- kind(e,"named_expression"),field(e,"value",raw),unparen(raw,v).
+sdp_dep(e,v) :- kind(e,"conditional_expression"),child(e,raw,i),(i=0;i=2),unparen(raw,v).
+sdp_dep(e,v) :- kind(e,"boolean_operator"),(field(e,"left",raw);field(e,"right",raw)),unparen(raw,v).
+sdp_dep(e,v) :- sdp_item(e,_,v).
+sdp_dep(e,v) :- sdp_pair(e,_,_,v).
+sdp_dep(e,v) :- kind(e,"dictionary"),child(e,s,_),kind(s,"dictionary_splat"),child(s,raw,0),unparen(raw,v).
+sdp_dep(e,v) :- sdp_selected(e,v).
+sdp_dep(e,v) :- kind(e,"subscript"),!sdp_selected(e,_),field(e,"value",raw),unparen(raw,v).
+sdp_dep(e,v) :- kind(e,"call"),field(e,"function",raw),unparen(raw,f),kind(f,"attribute"),
+    field(f,"attribute",a),text(a,name),!sdp_api(@nfkc(name)),field(f,"object",o),unparen(o,v).
+sdp_dep(e,v) :- sd_callee(e,"getattr"),sd_arg(e,0,v),sd_arg(e,1,_).
+sdp_dep(e,v) :- kind(e,"call"),field(e,"function",raw),unparen(raw,f),sd_callee(f,"attrgetter"),sd_arg(e,0,v).
+sdp_dep(e,v) :- kind(e,"call"),field(e,"function",raw),unparen(raw,f),kind(f,"attribute"),sd_terminal(f,"__getattribute__"),sd_arg(e,0,v),sd_arg(e,1,_).
+
+// Assignment pairing retains positional unpacking. Every syntax write kills a prior
+// runtime alias, even when its value carries no ownership.
+.decl sdp_assignment(a: node, target: node, value: node)
+sdp_assignment(a,t,v) :- assign_target(a,raw),unparen(raw,t),assign_value(a,r),unparen(r,v).
+sdp_assignment(a,t,v) :- kind(a,"named_expression"),field(a,"name",t),field(a,"value",raw),unparen(raw,v).
+sdp_assignment(a,t,v) :- (kind(a,"for_statement");kind(a,"for_in_clause")),field(a,"left",rawt),unparen(rawt,t),field(a,"right",raw),unparen(raw,v).
+.decl sdp_unpack(t: node, v: node, target: node, value: node)
+sdp_unpack(t,v,t,v) :- sdp_assignment(_,t,v),!patkind_for_unpack(t).
+sdp_unpack(t,v,t,v) :- sdp_assignment(_,t,v),patkind_for_unpack(t),!sdp_equal_unpack(t,v).
+sdp_unpack(t,v,nt,nv) :- sdp_assignment(_,t,v),sdp_equal_unpack(t,v),sdp_item(t,i,nt),sdp_item(v,i,nv).
+.decl patkind_for_unpack(t: node)
+patkind_for_unpack(t) :- kind(t,k),(k="tuple";k="list";k="pattern_list";k="tuple_pattern";k="list_pattern";k="expression_list").
+.decl sdp_equal_unpack(t: node,v: node)
+sdp_equal_unpack(t,v) :- sdp_assignment(_,t,v),patkind_for_unpack(t),(kind(v,"tuple");kind(v,"list");kind(v,"expression_list")),
+    count : {child(t,c,_),!kind(c,"comment")} = count : {sdp_item(v,_,_)}.
+.decl sdp_target(t: node, n: node)
+sdp_target(t,t) :- sdp_unpack(_,_,t,_).
+sdp_target(t,n) :- sdp_target(t,p),patkind_for_unpack(p),child(p,n,_).
+sdp_target(t,n) :- sdp_target(t,p),kind(p,"list_splat_pattern"),child(p,n,0).
+.decl sdp_write(a: node, f: node, name: symbol, value: node)
+sdp_write(a,f,@nfkc(name),value) :- sdp_assignment(a,t,v),sdp_unpack(t,v,nt,value),sdp_target(nt,n),ast_name(n,name),sdp_frame(n,f).
+.decl sdp_owners(f: node, name: symbol)
+sdp_owners(f,@nfkc(name)) :- sig_param(f,_,nm,_,k,a,_),(k="pos";k="posonly";k="kwonly"),text(nm,name),
+    (sdp_ann(a);unset(a),(name="backend";name="executor")).
+sdp_owners(f,name) :- kind(f,"function_definition"),def_frame(f,parent),sdp_owners(parent,name).
+sdp_owners(f,name) :- sdp_write(_,f,name,v),!kind(f,"module"),sdp_pre(v).
+sdp_owners(f,@nfkc(name)) :- assign_ann(a,ann),sdp_ann(ann),assign_target(a,t),sdp_target(t,n),ast_name(n,name),sdp_frame(n,f),!kind(f,"module").
+.decl sdp_attrs(name: symbol)
+sdp_attrs(@nfkc(name)) :- kind(c,"class_definition"),def_name(c,"BaseServerPlan"),field(c,"body",body),body_stmt(body,st,_),
+    child(st,a,0),assign_ann(a,ann),sdp_ann(ann),assign_target(a,t),ast_name(t,name).
+sdp_attrs(@nfkc(name)) :- sdp_assignment(_,t,v),sdp_unpack(t,v,nt,value),sdp_target(nt,n),kind(n,"attribute"),
+    field(n,"object",o),ast_name(o,raw),(raw="self";raw="cls"),sd_terminal(n,name),sdp_pre(value).
+.decl sdp_self_attr(e: node)
+sdp_self_attr(e) :- kind(e,"attribute"),field(e,"object",o),ast_name(o,raw),(raw="self";raw="cls"),sd_terminal(e,name),sdp_attrs(name).
+.decl sdp_pre(e: node)
+sdp_pre(e) :- sdp_seed(e).
+sdp_pre(e) :- sdp_self_attr(e).
+sdp_pre(e) :- ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),!kind(f,"module"),sdp_owners(f,name),!sdp_many(f,name).
+sdp_pre(e) :- sdp_dep(e,v),sdp_pre(v).
+
+// Runtime state is demanded only at linter event sites and assignment RHSs.
+.decl sdp_need(at: node,e: node)
+sdp_need(a,v) :- sdp_assignment(a,_,v),sdp_base(a).
+sdp_need(n,v) :- sdp_base(n),kind(n,"attribute"),field(n,"object",raw),unparen(raw,v).
+sdp_need(n,n) :- sdp_base(n),kind(n,"subscript").
+sdp_need(n,v) :- sdp_base(n),kind(n,"call"),sd_arg(n,_,v).
+sdp_need(n,v) :- sdp_base(n),kind(n,"call"),field(n,"arguments",args),child(args,k,_),kind(k,"keyword_argument"),field(k,"value",raw),unparen(raw,v).
+sdp_need(n,v) :- sdp_base(n),(kind(n,"return_statement");kind(n,"yield")),child(n,raw,0),unparen(raw,v).
+sdp_need(n,v) :- sdp_base(n),sd_operand(n,v).
+sdp_need(at,v) :- sdp_need(at,e),sdp_dep(e,v).
+.decl sdp_last(at: node, f: node, name: symbol, a: node)
+sdp_last(at,f,name,a) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_write(a,f,name,_),visit_index(a,i),visit_index(at,j),i<j,
+    i=max k : {sdp_write(w,f,name,_),visit_index(w,k),k<j}.
+.decl sdp_run(at: node,e: node)
+sdp_run(at,e) :- sdp_need(at,e),sdp_seed(e).
+sdp_run(at,e) :- sdp_need(at,e),sdp_self_attr(e).
+sdp_run(at,e) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),!kind(f,"module"),sdp_owners(f,name),!sdp_local(f,name).
+sdp_run(at,e) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_owners(f,name),!sdp_many(f,name).
+sdp_run(at,e) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_owners(f,name),!sdp_last(at,f,name,_).
+sdp_run(at,e) :- sdp_need(at,e),ast_name(e,raw),name=@nfkc(raw),sdp_frame(e,f),sdp_last(at,f,name,a),sdp_write(a,f,name,v),sdp_run(a,v).
+sdp_run(at,e) :- sdp_need(at,e),sdp_dep(e,v),sdp_run(at,v).
+
+// The closed executor API yields ordinary result objects; undeclared surfaces carry ownership.
+.decl sdp_hit(n: node)
+sdp_hit(n) :- sdp_base(n),py_ast_attribute(n,raw,_),name=@nfkc(raw),sdp_forbidden(name),name!="__dict__".
+sdp_hit(n) :- sdp_base(n),kind(n,"attribute"),sd_terminal(n,name),!sdp_api(name),field(n,"object",raw),unparen(raw,v),sdp_run(n,v).
+sdp_hit(n) :- sdp_base(n),sdp_assignment(n,t,v),sdp_run(n,v),(kind(t,"attribute");kind(t,"subscript")).
+sdp_hit(n) :- sdp_base(n),kind(n,"return_statement"),child(n,raw,0),unparen(raw,v),ast_name(v,_),sdp_run(n,v),sdp_frame(n,f),!def_name(f,"_create_backend_executor").
+sdp_hit(n) :- sdp_base(n),kind(n,"yield"),child(n,raw,0),unparen(raw,v),ast_name(v,_),sdp_run(n,v).
+sdp_hit(n) :- sdp_base(n),kind(n,"subscript"),sdp_run(n,n).
+sdp_hit(n) :- sdp_base(n),sd_operand(n,v),sdp_run(n,v),sdp_frame(n,f),!def_name(f,"_create_backend_executor").
+.decl sdp_reflection(n: node, owner: node, lookup: loc)
+sdp_reflection(n,o,lookup) :- sd_callee(n,name),(name="delattr";name="getattr";name="getattr_static";name="hasattr";name="setattr"),sd_arg(n,0,o),sd_arg(n,1,lookup).
+sdp_reflection(n,o,lookup) :- sd_callee(n,"vars"),sd_arg(n,0,o),unset(lookup).
+sdp_reflection(n,o,lookup) :- kind(n,"call"),field(n,"function",raw),unparen(raw,f),sd_callee(f,"attrgetter"),sd_arg(n,0,o),sd_arg(f,0,lookup),!sd_arg(f,1,_).
+sdp_reflection(n,o,lookup) :- kind(n,"call"),field(n,"function",raw),unparen(raw,f),kind(f,"attribute"),sd_terminal(f,"__getattribute__"),sd_arg(n,0,o),sd_arg(n,1,lookup).
+.decl sdp_allowed_lookup(n: node)
+sdp_allowed_lookup(n) :- sdp_reflection(n,_,lookup),str_const(lookup,name),sdp_api(name).
+sdp_hit(n) :- sdp_base(n),sdp_reflection(n,o,_),sdp_run(n,o),!sdp_allowed_lookup(n).
+sdp_hit(n) :- sdp_base(n),kind(n,"call"),sd_arg(n,0,_),field(n,"function",raw),unparen(raw,f),!kind(f,"attribute"),
+    !sdp_allowed_consumer(n),sdp_need(n,v),sdp_run(n,v).
+.decl sdp_allowed_consumer(n: node)
+sdp_allowed_consumer(n) :- sd_callee(n,name),(sdp_consumer(name);sdp_reflective(name);name="cast").
+sd_hit(n,0,"SPD005") :- sdp_hit(n).
