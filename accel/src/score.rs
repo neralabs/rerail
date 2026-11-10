@@ -112,7 +112,7 @@ pub struct FormRow {
 #[derive(Clone, Debug, Default)]
 pub struct TagRow {
     pub batches: u64,
-    pub launches: [u64; 4],
+    pub launches: [u64; Lane::COUNT],
     /// Launches whose lane is not the first to finish: the slack or the band let a lane of less host CPU take them.
     pub not_fastest: u64,
     /// The host CPU the placement estimated, and what placing every launch on its fastest lane would have cost.
@@ -131,7 +131,7 @@ pub struct TagRow {
     pub stalled: u64,
     /// Launches run on each lane, as claimed (decision 0100 §11); those run off the lane they were planned on,
     /// and those the waiting caller ran itself.
-    pub ran: [u64; 4],
+    pub ran: [u64; Lane::COUNT],
     pub moved: u64,
     pub helped: u64,
     /// The last overlaps (at most 32): the next batch's slack is their lower quartile, so a kind whose callers
@@ -163,7 +163,7 @@ pub struct PhaseRow {
 /// The scoreboard's state at one moment.
 #[derive(Clone, Debug, Default)]
 pub struct Score {
-    pub units: [Unit; 4],
+    pub units: [Unit; Lane::COUNT],
     /// By (lane, form).
     pub forms: BTreeMap<(Lane, &'static str), FormRow>,
     /// By (lane, phase).
@@ -385,7 +385,7 @@ fn since(t: Instant) -> f64 {
 
 impl Scoreboard {
     /// A scoreboard for lanes with `slots` workers each (0: the lane is absent).
-    pub fn new(slots: [usize; 4]) -> Self {
+    pub fn new(slots: [usize; Lane::COUNT]) -> Self {
         let _ = epoch();
         let mut score = Score::default();
         for (u, s) in score.units.iter_mut().zip(slots) {
@@ -542,7 +542,7 @@ impl Scoreboard {
 
     /// A batch of kind `tag` collected: its caller worked `overlap` seconds before it waited, then stalled `stall`;
     /// its launches ran on `ran` per lane, `moved` of them off their planned lane and `helped` by the caller.
-    pub fn collected(&self, tag: &'static str, overlap: f64, stall: f64, ran: [u64; 4], moved: u64, helped: u64) {
+    pub fn collected(&self, tag: &'static str, overlap: f64, stall: f64, ran: [u64; Lane::COUNT], moved: u64, helped: u64) {
         self.with(|s| {
             let t = s.tags.entry(tag).or_default();
             for (a, b) in t.ran.iter_mut().zip(ran) {
@@ -577,7 +577,7 @@ impl Scoreboard {
     }
 
     /// The lanes' measured latency, device job CPU, and host CPU over its estimate, where measured.
-    pub fn measured(&self) -> [(Option<f64>, Option<f64>, Option<f64>); 4] {
+    pub fn measured(&self) -> [(Option<f64>, Option<f64>, Option<f64>); Lane::COUNT] {
         self.with(|s| std::array::from_fn(|i| (s.units[i].latency, s.units[i].job_cpu, s.units[i].host_ratio)))
     }
 
@@ -592,7 +592,7 @@ impl Scoreboard {
     }
 
     /// The estimated seconds not yet done, per lane.
-    pub fn outstanding(&self) -> [f64; 4] {
+    pub fn outstanding(&self) -> [f64; Lane::COUNT] {
         self.with(|s| std::array::from_fn(|i| s.units[i].outstanding))
     }
 
@@ -625,9 +625,9 @@ mod tests {
     /// A job's estimate is outstanding from its queueing to its end, and its counts land on its lane and form.
     #[test]
     fn a_job_is_outstanding_until_it_ends_and_counted_on_its_lane() {
-        let b = Scoreboard::new([2, 0, 1, 0]);
+        let b = Scoreboard::new([2, 0, 1, 0, 0]);
         let mut t = b.queue(Lane::Gpu, vec![Item { form: "probe", units: 10.0, estimate: 0.5, host: 0.0 }, Item { form: "tile", units: 4.0, estimate: 1.5, host: 0.0 }]);
-        assert_eq!(b.outstanding(), [0.0, 0.0, 2.0, 0.0]);
+        assert_eq!(b.outstanding(), [0.0, 0.0, 2.0, 0.0, 0.0]);
         assert_eq!(b.score().units[Lane::Gpu.index()].queued, 1);
         b.start(&mut t);
         assert_eq!((b.score().units[Lane::Gpu.index()].running, b.score().units[Lane::Gpu.index()].peak), (1, 1));
@@ -635,7 +635,7 @@ mod tests {
         let s = b.score();
         let u = &s.units[Lane::Gpu.index()];
         assert_eq!((u.queued, u.running, u.jobs, u.launches, u.failed), (0, 0, 1, 2, 0));
-        assert_eq!(b.outstanding(), [0.0; 4]);
+        assert_eq!(b.outstanding(), [0.0; Lane::COUNT]);
         assert!((u.estimated - 2.0).abs() < 1e-12);
         // The submission's time shared by the estimates: a quarter to the probe.
         assert!((s.forms[&(Lane::Gpu, "probe")].actual - ran / 4.0).abs() < 1e-12);

@@ -3201,3 +3201,43 @@ The loop must build the same state that sparse edits consume, without a second c
 Initial execution and affected history replay must retain atomic failure, retry, frozen gates, and execution limits.
 Native callbacks remain limited to storage construction and indexed access. Rule evaluation stays in SQL, and AST matching stays outside it.
 Then repeat the complete sessions against the unchanged allowance and measure CPU separately again.
+
+### Shared work planner and SQL execution placement (2026-11-10)
+
+The user requested the shared CPU, SME, GPU, and Neural Engine planner, followed by SQL placement and parallel read-only execution.
+The planner's latest implementation is on `jeremybarnes/final-rerail-shape`, including `65695c362` and its shared pool, claims, prices, and scoreboard.
+Merge `029d83550` incorporates that branch at `776a1e263`.
+
+Merge verification exposed a SQL compatibility error with the incoming default definition IDs.
+Descending nearest-ancestor queries advanced node IDs arithmetically, assuming contiguous preorder IDs.
+They now follow indexed parent links and stop below a nearer matching node.
+This restores the corpus outputs under definition IDs and also supports arbitrary tree node IDs.
+Granule IDs reserve the extended core facts' synthetic-span flag. Prepared caches retain test isolation and the incoming multi-store entries.
+The incoming pool-based corpus builder retains text-only documents, binary-file exclusion, kept tapes, and reference collection.
+
+The merged debug build passes 176 SQL tests, fifteen syntax tests, and ten accelerator tests.
+The syntax suite runs only languages and verdict features present in that build.
+
+SQL is now a fifth executor lane, alongside CPU, SME, GPU, and Neural Engine.
+Its programs use the existing shared pool and scoreboard, with no extra SQL worker pool.
+SQL mode exposes only the SQL executor and refuses work without a SQL form.
+Mixed bindings can place SQL-only programs on SQL. Explicit SQL placement prevents another lane from claiming the launch.
+CPU and SQL placement account for their shared host queue. SQL work does not count as CPU work freed by a device.
+Connection-bound work has a scored owner-thread path, including errors and panics.
+Existing retained SQL phases now enter that scoreboard without changing their statement accounting.
+
+Accelerator tests verify concurrent SQL-only launches, shared-pool execution, worker bounds, placement, failures, and owner-thread cleanup.
+The default-feature accelerator suite passes forty-two tests at the initial lane checkpoint; the final CPU-only suite passes thirteen.
+All 176 SQL tests pass with retained phases on the SQL scoreboard.
+
+Required work remains:
+
+1. Build a physical SQL graph from checked rule and maintenance dependencies, preserving effect and snapshot boundaries.
+2. Combine compatible work with joins and materialized CTEs. Lower recursive feedback with its retained contexts and supports.
+3. Submit independent read-only groups through the shared SQL executor, with each connection owned by its worker.
+   Keep writes, opaque callbacks, and incompatible state transitions at explicit owner-thread gates.
+4. Use one statement allowance across the whole job and every worker. Plan grouping against the remaining allowance before submission.
+   Count setup, helper, transaction, publication, and failed statements. Do not hide SQL inside native callbacks or reset allowances by wave.
+5. Report placement, dependencies, grouping decisions, actual submissions, queue time, CPU, and failures through explain and profiling.
+6. Verify complete corpus and opaque-producer sessions, failure and retry, sparse changes, and multi-thread parity against the independent oracle.
+   The complete-session allowance remains 100. Native helpers construct storage; AST matching stays outside SQL.

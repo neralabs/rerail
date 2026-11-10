@@ -11,10 +11,15 @@ pub enum Lane {
     Gpu,
     /// The Neural Engine (Core ML).
     Ane,
+    /// SQLite programs on the shared host pool, each owning its connection.
+    Sql,
 }
 
 impl Lane {
-    pub const ALL: [Lane; 4] = [Lane::Cpu, Lane::Sme, Lane::Gpu, Lane::Ane];
+    pub const COUNT: usize = 5;
+    pub const ALL: [Lane; Self::COUNT] = [Lane::Cpu, Lane::Sme, Lane::Gpu, Lane::Ane, Lane::Sql];
+
+    pub fn is_pool(self) -> bool { matches!(self, Lane::Cpu | Lane::Sql) }
 
     pub fn name(self) -> &'static str {
         match self {
@@ -22,6 +27,7 @@ impl Lane {
             Lane::Sme => "sme",
             Lane::Gpu => "gpu",
             Lane::Ane => "ane",
+            Lane::Sql => "sql",
         }
     }
 
@@ -32,8 +38,8 @@ impl Lane {
 
 /// Which lanes this machine has: the CPU always; SME when the CPU reports SME2; the GPU when Metal has a device; the
 /// Neural Engine on Apple silicon running macOS (Core ML decides placement per model, and the `ane` lane checks it).
-pub fn present() -> [bool; 4] {
-    [true, sme2(), gpu(), ane()]
+pub fn present() -> [bool; Lane::COUNT] {
+    [true, sme2(), gpu(), ane(), true]
 }
 
 /// `hw.optional.arm.FEAT_SME2`.

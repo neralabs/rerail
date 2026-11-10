@@ -247,6 +247,13 @@ impl Phase {
         Ok(())
     }
     pub fn execute(self, w: &Work<'_>) -> Result<BTreeMap<String, Counts>> {
+        if self.outputs.is_empty() { return Ok(BTreeMap::new()); }
+        crate::code_rule_dsl::logic::lanes::sql_executor().local(
+            rerail_accel::Lane::Sql, "SQL retained phase", 0.0,
+            || self.execute_owned(w),
+        )
+    }
+    fn execute_owned(self, w: &Work<'_>) -> Result<BTreeMap<String, Counts>> {
         if self.outputs.is_empty() {
             return Ok(BTreeMap::new());
         }

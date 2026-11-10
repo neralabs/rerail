@@ -14,15 +14,16 @@
 
 use rerail_accel::Executor;
 use rerail_accel::exec::{Backend, CpuBackend};
+use rerail_accel::sql::SqlBackend;
 use std::sync::{Arc, LazyLock};
 
 /// Whether each executor was made: the profile reports only those.
-static MADE: [std::sync::atomic::AtomicBool; 2] = [std::sync::atomic::AtomicBool::new(false), std::sync::atomic::AtomicBool::new(false)];
+static MADE: [std::sync::atomic::AtomicBool; 3] = [const { std::sync::atomic::AtomicBool::new(false) }; 3];
 
 static CPU: LazyLock<Executor> = LazyLock::new(|| {
     MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
     let all = Executor::new();
-    let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default())];
+    let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     if all.lanes().contains(&rerail_accel::Lane::Sme) {
         lanes.extend(rerail_accel::sme::backend());
@@ -37,6 +38,14 @@ static ALL: LazyLock<Executor> = LazyLock::new(|| {
     crate::code_rule_dsl::transducer::packed::metal_sort::install_guard();
     Executor::new()
 });
+
+static SQL: LazyLock<Executor> = LazyLock::new(|| {
+    MADE[2].store(true, std::sync::atomic::Ordering::Relaxed);
+    Executor::sql_only()
+});
+
+/// Every rule job submitted in SQL mode must have a SQL form.
+pub(in crate::code_rule_dsl) fn sql_executor() -> &'static Executor { &SQL }
 
 /// The executor for this thread's run.
 pub(in crate::code_rule_dsl) fn executor() -> &'static Executor {
@@ -57,6 +66,9 @@ pub(in crate::code_rule_dsl) fn scores() -> Vec<(&'static str, rerail_accel::sco
     }
     if MADE[1].load(std::sync::atomic::Ordering::Relaxed) {
         out.push(("metal binding", ALL.score()));
+    }
+    if MADE[2].load(std::sync::atomic::Ordering::Relaxed) {
+        out.push(("sql binding", SQL.score()));
     }
     out
 }
