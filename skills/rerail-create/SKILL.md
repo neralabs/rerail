@@ -216,11 +216,14 @@ The person changes only where a rule applies. Change its `scope` and nothing els
 mode and its id stay as they are. Write's review and quality gates are about those, so skip them; this takes a handful of
 commands, not a new rule.
 
-1. **Read the rule:** `rerail rules show <id>`. It prints the rule as a draft; save it as `<tmp>/draft.json`. Its last
-   line, on stderr, says what saving does:
+1. **Read the rule:** `rerail rules show <id>`. It prints the rule as a draft, as it runs in this repo; save it as
+   `<tmp>/draft.json`. Its last line, on stderr, says what saving does:
    - A rule that ships with Rerail is saved as the person's copy, added where it is; approving the copy turns it off there.
    - "already has your copy … Change that one": run `rules show` on the copy's id and change that one instead.
+   - "is not added to <repo>": the rule does not run here, so there is no scope to change. Say so, and stop.
    - A rule in this worktree's `.rerail/rules/` is not printed: read its file instead and change it in place.
+
+   A rule with no `scope` (one about commands, not files) has no paths to change: say so, and stop.
 2. **Change only `rule.scope`.** Turn the person's words into `include` and `exclude` globs (an exclude wins; `**/`
    matches any folder). Name what this repo really has: one listing of its files shows, for example, where tests live
    (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`, `*.test.ts`, `__tests__/`). If the words can be read two ways, ask
@@ -243,7 +246,7 @@ commands, not a new rule.
      Left out now   tests/test_api.py, conftest.py
      Tested         Would catch <N> places in this repo
      Unchanged      What it checks, its message, <Steer|Log>
-     Saved as       Your copy of <id>; the original turns off in <repo> | <id>, revision <n>
+     Saved as       Your copy of <id>; the original turns off where the copy is added | <id>, revision <n>
 
      1. Yes, save it
      2. Change something

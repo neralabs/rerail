@@ -195,7 +195,7 @@ export function removeLibraryRule(db: RerailDatabase, id: string): boolean {
 function freeCopyId(db: Queries, ruleCatalog: RuleCatalog, sourceId: string): string {
   const taken = (id: string) => ruleCatalog.documents.has(id)
     || db.select({ id: ruleCatalogIdentities.ruleId }).from(ruleCatalogIdentities).where(eq(ruleCatalogIdentities.ruleId, id)).get() !== undefined
-    || db.select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get() !== undefined;
+    || libraryHoldsId(db, id);
   let candidate = `${sourceId}-copy`;
   for (let suffix = 2; taken(candidate); suffix += 1) candidate = `${sourceId}-copy-${suffix}`;
   return candidate;
@@ -210,6 +210,16 @@ export function rerailRuleFolders(db: Pick<Queries, "select">, ruleCatalog: Rule
     packId === undefined ? alone : or(alone, and(eq(ruleAttachments.sourceKind, "pack"), eq(ruleAttachments.sourceId, packId))),
   )).all();
   return [...new Set(presences.map(row => row.folder))].sort();
+}
+
+/** Folders of the repository the library rule `id` is added at. */
+export function libraryRuleFolders(db: Pick<Queries, "select">, repositoryKey: RepositoryKey, id: string): string[] {
+  const rows = db.select({ folder: ruleAttachments.folder }).from(ruleAttachments).where(and(
+    eq(ruleAttachments.repositoryKey, repositoryKey),
+    eq(ruleAttachments.sourceKind, "library_rule"),
+    eq(ruleAttachments.sourceId, id),
+  )).orderBy(asc(ruleAttachments.folder)).all();
+  return rows.map(row => row.folder);
 }
 
 /** Ids of the library copies of the By Rerail rule `sourceId` that are added to the repository. */

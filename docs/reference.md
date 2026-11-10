@@ -760,7 +760,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 
 A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `rerail rules test --help` prints the format; [Writing rules](writing-rules.md#testing-a-draft) explains each field.
 
-- `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule. Notes go to stderr, so stdout saves as a draft file.
+- `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as it runs in this repository (its option values and mode here). Notes go to stderr, so stdout saves as a draft file.
 - `rerail rules test` validates a draft, runs its cases and a repository pass, and writes nothing.
 - `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
 - The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
@@ -773,7 +773,7 @@ A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `
 - Text output shows the first five matches and files; `--json` shows all. Path and `file`-query matches have no line.
 - A bare rule document, such as `.rerail/rules/<name>.json`, gets validation and the repository pass only.
 
-`rerail rules add` sets the repository up with only that rule if needed. It never replaces a rule shipped by Rerail. Your copy of one takes no `folder`. It is refused where the repository does not add the original, and where your copy of it is already added; `rules show` names that copy, the one to change. `rerail rules approve` with no names lists everything awaiting approval and its source.
+`rerail rules add` sets the repository up with only that rule if needed. A rule already added here stays where it is when the draft names no `folder`. It never replaces a rule shipped by Rerail. Your copy of one takes no `folder`. It is refused where the repository does not add the original, and where your copy of it is already added; `rules show` names that copy, the one to change. `rerail rules approve` with no names lists everything awaiting approval and its source.
 
 </details>
 

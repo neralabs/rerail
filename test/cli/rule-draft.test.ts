@@ -12,6 +12,7 @@ import {
   openRerailDatabase,
   recordCheckout,
   listRepositoryRules,
+  setRuleSetting,
   setUpRepository,
   listLibraryRules,
   stableJsonText,
@@ -64,7 +65,7 @@ function writeDraft(root: string, draft: unknown): string {
   return file;
 }
 
-async function run(action: "test" | "add", args: string[]): Promise<{ exit: number; stdout: string; stderr: string }> {
+async function run(action: "show" | "test" | "add", args: string[]): Promise<{ exit: number; stdout: string; stderr: string }> {
   let stdout = "";
   let stderr = "";
   const exit = await runRuleDraftCommand(action, args, () => "usage", {
@@ -705,12 +706,7 @@ describe("rerail rules add", () => {
     }
 
     async function show(repo: string, id: string): Promise<{ exit: number; draft: { kind: string; rule: Record<string, unknown> }; stderr: string }> {
-      let stdout = "";
-      let stderr = "";
-      const exit = await runRuleDraftCommand("show", [id, "--repo", repo], () => "usage", {
-        stdout: { write: text => (stdout += text) },
-        stderr: { write: text => (stderr += text) },
-      });
+      const { exit, stdout, stderr } = await run("show", [id, "--repo", repo]);
       return { exit, draft: JSON.parse(stdout === "" ? "null" : stdout) as { kind: string; rule: Record<string, unknown> }, stderr };
     }
 
@@ -748,11 +744,47 @@ describe("rerail rules add", () => {
       ]);
     });
 
-    it("is refused where the repository does not run the original, storing nothing", async () => {
+    it("keeps the copy where the original is when it is changed again, from rules show of the copy", async () => {
+      const repo = await repository();
+      setUpWithComplexity(repo, "api");
+      const id = "complexity-cyclomatic-javascript";
+      expect((await run("add", [writeDraft(repo, (await show(repo, id)).draft), "--repo", repo])).exit).toBe(0);
+      const copy = await show(repo, `${id}-copy`);
+      expect(copy.stderr).toBe("");
+      const scope = { include: ["**/*.js"], exclude: ["**/vendor/**"] };
+
+      const { exit, stdout } = await run("add", [writeDraft(repo, { ...copy.draft, rule: { ...copy.draft.rule, scope } }), "--repo", repo]);
+
+      expect(exit).toBe(0);
+      expect(stdout).toMatch(new RegExp(`^● Added ${id}-copy to rerail-rule-draft-\\w+/api\\.\\n`));
+      expect(getLibraryRuleDocument(`${id}-copy`)).toMatchObject({ scope });
+      expect(rulesNamed(repo, `${id}-copy`)).toEqual([{ id: `${id}-copy`, kind: "library_rule", folder: "api", on: true }]);
+    });
+
+    it("is shown as the repository runs it, so a copy keeps the mode a person set there", async () => {
+      const repo = await repository();
+      setUpWithComplexity(repo);
+      const id = "complexity-cyclomatic-blade";
+      const database = openRerailDatabase(defaultRerailDatabasePath());
+      try {
+        const repositoryKey = recordCheckout(database, repo).repositoryKey;
+        setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: id, on: null, mode: "log" });
+      } finally {
+        database.$client.close();
+      }
+
+      const shown = await show(repo, id);
+
+      expect(shown.draft.rule).toEqual({ ...loadRuleCatalog().documents.get(id)?.rule, mode: "log" });
+    });
+
+    it("is refused where the repository does not run the original, which show says first, storing nothing", async () => {
       const repo = await repository();
       setUpEmpty(repo);
       const id = "complexity-cyclomatic-php";
-      const file = writeDraft(repo, (await show(repo, id)).draft);
+      const shown = await show(repo, id);
+      expect(shown.stderr).toContain(`${id} is not added to rerail-rule-draft-`);
+      const file = writeDraft(repo, shown.draft);
 
       const { exit, stdout, stderr } = await run("add", [file, "--repo", repo]);
 

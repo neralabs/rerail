@@ -30,15 +30,16 @@ import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableErr
 import { CODE_RULE_FORMAT, codeRuleSchema, type CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
-import { normalizeFolder, type CheckoutContext, type RuleCatalog } from "../engine/catalog/repository-model.js";
+import { normalizeFolder, type CheckoutContext, type EffectiveRule, type RuleCatalog } from "../engine/catalog/repository-model.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
 import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
-import { addAttachment, setUpRepository } from "../engine/catalog/rule-configuration.js";
+import { addAttachment, listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import {
   copyRerailRuleToLibrary,
   getLibraryRule,
   libraryHoldsId,
+  libraryRuleFolders,
   rerailRuleCopiesIn,
   rerailRuleFolders,
   upsertLibraryRule,
@@ -594,6 +595,16 @@ function libraryWriteError(error: unknown, ruleId: string): RuleDraftError {
   return new RuleDraftError(errorMessage(error));
 }
 
+/** Why the By Rerail rule `id` has no copy to make in the repository `name`. */
+function notAddedText(id: string, name: string): string {
+  return `${id} is not added to ${name}, so there is nothing here for your copy to replace`;
+}
+
+/** Names the copies of `id` the repository `name` already has: the first is the one to change. */
+function copyAddedText(id: string, name: string, copies: readonly string[]): string {
+  return `${name} already has your copy of ${id}, ${copies.join(", ")}. Change that one: rerail rules show ${copies[0]}`;
+}
+
 /**
  * Store a draft of a By Rerail rule as your copy, as `library_rules_upsert` does for its id: added wherever the
  * original is in the checkout's repository, where approving the copy switches the original off. Refused where the
@@ -606,11 +617,9 @@ function addRerailRuleCopy(database: RerailDatabase, ruleCatalog: RuleCatalog, c
     throw new RuleDraftError(`folder: your copy of ${sourceId} is added where ${sourceId} is, so the draft cannot name a folder`);
   }
   const copies = rerailRuleCopiesIn(database, checkout.repositoryKey, sourceId);
-  if (copies.length > 0) {
-    throw new RuleDraftError(`${name} already has your copy of ${sourceId}, ${copies.join(", ")}. Change that one: rerail rules show ${copies[0]}`);
-  }
+  if (copies.length > 0) throw new RuleDraftError(copyAddedText(sourceId, name, copies));
   if (rerailRuleFolders(database, ruleCatalog, checkout.repositoryKey, sourceId).length === 0) {
-    throw new RuleDraftError(`${sourceId} is not added to ${name}, so there is nothing here for your copy to replace`);
+    throw new RuleDraftError(notAddedText(sourceId, name));
   }
   let copied: CopiedRule;
   try {
@@ -619,15 +628,30 @@ function addRerailRuleCopy(database: RerailDatabase, ruleCatalog: RuleCatalog, c
     throw libraryWriteError(error, sourceId);
   }
   const ruleId = copied.rule.document.rule.id;
+  // A copy that was approved, removed and made again with the same content is approved already.
   const approved = isApproved(database, ruleSubject(ruleId, copied.rule.payloadHash));
   return { ruleId, repositoryName: name, folders: copied.folders, copiedFromRuleId: sourceId, setUp: false, mode: draft.rule.mode, approved };
 }
 
 /**
+ * Add the stored library rule of `draft` to the checkout's repository at the draft's folder, setting the repository up
+ * with it if it is not yet. A rule already added there stays where it is when the draft names no folder, as a draft
+ * from `rules show` does: changing a rule never widens where it runs.
+ */
+function attachLibraryRule(database: RerailDatabase, checkout: CheckoutContext, draft: RuleDraft): { folders: string[]; setUp: boolean } {
+  const attached = libraryRuleFolders(database, checkout.repositoryKey, draft.rule.id);
+  if (draft.folder === "" && attached.length > 0) return { folders: attached, setUp: false };
+  const attachment = { sourceKind: "library_rule" as const, sourceId: draft.rule.id, folder: draft.folder };
+  const setUp = checkoutStatus(database, checkout).setUp === false;
+  if (setUp) setUpRepository(database, checkout.repositoryKey, { packs: [], rules: [attachment] });
+  else addAttachment(database, { repositoryKey: checkout.repositoryKey, ...attachment });
+  return { folders: [draft.folder], setUp };
+}
+
+/**
  * Store the draft's rule in your library, through the same validation as `library_rules_upsert`, and add it to
- * `repo`'s repository at the draft's folder. A repository that is not set up yet is set up with this rule (an
- * agent creating a rule may add it to the repository). A By Rerail rule is never replaced: a draft with its id is
- * stored as your copy ({@link addRerailRuleCopy}).
+ * `repo`'s repository ({@link attachLibraryRule}). A By Rerail rule is never replaced: a draft with its id is stored
+ * as your copy ({@link addRerailRuleCopy}).
  */
 export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defaultRerailDatabasePath()): AddedRule {
   const database = openRerailDatabase(databasePath);
@@ -643,21 +667,10 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     } catch (error) {
       throw libraryWriteError(error, draft.rule.id);
     }
-    const attachment = { sourceKind: "library_rule" as const, sourceId: draft.rule.id, folder: draft.folder };
-    const setUp = checkoutStatus(database, checkout).setUp === false;
-    if (setUp) setUpRepository(database, checkout.repositoryKey, { packs: [], rules: [attachment] });
-    else addAttachment(database, { repositoryKey: checkout.repositoryKey, ...attachment });
+    const { folders, setUp } = attachLibraryRule(database, checkout, draft);
     const stored = getLibraryRule(database, draft.rule.id);
     const approved = stored !== undefined && isApproved(database, ruleSubject(draft.rule.id, stored.payloadHash));
-    return {
-      ruleId: draft.rule.id,
-      repositoryName: repositoryName(checkout.checkoutPath),
-      folders: [draft.folder],
-      copiedFromRuleId: null,
-      setUp,
-      mode: draft.rule.mode,
-      approved,
-    };
+    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folders, copiedFromRuleId: null, setUp, mode: draft.rule.mode, approved };
   } finally {
     database.$client.close();
   }
@@ -669,19 +682,36 @@ export interface ShownRule {
   readonly notes: readonly string[];
 }
 
-/** What changing the By Rerail rule `id` from `repo` does: a copy of it, or the copy this repository already has. */
-function rerailRuleNotes(database: RerailDatabase, repo: string, id: string): string[] {
+/**
+ * The rule as it runs in the repository, which a copy must keep: the option values its settings give it and its mode
+ * there (unless that is Log only while its pack waits for approval). Its shipped document when those values no longer
+ * apply.
+ */
+function runningDocument(running: EffectiveRule, bundled: RuleDocument): RuleDocument {
+  if (running.configError !== null) return bundled;
+  const mode = running.decidedBy.mode.by === "awaiting-approval" ? bundled.rule.mode : running.mode;
+  return { ...running.document, rule: { ...running.document.rule, mode } } as RuleDocument;
+}
+
+/** The By Rerail rule `id` as it runs in `repo`'s repository, with what saving an edit of it there does. */
+function rerailRuleShown(database: RerailDatabase, ruleCatalog: RuleCatalog, bundled: RuleDocument, repo: string, id: string): ShownRule {
   const checkout = lookupCheckout(database, repo);
-  const copies = checkout === undefined ? [] : rerailRuleCopiesIn(database, checkout.repositoryKey, id);
-  if (checkout === undefined || copies.length === 0) {
-    return [`${id} ships with Rerail. rules add stores your edit of it as your copy, added where ${id} is; approving the copy turns ${id} off there.`];
-  }
-  return [`${repositoryName(checkout.checkoutPath)} already has your copy of ${id}, ${copies.join(", ")}. Change that one: rerail rules show ${copies[0]}`];
+  if (checkout === undefined) return { draft: bundled, notes: [notAddedText(id, repositoryName(repo))] };
+  const name = repositoryName(checkout.checkoutPath);
+  const copies = rerailRuleCopiesIn(database, checkout.repositoryKey, id);
+  if (copies.length > 0) return { draft: bundled, notes: [copyAddedText(id, name, copies)] };
+  const running = listRepositoryRules(database, ruleCatalog, checkout.repositoryKey).rules
+    .find(rule => rule.document.rule.id === id && rule.source.kind !== "library_rule");
+  if (running === undefined) return { draft: bundled, notes: [notAddedText(id, name)] };
+  return {
+    draft: runningDocument(running, bundled),
+    notes: [`${id} ships with Rerail. rules add stores your edit of it as your copy, added where ${id} is; approving the copy turns ${id} off there.`],
+  };
 }
 
 /**
- * The rule `id` as a draft for `rules test` and `rules add`: one of yours, or a By Rerail rule, which `rules add`
- * stores as your copy. Reading records nothing.
+ * The rule `id` as a draft for `rules test` and `rules add`: one of yours, or a By Rerail rule as it runs in `repo`'s
+ * repository, which `rules add` stores as your copy. Reading records nothing.
  */
 export function showRule(id: string, repo: string, databasePath = defaultRerailDatabasePath()): ShownRule {
   const database = openRerailDatabase(databasePath);
@@ -689,11 +719,12 @@ export function showRule(id: string, repo: string, databasePath = defaultRerailD
     const own = getLibraryRule(database, id);
     if (own !== undefined) return { draft: own.document, notes: [] };
     if (libraryHoldsId(database, id)) throw new RuleDraftError(`your rule ${id} could not be read; the dashboard shows why`);
-    const bundled = loadRuleCatalog().documents.get(id);
+    const ruleCatalog = loadRuleCatalog();
+    const bundled = ruleCatalog.documents.get(id);
     if (bundled === undefined) {
       throw new RuleDraftError(`there is no rule ${id}: it is neither yours nor in an installed pack. A worktree's own rules are files in its .rerail/rules/`);
     }
-    return { draft: bundled, notes: rerailRuleNotes(database, repo, id) };
+    return rerailRuleShown(database, ruleCatalog, bundled, repo, id);
   } finally {
     database.$client.close();
   }
@@ -822,9 +853,13 @@ function ruleDraftHelp(): string {
   ].join("\n");
 }
 
-function draftArguments(action: RuleDraftAction, args: readonly string[], usage: () => string): { file: string; repo: string; json: boolean } {
-  const file = args[0];
-  if (file === undefined || file.startsWith("--")) {
+type RuleDraftAction = "show" | "test" | "add";
+type CommandOutput = NonNullable<RuleDraftCommandIo["stdout"]>;
+
+/** The command's operand (the rule id for `show`, else the draft file), the checkout it acts for, and `--json`. */
+function draftArguments(action: RuleDraftAction, args: readonly string[], usage: () => string): { operand: string; repo: string; json: boolean } {
+  const operand = args[0];
+  if (operand === undefined || operand.startsWith("--")) {
     const needs = action === "show" ? "a rule id" : "a draft file";
     throw new Error(`rules ${action} needs ${needs}; rerail rules ${action} --help shows its format\n\n${usage()}`);
   }
@@ -833,18 +868,15 @@ function draftArguments(action: RuleDraftAction, args: readonly string[], usage:
     { flags: action === "test" ? ["--json"] : [], options: ["--repo"] },
     argument => `Unknown rules ${action} option: ${argument}\n\n${usage()}`,
   );
-  return { file, repo: resolve(parsed.options.get("--repo") ?? process.cwd()), json: parsed.flags.has("--json") };
+  return { operand, repo: resolve(parsed.options.get("--repo") ?? process.cwd()), json: parsed.flags.has("--json") };
 }
-
-type RuleDraftAction = "show" | "test" | "add";
-type Output = NonNullable<RuleDraftCommandIo["stdout"]>;
 
 /** Where an added rule went: the repository, or its folders. */
 function placesText(added: AddedRule): string {
   return added.folders.map(folder => folder === "" ? added.repositoryName : `${added.repositoryName}/${folder}`).join(", ");
 }
 
-function runShow(id: string, repo: string, stdout: Output, stderr: Output): number {
+function runShow(id: string, repo: string, stdout: CommandOutput, stderr: CommandOutput): number {
   let shown: ShownRule;
   try {
     shown = showRule(id, repo);
@@ -873,7 +905,7 @@ function addedLines(added: AddedRule): string[] {
   return lines;
 }
 
-async function runAdd(file: string, repo: string, stdout: Output, stderr: Output): Promise<number> {
+async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr: CommandOutput): Promise<number> {
   let added: AddedRule;
   try {
     added = addRuleDraft(readRuleDraft(file), repo);
@@ -893,7 +925,7 @@ async function runAdd(file: string, repo: string, stdout: Output, stderr: Output
   return 0;
 }
 
-async function runTest(file: string, repo: string, json: boolean, stdout: Output): Promise<number> {
+async function runTest(file: string, repo: string, json: boolean, stdout: CommandOutput): Promise<number> {
   const report = await testRuleDraftFile(file, repo);
   stdout.write(`${json ? JSON.stringify(report) : formatRuleDraftReport(report)}\n`);
   return report.ok ? 0 : 1;
@@ -915,8 +947,8 @@ export async function runRuleDraftCommand(
     stdout.write(`${ruleDraftHelp()}\n`);
     return 0;
   }
-  const { file, repo, json } = draftArguments(action, args, usage);
-  if (action === "show") return runShow(file, repo, stdout, stderr);
-  if (action === "add") return await runAdd(file, repo, stdout, stderr);
-  return await runTest(file, repo, json, stdout);
+  const { operand, repo, json } = draftArguments(action, args, usage);
+  if (action === "show") return runShow(operand, repo, stdout, stderr);
+  if (action === "add") return await runAdd(operand, repo, stdout, stderr);
+  return await runTest(operand, repo, json, stdout);
 }
