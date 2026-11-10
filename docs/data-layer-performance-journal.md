@@ -10797,3 +10797,18 @@ No engine code or binary changed during this rule's acceptance cohort. No Linear
 The inventory is now 11 accepted ports, 84 drafts, and five absent translations.
 The 100-port migration remains open, including the unresolved composition application-probe boundary.
 The five absent translations are state tripwires, dispatch architecture, quality, target architecture, and legacy execution surfaces.
+
+# Dispatch migration checkpoint before Final refresh, 2026-11-10
+
+The dispatch architecture policy is a draft. Its generic SPD001–SPD004 kernels use the current root engine.
+A native byte-range function preserves exact UTF-8 source expressions beyond the short node-text limit.
+The focused source-range unit test and all 15 string-function tests pass. The optimized CLI build took 57.271 seconds.
+
+The supplemental source oracle records 122 cases. An earlier snapshot replay matched 121; executor provenance failed explicitly.
+Those results precede the inventory-helper edits and do not certify the current policy.
+The unchanged original source suite passes all 49 tests. Native runs through both interfaces failed at the upstream subprocess guard.
+They do not establish native rule parity. The harness needs the existing controlled native-worker transport.
+
+BaseServerPlan executor provenance, production integration, complete CLI behavior, and admission remain open.
+No rule was admitted at this checkpoint. No full-repository benchmark ran.
+The fetched Final branch is ec3cfe1b783a5b0e255d9dcbb46ff26dfb0264d2, already an ancestor of this branch.

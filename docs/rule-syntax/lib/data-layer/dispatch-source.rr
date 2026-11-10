@@ -95,3 +95,7 @@ Dispatch(@place(p,l),c,s,e,occ,cat(c,"|",p,"|",s,"|",normal,"|occurrence=",to_st
     sd_event(n,k,c,s,e,normal,l,_), sd_occurrence(n,k,c,occ), docof(n,d), sd_document(d,p), sd_message(c,message).
 .violation DispatchIncomplete(at: span) code "DISPATCH_INCOMPLETE" "BaseServerPlan executor provenance is not ported"
 DispatchIncomplete(@place(p,0)) :- sd_document(_,p), sd_base(p).
+.violation DispatchNonempty(at: span) code "DISPATCH_NONEMPTY" "inventory is not empty"
+DispatchNonempty(@place("",0)) :- option("entryPoint","inventory_is_empty"), option_item("dispatchInventory",_,_).
+.violation DispatchUnapproved(at: span, ordinal: number) code "DISPATCH_UNAPPROVED" "unapproved finding"
+DispatchUnapproved(@place("",0),i) :- option("entryPoint","unapproved_findings"), option_item("dispatchInventory",i,e), !option_item("dispatchApproved",_,e).
