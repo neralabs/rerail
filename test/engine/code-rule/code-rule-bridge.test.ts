@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFile, lstat, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -922,6 +922,47 @@ async function shell(bridge: CodeRuleBridge, run: () => void | Promise<void>): P
   await run();
   return await bridge.finish("shell-1");
 }
+/** How many Git processes `run` started to read a checkout's `HEAD`, and to list its unmerged entries. */
+async function gitReads(run: () => Promise<unknown>): Promise<{ heads: number; entries: number }> {
+  asyncGitCalls.args.length = 0;
+  await run();
+  const named = (name: string) => asyncGitCalls.args.filter(args => args.includes(name)).length;
+  return { heads: named("--verify"), entries: named("--unmerged") };
+}
+/**
+ * A repository with a checkout in `lib` that owns its files: a repository of its own, or with `linked` a worktree of one
+ * elsewhere, whose `.git` is a file. `lib` is on `ours`, which changed `src/gone.py`; `other` removed it, so merging
+ * `other` stops on a modify/delete conflict that changes no file. With `both`, each branch also changed `src/both.py`
+ * in its own place, and that merge writes it.
+ */
+async function nestedCheckout({ both = false, linked = false } = {}) {
+  const root = await workspace();
+  await writeFile(join(root, "src", "a.py"), "old\n");
+  commitAll(root);
+  const nested = join(root, "lib");
+  const repository = linked ? await workspace() : nested;
+  await mkdir(join(repository, "src"), { recursive: true });
+  await writeFile(join(repository, "src", "gone.py"), "gone\n");
+  await writeFile(join(repository, "src", "both.py"), "1\n2\n3\n4\n5\n6\n7\n");
+  git(repository, "init", "--quiet", "--initial-branch=main");
+  git(repository, "add", ".");
+  git(repository, "commit", "--quiet", "-m", "seed");
+  git(repository, "switch", "--quiet", "-c", "other");
+  await rm(join(repository, "src", "gone.py"));
+  if (both) await writeFile(join(repository, "src", "both.py"), "theirs\n2\n3\n4\n5\n6\n7\n");
+  git(repository, "commit", "--quiet", "-am", "other");
+  git(repository, "switch", "--quiet", "-c", "ours", "main");
+  await writeFile(join(repository, "src", "gone.py"), "gone\nours\n");
+  if (both) await writeFile(join(repository, "src", "both.py"), "1\n2\n3\n4\n5\n6\nours\n");
+  git(repository, "commit", "--quiet", "-am", "ours");
+  if (linked) {
+    git(repository, "switch", "--quiet", "main");
+    git(repository, "worktree", "add", "--quiet", nested, "ours");
+  }
+  await awaitClockAfter(join(nested, "src", "gone.py"), join(nested, "src", "both.py"));
+  const extra: Partial<CodeRuleAuditor> = { sourceRoot: path => resolve(root, path).startsWith(`${nested}${sep}`) ? nested : root };
+  return { root, nested, extra };
+}
 
 /** `root` (from `twoBranches`) with a worktree of `branch`, and an auditor that owns its files and walks it. */
 async function withWorktree(root: string, place: string, branch = "other") {
@@ -1387,19 +1428,13 @@ describe("CodeRuleBridge and Git's own writes", () => {
   it("starts no Git process for the unmerged entries until the index file changes", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
-    const passes = async (run: () => Promise<unknown>): Promise<{ heads: number; entries: number }> => {
-      asyncGitCalls.args.length = 0;
-      await run();
-      const named = (name: string) => asyncGitCalls.args.filter(args => args.includes(name)).length;
-      return { heads: named("--verify"), entries: named("--unmerged") };
-    };
     // A pass that finds nothing, then one that finds a shell edit: neither wrote the index.
-    expect(await passes(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
-    expect((await passes(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n")))).entries).toBe(0);
+    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
+    expect((await gitReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n")))).entries).toBe(0);
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
     // The pass after an index write reads it once, and the one after that does not.
-    expect((await passes(() => shell(bridge, () => git(root, "add", "src/a.py")))).entries).toBe(1);
-    expect(await passes(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
+    expect((await gitReads(() => shell(bridge, () => git(root, "add", "src/a.py")))).entries).toBe(1);
+    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
   });
 
   it("reads one checkout each pass for a session opened in a subfolder of it, once a walk has found a change there too", async () => {
@@ -1469,14 +1504,47 @@ describe("CodeRuleBridge and Git's own writes", () => {
     git(worktree, "add", "src/new.py");
     await writeFile(join(worktree, "src", "new.py"), "staged\nlocal\n");
     await awaitClockAfter(join(worktree, "src", "new.py"));
+    // Git cannot list the entries while the session opens, so no walk has that checkout's until the pass that finds a change in it.
+    asyncGitCalls.failing = "--unmerged";
     const { bridge, auditGeneratedEdits } = await opened(root, {
       sourceRoot: path => resolve(root, path).startsWith(`${worktree}${sep}`) ? worktree : root,
-    });
-    // The first change found in that checkout is the first read of its entries: the file holding its index blob is no work of the merge.
+    }).finally(() => { asyncGitCalls.failing = undefined; });
+    // That pass is the first read of its entries: the file holding its index blob is no work of the merge.
     await shell(bridge, () => writeFile(join(worktree, "src", "new.py"), "staged\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "wt/src/new.py", language: "python", previousText: "staged\nlocal\n", generatedText: "staged\n" }],
     ]);
+  });
+
+  it("audits a shell edit of a file a modify/delete conflict left as it was, in a checkout inside the session's folder", async () => {
+    const { root, nested, extra } = await nestedCheckout();
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shell(bridge, () => { try { git(nested, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ } });
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shell(bridge, () => writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "lib/src/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }],
+    ]);
+    expect(auditGeneratedEdits.mock.calls[0]?.[1].mode).not.toBe("log");
+  });
+
+  it("audits nothing a merge wrote beside a modify/delete conflict, in a worktree of another repository inside the session's folder", async () => {
+    const { root, nested, extra } = await nestedCheckout({ both: true, linked: true });
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shell(bridge, () => { try { git(nested, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ } });
+    expect(await readFile(join(nested, "src", "both.py"), "utf8")).toBe("theirs\n2\n3\n4\n5\n6\nours\n");
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("starts no Git process for a checkout inside the session's folder until its index file changes", async () => {
+    const { root, nested, extra } = await nestedCheckout();
+    const { bridge } = await opened(root, extra);
+    // A pass that finds nothing reads the session checkout's `HEAD`, and nothing of the one inside it.
+    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
+    // The pass after a write to its index lists its entries once, and the one after that does not.
+    const stopped = () => shell(bridge, () => { try { git(nested, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ } });
+    expect(await gitReads(stopped)).toEqual({ heads: 1, entries: 1 });
+    expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
   });
 
   it("audits nothing of a worktree added inside the session's folder", async () => {

@@ -395,6 +395,8 @@ interface SourceDiscovery {
   readonly heads: Map<string, string>;
   /** Each checkout's unmerged entries (`readUnmerged`) when that walk began: a conflict they hold is not the next walk's. */
   readonly unmerged: Map<string, ReadonlyMap<string, string>>;
+  /** The checkouts whose `.git` the session folder's last walk passed (`SourceScan.checkouts`): those inside it, and its own. */
+  passedCheckouts: ReadonlySet<string>;
   /** Reads a checkout's unmerged entries now. Every pass asks, so a Git process runs only if its index file changed. */
   readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
 }
@@ -429,6 +431,10 @@ interface SourceScan {
    * (`#readFirstSeenTexts`): the preimage of the session's next shell write to it, which no blob could give.
    */
   readonly firstSeen: Map<string, { readonly text: string; readonly digest: string }>;
+  /** The checkout that owns each folder the walk passed a `.git` entry in: a checkout inside the session folder is found here. */
+  readonly checkouts: Set<string>;
+  /** The unmerged entries of each of `checkouts` that no walk had read, read after the scan (`#readPassedCheckouts`). */
+  readonly unmerged: Map<string, ReadonlyMap<string, string>>;
 }
 /**
  * Where a text `CodeRuleBridge` keeps came from: an edit the session made, text Git wrote that neither the index nor
@@ -789,7 +795,7 @@ export class CodeRuleBridge {
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
-        heads: new Map(), unmerged: new Map(), readUnmerged: gitUnmergedReader(),
+        heads: new Map(), unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(),
       };
       this.#discovery = discovery;
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
@@ -1406,11 +1412,13 @@ export class CodeRuleBridge {
     const scan = await this.#observeSources({
       discovery, observedAt: await filesystemClock(),
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
-      captureChanges: !walk.baseline, scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map() },
+      captureChanges: !walk.baseline,
+      scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set(), unmerged: new Map() },
       stack: walk.inSession ? [discovery.root] : [...worktrees], roots: new Set([discovery.root, ...worktrees]),
     });
     // Read off the lane, as the scan is, so tool calls are not held up behind it.
     await this.#readFirstSeenTexts(discovery, walk, scan);
+    await this.#readPassedCheckouts(discovery, walk, scan);
     return scan;
   }
 
@@ -1424,6 +1432,8 @@ export class CodeRuleBridge {
     this.#keepFirstSeenTexts(scan.firstSeen);
     for (const [root, head] of walk.heads) discovery.heads.set(root, head);
     for (const [root, entries] of walk.unmerged) discovery.unmerged.set(root, entries);
+    // Kept after the audit: a checkout this walk was the first to pass is judged as one no walk has read (`stoppedSince`).
+    for (const [root, entries] of scan.unmerged) if (!discovery.unmerged.has(root)) discovery.unmerged.set(root, entries);
     if (walk.inSession) this.#finishSessionWalk(discovery, scan);
     else this.#finishWorktreeWalk(discovery, walk, scan);
     this.#observations?.set(this.#cwd, new Map(this.#observed));
@@ -1463,6 +1473,7 @@ export class CodeRuleBridge {
     discovery.baselineRoots = scan.failedRoots;
     discovery.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
     discovery.unread = scan.unread;
+    discovery.passedCheckouts = scan.checkouts;
   }
 
   #finishWorktreeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
@@ -1507,23 +1518,47 @@ export class CodeRuleBridge {
    * Each is read at the checkout that owns its files, as `#gitVerdicts` asks for it: a session opened in a subfolder
    * reads the checkout around it, whose unmerged paths Git lists from its top folder.
    * Read on every pass, not only one that finds changes: a modify/delete conflict can stop a merge without changing a
-   * file, and the next pass must still know that conflict was there before the edit it finds. A checkout whose entries
-   * Git could not list is left out of `unmerged`, so the last entries read stay its snapshot.
+   * file, and the next pass must still know that conflict was there before the edit it finds. So a checkout inside the
+   * session folder that no walk has found a change in has its entries read too, and not its `HEAD`: the entries cost a
+   * `stat` while its index file is as it was, where `HEAD` costs a Git process. A checkout whose entries Git could not
+   * list is left out of `unmerged`, so the last entries read stay its snapshot.
    */
   async #readCheckouts(discovery: SourceDiscovery, worktrees?: readonly string[]): Promise<Pick<WalkStart, "heads" | "unmerged">> {
     const heads = new Map<string, string>();
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
-    const others = [...discovery.heads.keys()].filter(known => !discovery.worktrees.roots.has(sessionPath(discovery.root, known)));
+    const readEntries = async (root: string): Promise<void> => {
+      const entries = await discovery.readUnmerged(root);
+      if (entries !== undefined) unmerged.set(root, entries);
+    };
+    const walkedApart = (root: string): boolean => discovery.worktrees.roots.has(sessionPath(discovery.root, root));
+    const others = [...discovery.heads.keys()].filter(known => !walkedApart(known));
     // When no checkout owns the session folder, no change in it is asked about.
     const session = this.#owningCheckout(discovery.root, "");
-    for (const root of worktrees ?? new Set(session === undefined ? others : [session, ...others])) {
+    const withHead = new Set(worktrees ?? (session === undefined ? others : [session, ...others]));
+    for (const root of withHead) {
       const head = await gitHead(root);
       if (head === undefined) continue;
       heads.set(root, head);
-      const entries = await discovery.readUnmerged(root);
-      if (entries !== undefined) unmerged.set(root, entries);
+      await readEntries(root);
     }
+    if (worktrees !== undefined) return { heads, unmerged };
+    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !walkedApart(root)) await readEntries(root);
     return { heads, unmerged };
+  }
+
+  /**
+   * Puts in `scan.unmerged` the unmerged entries of each checkout the session folder's walk passed that no walk has read:
+   * one inside the session folder, which nothing named before the walk. Once the walk is applied they are its snapshot,
+   * so a conflict that stops Git there afterwards is new to the walk that follows it.
+   */
+  async #readPassedCheckouts(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<void> {
+    if (!walk.inSession) return;
+    for (const checkout of scan.checkouts) {
+      if (discovery.cancelled) return;
+      if (walk.unmerged.has(checkout) || discovery.unmerged.has(checkout)) continue;
+      const entries = await discovery.readUnmerged(checkout);
+      if (entries !== undefined) scan.unmerged.set(checkout, entries);
+    }
   }
 
   /**
@@ -1707,12 +1742,22 @@ export class CodeRuleBridge {
     else if (info.isFile()) await this.#observeRegularFile(walk, absolute, info);
   }
 
-  /** Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed. */
+  /**
+   * Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed.
+   * A folder's `.git` is not entered either, and marks the checkout that owns the folder's files (`SourceScan.checkouts`).
+   */
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
     for await (const entry of await opendir(absolute)) {
       if (walk.discovery.cancelled) return;
-      if (this.#walksInto(walk, absolute, entry)) walk.stack.push(join(absolute, entry.name));
+      if (entry.name === ".git") this.#noteCheckout(walk, join(absolute, entry.name));
+      else if (this.#walksInto(walk, absolute, entry)) walk.stack.push(join(absolute, entry.name));
     }
+  }
+
+  /** Asks for the owner of the `.git` entry, not of its folder: it is owned as the files beside it are. */
+  #noteCheckout(walk: SourceWalk, gitEntry: string): void {
+    const checkout = this.#owningCheckout(walk.discovery.root, sessionPath(walk.discovery.root, gitEntry));
+    if (checkout !== undefined) walk.scan.checkouts.add(checkout);
   }
 
   /** A folder another walk starts at is not walked twice. */

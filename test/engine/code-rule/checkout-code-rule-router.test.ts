@@ -170,6 +170,19 @@ describe("CheckoutCodeRuleRouter", () => {
     ]);
   });
 
+  it("names the checkout that owns a `.git` entry as it does for the files beside it: a submodule's file, the session checkout's folder", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const { parent, sub } = await withSubmodule(root);
+    setUpTestRepository(parent, { library: [file(needle("test:parent", "PARENT"))] }, databasePath);
+    setUpTestRepository(sub, { library: [file(needle("test:sub", "SUB"))] }, databasePath);
+    const auditor = router(parent, databasePath, recordingAudits().recorder);
+
+    await auditor.openWorkspace("git-entries");
+    expect(auditor.sourceRoot("sub/.git")).toBe(sub);
+    expect(auditor.sourceRoot(".git")).toBe(parent);
+  });
+
   it("judges a submodule's file by no rules while the submodule's repository is not set up", async () => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");
