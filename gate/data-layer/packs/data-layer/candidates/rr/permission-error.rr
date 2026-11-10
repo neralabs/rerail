@@ -7,7 +7,7 @@
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_permission_error.py
 #include "python/ast.rr"
 .decl permission_selected(d: number)
-permission_selected(d) :- pp_doc(d,_), pp_api().
+permission_selected(d) :- pp_doc(d,p), pp_api(), permission_api_allowed(p).
 .decl permission_selected_included(d: number)
 permission_selected_included(d) :- pp_doc(d,p), glob("api/**/*.py",p).
 permission_selected_included(d) :- pp_doc(d,p), glob("impl/**/*.py",p).
@@ -38,8 +38,8 @@ permission_authorized(r) :- permission_raise(r), docof(r, d), permission_import(
 .decl permission_trigger(d: number)
 .decl permission_disk_trigger(d: number)
 permission_disk_trigger(d) :- split_line(d, _, t), contains("PermissionError", t).
-permission_trigger(d) :- permission_disk_trigger(d), !option("entryPoint","check_file_content").
-permission_trigger(d) :- permission_disk_trigger(d), option("entryPoint","check_file_content"), option("permissionSuppliedSource",s), contains("PermissionError",s).
+permission_trigger(d) :- permission_disk_trigger(d), !option("permissionSuppliedSource",_).
+permission_trigger(d) :- permission_disk_trigger(d), option("permissionSuppliedSource",s), contains("PermissionError",s).
 .decl permission_suppressed(d: number, l: number)
 permission_suppressed(d, l) :- split_line(d, l, t), contains("lint: allow-builtin-permission-error", t).
 

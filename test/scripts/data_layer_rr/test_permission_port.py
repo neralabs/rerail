@@ -51,13 +51,14 @@ class PermissionPortTests(unittest.TestCase):
             def native(self, check, entry, files, options=None):
                 calls.append((entry, files, options))
                 return []
-        module = SimpleNamespace(check_file_content=None, check_file=None)
+        module = SimpleNamespace(check_file_content=None, check_file=None, get_project_root=lambda: Path('.'))
         permission_port.install_detectors(Backend(), module)
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary)/'input.py'; path.write_text('pass\n')
             self.assertEqual(module.check_file_content(path, 'raise PermissionError\n'), [])
-        self.assertEqual(calls, [('check_file_content', [dict(path='input.py', source='pass\n')],
-                                 dict(permissionSuppliedSource='raise PermissionError\n'))])
+        self.assertEqual(calls[0][0], 'check_file_content')
+        self.assertEqual(calls[0][1], [dict(path='file-0/input.py', source='pass\n')])
+        self.assertEqual(calls[0][2]['permissionSuppliedSource'], 'raise PermissionError\n')
 
 
 if __name__ == '__main__': unittest.main()

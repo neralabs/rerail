@@ -5,12 +5,29 @@ import json
 
 def scan_file(suite, module, entry, file_path, source=None, tree=None):
     path = Path(file_path)
-    try: disk = path.read_text(encoding='utf-8')
-    except (OSError, UnicodeDecodeError): return []
-    options = dict(permissionSuppliedSource=source) if entry == 'check_file_content' else {}
-    rows = suite.native('permission_error', entry, [dict(path=path.name, source=disk)], options)
-    rows.sort(key=lambda r: (r['parameters']['collector_order0'], r['parameters']['collector_order1'], r['parameters']['collector_order2']))
-    return [module.Violation(path, r['line'], r['message']) for r in rows]
+    if entry == 'check_file':
+        try: source = path.read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError): return []
+    return scan_batch(suite, module, module.get_project_root(), [path], entry,
+                      dict(permissionSuppliedSource=source))
+
+
+def scan_batch(suite, module, root, files, entry='check_file', options=None):
+    batch, owners = [], {}
+    for index, path in enumerate(files):
+        owner = root/path
+        try: disk = owner.read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError): continue
+        key = f'file-{index}/{path.name}'
+        owners[key] = (index, owner)
+        batch.append(dict(path=key, source=disk))
+    metadata = dict(permissionBatch='true', permissionScanRoot=str(root),
+                    candidateDocs=[row['path'] for row in batch],
+                    candidatePaths=[str(owners[row['path']][1]) for row in batch], **(options or {}))
+    findings = suite.native('permission_error', entry, batch, metadata)
+    findings.sort(key=lambda r: (owners[r['path']][0], r['parameters']['collector_order0'],
+                                r['parameters']['collector_order1'], r['parameters']['collector_order2']))
+    return [module.Violation(owners[r['path']][1], r['line'], r['message']) for r in findings]
 
 
 def install_detectors(suite, module):
@@ -55,15 +72,7 @@ def install(suite, module, detectors=False):
         if any(r['code'] != 'PERMISSION_FILE' for r in found): raise AssertionError('Invalid native discovery rows')
         return [root/r['parameters']['value'] for r in sorted(found, key=lambda r: r['parameters']['ordinal'])]
     def violations_for_files(root, files):
-        batch, owners = [], {}
-        for index, path in enumerate(files):
-            try: disk = path.read_text(encoding='utf-8')
-            except (OSError, UnicodeDecodeError): continue
-            key = f'file-{index}/{path.name}'; owners[key] = (index, path)
-            batch.append(dict(path=key, source=disk))
-        findings = suite.native(check, 'check_file', batch)
-        findings.sort(key=lambda r: (owners[r['path']][0], r['parameters']['collector_order0'], r['parameters']['collector_order1'], r['parameters']['collector_order2']))
-        return [module.Violation(owners[r['path']][1], r['line'], r['message']) for r in findings]
+        return scan_batch(suite, module, root, files)
     def cli_main():
         parser = argparse.ArgumentParser(description=values('description')[0])
         parser.add_argument('--check', action='store_true', help=values('check_help')[0])

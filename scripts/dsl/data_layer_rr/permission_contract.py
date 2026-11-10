@@ -29,7 +29,7 @@ def cases():
                  'raise PermissionError(\n', None]:
         for supplied in ['pass\n', 'PermissionError', 'raise PermissionError\n']:
             rows.append(dict(kind='content', id=f'content-{len(rows)}', disk=disk, supplied=supplied))
-    for excluded in [[], ['docs'], ['skip.py'], ['hidden', '.git']]:
+    for excluded in [[], ['docs'], ['skip.py'], ['hidden', '.git'], ['docs/example.py', 'a/z.py']]:
         rows.append(dict(kind='files', id='files-' + repr(excluded), excluded=excluded))
     for value in [None, [], 'wrong', {}, {'path': 'a.py', 'line': 1},
                   *[dict(path=path, line=line, message=message) for path, line, message in [
@@ -134,6 +134,7 @@ def main():
     parser.add_argument('--kind', action='append', help='Run only the specified contract kinds')
     args = parser.parse_args(); source = args.source.absolute()
     if not 0 <= args.part < args.parts: parser.error('Expected 0 <= part < parts')
+    if args.engine is not None: args.engine = args.engine.absolute()
     compare(git(source, 'rev-parse', 'HEAD'), PIN)
     path = source/'scripts/lint_permission_error.py'
     compare(path.read_bytes(), subprocess.check_output(['git', '-C', str(source), 'show', PIN+':scripts/lint_permission_error.py']))
@@ -157,8 +158,10 @@ def main():
         baseline = read_json(args.baseline); assert baseline['passed']
         compare(sha(path.read_bytes()), baseline['sourceSha256'])
         compare(cases(), [r['input'] for r in baseline['cases']])
+        fallbacks = []
         def guard(frame, event, _arg):
             if event == 'call' and frame.f_code in original_codes and not original_codes[frame.f_code][2]:
+                fallbacks.append(frame.f_code.co_qualname)
                 raise AssertionError('Original linter semantics executed: '+frame.f_code.co_name)
     dependencies = [Path(__file__), *[Path(__file__).with_name(n) for n in
                     ['replay.py', 'migration.py', 'policy_routes.py', 'permission_port.py'] if Path(__file__).with_name(n).exists()]]
@@ -167,7 +170,9 @@ def main():
                   executionMode=args.mode, passed=False, fullMigrationAcceptance=False,
                   sourceSha256=sha(path.read_bytes()), harnessFiles=hashes, cases=[])
     report.update(part=args.part, parts=args.parts, kinds=args.kind, totalCases=len(cases()))
-    if args.command == 'native': report.update(engineSha256=sha(args.engine.read_bytes()), oracle=False)
+    if args.command == 'native':
+        report.update(engineSha256=sha(args.engine.read_bytes()), oracle=False,
+                      baselineSha256=sha(args.baseline.read_bytes()), semanticFallbacks=fallbacks)
     for i, case in enumerate(cases()):
         if i % args.parts != args.part or (args.kind and case['kind'] not in args.kind): continue
         if args.command == 'native': sys.setprofile(guard)

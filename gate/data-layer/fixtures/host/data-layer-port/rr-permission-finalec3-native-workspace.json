@@ -1,0 +1,97 @@
+{
+  "format": "rerail.permission-original-admission/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "mode": "workspace",
+  "exitCode": 0,
+  "engineSha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
+  "policySha256": {
+    "permission_error": "a5082ee1e5b8f1283d6199cb667e0e1e59e9afa33b90796f415eed4fd579384f"
+  },
+  "cases": {
+    "scripts/tests/test_lint_permission_error.py::test_flags_builtin_permission_error": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_permission_error.py::test_allows_data_layer_permission_error": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_permission_error.py::test_allows_other_exception": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_permission_error.py::test_explicit_suppression_is_honored": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_permission_error.py::test_reports_each_builtin_raise": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "collected": [
+    "scripts/tests/test_lint_permission_error.py::test_flags_builtin_permission_error",
+    "scripts/tests/test_lint_permission_error.py::test_allows_data_layer_permission_error",
+    "scripts/tests/test_lint_permission_error.py::test_allows_other_exception",
+    "scripts/tests/test_lint_permission_error.py::test_explicit_suppression_is_honored",
+    "scripts/tests/test_lint_permission_error.py::test_reports_each_builtin_raise"
+  ],
+  "semanticFallbacks": [],
+  "missingResults": [],
+  "retainedCaseIds": [],
+  "checkpoint": {
+    "path": "gate/data-layer/fixtures/host/data-layer-port/rr-permission-complete-finalec3.json.gz",
+    "sha256": "fb5bc42ff2d2b8e76d1901e758fe2c16b312cb05a9da434480024946f54e7519"
+  }
+}

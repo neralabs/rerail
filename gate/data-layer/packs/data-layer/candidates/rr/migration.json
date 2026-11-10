@@ -1374,7 +1374,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "sha256": "1547b712b8483e7af58692ae3bfc97fd235e193bf62a9924108d1623fe378817",
+      "sha256": "a5082ee1e5b8f1283d6199cb667e0e1e59e9afa33b90796f415eed4fd579384f",
       "origin": "authored",
       "upstreamPath": "scripts/lint_permission_error.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
@@ -2773,9 +2773,57 @@
       "batch": 1,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-permission-error.json",
       "legacySha256": "f95c0bc0626da3c96900d5bbe3aa72fd9709a3aad7557c0930e4d00db34de3f1",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/permission-error.rr",
-      "ruleSha256": "1547b712b8483e7af58692ae3bfc97fd235e193bf62a9924108d1623fe378817"
+      "ruleSha256": "a5082ee1e5b8f1283d6199cb667e0e1e59e9afa33b90796f415eed4fd579384f",
+      "evidence": {
+        "assertions": 5,
+        "positives": 2,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "a5082ee1e5b8f1283d6199cb667e0e1e59e9afa33b90796f415eed4fd579384f",
+        "engineCommit": "c5c8b30306e2ca3da48375d75f43e4692a81dc48",
+        "corpusSha256": "05fc033452dd88e0f519f6609c4d65e4e98d91416f8baf9ed0d1cfb8b5057b98",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "engineSha256": "82179e5e6ef15dec415e7929d508e826a6dfebef2b1a8843547b668081ec7476",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-permission-finalec3-native-snapshot.json",
+            "sha256": "3ddf570df325a500eb1f2fdac788aa884151c4d31b82fec105f7fe60f377b881"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-permission-finalec3-native-workspace.json",
+            "sha256": "b5bc4266b07a3596ac0ee499ec1096c919a3c1b15e72a9d8a6dbbd254e3f2570"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-permission-complete-finalec3.json.gz",
+            "sha256": "fb5bc42ff2d2b8e76d1901e758fe2c16b312cb05a9da434480024946f54e7519"
+          }
+        ],
+        "supplemental": {
+          "publicCasesPerAPI": 116,
+          "originalCasesPerAPI": 5,
+          "originalFindingPositiveCases": 2,
+          "productionCases": 18,
+          "suppliedFactCases": 16,
+          "persistentSteps": 14,
+          "controls": 6,
+          "nativeExecutions": 337,
+          "fullMigrationAcceptance": false
+        },
+        "scope": "All five original assertions through both APIs; recorded native detector, file-scope, CLI, JSON helper, supplied-fact, production and persistent-update contracts."
+      },
+      "migrationProgress": {
+        "status": "full-contract-passed",
+        "verifiedNativeExecutions": 337
+      }
     },
     {
       "check": "dynamic_module_loading",

@@ -106,6 +106,8 @@ def permission_error(source, target):
     text = header('permission_error', target)
     from data_layer_rr_cli import logical_scope
     text = logical_scope(text, 'permission_selected')
+    text = text.replace('permission_selected(d) :- doc(d,_,_), option("entryPoint",_).',
+                        'permission_selected(d) :- pp_doc(d,p), pp_api(), permission_api_allowed(p).')
     text += '''
 // The collector is ordered: an import encountered after a raise does not excuse it.
 .decl permission_import(i: node)
@@ -124,8 +126,8 @@ permission_authorized(r) :- permission_raise(r), docof(r, d), permission_import(
 .decl permission_trigger(d: number)
 .decl permission_disk_trigger(d: number)
 permission_disk_trigger(d) :- split_line(d, _, t), contains("PermissionError", t).
-permission_trigger(d) :- permission_disk_trigger(d), !option("entryPoint","check_file_content").
-permission_trigger(d) :- permission_disk_trigger(d), option("entryPoint","check_file_content"), option("permissionSuppliedSource",s), contains("PermissionError",s).
+permission_trigger(d) :- permission_disk_trigger(d), !option("permissionSuppliedSource",_).
+permission_trigger(d) :- permission_disk_trigger(d), option("permissionSuppliedSource",s), contains("PermissionError",s).
 .decl permission_suppressed(d: number, l: number)
 '''
     text += f'permission_suppressed(d, l) :- split_line(d, l, t), contains({json.dumps(suppression)}, t).\n'

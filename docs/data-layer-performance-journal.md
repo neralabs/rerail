@@ -1,5 +1,29 @@
 # Data-layer performance journal
 
+## PermissionError full recorded-contract admission: 2026-11-10
+
+The [complete receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-permission-complete-finalec3.json.gz) verifies 337 native executions on Final `ec3cfe1b7`.
+All five original assertions pass through snapshot and workspace APIs. Two tests produce three findings.
+All 116 source-derived public cases pass through each API.
+The receipt also verifies 18 production cases, 16 supplied-fact cases, 14 persistent steps, and six disabled-behavior controls.
+It retains complete observations, source recordings, program bytes, harness bytes, and engine provenance.
+The admission audit rejects omitted assertions, missing positives, mixed engines, changed programs, and unrelated control failures.
+All 256 tooling tests pass.
+
+The explicit-file regression ladder first reproduced 13 failures in 23 new cases.
+Native scope selection now rejects test directories and non-Python files, and deduplicates repeated file paths.
+Relative file arguments use the source project's root for materialization.
+The initial `check_file` read still uses the caller's working directory, as the source does.
+Every candidate and its I/O metadata enters one native batch. Python does not choose the accepted files.
+
+A final discovery case also caught an incorrect interpretation of exclusions containing a slash.
+The source compares individual path components. Native filtering now does the same.
+The complete acceptance cohort was refreshed after that repair.
+The port adds no engine code and invokes no Python from rules.
+
+PermissionError is admitted. The inventory is four accepted ports, 91 drafts, and five absent translations.
+This is per-rule recorded-contract acceptance. The overall migration remains incomplete.
+
 ## PermissionError native CLI and content repair: 2026-11-10
 
 Final `ec3cfe1b7` is still the latest fetched engine tip. It is already merged.
@@ -13,7 +37,7 @@ All file candidates enter discovery in one batch. All files enter a scan in one 
 
 The [checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-permission-public-finalec3.json.gz) records these passing checks:
 
-- All five original tests through snapshot and workspace APIs, including three finding-positive tests.
+- All five original tests through snapshot and workspace APIs, including two positive tests with three total findings.
 - Fifty source-derived public contract cases through each API, including exact CLI streams and partial output before errors.
 - Eighteen production cases, with 36 native executions.
 - Sixteen supplied-fact reporter cases.

@@ -1,4 +1,21 @@
 // PermissionError uses string path ordering, numeric lines, and stable ties.
+.decl permission_candidate(i: number, document: symbol, owner: symbol)
+permission_candidate(i,d,p) :- option("permissionBatch","true"), option_item("candidateDocs",i,d), option_item("candidatePaths",i,p).
+.decl permission_candidate_relative(i: number, path: symbol)
+permission_candidate_relative(i,".") :- permission_candidate(i,_,p), option("permissionScanRoot",p).
+permission_candidate_relative(i,@slice(p,strlen(root)+1,strlen(p))) :- permission_candidate(i,_,p), option("permissionScanRoot",root), root != "/", root != "//", root != ".", prefix(cat(root,"/"),p).
+permission_candidate_relative(i,@slice(p,1,strlen(p))) :- permission_candidate(i,_,p), option("permissionScanRoot","/"), p != "/", prefix("/",p), !prefix("//",p).
+permission_candidate_relative(i,@slice(p,2,strlen(p))) :- permission_candidate(i,_,p), option("permissionScanRoot","//"), p != "//", prefix("//",p).
+permission_candidate_relative(i,p) :- permission_candidate(i,_,p), option("permissionScanRoot","."), !prefix("/",p).
+.decl permission_candidate_test(i: number)
+permission_candidate_test(i) :- permission_candidate_relative(i,p), @count_matches("(^|/)(?:test|tests)(/|$)",p) > 0.
+permission_candidate_test(i) :- permission_candidate(i,_,p), !permission_candidate_relative(i,_), @count_matches("(^|/)(?:test|tests)(/|$)",p) > 0.
+.decl permission_candidate_duplicate(i: number)
+permission_candidate_duplicate(i) :- permission_candidate(i,_,p), permission_candidate(j,_,p), j < i.
+.decl permission_api_allowed(path: symbol)
+permission_api_allowed(p) :- pp_doc(_,p), !option("permissionBatch","true").
+permission_api_allowed(d) :- permission_candidate(i,d,p), suffix(".py",p), !permission_candidate_test(i), !permission_candidate_duplicate(i).
+
 .decl permission_cli_row(i: number, path: symbol, line: number)
 permission_cli_row(i,p,to_number(l)) :- tcli_kind("permission"), tcli_file(i,p,_), option_item("cliLine",i,l).
 .decl permission_cli_before(a: number, b: number)
@@ -27,7 +44,7 @@ TextCliExit(@place("",0),1) :- tcli_kind("permission"), tcli_count(n), n > 0, !p
 .decl permission_file(i: number, path: symbol, key: symbol)
 permission_file(i,p,@replace_all(p,"/","\u0000")) :- option("entryPoint","_permission_files"), option_item("candidateFiles",i,p).
 .decl permission_file_excluded(i: number)
-permission_file_excluded(i) :- permission_file(i,p,_), option_item("excludeDirs",_,e),
+permission_file_excluded(i) :- permission_file(i,p,_), option_item("excludeDirs",_,e), !contains("/",e),
     (p = e ; prefix(cat(e,"/"),p) ; contains(cat("/",e,"/"),p) ; suffix(cat("/",e),p)).
 .decl permission_file_selected(i: number, path: symbol, key: symbol)
 permission_file_selected(i,p,k) :- permission_file(i,p,k), !permission_file_excluded(i).

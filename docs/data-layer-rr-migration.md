@@ -97,7 +97,11 @@ It records the syntax branch commit and hashes the imported bytes, including unc
 It separates imported bytes from local repairs. It does not claim that a commit contains uncommitted files.
 
 The initial snapshot contained 43 target drafts and 57 absent translations.
-The current inventory has **three accepted ports, 92 drafts, and five absent translations**.
+The current inventory has **four accepted ports, 91 drafts, and five absent translations**.
+`permission_error` passes its complete recorded contract on Final `ec3cfe1b7`.
+Its admission receipt verifies 337 native executions, including every original assertion through both APIs.
+The 116 public-contract cases cover the detector, native CLI, fact conversions, file filtering, and duplicate-file handling.
+Production discovery, supplied-fact reporting, persistent updates, and six disabled-behavior controls also pass.
 `serverplan_grammar_surface` passes the fixed original-inventory gate on Final `04173bf00`.
 Its two acceptance receipts verify 634 unique native executions, including every original assertion through both APIs.
 `impl_direct_execution` has complete recorded-contract acceptance on Final `bc83f6ae8`, including all original linter and shared-ratchet tests.
@@ -123,7 +127,7 @@ The CLI's shared project helper now validates, coerces, orders, and renders mode
 The frontend only constructs passive typed DTOs; it rejects missing native coercion.
 The [projection checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-model-projection-final041.json.gz) covers all 206 projection cases and 33 CLI cases.
 The [Surface admission checkpoint](../gate/data-layer/fixtures/host/data-layer-port/rr-surface-full-contract-final041.json.gz) refreshes all reporter, original-suite, production, and update checks on the same engine.
-Surface is newly admitted. The other first-ten ports still need their own complete cohort refresh and admission.
+Surface and PermissionError are admitted. The other first-ten ports still need their complete refresh and admission.
 The 90th draft, `raw_execute_regression`, has native detector, CLI, and persistent-workspace contracts.
 The 89th draft, `internal_dead_code`, has a tested source-to-analysis path and supplied-graph consumer.
 Production discovery, reporting, and lifecycle behavior remain open.
