@@ -1726,6 +1726,15 @@ fn run_observed(
         program_sources.push(source);
         program_plans.push(plan);
     }
+    // The plans' whole-program choices (inline or store, demand), kept under the prepared program across processes
+    // (`plan::choices`, decision 0090 §5); the manifest names their entries too.
+    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key));
+    if durable.is_some()
+        && let Some((source, plan)) = super::choices::named(store, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?
+    {
+        program_sources.push(source);
+        program_plans.push(plan);
+    }
     let (kept, from) = match (kept, durable) {
         (Some(p), _) => (Some(p), "memory"),
         (None, Some(source)) => {

@@ -68,6 +68,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 pub(in crate::code_rule_dsl) mod corpus;
 pub(in crate::code_rule_dsl) mod placement;
+mod choices;
 mod demand;
 mod keeps;
 pub(in crate::code_rule_dsl) mod sketch;
@@ -4539,33 +4540,63 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     if super::profile::on() {
         super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
     }
-    // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
-    // 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
-    let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
-    // What each derived relation keeps (decision 0097): stored, or inlined into its readers, from this plan's
-    // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
-    let inlined;
-    let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
-        Some((p, done)) => {
-            super::profile::decision("inline or store (decision 0097)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
-            inlined = p;
-            model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&inlined)).into();
-            &inlined
+    // Both rewrites below keep the program's meaning and read every rule: a corpus run takes the choices an earlier
+    // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
+    let chosen_key = corpus.then(|| choices::key(prog));
+    let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
+    let chosen: Option<std::sync::Arc<Program>>;
+    let prog: &Program = match reused {
+        Some(c) => {
+            let nodes = model.stats.nodes;
+            super::profile::decision("planning choices (decision 0090 §5)", || format!("kept: inline or store and demand as chosen at {:.0} nodes, taken at {nodes:.0}", c.nodes));
+            if !c.inlined.is_empty() {
+                super::profile::decision("inline or store (decision 0097)", || format!("{} relations recomputed in their readers: {}", c.inlined.len(), c.inlined.join(", ")));
+            }
+            if !c.demanded.is_empty() {
+                super::profile::decision("demand (decision 0048)", || format!("{} relations computed only for the keys their readers reach: {}", c.demanded.len(), c.demanded.join(", ")));
+            }
+            if c.program.is_some() {
+                // The program run is the rewritten one: its analysis is that program's, made when asked.
+                model.analysis = std::sync::OnceLock::new();
+            }
+            chosen = c.program;
+            chosen.as_deref().unwrap_or(prog)
         }
-        None => prog,
-    };
-    let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
-        Some((p, demanded)) => {
-            super::profile::decision("demand (decision 0048)", || {
-                format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
-            });
-            split = p;
-            // The program run is the split one: its analysis is that program's, made when asked.
-            model.analysis = std::sync::OnceLock::new();
-            &split
+        None => {
+            // What each derived relation keeps (decision 0097): stored, or inlined into its readers, from this plan's
+            // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
+            let mut inlined_names = Vec::new();
+            let inlined = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
+                Some((p, done)) => {
+                    super::profile::decision("inline or store (decision 0097)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
+                    model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&p)).into();
+                    inlined_names = done;
+                    Some(p)
+                }
+                None => None,
+            };
+            // Relations computed for every node that rules only negate, computed for the keys those rules reach
+            // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
+            let mut demanded_names = Vec::new();
+            let split = match if corpus { demand::split_negations(inlined.as_ref().unwrap_or(prog), &model) } else { None } {
+                Some((p, demanded)) => {
+                    super::profile::decision("demand (decision 0048)", || {
+                        format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
+                    });
+                    // The program run is the split one: its analysis is that program's, made when asked.
+                    model.analysis = std::sync::OnceLock::new();
+                    demanded_names = demanded;
+                    Some(p)
+                }
+                None => None,
+            };
+            chosen = split.or(inlined).map(std::sync::Arc::new);
+            if let Some(k) = chosen_key {
+                choices::remember(k, choices::Chosen { program: chosen.clone(), inlined: inlined_names, demanded: demanded_names, nodes: model.stats.nodes });
+            }
+            chosen.as_deref().unwrap_or(prog)
         }
-        None => prog,
     };
     drop(demand_span);
     let strata_span = super::profile::span(|| "strata".into());
