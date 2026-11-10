@@ -79,9 +79,10 @@ $split = Split-RerailPathUnder $path $sandbox
 
 describe("the Windows install smoke", () => {
   it("takes its sandbox's launcher folder out of the user Path when it ends, passed or failed", async () => {
-    // Set-up writes the folder into HKCU\Environment, which no variable the sandbox sets redirects.
+    // Set-up writes the folder into HKCU\Environment, which no variable the sandbox sets redirects. The call opens its
+    // line, so a comment that names it does not count.
     const smoke = await readFile(SMOKE_SCRIPT, "utf8");
     const cleanup = smoke.slice(smoke.lastIndexOf("} finally {"));
-    expect(cleanup).toMatch(/Clear-RerailUserPath -Folder \$base/u);
+    expect(cleanup).toMatch(/^\s*Clear-RerailUserPath -Folder \$base\b/mu);
   });
 });
