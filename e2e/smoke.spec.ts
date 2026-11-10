@@ -8,7 +8,7 @@ for (const scenario of SCENARIO_NAMES) {
 
     await expect(page).toHaveTitle("Rerail");
     await expect(page.locator("#status")).toBeVisible();
-    const health = await page.request.get(new URL("/healthz", url).href);
+    const health = await rerail.get(new URL("/healthz", url).href);
     expect(health.ok()).toBe(true);
     expect(await health.json()).toMatchObject({ status: "ok", ui: "dev" });
   });

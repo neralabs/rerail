@@ -1,0 +1,232 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ytt303-sys-version-slice1",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Read the major version from sys.version_info instead of slicing the first character of sys.version; the first digit is wrong for a two-digit major version.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "sys-version-slice1",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "one-literal": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "eq": 1
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "one-literal"
+                  }
+                }
+              ]
+            },
+            "upper-one-slice": {
+              "kind": "slice",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "matches": "one-literal",
+                    "all": [
+                      {
+                        "follows": {
+                          "stopBy": "end",
+                          "regex": "^:$"
+                        }
+                      },
+                      {
+                        "not": {
+                          "follows": {
+                            "stopBy": "end",
+                            "regex": "^:$",
+                            "follows": {
+                              "stopBy": "end",
+                              "regex": "^:$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "nthChild": {
+                        "position": 2,
+                        "ofRule": {
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "comment"
+                              },
+                              {
+                                "kind": "line_continuation"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "slice-subscript": {
+              "kind": "subscript",
+              "all": [
+                {
+                  "has": {
+                    "field": "subscript",
+                    "matches": "upper-one-slice"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "subscripted": {
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "slice-subscript"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "subscripted"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "all": [
+                {
+                  "resolves": {
+                    "import": [
+                      "sys.version"
+                    ]
+                  }
+                },
+                {
+                  "matches": "subscripted"
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$C"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "YTT303",
+        "message": "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[:1]`, which is only the first digit of a two-digit major version.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "YTT303"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

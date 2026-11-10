@@ -74,7 +74,7 @@ program that reads it fails at planning ("no statistics for …"). "Refused" mea
 | `earlier/2` | CPython's ast order for Python, else start order | preorder ids (start order); `!earlier` refused | engine | CPython order (rrlab is also start order) |
 | `visit_index/2`, `ast_depth/2` | the visit order as a number; ast depth | missing | engine | — |
 | `split_dot/3` | `q` is `m.x`, split at the last dot | positive: `q = @cat(m, x)`; negated it is left an undeclared relation | engine | negation (minor) |
-| `parsed/3` | the tree of code inside a string | read as empty (O76) | engine | — |
+| `parsed/3` | the tree of code inside a string | made: each string annotation's tree a document of its own (`facts::vtab::syntax::annotation`) | engine | — |
 | `spread/1` | `*args`, `...xs` | missing (`py_call_arg` has a spread column) | engine | — |
 | `dfs_first/5`, `dfs_first_memo/6` | ordered first match | refused | engine | — |
 
@@ -110,7 +110,7 @@ program that reads it fails at planning ("no statistics for …"). "Refused" mea
 | `tag {t}` | an extra key field | checked, not carried | engine | — |
 | `.mode`, `.scope`, `.gate`, `.budget`, `.on`, … | findings-layer settings | kept as settings | engine | the findings layer |
 | `.input r(IO=…, filename=…)` | a policy file | empty when absent, an error when present (O76) | engine | — |
-| `option/2`, `option_item/3`, `file/1`, `package*`, `tsconfig*`, `git_*`, `signed_list/2`, `str_part/5`, `input_error/3` | repository inputs | missing (`string_annotation` read as empty, O76). `option` alone is read by 135 files | engine | — |
+| `option/2`, `option_item/3`, `file/1`, `package*`, `tsconfig*`, `git_*`, `signed_list/2`, `str_part/5`, `input_error/3` | repository inputs | missing (`string_annotation` is made, with `parsed`). `option` alone is read by 135 files | engine | — |
 | relation names `inside_*` | free | `inside_` is the engine's axis prefix; five rule relations use it (`inside_def`, `inside_concat` ×2, `inside_right`, `inside_braces`) | engine | a prefix rules cannot write |
 
 ### O79: `op` of a comparison

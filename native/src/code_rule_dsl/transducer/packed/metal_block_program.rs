@@ -129,6 +129,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
             [15, u32::from(k) | u32::from(r) << 8, bits as u32, (bits >> 32) as u32]
         }
         BlockInst::Class { .. } | BlockInst::Pair { .. } => unreachable!("the planes form has no class or pair"),
+        BlockInst::Cmp { .. } | BlockInst::Bit { .. } => unreachable!("a row program's, never a byte program's"),
     }
 }
 
@@ -1243,6 +1244,7 @@ fn emit(
             continue;
         }
         let rhs = match *inst {
+            BlockInst::Cmp { .. } | BlockInst::Bit { .. } => unreachable!("a row program's, never a byte program's"),
             BlockInst::Class { table, bits: sel } => {
                 let s4 = u32::from(sel) * 0x0101_0101;
                 (0..chunks)

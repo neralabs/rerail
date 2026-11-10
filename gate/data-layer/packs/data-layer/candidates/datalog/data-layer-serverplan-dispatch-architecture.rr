@@ -1,62 +1,120 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl backend_identity_cmp(kind: symbol)
+backend_identity_cmp("comparison_operator").
+.decl executor_fndef(kind: symbol)
+executor_fndef("function_definition").
+.decl executor_matchk(kind: symbol)
+executor_matchk("match_statement").
+.decl backend_identity_boundary(d: number)
+.decl backend_identity_callee(f: node, m: symbol)
+.decl backend_identity_entry(v: symbol)
+.decl backend_identity_literal(n: node)
+.decl backend_identity_source(n: node)
+.decl backend_identity_strnode(n: node)
 .decl child(p: node, c: node, i: number)
+.decl dialect_truth(n: node)
+.decl dialect_truth_at(n: node)
+.decl dialect_truth_ref(n: node)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl executor_ann(n: node)
+.decl executor_ann_edge(src: node, dst: node)
+.decl executor_arg(n: node, c: node, pos: number)
+.decl executor_arg_before(c: node, s: number, s2: number)
+.decl executor_arg_has_before(c: node, s: number)
+.decl executor_argc(c: node, n: node, s: number)
+.decl executor_argx(n: node)
+.decl executor_attr(n: node, attr: symbol, o: node)
+.decl executor_attr_node(n: node)
+.decl executor_attr_self(n: node)
+.decl executor_bind(b: node, s: number, t: node, v: node)
+.decl executor_binder(b: node)
+.decl executor_bsp(d: number, s: number, e: number)
+.decl executor_call(n: node, callee: symbol)
+.decl executor_call_plain(n: node)
+.decl executor_capture(n: node)
+.decl executor_carry(src: node, dst: node)
+.decl executor_cast_int(n: node, s: symbol)
+.decl executor_doc(d: number)
+.decl executor_edge(p: node, c: node)
+.decl executor_escape(n: node)
+.decl executor_factory(d: number, name: symbol)
+.decl executor_field(n: node, r: symbol, c: node)
+.decl executor_field_later(n: node, r: symbol, c: node)
+.decl executor_finding(n: node, code: symbol)
+.decl executor_fn(n: node, f: node)
+.decl executor_fn_bind(f: node, t: symbol, b: node, s: number, lv: node)
+.decl executor_fn_bound(f: node, t: symbol)
+.decl executor_func(f: node, name: symbol)
+.decl executor_generic_head(g: node)
+.decl executor_has_skip(p: node, i: number)
+.decl executor_in_factory(n: node)
+.decl executor_ord(n: node, o: number)
+.decl executor_owner(n: node)
+.decl executor_params_many(q: node)
+.decl executor_parent(n: node, p: node)
+.decl executor_part(n: node)
+.decl executor_part_after(n: node, i: number)
+.decl executor_pattern(n: node)
+.decl executor_prop(src: node, dst: node)
+.decl executor_receiver(n: node, o: node)
+.decl executor_role(r: symbol)
+.decl executor_row(d: number, n: node)
+.decl executor_scope_arg(c: node)
+.decl executor_seq(n: node)
+.decl executor_site(n: node, t: symbol, s: number, f: node)
+.decl executor_site_before(n: node, s: number)
+.decl executor_site_latest(n: node, lv: node)
+.decl executor_site_latest_at(n: node, m: number)
+.decl executor_site_many(n: node)
+.decl executor_site_reach(p: node, n: node, same: number)
+.decl executor_site_store(n: node)
+.decl executor_site_zero(n: node)
+.decl executor_skip_before(p: node, i: number, j: number)
+.decl executor_skipped(p: node, i: number)
+.decl executor_store_target(n: node)
+.decl executor_sub(s: node, c: node)
+.decl executor_typed_param(q: node)
+.decl executor_types(d: number, name: symbol)
+.decl executor_wrap(n: node)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, child, field, text, name, line, syntax_error
-.decl k0(kind: symbol)
-k0("attribute"). k0("call"). k0("identifier").
-.decl k1(kind: symbol)
-k1("comparison_operator").
-.decl k2(kind: symbol)
-k2("concatenated_string"). k2("string").
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
 .decl m10(n: node)
-.decl m100(n: node)
-.decl m101(n: node)
-.decl m107(n: node)
-.decl m113(n: node)
-.decl m118(n: node)
-.decl m119(n: node)
-.decl m120(n: node)
-.decl m125(n: node)
-.decl m134(n: node)
-.decl m137(n: node)
-.decl m139(n: node)
-.decl m144(n: node)
 .decl m15(n: node)
-.decl m153(n: node)
-.decl m160(n: node)
-.decl m169(n: node)
-.decl m25(n: node)
-.decl m30(n: node)
-.decl m31(n: node)
-.decl m32(n: node)
-.decl m37(n: node)
-.decl m38(n: node)
-.decl m44(n: node)
-.decl m49(n: node)
+.decl m21(n: node)
+.decl m26(n: node)
+.decl m27(n: node)
+.decl m28(n: node)
 .decl m5(n: node)
-.decl m50(n: node)
-.decl m51(n: node)
-.decl m54(n: node)
-.decl m59(n: node)
-.decl m64(n: node)
-.decl m71(n: node)
-.decl m76(n: node)
-.decl m77(n: node)
-.decl m83(n: node)
-.decl m89(n: node)
-.decl m95(n: node)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl u161(n: node)
-.decl u20(n: node)
-.decl u67(n: node)
-.decl u91(n: node)
+.decl step_name_compare_literal(n: node)
+.decl step_name_compare_name(n: node)
+.decl step_name_compare_type(o: node)
+.decl step_type(n: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, name, line, syntax_error, value, value_type_of, node_text
+.output violation
+executor_role("name").
+executor_role("left").
+executor_role("right").
+executor_role("value").
+executor_role("type").
+executor_role("function").
+executor_role("arguments").
+executor_role("object").
+executor_role("attribute").
+executor_role("return_type").
+executor_role("subject").
+option_value("entryPoint", "all").
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2065_plan_core/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2066_plan_optimizer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/optimizers/**/*.py", p).
@@ -73,69 +131,200 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
+tape_syntax_error(d) :- syntax_error(d).
 m5(n) :- node(v3, n, _, _, _), doc(v3, v4, _), (v4 = "impl/common/l2070_server_plan/backend_profiles.py" ; v4 = "impl/common/l2070_server_plan/backend_traits.py").
 m10(n) :- node(v8, n, _, _, _), doc(v8, v9, _), v9 = "impl/common/l2070_server_plan/base_server_plan.py".
 violation("data-layer-serverplan-dispatch-architecture", "backend-family", "SPD001", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), !m5(n), node(_, n, "attribute", _, _), field(n, "attribute", v6), node(_, v6, "identifier", _, _), text(v6, v7), (v7 = "is_document_backend" ; v7 = "is_graph_backend" ; v7 = "is_mysql_family" ; v7 = "is_sql_backend"), !m10(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 m15(n) :- node(v13, n, _, _, _), doc(v13, v14, _), (v14 = "impl/common/l2070_server_plan/backend_profiles.py" ; v14 = "impl/common/l2070_server_plan/backend_traits.py").
-m25(n) :- field(n, "attribute", v22), node(_, v22, "identifier", _, _), text(v22, v23), v23 = "backend_type".
-m25(n) :- field(n, "object", v24), u20(v24).
-m30(n) :- node(_, n, "identifier", _, _), text(n, v27), (v27 = "backend_type_for" ; v27 = "get_backend_type" ; v27 = "get_backend_type_async").
-m30(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v28), node(_, v28, "identifier", _, _), text(v28, v29), (v29 = "backend_type_for" ; v29 = "get_backend_type" ; v29 = "get_backend_type_async").
-m31(n) :- node(_, n, "identifier", _, _), text(n, v21), v21 = "backend_type".
-m31(n) :- node(_, n, "attribute", _, _), m25(n).
-m31(n) :- node(_, n, "call", _, _), field(n, "function", v26), m30(v26).
-u20(n) :- m31(n).
-m32(n) :- field(n, "attribute", v17), node(_, v17, "identifier", _, _), text(v17, v18), v18 = "backend_type".
-m32(n) :- field(n, "object", v19), u20(v19).
-m37(n) :- node(_, n, "identifier", _, _), text(n, v34), (v34 = "backend_type_for" ; v34 = "get_backend_type" ; v34 = "get_backend_type_async").
-m37(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v35), node(_, v35, "identifier", _, _), text(v35, v36), (v36 = "backend_type_for" ; v36 = "get_backend_type" ; v36 = "get_backend_type_async").
-m38(n) :- node(_, n, "identifier", _, _), text(n, v16), v16 = "backend_type".
-m38(n) :- node(_, n, "attribute", _, _), m32(n).
-m38(n) :- node(_, n, "call", _, _), field(n, "function", v33), m37(v33).
-m44(n) :- field(n, "attribute", v41), node(_, v41, "identifier", _, _), text(v41, v42), v42 = "backend_type".
-m44(n) :- field(n, "object", v43), u20(v43).
-m49(n) :- node(_, n, "identifier", _, _), text(n, v46), (v46 = "backend_type_for" ; v46 = "get_backend_type" ; v46 = "get_backend_type_async").
-m49(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v47), node(_, v47, "identifier", _, _), text(v47, v48), (v48 = "backend_type_for" ; v48 = "get_backend_type" ; v48 = "get_backend_type_async").
-m50(n) :- node(_, n, "identifier", _, _), text(n, v40), v40 = "backend_type".
-m50(n) :- node(_, n, "attribute", _, _), m44(n).
-m50(n) :- node(_, n, "call", _, _), field(n, "function", v45), m49(v45).
-m51(n) :- m38(n).
-m51(n) :- inside(v39, n, k1), m50(v39).
-m54(n) :- node(_, n, "string", _, _).
-m54(n) :- node(_, n, "concatenated_string", _, _).
-m59(n) :- node(v57, n, _, _, _), doc(v57, v58, _), (v58 = "impl/common/l2070_server_plan/backend_profiles.py" ; v58 = "impl/common/l2070_server_plan/backend_traits.py").
-m64(n) :- node(_, n, "identifier", _, _), text(n, v61), v61 = "isinstance".
-m64(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v62), node(_, v62, "identifier", _, _), text(v62, v63), v63 = "isinstance".
-m71(n) :- node(_, n, "identifier", _, _), text(n, v70), (v70 = "CompiledStep" ; v70 = "IntentStep" ; v70 = "ServerPlanStep").
-m76(n) :- node(_, n, "identifier", _, _), text(n, v75), (v75 = "CompiledStep" ; v75 = "IntentStep" ; v75 = "ServerPlanStep").
-m77(n) :- node(_, n, "identifier", _, _), name(n, v69), (glob("ConditionalStep", v69) ; glob("PhysicalStatementGroup", v69) ; glob("[A-Z_a-z]*Intent", v69) ; glob("[A-Z_a-z]*Step", v69) ; glob("[A-Z_a-z]*Strategy", v69)), !m71(n).
-m77(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v72), name(v72, v74), (glob("ConditionalStep", v74) ; glob("PhysicalStatementGroup", v74) ; glob("[A-Z_a-z]*Intent", v74) ; glob("[A-Z_a-z]*Step", v74) ; glob("[A-Z_a-z]*Strategy", v74)), !m76(v72).
-m83(n) :- node(v81, n, _, _, _), doc(v81, v82, _), (v82 = "impl/common/l2070_server_plan/backend_profiles.py" ; v82 = "impl/common/l2070_server_plan/backend_traits.py").
-m89(n) :- node(_, n, "identifier", _, _), text(n, v86), v86 = "type".
-m89(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v87), node(_, v87, "identifier", _, _), text(v87, v88), v88 = "type".
-m95(n) :- node(_, n, "identifier", _, _), text(n, v94), (v94 = "CompiledStep" ; v94 = "IntentStep" ; v94 = "ServerPlanStep").
-m100(n) :- node(_, n, "identifier", _, _), text(n, v99), (v99 = "CompiledStep" ; v99 = "IntentStep" ; v99 = "ServerPlanStep").
-m101(n) :- node(_, n, "identifier", _, _), name(n, v93), (glob("ConditionalStep", v93) ; glob("PhysicalStatementGroup", v93) ; glob("[A-Z_a-z]*Intent", v93) ; glob("[A-Z_a-z]*Step", v93) ; glob("[A-Z_a-z]*Strategy", v93)), !m95(n).
-m101(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v96), name(v96, v98), (glob("ConditionalStep", v98) ; glob("PhysicalStatementGroup", v98) ; glob("[A-Z_a-z]*Intent", v98) ; glob("[A-Z_a-z]*Step", v98) ; glob("[A-Z_a-z]*Strategy", v98)), !m100(v96).
-m107(n) :- node(v105, n, _, _, _), doc(v105, v106, _), (v106 = "impl/common/l2070_server_plan/backend_profiles.py" ; v106 = "impl/common/l2070_server_plan/backend_traits.py").
-m113(n) :- node(_, n, "identifier", _, _), text(n, v112), (v112 = "CompiledStep" ; v112 = "IntentStep" ; v112 = "ServerPlanStep").
-m118(n) :- node(_, n, "identifier", _, _), text(n, v117), (v117 = "CompiledStep" ; v117 = "IntentStep" ; v117 = "ServerPlanStep").
-m119(n) :- node(_, n, "identifier", _, _), name(n, v111), (glob("ConditionalStep", v111) ; glob("PhysicalStatementGroup", v111) ; glob("[A-Z_a-z]*Intent", v111) ; glob("[A-Z_a-z]*Step", v111) ; glob("[A-Z_a-z]*Strategy", v111)), !m113(n).
-m119(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v114), name(v114, v116), (glob("ConditionalStep", v116) ; glob("PhysicalStatementGroup", v116) ; glob("[A-Z_a-z]*Intent", v116) ; glob("[A-Z_a-z]*Step", v116) ; glob("[A-Z_a-z]*Strategy", v116)), !m118(v114).
-m120(n) :- node(_, n, "dotted_name", _, _), text(n, v109), (glob("*.ConditionalStep", v109) ; glob("*.PhysicalStatementGroup", v109) ; glob("*.[A-Z_a-z]*Intent", v109) ; glob("*.[A-Z_a-z]*Step", v109) ; glob("*.[A-Z_a-z]*Strategy", v109) ; glob("ConditionalStep", v109) ; glob("PhysicalStatementGroup", v109) ; glob("[A-Z_a-z]*Intent", v109) ; glob("[A-Z_a-z]*Step", v109) ; glob("[A-Z_a-z]*Strategy", v109)).
-m120(n) :- m119(n).
-violation("data-layer-serverplan-dispatch-architecture", "step-class-match", "SPD002", p, l) :- node(v103, n, _, _, _), doc(v103, v104, _), !m107(n), node(_, n, "class_pattern", _, _), child(n, v108, _), m120(v108), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m125(n) :- node(v123, n, _, _, _), doc(v123, v124, _), (v124 = "impl/common/l2070_server_plan/backend_profiles.py" ; v124 = "impl/common/l2070_server_plan/backend_traits.py").
-m134(n) :- node(_, n, "identifier", _, _), text(n, v131), v131 = "type".
-m134(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v132), node(_, v132, "identifier", _, _), text(v132, v133), v133 = "type".
-m137(n) :- node(_, n, "call", _, _), field(n, "function", v130), m134(v130).
-m137(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v135), node(_, v135, "identifier", _, _), text(v135, v136), v136 = "__class__".
-m139(n) :- node(_, n, "string", _, _).
-m139(n) :- node(_, n, "concatenated_string", _, _).
-m144(n) :- node(v142, n, _, _, _), doc(v142, v143, _), (v143 = "impl/common/l2070_server_plan/backend_profiles.py" ; v143 = "impl/common/l2070_server_plan/backend_traits.py").
-m153(n) :- node(_, n, "identifier", _, _), text(n, v150), v150 = "getattr".
-m153(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v151), node(_, v151, "identifier", _, _), text(v151, v152), v152 = "getattr".
-m160(n) :- node(v158, n, _, _, _), doc(v158, v159, _), (v159 = "impl/common/l2070_server_plan/backend_profiles.py" ; v159 = "impl/common/l2070_server_plan/backend_traits.py").
-m169(n) :- node(_, n, "identifier", _, _), text(n, v166), v166 = "getattr".
-m169(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v167), node(_, v167, "identifier", _, _), text(v167, v168), v168 = "getattr".
-.output violation
+m21(n) :- node(_, n, "identifier", _, _), text(n, v20), (v20 = "CompiledStep" ; v20 = "IntentStep" ; v20 = "ServerPlanStep").
+m26(n) :- node(_, n, "identifier", _, _), text(n, v25), (v25 = "CompiledStep" ; v25 = "IntentStep" ; v25 = "ServerPlanStep").
+m27(n) :- node(_, n, "identifier", _, _), name(n, v19), (glob("ConditionalStep", v19) ; glob("PhysicalStatementGroup", v19) ; glob("[A-Z_a-z]*Intent", v19) ; glob("[A-Z_a-z]*Step", v19) ; glob("[A-Z_a-z]*Strategy", v19)), !m21(n).
+m27(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v22), name(v22, v24), (glob("ConditionalStep", v24) ; glob("PhysicalStatementGroup", v24) ; glob("[A-Z_a-z]*Intent", v24) ; glob("[A-Z_a-z]*Step", v24) ; glob("[A-Z_a-z]*Strategy", v24)), !m26(v22).
+m28(n) :- node(_, n, "dotted_name", _, _), text(n, v17), (glob("*.ConditionalStep", v17) ; glob("*.PhysicalStatementGroup", v17) ; glob("*.[A-Z_a-z]*Intent", v17) ; glob("*.[A-Z_a-z]*Step", v17) ; glob("*.[A-Z_a-z]*Strategy", v17) ; glob("ConditionalStep", v17) ; glob("PhysicalStatementGroup", v17) ; glob("[A-Z_a-z]*Intent", v17) ; glob("[A-Z_a-z]*Step", v17) ; glob("[A-Z_a-z]*Strategy", v17)).
+m28(n) :- m27(n).
+violation("data-layer-serverplan-dispatch-architecture", "step-class-match", "SPD002", p, l) :- node(v11, n, _, _, _), doc(v11, v12, _), !m15(n), node(_, n, "class_pattern", _, _), child(n, v16, _), m28(v16), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+backend_identity_boundary(d) :- doc(d, "impl/common/l2070_server_plan/backend_profiles.py", _).
+backend_identity_boundary(d) :- doc(d, "impl/common/l2070_server_plan/backend_traits.py", _).
+backend_identity_entry(v) :- option_value("entryPoint", v), (v = "all" ; v = "scan_source").
+backend_identity_callee(f, m) :- node(_, f, "identifier", _, _), text(f, m).
+backend_identity_callee(f, m) :- node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, m).
+step_type(n) :- node(_, n, "identifier", _, _), text(n, s), match("^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\\w*(?:Intent|Step|Strategy))$", s), s != "CompiledStep", s != "IntentStep", s != "ServerPlanStep".
+step_type(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), text(a, s), match("^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\\w*(?:Intent|Step|Strategy))$", s), s != "CompiledStep", s != "IntentStep", s != "ServerPlanStep".
+step_type(n) :- node(_, n, "tuple", _, _), child(n, c, _), step_type(c).
+step_type(n) :- node(_, n, "binary_operator", _, _), node_text(n, t), contains("|", t), field(n, "left", c), step_type(c).
+step_type(n) :- node(_, n, "binary_operator", _, _), node_text(n, t), contains("|", t), field(n, "right", c), step_type(c).
+violation("data-layer-serverplan-dispatch-architecture", "step-isinstance", "SPD002", p, l) :- node(d, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "isinstance"), field(n, "arguments", g), child(g, c, 1), step_type(c), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-dispatch-architecture", "step-type-compare", "SPD002", p, l) :- node(d, n, "comparison_operator", _, _), child(n, c, _), node(_, c, "call", _, _), field(c, "function", f), backend_identity_callee(f, "type"), child(n, x, _), step_type(x), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+backend_identity_source(n) :- node(_, n, "identifier", _, _), text(n, "backend_type").
+backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "backend_type").
+backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "object", o), backend_identity_source(o).
+backend_identity_source(n) :- node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, m), (m = "backend_type_for" ; m = "get_backend_type" ; m = "get_backend_type_async").
+backend_identity_strnode(n) :- node(_, n, "string", _, _).
+backend_identity_strnode(n) :- node(_, n, "concatenated_string", _, _).
+backend_identity_literal(n) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "BackendType").
+backend_identity_literal(n) :- backend_identity_strnode(n), value(n, v), value_type_of(n, "str"), match("(?i)^(?:doltdb|mariadb|mongodb|mysql|neo4j|postgres|postgresql|sqlite)$", v).
+violation("data-layer-serverplan-dispatch-architecture", "backend-identity", "SPD001", p, l) :- node(d, n, "comparison_operator", _, _), backend_identity_source(x), inside(x, n, backend_identity_cmp), backend_identity_literal(y), inside(y, n, backend_identity_cmp), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+step_name_compare_type(o) :- node(_, o, "call", _, _), field(o, "function", f), backend_identity_callee(f, "type").
+step_name_compare_type(o) :- node(_, o, "attribute", _, _), field(o, "attribute", a), node(_, a, "identifier", _, _), text(a, "__class__").
+step_name_compare_name(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "__name__"), field(n, "object", o), step_name_compare_type(o).
+step_name_compare_literal(n) :- backend_identity_strnode(n), value(n, v), value_type_of(n, "str"), match("^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\\w*(?:Intent|Step|Strategy))$", v).
+violation("data-layer-serverplan-dispatch-architecture", "step-name-compare", "SPD003", p, l) :- node(d, n, "comparison_operator", _, _), child(n, x, _), step_name_compare_name(x), step_name_compare_literal(y), inside(y, n, backend_identity_cmp), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+dialect_truth_ref(n) :- node(_, n, "identifier", _, _), text(n, "dialect").
+dialect_truth_ref(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "dialect").
+dialect_truth_ref(n) :- node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "getattr"), field(n, "arguments", g), child(g, s, 1), node(_, s, "string", _, _), value(s, "dialect"), value_type_of(s, "str").
+violation("data-layer-serverplan-dispatch-architecture", "dialect-compare", "SPD004", p, l) :- node(d, n, "comparison_operator", _, _), child(n, x, _), dialect_truth_ref(x), child(n, z, _), node(_, z, "none", _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+dialect_truth(n) :- dialect_truth_ref(n).
+dialect_truth(n) :- node(_, n, "not_operator", _, _), child(n, c, _), dialect_truth_ref(c).
+dialect_truth(n) :- node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "bool"), field(n, "arguments", g), child(g, c, 0), dialect_truth_ref(c), !child(g, _, 1).
+dialect_truth(n) :- node(_, n, "boolean_operator", _, _), child(n, c, _), dialect_truth(c).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "if_statement", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "elif_clause", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "conditional_expression", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "while_statement", _, _).
+dialect_truth_at(n) :- child(q, n, _), node(_, q, "assert_statement", _, _).
+dialect_truth_at(n) :- child(q, n, _), node(_, q, "if_clause", _, _).
+violation("data-layer-serverplan-dispatch-architecture", "dialect-truth", "SPD004", p, l) :- dialect_truth(n), dialect_truth_at(n), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+executor_doc(d) :- doc(d, "impl/common/l2070_server_plan/base_server_plan.py", _), !tape_syntax_error(d), node(d, r, "module", _, _), node_text(r, t), match("(?s:.*)class BaseServerPlan\\b(?s:.*)", t).
+executor_part(n) :- node(_, n, "string_start", _, _).
+executor_part(n) :- node(_, n, "string_content", _, _).
+executor_part(n) :- node(_, n, "string_end", _, _).
+executor_part(n) :- node(_, n, "escape_sequence", _, _).
+executor_part(n) :- node(_, n, "line_continuation", _, _).
+executor_row(d, n) :- executor_doc(d), node(d, n, _, _, _), child(_, n, _), !executor_part(n).
+executor_parent(n, p) :- executor_row(_, n), child(p, n, _).
+executor_edge(p, c) :- executor_parent(c, p), executor_row(_, p).
+executor_skipped(p, i) :- executor_doc(d), node(d, c, _, _, _), child(p, c, i), executor_part(c).
+executor_skip_before(p, i, j) :- executor_parent(n, p), child(p, n, i), executor_skipped(p, j), j < i.
+executor_has_skip(p, i) :- executor_skip_before(p, i, _).
+executor_ord(n, i) :- executor_parent(n, p), child(p, n, i), !executor_has_skip(p, i).
+executor_ord(n, o) :- executor_parent(n, p), child(p, n, i), executor_has_skip(p, i), k = count : { executor_skip_before(p, i, _) }, o = @sub(i, k).
+executor_field_later(n, r, c) :- executor_row(_, n), executor_role(r), field(n, r, c), node(_, c, _, s, _), field(n, r, c2), node(_, c2, _, s2, _), s2 < s.
+executor_field(n, r, c) :- executor_row(_, n), executor_role(r), field(n, r, c), !executor_field_later(n, r, c).
+executor_func(f, nm) :- executor_row(_, f), node(_, f, "function_definition", _, _), executor_field(f, "name", c), node_text(c, nm).
+executor_fn(n, n) :- executor_row(_, n), node(_, n, "function_definition", _, _).
+executor_fn(n, f) :- executor_row(_, n), !node(_, n, "function_definition", _, _), nearest(n, f, executor_fndef).
+executor_in_factory(n) :- executor_fn(n, f), executor_func(f, "_create_backend_executor").
+executor_attr(n, at, o) :- executor_row(_, n), node(_, n, "attribute", _, _), executor_field(n, "attribute", a), executor_row(_, a), node_text(a, at), executor_field(n, "object", o), executor_row(_, o).
+executor_attr_node(n) :- executor_attr(n, _, _).
+executor_attr_self(n) :- executor_attr(n, _, o), node_text(o, "self").
+executor_attr_self(n) :- executor_attr(n, _, o), node_text(o, "cls").
+executor_call(n, at) :- executor_row(_, n), node(_, n, "call", _, _), executor_field(n, "function", f), executor_row(_, f), executor_attr(f, at, _).
+executor_call(n, t) :- executor_row(_, n), node(_, n, "call", _, _), executor_field(n, "function", f), executor_row(_, f), !executor_attr_node(f), node_text(f, t).
+executor_call_plain(n) :- executor_call(n, _), executor_field(n, "function", f), !node(_, f, "attribute", _, _).
+executor_receiver(n, o) :- executor_call(n, _), executor_field(n, "function", f), executor_attr(f, _, o).
+executor_argx(n) :- node(_, n, "keyword_argument", _, _).
+executor_argx(n) :- node(_, n, "list_splat", _, _).
+executor_argx(n) :- node(_, n, "dictionary_splat", _, _).
+executor_argc(c, n, s) :- executor_call(c, _), executor_field(c, "arguments", g), executor_parent(n, g), !executor_argx(n), node(_, n, _, s, _).
+executor_arg_before(c, s, s2) :- executor_argc(c, _, s), executor_argc(c, _, s2), s2 < s.
+executor_arg_has_before(c, s) :- executor_arg_before(c, s, _).
+executor_arg(n, c, 0) :- executor_argc(c, n, s), !executor_arg_has_before(c, s).
+executor_arg(n, c, pos) :- executor_argc(c, n, s), executor_arg_has_before(c, s), pos = count : { executor_arg_before(c, s, _) }.
+executor_types(d, "BackendExecutor") :- executor_doc(d).
+executor_types(d, x) :- executor_row(d, n), node(_, n, "aliased_import", _, _), node_text(n, t), match("(?s:.*)(?:^|\\b)[A-Za-z_]*BackendExecutor(?:\\s+as\\s+[A-Za-z_]\\w*)?", t), field(n, "alias", a), node_text(a, x), match("[A-Za-z_]\\w*", x).
+executor_part_after(n, i) :- child(n, _, i), child(n, _, j), j > i.
+executor_types(d, x) :- executor_row(d, n), node(_, n, "dotted_name", _, _), node_text(n, t), match("(?s:.*)(?:^|\\b)[A-Za-z_]*BackendExecutor(?:\\s+as\\s+[A-Za-z_]\\w*)?", t), child(n, c, i), !executor_part_after(n, i), node_text(c, x), match("[A-Za-z_]\\w*", x).
+executor_types(d, x) :- executor_row(d, n), node(_, n, "assignment", _, _), executor_field(n, "left", lv), executor_row(d, lv), node(_, lv, "identifier", _, _), executor_field(n, "right", rv), executor_row(d, rv), node(_, rv, "identifier", _, _), text(rv, y), executor_types(d, y), text(lv, x).
+executor_types(d, x) :- executor_row(d, n), node(_, n, "class_definition", _, _), node_text(n, t), executor_types(d, w), re = @concat(@concat("class\\s+\\w+\\([^\n:]*\\b", w), "\\b(?s:.*)"), match(re, t), field(n, "name", nm), node_text(nm, x), match("[A-Za-z_]\\w*", x).
+executor_ann_edge(c, q) :- executor_row(_, q), node(_, q, "type", _, _), executor_edge(q, c).
+executor_ann_edge(c, q) :- executor_row(_, q), node(_, q, "parenthesized_expression", _, _), executor_edge(q, c).
+executor_ann_edge(c, q) :- executor_row(_, q), node(_, q, "union_type", _, _), executor_edge(q, c).
+executor_ann_edge(c, q) :- executor_row(_, q), node(_, q, "binary_operator", _, _), node_text(q, t), contains("|", t), executor_edge(q, c).
+executor_generic_head(g) :- executor_edge(g, h), executor_ord(h, 0), node_text(h, t), match("(?:(?s:.*)\\.)?(?:Annotated|Awaitable|Coroutine|Optional)", t).
+executor_ann_edge(a, g) :- executor_row(_, g), node(_, g, "subscript", _, _), executor_generic_head(g), executor_edge(g, a), executor_ord(a, o), o > 0.
+executor_params_many(q) :- executor_edge(q, a), executor_edge(q, b), a != b.
+executor_ann_edge(c, g) :- executor_row(_, g), node(_, g, "generic_type", _, _), executor_generic_head(g), executor_edge(g, q), node(_, q, "type_parameter", _, _), !executor_params_many(q), executor_edge(q, c).
+executor_ann(n) :- executor_row(d, n), node(_, n, "identifier", _, _), text(n, t), executor_types(d, t).
+executor_ann(n) :- executor_row(_, n), node(_, n, "identifier", _, _), text(n, t), isuffix("BackendExecutor", t).
+executor_ann(n) :- executor_row(d, n), node(_, n, "attribute", _, _), executor_field(n, "attribute", a), node_text(a, t), executor_types(d, t).
+executor_ann(n) :- executor_row(_, n), node(_, n, "attribute", _, _), executor_field(n, "attribute", a), node_text(a, t), isuffix("BackendExecutor", t).
+executor_ann(n) :- executor_row(_, n), node(_, n, "string", _, _), node_text(n, t), match("(?s:.*)(?:^|[\\x22\\x27| ])(?:[A-Za-z_]\\w*\\.)*(?:[A-Za-z_]\\w*BackendExecutor|BackendExecutor)(?:[\\x22\\x27| ]|$)(?s:.*)", t).
+executor_ann(q) :- executor_ann(c), executor_ann_edge(c, q).
+executor_factory(d, nm) :- executor_func(f, nm), executor_row(d, f), executor_field(f, "return_type", r), executor_ann(r).
+executor_factory(d, "_create_backend_executor") :- executor_doc(d).
+executor_binder(b) :- node(_, b, "assignment", _, _).
+executor_binder(b) :- node(_, b, "for_statement", _, _).
+executor_binder(b) :- node(_, b, "for_in_clause", _, _).
+executor_bind(b, s, lv, rv) :- executor_row(_, b), executor_binder(b), executor_field(b, "left", lv), executor_row(_, lv), executor_field(b, "right", rv), executor_row(_, rv), node(_, b, _, s, _).
+executor_bind(b, s, lv, rv) :- executor_row(_, b), node(_, b, "named_expression", _, _), executor_field(b, "name", lv), executor_row(_, lv), executor_field(b, "value", rv), executor_row(_, rv), node(_, b, _, s, _).
+executor_fn_bind(f, t, b, s, lv) :- executor_bind(b, s, lv, _), executor_fn(b, f), node_text(lv, t).
+executor_fn_bound(f, t) :- executor_fn_bind(f, t, _, _, _).
+executor_site(n, t, s, f) :- executor_row(_, n), node(_, n, "identifier", _, _), executor_fn(n, f), executor_func(f, _), text(n, t), node(_, n, _, s, _).
+executor_site_store(n) :- executor_site(n, _, _, _), executor_bind(_, _, n, _).
+executor_site_zero(n) :- executor_site(n, t, _, f), !executor_fn_bound(f, t).
+executor_site_many(n) :- executor_site(n, t, _, f), executor_fn_bind(f, t, b1, _, _), executor_fn_bind(f, t, b2, _, _), b1 != b2.
+executor_site_before(n, s) :- executor_site(n, t, s0, f), executor_fn_bind(f, t, _, s, _), s < s0.
+executor_site_latest_at(n, m) :- executor_site_before(n, _), m = max s : { executor_site_before(n, s) }.
+executor_site_latest(n, lv) :- executor_site_latest_at(n, m), executor_site(n, t, _, f), executor_fn_bind(f, t, _, m, lv).
+executor_wrap(n) :- node(_, n, "parenthesized_expression", _, _).
+executor_wrap(n) :- node(_, n, "type", _, _).
+executor_wrap(n) :- node(_, n, "await", _, _).
+executor_wrap(n) :- node(_, n, "unary_operator", _, _).
+executor_wrap(n) :- node(_, n, "list", _, _).
+executor_wrap(n) :- node(_, n, "tuple", _, _).
+executor_wrap(n) :- node(_, n, "set", _, _).
+executor_wrap(n) :- node(_, n, "list_splat", _, _).
+executor_wrap(n) :- node(_, n, "expression_list", _, _).
+executor_wrap(n) :- node(_, n, "pattern_list", _, _).
+executor_pattern(n) :- node(_, n, "pattern_list", _, _).
+executor_pattern(n) :- node(_, n, "tuple_pattern", _, _).
+executor_pattern(n) :- node(_, n, "list_pattern", _, _).
+executor_seq(n) :- node(_, n, "expression_list", _, _).
+executor_seq(n) :- node(_, n, "tuple", _, _).
+executor_seq(n) :- node(_, n, "list", _, _).
+executor_prop(o, n) :- executor_attr(n, _, o).
+executor_prop(c, n) :- executor_row(_, n), executor_wrap(n), executor_edge(n, c).
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "boolean_operator", _, _), executor_edge(n, c).
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "conditional_expression", _, _), executor_edge(n, c), executor_ord(c, o), o = 0.
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "conditional_expression", _, _), executor_edge(n, c), executor_ord(c, o), o = 2.
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "pair", _, _), executor_field(n, "value", c), executor_row(_, c).
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "named_expression", _, _), executor_field(n, "value", c), executor_row(_, c).
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "dictionary", _, _), executor_edge(n, c).
+executor_prop(o, c) :- executor_receiver(c, o), executor_call(c, ce), ce != "async_pipeline_execution_scope", ce != "get_lowering_context", ce != "native_pipeline_execution_receipt", ce != "pipeline_execution_scope".
+executor_prop(a, c) :- executor_call(c, "getattr"), executor_arg(a, c, 0).
+executor_prop(rv, lv) :- executor_bind(_, _, lv, rv), !executor_pattern(lv).
+executor_prop(e, x) :- executor_bind(_, _, lv, rv), executor_pattern(lv), executor_seq(rv), executor_edge(lv, x), executor_edge(rv, e), executor_ord(x, o), executor_ord(e, o).
+executor_prop(rv, x) :- executor_bind(_, _, lv, rv), executor_pattern(lv), !executor_seq(rv), executor_edge(lv, x).
+executor_site_reach(p, n, 1) :- executor_site(p, t, _, f), executor_site(n, t, _, f), !executor_site_store(n).
+executor_site_reach(p, n, 0) :- executor_site(p, t, _, pf), executor_site(n, t, _, nf), pf != nf, !executor_site_store(n), node(_, pf, _, ps, pe), node(_, nf, _, ns, ne), ps <= ns, pe >= ne.
+executor_prop(p, n) :- executor_site_reach(p, n, 1), !executor_site_many(n).
+executor_prop(p, n) :- executor_site_reach(p, n, 1), executor_site_latest(n, p).
+executor_prop(p, n) :- executor_site_reach(p, n, _), executor_site_zero(n).
+executor_capture(n) :- executor_parent(n, q), executor_row(_, q), node(_, q, "as_pattern", _, _).
+executor_capture(n) :- executor_parent(n, q), executor_row(_, q), node(_, q, "splat_pattern", _, _).
+executor_capture(n) :- executor_parent(n, q), executor_row(_, q), node(_, q, "dotted_name", _, _), executor_parent(q, cp), executor_row(_, cp), node(_, cp, "case_pattern", _, _), node_text(cp, t), match("[A-Za-z_]\\w*", t).
+executor_prop(sb, n) :- executor_row(_, m), node(_, m, "match_statement", _, _), executor_field(m, "subject", sb), executor_row(_, n), node(_, n, "identifier", _, _), inside(n, m, executor_matchk), executor_capture(n).
+executor_prop(p, n) :- executor_attr(p, a, _), executor_attr_self(p), executor_attr(n, a, _), executor_attr_self(n).
+executor_sub(s, c) :- executor_row(_, s), node(_, s, "subscript", _, _), executor_edge(s, c), executor_ord(c, 0).
+executor_cast_int(n, s) :- node(_, n, "integer", _, _), node_text(n, t), s = @rx_replace(t, "(?s)^0*([0-9]+).*$", "${1}").
+executor_carry(c, s) :- executor_sub(s, c), !node(_, c, "list", _, _), !node(_, c, "tuple", _, _), !node(_, c, "dictionary", _, _).
+executor_carry(e, s) :- executor_sub(s, c), executor_seq(c), !node(_, c, "expression_list", _, _), executor_edge(s, ix), executor_ord(ix, 1), executor_cast_int(ix, x), executor_edge(c, e), executor_ord(e, v), @to_string(v) = x.
+executor_carry(v, s) :- executor_sub(s, c), node(_, c, "dictionary", _, _), executor_edge(s, ix), executor_ord(ix, 1), node_text(ix, t), executor_edge(c, pr), executor_edge(pr, k), executor_ord(k, 0), node_text(k, t), executor_edge(pr, v), executor_ord(v, 1).
+executor_bsp(d, s, e) :- executor_row(d, c), node(d, c, "class_definition", s, e), node_text(c, t), match("class BaseServerPlan\\b(?s:.*)", t).
+executor_typed_param(q) :- node(_, q, "typed_parameter", _, _).
+executor_typed_param(q) :- node(_, q, "typed_default_parameter", _, _).
+executor_owner(n) :- executor_row(_, n), node(_, n, "identifier", _, _), executor_parent(n, q), executor_row(_, q), node(_, q, "parameters", _, _), text(n, t), (t = "backend" ; t = "executor").
+executor_owner(n) :- executor_row(_, n), node(_, n, "identifier", _, _), executor_parent(n, q), executor_row(_, q), executor_typed_param(q), executor_ord(n, 0), executor_field(q, "type", ty), executor_ann(ty).
+executor_owner(c) :- executor_call(c, ce), executor_row(d, c), executor_factory(d, ce).
+executor_owner(c) :- executor_call(c, ce), executor_row(d, c), executor_types(d, ce).
+executor_owner(c) :- executor_call(c, ce), icontains("backend_executor", ce).
+executor_owner(c) :- executor_call(c, "cast"), executor_arg(a, c, 0), executor_ann(a).
+executor_owner(lv) :- executor_row(_, n), node(_, n, "assignment", _, _), executor_field(n, "left", lv), executor_row(_, lv), executor_field(n, "type", ty), executor_ann(ty).
+executor_owner(a) :- executor_attr(a, at, _), executor_attr_self(a), executor_row(d, n), node(d, n, "assignment", ns, ne), executor_field(n, "left", lv), executor_row(d, lv), node(_, lv, "identifier", _, _), text(lv, at), executor_field(n, "type", ty), executor_ann(ty), executor_bsp(d, cs, ce), cs < ns, ce > ne.
+executor_owner(x) :- executor_owner(s), executor_prop(s, x).
+executor_owner(x) :- executor_owner(s), executor_carry(s, x).
+executor_finding(n, "SPD001") :- executor_attr(n, at, _), (at = "is_document_backend" ; at = "is_graph_backend" ; at = "is_mysql_family" ; at = "is_sql_backend").
+executor_finding(n, "SPD005") :- executor_attr(n, at, _), (at = "_async_conn" ; at = "_conn" ; at = "native_pipeline" ; at = "native_pipeline_async").
+executor_finding(n, "SPD005") :- executor_attr(n, at, o), executor_owner(o), at != "async_pipeline_execution_scope", at != "get_lowering_context", at != "native_pipeline_execution_receipt", at != "pipeline_execution_scope".
+executor_finding(n, "SPD005") :- executor_sub(n, _), executor_owner(n).
+executor_escape(n) :- node(_, n, "return_statement", _, _).
+executor_escape(n) :- node(_, n, "yield", _, _).
+executor_finding(n, "SPD005") :- executor_row(_, n), executor_escape(n), !executor_in_factory(n), executor_edge(n, x), node(_, x, "identifier", _, _), executor_owner(x).
+executor_store_target(n) :- node(_, n, "attribute", _, _).
+executor_store_target(n) :- node(_, n, "subscript", _, _).
+executor_finding(n, "SPD005") :- executor_row(_, n), node(_, n, "assignment", _, _), executor_field(n, "left", lv), executor_store_target(lv), executor_field(n, "right", rv), executor_owner(rv).
+executor_finding(n, "SPD005") :- executor_row(_, n), node(_, n, "comparison_operator", _, _), !executor_in_factory(n), executor_edge(n, x), executor_owner(x).
+executor_scope_arg(c) :- executor_arg(a, c, 1), node_text(a, t), match("['\"]*(?:async_pipeline_execution_scope|get_lowering_context|native_pipeline_execution_receipt|pipeline_execution_scope)['\"]*", t).
+executor_finding(n, "SPD005") :- executor_call(n, ce), (ce = "delattr" ; ce = "getattr" ; ce = "getattr_static" ; ce = "hasattr" ; ce = "setattr" ; ce = "vars" ; ce = "__getattribute__"), executor_arg(a, n, 0), executor_owner(a), !executor_scope_arg(n).
+executor_finding(n, "SPD005") :- executor_call(n, ce), executor_call_plain(n), ce != "PlanExecutor", ce != "attrgetter", ce != "cast", ce != "delattr", ce != "getattr", ce != "getattr_static", ce != "hasattr", ce != "run_executable_pipeline", ce != "run_executable_pipeline_async", ce != "setattr", ce != "vars", executor_arg(a, n, _), executor_owner(a).
+violation("data-layer-serverplan-dispatch-architecture", "executor-provenance", code, p, l) :- executor_finding(n, code), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

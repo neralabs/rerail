@@ -14,7 +14,7 @@
 //! - Gated negations (`Options::gate`): a negation that demand puts inside its own component waits for its relation's
 //!   `done_` gate, which the native engine opens once what the relation reads is quiet.
 
-use super::front::{Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
+use super::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// T's environment switches.
@@ -102,9 +102,14 @@ fn binds(l: &Literal, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
         Literal::Atom(a) if !a.neg => Some(a.vars()),
         Literal::Atom(a) => a.vars().is_subset(bound).then(BTreeSet::new),
         Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound),
-        Literal::Agg { var, atom, .. } => {
+        Literal::Agg { var, op, over, atom } => {
+            // The aggregate's own variables, as in the planner's `ready`: the aggregated one and join's order.
             let mut need = atom.vars();
             need.remove(var);
+            over.iter().for_each(|o| _ = need.remove(o));
+            if let AggOp::Join { by, .. } = op {
+                by.iter().for_each(|k| _ = need.remove(k));
+            }
             need.is_subset(bound).then(|| BTreeSet::from([var.clone()]))
         }
         Literal::Nearest { n, a, .. } => (bound.contains(n) || bound.contains(a)).then(|| l.vars()),

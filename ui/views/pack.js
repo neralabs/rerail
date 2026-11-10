@@ -1,11 +1,13 @@
 /**
- * One rule pack's page (`#pack/<packId>`) and Created by you (`#created`). The heading leads: the name, how many of its
- * rules are on (or shown, under a search or filter), its share of the violations logged, what the pack covers and a
- * quiet Remove pack. Then Search, Filter and Sort with the whole-pack switch at the right end, on the On/off column,
- * and the rule table. No primary button: the switches are the page's action. A page with nothing to list keeps its own.
+ * One rule pack's page (`#pack/<packId>`) and Created by you (`#created`). The heading leads: the name with Remove
+ * pack at its right (an outline button; it asks first, in the counts line), what the pack covers, then how many of its
+ * rules are on (or shown, under a search or filter) and its share of the violations logged. Then Search, Filter and
+ * Sort with the whole-pack switch at the right end, on the On/off column, and the rule table. No primary button: the
+ * switches are the page's action. A page with nothing to list keeps its own.
  */
 import { h, setAttr, setClass, setContent, setText, icon } from "../dom.js";
 import { fmt } from "../format.js";
+import { isWorktreePack } from "../derive.js";
 import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
 import { writes } from "../shell.js";
 import { pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
@@ -21,13 +23,13 @@ let page = null;
 let notice = null;
 
 function build() {
-  const title = h("h2"), count = h("span.n2"), share = h("span.shr"), remove = h("span.rmslot"), pitch = h("p.pitch");
-  const head = h("div.ghead.pk", null, title, h("p.sub", null, count, share, remove), pitch);
-  const packAllText = h("span.t");
+  const title = h("h2"), removeButton = h("span.rmbtn"), count = h("span.n2"), share = h("span.shr"), ask = h("span.rmslot"), pitch = h("p.pitch");
+  const head = h("div.ghead.pk", null, h("div.pkh", null, title, removeButton), pitch, h("p.sub", null, count, share, ask));
+  const packAllText = h("span.t", null, "All");
   const packAll = h("div.packall", null, packAllText, h("button.sw", { role: "switch", "data-act": "ptoggle" }));
   const controls = h("div");
   const table = h("div");
-  page = { root: h("div.ppage", null, head, controls, table), title, count, share, remove, pitch, packAll, packAllText, controls, table };
+  page = { root: h("div.ppage", null, head, controls, table), title, removeButton, count, share, ask, pitch, packAll, controls, table };
   notice = h("div.ppage");
 }
 
@@ -38,12 +40,12 @@ function renderNotice(root) {
   const added = pack ? isAttached(pack) : false;
   setContent(notice, JSON.stringify([data.loaded, ui.view, ui.pack, pack?.name, added, ui.removeAsk, repo]), () => h("div.list", null, h("div.empty", null,
     !data.loaded ? h("h3", null, "Loading…")
-      : created ? [h("h3", null, "No rules of your own yet"),
+      : created ? [h("h3", null, "No rules of your own yet."),
         h("p", null, "Write one with your coding agent: run ", h("span.mono", null, CREATE_COMMAND), " in a session and it lands here."),
         h("p.acts", null, h("button.btn.sm.solid", { "data-act": "nav", "data-i": "create" }, icon("plus"), "Create a rule"))]
-      : pack === undefined ? [h("h3", null, "Rerail has no rule pack by that name"), h("p", null, h("span.mono", null, ui.pack))]
-        : added ? [h("h3", null, `${pack.name} has no rules in ${repo} yet`), h("p", null, pack.covers), h("p.acts", null, removePackControl(pack))]
-        : [h("h3", null, `${pack.name} is not added to ${repo}`), h("p", null, pack.covers),
+      : pack === undefined ? [h("h3", null, "No rule pack by that name."), h("p", null, h("span.mono", null, ui.pack))]
+        : added ? [h("h3", null, `No ${pack.name} rules in ${repo} yet.`), h("p", null, pack.covers), h("p.acts", null, removePackControl(pack))]
+        : [h("h3", null, `${pack.name} isn’t added to ${repo}.`), h("p", null, pack.covers),
           h("p.acts", null, h("button.btn.sm.solid", { "data-act": "addpack", "data-i": pack.id }, icon("plus"), "Add pack"))])));
 }
 
@@ -56,21 +58,23 @@ function renderHead(all, shown, pack) {
   setAttr(page.share, "hidden", total === 0);
   setText(page.share, `${fmt(n)} of ${fmt(total)} violations logged`);
   setAttr(page.share, "title", `Violations logged by these rules, of all violations ${rangeLabel()}`);
-  // The one Remove on a pack page is the red pill; the catalog's list keeps the quiet link.
-  setContent(page.remove, JSON.stringify([pack?.id, ui.removeAsk === pack?.id, repoName()]), () => (pack ? removePackControl(pack) : null));
+  // Remove pack sits at the title's right; once clicked, its question takes the counts line and the button goes. The
+  // worktree's own rules are no attachment to remove: the files in its `.rerail/rules` decide them.
+  const asking = pack ? ui.removeAsk === pack.id : false;
+  setContent(page.removeButton, JSON.stringify([pack?.id, asking]), () => (pack && !asking && !isWorktreePack(pack)
+    ? h("button.btn.sm.danger.outline", { "data-act": "removepack", "data-i": pack.id }, "Remove pack")
+    : null));
+  setContent(page.ask, JSON.stringify([pack?.id, asking, repoName()]), () => (asking ? removePackControl(pack) : null));
   setAttr(page.pitch, "hidden", !pack);
   setText(page.pitch, pack?.covers ?? "");
 }
 
-/** The whole-pack switch: "x of y <pack> rules on" and drawn mixed while some are off; "All y <pack> rules" otherwise. */
+/** The whole-pack switch, labelled All: on only while every rule is on; the chip above says how many are. */
 function renderPackAll(all, name) {
-  const { on, total, state } = packSwitch(all);
-  setText(page.packAllText, state === "mixed" ? `${fmt(on)} of ${fmt(total)} ${name} rules on` : `All ${fmt(total)} ${name} rules`);
-  const sw = page.packAll.lastChild, verb = switchTurnsOn(state) ? "on" : "off";
+  const { on, total, state } = packSwitch(all), sw = page.packAll.lastChild;
   setAttr(sw, "aria-checked", state);
-  setClass(sw, "mixed", state === "mixed");
-  setAttr(sw, "aria-label", `Turn all ${fmt(total)} ${name} rules ${verb}`);
-  setAttr(sw, "title", `Turn all ${fmt(total)} rules ${verb}`);
+  setAttr(sw, "aria-label", `Turn all ${fmt(total)} ${name} rules ${switchTurnsOn(state) ? "on" : "off"}`);
+  setAttr(sw, "title", state === "true" ? `Turn all ${fmt(total)} off` : on > 0 ? `Turn the other ${fmt(total - on)} on` : `Turn all ${fmt(total)} on`);
 }
 
 export function render(root) {
@@ -92,10 +96,13 @@ function togglePage() {
   const all = pageRules(pageKey(ui.view, ui.pack));
   if (all === null || all.length === 0) return;
   const turnOn = switchTurnsOn(packSwitch(all).state), pack = ui.view === "created" ? null : packById(ui.pack);
-  const label = `${turnOn ? "On" : "Off"}: ${all.length === 1 ? "its rule" : `all ${fmt(all.length)} rules`} in ${pack?.name ?? CREATED}.`;
+  const state = turnOn ? "on" : "off", one = all.length === 1;
+  const label = pack ? (one ? `The ${pack.name} rule is ${state}.` : `All ${fmt(all.length)} ${pack.name} rules are ${state}.`)
+    : (one ? `Your rule is ${state}.` : `All ${fmt(all.length)} of your rules are ${state}.`);
+  const failure = `Couldn’t turn ${pack ? `${pack.name} rules` : "your rules"} ${state}`;
   // A pack's rules follow one setting for the pack; rules created by you have no pack, so each gets its own.
-  if (pack) writes.setPackEnabled(pack.id, turnOn, label);
-  else writes.setEnabled(all.map(r => r.rule.id), turnOn, label);
+  if (pack) writes.setPackEnabled(pack.id, turnOn, label, failure);
+  else writes.setEnabled(all.map(r => r.rule.id), turnOn, label, failure);
 }
 
 export const actions = { ...ruleControlActions, ptoggle: togglePage };

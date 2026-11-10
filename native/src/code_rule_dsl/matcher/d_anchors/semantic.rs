@@ -8,6 +8,8 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
         Semantic::Layout(_) | Semantic::Tokens(_) | Semantic::FilePath(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
             AnchorPlan::unrestricted()
         }
+        // An import target is a string's own value; its kinds are the strings the test lists.
+        Semantic::ImportTarget(_) => AnchorPlan::unrestricted(),
         // Every value predicate except `constant: false` needs a known value, which only the
         // kinds the decoder reads can have. Following bindings, a name has a value too, and in
         // PHP a named or class constant.

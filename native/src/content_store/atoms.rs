@@ -159,6 +159,9 @@ struct State {
 pub(crate) struct Atoms {
     /// The database file; `None` for an in-memory database, whose atoms are never written.
     path: Option<PathBuf>,
+    /// The store's identity (`store_identity`) when these are a store's own atoms: a store created again at the
+    /// path has another, and atoms of its own (`for_store`).
+    identity: Option<i64>,
     state: RwLock<State>,
     /// Held (the lock file, exclusively locked) while this process may give out pending ids.
     /// Lock order: `lease`, then `reader`, then `state`.
@@ -178,7 +181,7 @@ pub(crate) struct Atoms {
 
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
 /// The atoms of in-memory databases: one set for the process, as the planner's symbols had.
-static MEMORY: LazyLock<Arc<Atoms>> = LazyLock::new(|| Arc::new(Atoms::new(None)));
+static MEMORY: LazyLock<Arc<Atoms>> = LazyLock::new(|| Arc::new(Atoms::new(None, None)));
 
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
 /// run's main thread). A path that does not resolve yet is not remembered.
@@ -210,16 +213,18 @@ fn try_lock(file: &File) -> Result<(), TryLockError> {
     }
 }
 
-fn sidecar(path: &Path, suffix: &str) -> PathBuf {
+/// `path` with `suffix` appended to its file name (the arena's lock and journal files).
+fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     PathBuf::from(name)
 }
 
 impl Atoms {
-    fn new(path: Option<PathBuf>) -> Self {
+    fn new(path: Option<PathBuf>, identity: Option<i64>) -> Self {
         Atoms {
             path,
+            identity,
             // Atom 0, the empty string, is the schema's first segment.
             state: RwLock::new(State { atoms: Interner::default(), stored: 1, since: None }),
             lease: Mutex::new(None),
@@ -232,25 +237,47 @@ impl Atoms {
         }
     }
 
-    /// This process's atoms of the database at `path`.
-    pub(crate) fn for_path(path: &Path) -> Arc<Atoms> {
+    /// This process's atoms of the database at `path`, as it holds them (`install` checks they are the database's).
+    fn for_path(path: &Path) -> Arc<Atoms> {
         let key = key(path);
         let mut registry = REGISTRY.lock();
         if let Some(atoms) = registry.get(&key).and_then(Weak::upgrade) {
             return atoms;
         }
-        let atoms = Arc::new(Atoms::new(Some(key.clone())));
+        let atoms = Arc::new(Atoms::new(Some(key.clone()), None));
         registry.insert(key, Arc::downgrade(&atoms));
         atoms
     }
 
-    /// Atoms for a database just created at `path`, replacing any this process held for a file
-    /// that was there before.
-    pub(crate) fn fresh(path: &Path) -> Arc<Atoms> {
+    /// This process's atoms of the database at `path`, whose identity is `identity` (`store_identity`; `None`: not a
+    /// store): those it holds for the path, unless they are of a store that was there before (deleted and created
+    /// again, by this process or another: it has another identity). A store has atoms of its own; another database
+    /// (a run's scratch) may borrow a store's (`share`).
+    pub(crate) fn for_database(path: &Path, identity: Option<i64>) -> Arc<Atoms> {
         let key = key(path);
-        let atoms = Arc::new(Atoms::new(Some(key.clone())));
-        REGISTRY.lock().insert(key, Arc::downgrade(&atoms));
+        let mut registry = REGISTRY.lock();
+        if let Some(atoms) = registry.get(&key).and_then(Weak::upgrade) {
+            let held = if atoms.path.as_ref() == Some(&key) { atoms.identity == identity } else { identity.is_none() };
+            if held {
+                return atoms;
+            }
+        }
+        let atoms = Arc::new(Atoms::new(Some(key.clone()), identity));
+        registry.insert(key, Arc::downgrade(&atoms));
         atoms
+    }
+
+    /// The identity of `connection`'s main database if it is a store (`store_identity`).
+    fn identity(connection: &Connection) -> rusqlite::Result<Option<i64>> {
+        let store: bool = connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = 'store_identity')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !store {
+            return Ok(None);
+        }
+        connection.query_row("SELECT id FROM main.store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()
     }
 
     /// Makes `path`'s database read and write these atoms in this process: a run's working database
@@ -279,7 +306,10 @@ impl Atoms {
     /// hook that refuses a commit writing it while atoms are pending that the transaction did not
     /// append.
     pub(crate) fn install(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
-        let atoms = Atoms::for_connection(connection);
+        let atoms = match connection.path().filter(|path| !path.is_empty()) {
+            Some(path) => Atoms::for_database(Path::new(path), Atoms::identity(connection)?),
+            None => Arc::clone(&MEMORY),
+        };
         vtab::install(connection, &atoms)?;
         if atoms.owns(connection) {
             // SAFETY: the handle is only read by the hooks, which run on this connection.
@@ -356,6 +386,18 @@ impl Atoms {
         Ok(self.with_str(atom, str::to_owned))
     }
 
+    /// Reads into the arena the atoms the database holds that it does not (an arena made after the store was
+    /// written holds none of them).
+    pub(crate) fn read_stored(&self) -> StoreResult<()> {
+        self.catch_up()
+    }
+
+    /// Closes this process's connection for reading other processes' segments (reopened when next needed): the
+    /// store's last handle closed, and the arena, which the planner's symbols keep, must not hold its file open.
+    pub(crate) fn release_reader(&self) {
+        self.reader.lock().take();
+    }
+
     /// The atom of each of `values`, giving out new ones (pending) under the lease.
     pub(crate) fn intern_all(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
         {
@@ -391,7 +433,7 @@ impl Atoms {
             return Ok(());
         }
         let open = |suffix: &str| {
-            std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(sidecar(path, suffix))
+            std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(suffixed(path, suffix))
         };
         let file = open("-atoms.lock")?;
         match try_lock(&file) {
@@ -569,7 +611,7 @@ impl Atoms {
         let seen = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
-            .open(sidecar(path, "-atoms.want"))
+            .open(suffixed(path, "-atoms.want"))
             .is_ok_and(|file| matches!(try_lock(&file), Err(TryLockError::WouldBlock)));
         *wanted = (Some(Instant::now()), seen);
         seen

@@ -364,6 +364,8 @@ pub fn run(conn: &Connection, name: &str, max_waves: u32) -> Result<String> {
             for vals in got {
                 visits += 1;
                 row.clear();
+                // A function with no value (`rx_group` with no match) gives no row, as the SQL strata's inserts.
+                if vals.iter().any(|v| matches!(v, Value::Null)) { continue; }
                 for (v, &ty) in vals.iter().zip(&types) { row.push(read_value(ValueRef::from(v), ty, &mut syms)?); }
                 if !store.rels[head].contains(&row) { fresh[head].add(&row); }
             }

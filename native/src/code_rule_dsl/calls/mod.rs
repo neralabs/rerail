@@ -8,6 +8,7 @@ pub(crate) mod closure;
 pub(crate) mod contracts;
 pub(crate) mod names;
 pub(crate) mod php;
+pub(crate) mod python;
 pub(crate) mod rust;
 pub(crate) mod summary;
 
@@ -190,7 +191,7 @@ impl CallsCollector {
         };
         let digest = |canonical: serde_json::Result<String>| -> Result<Arc<str>> {
             let canonical = canonical.map_err(|error| invalid(error.to_string()))?;
-            Ok(format!("{:x}", Sha256::digest(canonical.as_bytes())).into())
+            Ok(crate::lower_hex(&Sha256::digest(canonical.as_bytes())).into())
         };
         let key = digest(serde_json::to_string(&(
             through_name(through),
@@ -1174,6 +1175,12 @@ thread_local! {
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn reference_rows(key: contracts::Key) -> Option<closure::ReferenceRows> {
     EVALUATION.with_borrow(|slot| slot.as_ref()?.view.reference_rows(key))
+}
+
+/// `read` of the installed evaluation's reference graph for `key`.
+#[cfg(test)]
+pub(crate) fn with_reference_graph<R>(key: contracts::Key, read: impl FnOnce(&Graph) -> R) -> Option<R> {
+    EVALUATION.with_borrow(|slot| slot.as_ref()?.view.references.get(&key).map(read))
 }
 
 /// Installs an evaluation's `EvaluationCalls` until dropped.

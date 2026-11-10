@@ -635,8 +635,8 @@ pub(super) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
     // (A program's route marks its labels as it publishes: `label_mark` in `run_task_in`.)
     let source = edit(
         source,
-        "device const uint* bits=(device const uint*)(values+1);return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;",
-        "device atomic_uint* bits=(device atomic_uint*)(values+1);return ((atomic_load_explicit(&bits[(kind-61440u)*words+node/32u],memory_order_relaxed)>>(node%32u))&1u)!=0u;",
+        "device const uint* bits=(device const uint*)(values+1);return ((bits[(kind-16384u)*words+node/32u]>>(node%32u))&1u)!=0u;",
+        "device atomic_uint* bits=(device atomic_uint*)(values+1);return ((atomic_load_explicit(&bits[(kind-16384u)*words+node/32u],memory_order_relaxed)>>(node%32u))&1u)!=0u;",
     );
     let begin = source.find("kernel void run_batch(").expect("the runtime has run_batch") + "kernel void run_batch(".len();
     let end = begin + source[begin..].find("uint tid [[thread_position_in_grid]]){").expect("run_batch's thread position");

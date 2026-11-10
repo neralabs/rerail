@@ -67,7 +67,9 @@ impl From<super::front::Error> for Error {
 type Result<T> = std::result::Result<T, Error>;
 
 pub(in crate::code_rule_dsl) mod corpus;
+pub(in crate::code_rule_dsl) mod placement;
 mod demand;
+pub(in crate::code_rule_dsl) mod sketch;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -194,6 +196,20 @@ pub(in crate::code_rule_dsl) struct Step {
 /// An atom's binding pattern: its relation, and which columns are bound, constants by value (T's `atom_sig`).
 type Sig = (String, Vec<(usize, Option<Constant>)>);
 
+/// The rule an observed fanout belongs to (`Stats::obs`): its head and body as text, hashed. A fanout through a bound
+/// column depends on which values the rule's bindings bring: `docof($x, $d)` with `$d` bound reads a whole document,
+/// and one rule's bindings fall in 11-node documents while another's fall in documents of thousands of nodes. Pooled
+/// over rules, the first set the second's estimate (`up_once`: 1,285 rows a binding, priced at 10).
+fn obs_rule(head: &Atom, body: &[Literal]) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    head.to_string().hash(&mut h);
+    for l in body {
+        l.to_string().hash(&mut h);
+    }
+    h.finish()
+}
+
 fn atom_sig(a: &Atom, bound: &BTreeSet<String>) -> Sig {
     let cols = a
         .args
@@ -226,8 +242,8 @@ pub(in crate::code_rule_dsl) struct Stats {
     pub(in crate::code_rule_dsl) fan: HashMap<(String, usize), f64>,
     /// (derived rel, col) → {value: postings}, for a column of few values (native statistics).
     pub(in crate::code_rule_dsl) dfreq: HashMap<(String, usize), HashMap<Constant, i64>>,
-    /// Binding pattern → [bindings in, bindings out]: fanouts native joins observed.
-    pub(in crate::code_rule_dsl) obs: HashMap<Sig, [i64; 2]>,
+    /// (rule, binding pattern) → [bindings in, bindings out]: fanouts native joins observed, per rule (`obs_rule`).
+    pub(in crate::code_rule_dsl) obs: HashMap<(u64, Sig), [i64; 2]>,
     /// The recursive component being planned (`atom_rows`).
     pub(in crate::code_rule_dsl) solving: BTreeSet<String>,
     /// Input rel → index column lists.
@@ -315,6 +331,24 @@ impl Stats {
     /// Whether any column of `rel` has statistics (read or measured).
     pub(in crate::code_rule_dsl) fn knows(&self, rel: &str) -> bool {
         self.col.keys().any(|(r, _)| r == rel)
+    }
+
+    /// `rel`'s statistics by column (`width` of them), and its exact postings of integer values (`measured`'s
+    /// `vals`, by column), when every column is known: what a session's next run gives `rel__old`, whose rows are
+    /// these (decision 0094 §4: statistics kept like data, not measured again).
+    pub(in crate::code_rule_dsl) fn of_relation(&self, rel: &str, width: usize) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
+        let names: Vec<String> = (0..width).map(|c| sql_col(rel, c)).collect();
+        let cols = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
+        let vals = self
+            .memo
+            .iter()
+            .filter(|((r, _, _), _)| r == rel)
+            .filter_map(|((_, c, v), n)| match v {
+                Constant::Int(v) => Some((names.iter().position(|x| x == c)?, *v, *n)),
+                _ => None,
+            })
+            .collect();
+        Some((cols, vals))
     }
 
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
@@ -416,7 +450,8 @@ impl Stats {
     /// Posting-weighted fanout of an equality probe on `cname` confined to one document: sqd / rows.
     fn fan_doc(&self, rel: &str, cname: &str) -> f64 {
         let [rows, _, _, sqd] = self.col[&(rel.to_owned(), cname.to_owned())];
-        if rows != 0 { sqd as f64 / rows as f64 } else { 1.0 }
+        let skewed = skew(rel, cname.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)), 2);
+        if rows != 0 { (sqd as f64 / rows as f64 * skewed).max(1.0) } else { 1.0 }
     }
 
     /// Expected parent reads to climb from `kind` to the nearest ancestor in `kset` (an absorbing Markov chain).
@@ -468,8 +503,8 @@ pub(in crate::code_rule_dsl) struct Model {
     /// View over one input atom → (input, the input column behind each view column).
     view_src: HashMap<String, (String, Vec<Option<String>>)>,
     inputs: Inputs,
-    /// The relations the program's rules derive. Their columns are `c0`, `c1`, … even where an input of the
-    /// same name has named columns: `rr::lower`'s projections (`kind`, `docof` over nodes) are rules.
+    /// The relations the program's rules derive or its facts state. Their columns are `c0`, `c1`, … even where an
+    /// input of the same name has named columns: `rr::lower`'s projections (`kind`, `docof` over nodes) are rules.
     derived: HashSet<String>,
 }
 
@@ -580,16 +615,17 @@ thread_local! {
     /// component solved), its order and its work per node when planned. `None` outside a corpus run: every plan is
     /// searched.
     /// When profiling, the plan as EXPLAIN showed it when searched: a re-pricing reports it with its own work and rows.
-    static PLANS: std::cell::RefCell<Option<HashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
+    static PLANS: std::cell::RefCell<Option<rustc_hash::FxHashMap<PlanKey, Kept>>> = const { std::cell::RefCell::new(None) };
     /// The last priced body's cheapest start: the least work of any one join literal read first, from no binding.
     /// Every order costs at least this, so a kept order's work over it measures how far the order is from the best
     /// any start allows.
     static SEED: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
 }
 
-/// A kept plan's key: the rule as text, the delta and the component solved. Not the rule's address: each chunk's
-/// program is a new value (the demand split makes one per chunk), so no address is kept between chunks.
-type PlanKey = String;
+/// A kept plan's key: a digest of the rule, the delta and the component solved (`derived::digest`). Not the rule's
+/// address: each chunk's program is a new value (the demand split makes one per chunk), so no address is kept between
+/// chunks. Not the rule's text either: formatting every rule was a tenth of a session run's planning.
+type PlanKey = u128;
 
 /// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, its work over its body's
 /// cheapest start (`SEED`) when searched, and its last price with the sizes it was priced at (`Priced`).
@@ -621,7 +657,7 @@ pub(in crate::code_rule_dsl) struct KeepPlans(Option<u64>);
 
 thread_local! {
     /// A session's plans between its runs, with the session's generation: another session's are not taken.
-    static SESSION_PLANS: std::cell::RefCell<Option<(u64, HashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
+    static SESSION_PLANS: std::cell::RefCell<Option<(u64, rustc_hash::FxHashMap<PlanKey, Kept>)>> = const { std::cell::RefCell::new(None) };
 }
 
 impl KeepPlans {
@@ -639,6 +675,36 @@ impl Drop for KeepPlans {
             SESSION_PLANS.with(|s| *s.borrow_mut() = Some((g, plans)));
         }
     }
+}
+
+thread_local! {
+    /// Whether the planner reads its statistics skewed (`Model::plan_inner`, `RERAIL_STATS_SKEW`).
+    static SKEWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `RERAIL_STATS_SKEW=f[:seed]`: the largest factor a statistic is skewed by, and the seed of the factors.
+fn skew_setting() -> Option<(f64, u64)> {
+    static SETTING: std::sync::OnceLock<Option<(f64, u64)>> = std::sync::OnceLock::new();
+    *SETTING.get_or_init(|| {
+        let v = std::env::var("RERAIL_STATS_SKEW").ok()?;
+        let (f, seed) = v.split_once(':').map_or((v.as_str(), "0"), |(a, b)| (a, b));
+        Some((f.parse().ok()?, seed.parse().ok()?))
+    })
+}
+
+/// The factor statistic `what` of column `c` of `rel` is skewed by while skewing: fixed per (seed, rel, c, what),
+/// log-uniform in [1/f, f]; 1 otherwise.
+fn skew(rel: &str, c: usize, what: u64) -> f64 {
+    let Some((f, seed)) = skew_setting().filter(|_| SKEWING.with(std::cell::Cell::get)) else { return 1.0 };
+    let mut h = seed ^ (what << 56) ^ (c as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    for b in rel.bytes() {
+        h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+    }
+    h ^= h >> 31;
+    h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h ^= h >> 29;
+    let u = (h >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0;
+    (u * f.ln()).exp()
 }
 
 /// A rule body in plan order, its estimated work and its estimated output rows.
@@ -659,7 +725,7 @@ impl Model {
     }
 
     fn ndv_or_1(&self, rel: &str, c: usize) -> f64 {
-        self.ndv.get(&(rel.to_owned(), c)).copied().unwrap_or(1.0).max(1.0)
+        (self.ndv.get(&(rel.to_owned(), c)).copied().unwrap_or(1.0) * skew(rel, c, 0)).max(1.0)
     }
 
     /// Orders a rule body (T's `plan_rule`). Dynamic programming over subsets of the join literals (Selinger): the
@@ -756,7 +822,15 @@ impl Model {
     /// A kept plan's key: the rule as text, the delta (`first`) and the component solved, after `kind`.
     fn plan_key(&self, kind: &str, head: &Atom, body: &[Literal], first: Option<usize>) -> PlanKey {
         let _span = super::profile::span(|| "key".into());
-        format!("{kind}{head} :- {} @{first:?} /{}", body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), self.stats.solving.iter().cloned().collect::<Vec<_>>().join(","))
+        super::derived::digest(|d| {
+            d.str(kind);
+            digest_atom(d, head);
+            d.u64(body.len() as u64);
+            body.iter().for_each(|l| digest_literal(d, l));
+            d.u64(first.map_or(u64::MAX, |f| f as u64));
+            d.u64(self.stats.solving.len() as u64);
+            self.stats.solving.iter().for_each(|r| d.str(r));
+        })
     }
 
     /// The sizes a price reads (`Priced`): the corpus's nodes and the rows of each relation the body reads.
@@ -784,11 +858,46 @@ impl Model {
             return self.plan_inner(prog, head, body, first, None, true);
         }
         let key = self.plan_key("live ", head, body, first);
-        let sizes = self.read_sizes(body);
-        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| k.4.clone()));
-        if let Some(priced) = kept.filter(|k| near(&k.sizes, &sizes)) {
-            super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
-            return Ok(priced.got.clone());
+        // The delta atom is read first and priced by its live size; every later step's rows are per binding of it,
+        // so its size scales every order alike and does not change which is cheapest. It is left out (one row)
+        // unless the body reads its relation again: a wave that only grew the delta keeps the plan. Callers read
+        // the order only, so the kept price is not scaled.
+        let delta_rel = first.and_then(|f| body[f].atom()).map(|a| a.rel.as_str());
+        let once = delta_rel.is_some_and(|d| body.iter().filter(|l| l.atom().is_some_and(|a| a.rel == d)).count() == 1);
+        let sizes: Vec<f64> = std::iter::once(self.stats.nodes.max(1.0))
+            .chain(body.iter().enumerate().filter_map(|(i, l)| match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(if once && Some(i) == first { 1.0 } else { self.card(&a.rel) }),
+                _ => None,
+            }))
+            .collect();
+        // The last price, and the work of the order when it was searched.
+        let kept = PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.get(&key)).and_then(|k| Some((k.4.clone()?, k.1))));
+        if let Some((priced, searched)) = &kept {
+            if near(&priced.sizes, &sizes) {
+                super::profile::decision("plan cache (decision 0038)", || format!("a live replan kept: no size it reads moved over {PRICE_DRIFT}x"));
+                return Ok(priced.got.clone());
+            }
+            // A size moved: the kept order is priced again (no search), and kept while its work grew less than
+            // `REPLAN` times or by fewer than `REPLAN_ROWS` rows over its work when searched, as a kept plan is
+            // across chunks. Most moves are small relations growing between waves (1 row, then 50), where any
+            // order costs less than a search.
+            let then = *searched;
+            let repriced = {
+                let _span = super::profile::span(|| "re-price".into());
+                self.plan_inner(prog, head, body, first, Some(&priced.got.0.0), false)
+            };
+            if let Ok((plan, _)) = repriced
+                && (plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS)
+            {
+                super::profile::decision("plan cache (decision 0038)", || "a live replan kept, re-priced: its work grew little".into());
+                let got = (plan, priced.got.1.clone());
+                PLANS.with(|p| {
+                    if let Some(k) = p.borrow_mut().as_mut().and_then(|p| p.get_mut(&key)) {
+                        k.4 = Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }));
+                    }
+                });
+                return Ok(got);
+            }
         }
         let got = {
             let _span = super::profile::span(|| "search".into());
@@ -796,13 +905,17 @@ impl Model {
         };
         PLANS.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
-                p.insert(key, (got.0.0.clone().into(), 0.0, None, 0.0, Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }))));
+                // Its work as searched (for live replans, the second field), against which a re-pricing is judged.
+                p.insert(key, (got.0.0.clone().into(), got.0.1, None, 0.0, Some(std::rc::Rc::new(Priced { sizes, got: got.clone() }))));
             }
         });
         Ok(got)
     }
 
-    /// The search, or with `fixed`, the pricing of that order (an error where it cannot run).
+    /// `plan_search`, under `RERAIL_STATS_SKEW` (a measurement aid, decision 0096): planned with each column's
+    /// fanout and distinct values skewed by a fixed factor in [1/f, f]; a search is also made with the statistics as
+    /// they are, and the skewed order priced with them, so `RERAIL_STATS_SKEW_LOG` gets the regret: the skewed
+    /// order's work over the best order's, by the true statistics.
     fn plan_inner(
         &self,
         prog: &Program,
@@ -812,7 +925,41 @@ impl Model {
         fixed: Option<&[Step]>,
         explain: bool,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        if skew_setting().is_none() {
+            return self.plan_search(prog, head, body, first, fixed, explain);
+        }
+        SKEWING.with(|s| s.set(true));
+        let got = self.plan_search(prog, head, body, first, fixed, explain);
+        SKEWING.with(|s| s.set(false));
+        let got = got?;
+        if fixed.is_none()
+            && std::env::var_os("RERAIL_STATS_SKEW_LOG").is_some()
+            && let Ok((truth, _)) = self.plan_search(prog, head, body, first, None, false)
+            && let Ok((priced, _)) = self.plan_search(prog, head, body, first, Some(&got.0.0), false)
+        {
+            use std::io::Write as _;
+            static LOG: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::OnceLock::new();
+            let log = LOG.get_or_init(|| std::env::var_os("RERAIL_STATS_SKEW_LOG").and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok()).map(std::sync::Mutex::new));
+            if let Some(f) = log {
+                let same = shown(&got.0.0) == shown(&truth.0);
+                let _ = writeln!(f.lock().unwrap(), "{:.6}\t{}\t{:.1}\t{:.1}\t{head}", priced.1 / truth.1.max(1e-9), u8::from(same), priced.1, truth.1);
+            }
+        }
+        Ok(got)
+    }
+
+    /// The search, or with `fixed`, the pricing of that order (an error where it cannot run).
+    fn plan_search(
+        &self,
+        prog: &Program,
+        head: &Atom,
+        body: &[Literal],
+        first: Option<usize>,
+        fixed: Option<&[Step]>,
+        explain: bool,
+    ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let stats = &self.stats;
+        let rule = obs_rule(head, body);
         // var → constant kind, from kind($v, "k") atoms.
         let mut kinds: HashMap<&str, String> = HashMap::new();
         for l in body {
@@ -834,7 +981,7 @@ impl Model {
             // not a property of the join, so it is priced from the relation's own estimate (below).
             let crossed = !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v)));
             if !crossed
-                && let Some(seen) = stats.obs.get(&atom_sig(a, bound))
+                && let Some(seen) = stats.obs.get(&(rule, atom_sig(a, bound)))
                 && seen[0] >= OBS_MIN
             {
                 return (seen[1] as f64 / seen[0] as f64).max(0.01);
@@ -872,7 +1019,7 @@ impl Model {
                 {
                     return d.get(k).copied().unwrap_or(0) as f64;
                 }
-                stats.fan.get(&(a.rel.clone(), c)).copied().unwrap_or_else(|| self.card(&a.rel) / self.ndv_or_1(&a.rel, c))
+                stats.fan.get(&(a.rel.clone(), c)).map(|f| (f * skew(&a.rel, c, 1)).max(1.0)).unwrap_or_else(|| self.card(&a.rel) / self.ndv_or_1(&a.rel, c))
             };
             let mut first = cols[0];
             for &c in &cols[1..] {
@@ -1441,7 +1588,9 @@ fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<Mode
         analysis.explain();
         std::sync::Arc::new(analysis)
     };
-    let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+    // A relation of the program's facts is its table too (`run`: `c0`, `c1`, …), though an input of that name has
+    // named columns (the converter's `option_item`, core.rr's `option_item(name, i, v)`).
+    let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).chain(prog.facts.keys().filter(|rel| !prog.inputs.contains(*rel)).cloned()).collect();
     let mut stats = Stats::new(db, prog, &mut inputs)?;
     let mut ndv = HashMap::new();
     for (rel, (_, rows)) in &inputs.batch {
@@ -1517,26 +1666,47 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "node" => &[&["n"], &["kind", "n"]],
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
-        "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
+        "text" | "name" | "str" | "strprefix" | "node_text" | "comment" => &[&["n"], &["s", "n"]],
+        // W's values (`facts::vtab::syntax::Extra`).
+        "value" | "static_value" => &[&["n"], &["v", "n"]],
+        "value_type_of" => &[&["n"], &["t", "n"]],
+        "value_type" => &[&["v"], &["t", "v"]],
+        "fstring_piece" => &[&["n"], &["v", "n"]],
+        "fstring_template" => &[&["n"], &["v", "n"]],
+        "cpython_syntax_error" => &[&["d"]],
+        "string_annotation" => &[&["s"]],
+        "parsed" => &[&["s"], &["root"]],
+        "literal_json" => &[&["n"], &["v", "n"]],
+        "cpython_unparse" | "cpython_ast_dump" => &[&["n"], &["s", "n"]],
+        "dump_sha256" => &[&["n"], &["h", "n"]],
+        "body_sha256" | "signature_sha256" => &[&["f"], &["h", "f"]],
         "tree_digest" | "def_digest" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
         "ast_match" => &[&["n"], &["c"]],
-        "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],
+        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "reference_open" => &[&["n"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
         "next_sibling" => &[&["a"], &["b"]],
-        "source" | "src_line" | "split_line" | "lf_line" | "line_count" => &[&["d"]],
+        "split_line" | "lf_line" => &[&["d"]],
         "str_part" | "str_part_start" | "str_part_word" => &[&["lit"]],
+        "reference_edge" => &[&["src"], &["dst"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
         "within" => &[&["n"], &["a"]],
         "span_within" => &[&["inner"], &["outer"]],
-        "doc" | "pkg" | "syntax_error" => &[&["d"]],
+        "doc" | "pkg" | "syntax_error" | "source" | "line_count" => &[&["d"]],
+        "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
+        "op_at" | "prev_token" => &[&["n"], &["s", "n"]],
+        "token" => &[&["p", "i"], &["start"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &[&["n"], &["a"]],
         // A text test's symbols (decision 0037, `logic::strings::as_relations`).
         rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
+        // A `match_all` regex's matches, by span and by match (`facts::vtab::syntax::Extra`).
+        rel if rel.starts_with(super::strings::MATCHES) => &[&["sp"], &["m"]],
+        // A `match_group` regex's groups, by span, by match and by group span.
+        rel if rel.starts_with(super::strings::GROUPS) => &[&["sp"], &["m"], &["gsp"]],
         _ => &[],
     };
     lists.iter().map(|l| l.iter().map(|c| (*c).to_owned()).collect()).collect()
@@ -1581,6 +1751,14 @@ fn text_of(atoms: Option<[i64; 3]>, e: &Expr) -> Expr {
 /// A text's symbol: `sym_atom` of it in atoms mode.
 fn symbol_of(atoms: Option<[i64; 3]>, e: Expr) -> Expr {
     if atoms.is_some() { call("sym_atom", vec![e]) } else { e }
+}
+
+/// Whether `t` calls a function that can have no value (`strings::functions`' NULL, as `to_number("a")`; a regex
+/// group of a string the regex does not match, `rx_group`): a row that binds or derives its value needs it not NULL,
+/// or a negation over it would hold (`NOT EXISTS (… = NULL)`). `x / 0` is SQL's NULL, a value the row keeps (the
+/// executor's walks carry it as a nullable seed, `sql_executor::walks::nullable`).
+fn partial(t: &Term) -> bool {
+    matches!(t, Term::Call(f, args) if super::strings::functions::signature(f).is_some() || f == "rx_group" || args.iter().any(partial))
 }
 
 fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> Result<Expr> {
@@ -1643,12 +1821,22 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 // A named group of a regex's match (`.rr`'s `match` with captures, `strings::group`); NULL without one.
                 ("rx_group", [x, re, g]) => symbol_of(atoms, call("rx_group", vec![text_of(atoms, x), text_of(atoms, re), text_of(atoms, g)])),
                 ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
+                // `@dot` (`core.rr`): `a.b`, and `"" . b` is `b`.
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
                 // `@dot("", y)` is `y` (`core.rr`).
                 ("cat", [x, y]) => Expr::Case {
                     branches: vec![(bin(Op::Equal, x.clone(), string("")), y.clone())],
                     fallback: Box::new(bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone())),
                 },
+                // core.rr's functors whose meaning is W's (`register_functors`), ahead of `strings::functions`' below.
+                ("replace_all", [s, re, by]) => symbol_of(atoms, call("rr_replace_all", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
+                // A JSON string literal as W's signed-list stages write one (`json_group_array`'s elements): SQLite's
+                // `json_quote` of the text.
+                ("json_str", [x]) => symbol_of(atoms, call("json_quote", vec![bin(Op::Concatenate, text_of(atoms, x), string(""))])),
+                ("nfkc", [x]) => symbol_of(atoms, call("rr_nfkc", vec![text_of(atoms, x)])),
+                ("py_repr", [x]) => symbol_of(atoms, call("rr_py_repr", vec![text_of(atoms, x)])),
+                ("ed25519_ok", [k, m, sig]) => call("rr_ed25519_ok", vec![text_of(atoms, k), text_of(atoms, m), text_of(atoms, sig)]),
+                ("rx_replace", [s, re, by]) => symbol_of(atoms, call("rr_rx_replace", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
                 ("flat_bin", [o, x, y]) => {
                     let big = integer(1i64 << 40);
                     let [plus, minus, times] = match atoms {
@@ -1666,6 +1854,20 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                         fallback: Box::new(integer(TOP)),
                     }
                 }
+                // `.rr`'s `@place(path, line)` (`rr::lower`'s `PLACE`): `-2 - (path << 32 | line)`, the path's symbol
+                // atom and the line, below `unset` (-1) and every node id; `unset` for a line outside `0 .. 2^32`.
+                // `@place_path` and `@place_line` take it apart.
+                ("place", [p, l]) if atoms.is_some() => {
+                    let valid = bin(Op::And, bin(Op::GreaterOrEqual, l.clone(), integer(0)), bin(Op::Less, l.clone(), integer(1 << 32)));
+                    let place = bin(Op::Subtract, integer(-2), bin(Op::Add, bin(Op::Multiply, p.clone(), integer(1 << 32)), l.clone()));
+                    Expr::Case { branches: vec![(valid, place)], fallback: Box::new(integer(-1)) }
+                }
+                ("place_path", [x]) if atoms.is_some() => bin(Op::Divide, bin(Op::Subtract, integer(-2), x.clone()), integer(1 << 32)),
+                ("place_line", [x]) if atoms.is_some() => {
+                    let n = bin(Op::Subtract, integer(-2), x.clone());
+                    bin(Op::Subtract, n.clone(), bin(Op::Multiply, bin(Op::Divide, n, integer(1 << 32)), integer(1 << 32)))
+                }
+                ("place" | "place_path" | "place_line", _) => return Err(Error::Plan(format!("no SQL for {t}: a place is made of a symbol atom"))),
                 // `core.rr`'s text functors (`strings::functions`): symbols in as text, a symbol result back.
                 (f, items) if let Some((f, kinds, ret)) = super::strings::functions::signature(f) && kinds.len() == items.len() => {
                     use super::strings::functions::Kind;
@@ -1843,6 +2045,9 @@ impl Model {
                     let lv = if let Term::Var(v) = l { Some(v) } else { None };
                     if *op == "=" && lv.is_some_and(|v| !env.contains_key(v)) {
                         let e = sql_term(r, &env, atoms)?;
+                        if partial(r) {
+                            wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(e.clone()) });
+                        }
                         env.insert(lv.expect("a variable").clone(), e);
                     } else if *op == "="
                         && let Some(lv) = lv
@@ -1853,31 +2058,42 @@ impl Model {
                             rv.iter().all(|v| env.contains_key(v))
                         }
                     {
-                        // A split of the bound whole: at the "." a bound part places, else at every "." (`rdl_int`).
-                        // In atoms mode the text is `sym_text`'s, and the parts are interned (`sym_atom`).
+                        // A split of the bound whole, as `@dot` makes it: `"" . w` is `w`, else at the "." a bound
+                        // part places, or at every "." with a part before it (`rdl_int`). In atoms mode the text
+                        // is `sym_text`'s, and the parts are interned (`sym_atom`).
                         let inputs = &self.inputs;
                         let w = inputs.text_of(&env[lv]);
                         let Term::Call(_, parts) = r else { unreachable!() };
                         let (Term::Var(q), Term::Var(x)) = (&parts[0], &parts[1]) else { unreachable!() };
+                        let case = |when: Expr, then: Expr, otherwise: Expr| Expr::Case { branches: vec![(when, then)], fallback: Box::new(otherwise) };
                         if let Some(eq_) = env.get(q).map(|e| inputs.text_of(e)) {
-                            wh.push(eq(
-                                substr(vec![w.clone(), integer(1), bin(Op::Add, length(&eq_), integer(1))]),
-                                bin(Op::Concatenate, eq_.clone(), string(".")),
-                            ));
-                            env.insert(x.clone(), inputs.symbol_of(substr(vec![w, bin(Op::Add, length(&eq_), integer(2))])));
+                            let empty = eq(eq_.clone(), string(""));
+                            let prefix = eq(substr(vec![w.clone(), integer(1), bin(Op::Add, length(&eq_), integer(1))]), bin(Op::Concatenate, eq_.clone(), string(".")));
+                            wh.push(bin(Op::Or, empty.clone(), prefix));
+                            env.insert(x.clone(), inputs.symbol_of(case(empty, w.clone(), substr(vec![w, bin(Op::Add, length(&eq_), integer(2))]))));
                         } else if let Some(ex) = env.get(x).map(|e| inputs.text_of(e)) {
+                            let whole = eq(w.clone(), ex.clone());
                             let negated = Expr::Unary { operator: SqlUnaryOperator::Negate, input: Box::new(length(&ex)) };
-                            wh.push(eq(substr(vec![w.clone(), bin(Op::Subtract, negated, integer(1))]), bin(Op::Concatenate, string("."), ex.clone())));
-                            wh.push(bin(Op::Greater, length(&w), length(&ex)));
+                            let suffix = bin(
+                                Op::And,
+                                eq(substr(vec![w.clone(), bin(Op::Subtract, negated, integer(1))]), bin(Op::Concatenate, string("."), ex.clone())),
+                                bin(Op::Greater, length(&w), bin(Op::Add, length(&ex), integer(1))),
+                            );
+                            wh.push(bin(Op::Or, whole.clone(), suffix));
                             let end = bin(Op::Subtract, bin(Op::Subtract, length(&w), length(&ex)), integer(1));
-                            env.insert(q.clone(), inputs.symbol_of(substr(vec![w, integer(1), end])));
+                            env.insert(q.clone(), inputs.symbol_of(case(whole, string(""), substr(vec![w, integer(1), end]))));
                         } else {
+                            // Position 1 stands for `"" . w`: a "." there has no part before it.
                             let al = a_name();
                             let at = col(&al, "i");
-                            let conds = vec![bin(Op::LessOrEqual, at.clone(), length(&w)), eq(substr(vec![w.clone(), at.clone(), integer(1)]), string("."))];
+                            let first = eq(at.clone(), integer(1));
+                            let conds = vec![
+                                bin(Op::LessOrEqual, at.clone(), call("max", vec![length(&w), integer(1)])),
+                                bin(Op::Or, first.clone(), eq(substr(vec![w.clone(), at.clone(), integer(1)]), string("."))),
+                            ];
                             frm.push((FromItem::cross(Relation::Integers, al), conds));
                             env.insert(q.clone(), inputs.symbol_of(substr(vec![w.clone(), integer(1), bin(Op::Subtract, at.clone(), integer(1))])));
-                            env.insert(x.clone(), inputs.symbol_of(substr(vec![w, bin(Op::Add, at, integer(1))])));
+                            env.insert(x.clone(), inputs.symbol_of(case(first, w.clone(), substr(vec![w, bin(Op::Add, at, integer(1))]))));
                         }
                     } else {
                         let operator = match *op {
@@ -1919,7 +2135,8 @@ impl Model {
                         (AggOp::Sum, Some(o)) => call("coalesce", vec![call("rr_exact_sum", vec![column(o).0]), integer(0)]),
                         // 1 over no rows (`strings::functions::Product`).
                         (AggOp::Product, Some(o)) => call("coalesce", vec![call("rr_product", vec![column(o).0]), integer(1)]),
-                        // `rr_join(sep, value, key, …)` (`strings::functions`) orders and joins text; symbols in as text.
+                        // `rr_join(sep, value, key, …)` (`register_functors`) orders and joins the distinct rows' text;
+                        // symbols in as text.
                         (AggOp::Join { by, sep }, Some(o)) => {
                             let text = |(e, symbol): (Expr, bool)| if symbol { self.inputs.text_of(&e) } else { e };
                             let mut args = vec![string(sep), text(column(o))];
@@ -2066,12 +2283,14 @@ impl Model {
                 Literal::Ast { .. } => return Err(Error::Plan(format!("no SQL for {}", s.lit))),
             }
         }
-        let columns = head
-            .args
-            .iter()
-            .enumerate()
-            .map(|(i, t)| Ok((sql_term(t, &env, atoms)?, Some(format!("c{i}")))))
-            .collect::<Result<Vec<_>>>()?;
+        let mut columns = Vec::new();
+        for (i, t) in head.args.iter().enumerate() {
+            let e = sql_term(t, &env, atoms)?;
+            if partial(t) {
+                wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(e.clone()) });
+            }
+            columns.push((e, Some(format!("c{i}"))));
+        }
         // A safe scalar rule (global aggregates, ground comparisons, or Boolean negation)
         // evaluates once. SQLite permits its SELECT and WHERE without an outer FROM.
         let (from, conds): (Vec<FromItem>, Vec<Vec<Expr>>) = frm.into_iter().unzip();
@@ -2490,7 +2709,7 @@ impl Run<'_, '_> {
 /// Adds a native join's step counts ("in:out" per step, `set_fixpoint_steps`) to the observed fanouts of the binding
 /// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
 /// skipped.
-fn observe(stats: &mut Stats, order: &[Step], counts: &[(i64, i64)]) {
+fn observe(stats: &mut Stats, rule: u64, order: &[Step], counts: &[(i64, i64)]) {
     let mut bound = BTreeSet::new();
     for (i, (s, &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
         if i > 0
@@ -2498,7 +2717,7 @@ fn observe(stats: &mut Stats, order: &[Step], counts: &[(i64, i64)]) {
             && !l.neg
             && n_in != 0
         {
-            let o = stats.obs.entry(atom_sig(l, &bound)).or_insert([0, 0]);
+            let o = stats.obs.entry((rule, atom_sig(l, &bound))).or_insert([0, 0]);
             o[0] += n_in;
             o[1] += n_out;
         }
@@ -2563,7 +2782,11 @@ impl LiveRel {
 /// columns' distinct counts and fanouts, which otherwise start at 1 until the first replan.
 fn prior_stats(model: &mut Model, prog: &Program, r: &str) -> Option<f64> {
     let width = prog.decls.get(r)?.len();
-    let cols: Vec<[i64; 4]> = (0..width).map(|c| model.stats.col.get(&(r.to_owned(), sql_col(r, c))).copied()).collect::<Option<_>>()?;
+    let measured = |of: &str| (0..width).map(|c| model.stats.col.get(&(of.to_owned(), sql_col(of, c))).copied()).collect::<Option<Vec<[i64; 4]>>>();
+    // A maintained relation starts as its old rows (`rel r … base r__old r__del`), which are measured under that
+    // name: without them every column read as one value, so a bound column narrowed nothing (`cfn($c, $e, $f)` with
+    // `$c` bound priced as all 2,139 rows, and the plan took cross products of `rpvar` and `attr_of__plus` instead).
+    let cols = measured(r).or_else(|| measured(&format!("{r}__old")))?;
     let rows = cols.first().map_or(0, |m| m[0]);
     for (c, [n, ndv, sq, _]) in cols.into_iter().enumerate() {
         model.ndv.insert((r.to_owned(), c), ndv.max(1) as f64);
@@ -2712,7 +2935,12 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
                     by.iter().for_each(|b| d.str(b));
                     d.str(sep);
                 }
-                other => d.u64(match other { AggOp::Count => 0, AggOp::Min => 1, AggOp::Max => 2, _ => 3 }),
+                // Each aggregate its own tag: `sum` and `product` over one atom are different values.
+                AggOp::Count => d.u64(0),
+                AggOp::Min => d.u64(1),
+                AggOp::Max => d.u64(2),
+                AggOp::Sum => d.u64(3),
+                AggOp::Product => d.u64(5),
             }
             d.str(over.as_deref().unwrap_or("\u{0}"));
             digest_atom(d, atom);
@@ -2968,7 +3196,10 @@ impl Run<'_, '_> {
             // A relation this program part does not declare (an input view of the whole) is not joined natively: SQL
             // reads it.
             let decl = prog.decls.get(&l.rel)?;
-            let types: String = keep.iter().map(|&c| sym_char(&self.model.inputs, &decl[c].1)).collect();
+            let types: String = keep
+                .iter()
+                .map(|&c| sym_char(&self.model.inputs, &decl.get(c).unwrap_or_else(|| panic!("{} is declared with {} columns and read as {l}", l.rel, decl.len())).1))
+                .collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
             let mut sel = self.model.relation(prog, projected.map_or(&l.rel, |(base, _)| base), false).render();
             if !wheres.is_empty() {
@@ -3153,11 +3384,19 @@ impl Run<'_, '_> {
                         return None;
                     }
                     let sym = |c: usize| u8::from(prog_types(prog, &a.rel).get(c).copied() == Some("sym"));
+                    // An input is read without its constant columns (`atom`): a column's place among those read.
+                    let read = |c: usize| {
+                        if scc.contains(&a.rel) || native_rels.contains(&a.rel) {
+                            c
+                        } else {
+                            c - a.args[..c].iter().filter(|t| matches!(t, Term::Int(_) | Term::Str(_))).count()
+                        }
+                    };
                     let xc = column(o)?;
                     let mut bycols = Vec::new();
                     for b in by.iter().filter(|b| !slots.contains_key(*b)) {
                         let c = column(b)?;
-                        bycols.push(format!("{c}:{}", sym(c)));
+                        bycols.push(format!("{}:{}", read(c), sym(c)));
                     }
                     let mut a = a.clone();
                     for v in &local {
@@ -3167,7 +3406,7 @@ impl Run<'_, '_> {
                     let (sc, toks) = atom(&a, None, &mut slots)?;
                     let sep = const_tok(&Term::Str(sep.clone()))?;
                     let bylist = if bycols.is_empty() { "-".to_owned() } else { bycols.join(",") };
-                    lines.push(format!("strjoin {sc} {} {xc}:{} {bylist} {sep} {}", toks.join(" "), sym(xc), tok(&Term::Var(var.clone()), &mut slots)?));
+                    lines.push(format!("strjoin {sc} {} {}:{} {bylist} {sep} {}", toks.join(" "), read(xc), sym(xc), tok(&Term::Var(var.clone()), &mut slots)?));
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
                     let tn = tok(&Term::Var(n.clone()), &mut slots)?;
@@ -3252,8 +3491,49 @@ impl Run<'_, '_> {
             rules.iter().filter_map(|r| survivors(r, scc, native_rels).map(|od| (r.head.rel.clone(), od))).collect()
         };
         let rules: Vec<&Rule> = rules.into_iter().filter(|r| !(based.contains_key(&r.head.rel) && survivors(r, scc, native_rels).is_some())).collect();
+        // A rule that joins a relation of a lower stratum holding no rows derives nothing, so it is neither planned
+        // nor given to the engine. In a maintained run most delta rules read a delta that is empty this time, and
+        // planning, keying and specifying them was work in the program's size, not the delta's (0090 step 5,
+        // 0094 §4). Only a positive atom counts: a negation of it holds, and an aggregate over no rows is a row.
+        // A relation a request may fill during the stratum is never taken as empty. `RERAIL_KEEP_EMPTY_JOINS` runs
+        // them all (to measure what leaving them out saves).
+        let rules: Vec<&Rule> = if std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_some() { rules } else {
+            let fillable: BTreeSet<&str> = super::answers::produced(prog).into_iter().flat_map(|(p, r)| [p, r]).collect();
+            let mut empty: HashMap<String, bool> = HashMap::new();
+            let mut is_empty = |rel: &str| -> bool {
+                if scc.contains(rel) || fillable.contains(rel) || !native_rels.contains(rel) {
+                    return false;
+                }
+                if let Some(&e) = empty.get(rel) {
+                    return e;
+                }
+                let e = super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0);
+                empty.insert(rel.to_owned(), e);
+                e
+            };
+            let before = rules.len();
+            let kept: Vec<&Rule> = rules.into_iter().filter(|r| !r.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && is_empty(&a.rel)))).collect();
+            if before > kept.len() {
+                super::profile::decision("rules over empty relations", || format!("{} of {before} rules not run: each joins a relation of a lower stratum that has no rows", before - kept.len()));
+            }
+            kept
+        };
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
         let types = |r: &str| typed[r].clone();
+        // Nothing left to run (every rule joined an empty relation, and no relation of the stratum has facts): the
+        // stratum's relations are held with no rows, and no component is specified or opened. A relation with facts
+        // (`d("a"). d(y) :- d(x), e(x, y).` with `e` empty) holds its facts, which the component seeds.
+        // `RERAIL_KEEP_EMPTY_JOINS` opens it as before.
+        let asks = scc.iter().any(|r| prog.answers.contains_key(r) || super::answers::produced(prog).contains_key(r.as_str()));
+        let facts = scc.iter().any(|r| prog.facts.get(r).is_some_and(|rows| !rows.is_empty()));
+        if rules.is_empty() && based.is_empty() && gates.is_empty() && !asks && !facts && std::env::var_os("RERAIL_KEEP_EMPTY_JOINS").is_none() {
+            for r in &rels {
+                super::native::component::hold_empty(self.db, r, types(r).into_bytes());
+            }
+            super::profile::stratum(&stratum_key(scc), "native set engine", || "every rule joins an empty relation: held empty, no component opened".to_owned());
+            self.native_rels.extend(scc.iter().cloned());
+            return Ok(true);
+        }
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
         let spec_span = super::profile::span(|| "spec".into());
@@ -3283,6 +3563,8 @@ impl Run<'_, '_> {
             *est.entry(h.as_str()).or_default() += n as f64;
         }
         let mut orders = Vec::new();
+        // Each order's rule, for the fanouts its runs observe (`obs_rule`).
+        let mut order_rules: Vec<u64> = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
         // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
         let planning = |r: &Rule, what: &str| {
@@ -3295,6 +3577,8 @@ impl Run<'_, '_> {
         let rule_no = |r: &Rule| numbers.get(&(r as *const Rule)).copied();
         // Per seed, then per probe: (kind, rule, plan as EXPLAIN shows it, planning CPU, replans).
         let mut explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)> = Vec::new();
+        // Its shape and planned work, for where it runs (`placement`, decision 0095).
+        let mut shape = placement::Shape::default();
         // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
         let missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
             let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
@@ -3310,9 +3594,10 @@ impl Run<'_, '_> {
         for r in &seeds {
             let span = planning(r, "plan");
             let t0 = if profiling { super::profile::now() } else { 0.0 };
-            let ((order, _, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
+            let ((order, work, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
+            shape.add(&order, &r.head.args, work, false);
             let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
                 if answering {
                     let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|a| !scc.contains(a)).collect();
@@ -3331,6 +3616,7 @@ impl Run<'_, '_> {
             *est.entry(r.head.rel.as_str()).or_default() += rows;
             lines.push(format!("seed {} {}", ri[&r.head.rel], hex(&spec)));
             orders.push(order);
+            order_rules.push(obs_rule(&r.head, &r.body));
         }
         // A stratum's relations were made empty by `run` unless the program states facts of them or a SQL seed derived
         // some. A produced input (decision 0065 §2a) starts from its rows where it is.
@@ -3362,8 +3648,9 @@ impl Run<'_, '_> {
             for (ai, a) in recursive(&r.body, scc) {
                 let _span = planning(r, "plan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
-                let ((order, _, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
+                let ((order, work, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
+                shape.add(&order, &r.head.args, work, true);
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
                     if answering {
@@ -3422,7 +3709,16 @@ impl Run<'_, '_> {
             let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n"), lines.join("\n")));
         }
         let started = std::time::Instant::now();
+        // Where it runs (decision 0095). The device has no relational form yet, so every stratum runs here; the
+        // placement is recorded with the CPU it took, for the profile's "Placement" section.
+        let placed = placement::place(&shape);
+        let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s } else { 0.0 };
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
+        // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
+        let lab = super::native::component::lab::wanted(&name, shape.work)
+            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &lines.join("\n"), &path));
+        // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
+        let mut timed: Vec<f64> = Vec::new();
         self.fx().open(&lines.join("\n"))?;
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
@@ -3441,17 +3737,26 @@ impl Run<'_, '_> {
                 eprintln!("    {name} probe {k}: {}", shown(o).join(" , "));
             }
         }
+        order_rules.extend(probes.iter().map(|p| obs_rule(&p.0.head, &p.0.body)));
         let mut chunk: i64 = 1;
         loop {
             let f: String = self.fx().run(&name, chunk as u32)?;
             let f: Vec<&str> = f.split_whitespace().collect();
+            if let Some(per) = f.get(7).filter(|_| f.len() == 9 && super::profile::on()) {
+                for (k, item) in per.split(',').enumerate() {
+                    if timed.len() <= k {
+                        timed.resize(k + 1, 0.0);
+                    }
+                    timed[k] += item.rsplit(':').next().and_then(|c| c.parse::<f64>().ok()).unwrap_or(0.0) / 1e3;
+                }
+            }
             if f.last() == Some(&"2") {
                 answer_pending(self.db, self.model.inputs.atoms.is_some(), &mut self.answer, &mut self.answered, &name, scc)?;
                 continue;
             }
             let steps = self.fx().steps(&name)?;
-            for (o, line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&steps) {
-                observe(&mut self.model.stats, o, line);
+            for ((o, &rule), line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&order_rules).zip(&steps) {
+                observe(&mut self.model.stats, rule, o, line);
             }
             for (k, line) in steps.iter().enumerate() {
                 if counted.len() <= k {
@@ -3525,11 +3830,16 @@ impl Run<'_, '_> {
             }
             chunk *= 2;
         }
+        if profiling {
+            let (u, s) = corpus::thread_usage();
+            let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();
+            super::profile::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at);
+        }
         if super::profile::on() {
             let empty = Vec::new();
             let kinds = seeds.iter().map(|r| format!("seed {}", r.head)).chain(probes.iter().map(|(r, ai, _)| format!("join {} (delta at {ai})", r.head)));
             for ((k, o), kind) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate().zip(kinds) {
-                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty));
+                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0));
             }
             // After the native plans: they are charged to this stratum's `engine run (joins)` by the current span.
             let _record = super::profile::span(|| "profile record".into());
@@ -3582,6 +3892,9 @@ impl Run<'_, '_> {
         {
             let _close = super::profile::span(|| "engine close".into());
             self.fx().close(&name)?;
+        }
+        if let Some(capture) = lab {
+            super::native::component::lab::capture_outputs(self.db, capture);
         }
         self.native_rels.extend(scc.iter().cloned());
         Ok(true)
@@ -4128,6 +4441,99 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         }
     }
     Ok(views)
+}
+
+/// core.rr's functors whose meaning is W's, which `strings::functions` does not give: `@replace_all(s, re, by)`, each
+/// match of `re` in `s` replaced by `by`, `$1`
+/// and `${name}` its groups, as W's `replace` transform does (`matcher::transform::replace`); `@rx_replace(s, re, by)`
+/// the same as W's SQL `rx_replace` does it (`waves::relational::functions`: the `regex` crate's `replace_all`, `$1`,
+/// `$name`, `${name}` and `$$` as it reads them); `@ed25519_ok(key, message, sig)`, 1 where `crypto::ed25519_ok`
+/// holds, else 0; `@nfkc(s)`, `s` under Unicode NFKC, as CPython normalizes an identifier (PEP 3131: the parser's
+/// `unicodedata.normalize("NFKC", …)` of each non-ASCII one; `identifier::nfkc`); `@py_repr(s)`, CPython's `repr(s)` of
+/// the str `s` (`cpython::value::str_repr`: W's `repr_unparse` is `@py_repr(@py_unparse(n))`). NULL gives NULL
+/// (`rr_ed25519_ok`: 0). `rr_join(sep, x, k, …)` is `join`'s aggregate: the distinct
+/// `(k, …, x)` rows' `x` ordered by `k, …` then `x` (numbers by value, then text by code point, as `sorted()` orders a
+/// list of one type), joined by `sep`; `""` over no rows.
+pub(in crate::code_rule_dsl) fn register_functors(db: &Connection) -> rusqlite::Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    fn compiled(f: &str, re: &str) -> rusqlite::Result<regex::Regex> {
+        static REGEXES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<regex::Regex>>>> = std::sync::LazyLock::new(Default::default);
+        let regex = REGEXES.lock().expect("the regex cache").entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok()).clone();
+        regex.ok_or_else(|| rusqlite::Error::UserFunctionError(format!("@{f}: bad regex {re:?}").into()))
+    }
+    let texts = |ctx: &rusqlite::functions::Context<'_>| -> rusqlite::Result<Option<[String; 3]>> {
+        Ok(match (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?, ctx.get::<Option<String>>(2)?) {
+            (Some(a), Some(b), Some(c)) => Some([a, b, c]),
+            _ => None,
+        })
+    };
+    db.create_scalar_function(c"rr_replace_all", 3, flags, move |ctx| {
+        let Some([s, re, by]) = texts(ctx)? else { return Ok(None) };
+        Ok(Some(crate::code_rule_dsl::matcher::transform::replace(&s, &compiled("replace_all", &re)?, &by)))
+    })?;
+    db.create_scalar_function(c"rr_rx_replace", 3, flags, move |ctx| {
+        let Some([s, re, by]) = texts(ctx)? else { return Ok(None) };
+        Ok(Some(compiled("rx_replace", &re)?.replace_all(&s, by.as_str()).into_owned()))
+    })?;
+    db.create_scalar_function(c"rr_ed25519_ok", 3, flags, move |ctx| {
+        Ok(texts(ctx)?.is_some_and(|[key, message, sig]| super::crypto::ed25519_ok(&key, &message, &sig)))
+    })?;
+    db.create_scalar_function(c"rr_nfkc", 1, flags, |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::code_rule_dsl::identifier::nfkc(&s).into_owned())))?;
+    db.create_scalar_function(c"rr_py_repr", 1, flags, |ctx| {
+        Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::code_rule_dsl::cpython::value::str_repr(&crate::code_rule_dsl::cpython::value::PyStr::Text(s))))
+    })?;
+    db.create_aggregate_function(c"rr_join", -1, flags, OrderedJoin)
+}
+
+/// `rr_join`'s rows: each one's order key (its `k, …`, then `x`) and `x`'s text.
+struct OrderedJoin;
+impl rusqlite::functions::Aggregate<(String, Vec<(Vec<rusqlite::types::Value>, String)>), String> for OrderedJoin {
+    fn init(&self, ctx: &mut rusqlite::functions::Context<'_>) -> rusqlite::Result<(String, Vec<(Vec<rusqlite::types::Value>, String)>)> {
+        Ok((ctx.get::<Option<String>>(0)?.unwrap_or_default(), Vec::new()))
+    }
+    fn step(&self, ctx: &mut rusqlite::functions::Context<'_>, acc: &mut (String, Vec<(Vec<rusqlite::types::Value>, String)>)) -> rusqlite::Result<()> {
+        use rusqlite::types::Value;
+        let x: Value = ctx.get(1)?;
+        let text = match &x {
+            Value::Text(s) => s.clone(),
+            Value::Integer(i) => i.to_string(),
+            Value::Real(r) => r.to_string(),
+            Value::Null => return Ok(()),
+            Value::Blob(_) => return Err(rusqlite::Error::UserFunctionError("join: a blob".into())),
+        };
+        let mut key: Vec<Value> = (2..ctx.len()).map(|i| ctx.get(i)).collect::<rusqlite::Result<_>>()?;
+        key.push(x);
+        acc.1.push((key, text));
+        Ok(())
+    }
+    fn finalize(&self, _: &mut rusqlite::functions::Context<'_>, acc: Option<(String, Vec<(Vec<rusqlite::types::Value>, String)>)>) -> rusqlite::Result<String> {
+        use rusqlite::types::Value;
+        use std::cmp::Ordering;
+        let Some((sep, mut rows)) = acc else { return Ok(String::new()) };
+        // Numbers by value before text by code point (UTF-8 byte order is code point order).
+        fn value(a: &Value, b: &Value) -> Ordering {
+            let number = |v: &Value| match v {
+                Value::Integer(i) => Some(*i as f64),
+                Value::Real(r) => Some(*r),
+                _ => None,
+            };
+            match (a, b) {
+                (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+                (Value::Text(x), Value::Text(y)) => x.cmp(y),
+                _ => match (number(a), number(b)) {
+                    (Some(x), Some(y)) => x.total_cmp(&y),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                },
+            }
+        }
+        let key = |a: &[Value], b: &[Value]| a.iter().zip(b).map(|(x, y)| value(x, y)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal);
+        rows.sort_by(|a, b| key(&a.0, &b.0));
+        rows.dedup_by(|a, b| key(&a.0, &b.0).is_eq());
+        Ok(rows.iter().map(|(_, x)| x.as_str()).collect::<Vec<_>>().join(&sep))
+    }
 }
 
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>, mut hooks: Hooks<'_>) -> Result<Outcome> {

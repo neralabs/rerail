@@ -43,15 +43,15 @@ export const shownRules = rules => sortPageRules(rules.filter(matches), ui.sort)
 export const runningOf = rules => rules.filter(isRunning).length;
 
 /**
- * The whole-pack switch over `rules`: how many are switched on, of how many, and its `aria-checked` — "true" when every
- * one is on, "false" when none is (or there are none), else "mixed".
+ * The whole-pack switch over `rules`: how many are switched on, of how many, and its `aria-checked`. Binary: "true"
+ * only when every one is on (and there is one), else "false"; the on-count chip says how many are on.
  */
 export function packSwitch(rules) {
   const on = rules.filter(r => r.enabled).length, total = rules.length;
-  return { on, total, state: on === 0 ? "false" : on === total ? "true" : "mixed" };
+  return { on, total, state: total > 0 && on === total ? "true" : "false" };
 }
 
-/** What a click on the whole-pack switch sets: a mixed or all-off pack turns every rule on; an all-on pack turns them off. */
+/** What a click on the whole-pack switch sets: off turns the rest on; on turns them all off. */
 export const switchTurnsOn = state => state !== "true";
 
 /* ---------- the catalog ---------- */

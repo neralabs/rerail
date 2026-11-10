@@ -1,0 +1,625 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up045-non-pep604-annotation-optional",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write optional types as X | None instead of Optional[X]; the union operator is shorter and needs no typing import.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "future-seen": {
+            "inside": {
+              "stopBy": "end",
+              "follows": {
+                "stopBy": "end",
+                "kind": "future_import_statement",
+                "has": {
+                  "stopBy": "end",
+                  "kind": "dotted_name",
+                  "resolves": {
+                    "imported": [
+                      "__future__.annotations"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "annotation-root": {
+            "kind": "type",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "any": [
+                    {
+                      "kind": "typed_parameter"
+                    },
+                    {
+                      "kind": "typed_default_parameter"
+                    },
+                    {
+                      "kind": "assignment"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "return_type",
+                  "kind": "function_definition"
+                }
+              }
+            ]
+          },
+          "optional-head": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.Optional",
+                    "typing_extensions.Optional",
+                    "_typeshed.Optional"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "optional-head"
+                }
+              }
+            ]
+          },
+          "named-tuple-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.NamedTuple",
+                "typing_extensions.NamedTuple",
+                "_typeshed.NamedTuple"
+              ]
+            }
+          },
+          "named-tuple": {
+            "any": [
+              {
+                "matches": "named-tuple-ref"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "named-tuple"
+                }
+              }
+            ]
+          },
+          "plain-string": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[a-zA-Z]*[bBfFtT]"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "regex": "^[a-zA-Z]*[bBfFtT]"
+                  }
+                }
+              }
+            ]
+          },
+          "quoted-element": {
+            "any": [
+              {
+                "matches": "plain-string"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "tuple"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "quoted-element"
+                }
+              }
+            ]
+          },
+          "starred-element": {
+            "any": [
+              {
+                "kind": "list_splat"
+              },
+              {
+                "kind": "splat_type"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "tuple"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "starred-element"
+                }
+              }
+            ]
+          },
+          "plain-slice": {
+            "not": {
+              "any": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "starred-element"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "named-tuple"
+                  },
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "quoted-slice": {
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "quoted-element"
+            }
+          },
+          "optional-subscript": {
+            "kind": "subscript",
+            "matches": "plain-slice",
+            "has": {
+              "field": "value",
+              "matches": "optional-head"
+            }
+          },
+          "optional-generic": {
+            "kind": "generic_type",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "identifier",
+                  "matches": "optional-head"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "matches": "plain-slice"
+                }
+              }
+            ]
+          },
+          "optional-node": {
+            "any": [
+              {
+                "matches": "optional-subscript"
+              },
+              {
+                "matches": "optional-generic"
+              }
+            ]
+          },
+          "quoted-optional": {
+            "any": [
+              {
+                "kind": "subscript",
+                "matches": "quoted-slice"
+              },
+              {
+                "kind": "generic_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter",
+                  "matches": "quoted-slice"
+                }
+              }
+            ]
+          },
+          "type-checking-test": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^TYPE_CHECKING$"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.TYPE_CHECKING",
+                    "typing_extensions.TYPE_CHECKING",
+                    "_typeshed.TYPE_CHECKING"
+                  ]
+                }
+              }
+            ]
+          },
+          "in-type-checking": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "consequence",
+                "kind": "if_statement",
+                "has": {
+                  "field": "condition",
+                  "matches": "type-checking-test"
+                }
+              }
+            }
+          },
+          "in-annotation": {
+            "inside": {
+              "stopBy": "end",
+              "matches": "annotation-root"
+            }
+          },
+          "in-local-annotation": {
+            "inside": {
+              "stopBy": "end",
+              "matches": "annotation-root",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "assignment",
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "function_definition"
+                }
+              }
+            }
+          },
+          "typing-context": {
+            "any": [
+              {
+                "matches": "in-type-checking"
+              },
+              {
+                "matches": "in-local-annotation"
+              },
+              {
+                "matches": "in-type-param"
+              },
+              {
+                "matches": "future-seen",
+                "all": [
+                  {
+                    "matches": "in-annotation"
+                  }
+                ]
+              }
+            ]
+          },
+          "optional-in-string": {
+            "matches": "string-annotation",
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "optional-node",
+                    "pattern": "$NAME"
+                  },
+                  {
+                    "matches": "optional-in-string"
+                  }
+                ]
+              }
+            }
+          },
+          "string-annotation": {
+            "kind": "string",
+            "any": [
+              {
+                "not": {
+                  "regex": "\\\\"
+                }
+              },
+              {
+                "regex": "^[a-zA-Z]*[rR]"
+              }
+            ]
+          },
+          "in-type-param": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "type_alias_statement"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "type_parameter",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "runtime-optional": {
+            "any": [
+              {
+                "matches": "optional-node",
+                "pattern": "$NAME",
+                "any": [
+                  {
+                    "not": {
+                      "matches": "quoted-optional"
+                    }
+                  },
+                  {
+                    "matches": "typing-context"
+                  }
+                ]
+              },
+              {
+                "matches": "optional-in-string"
+              }
+            ]
+          },
+          "quoted-annotation-optional": {
+            "matches": "optional-node",
+            "pattern": "$NAME",
+            "all": [
+              {
+                "matches": "quoted-optional"
+              },
+              {
+                "matches": "in-annotation"
+              },
+              {
+                "not": {
+                  "matches": "typing-context"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "optional-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "when": {
+            "pythonVersion": {
+              "min": "3.10"
+            }
+          },
+          "rule": {
+            "matches": "runtime-optional"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "each": "NAME",
+        "code": "UP045",
+        "message": "Write `Optional[X]` as `X | None`, and drop the `Optional` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP045"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "optional-annotation-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "runtime-optional"
+              },
+              {
+                "matches": "quoted-annotation-optional"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "each": "NAME",
+        "code": "UP045",
+        "message": "Write `Optional[X]` as `X | None`, and drop the `Optional` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP045"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "optional-annotation-deferred",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "when": {
+            "pythonVersion": {
+              "min": "3.14"
+            }
+          },
+          "rule": {
+            "matches": "quoted-annotation-optional"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "each": "NAME",
+        "code": "UP045",
+        "message": "Write `Optional[X]` as `X | None`, and drop the `Optional` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP045"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "optional-annotation-future",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          },
+          "when": {
+            "pythonVersion": {
+              "max": "3.9"
+            }
+          },
+          "rule": {
+            "matches": "future-seen",
+            "any": [
+              {
+                "matches": "optional-node",
+                "pattern": "$NAME",
+                "all": [
+                  {
+                    "matches": "in-annotation"
+                  }
+                ]
+              },
+              {
+                "matches": "optional-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "each": "NAME",
+        "code": "UP045",
+        "message": "Write `Optional[X]` as `X | None`, and drop the `Optional` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP045"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

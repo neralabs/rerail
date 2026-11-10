@@ -1,0 +1,141 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-restricted-require",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Do not require the modules this repository restricts (the restricted option).",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "options",
+      "define": {
+        "options": {
+          "restricted": {
+            "type": "array",
+            "items": "string",
+            "default": [],
+            "description": "Modules to restrict: regular expressions, each matching a whole module name (the specifier up to its first !)."
+          }
+        }
+      }
+    },
+    {
+      "id": "restricted",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
+          "utils": {
+            "require-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^require$",
+                  "resolves": {
+                    "global": [
+                      "require"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "require-callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "field": "arguments",
+                "kind": "call_expression",
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "template_string"
+                  }
+                },
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "matches": "require-callee"
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "require-callee"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^resolve$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "value": {
+              "regex": {
+                "$option": "restricted",
+                "map": "(?:{})",
+                "join": "|",
+                "template": "^(?:{})(?:!.*)?$"
+              }
+            },
+            "not": {
+              "value": {
+                "regex": "^(?:!.*)?$"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-restricted-require",
+        "message": "This module is restricted in this repository; do not require it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-restricted-require"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

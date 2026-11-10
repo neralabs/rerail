@@ -7,39 +7,6 @@
     "value",
     "suppression"
   ],
-  "corpora": [
-    {
-      "name": "shadcn-ui",
-      "repository": "https://github.com/shadcn-ui/ui",
-      "commit": "0e3abd65a97707f4a9cc3ed07bf5006e1cb67b13",
-      "paths": [
-        "apps/v4"
-      ],
-      "exclude": []
-    },
-    {
-      "name": "next-examples",
-      "repository": "https://github.com/vercel/next.js",
-      "commit": "6194d642b6fd743437da21dac3c720a587e6b9b2",
-      "paths": [
-        "examples"
-      ],
-      "exclude": []
-    },
-    {
-      "name": "commerce",
-      "repository": "https://github.com/vercel/commerce",
-      "commit": "3761e52e60df9c6a316e067dbfd7032e494d3634",
-      "paths": [
-        "app",
-        "components",
-        "lib",
-        "next.config.ts",
-        "postcss.config.mjs"
-      ],
-      "exclude": []
-    }
-  ],
   "tools": [
     {
       "name": "eslint-plugin-next",

@@ -1,0 +1,138 @@
+// data-layer-regex-sql-parsing, hand-written (decision 0043): the nine clauses category-0 … category-8 of
+// candidates/rules-ast/data-layer-regex-sql-parsing.json. Options read from the run (option_on("sourceGate"));
+// oracleAnalyzer is not read by these clauses.
+//
+// Each clause: a call `re.<method>(…)` whose argument list's first named child that is not a comment (nthChild 1,
+// ofRule not comment) matches the utility regex-pattern-<k>, in a syntactically valid module whose text matches
+// the source gate. regex-pattern-<k> is, at a node x:
+//   A1. x a str literal: a `string` without an f prefix, or a concatenated_string without an f-string part, not
+//       itself a part of a concatenated_string, whose value is a str; the category's tests over that value;
+//   A2. x an f-string (not a part), a concatenated_string with an f-string part, or a format_specifier: the
+//       category's tests over W's `parse: pythonFString` root value with interpolation marker "{...}" (the decoded
+//       literal text, each interpolation replaced by the marker, a debug field's `expr =` source kept as literal);
+//   B.  x a parenthesized_expression with a child matching regex-pattern-<k> (recursive).
+// The utilities regex-false-positive, regex-error-message and regex-sql-syntax are `value.regex` tests on the same
+// node, so in A1 and A2 every test is a regex over one string, the value or the template (rsp_text). The category
+// tests are mutually exclusive by construction (each excludes the earlier ones); under regex-sql-syntax, which
+// every category from 1 on requires, `not (sql-syntax and X)` is `not X`, which is how they are written here.
+// The regexes are the policy's, verbatim (W's value.regex reads Rust `regex` syntax, as `match` does). W's regexes
+// search; `match` is whole-string, so each is `(?s:.*)(?:R)(?s:.*)` (the `(?s:…)` groups keep R's own `.` as written).
+//
+// A2 reads fstring_template(x, "{...}", v), W's pythonFString root value with that marker; it has no row where
+// W's parse gives no tree, as W's parse stage then fails. A format_specifier host is unreachable: x is a call's
+// first argument or a parenthesized_expression's child, which a format_specifier never is, so leaving it out is
+// exact.
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_on(name: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// ---- the string a candidate is tested on ----
+// A `string` whose node text matches `(?i)^[rub]*f`: its prefix letters (lowercased in strprefix) are r, u, b, f,
+// so the regex holds exactly when the prefix holds an `f`.
+.decl rsp_fstr(x: node)
+rsp_fstr(x) :- node(_, x, "string", _, _), strprefix(x, p), contains("f", p).
+// `inside concatenated_string, stopBy neighbor`: the parent is one.
+.decl rsp_part(x: node)
+rsp_part(x) :- child(c, x, _), node(_, c, "concatenated_string", _, _).
+// `has string (f), stopBy neighbor`: a concatenated_string with an f-string part.
+.decl rsp_fparts(x: node)
+rsp_fparts(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), rsp_fstr(s).
+.decl rsp_text(x: node, v: symbol)
+// A1: a str literal's value (W's `value: {type: str}`, then `value.regex` over it).
+rsp_text(x, v) :- node(_, x, "string", _, _), !rsp_fstr(x), !rsp_part(x), value(x, v), value_type_of(x, "str").
+rsp_text(x, v) :- node(_, x, "concatenated_string", _, _), !rsp_fparts(x), !rsp_part(x), value(x, v), value_type_of(x, "str").
+// A2: an f-string host's template (W's `parse: {grammar: pythonFString, interpolation: "{...}"}`, then
+// `value.regex` over the root's value).
+.decl rsp_fhost(x: node)
+rsp_fhost(x) :- rsp_fstr(x), !rsp_part(x).
+rsp_fhost(x) :- rsp_fparts(x).
+rsp_text(x, v) :- rsp_fhost(x), fstring_template(x, "{...}", v).
+// B: through parentheses.
+.decl rsp_str(x: node, v: symbol)
+rsp_str(x, v) :- rsp_text(x, v).
+rsp_str(x, v) :- node(_, x, "parenthesized_expression", _, _), child(x, y, _), rsp_str(y, v).
+
+// ---- the tests, over the strings tested ----
+.decl rsp_tested(v: symbol)
+rsp_tested(v) :- rsp_str(_, v).
+.decl rsp_fp(v: symbol)  // regex-false-positive
+rsp_fp(v) :- rsp_tested(v), match("(?s:.*)(?:(?:(?i:-----BEGIN))|(?:(?i:-----END))|(?:(?i:File\\\\s\\+\"))|(?:(?i:at\\\\s\\+line))|(?:\\^\\s*sys_)|(?:\\^\\s*\\w+_embeddings\\$)|(?:Invalid ID value)|(?:internal\\|prod\\|staging)|(?:\\\\.internal\\\\b)|(?:(?i:collection))|(?:(?i:branch\\\\s))|(?:(?i:revision\\\\s))|(?:\\\\bRow\\\\b)|(?:ns not found)|(?:field not found|unknown field)|(?:(?i:api\\[_\\-\\]\\?key))|(?:(?i:api_key))|(?:(?i:secret\\[_\\-\\]\\?key))|(?:(?i:secret_key))|(?:(?i:password|passwd|pwd))|(?:(?i:token\\[\\\\\"))|(?:(?i:bearer\\\\s))|(?:(?i:host\\|password\\|user\\|pwd\\|passwd\\|secret\\|token\\|key\\|auth))|(?:\\[SQL statement\\]|\\[table\\]|\\[column\\])|(?:table\\\\s\\+\\[)|(?:column\\\\s\\+\\[)|(?:field\\\\s\\+\\[)|(?:mode=\\[?\\^?\\&?\\]?\\*?$))(?s:.*)", v).
+.decl rsp_err(v: symbol)  // regex-error-message
+rsp_err(v) :- rsp_tested(v), match("(?s:.*)(?:(?:(?i:no such table))|(?:(?i:no such column))|(?:(?i:Unknown column))|(?:(?i:Unknown table))|(?:(?i:does not exist))|(?:(?i:not found))|(?:(?i:relation.*\\\"))|(?:(?i:Table\\\\s\\+'))|(?:(?i:column\\\\s\\+\\\"))|(?:(?i:table not found)))(?s:.*)", v).
+.decl rsp_sql(v: symbol)  // regex-sql-syntax
+rsp_sql(v) :- rsp_tested(v), match("(?s:.*)(?:(?:(?i:\\\\b(?:SELECT|INSERT|UPDATE|DELETE)\\\\b))|(?:(?i:\\bSELECT\\b.*\\bFROM\\b))|(?:(?i:\\b(?:SELECT|INSERT|UPDATE|DELETE)\\b))|(?:(?i:\\b(?:DROP|TRUNCATE|ALTER|CREATE)\\b.*\\bTABLE\\b))|(?:(?i:\\b(?:DROP|TRUNCATE|ALTER)\\b))|(?:(?i:\\bFROM\\\\s))|(?:(?i:\\bINTO\\\\s))|(?:(?i:\\bJOIN\\\\s))|(?:(?i:\\bWHERE\\\\s))|(?:(?i:\\bSET\\\\s))|(?:(?i:ON\\s+(?:DELETE|UPDATE)\\s+))|(?:(?i:ON DELETE))|(?:(?i:ON UPDATE))|(?:(?i:\\\\bBEFORE\\\\b))|(?:(?i:\\\\bAFTER\\\\b))|(?:(?i:INSTEAD\\\\s\\+OF))|(?:(?i:INSTEAD\\s+OF))|(?:(?i:WHEN.*BEGIN))|(?:(?i:CHECK\\\\s\\*\\\\))|(?:(?i:\\bCHECK\\s*\\())|(?:(?i:json_valid))|(?:(?i:=\\s*ANY\\s*\\\\?\\())|(?:(?i:\\bIN\\s*\\\\?\\())|(?:--\\[\\\\?\\^)|(?:/\\\\\\*)|(?:(?:^|[^%])%s)|(?:\\\\\\$\\\\d)|(?:\\\\bIN\\\\s\\*\\\\)|(?:(?i:\\\\bLIKE\\\\s))|(?:(?i:\\bLIKE\\b))|(?:(?i:\\bCONSTRAINT\\\\s))|(?:(?i:\\bUSING\\\\s))|(?:(?i:INTEGER\\\\s\\+PRIMARY))|(?:(?i:\\\\bINDEX\\\\b))|(?:(?i:nera_session))|(?:(?i:mode=\\[))|(?:(?i:\\bKEY\\b|\\bINDEX\\b|\\bFULLTEXT\\b))|(?:(?i:fts5))|(?:(?i:=\\\\s\\*NULL|!=\\\\s\\*NULL|IS NULL|IS NOT NULL))|(?:(?i:=\\s*NULL))|(?:%\\(\\\\w))(?s:.*)", v).
+.decl rsp_r4(v: symbol)  // category 1
+rsp_r4(v) :- rsp_tested(v), match("(?s:.*)(?:--\\[?\\\\?\\^|/\\\\\\*)(?s:.*)", v).
+.decl rsp_r5(v: symbol)  // category 2
+rsp_r5(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)(?:^|[^%])%S|\\\\?\\\\\\$\\\\?\\\\?D|\\\\\\?)(?s:.*)", v).
+.decl rsp_r6(v: symbol)  // category 2
+rsp_r6(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN)(?s:.*)", v).
+.decl rsp_r7(v: symbol)  // category 2
+rsp_r7(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*\\\\\\?|\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*%s)(?s:.*)", v).
+.decl rsp_r8(v: symbol)  // category 3
+rsp_r8(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)ON\\s+DELETE|ON\\s+UPDATE|ON DELETE|ON UPDATE|CHECK|json_valid|=\\s*ANY\\s*\\()(?s:.*)", v).
+.decl rsp_r9(v: symbol)  // category 4
+rsp_r9(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)IN\\s*\\\\\\(|\\\\s\\+IN\\\\s)(?s:.*)", v).
+.decl rsp_r10(v: symbol)  // category 4
+rsp_r10(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)SELECT|INSERT|DELETE|FROM|WHERE)(?s:.*)", v).
+.decl rsp_r11(v: symbol)  // category 5
+rsp_r11(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)BEFORE|AFTER|INSTEAD|WHEN.*BEGIN)(?s:.*)", v).
+.decl rsp_r12(v: symbol)  // category 6
+rsp_r12(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)LIKE)(?s:.*)", v).
+// category 2's test: (R5 and not R6) or R7; category 4's: R9 and not R10.
+.decl rsp_g2(v: symbol)
+rsp_g2(v) :- rsp_r5(v), !rsp_r6(v).
+rsp_g2(v) :- rsp_r7(v).
+.decl rsp_g4(v: symbol)
+rsp_g4(v) :- rsp_r9(v), !rsp_r10(v).
+// Categories 1-8: not a false positive, SQL syntax, not an error message.
+.decl rsp_sqlish(v: symbol)
+rsp_sqlish(v) :- rsp_sql(v), !rsp_fp(v), !rsp_err(v).
+.decl rsp_cat(k: number, v: symbol)
+rsp_cat(0, v) :- rsp_err(v), !rsp_fp(v).
+rsp_cat(1, v) :- rsp_sqlish(v), rsp_r4(v).
+rsp_cat(2, v) :- rsp_sqlish(v), rsp_g2(v), !rsp_r4(v).
+rsp_cat(3, v) :- rsp_sqlish(v), rsp_r8(v), !rsp_r4(v), !rsp_g2(v).
+rsp_cat(4, v) :- rsp_sqlish(v), rsp_g4(v), !rsp_r4(v), !rsp_g2(v), !rsp_r8(v).
+rsp_cat(5, v) :- rsp_sqlish(v), rsp_r11(v), !rsp_r4(v), !rsp_g2(v), !rsp_r8(v), !rsp_g4(v).
+rsp_cat(6, v) :- rsp_sqlish(v), rsp_r12(v), !rsp_r4(v), !rsp_g2(v), !rsp_r8(v), !rsp_g4(v), !rsp_r11(v).
+// Categories 7 and 8 (one test, different methods).
+rsp_cat(7, v) :- rsp_sqlish(v), !rsp_r4(v), !rsp_g2(v), !rsp_r8(v), !rsp_g4(v), !rsp_r11(v), !rsp_r12(v).
+// ---- the call ----
+// call(c, m, a): `re.<m>(…)`, a the node at its `arguments` field.
+.decl rsp_call(c: node, m: symbol, a: node)
+rsp_call(c, m, a) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "object", o), node(_, o, "identifier", _, _), text(o, "re"),
+    field(f, "attribute", t), node(_, t, "identifier", _, _), text(t, m),
+    (m = "compile" ; m = "findall" ; m = "fullmatch" ; m = "match" ; m = "search" ; m = "split" ; m = "sub"),
+    field(c, "arguments", a).
+// The first named child of a that is not a comment (W's nthChild counts the named siblings its ofRule accepts):
+// `child` has named children and no comments, so it is a's first child.
+.decl rsp_later(a: node, i: number)
+rsp_later(a, i) :- rsp_call(_, _, a), child(a, _, i), child(a, _, j), j < i.
+.decl rsp_first(a: node, z: node)
+rsp_first(a, z) :- rsp_call(_, _, a), child(a, z, i), !rsp_later(a, i).
+// The call's category k.
+.decl rsp_hit(c: node, m: symbol, k: number)
+rsp_hit(c, m, k) :- rsp_call(c, m, a), rsp_first(a, z), rsp_str(z, v), rsp_cat(k, v).
+// The source gate (option sourceGate): with it on, the module's text (comments and strings included) matches it;
+// off, the gate is `(?s).*`, which every module passes.
+.decl rsp_gate(d: number)
+rsp_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
+rsp_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE)(?s:.*)", s).
+
+.decl rsp_found(c: node, m: symbol, k: number, p: symbol, l: number)
+rsp_found(c, m, k, p, l) :- rsp_hit(c, m, k), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), rsp_gate(d), doc(d, p, _), line(c, l).
+
+violation("data-layer-regex-sql-parsing", "category-0", "ERROR_MSG_PARSE", p, l) :- rsp_found(_, _, 0, p, l).
+violation("data-layer-regex-sql-parsing", "category-1", "SQL_COMMENT_STRIP", p, l) :- rsp_found(_, _, 1, p, l).
+violation("data-layer-regex-sql-parsing", "category-2", "SQL_PARAM_NORMALIZE", p, l) :- rsp_found(_, _, 2, p, l).
+violation("data-layer-regex-sql-parsing", "category-3", "CONSTRAINT_PARSE", p, l) :- rsp_found(_, _, 3, p, l).
+violation("data-layer-regex-sql-parsing", "category-4", "CONSTRAINT_PARSE", p, l) :- rsp_found(_, _, 4, p, l).
+violation("data-layer-regex-sql-parsing", "category-5", "TRIGGER_PARSE", p, l) :- rsp_found(_, _, 5, p, l).
+violation("data-layer-regex-sql-parsing", "category-6", "SQL_STRUCTURE_PARSE", p, l) :- rsp_found(_, _, 6, p, l).
+violation("data-layer-regex-sql-parsing", "category-7", "SQL_REWRITE", p, l) :- rsp_found(_, m, 7, p, l), m = "sub".
+violation("data-layer-regex-sql-parsing", "category-8", "SQL_STRUCTURE_PARSE", p, l) :- rsp_found(_, m, 7, p, l), m != "sub".

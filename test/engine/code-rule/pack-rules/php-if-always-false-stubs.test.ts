@@ -1,5 +1,5 @@
 /**
- * phpstan-if-always-false (packs/php/, candidate) must not steer an agent into deleting a declaration stub.
+ * phpstan-if-always-false (packs/php/) must not steer an agent into deleting a declaration stub.
  * `if (false) { class Router {} }` is a deliberate idiom: the class never exists at runtime (a class_alias call
  * declares the name), but Composer's class map, IDEs and static analysers see a declaration for it. Symfony ships it
  * for every deprecated alias (src/Symfony/Bundle/FrameworkBundle/Routing/Router.php:20 and 23 more on the pack's
@@ -21,7 +21,7 @@ const CODE_RULE_DIRECTORY = fileURLToPath(new URL("../../../../native/src/code_r
 const capabilities = await readFile(join(CODE_RULE_DIRECTORY, "capabilities.json"), "utf8");
 const runtime = loadNativeBinding().CodeRuleDslRuntime;
 const RULE_ID = "phpstan-if-always-false";
-const RULE_PATH = repositoryPath("packs", "php", "candidates", "rules", `${RULE_ID}.json`);
+const RULE_PATH = repositoryPath("packs", "php", "rules", `${RULE_ID}.json`);
 
 const evaluationSchema = z.object({
   violations: z.array(z.object({ path: z.string(), message: z.string(), span: z.object({ startLine: z.number().int().nonnegative() }) })).default([]),

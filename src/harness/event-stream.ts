@@ -1,15 +1,16 @@
 import { once } from "node:events";
 import { realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type { RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
 import { hookRerailStarted } from "./hook-host.js";
-import { bundledModelPath } from "../engine/package-root.js";
+import { resolveSessionPaths } from "../runtime/session-paths.js";
 import {
   decodeRerailEventFrame,
   encodeRerailEventResult,
+  INACTIVE_SESSION,
   RERAIL_EVENT_PROTOCOL_PREFACE,
   type RerailEventErrorFrame,
 } from "../runtime/event-protocol.js";
@@ -44,9 +45,17 @@ function eventIdFromLine(line: string): string | null {
   }
 }
 
+/**
+ * Read by `code`, not `instanceof InactiveSessionError`: `build:events` bundles this stream with its own copy of the
+ * class, so an event loop built from the package's other entry points throws a different one.
+ */
+function isInactiveSession(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === INACTIVE_SESSION;
+}
+
 function errorFrame(line: string, error: unknown): RerailEventErrorFrame {
   const message = error instanceof Error ? error.message : String(error);
-  const code = message.startsWith("Inactive session:") ? "inactive-session" : "invalid-event";
+  const code = isInactiveSession(error) ? INACTIVE_SESSION : "invalid-event";
   return { eventId: eventIdFromLine(line), error: { code, message } };
 }
 
@@ -100,11 +109,8 @@ export interface RunRerailEventStreamOptions {
 export async function runRerailEventStream(options: RunRerailEventStreamOptions = {}): Promise<void> {
   const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
   // Absolute paths: in a main build the daemon, running elsewhere, opens them.
-  const storageRoot = resolve(options.storageRoot ?? process.env.RERAIL_STORAGE_ROOT ?? join(workspaceRoot, ".rerail", "sessions"));
-  const modelPath = options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath();
   const configuration = {
-    storageRoot,
-    modelPath,
+    ...resolveSessionPaths(workspaceRoot, options),
     databasePath: resolve(options.databasePath ?? defaultRerailDatabasePath()),
     workspaceRoot,
   };

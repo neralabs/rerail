@@ -1,0 +1,167 @@
+// data-layer-raw-execute-regression: the whole rule, gated on the run's options (`option_on`, `option_item`,
+// `option_value`, as the converter gives them), no option ignored.
+// Every clause of the rule is here, so the replay's configured events (entryPoint, oracleAnalyzer,
+// compatibilityStubFiles) all run:
+// - entryPoint: the removed-* clauses run for "all", "_check_ast" and "scan_file_content"; the mixed-marker
+//   clauses for "all", "_check_text" and "scan_file_content"; any other value turns the clause off (the
+//   policy's default case, filePath regex `\b\B`, which matches nothing);
+// - oracleAnalyzer: true gives the oracle analyzer's codes (removed_call, removed_definition,
+//   mixed_helper_text), false RER001;
+// - compatibilityStubFiles: the policy joins the items, regex-escaped, into `^(?:a|b|…)$` over the file path,
+//   which is an exact path match: `option_item("compatibilityStubFiles", _, p)`.
+// mixed-marker-0..4: W tests a `module` node's full text (comments, docstrings and strings included) against a
+// plain phrase, so `contains` over `node_text` is the regex exactly. (The converter's own form for 0..2, "some
+// name in the file contains the phrase", misses the phrase in comments, strings and docstrings; these replace
+// it.)
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// ---- removed-calls ----------------------------------------------------------------------------------------------
+// A call whose function is an attribute `….<removed helper>`.
+.decl removed_calls_entry(v: symbol)
+removed_calls_entry("all").
+removed_calls_entry("_check_ast").
+removed_calls_entry("scan_file_content").
+
+// The code by oracleAnalyzer: (code, "on") when it is true, (code, "off") when false.
+.decl removed_calls_codes(c: symbol, when: symbol)
+removed_calls_codes("removed_call", "on").
+removed_calls_codes("RER001", "off").
+.decl removed_calls_code(c: symbol)
+removed_calls_code(c) :- removed_calls_codes(c, "on"), option_on("oracleAnalyzer").
+removed_calls_code(c) :- removed_calls_codes(c, "off"), !option_on("oracleAnalyzer").
+
+.decl removed_calls_name(s: symbol)
+removed_calls_name("_execute_grammar").
+removed_calls_name("_execute_sql_or_schema_statement").
+removed_calls_name("_execute_sql_or_schema_statement_async").
+removed_calls_name("_execute_template_with_params").
+removed_calls_name("_execute_template_with_params_async").
+removed_calls_name("execute_grammar").
+removed_calls_name("execute_sql").
+removed_calls_name("fetchall_grammar").
+removed_calls_name("fetchall_raw").
+removed_calls_name("fetchall_raw_async").
+removed_calls_name("fetchone_grammar").
+removed_calls_name("fetchone_raw").
+removed_calls_name("fetchone_raw_async").
+removed_calls_name("nonportably_execute_sql").
+removed_calls_name("raw_execute").
+removed_calls_name("raw_execute_async").
+removed_calls_name("raw_execute_fetch").
+removed_calls_name("raw_execute_fetch_async").
+
+.decl removed_calls_call(x: node)
+removed_calls_call(x) :-
+    node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _),
+    field(a, "attribute", at), node(_, at, "identifier", _, _), text(at, s), removed_calls_name(s).
+
+violation("data-layer-raw-execute-regression", "removed-calls", c, p, l) :-
+    option_value("entryPoint", e), removed_calls_entry(e), removed_calls_code(c),
+    node(d, x, _, _, _), removed_calls_call(x),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(x, l).
+
+// ---- removed-definitions ----------------------------------------------------------------------------------------
+// A function_definition ($OWNER) named one of the removed helpers, unless the file is a compatibility stub whose
+// body raises (a `raise`, or a call of `x._raise_…`) in $OWNER itself and calls no removed helper in $OWNER itself.
+// "In $OWNER itself": the node's nearest enclosing function_definition (W: `inside` that function_definition,
+// `stopBy` function_definition, then `compare` OWNER = SAME_OWNER as the same node) is $OWNER. The node is a strict
+// descendant of $OWNER's body block (W: `has` field body, then `has` stopBy end), checked by byte span.
+.decl removed_definitions_codes(c: symbol, when: symbol)
+removed_definitions_codes("removed_definition", "on").
+removed_definitions_codes("RER001", "off").
+.decl removed_definitions_code(c: symbol)
+removed_definitions_code(c) :- removed_definitions_codes(c, "on"), option_on("oracleAnalyzer").
+removed_definitions_code(c) :- removed_definitions_codes(c, "off"), !option_on("oracleAnalyzer").
+
+.decl removed_definitions_fdef(kind: symbol)
+removed_definitions_fdef("function_definition").
+
+.decl removed_definitions_name(s: symbol)
+removed_definitions_name("_execute_grammar").
+removed_definitions_name("_execute_grammar_async").
+removed_definitions_name("_execute_sql_or_schema_statement").
+removed_definitions_name("_execute_sql_or_schema_statement_async").
+removed_definitions_name("_execute_template_with_params").
+removed_definitions_name("_execute_template_with_params_async").
+removed_definitions_name("_is_schema_ddl_statement").
+removed_definitions_name("execute_grammar").
+removed_definitions_name("execute_sql").
+removed_definitions_name("fetchall_grammar").
+removed_definitions_name("fetchall_raw").
+removed_definitions_name("fetchall_raw_async").
+removed_definitions_name("fetchone_grammar").
+removed_definitions_name("fetchone_raw").
+removed_definitions_name("fetchone_raw_async").
+removed_definitions_name("nonportably_execute_sql").
+removed_definitions_name("raw_execute").
+removed_definitions_name("raw_execute_async").
+removed_definitions_name("raw_execute_fetch").
+removed_definitions_name("raw_execute_fetch_async").
+
+.decl removed_definitions_owner(d: number, f: node)
+removed_definitions_owner(d, f) :-
+    node(d, f, "function_definition", _, _), field(f, "name", nm), node(_, nm, "identifier", _, _),
+    text(nm, s), removed_definitions_name(s).
+
+.decl removed_definitions_own(f: node, x: node)
+removed_definitions_own(f, x) :-
+    removed_definitions_owner(d, f), field(f, "body", b), node(d, b, _, bs, be),
+    node(d, x, _, xs, xe), x != b, bs <= xs, xe <= be, nearest(x, f, removed_definitions_fdef).
+
+.decl removed_definitions_raise(x: node)
+removed_definitions_raise(x) :- node(_, x, "raise_statement", _, _).
+removed_definitions_raise(x) :-
+    node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _),
+    field(a, "attribute", at), text(at, s), prefix("_raise_", s).
+
+.decl removed_definitions_raises(f: node)
+removed_definitions_raises(f) :- removed_definitions_own(f, x), removed_definitions_raise(x).
+.decl removed_definitions_calls(f: node)
+removed_definitions_calls(f) :- removed_definitions_own(f, x), removed_calls_call(x).
+
+.decl removed_definitions_stubbed(f: node)
+removed_definitions_stubbed(f) :-
+    removed_definitions_owner(d, f), doc(d, p, _), option_item("compatibilityStubFiles", _, p),
+    removed_definitions_raises(f), !removed_definitions_calls(f).
+
+violation("data-layer-raw-execute-regression", "removed-definitions", c, p, l) :-
+    option_value("entryPoint", e), removed_calls_entry(e), removed_definitions_code(c),
+    removed_definitions_owner(d, f), !removed_definitions_stubbed(f),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+
+// ---- mixed-marker-0..4 ------------------------------------------------------------------------------------------
+.decl mixed_marker_entry(v: symbol)
+mixed_marker_entry("all").
+mixed_marker_entry("_check_text").
+mixed_marker_entry("scan_file_content").
+
+.decl mixed_marker_codes(c: symbol, when: symbol)
+mixed_marker_codes("mixed_helper_text", "on").
+mixed_marker_codes("RER001", "off").
+.decl mixed_marker_code(c: symbol)
+mixed_marker_code(c) :- mixed_marker_codes(c, "on"), option_on("oracleAnalyzer").
+mixed_marker_code(c) :- mixed_marker_codes(c, "off"), !option_on("oracleAnalyzer").
+
+// A module in scope with the entry point on, its path and text. Anchor file.start: line 1.
+.decl mixed_marker_module(p: symbol, s: symbol, c: symbol)
+mixed_marker_module(p, s, c) :-
+    option_value("entryPoint", e), mixed_marker_entry(e), mixed_marker_code(c),
+    node(d, n, "module", _, _), node_text(n, s),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _).
+
+violation("data-layer-raw-execute-regression", "mixed-marker-0", c, p, 1) :-
+    mixed_marker_module(p, s, c), contains("_execute_sql_or_schema_statement", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-1", c, p, 1) :-
+    mixed_marker_module(p, s, c), contains("_execute_sql_or_schema_statement_async", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-2", c, p, 1) :-
+    mixed_marker_module(p, s, c), contains("_is_schema_ddl_statement", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-3", c, p, 1) :-
+    mixed_marker_module(p, s, c), contains("arbitrary grammar router", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-4", c, p, 1) :-
+    mixed_marker_module(p, s, c), contains("compatibility router", s).

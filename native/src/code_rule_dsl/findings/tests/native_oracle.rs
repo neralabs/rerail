@@ -101,7 +101,7 @@ impl<'a> Native<'a> {
             .clauses
             .iter()
             .filter_map(|clause| match &clause.kind {
-                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers),
+                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.iter()),
                 _ => None,
             })
             .flatten()
@@ -170,7 +170,7 @@ impl<'a> Native<'a> {
                         );
                         if !grammar.applies
                             || !grammar.file.as_ref().is_none_or(|condition| {
-                                condition.holds(path, file.module.as_deref(), None)
+                                condition.holds(path, file.module.as_deref(), None, &file.source)
                             })
                             || !gates.admit(grammar)
                             || !grammar.text.as_ref().is_none_or(|text| {

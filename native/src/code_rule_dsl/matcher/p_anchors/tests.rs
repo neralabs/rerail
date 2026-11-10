@@ -27,6 +27,7 @@ pub(super) fn compile_rule(
         conflicts: None,
         captures: Default::default(),
         calls: None,
+        instances: None,
         documents: None,
         side: crate::code_rule_dsl::compile::documents::Side::Host,
     };
@@ -496,7 +497,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             .clauses
             .iter()
             .find_map(|clause| match &clause.kind {
-                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.as_slice()),
+                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(&matchers[..]),
                 _ => None,
             })
             .expect("an AST clause")

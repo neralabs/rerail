@@ -647,7 +647,9 @@ impl<'a> Session<'a> {
                 fields.len() + 3,
                 rows.witnesses.iter().map(|witness| {
                     use rusqlite::types::ValueRef;
-                    let location = crate::code_rule_dsl::violations::anchored_span(&input.anchor, witness).0;
+                    let location = crate::code_rule_dsl::violations::anchored_span(&input.anchor, witness)
+                .0
+                .expect("a relation's AST witness has a span");
                     let projected = witness.captures.projection();
                     let layout = projected.map(|p| &layouts[&p.schema_identity()]);
                     [
@@ -931,7 +933,7 @@ impl<'a> Session<'a> {
                 .collect::<Result<Vec<_>>>()?;
             let witness = Witness {
                 path: path.to_owned(),
-                span,
+                span: Some(span),
                 captures: Captures::default(),
                 message: None,
                 fix: None,

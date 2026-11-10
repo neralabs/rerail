@@ -113,6 +113,8 @@ impl CodeRuleSqlExecutor {
                 || self.executions.iter().any(|e| e.counts.contains_key(name))
         }) {
             false
+        } else if self.statistics.snapshot().is_some() {
+            true
         } else {
             self.db
                 .query_row(
@@ -152,7 +154,7 @@ impl CodeRuleSqlExecutor {
                 None if has_wave_stats => self
                     .db
                     .query_row(
-                        "SELECT rows FROM temp.wave_stats WHERE tbl = ?1",
+                        "SELECT rows FROM wave_stats WHERE tbl = ?1",
                         [name],
                         |r| r.get::<_, i64>(0),
                     )
@@ -167,10 +169,7 @@ impl CodeRuleSqlExecutor {
             plan::emit::emit(&lowered, &self.db, "main", "sql-extension", None, &batch)
                 .map_err(error)?;
         use sha2::Digest;
-        let key = format!(
-            "{:x}",
-            sha2::Sha256::digest(format!("{program:?}:{dialect:?}"))
-        );
+        let key = crate::lower_hex(&sha2::Sha256::digest(format!("{program:?}:{dialect:?}")));
         lattices::transfers(&mut emitted, &tops);
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
         walks::optimize(&mut emitted);

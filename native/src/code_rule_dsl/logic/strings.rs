@@ -54,24 +54,44 @@ pub(in crate::code_rule_dsl) const SET_SEP: char = '\u{1f}';
 /// The prefix of a test's input relation, `strtest_<k>(s)`.
 pub(in crate::code_rule_dsl) const RELATION: &str = "strtest_";
 
+/// The prefix of a `match_all` built-in's input relation, `matchall_<k>(sp, m)` (`as_relations`).
+pub(in crate::code_rule_dsl) const MATCHES: &str = "matchall_";
+
+/// The prefix of a `match_group` built-in's input relation, `matchgroup_<k>(sp, m, g, gsp)` (`as_relations`).
+pub(in crate::code_rule_dsl) const GROUPS: &str = "matchgroup_";
+
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 17] = [
-    ("value", &[1]),
+pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
     ("text", &[1]),
     ("name", &[1]),
     ("str", &[1]),
     ("strprefix", &[1]),
     ("op", &[1]),
-    ("op_at", &[2]),
     ("doc", &[1, 2]),
     ("pkg", &[1]),
+    ("node_text", &[1]),
+    ("op_at", &[2]),
+    ("prev_token", &[1]),
+    ("token", &[2]),
     ("path_part", &[1]),
     ("file_name", &[1]),
-    ("comment", &[1]),
+    ("value", &[1]),
     ("static_value", &[1]),
-    ("str_part", &[2]),
+    ("value_type_of", &[1]),
     ("value_type", &[0, 1]),
+    ("comment", &[1]),
+    ("str_part", &[2]),
+    ("fstring_piece", &[2, 3]),
+    ("fstring_template", &[1, 2]),
+    ("cpython_syntax_error", &[2]),
+    ("parsed", &[1]),
+    ("literal_json", &[1]),
+    ("cpython_unparse", &[1]),
+    ("cpython_ast_dump", &[1]),
+    ("dump_sha256", &[1]),
+    ("body_sha256", &[1]),
+    ("signature_sha256", &[1]),
     ("split_line", &[2]),
     ("lf_line", &[2]),
 ];
@@ -158,17 +178,17 @@ pub(in crate::code_rule_dsl) fn test(op: &str, s: &str, pattern: &str) -> bool {
     m.is_some_and(|m| m.is_match(s))
 }
 
-static GROUPS: LazyLock<Mutex<HashMap<String, Option<Arc<regex::Regex>>>>> = LazyLock::new(Default::default);
+static GROUP_REGEXES: LazyLock<Mutex<HashMap<String, Option<Arc<regex::Regex>>>>> = LazyLock::new(Default::default);
 
 /// The text of named group `name` of regex `re`'s match of `s` (`.rr`'s `match("(?<x>…)", s)`); none when `re`
 /// does not match, the group took no part, or `re` is invalid.
 pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<String> {
-    let rx = GROUPS.lock().unwrap().entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok().map(Arc::new)).clone()?;
+    let rx = GROUP_REGEXES.lock().unwrap().entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok().map(Arc::new)).clone()?;
     rx.captures(s)?.name(name).map(|m| m.as_str().to_owned())
 }
 
-/// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them). NULL
-/// gives NULL.
+/// `str_test(op, s, patterns)`: 1 or 0; and `core.rr`'s text functors (`functions`, `rx_group` among them, and
+/// `plan::register_functors`'s: `rr_join`, `@rx_replace`, `@nfkc`, …). NULL gives NULL.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     db.create_scalar_function(c"str_test", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
@@ -177,7 +197,8 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         };
         Ok(Some(i64::from(test(&op, &s, &p))))
     })?;
-    functions::register(db)
+    functions::register(db)?;
+    super::plan::register_functors(db)
 }
 
 /// A text test in a rule body: `@op($s, patterns) = 1` (holds) or `= 0` (fails).
@@ -194,11 +215,17 @@ struct Compiled {
     owner: Vec<usize>,
 }
 
-/// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher.
+/// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher; the
+/// regexes of `match_all` and `match_group` the batches find in their spans, regex `k`'s matches in
+/// `matchall_<k>(sp, m)` and their groups in `matchgroup_<k>(sp, m, g, gsp)`; and the interpolation markers the
+/// batches make `fstring_template(n, marker, v)` rows for.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Vocabulary {
     /// Each test's input relation and matcher (`again` keeps them for another run).
     pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
+    pub(in crate::code_rule_dsl) matches: Vec<Arc<regex::Regex>>,
+    /// The constant markers of the program's `fstring_template` atoms, distinct, in order.
+    pub(in crate::code_rule_dsl) markers: Vec<String>,
     /// Each test's operator and patterns, in `tests`' order: what its matcher is made from (`from_specs`).
     pub(in crate::code_rule_dsl) specs: Vec<(String, Vec<String>)>,
     /// Every test's plans compiled together, once (decision 0075): shared by `again`, so a program kept for the
@@ -260,9 +287,8 @@ impl Vocabulary {
     }
 }
 
-/// Turns each text test whose string a text relation of the same rule gives (`TEXT_COLUMNS`) into an atom over
-/// the input relation `strtest_<k>(s)`, negated where the test is: rules then join on symbols, and the run fills
-/// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
+/// The text columns of the program's relations: `TEXT_COLUMNS`, and each symbol column every writer of a derived
+/// relation copies from one of them (a fixpoint), so a test on a copy is answered from the vocabulary too.
 fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
     let mut columns: HashMap<String, HashSet<usize>> = TEXT_COLUMNS.iter()
         .map(|(name, columns)| ((*name).to_owned(), columns.iter().copied().collect()))
@@ -317,7 +343,14 @@ fn vocabulary_columns(prog: &Program) -> HashMap<String, HashSet<usize>> {
 impl Vocabulary {
     /// The same tests for another run, with nothing tested yet.
     pub(in crate::code_rule_dsl) fn again(&self) -> Vocabulary {
-        Vocabulary { tests: self.tests.clone(), specs: self.specs.clone(), compiled: Arc::clone(&self.compiled), ..Vocabulary::default() }
+        Vocabulary {
+            tests: self.tests.clone(),
+            specs: self.specs.clone(),
+            matches: self.matches.clone(),
+            markers: self.markers.clone(),
+            compiled: Arc::clone(&self.compiled),
+            ..Vocabulary::default()
+        }
     }
 
     fn compile_with(&self, cache: Option<&dyn crate::code_rule_dsl::text::vocabulary::DfaCache>) -> Compiled {
@@ -348,8 +381,8 @@ impl Vocabulary {
 
 /// The values a relation's column can hold when they come from the program's constants alone: a fact relation's
 /// (rows matching the atom's constants), a constant relation's (`typing::file_local::constant_relations`), or a
-/// derived column every rule fills from such a column or a literal. A superset is enough for its one reader,
-/// `implied_set_tests`. `None` where a value may come from anything else.
+/// derived column every rule fills from such a column or a literal (with its facts' values, where it has facts). A
+/// superset is enough for its one reader, `implied_set_tests`. `None` where a value may come from anything else.
 fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(String, usize)>) -> Option<std::collections::BTreeSet<String>> {
     use std::collections::BTreeSet;
     if visiting.iter().any(|(r, c)| r == rel && *c == col) || visiting.len() > 16 {
@@ -364,7 +397,15 @@ fn constant_domain(prog: &Program, rel: &str, col: usize, visiting: &mut Vec<(St
         return rows.iter().map(|row| match row.get(col) { Some(super::front::Value::Str(s)) => Some(s.clone()), _ => None }).collect();
     }
     visiting.push((rel.to_owned(), col));
+    // Its facts' values too: a relation of facts and rules holds both.
     let mut out = BTreeSet::new();
+    for row in prog.facts.get(rel).into_iter().flatten() {
+        let Some(super::front::Value::Str(s)) = row.get(col) else {
+            visiting.pop();
+            return None;
+        };
+        out.insert(s.clone());
+    }
     for rule in rules {
         let got = match rule.head.args.get(col) {
             Some(Term::Str(s)) => Some(BTreeSet::from([s.clone()])),
@@ -442,6 +483,18 @@ fn implied_set_tests(prog: &mut Program) {
     }
 }
 
+/// Turns each text test whose string a text relation of the same rule gives (`TEXT_COLUMNS`) into an atom over
+/// the input relation `strtest_<k>(s)`, negated where the test is: rules then join on symbols, and the run fills
+/// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
+///
+/// And each `match_all("re", sp, m)` (core.rr's built-in: `m` is each match of `re` in span `sp`'s text, as Rust's
+/// `find_iter` finds them) into an atom over the input relation `matchall_<k>(sp, m)`, and each
+/// `match_group("re", sp, m, g, gsp)` (`gsp` the span of named group `g` in match `m`) into one over
+/// `matchgroup_<k>(sp, m, g, gsp)`, `k` the regex's (one per distinct regex, so the two agree on `m`), which the
+/// batches fill (`facts::vtab::syntax`). The regex is a constant, in Rust `regex` syntax (W's).
+///
+/// And collects the markers of `fstring_template(n, "marker", v)` (W's `interpolation`): a constant, since the
+/// batches parse each host once per marker (`facts::vtab::syntax::fstring`).
 pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     implied_set_tests(prog);
     let vocabulary_columns = vocabulary_columns(prog);
@@ -487,17 +540,65 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             *literal = Literal::Atom(Atom { rel, args: vec![Term::Var(s.to_owned())], neg: !holds, gated: false });
         }
     }
+    let mut markers: Vec<String> = Vec::new();
+    let mut regexes: BTreeMap<String, usize> = BTreeMap::new();
+    let mut matches = Vec::new();
+    let mut made = BTreeMap::new();
+    for rule in &mut prog.rules {
+        for literal in &mut rule.body {
+            let (Literal::Atom(a) | Literal::Agg { atom: a, .. }) = literal else { continue };
+            if a.rel == "fstring_template" {
+                let [_, Term::Str(marker), _] = a.args.as_slice() else {
+                    return Err(format!("fstring_template takes a constant marker: fstring_template(n, \"{{...}}\", v), not {a}"));
+                };
+                if !markers.contains(marker) {
+                    markers.push(marker.clone());
+                }
+                continue;
+            }
+            let (args, group) = match (a.rel.as_str(), a.args.as_slice()) {
+                ("match_all", [Term::Str(_), sp, m]) => (vec![sp.clone(), m.clone()], false),
+                ("match_group", [Term::Str(_), sp, m, g, gsp]) => (vec![sp.clone(), m.clone(), g.clone(), gsp.clone()], true),
+                ("match_all", _) => return Err(format!("match_all takes a constant regex, a span and its match: match_all(\"re\", sp, m), not {a}")),
+                ("match_group", _) => {
+                    return Err(format!("match_group takes a constant regex, a span, its match, a group name and its span: match_group(\"re\", sp, m, g, gsp), not {a}"));
+                }
+                _ => continue,
+            };
+            let Term::Str(re) = &a.args[0] else { unreachable!("matched above") };
+            let k = match regexes.get(re) {
+                Some(&k) => k,
+                None => {
+                    let regex = regex::Regex::new(re).map_err(|e| format!("{}({re:?}, …): {e}", a.rel))?;
+                    matches.push(Arc::new(regex));
+                    regexes.insert(re.clone(), matches.len() - 1);
+                    matches.len() - 1
+                }
+            };
+            let rel = if group { format!("{GROUPS}{k}") } else { format!("{MATCHES}{k}") };
+            made.insert(rel.clone(), group);
+            a.args = args;
+            a.rel = rel;
+        }
+    }
     for (rel, _) in &tests {
         prog.decls.insert(rel.clone(), vec![("s".to_owned(), "sym".to_owned())]);
         if !prog.inputs.contains(rel) {
             prog.inputs.push(rel.clone());
         }
     }
-    Ok(Vocabulary { tests, specs, ..Vocabulary::default() })
+    for (rel, group) in made {
+        let node = |c: &str| (c.to_owned(), "node".to_owned());
+        let columns = if group { vec![node("sp"), node("m"), ("g".to_owned(), "sym".to_owned()), node("gsp")] } else { vec![node("sp"), node("m")] };
+        prog.decls.insert(rel.clone(), columns);
+        if !prog.inputs.contains(&rel) {
+            prog.inputs.push(rel);
+        }
+    }
+    Ok(Vocabulary { tests, specs, matches, markers, ..Vocabulary::default() })
 }
 
 pub(in crate::code_rule_dsl) mod functions;
-mod signatures;
 pub(in crate::code_rule_dsl) mod git;
 
 #[cfg(test)]

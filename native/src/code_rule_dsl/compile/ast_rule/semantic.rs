@@ -1,6 +1,7 @@
 use super::super::arguments::{compile_arguments, validate_arguments};
 use super::super::binds::{compile_binds, validate_binds};
 use super::super::format_args::{compile_format_args, validate_format_args};
+use super::super::import_target::{compile_import_target, validate_import_target};
 use super::super::layout::{compile_layout, validate_layout};
 use super::super::parse::{capture_name, compile_parse, validate_parse};
 use super::super::resolve::{
@@ -61,6 +62,9 @@ pub(super) fn validate(
     }
     if let Some(layout) = rule.get("layout") {
         validate_layout(layout, &format!("{path}/layout"), limits)?;
+    }
+    if let Some(target) = rule.get("importTarget") {
+        validate_import_target(target, &format!("{path}/importTarget"))?;
     }
     if let Some(calls) = rule.get("calls") {
         let calls_path = format!("{path}/calls");
@@ -144,6 +148,12 @@ pub(super) fn compile_key(
             }),
         ),
         (Stage::Late, "layout") => Some(compile_layout(value, path)),
+        (Stage::Late, "importTarget") => Some(compile_import_target(
+            value,
+            language,
+            path,
+            utils.options.as_ref(),
+        )),
         (Stage::Late, "value") => Some(compile_value(
             value,
             language,

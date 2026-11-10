@@ -1,8 +1,106 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl mode_split_imports(kind: symbol)
+mode_split_imports("import_statement"). mode_split_imports("import_from_statement").
+.decl mode_split_patterns(kind: symbol)
+mode_split_patterns("case_pattern").
+.decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl mode_split_async(m: node)
+.decl mode_split_async_allowed(s: symbol)
+.decl mode_split_async_named(s: symbol)
+.decl mode_split_core(s: symbol)
+.decl mode_split_core_allowed(d: number)
+.decl mode_split_core_home(p: symbol)
+.decl mode_split_enabled(k: number)
+.decl mode_split_facade(s: symbol)
+.decl mode_split_gate(d: number)
+.decl mode_split_hit(d: number, n: node)
+.decl mode_split_id(n: node, s: symbol)
+.decl mode_split_imported(x: node, dn: node)
+.decl mode_split_last(dn: node, c: node)
+.decl mode_split_last_index(dn: node, i: number)
+.decl mode_split_method(c: node, cn: symbol, m: node, mn: symbol)
+.decl mode_split_mixed(s: symbol)
+.decl mode_split_mixed_entry(s: symbol)
+.decl mode_split_not_name(n: node)
+.decl mode_split_params(p: node)
+.decl mode_split_pattern_ref(dn: node)
+.decl mode_split_private(s: symbol)
+.decl mode_split_probe(v: symbol)
+.decl mode_split_splat(s: node)
+.decl mode_split_symbol(d: number, n: node, s: symbol)
+.decl mode_split_tparam(p: node)
+.decl mode_split_tparam_inner(x: node)
+.decl mode_split_type_params(l: node)
+.decl mode_split_word(w: symbol)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, name, node_text, cpython_syntax_error
+.output violation
+mode_split_async_allowed("__aenter__").
+mode_split_async_allowed("__aexit__").
+mode_split_async_allowed("authenticated_session_lazy").
+mode_split_async_allowed("branch_id").
+mode_split_async_allowed("connection").
+mode_split_async_allowed("domain").
+mode_split_async_allowed("invalidate_tip_cache").
+mode_split_async_allowed("open_read_plan").
+mode_split_async_allowed("open_versioned_read_plan").
+mode_split_async_allowed("open_versioned_write_plan").
+mode_split_async_allowed("open_write_plan").
+mode_split_async_allowed("session").
+mode_split_async_allowed("session_id").
+mode_split_async_allowed("version").
+mode_split_core("_DatabaseConnectionCore").
+mode_split_core("_SqlConnectionCore").
+mode_split_core("_VersionedDatabaseConnectionCore").
+mode_split_core_home("impl/common/l2200_sql_dialect/sql_connection.py").
+mode_split_core_home("impl/doltdb/connection.py").
+mode_split_core_home("impl/mariadb/connection.py").
+mode_split_core_home("impl/mongodb/connection.py").
+mode_split_core_home("impl/neo4j/connection.py").
+mode_split_core_home("impl/postgres/connection.py").
+mode_split_core_home("impl/read_through/connection.py").
+mode_split_core_home("impl/sqlite/connection.py").
+mode_split_core_home("l2000_connection/connection.py").
+mode_split_core_home("l2000_connection/connection_pool.py").
+mode_split_core_home("l7000_versioned_schema/versioned_connection.py").
+mode_split_mixed("DatabaseConnection").
+mode_split_mixed("DoltDBConnection").
+mode_split_mixed("MariaDBConnection").
+mode_split_mixed("MongoConnection").
+mode_split_mixed("Neo4jConnection").
+mode_split_mixed("PostgresConnection").
+mode_split_mixed("ReadThroughConnection").
+mode_split_mixed("SessionHandle").
+mode_split_mixed("SqlConnection").
+mode_split_mixed("SqliteConnection").
+mode_split_mixed("VersionHandle").
+mode_split_mixed("VersionedDatabaseConnection").
+mode_split_mixed_entry("read").
+mode_split_mixed_entry("read_async").
+mode_split_mixed_entry("write").
+mode_split_mixed_entry("write_async").
+mode_split_word("Async").
+mode_split_word("Connection").
+mode_split_word("SessionHandle").
+mode_split_word("Sync").
+mode_split_word("VersionHandle").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
@@ -27,4 +125,72 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+mode_split_probe(v) :- option_json("parameters", "/probeSource", v), v != "null".
+mode_split_enabled(1) :- option_value("parameters", _), !mode_split_probe(_).
+mode_split_enabled(1) :- mode_split_probe(v), match("(?s:.*)(?:Async|Connection|DatabaseConnection|DoltDBConnection|MariaDBConnection|MongoConnection|Neo4jConnection|PostgresConnection|ReadThroughConnection|SessionHandle|SqlConnection|SqliteConnection|Sync|VersionHandle|VersionedDatabaseConnection|_DatabaseConnectionCore|_SessionHandleCore|_SqlConnectionCore|_VersionHandleCore|_VersionedDatabaseConnectionCore)(?s:.*)", v).
+mode_split_core_allowed(d) :- doc(d, p, _), mode_split_core_home(p).
+mode_split_core_allowed(d) :- doc(d, p, _), prefix("impl/", p).
+mode_split_core_allowed(d) :- doc(d, p, _), prefix("l2070_batching/", p).
+mode_split_id(n, s) :- node(_, n, "identifier", _, _), text(n, t), s = @nfkc(t).
+mode_split_gate(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _), node_text(m, s), mode_split_word(w), contains(w, s).
+mode_split_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
+mode_split_not_name(n) :- node(_, p, "function_definition", _, _), field(p, "name", n).
+mode_split_not_name(n) :- node(_, p, "class_definition", _, _), field(p, "name", n).
+mode_split_not_name(n) :- node(_, p, "keyword_argument", _, _), field(p, "name", n).
+mode_split_not_name(n) :- node(_, p, "default_parameter", _, _), field(p, "name", n).
+mode_split_not_name(n) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", n).
+mode_split_not_name(n) :- node(_, p, "except_clause", _, _), field(p, "alias", n).
+mode_split_not_name(n) :- mode_split_params(p), child(p, n, _), node(_, n, "identifier", _, _).
+mode_split_not_name(n) :- mode_split_params(p), child(p, s, _), mode_split_splat(s), child(s, n, _), node(_, n, "identifier", _, _).
+mode_split_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, n, _), node(_, n, "identifier", _, _).
+mode_split_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, s, _), mode_split_splat(s), child(s, n, _), node(_, n, "identifier", _, _).
+mode_split_not_name(n) :- node(_, p, "global_statement", _, _), child(p, n, _).
+mode_split_not_name(n) :- node(_, p, "nonlocal_statement", _, _), child(p, n, _).
+mode_split_not_name(n) :- node(_, n, "identifier", _, _), inside(n, a, mode_split_imports), node(_, a, _, _, _).
+mode_split_not_name(n) :- node(_, n, "identifier", _, _), inside(n, a, mode_split_patterns), node(_, a, _, _, _).
+mode_split_not_name(x) :- mode_split_tparam_inner(x), node(_, x, "identifier", _, _).
+mode_split_not_name(n) :- mode_split_tparam_inner(x), node(_, x, "splat_type", _, _), child(x, n, _), node(_, n, "identifier", _, _).
+mode_split_not_name(n) :- mode_split_tparam_inner(x), node(_, x, "constrained_type", _, _), child(x, n, 0), node(_, n, "identifier", _, _).
+mode_split_not_name(n) :- mode_split_tparam_inner(x), node(_, x, "constrained_type", _, _), child(x, f, 0), node(_, f, "type", _, _), child(f, n, 0), node(_, n, "identifier", _, _).
+mode_split_type_params(l) :- node(_, f, "function_definition", _, _), field(f, "type_parameters", l).
+mode_split_type_params(l) :- node(_, c, "class_definition", _, _), field(c, "type_parameters", l).
+mode_split_type_params(l) :- node(_, s, "type_alias_statement", _, _), field(s, "left", g), node(_, g, "generic_type", _, _), child(g, l, _), node(_, l, "type_parameter", _, _).
+mode_split_type_params(l) :- node(_, s, "type_alias_statement", _, _), field(s, "left", t), node(_, t, "type", _, _), child(t, g, 0), node(_, g, "generic_type", _, _), child(g, l, _), node(_, l, "type_parameter", _, _).
+mode_split_tparam(p) :- mode_split_type_params(l), child(l, p, _), !node(_, p, "type_default", _, _).
+mode_split_tparam(p) :- mode_split_type_params(l), child(l, it, _), node(_, it, "type_default", _, _), field(it, "name", p).
+mode_split_tparam_inner(x) :- mode_split_tparam(p), node(_, p, "type", _, _), child(p, x, 0).
+mode_split_tparam_inner(p) :- mode_split_tparam(p), !node(_, p, "type", _, _).
+mode_split_params(p) :- node(_, p, "parameters", _, _).
+mode_split_params(p) :- node(_, p, "lambda_parameters", _, _).
+mode_split_splat(s) :- node(_, s, "list_splat_pattern", _, _).
+mode_split_splat(s) :- node(_, s, "dictionary_splat_pattern", _, _).
+mode_split_pattern_ref(dn) :- node(_, dn, "dotted_name", _, _), inside(dn, a, mode_split_patterns), node(_, a, _, _, _), child(dn, _, 1).
+mode_split_pattern_ref(dn) :- node(_, cp, "class_pattern", _, _), child(cp, dn, 0), node(_, dn, "dotted_name", _, _).
+mode_split_symbol(d, n, s) :- node(d, n, "identifier", _, _), mode_split_id(n, s), !mode_split_not_name(n).
+mode_split_symbol(d, a, s) :- node(d, a, "attribute", _, _), field(a, "attribute", x), mode_split_id(x, s).
+mode_split_symbol(d, n, s) :- mode_split_pattern_ref(dn), child(dn, n, 0), node(d, n, "identifier", _, _), mode_split_id(n, s).
+mode_split_symbol(d, dn, s) :- mode_split_pattern_ref(dn), child(dn, x, i), i > 0, mode_split_id(x, s), node(d, dn, _, _, _).
+mode_split_symbol(d, i, s) :- node(d, i, "import_statement", _, _), field(i, "name", x), mode_split_imported(x, dn), mode_split_last(dn, c), mode_split_id(c, s).
+mode_split_symbol(d, i, s) :- node(d, i, "import_statement", _, _), field(i, "name", x), node(_, x, "aliased_import", _, _), field(x, "alias", a), mode_split_id(a, s).
+mode_split_symbol(d, i, s) :- node(d, i, "import_from_statement", _, _), field(i, "name", x), mode_split_imported(x, dn), name(dn, t), s = @nfkc(t).
+mode_split_symbol(d, i, s) :- node(d, i, "import_from_statement", _, _), field(i, "name", x), node(_, x, "aliased_import", _, _), field(x, "alias", a), mode_split_id(a, s).
+mode_split_imported(x, x) :- node(_, x, "dotted_name", _, _).
+mode_split_imported(x, dn) :- node(_, x, "aliased_import", _, _), field(x, "name", dn), node(_, dn, "dotted_name", _, _).
+mode_split_last_index(dn, i) :- mode_split_imported(_, dn), child(dn, _, _), i = max j : { child(dn, _, j) }.
+mode_split_last(dn, c) :- mode_split_last_index(dn, i), child(dn, c, i).
+mode_split_method(c, cn, m, mn) :- node(_, c, "class_definition", _, _), field(c, "name", cx), mode_split_id(cx, cn), field(c, "body", b), child(b, m, _), node(_, m, "function_definition", _, _), field(m, "name", mx), mode_split_id(mx, mn).
+mode_split_method(c, cn, m, mn) :- node(_, c, "class_definition", _, _), field(c, "name", cx), mode_split_id(cx, cn), field(c, "body", b), child(b, dd, _), node(_, dd, "decorated_definition", _, _), field(dd, "definition", m), node(_, m, "function_definition", _, _), field(m, "name", mx), mode_split_id(mx, mn).
+mode_split_async(m) :- node(_, m, "function_definition", _, _), op(m, "async").
+mode_split_facade(s) :- mode_split_method(_, s, _, _), suffix("Connection", s).
+mode_split_facade(s) :- mode_split_method(_, s, _, _), suffix("SessionHandle", s).
+mode_split_facade(s) :- mode_split_method(_, s, _, _), suffix("VersionHandle", s).
+mode_split_private(s) :- mode_split_method(_, _, _, s), prefix("_", s).
+mode_split_async_named(s) :- mode_split_method(_, _, _, s), suffix("_async", s).
+mode_split_hit(d, c) :- node(d, c, "class_definition", _, _), field(c, "name", x), mode_split_id(x, s), mode_split_mixed(s).
+mode_split_hit(d, n) :- mode_split_symbol(d, n, s), mode_split_mixed(s).
+mode_split_hit(d, n) :- mode_split_symbol(d, n, s), mode_split_core(s), !mode_split_core_allowed(d).
+mode_split_hit(d, m) :- mode_split_method(_, cn, m, mn), (cn = "_SessionHandleCore" ; cn = "_VersionHandleCore"), mode_split_mixed_entry(mn), node(d, m, _, _, _).
+mode_split_hit(d, m) :- mode_split_method(_, cn, m, mn), prefix("Sync", cn), mode_split_facade(cn), mode_split_async(m), !mode_split_private(mn), node(d, m, _, _, _).
+mode_split_hit(d, m) :- mode_split_method(_, cn, m, mn), prefix("Async", cn), mode_split_facade(cn), !mode_split_async(m), !mode_split_private(mn), !mode_split_async_named(mn), !mode_split_async_allowed(mn), node(d, m, _, _, _).
+violation("data-layer-connection-mode-split", "mode-split", "connection_mode_split", p, l) :- mode_split_hit(d, n), mode_split_enabled(_), mode_split_gate(d), doc(d, p, _), line(n, l).

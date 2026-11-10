@@ -604,7 +604,7 @@ clauses:
       expect(result.status).toBe("completed");
       expect(result.violations.map((item) => item.span?.startByte)).toEqual([0, source.lastIndexOf("execute_async()")]);
     });
-    it("matches file paths without inspecting file contents", () => {
+    it("matches file paths without inspecting file contents, naming the file with no span", () => {
       const compiled = compileJson([
         {
           violation: violation("REQUIRED_FILE"),
@@ -621,11 +621,8 @@ clauses:
       );
 
       expect(result.violations).toHaveLength(1);
-      expect(result.violations[0]).toMatchObject({
-        code: "REQUIRED_FILE",
-        path: ".required.json",
-        span: { startLine: 0 },
-      });
+      expect(result.violations[0]).toMatchObject({ code: "REQUIRED_FILE", path: ".required.json" });
+      expect(result.violations[0]).not.toHaveProperty("span");
     });
     it("selects repository witnesses only when another query has evidence", () => {
       const compiled = compileJson([
@@ -652,7 +649,8 @@ clauses:
       );
 
       expect(violating.violations).toHaveLength(1);
-      expect(violating.violations[0]).toMatchObject({ path: ".baseline.json", span: { startLine: 0 } });
+      expect(violating.violations[0]).toMatchObject({ path: ".baseline.json" });
+      expect(violating.violations[0]).not.toHaveProperty("span");
       expect(compliant).toMatchObject({ violations: [], status: "completed" });
     });
     it("applies portable include and exclude scopes before matching", () => {
@@ -719,7 +717,7 @@ clauses:
 
     it.each([
       [
-        "example-data-layer-layer-violations",
+        "example-layers-layer-violations",
         "impl/module.py",
         "# module header\nfrom impl.internal import Service\n",
         "layer_violations",
@@ -756,8 +754,8 @@ clauses:
       expect(result.violations[0]).toMatchObject({ code, path });
     });
 
-    it("limits eager resolve violations to explicit plan scope bodies", () => {
-      const compiled = compileCodeRuleFile("example-data-layer-plan-scope-side-effects");
+    it("limits eager resolve violations to explicit read and write scope bodies", () => {
+      const compiled = compileCodeRuleFile("example-layers-scope-side-effects");
       const unrelated = evaluate(
         compiled,
         snapshot([
@@ -768,33 +766,33 @@ clauses:
           },
         ]),
       );
-      const inPlanScope = evaluate(
+      const inScope = evaluate(
         compiled,
         snapshot([
           {
             language: "python",
-            path: "impl/common/plan.py",
+            path: "impl/common/scope.py",
             source:
-              "def load(conn, lazy):\n    with conn.session().open_write_plan() as scope:\n        value = lazy.resolve()\n        scope.execute()\n",
+              "def load(conn, lazy):\n    with conn.session().open_write_scope() as scope:\n        value = lazy.resolve()\n        scope.execute()\n",
           },
         ]),
       );
 
       expect(unrelated).toMatchObject({ status: "completed", violations: [], failures: [] });
-      expect(inPlanScope).toMatchObject({ status: "completed", failures: [] });
-      expect(inPlanScope.violations).toHaveLength(1);
-      expect(inPlanScope.violations[0]).toMatchObject({
-        code: "plan_scope_side_effects",
-        path: "impl/common/plan.py",
+      expect(inScope).toMatchObject({ status: "completed", failures: [] });
+      expect(inScope.violations).toHaveLength(1);
+      expect(inScope.violations[0]).toMatchObject({
+        code: "scope_side_effects",
+        path: "impl/common/scope.py",
       });
     });
 
     it.each([
       [
-        "example-app-conn-based-function",
-        "def load(conn: SyncDatabaseConnection):\n    return conn.session()\n",
-        "def load(txn: ReadTransaction):\n    return txn.query()\n",
-        "CONN_BASED_FUNCTION",
+        "example-app-conn-parameter",
+        "def load(conn: Connection):\n    return conn.execute(query)\n",
+        "def load(work: UnitOfWork):\n    return work.query()\n",
+        "CONN_PARAMETER",
       ],
       [
         "example-app-sync-conn-in-async",
@@ -816,7 +814,7 @@ clauses:
       ],
       [
         "example-app-stored-connection",
-        "class Service:\n    def __init__(self, conn: SyncDatabaseConnection):\n        self.conn = conn\n",
+        "class Service:\n    def __init__(self, conn: Connection):\n        self.conn = conn\n",
         "class Service:\n    def __init__(self, pool: DatabasePool):\n        self.pool = pool\n",
         "STORED_CONNECTION",
       ],
@@ -2941,13 +2939,30 @@ describe.skipIf(codeRuleDslRuntime === undefined)("trust sweep (M6)", () => {
     }
   });
 
-  it.each(["expression", "statement", "declaration", "primary_expression", "pattern"])("rejects the abstract kind %s, which no node carries", kind => {
-    expect(() => compileJson([astForbid({ kind }, "typescript")])).toThrow(
-      `/clauses/0/forbid/ast/rule/kind: \`${kind}\` is an abstract kind (a grammar supertype) that no node carries; list its concrete kinds under \`any\` (typescript, tsx, javascript grammars)`,
-    );
-    if (["expression", "primary_expression", "pattern"].includes(kind)) {
-      expect(() => compileJson([astForbid({ kind: "call", has: { kind } })])).toThrow(/rule\/has\/kind: `\w+` is an abstract kind/);
-    }
+  // An abstract kind (a grammar supertype) matches the nodes the parser reported as its members. Membership is
+  // positional: the assigned `a` is in neither `expression` nor `pattern`, the destructured `c` and the parameter `e`
+  // are `pattern`s, and `e` read in the body is an `expression`.
+  it.each([
+    ["expression", ["a = b", "b", "d", "e + 1", "e", "1"]],
+    ["statement", ["a = b;", "let [c] = d;", "function f(e) { return e + 1; }", "return e + 1;"]],
+    ["declaration", ["let [c] = d;", "function f(e) { return e + 1; }"]],
+    ["primary_expression", ["b", "d", "e", "1"]],
+    ["pattern", ["c", "e"]],
+  ] as Array<[string, string[]]>)("compiles the abstract kind %s and matches the parser's members", (kind, members) => {
+    const source = "a = b;\nlet [c] = d;\nfunction f(e) { return e + 1; }\n";
+    const typescript = evaluate(compileJson([astForbid({ kind }, "typescript")]), snapshot([{ language: "typescript", path: "a.ts", source }]));
+    expect(typescript.violations.map(item => source.slice(item.span!.startByte, item.span!.endByte))).toEqual(members);
+  });
+
+  // A call's direct children are its function, reported as a `primary_expression` only, and its argument list.
+  it.each([
+    ["expression", []],
+    ["primary_expression", ["f(a + 1)", "g(y)"]],
+    ["pattern", []],
+  ] as Array<[string, string[]]>)("matches a call that has a member of the abstract kind %s", (kind, members) => {
+    const source = "f(a + 1)\nx = g(y)\n";
+    const python = evaluate(compileJson([astForbid({ kind: "call", has: { kind } })]), snapshot([{ language: "python", path: "a.py", source }]));
+    expect(python.violations.map(item => source.slice(item.span!.startByte, item.span!.endByte))).toEqual(members);
   });
 
   it("rejects a Python pattern whose $-name is not a metavariable, and keeps TypeScript's literal $-identifiers", async () => {
@@ -3351,7 +3366,7 @@ describe.skipIf(codeRuleDslRuntime === undefined)("file-local name resolution (M
   it("separates TypeScript values from types and honors /* global */ comments only when asked", async () => {
     const source = "/* global jQuery */\ninterface Window { x: number }\nlet w: Window = window;\njQuery(alert);\n";
     const values = { ...astForbid({ resolves: { global: ["Window", "window", "alert", "jQuery"] } }, "typescript"), id: "plain" };
-    const directives = { ...astForbid({ resolves: { global: ["alert"], directives: "eslint" } }, "typescript"), id: "eslint" };
+    const directives = { ...astForbid({ resolves: { global: ["alert", "jQuery"], directives: "eslint" } }, "typescript"), id: "eslint" };
     const files = [{ language: "typescript" as const, path: "a.ts", source }];
     const { actual, full } = await workspaceAndFull([values, directives], files);
     expect(actual.violations).toEqual(full.violations);

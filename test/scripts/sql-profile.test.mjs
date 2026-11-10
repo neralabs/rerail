@@ -299,3 +299,22 @@ test("preparation has its own cost bucket and action using exclusive CPU", () =>
   assert.equal(summary.costBreakdown.find(c => c.label === "SQL statement preparation").cpuMs, 30);
   assert.deepEqual(summary.actions.find(a => a.key === "sql-phase-preparation").queryIds, [1]);
 });
+
+test("deferred DDL explanations allow replacement of a table by a view", () => {
+  const queries = [["DROP TABLE temp.wave_stats", "use DROP VIEW to delete view wave_stats"],
+    ["DROP VIEW temp.wave_stats", "use DROP TABLE to delete table wave_stats"]].map(([sql,error],id)=>query({id,sql,
+      flags:[{code:"explain-unavailable"}],plans:[{plan:{error},bytecode:{error}}]}));
+  const summary=actionableSummary({workload:{},queries});
+  assert.equal(summary.quality.expectedSetupExplainFailures,2);
+  assert.equal(summary.quality.unexpectedExplainFailures,0);
+});
+
+
+test("deferred DROP of a lattice counter can see its native replacement", () => {
+  const queries=[['DROP TABLE temp."__sql_changes_level"','table __sql_changes_level may not be dropped'],
+    ['DROP TABLE temp."protected"','table protected may not be dropped']].map(([sql,error],id)=>query({id,sql,
+      flags:[{code:"explain-unavailable"}],plans:[{plan:{error},bytecode:{error}}]}));
+  const summary=actionableSummary({workload:{},queries});
+  assert.equal(summary.quality.expectedSetupExplainFailures,1);
+  assert.equal(summary.quality.unexpectedExplainFailures,1);
+});

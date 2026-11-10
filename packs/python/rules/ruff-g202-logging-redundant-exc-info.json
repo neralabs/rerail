@@ -1,0 +1,262 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-g202-logging-redundant-exc-info",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove exc_info from exception logging calls inside exception handlers; the exception method already logs the traceback.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "logging-redundant-exc-info",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "logger-object": {
+              "any": [
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "resolves": {
+                      "import": [
+                        "logging.getLogger",
+                        "logging.Logger"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "logger-object"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "logging",
+                      "flask.current_app.logger"
+                    ]
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                    },
+                    {
+                      "kind": "attribute",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "attribute",
+                            "regex": "^(log|LOG)|(logger|logging|LOGGER|LOGGING)$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "object",
+                            "matches": "name-chain"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "not": {
+                    "resolves": {
+                      "import": true
+                    }
+                  }
+                }
+              ]
+            },
+            "name-chain": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "object",
+                    "matches": "name-chain"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name-chain"
+                  }
+                }
+              ]
+            },
+            "in-handler": {
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "except_clause"
+                    },
+                    {
+                      "kind": "block",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "kind": "except_clause"
+              }
+            },
+            "exc-info-set": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "call",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "resolves": {
+                      "import": [
+                        "sys.exc_info"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "exc-info-set"
+                  }
+                }
+              ]
+            },
+            "exc-info-kwarg": {
+              "kind": "keyword_argument",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "name",
+                    "regex": "^exc_info$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "exc-info-set"
+                  }
+                }
+              ]
+            },
+            "level-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "regex": "^exception$"
+                      }
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "object",
+                        "matches": "logger-object"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "logging.exception"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "level-callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "exc-info-kwarg",
+            "all": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "argument_list",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "kind": "call",
+                    "matches": "in-handler",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "level-callee"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "G202",
+        "message": "Remove this redundant `exc_info` argument: `exception(...)` already logs the active exception's traceback.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "G202"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

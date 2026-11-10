@@ -28,6 +28,7 @@ fn compile_rule(
         captures: Default::default(),
         calls: None,
         documents: None,
+        instances: None,
         side: crate::code_rule_dsl::compile::documents::Side::Host,
     };
     crate::code_rule_dsl::compile::compile_ast_rule(rule, language, path, gaps, &utils)
@@ -482,7 +483,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             .clauses
             .iter()
             .find_map(|clause| match &clause.kind {
-                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.as_slice()),
+                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(&matchers[..]),
                 _ => None,
             })
             .expect("an AST clause")
@@ -518,13 +519,13 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             }
         }
     }
-    assert_eq!(queries.len(), 369, "pinned catalog query inventory");
+    assert_eq!(queries.len(), 1668, "pinned catalog query inventory");
     // Every catalog grammar needs a fixture here; an unknown language fails rather than being skipped.
     let fixtures = [
         (
             "python",
             GrammarDialect::Python,
-            "from data_layer import AbstractData\nclass Example:\n    def run(self, txn):\n        value = txn.execute('select * from users')\n        assert value != None\n        return sorted(value)\n",
+            "from core import AbstractData\nclass Example:\n    def run(self, txn):\n        value = txn.execute('select * from users')\n        assert value != None\n        return sorted(value)\n",
         ),
         (
             "typescript",
@@ -536,6 +537,29 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             GrammarDialect::JavaScript,
             "function route(a, b, c) {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
         ),
+        (
+            "php",
+            GrammarDialect::Php,
+            "<?php\nfunction route($a, $b, $c) {\n  if ($a) return 1;\n  if ($b) return 2;\n  if ($c) return 3;\n  foreach ($a as $x) { if ($x) return 4; }\n  return $a && $b ? 5 : 6;\n}\n",
+        ),
+        // A Blade clause reads the compiled view, a PHP program (`ast.embedded: compiled-view`).
+        (
+            "blade",
+            GrammarDialect::Php,
+            "<?php\n$route = function ($a, $b, $c) {\n  if ($a) return 1;\n  if ($b) return 2;\n  if ($c) return 3;\n  foreach ($a as $x) { if ($x) return 4; }\n  return $a && $b ? 5 : 6;\n};\n",
+        ),
+        (
+            "rust",
+            GrammarDialect::Rust,
+            "fn route(a: bool, b: bool, c: bool, v: Vec<u32>) -> u32 {\n    if a { return 1; }\n    if b { return 2; }\n    if c { return 3; }\n    for x in v { if x > 0 { return 4; } }\n    if a && b { 5 } else { 6 }\n}\n",
+        ),
+        // A Vue clause reads the program its scripts make (`ast.embedded: script-block`): TypeScript
+        // for `lang="ts"`.
+        (
+            "vue",
+            GrammarDialect::TypeScript,
+            "function route(a: any, b: any, c: any): number {\n  if (a) return 1;\n  if (b) return 2;\n  if (c) return 3;\n  for (const x of a) { if (x) return 4; }\n  while (b) { if (c) break; }\n  return a && b ? 5 : 6;\n}\n",
+        ),
     ];
     for (query, _) in &queries {
         let language = query["language"].as_str().expect("AST query language");
@@ -545,8 +569,10 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
         );
     }
     for (name, language, source) in fixtures {
+        // Compiling the queries is most of the test's work; each compiles alone.
+        use rayon::prelude::*;
         let compiled: Vec<_> = queries
-            .iter()
+            .par_iter()
             .filter(|(query, _)| query["language"] == name)
             .map(|(query, defines)| {
                 let mut clauses = defines.clone();
@@ -1069,6 +1095,111 @@ fn utility_plans_select_as_precisely_as_the_rule_written_inline() {
     }
 }
 
+/// A root gate (a utility written `inside` the grammar's root node, to the end, as the Airflow
+/// ports' `seen-airflow` gates a file on an `airflow` import) selects the roots the gate written
+/// inline selects: `compile_util` keeps its relations and those of the utilities under it, where
+/// it reduces any other relation utility to its root kinds (`relation` here, which adds nothing to
+/// the identifier roots it is written over). The same gate written `inside` another kind is
+/// reduced by the index (`Condition::RootGate`), and a utility reached both under the gate and
+/// outside it has a plan for each context.
+#[test]
+fn utility_root_gates_select_as_the_gate_written_inline() {
+    let calls: String = (0..200)
+        .map(|n| format!("bar{n}(baz{n});\nfoo(x{n});\n"))
+        .collect();
+    let imports = format!("import lib from \"lib\";\n{calls}");
+    let selection = |ast: Value, source: &str| {
+        let native = AstGrep::doc(StrDoc::new(source, GrammarDialect::TypeScript));
+        let compiled = compiled(ast);
+        let grammar = &grammar_matchers(&compiled)[0];
+        let (found, roots, _, complete, all) = selected(
+            &native,
+            &grammar.matcher,
+            &grammar.anchors,
+            usize::MAX,
+            || false,
+        );
+        assert!(complete && !all, "the index decides the file");
+        assert_eq!(found, actual(&native, &grammar.matcher), "sound selection");
+        (found.len(), roots)
+    };
+    let foo = json!({ "kind": "identifier", "regex": "^foo$" });
+    let leaf = json!({ "kind": "string_fragment", "regex": "^lib$" });
+    let inline = json!({
+        "kind": "identifier", "regex": "^foo$",
+        "inside": { "stopBy": "end", "kind": "program", "has": { "stopBy": "end", "matches": "leaf" } },
+    });
+    let inline_utils = json!({ "leaf": leaf });
+    // The gate's `has` sits in a utility of its own, as `seen-airflow` reaches `imports-airflow`.
+    let utility = json!({ "kind": "identifier", "regex": "^foo$", "matches": "gate" });
+    let imports_util = json!({ "has": { "stopBy": "end", "matches": "leaf", "inside": { "stopBy": "neighbor", "kind": "string" } } });
+    let utils = json!({
+        "gate": { "inside": { "stopBy": "end", "kind": "program", "matches": "imports" } },
+        "imports": imports_util,
+        "leaf": leaf,
+    });
+    // A gate whose leaf is a `pattern`: where the index has no value postings for a regex leaf,
+    // `text_selection` reads the text, but a pattern leaf reads only the postings `collect_needs`
+    // built, so a gate it skips that `select_complete` confirms loses every finding.
+    let pattern_utils = json!({
+        "gate": { "inside": { "stopBy": "end", "kind": "program",
+            "has": { "stopBy": "end", "pattern": "import lib from \"lib\"" } } },
+    });
+    for (source, expected) in [(calls.as_str(), (0, 0)), (imports.as_str(), (200, 200))] {
+        assert_eq!(
+            selection(json!({ "rule": inline, "utils": inline_utils }), source),
+            expected,
+            "inline"
+        );
+        assert_eq!(
+            selection(json!({ "rule": utility, "utils": utils }), source),
+            expected,
+            "utility"
+        );
+        assert_eq!(
+            selection(json!({ "rule": utility, "utils": pattern_utils }), source),
+            expected,
+            "utility with a pattern leaf"
+        );
+    }
+    // `foo` alone selects the 200 roots `foo` names; the reduced relation utility leaves them.
+    let relation = json!({ "kind": "identifier", "regex": "^foo$", "matches": "relation" });
+    let relation_utils =
+        json!({ "relation": { "inside": { "stopBy": "neighbor", "kind": "call_expression" } } });
+    assert_eq!(selection(json!({ "rule": foo }), &calls), (200, 200));
+    assert_eq!(
+        selection(json!({ "rule": relation, "utils": relation_utils }), &calls),
+        (200, 200)
+    );
+    // The same gate written `inside` a kind that is not the tree's root (no `expression_statement`
+    // holds the import) is reduced by the index to every root, where the gate itself would have
+    // selected none: `foo`'s 200 roots, none of which the rule matches.
+    let not_root = json!({
+        "gate": { "inside": { "stopBy": "end", "kind": "expression_statement", "matches": "imports" } },
+        "imports": imports_util,
+        "leaf": leaf,
+    });
+    assert_eq!(
+        selection(json!({ "rule": utility, "utils": not_root }), &imports),
+        (0, 200),
+        "a gate on another kind is reduced"
+    );
+    // `imports` reached under the gate and directly: the gated copy keeps its `has`, the direct
+    // one is reduced (an identifier has no children, so the rule matches nothing).
+    let both = json!({
+        "kind": "identifier", "regex": "^foo$",
+        "all": [{ "matches": "gate" }, { "matches": "imports" }],
+    });
+    assert_eq!(
+        selection(json!({ "rule": both, "utils": utils }), &calls),
+        (0, 0)
+    );
+    assert_eq!(
+        selection(json!({ "rule": both, "utils": utils }), &imports),
+        (0, 200)
+    );
+}
+
 /// A utility's plan is inlined once per plan and reused by every diamond path that reaches it.
 #[test]
 fn utility_diamonds_inline_anchor_plans_in_linear_visits() {
@@ -1301,4 +1432,135 @@ fn a_pattern_selection_spends_a_unit_per_256_roots_not_per_root() {
         spent < (roots / 16) as u64,
         "{spent} units for {roots} candidate roots"
     );
+}
+
+/// The Airflow ports (AIR302, AIR311, AIR312) gate every clause on Ruff's `seen_module(AIRFLOW)`
+/// check through their shared `seen-airflow` utility (`inside module has dotted_name ^airflow`),
+/// a root gate `compile_util` keeps, so the anchor index selects no root in a file without an
+/// `airflow` import. Reduced to its root kinds, as any other relation utility is, the gate would
+/// keep every finding and make AIR302 about a hundred times slower on such files (#375).
+#[test]
+fn airflow_ports_select_no_root_in_a_file_without_an_airflow_import() {
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
+    // Names the rules report, with no `airflow` import: `airflowx` has the prefix, not the module.
+    let without = "import airflowx\nfrom airflowx.hooks import PostgresHook\nimport os.path as airflow_path\n\nclass Dataset: ...\n\ndef run(h: \"PostgresHook\", d: \"Dataset\") -> \"BashOperator\":\n    airflow_path.join(h.conn, airflowx.DAG)\n    return BashOperator(bash_command=\"x\", sla=d)\n";
+    let with = "from airflow.hooks.S3_hook import S3Hook\nfrom airflow import Dataset\nfrom airflow.operators.bash import BashOperator\n\ndef run(h: \"S3Hook\") -> \"BashOperator\":\n    return BashOperator(bash_command=\"x\", sla=Dataset(uri=\"x\"))\n";
+    let without = AstGrep::doc(StrDoc::new(without, GrammarDialect::Python));
+    let with = AstGrep::doc(StrDoc::new(with, GrammarDialect::Python));
+    for name in [
+        "ruff-air302-airflow3-moved-to-provider",
+        "ruff-air311-airflow3-suggested-update",
+        "ruff-air312-airflow3-suggested-to-move-to-provider",
+    ] {
+        let document = std::fs::read_to_string(rules.join(format!("{name}.json"))).unwrap();
+        let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
+            document,
+            "json".to_owned(),
+            crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
+        )
+        .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
+        let grammars: Vec<&GrammarMatcher> = compiled
+            .inner
+            .clauses
+            .iter()
+            .filter_map(|clause| match &clause.kind {
+                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.iter()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert!(!grammars.is_empty(), "{name}: AST clauses");
+        for grammar in &grammars {
+            let (found, roots, _, complete, all) = selected(
+                &without,
+                &grammar.matcher,
+                &grammar.anchors,
+                usize::MAX,
+                || false,
+            );
+            assert!(complete && !all, "{name}: the index decides the file");
+            assert_eq!(roots, 0, "{name}: no root without an airflow import");
+            assert!(found.is_empty(), "{name}");
+        }
+        let mut reported = 0;
+        for grammar in &grammars {
+            let (found, _, _, complete, _) = selected(
+                &with,
+                &grammar.matcher,
+                &grammar.anchors,
+                usize::MAX,
+                || false,
+            );
+            assert!(complete, "{name}");
+            assert_eq!(
+                found,
+                actual(&with, &grammar.matcher),
+                "{name}: sound selection"
+            );
+            reported += found.len();
+        }
+        assert!(
+            reported > 0,
+            "{name}: a file with an airflow import still reports"
+        );
+    }
+}
+
+/// ANN204, ANN205, ANN206 and ANN401 reach their `seen-builtins` utility (`inside module has
+/// dotted_name ^builtins`, a root gate) only through `static-ref` and `class-ref`: under a `not`
+/// in their first arm (a `staticmethod` / `classmethod` identifier no `builtins` import shadows)
+/// and directly in their second (a name that resolves to the builtin). Selection stays sound and
+/// complete on a file with a `builtins` import and on one without.
+#[test]
+fn ann_ports_select_soundly_with_and_without_a_builtins_import() {
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/rules");
+    let without = "from typing import Any\n\nclass A:\n    def __init__(self):\n        pass\n\n    @staticmethod\n    def s(x):\n        return x\n\n    @classmethod\n    def c(cls):\n        return cls\n\ndef f(a: Any):\n    return a\n";
+    let with = "import builtins\nfrom typing import Any\n\nclass A:\n    def __init__(self):\n        pass\n\n    @builtins.staticmethod\n    def s(x):\n        return x\n\n    @builtins.classmethod\n    def c(cls):\n        return cls\n\n    @staticmethod\n    def t(x):\n        return x\n\ndef f(a: Any):\n    return a\n";
+    let without = AstGrep::doc(StrDoc::new(without, GrammarDialect::Python));
+    let with = AstGrep::doc(StrDoc::new(with, GrammarDialect::Python));
+    for name in [
+        "ruff-ann204-missing-return-type-special-method",
+        "ruff-ann205-missing-return-type-static-method",
+        "ruff-ann206-missing-return-type-class-method",
+        "ruff-ann401-any-type",
+    ] {
+        let document = std::fs::read_to_string(rules.join(format!("{name}.json"))).unwrap();
+        let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
+            document,
+            "json".to_owned(),
+            crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
+        )
+        .unwrap_or_else(|error| panic!("{name}: {}", error.reason));
+        let grammars: Vec<&GrammarMatcher> = compiled
+            .inner
+            .clauses
+            .iter()
+            .filter_map(|clause| match &clause.kind {
+                ClauseKind::Forbid(Query::Ast { matchers, .. }) => Some(matchers.iter()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert!(!grammars.is_empty(), "{name}: AST clauses");
+        for (source, label) in [(&without, "without"), (&with, "with")] {
+            let mut reported = 0;
+            for grammar in &grammars {
+                let (found, _, _, complete, _) = selected(
+                    source,
+                    &grammar.matcher,
+                    &grammar.anchors,
+                    usize::MAX,
+                    || false,
+                );
+                assert!(complete, "{name} {label}: the index decides the file");
+                assert_eq!(
+                    found,
+                    actual(source, &grammar.matcher),
+                    "{name} {label} a builtins import: sound selection"
+                );
+                reported += found.len();
+            }
+            assert!(reported > 0, "{name} {label} a builtins import: reports");
+        }
+    }
 }

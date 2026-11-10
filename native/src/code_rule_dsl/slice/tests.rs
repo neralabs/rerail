@@ -79,7 +79,8 @@ fn an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off() {
     std::fs::create_dir_all(&dir).unwrap();
     write(&dir, "a.py", "import os, sys\nf = lambda: 0\n");
     write(&dir, "b.py", "try:\n    pass\nexcept:\n    pass\n");
-    write(&dir, "c.py", "x = 1\n");
+    // A module docstring: the pack's D100 flags a public module without one.
+    write(&dir, "c.py", "\"\"\"The c module.\"\"\"\nx = 1\n");
     write(&dir, "notes.txt", "not code\n");
     let store = ContentStore::open(&temp("store").with_extension("sqlite")).unwrap();
     let mut rules = Rules::lower(&policies, ExecutionBackend::CpuJit).unwrap();
@@ -106,7 +107,7 @@ fn an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off() {
     assert_eq!(keys(&again), keys(&first));
 
     // One file edited: its four derivations re-run and only it is evaluated; only its findings move.
-    write(&dir, "c.py", "x = 1\ng = lambda: 1\n");
+    write(&dir, "c.py", "\"\"\"The c module.\"\"\"\nx = 1\ng = lambda: 1\n");
     let edited = apply(&store, WS, directory_root(&store, &dir).unwrap(), &mut rules).unwrap();
     assert_eq!(edited.ingested.push.work.rerun, 4, "c.py's tape, core, prefilter and kinds");
     assert_eq!(edited.evaluated, ["c.py"]);
@@ -437,7 +438,7 @@ fn pack_census() {
             rules += 1;
             for clause in &compiled.inner.clauses {
                 let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
-                for grammar in matchers {
+                for grammar in matchers.iter() {
                     clauses += 1;
                     let Some(matcher) = match_tree(grammar).ok().and_then(|tree| LoweredMatcher::lower(&tree).ok()) else {
                         unlowered += 1;

@@ -76,7 +76,8 @@ fn item(b: u8) -> String {
 fn generated() -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut add = |family: &str, what: &str, body: String| {
-        let name = format!("{:04}-{family}-{}.bitlex", out.len(), what.replace([' ', ',', '(', ')'], "_").replace("__", "_").trim_end_matches('_'));
+        // `|` spelled `or`: Windows forbids it in a file name.
+        let name = format!("{:04}-{family}-{}.bitlex", out.len(), what.replace('|', "or").replace([' ', ',', '(', ')'], "_").replace("__", "_").trim_end_matches('_'));
         out.push((name, file(family, what, &body)));
     };
 

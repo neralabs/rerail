@@ -1,0 +1,81 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi025-unaliased-collections-abc-set-import",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Import Set from collections.abc under the alias AbstractSet; the bare name is easily mistaken for the builtin set.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unaliased-collections-abc-set-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "abc-set": {
+              "kind": "dotted_name",
+              "resolves": {
+                "imported": [
+                  "collections.abc.Set"
+                ]
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "abc-set",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "import_from_statement"
+                },
+                "not": {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^from$"
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "not": {
+                  "regex": "^AbstractSet$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "aliased_import",
+                  "field": "alias",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "abc-set"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "import_from_statement"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI025",
+        "message": "Import `Set` as `AbstractSet` and rename its uses, so it isn't mistaken for the builtin `set`; keep the name if other modules import `Set` from this file.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI025"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

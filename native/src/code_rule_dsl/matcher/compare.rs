@@ -316,26 +316,34 @@ fn element_index<D: Doc>(node: &Node<'_, D>) -> Option<usize> {
     if !node.is_named() || super::util::is_comment_kind(&node.kind()) {
         return None;
     }
+    let (element, list) = outside_parentheses(node)?;
+    if !LISTS.contains(&list.kind().as_ref()) {
+        return None;
+    }
+    commas_before(&list, &element)
+}
+
+/// The outermost parentheses around `node` (or `node` itself, where none are), with its parent.
+fn outside_parentheses<'t, D: Doc>(node: &Node<'t, D>) -> Option<(Node<'t, D>, Node<'t, D>)> {
     let mut node = node.clone();
     let mut parent = node.parent()?;
-    while parent.kind() == "parenthesized_expression" {
+    while super::util::is_paren_kind(&parent.kind()) {
         node = parent;
         parent = node.parent()?;
     }
-    if !LISTS.contains(&parent.kind().as_ref()) {
-        return None;
-    }
-    Some(parent.count_tokens_before(&node, ","))
+    Some((node, parent))
+}
+
+/// The `,` tokens among `list`'s children before its child `element`.
+fn commas_before<'r, D: Doc>(list: &Node<'r, D>, element: &Node<'r, D>) -> Option<usize> {
+    Some(list.count_tokens_before(element, ","))
 }
 
 /// The node inside any parentheses: ESTree has none.
 fn unparenthesized<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
     let mut node = node.clone();
-    while node.kind() == "parenthesized_expression" {
-        let Some(inner) = node
-            .children()
-            .find(|child| child.is_named() && !super::util::is_comment_kind(&child.kind()))
-        else {
+    while super::util::is_paren_kind(&node.kind()) {
+        let Some(inner) = node.first_code() else {
             break;
         };
         node = inner;

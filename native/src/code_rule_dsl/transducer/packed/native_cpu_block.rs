@@ -95,6 +95,8 @@ pub(super) struct PassShape {
     pub(super) gate_branches: usize,
     pub(super) round_branches: usize,
     pub(super) extracts: usize,
+    /// Its machine code, disassembled.
+    pub(super) disassembly: String,
 }
 
 /// The running counts, as output indexes: each extract's, then each total's. A file's counts are
@@ -668,6 +670,7 @@ impl Emit<'_, '_> {
             }
             BlockInst::BackFill(..) => unreachable!("a pass of its own (`native_ir::passes`)"),
             BlockInst::Carry(_) => unreachable!("a carry is its round's head's parameter"),
+            BlockInst::Cmp { .. } | BlockInst::Bit { .. } => unreachable!("a row program's (`native_cpu_rows`)"),
             BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) => unreachable!("on the vectors"),
             BlockInst::Const(_) | BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) => unreachable!("folded"),
             BlockInst::Prev(a, k) => {
@@ -987,7 +990,7 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let mut context: Context = module.make_context();
         context.func.signature = signature.clone();
         context.set_disasm(true);
-        let mut shape = PassShape { back: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0 };
+        let mut shape = PassShape { back: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0, disassembly: String::new() };
         match pass {
             Pass::Forward { body, stores } => {
                 (shape.ascii_branch, shape.gate_branches, shape.round_branches) = forward(&mut context, body, stores, passes.slots)?;
@@ -999,9 +1002,10 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             }
         }
         shape.clif = context.func.display().to_string();
-        shapes.push(shape);
         super::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
-        disassembly.push_str(&context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
+        shape.disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
+        disassembly.push_str(&shape.disassembly);
+        shapes.push(shape);
         module.clear_context(&mut context);
         ids.push(id);
     }

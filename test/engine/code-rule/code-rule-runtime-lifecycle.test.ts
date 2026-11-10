@@ -1,10 +1,11 @@
-import { mkdir, opendir, realpath, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, opendir, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, RerailHost } from "../../../src/engine/adapter-contract.js";
 import type { CodeRuleAuditor, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
-import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
@@ -47,7 +48,8 @@ async function fixture({ deliverBackground, host = "claude-code", prepare, audit
       steerDelivery = options.steerDelivery;
       return {
         openWorkspace: async () => { opened.resolve(); },
-        acceptsPath: () => true,
+        // As rules without a text clause: the session's own files under `sessions/` are no sources.
+        acceptsPath: path => languageFor(path) !== undefined,
         auditGeneratedEdits: auditGeneratedEdits?.(options.steerDelivery)
           ?? (async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] })),
         close: async () => undefined,
@@ -264,6 +266,66 @@ describe("source-scoped steers", () => {
       expect(deliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
         expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
+      ]);
+    } finally {
+      await runtime.dispose();
+      audits.close();
+    }
+  });
+
+  it("steers and records nothing for what a Git command rewrote, in any session, and only its own line for a later edit", async () => {
+    const root = await realpath(await temporaryDirectory());
+    const databasePath = join(root, "rerail.sqlite");
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd: root, stdio: "ignore" });
+    await writeFile(join(root, ".gitignore"), "rerail.sqlite*\nsessions/\n");
+    await writeFile(join(root, "existing.py"), "safe\n");
+    await writeFile(join(root, "removed.py"), "NEEDLE\n");
+    git("init", "--quiet", "--initial-branch=main");
+    git("add", ".");
+    git("commit", "--quiet", "-m", "seed");
+    git("switch", "--quiet", "-c", "other");
+    await writeFile(join(root, "existing.py"), "NEEDLE\nsafe\n");
+    await writeFile(join(root, "added.py"), "NEEDLE\n");
+    await rm(join(root, "removed.py"));
+    git("add", ".");
+    git("commit", "--quiet", "-m", "other");
+    git("switch", "--quiet", "main");
+    const runtime = new RerailRuntime({
+      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+      createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
+    });
+    const audits = new SqliteAuditStore(databasePath);
+    const ran = { host: "omp" as const, sessionId: "ran-the-checkout", cwd: root };
+    const other = { host: "omp" as const, sessionId: "only-browsed", cwd: root };
+    const command = async (eventId: string, run: () => unknown) => {
+      await runtime.ingest({
+        kind: "call", eventId: `${eventId}-call`, sessionId: ran.sessionId, toolCallId: eventId, toolName: "bash", input: { command: "./run.sh" },
+      });
+      await run();
+      return await runtime.ingest({
+        kind: "result", eventId: `${eventId}-result`, sessionId: ran.sessionId, toolCallId: eventId, toolName: "bash", output: "",
+      });
+    };
+    const turnEnd = (sessionId: string, eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId, text: "done" });
+    try {
+      for (const session of [ran, other]) {
+        await runtime.ingest({ kind: "session-start", eventId: `${session.sessionId}-start`, session });
+        await runtime.codeRulesOpened(session.sessionId);
+        expect(await turnEnd(session.sessionId, `${session.sessionId}-baseline`)).toEqual([]);
+      }
+
+      expect(await command("checkout", () => git("checkout", "--quiet", "other"))).toEqual([]);
+      expect(await turnEnd(ran.sessionId, "ran-turn")).toEqual([]);
+      expect(await turnEnd(other.sessionId, "other-turn")).toEqual([]);
+      for (const session of [ran, other]) expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([]);
+
+      const deliveries = await command("edit", () => writeFile(join(root, "existing.py"), "NEEDLE\nsafe\nNEEDLE\n"));
+      const steered = deliveries.map(delivery => delivery.content).join("\n");
+      expect(steered).toContain("- existing.py:3:1 — No needle [");
+      expect(steered).not.toContain("existing.py:1:1");
+      expect(audits.list({ sessionId: ran.sessionId }).audits).toEqual([
+        expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["existing.py"] }),
       ]);
     } finally {
       await runtime.dispose();

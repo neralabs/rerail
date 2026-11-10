@@ -85,7 +85,7 @@ fn group_key(hirs: &[regex_syntax::hir::Hir]) -> String {
         hash.update(hir.to_string().as_bytes());
         hash.update(b"\0");
     }
-    format!("dfa1:{:x}", hash.finalize())
+    format!("dfa1:{}", crate::lower_hex(&hash.finalize()))
 }
 
 /// `hirs` determinized into one DFA over all of them, if it fits in `DFA_LIMIT`.

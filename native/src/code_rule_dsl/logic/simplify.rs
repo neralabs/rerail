@@ -41,7 +41,7 @@
 //!   they are the same as another's. Outputs, inputs, lattices, relations with facts and demanded relations are kept
 //!   as they are.
 
-use super::front::{Atom, Literal, Program, Rule, Term, Value};
+use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// What was simplified.
@@ -1079,14 +1079,17 @@ fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, de
     // `node`'s columns as declared: the node and its kind.
     let Some(cols) = decls.get("node") else { return 0 };
     let (Some(n), Some(k)) = (cols.iter().position(|(c, _)| c == "n"), cols.iter().position(|(c, _)| c == "kind")) else { return 0 };
-    // The ancestors of a single-kind set, by variable.
+    // The members of a single-kind set, by variable: `nearest`'s and `inside`'s ancestor, `has`'s descendant.
     let mut member: HashMap<String, &str> = HashMap::new();
     for l in &rule.body {
         let (a, set) = match l {
             Literal::Nearest { a, kindset, .. } => (a.clone(), kindset.as_str()),
-            Literal::Atom(x) if !x.neg && x.args.len() == 2 => match (x.rel.strip_prefix(super::front::AXIS), &x.args[1]) {
-                (Some(set), Term::Var(a)) => (a.clone(), set),
-                _ => continue,
+            Literal::Atom(x) if !x.neg && x.args.len() == 2 => match super::front::axis(&x.rel) {
+                Some((set, has)) => match &x.args[if has { 0 } else { 1 }] {
+                    Term::Var(a) => (a.clone(), set),
+                    _ => continue,
+                },
+                None => continue,
             },
             _ => continue,
         };
@@ -1139,7 +1142,11 @@ fn canonical(rule: &Rule, label: &dyn Fn(&str) -> String) -> String {
             Literal::Agg { var, op, over, atom: a } => {
                 let var = name(var);
                 let over = over.as_ref().map(|o| name(o));
-                Literal::Agg { var, op: op.clone(), over, atom: atom(a, &mut name) }
+                let op = match op {
+                    AggOp::Join { by, sep } => AggOp::Join { by: by.iter().map(|k| name(k)).collect(), sep: sep.clone() },
+                    op => op.clone(),
+                };
+                Literal::Agg { var, op, over, atom: atom(a, &mut name) }
             }
             Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n), a: name(a), kindset: kindset.clone() },
             Literal::Ast { document, node, matcher, captures } => Literal::Ast {

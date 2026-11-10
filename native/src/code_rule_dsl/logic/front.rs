@@ -9,7 +9,7 @@
 //!   node, or the text of a regex group or a transform); a match that leaves one unbound gives no row;
 //! - JSON strings, and `.policy { … }` for lint-rule documents (`yaml`, the second syntax of B12);
 //! - named errors for aggregation in recursion (unless the head is a monotone lattice) and unbounded lattices;
-//! - unbounded value cycles (`cycles`, O11 option b): a recursion that creates values must move along the tree.
+//! - unbounded value cycles (`cycles`, O11 option b): a recursion that creates values must be bounded by the data.
 //!
 //! §12's other named errors are not here: a non-interned cross-document join needs column types, and the cost gate
 //! is the planner's (row 5).
@@ -154,13 +154,13 @@ pub(in crate::code_rule_dsl) enum AggOp {
     Count,
     Min,
     Max,
-    /// Soufflé's `sum`: 0 over no rows.
+    /// `sum x : { … }`: the sum of `x` over the body's rows, 0 when there are none.
     Sum,
     /// `product x : {…}`: the product of `x` over the rows, 1 over no rows, saturating at i64's range (a count of
     /// combinations, as pytest's stacked parametrize marks multiply).
     Product,
-    /// `core.rr`'s `join x by k sep ","`: the `over` values ordered by the `by` columns' values (ties by the value),
-    /// joined by `sep`; "" over no rows.
+    /// `join x by (k, …) sep "s" : { … }`: the distinct `(k, …, x)` rows' `x` texts ordered by `k, …` then `x`
+    /// (symbols by code point, numbers by value), separated by `sep`; `""` when there are none.
     Join { by: Vec<String>, sep: String },
 }
 
@@ -168,7 +168,7 @@ pub(in crate::code_rule_dsl) enum AggOp {
 pub(in crate::code_rule_dsl) enum Literal {
     Atom(Atom),
     Cmp { l: Term, op: &'static str, r: Term },
-    /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max` likewise).
+    /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max`, `sum` and `join` likewise).
     Agg { var: String, op: AggOp, over: Option<String>, atom: Atom },
     /// `nearest($n, $a, kindset)`: `$a` is `$n`'s nearest strict ancestor of a kind in the set.
     Nearest { n: String, a: String, kindset: String },
@@ -481,9 +481,11 @@ pub(in crate::code_rule_dsl) enum Error {
     UnboundedLattice { relation: String },
     /// A demanded relation is used with its key unbound: its demand would be everything (magic sets).
     UnboundDemand { message: String, relation: String },
-    /// A component creates values (`@cat`, …) without moving along the tree (`cycles`): `rule` is one it
-    /// could not bound.
+    /// A component creates values (`@cat`, …) the data does not bound (`cycles`): `rule` is one it could not
+    /// bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
+    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rr's, for `.rr`).
+    UndeclaredInput { relation: String },
 }
 
 impl Error {
@@ -512,8 +514,9 @@ impl fmt::Display for Error {
             }
             Error::UnboundedValueCycle { component, rule } => {
                 let component = component.iter().cloned().collect::<Vec<_>>().join(", ");
-                write!(f, "unbounded value cycle: {{{component}}} creates values without moving along the tree ({rule})")
+                write!(f, "unbounded value cycle: {{{component}}} creates values the data does not bound ({rule})")
             }
+            Error::UndeclaredInput { relation } => write!(f, ".input {relation}: no .decl declares {relation}'s columns"),
         }
     }
 }
@@ -713,6 +716,7 @@ impl Parser<'_> {
                 Tok::Id(s) if s == "count" => Some(AggOp::Count),
                 Tok::Id(s) if s == "min" => Some(AggOp::Min),
                 Tok::Id(s) if s == "max" => Some(AggOp::Max),
+                Tok::Id(s) if s == "sum" => Some(AggOp::Sum),
                 _ => None,
             };
             if let Some(op) = agg.filter(|_| matches!(self.peek_at(1), Tok::P("{") | Tok::Var(_) | Tok::P(":"))) {
@@ -888,12 +892,17 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
             prog.inputs.push(rel);
         }
     }
+    // An input's columns are its declaration's: the planner reads them.
+    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(*rel)) {
+        return Err(Error::UndeclaredInput { relation: relation.clone() });
+    }
     cycles::check(&prog)?;
     Ok(prog)
 }
 
 /// A program to run reads only relations it declares or the transducer makes: else an error, as in Soufflé, not a
-/// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.)
+/// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.) `match_all` and
+/// `match_group` over a span are built-ins: the text columns make each regex's relation (`strings`).
 pub(in crate::code_rule_dsl) fn declared(prog: &Program) -> Result<(), Error> {
     for rule in &prog.rules {
         let mut read = rule.body.iter().filter_map(|l| match l {
@@ -902,7 +911,9 @@ pub(in crate::code_rule_dsl) fn declared(prog: &Program) -> Result<(), Error> {
         });
         // The import components' relations (`rr_cx_reach`, decision 0076) are added by the run to a program that reads
         // them: declared there.
-        if let Some(a) = read.find(|a| !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_")) {
+        if let Some(a) = read.find(|a| {
+            !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_") && !matches!(a.rel.as_str(), "match_all" | "match_group")
+        }) {
             return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
         }
     }
@@ -933,6 +944,16 @@ pub(in crate::code_rule_dsl) fn is_axis(rel: &str) -> bool {
 pub(in crate::code_rule_dsl) fn is_transduced(rel: &str) -> bool {
     is_axis(rel) || rel.starts_with(NEAREST)
 }
+
+/// A tree axis relation's set, and whether it is `has`'s (`DESCENDANTS`: the set tested on its first column, the
+/// descendant) rather than `inside`'s (`AXIS`: on its second, the ancestor).
+pub(in crate::code_rule_dsl) fn axis(rel: &str) -> Option<(&str, bool)> {
+    rel.strip_prefix(DESCENDANTS).map(|set| (set, true)).or_else(|| rel.strip_prefix(AXIS).map(|set| (set, false)))
+}
+
+/// A kind set's one member meaning every kind of the dialect: core.rr's `within(n, a)` is the tree axis over it
+/// (`rr::lower::core`); lowering for a dialect makes it the dialect's kinds (`plan::lower`).
+pub(in crate::code_rule_dsl) const EVERY_KIND: &str = "*";
 
 /// Dependency edges: head → {(dependency, negative)}; an aggregate's is negative, a gated negation's is not.
 pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, bool)>>;

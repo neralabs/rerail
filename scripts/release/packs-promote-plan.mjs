@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Which pack versions a promotion points `latest` at (promotionRequest and planPromotions in packs.mjs). Packs publish
 // under `latest`, so this is for putting one back, or for a version a publish left under `next`. With no pack id,
-// every pack whose package.json version is released (its `<name>@<version>` tag exists) and is not `latest` yet, less
+// every published pack whose package.json version is released (its `<name>@<version>` tag exists) and is not `latest` yet, less
 // any pack held at its `latest` (put back on purpose). With an id, that pack alone, at the version given or else its
 // package.json one; naming an older version holds the pack there. Writes `promote` (a JSON list
 // for packs-promote.mjs) to $GITHUB_OUTPUT and a table to $GITHUB_STEP_SUMMARY when they are set, so the run shows
@@ -16,11 +16,11 @@
 //   checkout's remote names the repository)
 import { appendFileSync } from "node:fs";
 import { readDistTags } from "./dist-tags.mjs";
-import { HOLD_TAG, listPacks, planPromotions, promotionRequest, releaseTag, releaseTags } from "./packs.mjs";
+import { HOLD_TAG, planPromotions, promotionRequest, publishedPacks, releaseTag, releaseTags } from "./packs.mjs";
 
 // The workflow passes both inputs, empty when not given: read them by position.
 const [id, version] = process.argv.slice(2, 4).map((argument) => (argument === "" ? undefined : argument));
-const request = promotionRequest(listPacks(), id, version);
+const request = promotionRequest(publishedPacks(), id, version);
 const tags = releaseTags();
 const released = request.packs.filter((pack) => tags.includes(releaseTag(pack.name, pack.version)));
 const distTags = await readDistTags(released.map((pack) => pack.name));

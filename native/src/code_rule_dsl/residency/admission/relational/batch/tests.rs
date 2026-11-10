@@ -288,6 +288,7 @@ fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
     assert!(witness.captures.get("NAME").is_some());
     assert!(witness.captures.get("PARAMS").is_none());
     let (anchor, fallback) = anchored_span(&input.anchor, witness);
+    let anchor = anchor.expect("an AST witness has a span");
     assert_eq!((anchor.start_byte, anchor.end_byte), (4, 5));
     assert!(!fallback);
     assert!(anchored_span(&Anchor::Capture("ABSENT".into()), witness).1);

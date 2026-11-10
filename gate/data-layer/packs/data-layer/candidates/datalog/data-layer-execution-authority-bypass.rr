@@ -1,8 +1,83 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl authority_frame_kinds(kind: symbol)
+authority_frame_kinds("function_definition"). authority_frame_kinds("class_definition").
+.decl authority_import_kinds(kind: symbol)
+authority_import_kinds("import_statement"). authority_import_kinds("import_from_statement").
+.decl authority_wrapper_kind(kind: symbol)
+authority_wrapper_kind("decorated_definition").
+.decl authority_bare_private(v: symbol)
+.decl authority_boundary_ref(e: node)
+.decl authority_context(f: node, qualname: symbol, depth: number)
+.decl authority_doc(d: number)
+.decl authority_dotted_private(v: symbol)
+.decl authority_explicit_exception(path: symbol, qualname: symbol)
+.decl authority_frame(f: node, is_function: number, name: symbol)
+.decl authority_gate(d: number)
+.decl authority_has_parent(f: node)
+.decl authority_innermost(r: node, s: number)
+.decl authority_name_owner(kind: symbol)
+.decl authority_param_parent(kind: symbol)
+.decl authority_parent(f: node, p: node)
+.decl authority_plain_prefix(s: node)
+.decl authority_plain_value(s: node, v: symbol)
+.decl authority_private_exception(path: symbol, qualname: symbol)
+.decl authority_private_excluded(r: node)
+.decl authority_private_name(s: symbol)
+.decl authority_qualname(r: node, q: symbol)
+.decl authority_setattr(r: node, args: node)
+.decl authority_signed(module: symbol, qualname: symbol)
+.decl authority_signed_site(r: node)
+.decl authority_site(r: node, issue: symbol)
+.decl authority_site_frame(r: node, f: node)
+.decl authority_string_kind(kind: symbol)
+.decl authority_wrapped(f: node, w: node)
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(r: node, t: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, value, value_type_of, node_text
+.output violation
+authority_bare_private("_caller_token").
+authority_bare_private("_explicit_authority_var").
+authority_bare_private("_legacy_boundary_var").
+authority_bare_private("verify_callsite_authorization").
+authority_explicit_exception("l2050_transaction/tests/test_execution_boundary.py", "test_explicit_execution_authority_uses_outer_callsite.<locals>.helper").
+authority_name_owner("keyword_argument").
+authority_name_owner("function_definition").
+authority_name_owner("class_definition").
+authority_name_owner("default_parameter").
+authority_name_owner("typed_default_parameter").
+authority_param_parent("parameters").
+authority_param_parent("list_splat_pattern").
+authority_param_parent("dictionary_splat_pattern").
+authority_private_exception("l2050_transaction/tests/test_execution_boundary.py", "test_explicit_execution_authority_uses_outer_callsite").
+authority_private_exception("l2050_transaction/tests/test_execution_boundary.py", "test_raw_explicit_authority_contextvar_value_does_not_authorize").
+authority_private_name("_explicit_authority_var").
+authority_private_name("_legacy_boundary_var").
+authority_signed("impl.common.l2070_server_plan.execution_context", "explicit_plan_execution_scope").
+authority_signed("l1300_session.bootstrap", "ensure_system_session_exists.<locals>._insert_if_missing").
+authority_signed("l2000_connection.schema_transaction", "AsyncSchemaTransaction._enter_async").
+authority_signed("l2000_connection.schema_transaction", "LazySchemaTransaction._enter_sync").
+authority_signed("l2050_transaction.execution_boundary", "execute_server_plan_async").
+authority_signed("l2050_transaction.execution_boundary", "execute_server_plan_now").
+authority_signed("l3200_metadata.schema_lock", "_schema_lock_bootstrap_row").
+authority_signed("l3200_metadata.schema_lock", "_schema_lock_bootstrap_row_async").
+authority_signed("l4170_inbound_bridge.process", "_invoke_inbound_bridge_handler_eager").
+authority_signed("l7500_commit_triggers.registry", "CommitTriggerRegistry._materialize_pending_triggers_under_authority").
+authority_signed("l7500_commit_triggers.registry", "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async").
+authority_string_kind("string").
+authority_string_kind("concatenated_string").
 in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
@@ -12,4 +87,47 @@ out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+authority_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("_legacy_boundary_var", s).
+authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("_explicit_authority_var", s).
+authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("explicit_execution_authority", s).
+authority_gate(d) :- authority_doc(d), node(d, m, "module", _, _), node_text(m, s), contains("execution_boundary", s).
+authority_frame(f, 1, x) :- node(d, f, "function_definition", _, _), authority_gate(d), field(f, "name", n), text(n, x).
+authority_frame(f, 0, x) :- node(d, f, "class_definition", _, _), authority_gate(d), field(f, "name", n), text(n, x).
+authority_wrapped(f, w) :- authority_frame(f, _, _), child(w, f, _), node(_, w, "decorated_definition", _, _).
+authority_parent(f, p) :- authority_frame(f, _, _), nearest(f, p, authority_frame_kinds), authority_frame(p, _, _).
+authority_has_parent(f) :- authority_parent(f, _).
+authority_context(f, x, k) :- authority_frame(f, k, x), !authority_has_parent(f).
+authority_context(c, q, k) :- authority_parent(c, p), authority_context(p, pq, pk), authority_frame(c, 1, x), pk > 0, q = @concat(pq, @concat(".<locals>.", x)), k = @add(pk, 1).
+authority_context(c, q, k) :- authority_parent(c, p), authority_context(p, pq, pk), authority_frame(c, 1, x), pk = 0, q = @concat(pq, @concat(".", x)), k = @add(pk, 1).
+authority_context(c, q, pk) :- authority_parent(c, p), authority_context(p, pq, pk), authority_frame(c, 0, x), q = @concat(pq, @concat(".", x)).
+authority_private_excluded(r) :- field(p, "attribute", r), node(_, p, "attribute", _, _).
+authority_private_excluded(r) :- field(p, "name", r), node(_, p, k, _, _), authority_name_owner(k).
+authority_private_excluded(r) :- child(p, r, _), node(_, p, k, _, _), authority_param_parent(k).
+authority_private_excluded(r) :- child(p, r, 0), node(_, p, "typed_parameter", _, _).
+authority_site(r, "AUTH001") :- node(d, r, "identifier", _, _), authority_doc(d), text(r, s), authority_private_name(s), !inside(r, _, authority_import_kinds), !authority_private_excluded(r).
+authority_site(r, "AUTH001") :- node(d, r, "attribute", _, _), authority_doc(d), field(r, "attribute", a), node(_, a, "identifier", _, _), text(a, s), authority_private_name(s).
+authority_site(r, "AUTH002") :- node(d, r, "call", _, _), authority_doc(d), field(r, "function", f), node(_, f, "identifier", _, _), text(f, "explicit_execution_authority").
+authority_site(r, "AUTH002") :- node(d, r, "call", _, _), authority_doc(d), field(r, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, "explicit_execution_authority").
+authority_setattr(r, a) :- node(d, r, "call", _, _), authority_doc(d), field(r, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", x), node(_, x, "identifier", _, _), text(x, "setattr"), field(r, "arguments", a).
+authority_plain_prefix(s) :- node(_, s, k, _, _), authority_string_kind(k), node_text(s, t), match("(?i:[rub]*[\"'])(?s:.*)", t).
+authority_dotted_private(v) :- authority_plain_value(_, v), contains("execution_boundary._explicit_authority_var", v).
+authority_dotted_private(v) :- authority_plain_value(_, v), contains("execution_boundary._legacy_boundary_var", v).
+authority_dotted_private(v) :- authority_plain_value(_, v), contains("execution_boundary._caller_token", v).
+authority_dotted_private(v) :- authority_plain_value(_, v), contains("execution_boundary.verify_callsite_authorization", v).
+authority_plain_value(s, v) :- authority_setattr(_, a), child(a, s, _), authority_plain_prefix(s), value(s, v), value_type_of(s, "str").
+authority_boundary_ref(e) :- node(_, e, "identifier", _, _), text(e, "execution_boundary").
+authority_boundary_ref(e) :- node(_, e, "attribute", _, _), field(e, "attribute", a), node(_, a, "identifier", _, _), text(a, "execution_boundary").
+authority_site(r, "AUTH003") :- authority_setattr(r, a), child(a, s, 0), authority_plain_value(s, v), authority_dotted_private(v).
+authority_site(r, "AUTH003") :- authority_setattr(r, a), child(a, s, 1), authority_plain_value(s, v), authority_bare_private(v), child(a, e, 0), authority_boundary_ref(e).
+authority_site_frame(r, f) :- authority_site(r, _), inside(r, f, authority_frame_kinds), authority_frame(f, _, _).
+authority_site_frame(r, f) :- authority_site(r, _), inside(r, w, authority_wrapper_kind), authority_wrapped(f, w).
+rr_agg1(r, t) :- authority_site_frame(r, f), node(_, f, _, t, _).
+authority_innermost(r, s) :- authority_site_frame(r, _), s = max t : { rr_agg1(r, t) }.
+authority_qualname(r, q) :- authority_site_frame(r, f), node(_, f, _, s, _), authority_innermost(r, s), authority_context(f, q, _).
+authority_qualname(r, "<module>") :- authority_site(r, _), !authority_site_frame(r, _).
+authority_signed_site(r) :- authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), m = @rx_replace(@rx_replace(p, "\\.py$", ""), "/", "."), authority_signed(m, q).
+violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH001", p, l) :- authority_site(r, "AUTH001"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), p != "l2050_transaction/execution_boundary.py", !authority_private_exception(p, q), line(r, l).
+violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH002", p, l) :- authority_site(r, "AUTH002"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_signed_site(r), !authority_explicit_exception(p, q), line(r, l).
+violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH003", p, l) :- authority_site(r, "AUTH003"), authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _), !authority_private_exception(p, q), line(r, l).

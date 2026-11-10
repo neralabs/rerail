@@ -8,7 +8,8 @@
 //! - `translate`: the earlier `.rdl` dialect's text in `.rr`, comments kept, for the move and for the converter.
 //!
 //! `#include "x.rr"` reads `docs/rule-syntax/lib/x.rr`, or else `x.rr` beside the including file; each file once.
-//! A file read with `parse_file` has `core.rr` before it, included or not.
+//! A file read with `parse_file` has `core.rr` before it, included or not. An included file's `.output`s are its own,
+//! not the program's: they are left out (`python/calls.rr`'s).
 
 mod check;
 mod from_tape;
@@ -27,6 +28,9 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
+#[cfg(test)]
+pub(in crate::code_rule_dsl) use lower::drop_unread_core;
+pub(in crate::code_rule_dsl) use lower::is_core;
 pub(in crate::code_rule_dsl) use lower::WORLD;
 pub(in crate::code_rule_dsl) use print::print;
 pub(in crate::code_rule_dsl) use syntax::quote;
@@ -259,7 +263,7 @@ fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syn
     if t_shape {
         seen.push(core);
     } else {
-        visit(&core, &mut out, &mut read_files, &mut seen)?;
+        visit(&core, &mut out, &mut read_files, &mut seen, false)?;
     }
     for (item, line) in includes {
         let syntax::Item::Include(name) = item else { unreachable!("an include") };
@@ -267,7 +271,7 @@ fn builtin_resolve(statements: Vec<syntax::Statement>) -> Result<(Files, Vec<syn
         if !path.exists() {
             return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
         }
-        visit(&path, &mut out, &mut read_files, &mut seen)?;
+        visit(&path, &mut out, &mut read_files, &mut seen, true)?;
     }
     Ok((out, own))
 }
@@ -556,8 +560,8 @@ fn stored_statements(path: &Path, src: String) -> Result<Vec<syntax::Statement>,
 type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
-/// probed, to `read_files`.
-fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>) -> Result<(), Error> {
+/// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.
+fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
     let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     if seen.contains(&path) {
         return Ok(());
@@ -565,7 +569,10 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
     seen.push(path.clone());
     let (statements, file) = read(&path)?;
     read_files.push(file);
-    let (includes, rest): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+    let (includes, mut rest): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+    if included {
+        rest.retain(|(item, _)| !matches!(item, syntax::Item::Io { output: true, .. }));
+    }
     for (item, line) in includes {
         let syntax::Item::Include(name) = item else { unreachable!("an include") };
         let in_library = library().join(&name);
@@ -581,14 +588,14 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
         if !found.exists() {
             return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
         }
-        visit(&found, out, read_files, seen)?;
+        visit(&found, out, read_files, seen, true)?;
     }
     out.push((path, rest));
     Ok(())
 }
 
 /// A file and everything it includes, each once, includes first: (path, statements without the
-/// includes); and every library file read or probed, in reading order.
+/// includes, the included files' `.output`s left out); and every library file read or probed, in reading order.
 fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     use super::plan::corpus::phase0;
     if phase0::active() {
@@ -616,7 +623,15 @@ fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
         probe(&library, &name, &target, &mut files);
         trace(&g, &library, &target, &mut files, &mut seen);
     }
-    Ok((modules_of(order)?, files))
+    // An included file's `.output`s are its own, not the program's; `core.rr` is the prelude, read as the file is.
+    let core = library.join("core.rr").canonicalize().ok();
+    let mut modules = modules_of(order)?;
+    for (p, statements) in &mut modules {
+        if *p != path && Some(&*p) != core.as_ref() {
+            statements.retain(|(item, _)| !matches!(item, syntax::Item::Io { output: true, .. }));
+        }
+    }
+    Ok((modules, files))
 }
 
 /// `path` and what it includes, each once, as phase 0 found them: the reading order of the builtin reader.
@@ -651,10 +666,10 @@ fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
         .iter()
         .any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
     if !t_shape {
-        visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new())?;
+        visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new(), false)?;
     }
     let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
-    visit(path, &mut out, &mut read_files, &mut seen)?;
+    visit(path, &mut out, &mut read_files, &mut seen, false)?;
     Ok((out, read_files))
 }
 

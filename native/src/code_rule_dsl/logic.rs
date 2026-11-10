@@ -2,6 +2,7 @@
 //! facts and Datalog over them, planned from statistics and lowered to SQL or transducer groups.
 //! `sql` is the typed SQL its plans emit.
 
+pub(in crate::code_rule_dsl) mod crypto;
 pub(in crate::code_rule_dsl) mod derived;
 pub(in crate::code_rule_dsl) mod analysis;
 // Nothing emits SQL through them until the planner (Phase 6) does.
@@ -9,6 +10,7 @@ pub(in crate::code_rule_dsl) mod analysis;
 pub(in crate::code_rule_dsl) mod front;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod answers;
+pub(in crate::code_rule_dsl) mod liveness;
 pub(in crate::code_rule_dsl) mod magic;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod native;

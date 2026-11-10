@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE } from "../../src/runtime/index.js";
 import { runRerailMcpBridge } from "../../src/api/mcp-bridge.js";
+import { otherUserPid } from "../support/other-user-pid.js";
 
 /** The Rerail home and which daemon pid answers on each local port; a step may change either to stage a restart. */
 interface Machine {
@@ -40,6 +41,7 @@ interface BridgeSetup {
 }
 
 const NOT_RUNNING = "Rerail daemon is not running; start it with rerail daemon start";
+const REFUSED = "Rerail daemon refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start";
 
 const directories: string[] = [];
 
@@ -215,6 +217,15 @@ describe("Rerail MCP bridge", () => {
     expect(run.stderr).toEqual([expect.stringContaining(NOT_RUNNING)]);
   });
 
+  const foreignPid = otherUserPid();
+  it.runIf(foreignPid !== undefined)("never probes a recorded pid that another OS user runs, even when its port answers as that pid", async () => {
+    const request = JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list" });
+    const run = await runBridge([request], [], { daemon: { pid: foreignPid!, port: 51_234 } });
+    expect(run.probes).toEqual([]);
+    expect(run.requests).toEqual([]);
+    expect(run.stdout).toEqual([JSON.stringify({ jsonrpc: "2.0", id: 4, error: { code: -32000, message: NOT_RUNNING } })]);
+  });
+
   it("reads the home again after a failed request and follows a daemon that moved", async () => {
     const first = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
     const second = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
@@ -320,5 +331,39 @@ describe("Rerail MCP bridge", () => {
       JSON.stringify({ jsonrpc: "2.0", id: 2, error: { code: -32000, message: NOT_RUNNING } }),
       JSON.stringify({ jsonrpc: "2.0", id: 3, error: { code: -32000, message: NOT_RUNNING } }),
     ]);
+  });
+
+  it("sends the capability daemon.json records, and says a refusal is one rather than relaying it or calling the daemon down", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-bridge-access-"));
+    directories.push(root);
+    const home = join(root, "home");
+    await recordDaemon(home, { pid: process.pid, port: 4321 });
+    const state = JSON.parse(await readFile(join(home, DAEMON_STATE_FILE), "utf8")) as Record<string, unknown>;
+    const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
+    const pong = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
+    const refused = JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: REFUSED } });
+    /** A daemon that admits only `accepted`, answering `/mcp` with `answer` once admitted. */
+    const bridge = async (recorded: string, accepted: string, answer: () => Response = () => new Response(pong, { status: 200 })) => {
+      await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify({ ...state, accessToken: recorded, startedAt: Math.random() }));
+      const sent: string[] = [];
+      const stdout = new PassThrough();
+      const lines = collect(stdout);
+      await runRerailMcpBridge({
+        home, stdout, stderr: new PassThrough(), input: Readable.from([`${request}\n`]),
+        fetch: async (endpoint, init) => {
+          const access = new Headers(init.headers).get("x-rerail-access") ?? "";
+          sent.push(`${endpoint.pathname} ${access}`);
+          if (access !== accepted) return jsonResponse(401, { error: "access-required", message: "…" });
+          return endpoint.pathname === "/healthz" ? jsonResponse(200, { status: "ok", pid: process.pid }) : answer();
+        },
+      });
+      return { sent, stdout: lines() };
+    };
+    expect(await bridge("kept", "kept")).toEqual({ sent: ["/healthz kept", "/mcp kept"], stdout: [pong] });
+    // A capability daemon.json no longer matches is refused at the health check: said so, not "not running".
+    expect(await bridge("stale", "kept")).toEqual({ sent: ["/healthz stale"], stdout: [refused] });
+    // One that stops being accepted after the check: the 401 body is no MCP answer, so the client gets the same error.
+    expect(await bridge("kept", "kept", () => jsonResponse(401, { error: "access-required", message: "…" })))
+      .toEqual({ sent: ["/healthz kept", "/mcp kept"], stdout: [refused] });
   });
 });

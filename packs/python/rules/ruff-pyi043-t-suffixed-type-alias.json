@@ -1,0 +1,159 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi043-t-suffixed-type-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't end a private type alias name with a T suffix; that suffix is the convention for type variables, so it misleads readers.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "t-suffixed-type-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "type-alias-marker": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "type-alias-marker"
+                  }
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.TypeAlias",
+                  "typing_extensions.TypeAlias",
+                  "_typeshed.TypeAlias"
+                ]
+              }
+            },
+            "alias-assignment": {
+              "kind": "assignment",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "type-alias-marker"
+                }
+              }
+            },
+            "assignment-target": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "matches": "alias-assignment"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "tuple_pattern",
+                    "matches": "assignment-target",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "statement-name": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type_alias_statement",
+                      "field": "left"
+                    }
+                  }
+                },
+                {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "kind": "type_parameter"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "generic_type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "type",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "type_alias_statement",
+                        "field": "left"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier",
+                "pattern": "$NAME"
+              },
+              {
+                "regex": "^_"
+              },
+              {
+                "regex": "T[0-9]?$"
+              },
+              {
+                "not": {
+                  "regex": "[^a-z]T[0-9]?$"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "matches": "assignment-target"
+                  },
+                  {
+                    "matches": "statement-name"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI043",
+        "message": "Rename private type alias `$NAME` so it no longer ends in `T` (or `T` plus a digit), e.g. by dropping the `T`, and update its references; that suffix conventionally marks a type variable.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI043"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

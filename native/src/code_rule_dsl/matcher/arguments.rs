@@ -497,7 +497,7 @@ fn pass_by_name<'r, D: Doc>(
 /// The expression inside any parentheses: neither ESTree nor PHP-Parser has a parenthesized
 /// expression, so `super((a))`'s `arguments[0]` is `a`, as `f((a))`'s PHP argument is.
 fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
-    while node.kind() == "parenthesized_expression" {
+    while super::util::is_paren_kind(&node.kind()) {
         match node.named_code().collect::<Vec<_>>().as_slice() {
             [inner] => node = inner.clone(),
             _ => break,

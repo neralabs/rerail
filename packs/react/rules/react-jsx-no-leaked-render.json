@@ -1,0 +1,274 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-jsx-no-leaked-render",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use a boolean condition or a ternary for && expressions rendered in JSX; a falsy number on the left, such as 0, is rendered instead of nothing.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "leaked-and",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "binary_expression",
+            "has": {
+              "field": "operator",
+              "regex": "^&&$"
+            },
+            "all": [
+              {
+                "matches": "container-child"
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "left",
+                    "any": [
+                      {
+                        "matches": "coerced"
+                      },
+                      {
+                        "matches": "boolean-variable"
+                      },
+                      {
+                        "matches": "empty-string"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          },
+          "utils": {
+            "container-child": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "jsx_expression"
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "matches": "container-child"
+                  }
+                ]
+              }
+            },
+            "optional-chain": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "member_expression"
+                    },
+                    {
+                      "kind": "subscript_expression"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "optional_chain"
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\?\\.$"
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "matches": "optional-chain"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "member_expression"
+                    },
+                    {
+                      "kind": "subscript_expression"
+                    }
+                  ],
+                  "has": {
+                    "field": "object",
+                    "matches": "optional-chain"
+                  }
+                },
+                {
+                  "kind": "non_null_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "optional-chain"
+                  }
+                }
+              ]
+            },
+            "coerced": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "coerced"
+                  }
+                },
+                {
+                  "kind": "unary_expression"
+                },
+                {
+                  "kind": "binary_expression",
+                  "not": {
+                    "has": {
+                      "field": "operator",
+                      "regex": "^(&&|\\|\\||\\?\\?)$"
+                    }
+                  }
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^(&&|\\|\\||\\?\\?)$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "left",
+                        "matches": "coerced"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "right",
+                        "matches": "coerced"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "call_expression",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "field": "arguments",
+                          "kind": "template_string"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "field": "function",
+                          "kind": "import"
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": "optional-chain"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "boolean-literal": {
+              "any": [
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "boolean-literal"
+                  }
+                }
+              ]
+            },
+            "boolean-variable": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "boolean-variable"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "variable_declarator",
+                        "has": {
+                          "field": "value",
+                          "matches": "boolean-literal"
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "empty-string": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "empty-string"
+                  }
+                },
+                {
+                  "kind": "string",
+                  "regex": "^(''|\"\")$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/jsx-no-leaked-render",
+        "message": "Coerce the left side of this && to a boolean (`!!x` or a comparison such as `x > 0`) or use a ternary with `null`; a falsy number there is rendered as text.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/jsx-no-leaked-render"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -7,7 +7,6 @@ export {
   type ConversationRulesOptions,
 } from "./hosts/omp/extension.js";
 export { bundledModelPath } from "./engine/package-root.js";
-export { createPiConversationRulesExtension, type PiConversationRulesOptions } from "./hosts/pi/pi-extension.js";
 export {
   CustomerActivationManager,
   CustomerProfileStore,
@@ -44,6 +43,7 @@ export { codexHookEvents, createCodexEventHandler, type CodexHookInput } from ".
 export {
   decodeRerailEventFrame,
   encodeRerailEventResult,
+  InactiveSessionError,
   RERAIL_EVENT_MAX_FRAME_BYTES,
   RERAIL_EVENT_PROTOCOL_PREFACE,
   type RerailEventErrorFrame,
@@ -78,6 +78,7 @@ export {
   type CodeRuleDslCompare,
   type CodeRuleDslDocument,
   type CodeRuleDslEvidenceQuery,
+  type CodeRuleDslFileQuery,
   type CodeRuleDslRelation,
   type CodeRuleDslViolationAnchor,
   type CodeRuleDslViolationSpec,

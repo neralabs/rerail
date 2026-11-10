@@ -1,4 +1,5 @@
-import { loadNativeBinding } from "../native/native.js";
+import { EngineUnavailableError } from "../code-rule/code-rule-compile.js";
+import { loadNativeBinding, type NativeBinding } from "../native/native.js";
 import { isSimilarityMatch, type ConversationRule, type MatchCondition } from "./rule-schema.js";
 
 export interface RegexIssue {
@@ -17,16 +18,16 @@ function* regexes(condition: MatchCondition, path: (string | number)[]): Generat
 /**
  * Patterns in a structural match that the engine would refuse to compile. The engine owns the regex
  * dialect and `maxRegexPatternBytes`; this lives apart from `rule-schema.ts` because that module is
- * shared with browser bundles. Without the native binding nothing is reported, and the engine rejects
- * the pattern when rules load.
+ * shared with browser bundles. Throws {@link EngineUnavailableError} when the native binding does not
+ * load, as `storableCodeRule` does: a pattern nobody checked is never taken as accepted.
  */
 export function engineRegexIssues(rule: ConversationRule): RegexIssue[] {
   if (isSimilarityMatch(rule.match)) return [];
-  let binding: ReturnType<typeof loadNativeBinding>;
+  let binding: NativeBinding;
   try {
     binding = loadNativeBinding();
-  } catch {
-    return [];
+  } catch (error) {
+    throw new EngineUnavailableError(rule.id, error instanceof Error ? error.message : String(error));
   }
   const issues: RegexIssue[] = [];
   for (const [pattern, path] of regexes(rule.match, ["match"])) {

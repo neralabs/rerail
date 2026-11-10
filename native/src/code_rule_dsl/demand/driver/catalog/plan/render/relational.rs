@@ -128,7 +128,7 @@ impl TerminalPlan {
                 applicability
                     .condition
                     .as_ref()
-                    .is_none_or(|condition| condition.holds(path, module, None))
+                    .is_none_or(|condition| condition.holds(path, module, None, source))
                     && applicability.required.as_ref().is_none_or(|required| {
                         required.holds_with(source, &mut |text, literal| text.contains(literal))
                     })
@@ -306,7 +306,7 @@ impl SqlCatalogPlan {
                     continue;
                 };
                 let _ = calls;
-                for matcher in matchers {
+                for matcher in matchers.iter() {
                     let language = label(matcher.language).unwrap_or("unknown");
                     let at = format!("{clause_at}/{language}/rule");
                     let mut terminals = Vec::new();
@@ -1300,7 +1300,8 @@ impl Builder {
             | Semantic::Capture(_)
             | Semantic::Embedded(_)
             | Semantic::Tokens(_)
-            | Semantic::FilePath(_) => {
+            | Semantic::FilePath(_)
+            | Semantic::ImportTarget(_) => {
                 self.unsupported.push(format!(
                     "{at}: semantic fact family belongs to a later phase"
                 ));
@@ -1406,7 +1407,8 @@ impl Builder {
             | Semantic::Capture(_)
             | Semantic::Embedded(_)
             | Semantic::Tokens(_)
-            | Semantic::FilePath(_) => {
+            | Semantic::FilePath(_)
+            | Semantic::ImportTarget(_) => {
                 unreachable!("unsupported semantic families returned before descriptor creation")
             }
         };
@@ -3172,6 +3174,12 @@ impl Builder {
                     RelationalIr::empty_relation()
                 });
                 (terminals, ir)
+            }
+            // A `file` query (main's) has no fact family in N's catalog.
+            Query::File => {
+                self.unsupported
+                    .push(format!("{at}: file queries have no relational lowering"));
+                (Vec::new(), RelationalIr::empty_relation())
             }
         }
     }

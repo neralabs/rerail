@@ -1,0 +1,209 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ytt102-sys-version2",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use sys.version_info.minor instead of indexing the third character of sys.version; the character is only the first digit of a two-digit minor version.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "sys-version2",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "two-literal": {
+              "any": [
+                {
+                  "kind": "integer",
+                  "value": {
+                    "type": "int",
+                    "eq": 2
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "two-literal"
+                  }
+                }
+              ]
+            },
+            "two-subscript": {
+              "kind": "subscript",
+              "all": [
+                {
+                  "has": {
+                    "field": "subscript",
+                    "matches": "two-literal"
+                  }
+                },
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  }
+                }
+              ]
+            },
+            "subscripted": {
+              "any": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "two-subscript"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "subscripted"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "all": [
+                {
+                  "resolves": {
+                    "import": [
+                      "sys.version"
+                    ]
+                  }
+                },
+                {
+                  "matches": "subscripted"
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "C"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "splat-target": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "list_splat",
+                        "has": {
+                          "kind": "identifier",
+                          "resolves": {
+                            "import": [
+                              "sys"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^version$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "list_splat",
+                  "has": {
+                    "kind": "identifier",
+                    "resolves": {
+                      "import": [
+                        "sys.version"
+                      ]
+                    }
+                  }
+                }
+              ],
+              "matches": "subscripted"
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$C"
+              },
+              {
+                "matches": "splat-target",
+                "regex": "^\\*(?:[\\s\\\\]|#[^\\n]*\\n)*(?<C>[\\s\\S]*)$"
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.C",
+        "code": "YTT102",
+        "message": "Use `sys.version_info.minor` instead of `sys.version[2]`; the character is only the first digit of the minor version once it has two digits (3.10 gives \"1\").",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "YTT102"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

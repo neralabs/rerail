@@ -1,241 +1,166 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl txn_blocks(kind: symbol)
+txn_blocks("block").
+.decl txn_classes(kind: symbol)
+txn_classes("class_definition").
+.decl txn_functions(kind: symbol)
+txn_functions("function_definition").
 .decl child(p: node, c: node, i: number)
-.decl text(n: node, s: symbol)
-.input doc, node, child, text
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
-.decl m100(n: node)
-.decl m105(n: node)
-.decl m111(n: node)
-.decl m112(n: node)
-.decl m113(n: node)
-.decl m119(n: node)
-.decl m120(n: node)
-.decl m124(n: node)
-.decl m129(n: node)
-.decl m135(n: node)
-.decl m136(n: node)
-.decl m137(n: node)
-.decl m143(n: node)
-.decl m144(n: node)
-.decl m148(n: node)
-.decl m15(n: node)
-.decl m153(n: node)
-.decl m159(n: node)
-.decl m16(n: node)
-.decl m160(n: node)
-.decl m161(n: node)
-.decl m167(n: node)
-.decl m168(n: node)
-.decl m17(n: node)
-.decl m172(n: node)
-.decl m177(n: node)
-.decl m183(n: node)
-.decl m184(n: node)
-.decl m185(n: node)
-.decl m191(n: node)
-.decl m192(n: node)
-.decl m196(n: node)
-.decl m201(n: node)
-.decl m207(n: node)
-.decl m208(n: node)
-.decl m209(n: node)
-.decl m215(n: node)
-.decl m216(n: node)
-.decl m220(n: node)
-.decl m225(n: node)
-.decl m23(n: node)
-.decl m231(n: node)
-.decl m232(n: node)
-.decl m233(n: node)
-.decl m239(n: node)
-.decl m24(n: node)
-.decl m240(n: node)
-.decl m244(n: node)
-.decl m249(n: node)
-.decl m255(n: node)
-.decl m256(n: node)
-.decl m257(n: node)
-.decl m263(n: node)
-.decl m264(n: node)
-.decl m268(n: node)
-.decl m273(n: node)
-.decl m279(n: node)
-.decl m28(n: node)
-.decl m280(n: node)
-.decl m281(n: node)
-.decl m287(n: node)
-.decl m288(n: node)
-.decl m292(n: node)
-.decl m297(n: node)
-.decl m303(n: node)
-.decl m304(n: node)
-.decl m305(n: node)
-.decl m311(n: node)
-.decl m312(n: node)
-.decl m316(n: node)
-.decl m321(n: node)
-.decl m327(n: node)
-.decl m328(n: node)
-.decl m329(n: node)
-.decl m33(n: node)
-.decl m335(n: node)
-.decl m336(n: node)
-.decl m340(n: node)
-.decl m345(n: node)
-.decl m351(n: node)
-.decl m352(n: node)
-.decl m353(n: node)
-.decl m359(n: node)
-.decl m360(n: node)
-.decl m364(n: node)
-.decl m369(n: node)
-.decl m375(n: node)
-.decl m376(n: node)
-.decl m377(n: node)
-.decl m383(n: node)
-.decl m384(n: node)
-.decl m388(n: node)
-.decl m39(n: node)
-.decl m393(n: node)
-.decl m399(n: node)
-.decl m4(n: node)
-.decl m40(n: node)
-.decl m400(n: node)
-.decl m401(n: node)
-.decl m407(n: node)
-.decl m408(n: node)
-.decl m41(n: node)
-.decl m412(n: node)
-.decl m417(n: node)
-.decl m423(n: node)
-.decl m424(n: node)
-.decl m425(n: node)
-.decl m431(n: node)
-.decl m432(n: node)
-.decl m436(n: node)
-.decl m441(n: node)
-.decl m447(n: node)
-.decl m448(n: node)
-.decl m449(n: node)
-.decl m455(n: node)
-.decl m456(n: node)
-.decl m460(n: node)
-.decl m465(n: node)
-.decl m47(n: node)
-.decl m471(n: node)
-.decl m472(n: node)
-.decl m473(n: node)
-.decl m479(n: node)
-.decl m48(n: node)
-.decl m480(n: node)
-.decl m484(n: node)
-.decl m489(n: node)
-.decl m495(n: node)
-.decl m496(n: node)
-.decl m497(n: node)
-.decl m503(n: node)
-.decl m504(n: node)
-.decl m508(n: node)
-.decl m513(n: node)
-.decl m519(n: node)
-.decl m52(n: node)
-.decl m520(n: node)
-.decl m521(n: node)
-.decl m527(n: node)
-.decl m528(n: node)
-.decl m532(n: node)
-.decl m537(n: node)
-.decl m543(n: node)
-.decl m544(n: node)
-.decl m545(n: node)
-.decl m551(n: node)
-.decl m552(n: node)
-.decl m57(n: node)
-.decl m63(n: node)
-.decl m64(n: node)
-.decl m65(n: node)
-.decl m71(n: node)
-.decl m72(n: node)
-.decl m76(n: node)
-.decl m81(n: node)
-.decl m87(n: node)
-.decl m88(n: node)
-.decl m89(n: node)
-.decl m9(n: node)
-.decl m95(n: node)
-.decl m96(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl t117(s: symbol)
-.decl t141(s: symbol)
-.decl t165(s: symbol)
-.decl t189(s: symbol)
-.decl t21(s: symbol)
-.decl t213(s: symbol)
-.decl t237(s: symbol)
-.decl t261(s: symbol)
-.decl t285(s: symbol)
-.decl t309(s: symbol)
-.decl t333(s: symbol)
-.decl t357(s: symbol)
-.decl t381(s: symbol)
-.decl t405(s: symbol)
-.decl t429(s: symbol)
-.decl t45(s: symbol)
-.decl t453(s: symbol)
-.decl t477(s: symbol)
-.decl t501(s: symbol)
-.decl t525(s: symbol)
-.decl t549(s: symbol)
-.decl t69(s: symbol)
-.decl t93(s: symbol)
-.decl u1(n: node)
-.decl u115(n: node)
-.decl u121(n: node)
-.decl u139(n: node)
-.decl u145(n: node)
-.decl u163(n: node)
-.decl u169(n: node)
-.decl u187(n: node)
-.decl u19(n: node)
-.decl u193(n: node)
-.decl u211(n: node)
-.decl u217(n: node)
-.decl u235(n: node)
-.decl u241(n: node)
-.decl u25(n: node)
-.decl u259(n: node)
-.decl u265(n: node)
-.decl u283(n: node)
-.decl u289(n: node)
-.decl u307(n: node)
-.decl u313(n: node)
-.decl u331(n: node)
-.decl u337(n: node)
-.decl u355(n: node)
-.decl u361(n: node)
-.decl u379(n: node)
-.decl u385(n: node)
-.decl u403(n: node)
-.decl u409(n: node)
-.decl u427(n: node)
-.decl u43(n: node)
-.decl u433(n: node)
-.decl u451(n: node)
-.decl u457(n: node)
-.decl u475(n: node)
-.decl u481(n: node)
-.decl u49(n: node)
-.decl u499(n: node)
-.decl u505(n: node)
-.decl u523(n: node)
-.decl u529(n: node)
-.decl u547(n: node)
-.decl u67(n: node)
-.decl u73(n: node)
-.decl u91(n: node)
-.decl u97(n: node)
+.decl rr_agg1(cs: number, n: node, s: symbol, st: number)
+.decl rr_ctx2(cs: number, n: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl txn_ac(n: node)
+.decl txn_ac_left(n: node)
+.decl txn_ac_right(n: node)
+.decl txn_after_star(ps: node, i: number)
+.decl txn_ahc(n: node)
+.decl txn_ahc_left(n: node)
+.decl txn_ahc_right(n: node)
+.decl txn_before_slash(ps: node, i: number)
+.decl txn_binop(n: node)
+.decl txn_call(c: node, conn: symbol)
+.decl txn_cf(f: node, conn: symbol)
+.decl txn_classified(f: node)
+.decl txn_gate(d: number)
+.decl txn_init_in_conn_class(f: node)
+.decl txn_it(f: node, conn: symbol)
+.decl txn_it_blocked(c: node, b: node)
+.decl txn_name_1(f: node)
+.decl txn_name_10(f: node)
+.decl txn_name_11(f: node)
+.decl txn_name_12(f: node)
+.decl txn_name_13(f: node)
+.decl txn_name_14(f: node)
+.decl txn_name_2(f: node)
+.decl txn_name_3(f: node)
+.decl txn_name_4(f: node)
+.decl txn_name_5(f: node)
+.decl txn_name_6(f: node)
+.decl txn_name_7(f: node)
+.decl txn_name_8(f: node)
+.decl txn_name_9(f: node)
+.decl txn_named(f: node, cat: symbol)
+.decl txn_param(ps: node, q: node, i: number)
+.decl txn_param_later(ps: node, i: number)
+.decl txn_param_name(q: node, c: node)
+.decl txn_splat(s: node)
+.decl txn_star(s: node)
+.decl txn_str_value(n: node, v: symbol)
+.decl txn_typed(ps: node, q: node, i: number)
+.decl txn_unclassified(f: node)
+.decl txn_union_nth(n: node, c: node, k: number)
+.decl txn_wrapper(n: node)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, value, value_type_of, node_text, token
+.output violation
+option_item("category-BACKGROUND", 0, "_get_ripple_chain").
+option_item("category-BACKGROUND", 1, "_run_handler").
+option_item("category-BACKGROUND", 10, "recover_stale_message").
+option_item("category-BACKGROUND", 11, "recover_stale_messages").
+option_item("category-BACKGROUND", 12, "wait_for_embeddings").
+option_item("category-BACKGROUND", 2, "collect_all_metrics").
+option_item("category-BACKGROUND", 3, "create_derived_ripple_session").
+option_item("category-BACKGROUND", 4, "detect_stale_messages").
+option_item("category-BACKGROUND", 5, "enqueue_ripples_for_revision").
+option_item("category-BACKGROUND", 6, "enqueue_ripples_for_revision_bridge").
+option_item("category-BACKGROUND", 7, "get_embedding_staleness").
+option_item("category-BACKGROUND", 8, "process_ripple_event").
+option_item("category-BACKGROUND", 9, "process_ripple_event_bridge").
+option_item("category-BOOTSTRAP", 0, "_ensure_bootstrap_session").
+option_item("category-BOOTSTRAP", 1, "_ensure_schema").
+option_item("category-BOOTSTRAP", 10, "ensure_database_initialized").
+option_item("category-BOOTSTRAP", 11, "ensure_migration_table_exists").
+option_item("category-BOOTSTRAP", 12, "ensure_type_metadata_table_exists").
+option_item("category-BOOTSTRAP", 13, "ensure_vector_support").
+option_item("category-BOOTSTRAP", 14, "ensure_versioning_metadata_tables").
+option_item("category-BOOTSTRAP", 15, "execute_rebase").
+option_item("category-BOOTSTRAP", 16, "initialize_config_schema_bridge").
+option_item("category-BOOTSTRAP", 17, "initialize_config_system").
+option_item("category-BOOTSTRAP", 18, "initialize_domain").
+option_item("category-BOOTSTRAP", 19, "initialize_rbac").
+option_item("category-BOOTSTRAP", 2, "_ensure_target_tip_stable").
+option_item("category-BOOTSTRAP", 20, "initialize_rbac_system").
+option_item("category-BOOTSTRAP", 21, "register_embedding_trigger").
+option_item("category-BOOTSTRAP", 22, "versioned_write_transaction").
+option_item("category-BOOTSTRAP", 3, "backfill_revision_parents").
+option_item("category-BOOTSTRAP", 4, "create_branch").
+option_item("category-BOOTSTRAP", 5, "create_config_logged_table").
+option_item("category-BOOTSTRAP", 6, "create_log_table").
+option_item("category-BOOTSTRAP", 7, "create_staged_commit").
+option_item("category-BOOTSTRAP", 8, "ensure_adapter_session").
+option_item("category-BOOTSTRAP", 9, "ensure_branch").
+option_item("category-LEGITIMATE", 0, "__enter__").
+option_item("category-LEGITIMATE", 1, "__exit__").
+option_item("category-LEGITIMATE", 10, "_get_introspector_for_connection").
+option_item("category-LEGITIMATE", 11, "_get_migration_executor").
+option_item("category-LEGITIMATE", 12, "_get_migration_history_manager").
+option_item("category-LEGITIMATE", 13, "_get_migration_plan_generator").
+option_item("category-LEGITIMATE", 14, "_import_database_handler").
+option_item("category-LEGITIMATE", 15, "_import_table_data_handler").
+option_item("category-LEGITIMATE", 16, "_import_tables_handler").
+option_item("category-LEGITIMATE", 17, "_validate").
+option_item("category-LEGITIMATE", 18, "begin_schema_transaction").
+option_item("category-LEGITIMATE", 19, "benchmark_1hop_traversal").
+option_item("category-LEGITIMATE", 2, "_create_introspector").
+option_item("category-LEGITIMATE", 20, "benchmark_2hop_traversal").
+option_item("category-LEGITIMATE", 21, "benchmark_filtered_traversal").
+option_item("category-LEGITIMATE", 22, "clear_query_statistics").
+option_item("category-LEGITIMATE", 23, "close").
+option_item("category-LEGITIMATE", 24, "connect").
+option_item("category-LEGITIMATE", 25, "disable_prepared_cache").
+option_item("category-LEGITIMATE", 26, "disable_query_instrumentation").
+option_item("category-LEGITIMATE", 27, "enable_prepared_cache").
+option_item("category-LEGITIMATE", 28, "enable_query_instrumentation").
+option_item("category-LEGITIMATE", 29, "get_backend_type").
+option_item("category-LEGITIMATE", 3, "_create_sparse_versioned_backend").
+option_item("category-LEGITIMATE", 30, "get_bulk_loader").
+option_item("category-LEGITIMATE", 31, "get_data_importer").
+option_item("category-LEGITIMATE", 32, "get_database_exporter").
+option_item("category-LEGITIMATE", 33, "get_database_importer").
+option_item("category-LEGITIMATE", 34, "get_migration_executor").
+option_item("category-LEGITIMATE", 35, "get_migration_plan_generator").
+option_item("category-LEGITIMATE", 36, "get_prepared_cache").
+option_item("category-LEGITIMATE", 37, "get_prepared_cache_debug_report").
+option_item("category-LEGITIMATE", 38, "get_prepared_cache_statistics").
+option_item("category-LEGITIMATE", 39, "get_query_instrumentation").
+option_item("category-LEGITIMATE", 4, "_execute_graphql_subscription").
+option_item("category-LEGITIMATE", 40, "get_query_statistics").
+option_item("category-LEGITIMATE", 41, "is_connected").
+option_item("category-LEGITIMATE", 42, "populate_benchmark_data").
+option_item("category-LEGITIMATE", 43, "populate_benchmark_dataset").
+option_item("category-LEGITIMATE", 44, "read").
+option_item("category-LEGITIMATE", 45, "read_transaction").
+option_item("category-LEGITIMATE", 46, "record_query").
+option_item("category-LEGITIMATE", 47, "register").
+option_item("category-LEGITIMATE", 48, "register_backup_tools").
+option_item("category-LEGITIMATE", 49, "register_import_tools").
+option_item("category-LEGITIMATE", 5, "_get_conn").
+option_item("category-LEGITIMATE", 50, "run_all_benchmarks").
+option_item("category-LEGITIMATE", 51, "schema_transaction").
+option_item("category-LEGITIMATE", 52, "set_connection").
+option_item("category-LEGITIMATE", 53, "warn_if_index_missing").
+option_item("category-LEGITIMATE", 54, "with_pinned_branch").
+option_item("category-LEGITIMATE", 55, "write").
+option_item("category-LEGITIMATE", 56, "write_transaction").
+option_item("category-LEGITIMATE", 6, "_get_data_importer").
+option_item("category-LEGITIMATE", 7, "_get_database_exporter").
+option_item("category-LEGITIMATE", 8, "_get_database_importer").
+option_item("category-LEGITIMATE", 9, "_get_import_validator").
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -248,395 +173,132 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-m4(n) :- node(_, n, "identifier", _, _).
-m4(n) :- node(_, n, "default_parameter", _, _).
-m4(n) :- node(_, n, "typed_parameter", _, _).
-m4(n) :- node(_, n, "typed_default_parameter", _, _).
-m9(n) :- child(v6, n, v7), child(v6, v5, v8), v7 < v8, node(_, v5, "positional_separator", _, _).
-m15(n) :- node(_, n, "list_splat_pattern", _, _).
-m15(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m16(n) :- node(_, n, "keyword_separator", _, _).
-m16(n) :- node(_, n, "list_splat_pattern", _, _).
-m16(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m16(n) :- node(_, n, "typed_parameter", _, _), child(n, v14, _), m15(v14).
-m17(n) :- child(v11, n, v12), child(v11, v10, v13), v13 < v12, m16(v10).
-t21(s) :- text(_, s), contains("Connection", s).
-t21(s) :- text(_, s), s = "conn".
-m23(n) :- node(_, n, "identifier", _, _), text(n, v22), v22 = "ConnectionId".
-m24(n) :- node(_, n, "string", _, _).
-m24(n) :- node(_, n, "concatenated_string", _, _).
-m28(n) :- node(_, n, "identifier", _, _).
-m28(n) :- node(_, n, "default_parameter", _, _).
-m28(n) :- node(_, n, "typed_parameter", _, _).
-m28(n) :- node(_, n, "typed_default_parameter", _, _).
-m33(n) :- child(v30, n, v31), child(v30, v29, v32), v31 < v32, node(_, v29, "positional_separator", _, _).
-m39(n) :- node(_, n, "list_splat_pattern", _, _).
-m39(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m40(n) :- node(_, n, "keyword_separator", _, _).
-m40(n) :- node(_, n, "list_splat_pattern", _, _).
-m40(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m40(n) :- node(_, n, "typed_parameter", _, _), child(n, v38, _), m39(v38).
-m41(n) :- child(v35, n, v36), child(v35, v34, v37), v37 < v36, m40(v34).
-t45(s) :- text(_, s), contains("Connection", s).
-t45(s) :- text(_, s), s = "conn".
-m47(n) :- node(_, n, "identifier", _, _), text(n, v46), v46 = "ConnectionId".
-m48(n) :- node(_, n, "string", _, _).
-m48(n) :- node(_, n, "concatenated_string", _, _).
-m52(n) :- node(_, n, "identifier", _, _).
-m52(n) :- node(_, n, "default_parameter", _, _).
-m52(n) :- node(_, n, "typed_parameter", _, _).
-m52(n) :- node(_, n, "typed_default_parameter", _, _).
-m57(n) :- child(v54, n, v55), child(v54, v53, v56), v55 < v56, node(_, v53, "positional_separator", _, _).
-m63(n) :- node(_, n, "list_splat_pattern", _, _).
-m63(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m64(n) :- node(_, n, "keyword_separator", _, _).
-m64(n) :- node(_, n, "list_splat_pattern", _, _).
-m64(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m64(n) :- node(_, n, "typed_parameter", _, _), child(n, v62, _), m63(v62).
-m65(n) :- child(v59, n, v60), child(v59, v58, v61), v61 < v60, m64(v58).
-t69(s) :- text(_, s), contains("Connection", s).
-t69(s) :- text(_, s), s = "conn".
-m71(n) :- node(_, n, "identifier", _, _), text(n, v70), v70 = "ConnectionId".
-m72(n) :- node(_, n, "string", _, _).
-m72(n) :- node(_, n, "concatenated_string", _, _).
-m76(n) :- node(_, n, "identifier", _, _).
-m76(n) :- node(_, n, "default_parameter", _, _).
-m76(n) :- node(_, n, "typed_parameter", _, _).
-m76(n) :- node(_, n, "typed_default_parameter", _, _).
-m81(n) :- child(v78, n, v79), child(v78, v77, v80), v79 < v80, node(_, v77, "positional_separator", _, _).
-m87(n) :- node(_, n, "list_splat_pattern", _, _).
-m87(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m88(n) :- node(_, n, "keyword_separator", _, _).
-m88(n) :- node(_, n, "list_splat_pattern", _, _).
-m88(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m88(n) :- node(_, n, "typed_parameter", _, _), child(n, v86, _), m87(v86).
-m89(n) :- child(v83, n, v84), child(v83, v82, v85), v85 < v84, m88(v82).
-t93(s) :- text(_, s), contains("Connection", s).
-t93(s) :- text(_, s), s = "conn".
-m95(n) :- node(_, n, "identifier", _, _), text(n, v94), v94 = "ConnectionId".
-m96(n) :- node(_, n, "string", _, _).
-m96(n) :- node(_, n, "concatenated_string", _, _).
-m100(n) :- node(_, n, "identifier", _, _).
-m100(n) :- node(_, n, "default_parameter", _, _).
-m100(n) :- node(_, n, "typed_parameter", _, _).
-m100(n) :- node(_, n, "typed_default_parameter", _, _).
-m105(n) :- child(v102, n, v103), child(v102, v101, v104), v103 < v104, node(_, v101, "positional_separator", _, _).
-m111(n) :- node(_, n, "list_splat_pattern", _, _).
-m111(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m112(n) :- node(_, n, "keyword_separator", _, _).
-m112(n) :- node(_, n, "list_splat_pattern", _, _).
-m112(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m112(n) :- node(_, n, "typed_parameter", _, _), child(n, v110, _), m111(v110).
-m113(n) :- child(v107, n, v108), child(v107, v106, v109), v109 < v108, m112(v106).
-t117(s) :- text(_, s), contains("Connection", s).
-t117(s) :- text(_, s), s = "conn".
-m119(n) :- node(_, n, "identifier", _, _), text(n, v118), v118 = "ConnectionId".
-m120(n) :- node(_, n, "string", _, _).
-m120(n) :- node(_, n, "concatenated_string", _, _).
-m124(n) :- node(_, n, "identifier", _, _).
-m124(n) :- node(_, n, "default_parameter", _, _).
-m124(n) :- node(_, n, "typed_parameter", _, _).
-m124(n) :- node(_, n, "typed_default_parameter", _, _).
-m129(n) :- child(v126, n, v127), child(v126, v125, v128), v127 < v128, node(_, v125, "positional_separator", _, _).
-m135(n) :- node(_, n, "list_splat_pattern", _, _).
-m135(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m136(n) :- node(_, n, "keyword_separator", _, _).
-m136(n) :- node(_, n, "list_splat_pattern", _, _).
-m136(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m136(n) :- node(_, n, "typed_parameter", _, _), child(n, v134, _), m135(v134).
-m137(n) :- child(v131, n, v132), child(v131, v130, v133), v133 < v132, m136(v130).
-t141(s) :- text(_, s), contains("Connection", s).
-t141(s) :- text(_, s), s = "conn".
-m143(n) :- node(_, n, "identifier", _, _), text(n, v142), v142 = "ConnectionId".
-m144(n) :- node(_, n, "string", _, _).
-m144(n) :- node(_, n, "concatenated_string", _, _).
-m148(n) :- node(_, n, "identifier", _, _).
-m148(n) :- node(_, n, "default_parameter", _, _).
-m148(n) :- node(_, n, "typed_parameter", _, _).
-m148(n) :- node(_, n, "typed_default_parameter", _, _).
-m153(n) :- child(v150, n, v151), child(v150, v149, v152), v151 < v152, node(_, v149, "positional_separator", _, _).
-m159(n) :- node(_, n, "list_splat_pattern", _, _).
-m159(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m160(n) :- node(_, n, "keyword_separator", _, _).
-m160(n) :- node(_, n, "list_splat_pattern", _, _).
-m160(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m160(n) :- node(_, n, "typed_parameter", _, _), child(n, v158, _), m159(v158).
-m161(n) :- child(v155, n, v156), child(v155, v154, v157), v157 < v156, m160(v154).
-t165(s) :- text(_, s), contains("Connection", s).
-t165(s) :- text(_, s), s = "conn".
-m167(n) :- node(_, n, "identifier", _, _), text(n, v166), v166 = "ConnectionId".
-m168(n) :- node(_, n, "string", _, _).
-m168(n) :- node(_, n, "concatenated_string", _, _).
-m172(n) :- node(_, n, "identifier", _, _).
-m172(n) :- node(_, n, "default_parameter", _, _).
-m172(n) :- node(_, n, "typed_parameter", _, _).
-m172(n) :- node(_, n, "typed_default_parameter", _, _).
-m177(n) :- child(v174, n, v175), child(v174, v173, v176), v175 < v176, node(_, v173, "positional_separator", _, _).
-m183(n) :- node(_, n, "list_splat_pattern", _, _).
-m183(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m184(n) :- node(_, n, "keyword_separator", _, _).
-m184(n) :- node(_, n, "list_splat_pattern", _, _).
-m184(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m184(n) :- node(_, n, "typed_parameter", _, _), child(n, v182, _), m183(v182).
-m185(n) :- child(v179, n, v180), child(v179, v178, v181), v181 < v180, m184(v178).
-t189(s) :- text(_, s), contains("Connection", s).
-t189(s) :- text(_, s), s = "conn".
-m191(n) :- node(_, n, "identifier", _, _), text(n, v190), v190 = "ConnectionId".
-m192(n) :- node(_, n, "string", _, _).
-m192(n) :- node(_, n, "concatenated_string", _, _).
-m196(n) :- node(_, n, "identifier", _, _).
-m196(n) :- node(_, n, "default_parameter", _, _).
-m196(n) :- node(_, n, "typed_parameter", _, _).
-m196(n) :- node(_, n, "typed_default_parameter", _, _).
-m201(n) :- child(v198, n, v199), child(v198, v197, v200), v199 < v200, node(_, v197, "positional_separator", _, _).
-m207(n) :- node(_, n, "list_splat_pattern", _, _).
-m207(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m208(n) :- node(_, n, "keyword_separator", _, _).
-m208(n) :- node(_, n, "list_splat_pattern", _, _).
-m208(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m208(n) :- node(_, n, "typed_parameter", _, _), child(n, v206, _), m207(v206).
-m209(n) :- child(v203, n, v204), child(v203, v202, v205), v205 < v204, m208(v202).
-t213(s) :- text(_, s), contains("Connection", s).
-t213(s) :- text(_, s), s = "conn".
-m215(n) :- node(_, n, "identifier", _, _), text(n, v214), v214 = "ConnectionId".
-m216(n) :- node(_, n, "string", _, _).
-m216(n) :- node(_, n, "concatenated_string", _, _).
-m220(n) :- node(_, n, "identifier", _, _).
-m220(n) :- node(_, n, "default_parameter", _, _).
-m220(n) :- node(_, n, "typed_parameter", _, _).
-m220(n) :- node(_, n, "typed_default_parameter", _, _).
-m225(n) :- child(v222, n, v223), child(v222, v221, v224), v223 < v224, node(_, v221, "positional_separator", _, _).
-m231(n) :- node(_, n, "list_splat_pattern", _, _).
-m231(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m232(n) :- node(_, n, "keyword_separator", _, _).
-m232(n) :- node(_, n, "list_splat_pattern", _, _).
-m232(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m232(n) :- node(_, n, "typed_parameter", _, _), child(n, v230, _), m231(v230).
-m233(n) :- child(v227, n, v228), child(v227, v226, v229), v229 < v228, m232(v226).
-t237(s) :- text(_, s), contains("Connection", s).
-t237(s) :- text(_, s), s = "conn".
-m239(n) :- node(_, n, "identifier", _, _), text(n, v238), v238 = "ConnectionId".
-m240(n) :- node(_, n, "string", _, _).
-m240(n) :- node(_, n, "concatenated_string", _, _).
-m244(n) :- node(_, n, "identifier", _, _).
-m244(n) :- node(_, n, "default_parameter", _, _).
-m244(n) :- node(_, n, "typed_parameter", _, _).
-m244(n) :- node(_, n, "typed_default_parameter", _, _).
-m249(n) :- child(v246, n, v247), child(v246, v245, v248), v247 < v248, node(_, v245, "positional_separator", _, _).
-m255(n) :- node(_, n, "list_splat_pattern", _, _).
-m255(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m256(n) :- node(_, n, "keyword_separator", _, _).
-m256(n) :- node(_, n, "list_splat_pattern", _, _).
-m256(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m256(n) :- node(_, n, "typed_parameter", _, _), child(n, v254, _), m255(v254).
-m257(n) :- child(v251, n, v252), child(v251, v250, v253), v253 < v252, m256(v250).
-t261(s) :- text(_, s), contains("Connection", s).
-t261(s) :- text(_, s), s = "conn".
-m263(n) :- node(_, n, "identifier", _, _), text(n, v262), v262 = "ConnectionId".
-m264(n) :- node(_, n, "string", _, _).
-m264(n) :- node(_, n, "concatenated_string", _, _).
-m268(n) :- node(_, n, "identifier", _, _).
-m268(n) :- node(_, n, "default_parameter", _, _).
-m268(n) :- node(_, n, "typed_parameter", _, _).
-m268(n) :- node(_, n, "typed_default_parameter", _, _).
-m273(n) :- child(v270, n, v271), child(v270, v269, v272), v271 < v272, node(_, v269, "positional_separator", _, _).
-m279(n) :- node(_, n, "list_splat_pattern", _, _).
-m279(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m280(n) :- node(_, n, "keyword_separator", _, _).
-m280(n) :- node(_, n, "list_splat_pattern", _, _).
-m280(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m280(n) :- node(_, n, "typed_parameter", _, _), child(n, v278, _), m279(v278).
-m281(n) :- child(v275, n, v276), child(v275, v274, v277), v277 < v276, m280(v274).
-t285(s) :- text(_, s), contains("Connection", s).
-t285(s) :- text(_, s), s = "conn".
-m287(n) :- node(_, n, "identifier", _, _), text(n, v286), v286 = "ConnectionId".
-m288(n) :- node(_, n, "string", _, _).
-m288(n) :- node(_, n, "concatenated_string", _, _).
-m292(n) :- node(_, n, "identifier", _, _).
-m292(n) :- node(_, n, "default_parameter", _, _).
-m292(n) :- node(_, n, "typed_parameter", _, _).
-m292(n) :- node(_, n, "typed_default_parameter", _, _).
-m297(n) :- child(v294, n, v295), child(v294, v293, v296), v295 < v296, node(_, v293, "positional_separator", _, _).
-m303(n) :- node(_, n, "list_splat_pattern", _, _).
-m303(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m304(n) :- node(_, n, "keyword_separator", _, _).
-m304(n) :- node(_, n, "list_splat_pattern", _, _).
-m304(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m304(n) :- node(_, n, "typed_parameter", _, _), child(n, v302, _), m303(v302).
-m305(n) :- child(v299, n, v300), child(v299, v298, v301), v301 < v300, m304(v298).
-t309(s) :- text(_, s), contains("Connection", s).
-t309(s) :- text(_, s), s = "conn".
-m311(n) :- node(_, n, "identifier", _, _), text(n, v310), v310 = "ConnectionId".
-m312(n) :- node(_, n, "string", _, _).
-m312(n) :- node(_, n, "concatenated_string", _, _).
-m316(n) :- node(_, n, "identifier", _, _).
-m316(n) :- node(_, n, "default_parameter", _, _).
-m316(n) :- node(_, n, "typed_parameter", _, _).
-m316(n) :- node(_, n, "typed_default_parameter", _, _).
-m321(n) :- child(v318, n, v319), child(v318, v317, v320), v319 < v320, node(_, v317, "positional_separator", _, _).
-m327(n) :- node(_, n, "list_splat_pattern", _, _).
-m327(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m328(n) :- node(_, n, "keyword_separator", _, _).
-m328(n) :- node(_, n, "list_splat_pattern", _, _).
-m328(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m328(n) :- node(_, n, "typed_parameter", _, _), child(n, v326, _), m327(v326).
-m329(n) :- child(v323, n, v324), child(v323, v322, v325), v325 < v324, m328(v322).
-t333(s) :- text(_, s), contains("Connection", s).
-t333(s) :- text(_, s), s = "conn".
-m335(n) :- node(_, n, "identifier", _, _), text(n, v334), v334 = "ConnectionId".
-m336(n) :- node(_, n, "string", _, _).
-m336(n) :- node(_, n, "concatenated_string", _, _).
-m340(n) :- node(_, n, "identifier", _, _).
-m340(n) :- node(_, n, "default_parameter", _, _).
-m340(n) :- node(_, n, "typed_parameter", _, _).
-m340(n) :- node(_, n, "typed_default_parameter", _, _).
-m345(n) :- child(v342, n, v343), child(v342, v341, v344), v343 < v344, node(_, v341, "positional_separator", _, _).
-m351(n) :- node(_, n, "list_splat_pattern", _, _).
-m351(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m352(n) :- node(_, n, "keyword_separator", _, _).
-m352(n) :- node(_, n, "list_splat_pattern", _, _).
-m352(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m352(n) :- node(_, n, "typed_parameter", _, _), child(n, v350, _), m351(v350).
-m353(n) :- child(v347, n, v348), child(v347, v346, v349), v349 < v348, m352(v346).
-t357(s) :- text(_, s), contains("Connection", s).
-t357(s) :- text(_, s), s = "conn".
-m359(n) :- node(_, n, "identifier", _, _), text(n, v358), v358 = "ConnectionId".
-m360(n) :- node(_, n, "string", _, _).
-m360(n) :- node(_, n, "concatenated_string", _, _).
-m364(n) :- node(_, n, "identifier", _, _).
-m364(n) :- node(_, n, "default_parameter", _, _).
-m364(n) :- node(_, n, "typed_parameter", _, _).
-m364(n) :- node(_, n, "typed_default_parameter", _, _).
-m369(n) :- child(v366, n, v367), child(v366, v365, v368), v367 < v368, node(_, v365, "positional_separator", _, _).
-m375(n) :- node(_, n, "list_splat_pattern", _, _).
-m375(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m376(n) :- node(_, n, "keyword_separator", _, _).
-m376(n) :- node(_, n, "list_splat_pattern", _, _).
-m376(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m376(n) :- node(_, n, "typed_parameter", _, _), child(n, v374, _), m375(v374).
-m377(n) :- child(v371, n, v372), child(v371, v370, v373), v373 < v372, m376(v370).
-t381(s) :- text(_, s), contains("Connection", s).
-t381(s) :- text(_, s), s = "conn".
-m383(n) :- node(_, n, "identifier", _, _), text(n, v382), v382 = "ConnectionId".
-m384(n) :- node(_, n, "string", _, _).
-m384(n) :- node(_, n, "concatenated_string", _, _).
-m388(n) :- node(_, n, "identifier", _, _).
-m388(n) :- node(_, n, "default_parameter", _, _).
-m388(n) :- node(_, n, "typed_parameter", _, _).
-m388(n) :- node(_, n, "typed_default_parameter", _, _).
-m393(n) :- child(v390, n, v391), child(v390, v389, v392), v391 < v392, node(_, v389, "positional_separator", _, _).
-m399(n) :- node(_, n, "list_splat_pattern", _, _).
-m399(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m400(n) :- node(_, n, "keyword_separator", _, _).
-m400(n) :- node(_, n, "list_splat_pattern", _, _).
-m400(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m400(n) :- node(_, n, "typed_parameter", _, _), child(n, v398, _), m399(v398).
-m401(n) :- child(v395, n, v396), child(v395, v394, v397), v397 < v396, m400(v394).
-t405(s) :- text(_, s), contains("Connection", s).
-t405(s) :- text(_, s), s = "conn".
-m407(n) :- node(_, n, "identifier", _, _), text(n, v406), v406 = "ConnectionId".
-m408(n) :- node(_, n, "string", _, _).
-m408(n) :- node(_, n, "concatenated_string", _, _).
-m412(n) :- node(_, n, "identifier", _, _).
-m412(n) :- node(_, n, "default_parameter", _, _).
-m412(n) :- node(_, n, "typed_parameter", _, _).
-m412(n) :- node(_, n, "typed_default_parameter", _, _).
-m417(n) :- child(v414, n, v415), child(v414, v413, v416), v415 < v416, node(_, v413, "positional_separator", _, _).
-m423(n) :- node(_, n, "list_splat_pattern", _, _).
-m423(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m424(n) :- node(_, n, "keyword_separator", _, _).
-m424(n) :- node(_, n, "list_splat_pattern", _, _).
-m424(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m424(n) :- node(_, n, "typed_parameter", _, _), child(n, v422, _), m423(v422).
-m425(n) :- child(v419, n, v420), child(v419, v418, v421), v421 < v420, m424(v418).
-t429(s) :- text(_, s), contains("Connection", s).
-t429(s) :- text(_, s), s = "conn".
-m431(n) :- node(_, n, "identifier", _, _), text(n, v430), v430 = "ConnectionId".
-m432(n) :- node(_, n, "string", _, _).
-m432(n) :- node(_, n, "concatenated_string", _, _).
-m436(n) :- node(_, n, "identifier", _, _).
-m436(n) :- node(_, n, "default_parameter", _, _).
-m436(n) :- node(_, n, "typed_parameter", _, _).
-m436(n) :- node(_, n, "typed_default_parameter", _, _).
-m441(n) :- child(v438, n, v439), child(v438, v437, v440), v439 < v440, node(_, v437, "positional_separator", _, _).
-m447(n) :- node(_, n, "list_splat_pattern", _, _).
-m447(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m448(n) :- node(_, n, "keyword_separator", _, _).
-m448(n) :- node(_, n, "list_splat_pattern", _, _).
-m448(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m448(n) :- node(_, n, "typed_parameter", _, _), child(n, v446, _), m447(v446).
-m449(n) :- child(v443, n, v444), child(v443, v442, v445), v445 < v444, m448(v442).
-t453(s) :- text(_, s), contains("Connection", s).
-t453(s) :- text(_, s), s = "conn".
-m455(n) :- node(_, n, "identifier", _, _), text(n, v454), v454 = "ConnectionId".
-m456(n) :- node(_, n, "string", _, _).
-m456(n) :- node(_, n, "concatenated_string", _, _).
-m460(n) :- node(_, n, "identifier", _, _).
-m460(n) :- node(_, n, "default_parameter", _, _).
-m460(n) :- node(_, n, "typed_parameter", _, _).
-m460(n) :- node(_, n, "typed_default_parameter", _, _).
-m465(n) :- child(v462, n, v463), child(v462, v461, v464), v463 < v464, node(_, v461, "positional_separator", _, _).
-m471(n) :- node(_, n, "list_splat_pattern", _, _).
-m471(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m472(n) :- node(_, n, "keyword_separator", _, _).
-m472(n) :- node(_, n, "list_splat_pattern", _, _).
-m472(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m472(n) :- node(_, n, "typed_parameter", _, _), child(n, v470, _), m471(v470).
-m473(n) :- child(v467, n, v468), child(v467, v466, v469), v469 < v468, m472(v466).
-t477(s) :- text(_, s), contains("Connection", s).
-t477(s) :- text(_, s), s = "conn".
-m479(n) :- node(_, n, "identifier", _, _), text(n, v478), v478 = "ConnectionId".
-m480(n) :- node(_, n, "string", _, _).
-m480(n) :- node(_, n, "concatenated_string", _, _).
-m484(n) :- node(_, n, "identifier", _, _).
-m484(n) :- node(_, n, "default_parameter", _, _).
-m484(n) :- node(_, n, "typed_parameter", _, _).
-m484(n) :- node(_, n, "typed_default_parameter", _, _).
-m489(n) :- child(v486, n, v487), child(v486, v485, v488), v487 < v488, node(_, v485, "positional_separator", _, _).
-m495(n) :- node(_, n, "list_splat_pattern", _, _).
-m495(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m496(n) :- node(_, n, "keyword_separator", _, _).
-m496(n) :- node(_, n, "list_splat_pattern", _, _).
-m496(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m496(n) :- node(_, n, "typed_parameter", _, _), child(n, v494, _), m495(v494).
-m497(n) :- child(v491, n, v492), child(v491, v490, v493), v493 < v492, m496(v490).
-t501(s) :- text(_, s), contains("Connection", s).
-t501(s) :- text(_, s), s = "conn".
-m503(n) :- node(_, n, "identifier", _, _), text(n, v502), v502 = "ConnectionId".
-m504(n) :- node(_, n, "string", _, _).
-m504(n) :- node(_, n, "concatenated_string", _, _).
-m508(n) :- node(_, n, "identifier", _, _).
-m508(n) :- node(_, n, "default_parameter", _, _).
-m508(n) :- node(_, n, "typed_parameter", _, _).
-m508(n) :- node(_, n, "typed_default_parameter", _, _).
-m513(n) :- child(v510, n, v511), child(v510, v509, v512), v511 < v512, node(_, v509, "positional_separator", _, _).
-m519(n) :- node(_, n, "list_splat_pattern", _, _).
-m519(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m520(n) :- node(_, n, "keyword_separator", _, _).
-m520(n) :- node(_, n, "list_splat_pattern", _, _).
-m520(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m520(n) :- node(_, n, "typed_parameter", _, _), child(n, v518, _), m519(v518).
-m521(n) :- child(v515, n, v516), child(v515, v514, v517), v517 < v516, m520(v514).
-t525(s) :- text(_, s), contains("Connection", s).
-t525(s) :- text(_, s), s = "conn".
-m527(n) :- node(_, n, "identifier", _, _), text(n, v526), v526 = "ConnectionId".
-m528(n) :- node(_, n, "string", _, _).
-m528(n) :- node(_, n, "concatenated_string", _, _).
-m532(n) :- node(_, n, "identifier", _, _).
-m532(n) :- node(_, n, "default_parameter", _, _).
-m532(n) :- node(_, n, "typed_parameter", _, _).
-m532(n) :- node(_, n, "typed_default_parameter", _, _).
-m537(n) :- child(v534, n, v535), child(v534, v533, v536), v535 < v536, node(_, v533, "positional_separator", _, _).
-m543(n) :- node(_, n, "list_splat_pattern", _, _).
-m543(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m544(n) :- node(_, n, "keyword_separator", _, _).
-m544(n) :- node(_, n, "list_splat_pattern", _, _).
-m544(n) :- node(_, n, "dictionary_splat_pattern", _, _).
-m544(n) :- node(_, n, "typed_parameter", _, _), child(n, v542, _), m543(v542).
-m545(n) :- child(v539, n, v540), child(v539, v538, v541), v541 < v540, m544(v538).
-t549(s) :- text(_, s), contains("Connection", s).
-t549(s) :- text(_, s), s = "conn".
-m551(n) :- node(_, n, "identifier", _, _), text(n, v550), v550 = "ConnectionId".
-m552(n) :- node(_, n, "string", _, _).
-m552(n) :- node(_, n, "concatenated_string", _, _).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+txn_str_value(n, v) :- node(_, n, "string", _, _), value(n, v), value_type_of(n, "str").
+txn_str_value(n, v) :- node(_, n, "concatenated_string", _, _), value(n, v), value_type_of(n, "str").
+txn_ahc(n) :- node(_, n, "identifier", _, _), text(n, s), contains("Connection", s).
+txn_ahc(n) :- txn_str_value(n, v), contains("Connection", v).
+txn_ahc(n) :- node(_, n, "attribute", _, _), field(n, "attribute", c), txn_ahc(c).
+txn_ahc(n) :- node(_, n, "subscript", _, _), field(n, "value", c), txn_ahc(c).
+txn_ahc(n) :- node(_, n, "generic_type", _, _), child(n, c, _), node(_, c, "identifier", _, _), txn_ahc(c).
+txn_ahc(n) :- txn_wrapper(n), child(n, c, _), txn_ahc(c).
+txn_ahc(n) :- txn_ahc_left(n).
+txn_ahc(n) :- txn_ahc_right(n).
+txn_ahc_left(n) :- txn_binop(n), field(n, "left", c), txn_ahc(c).
+txn_ahc_left(n) :- txn_union_nth(n, c, 1), txn_ahc(c).
+txn_ahc_right(n) :- txn_binop(n), field(n, "right", c), txn_ahc(c).
+txn_ahc_right(n) :- txn_union_nth(n, c, 2), txn_ahc(c).
+rr_ctx2(cs, n) :- node(_, n, "union_type", _, _), child(n, c, i), node(_, c, "type", cs, _).
+rr_agg1(cs, n, s, st) :- rr_ctx2(cs, n), token(n, _, s, st, _), prefix("#", s), st < cs.
+txn_union_nth(n, c, k) :- node(_, n, "union_type", _, _), child(n, c, i), node(_, c, "type", cs, _), j = count : { rr_agg1(cs, n, _, _) }, k = @add(@add(i, j), 1).
+txn_wrapper(n) :- node(_, n, "type", _, _).
+txn_wrapper(n) :- node(_, n, "parenthesized_expression", _, _).
+txn_binop(n) :- node(_, n, "binary_operator", _, _).
+txn_binop(n) :- node(_, n, "union_type", _, _).
+txn_ac(n) :- node(_, n, "identifier", _, _), text(n, s), match("(?s:.*)(?:Connection|^conn$)(?s:.*)", s), s != "ConnectionId".
+txn_ac(n) :- txn_str_value(n, v), match("(?s:.*)(?:Connection|^conn$)(?s:.*)", v), v != "ConnectionId".
+txn_ac(n) :- node(_, n, "attribute", _, _), field(n, "attribute", c), txn_ac(c).
+txn_ac(n) :- node(_, n, "subscript", _, _), field(n, "value", c), txn_ac(c).
+txn_ac(n) :- node(_, n, "generic_type", _, _), child(n, c, _), node(_, c, "identifier", _, _), txn_ac(c).
+txn_ac(n) :- txn_wrapper(n), child(n, c, _), txn_ac(c).
+txn_ac(n) :- txn_ahc_left(n), txn_ac_left(n).
+txn_ac(n) :- txn_binop(n), !txn_ahc_left(n), txn_ahc_right(n), txn_ac_right(n).
+txn_ac_left(n) :- txn_binop(n), field(n, "left", c), txn_ac(c).
+txn_ac_left(n) :- txn_union_nth(n, c, 1), txn_ac(c).
+txn_ac_right(n) :- txn_binop(n), field(n, "right", c), txn_ac(c).
+txn_ac_right(n) :- txn_union_nth(n, c, 2), txn_ac(c).
+txn_param_name(q, c) :- node(_, q, "typed_parameter", _, _), child(q, c, _), node(_, c, "identifier", _, _), text(c, s), s != "self".
+txn_param_name(q, c) :- node(_, q, "typed_default_parameter", _, _), field(q, "name", c), node(_, c, "identifier", _, _), text(c, s), s != "self".
+txn_star(s) :- node(_, s, "keyword_separator", _, _).
+txn_star(s) :- txn_splat(s).
+txn_star(s) :- node(_, s, "typed_parameter", _, _), child(s, c, _), txn_splat(c).
+txn_splat(s) :- node(_, s, "list_splat_pattern", _, _).
+txn_splat(s) :- node(_, s, "dictionary_splat_pattern", _, _).
+txn_typed(ps, q, i) :- node(_, ps, "parameters", _, _), child(ps, q, i), node(_, q, "typed_parameter", _, _).
+txn_typed(ps, q, i) :- node(_, ps, "parameters", _, _), child(ps, q, i), node(_, q, "typed_default_parameter", _, _).
+txn_before_slash(ps, i) :- txn_typed(ps, _, i), child(ps, s, j), node(_, s, "positional_separator", _, _), i < j.
+txn_after_star(ps, i) :- txn_typed(ps, _, i), child(ps, s, j), j < i, txn_star(s).
+txn_param(ps, q, i) :- txn_typed(ps, q, i), !txn_before_slash(ps, i), !txn_after_star(ps, i), field(q, "type", t), txn_ac(t), txn_param_name(q, _).
+txn_param_later(ps, i) :- txn_param(ps, _, i), txn_param(ps, _, j), j < i.
+txn_cf(f, conn) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), txn_param(ps, q, i), !txn_param_later(ps, i), txn_param_name(q, c), text(c, conn).
+txn_call(c, conn) :- node(_, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "object", o), node(_, o, "identifier", _, _), text(o, conn), field(a, "attribute", m), node(_, m, "identifier", _, _), text(m, s), (s = "read" ; s = "schema_transaction" ; s = "write").
+txn_it_blocked(c, b) :- txn_call(c, _), inside(c, s, txn_functions), inside(s, b, txn_blocks).
+txn_it(f, conn) :- txn_call(c, conn), inside(c, b, txn_blocks), field(f, "body", b), node(_, f, "function_definition", _, _), !txn_it_blocked(c, b).
+txn_init_in_conn_class(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), node(_, c, "identifier", _, _), text(c, "__init__"), nearest(f, k, txn_classes), field(k, "name", kn), text(kn, s), match("(?s:.*)(?:Connection|SyncConnectionPool|Transaction|TransactionGenerator)(?s:.*)", s).
+txn_named(f, cat) :- field(f, "name", c), node(_, c, "identifier", _, _), text(c, s), option_item(cat, _, s), prefix("category-", cat).
+txn_classified(f) :- txn_named(f, _).
+txn_unclassified(f) :- node(_, f, "function_definition", _, _), !txn_init_in_conn_class(f), !txn_classified(f).
+txn_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), (contains("Connection", s) ; contains("conn", s)).
+txn_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
+txn_name_1(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:initialize|ensure|bootstrap|create_log_table)(?s:.*)", s).
+txn_name_2(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:ripple|reaper|background|process_)(?s:.*)", s).
+txn_name_3(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:table_exists|get_table|list_tables|introspect)(?s:.*)", s).
+txn_name_4(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:export_|import_|validate_import)(?s:.*)", s).
+txn_name_5(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:rbac|permission)(?s:.*)", s).
+txn_name_6(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:schema_transaction|begin_)(?s:.*)", s).
+txn_name_7(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:_handler)(?s:.*)", s).
+txn_name_8(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:(?i)validat)(?s:.*)", s).
+txn_name_9(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:ensure|initialize|(?i:bootstrap))(?s:.*)", s).
+txn_name_10(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:stale|reaper|recover|ripple|process_|enqueue_ripple)(?s:.*)", s).
+txn_name_11(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:_detect_|get_capabilities|has_native|get_backend_type|run_after_rollback|attach_renewable_capability_runtime)(?s:.*)", s).
+txn_name_12(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:register_queue|register_table|sync_column|register_trigger)(?s:.*)", s).
+txn_name_13(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:subscribe)(?s:.*)", s).
+txn_name_14(f) :- node(_, f, "function_definition", _, _), field(f, "name", c), text(c, s), match("(?s:.*)(?:export_database|import_database)(?s:.*)", s).
+violation("data-layer-transaction-patterns", "category-1", "LEGITIMATE", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_init_in_conn_class(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-2", "LEGITIMATE", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-LEGITIMATE"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-3", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BOOTSTRAP"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-4", "BACKGROUND", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BACKGROUND"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-5", "BACKEND_SPECIFIC", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BACKEND_SPECIFIC"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-5", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-BACKEND_SPECIFIC"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-6", "CAPABILITY", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-CAPABILITY"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-6", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-CAPABILITY"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-7", "ADMIN_TOOLS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-ADMIN_TOOLS"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-8", "VALIDATION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-VALIDATION"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-9", "SUBSCRIPTION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-SUBSCRIPTION"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-9", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-SUBSCRIPTION"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-10", "SCHEMA_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-SCHEMA_OPS"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-10", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-SCHEMA_OPS"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-11", "DEPRECATED", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-DEPRECATED"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-11", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-DEPRECATED"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-12", "BACKEND_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BACKEND_OPS"), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-13", "BULK_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), !txn_init_in_conn_class(f), txn_named(f, "category-BULK_OPS"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-13", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-BULK_OPS"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-14", "NEEDS_REVIEW", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-NEEDS_REVIEW"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-14", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-NEEDS_REVIEW"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-15", "TS_BRIDGE", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-TS_BRIDGE"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-15", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-TS_BRIDGE"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-16", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-INTERNAL_TXN_VIOLATION"), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "internal-16", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), !txn_init_in_conn_class(f), txn_named(f, "category-INTERNAL_TXN_VIOLATION"), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-transaction-patterns", "category-17", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_1(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-18", "BACKGROUND", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_2(f), !txn_name_1(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-19", "CAPABILITY", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_3(f), !txn_name_1(f), !txn_name_2(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-19", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_3(f), !txn_name_1(f), !txn_name_2(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-20", "BULK_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_4(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-20", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_4(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-21", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_5(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), !txn_name_4(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-22", "LEGITIMATE", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_6(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), !txn_name_4(f), !txn_name_5(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-23", "BACKEND_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_1(f), !txn_name_2(f), !txn_name_3(f), !txn_name_4(f), !txn_name_5(f), !txn_name_6(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:l9900_ts_models|l0500_ts_models))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-24", "ADMIN_TOOLS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_7(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models)))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-25", "ADMIN_TOOLS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:(?:^|/)tools/|^l8000_admin/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models)))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-26", "VALIDATION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_8(f), !txn_name_7(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-27", "VALIDATION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:validation)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-28", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_9(f), !txn_name_7(f), !txn_name_8(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-29", "BACKGROUND", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_10(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-30", "CAPABILITY", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_11(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-30", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_11(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-31", "CAPABILITY", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^l6510_credentials/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-31", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^l6510_credentials/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-32", "SCHEMA_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_12(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-32", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_12(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-33", "BOOTSTRAP", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-34", "SUBSCRIPTION", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_13(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-34", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_13(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-35", "BULK_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), txn_name_14(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-35", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), txn_name_14(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-36", "BULK_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:bulk)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-36", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:bulk)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-37", "BACKEND_SPECIFIC", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb))(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-37", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb))(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-38", "BACKEND_OPS", p, l) :- txn_cf(f, conn), option_on("oracleAnalyzer"), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), match("(?s:.*)(?:^(?:api|impl|data_layer|_internal|l\\d{4}_[^/]+)/)(?s:.*)", p), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk)|(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb)))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "category-39", "NEEDS_REVIEW", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), !txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk)|(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb))|(?:^(?:api|impl|data_layer|_internal|l\\d{4}_[^/]+)/))(?s:.*)", p).
+violation("data-layer-transaction-patterns", "internal-39", "INTERNAL_TXN_VIOLATION", p, l) :- txn_cf(f, conn), txn_unclassified(f), !txn_name_7(f), !txn_name_8(f), !txn_name_9(f), !txn_name_10(f), !txn_name_11(f), !txn_name_12(f), !txn_name_13(f), !txn_name_14(f), txn_it(f, conn), node(d, f, _, _, _), txn_gate(d), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l), !match("(?s:.*)(?:(?:(?:l9900_ts_models|l0500_ts_models))|(?:(?:^|/)tools/|^l8000_admin/)|(?:validation)|(?:^l6510_credentials/)|(?:^l(?:3100_schema_introspector|3200_metadata|3250_migrations)/)|(?:bulk)|(?:^impl/.*(?:sqlite|postgres|mariadb|mongodb|neo4j|doltdb))|(?:^(?:api|impl|data_layer|_internal|l\\d{4}_[^/]+)/))(?s:.*)", p).

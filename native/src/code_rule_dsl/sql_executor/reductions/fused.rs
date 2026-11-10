@@ -81,7 +81,7 @@ pub(super) fn append_with(
         .versions
         .ok_or_else(|| error("fused cache requires native storage"))?;
     let mut weights = vec![];
-    let mut unique_heads = None;
+    let mut unique_heads = vec![];
     let unique = state.lattice.is_none() && state.support_uniqueness().proven;
     let width = state.width;
     for rule in state.rules.iter() {
@@ -191,7 +191,7 @@ pub(super) fn append_with(
                     fields("c", rule.width, width)
                 ),
             );
-            unique_heads = Some((old, next));
+            unique_heads.push((old,next));
         } else {
             weights.push(format!(
                 "SELECT {heads},-1 FROM {dirty} d CROSS JOIN {} c WHERE {}",
@@ -204,7 +204,12 @@ pub(super) fn append_with(
             ));
         }
     }
-    if let Some((old, next)) = unique_heads {
+    if !unique_heads.is_empty() {
+        let (old,next) = if unique_heads.len()==1 { unique_heads.pop().unwrap() } else {
+        let old = phase.view(width,&unique_heads.iter().map(|(old,_)|format!("SELECT * FROM {old}")).collect::<Vec<_>>().join(" UNION ALL "));
+        let next = phase.view(width,&unique_heads.iter().map(|(_,next)|format!("SELECT * FROM {next}")).collect::<Vec<_>>().join(" UNION ALL "));
+        (old,next)
+        };
         // The shared witness proof establishes at most one producer per head
         // in each snapshot. Replace dirty supports of one without an aggregate.
         let removed = phase.relation(

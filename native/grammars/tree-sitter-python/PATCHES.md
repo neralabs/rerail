@@ -3,7 +3,7 @@
 Upstream: https://github.com/tree-sitter/tree-sitter-python, tag `v0.25.0`
 (commit `293fdc02038ee2bf0e2e206711b69c90ac0d413f`), the version `ast-grep-language` 0.45.3 pins
 and the latest release. Upstream `master` adds one commit after it (`26855ea`, marking
-`expression_statement` a supertype), which fixes neither gap below. tree-sitter and its grammars
+`expression_statement` a supertype), which fixes none of the gaps below. tree-sitter and its grammars
 accept contributions only from maintainers, so Rerail carries its fixes here instead of upstream.
 
 ## Files
@@ -147,3 +147,58 @@ single-quoted string no longer runs through a lone `\r`, which CPython rejects a
 Tree-sitter itself still counts rows at `\n` only, so a node's row and column (and a tape's, which
 equals the native tree's) do not change; violations are placed by Rerail's line table, which follows
 Ruff's `\r\n`, `\r` and `\n` (`code_rule_dsl/lines.rs`).
+
+## Patch 3: a line end ends an unpacking assignment
+
+Upstream issue: tree-sitter/tree-sitter-python#178 (open), on the line ends the grammar skips where
+CPython ends a statement. This patch fixes one case of it that misreads valid code.
+
+Why: the grammar's whitespace extras match `\n`, and the scanner emits a NEWLINE only in a parse
+state that accepts one. After `path, size = source.path, source.size()` the parser keeps two
+readings of the right side: an `expression_list`, which accepts the NEWLINE, and the `pattern_list`
+target of a chained assignment, which does not, so that reading skips the line end. When the next
+line opens with `[`, that reading goes on through it:
+
+```python
+path, size = source.path, source.size()
+[first] = path.split(size)
+```
+
+parses as one chained assignment, `path, size = source.path, source.size()[first] = path.split(size)`.
+Both readings parse without an error and tree-sitter kept the chained one, so `path` was read before
+the unpacking bound it, and Ruff's F823 port reported it (`fixtures/python/scope/usage/F823_unpacking.py`).
+
+```diff
+--- a/grammar.js
++++ b/grammar.js
+@@ -96,6 +96,7 @@ module.exports = grammar({
+     $._suite,
+     $._expressions,
+     $._left_hand_side,
++    $._right_hand_side,
+     $.keyword_identifier,
+   ],
+ 
+@@ -883,8 +884,9 @@ module.exports = grammar({
+     _right_hand_side: $ => choice(
+       $.expression,
+       $.expression_list,
+-      $.assignment,
+-      $.augmented_assignment,
++      // A chained target loses to the reading that ends the statement at a line end.
++      prec.dynamic(-1, $.assignment),
++      prec.dynamic(-1, $.augmented_assignment),
+       $.pattern_list,
+       $.yield,
+     ),
+```
+
+A chained assignment or augmented assignment as a right side now has dynamic precedence -1, so
+where both readings parse, tree-sitter keeps the one that ends the statement at the line end. On one
+line, or across a line end inside brackets or after a backslash, only the chained reading parses, as
+before. The rule is inlined into its three uses (`assignment`'s two right sides and
+`augmented_assignment`'s): tree-sitter-generate drops a unit reduction of a hidden rule together with
+its dynamic precedence (`remove_unit_reductions` in `build_tables/minimize_parse_table.rs`), and inlined,
+each chained alternative is a production of three or more symbols, which keeps it.
+
+Node kinds and fields are unchanged: `_right_hand_side` is hidden, so it was never a node of the tree.

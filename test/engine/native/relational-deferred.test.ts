@@ -102,7 +102,7 @@ it.each([false, true])("invalidates source reads without evidence, including evi
       execFileSync("git", ["init", "--quiet"], { cwd: root });
       execFileSync("git", ["add", "a.py", "settings.py"], { cwd: root });
       execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "source fixture"], { cwd: root });
-      await workspace.enableStorageAsync(root, join(root, "results.sqlite"));
+      await workspace.enableStorageAsync(root, join(root, "results.sqlite"), { files: [], folders: [] });
       workspace.setDocumentResidencyLimit(0);
     }
     workspace.addCodeRule(rule);

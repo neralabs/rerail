@@ -48,5 +48,12 @@ pub(super) fn describe_matcher(semantic: &Semantic, language: GrammarDialect) ->
         Semantic::Tokens(test) => json!({ "tokens": format!("{test:?}") }),
         Semantic::FilePath(condition) => json!({ "filePath": format!("{condition:?}") }),
         Semantic::Calls(_) => json!({ "calls": true }),
+        Semantic::ImportTarget(test) => json!({ "importTarget": {
+            "via": format!("{:?}", test.via),
+            "moduleType": test.module_types.as_ref().map(|types| types.iter().map(|kind| format!("{kind:?}")).collect::<Vec<_>>()),
+            "builtin": test.builtin, "resolved": test.resolved, "failed": test.failed,
+            "extensionSpelled": test.extension_spelled, "published": test.published,
+            "devDependency": test.dev_dependency, "declared": test.declared, "aliased": test.aliased,
+        } }),
     }
 }

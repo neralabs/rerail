@@ -49,6 +49,7 @@ is the primary one in every scenario.
 | `multi-repo` | storefront (3 weeks of history, 10 sessions, one open), `acme/billing` (set up, no sessions), `acme/docs-site` (known, never set up or started). |
 | `not-set-up` | Started 20 minutes ago, never set up: nothing runs. |
 | `stopped` | Set up 10 days ago with `typescript` and `javascript`, two sessions, stopped 2 days ago. |
+| `awaiting-approval` | Set up an hour ago with `typescript`, started, no sessions; a rule a coding agent added to the library and a rule in the checkout's own `.rerail/rules`, neither approved, so both run in Log. |
 
 Pick the smallest scenario that shows the state under test. Add one only for a state none of these has: a new
 `case` in `plansFor`, its name in `SCENARIO_NAMES` (`support/scenario-manifest.ts`) and a row here.

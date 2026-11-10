@@ -201,6 +201,73 @@ Debug build, load 10–22. Spans are each step's own, in CPU seconds:
 - **Evaluation dominates:** joins and the over-delete stratum are 30 s of 43 at step 06. That is §3's work and
   O137's stratum, not step 5's.
 
+## Measured: a step's work in the delta's size, not the program's (2026-11-09)
+
+This was measured after merging the rollup and its siblings, including kept prices and replans (d74dbdba4), kept
+relations measured once (1c0aa91ea) and definition ids in T's shape (a3dc7edfd). It is the same replay, step 06
+(2 files) after a cold run at 05, with `RERAIL_NODE_IDS=definition`, on a debug build at load 70–150. Each change
+is compared against the same binary with the change switched off.
+
+**Most of DRed's rules have nothing to do on a given step.** Of 11,757 rules run, 6,571 found no rows at their
+first step. In 657 of 1,794 strata no rule found any.
+
+**Joins over empty relations are left out** (`RERAIL_KEEP_EMPTY_JOINS` switches this off):
+- A rule with a positive atom over a lower stratum's relation that has no rows is not planned, keyed, specified or
+  opened.
+- A stratum left with no rules holds its relations empty and opens no component.
+- An aggregate, a negation, the stratum's own relations, and a relation a request may fill are never treated as
+  empty.
+
+| span | joins over empty kept | left out |
+|---|---:|---:|
+| session | 46.2 s | 31.2 s |
+| cross part | 37.7 s | 23.9 s |
+| `search` | 11.8 s (24,479 calls) | 3.2 s (13,473) |
+| `spec` | 8.8 s | 3.0 s |
+| `plan #` | 8.2 s (15,873) | 2.7 s (7,816) |
+| replans | 5.3 s | 1.3 s |
+| `key` | 1.2 s (49,374) | 0.5 s (25,003) |
+| cold run at 05, its cross part | 9.6 s | 7.4 s |
+
+The outputs equal a full run's. The gate holds `3988 303 298 0`.
+
+**Engine open is not overhead per stratum.** It opens 943 components instead of 1,434, but still costs about
+5.3 s. The spans under `open:` split it:
+
+| part | CPU | calls |
+|---|---:|---:|
+| index of a base input | 2.7 s | 696 |
+| index of a derived input | 1.2 s | 1,703 |
+| survivors (`h__old` less `h__del`, in place) | 0.7 s | 277 |
+| input loads, other indexes | 0.1 s | |
+
+Nearly all of the base-input index cost is in the input diffs, the `r__minus` and `r__plus` strata
+(`r__minus :- r__old, !r`), and not in hash tables. Their probes read a column's sorted order (`Stored::index`). A
+run binds its base relations as new in-memory columns, so that order is sorted again: 11 sorts of about 181k rows
+(`node`, `rr_nearest_*fscope`) and many smaller ones, about 1.9 s.
+
+Keeping the inputs whose rows did not change, with their indexes, was tried and measured no gain (5.22 s both
+ways). The 154 kept inputs were cheap; the cost is in the 105 that changed. It was removed.
+
+The two diff strata cost 6.7 s of the 21 s evaluate, all of it in the repository's size: each anti-joins a whole
+relation against its old rows. The digests of every input read the same rows in 0.14 s. A step's input delta
+should be read, not computed. That means the changed documents' old and new rows of each input, which needs the
+cross inputs held per document, not assembled whole each run. That is the next step for engine open and for the
+diff strata both.
+
+**Binding** costs 3.4 s: 2.2 s for 103 sources that are not kept, and 1.1 s for 282 kept ones.
+- The 103 are inputs' old rows (`X__old`), which were measured from their rows every step. They are now given the
+  statistics their run planned `X` with (`retain::InputStats`, `Stats::of_relation`): their rows are those rows.
+- A kept relation now also keeps its constant counts (`Source::value_counts`), as it keeps its statistics.
+
+Binding the kept relations then costs 1.25 s.
+
+What is left at step 06:
+- the input diffs (above);
+- the joins (7.5 s);
+- the over-delete stratum (O137's);
+- `statistics` and key analysis, 0.7 s each, run once per run over the whole rewritten program.
+
 ## What the prior work says
 
 - **Target architecture (03):**

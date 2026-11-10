@@ -307,7 +307,9 @@ impl CallsState {
             let witnesses = file.witnesses.get(id);
             let starts = witnesses.and_then(|witnesses| {
                 calls::seed_starts(
-                    witnesses.iter().map(|witness| &witness.span),
+                    witnesses
+                        .iter()
+                        .map(|witness| witness.span.as_ref().expect("an ast witness has a span")),
                     scope,
                     summary,
                 )

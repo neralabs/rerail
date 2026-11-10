@@ -1,0 +1,121 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth122-os-path-splitext",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use the suffix, stem and parent properties of a Path object instead of os.path.splitext; pathlib reads better than string-based os.path functions.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "os-path-splitext",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "any": [
+       {
+        "matches": "target"
+       },
+       {
+        "matches": "in-string"
+       }
+      ]
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "os.path.splitext"
+          ]
+         },
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "target": {
+       "kind": "call",
+       "all": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee",
+          "precedes": {
+           "stopBy": "end",
+           "any": [
+            {
+             "kind": "argument_list"
+            },
+            {
+             "kind": "generator_expression"
+            }
+           ]
+          }
+         }
+        }
+       ]
+      },
+      "in-string": {
+       "any": [
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "concatenated_string"
+        }
+       ],
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "matches": "target"
+          },
+          {
+           "matches": "in-string"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH122",
+    "message": "Use `Path(...)` with `.suffix`, `.stem` and `.parent` instead of `os.path.splitext(...)`: the root is `p.parent / p.stem`, the extension `p.suffix`. Leave it for bytes paths, which `Path` rejects.",
+    "each": "F",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH122"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

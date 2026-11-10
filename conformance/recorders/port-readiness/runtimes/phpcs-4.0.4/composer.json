@@ -1,8 +1,0 @@
-{
-  "name": "rerail/port-readiness-upstream-phpcs",
-  "description": "PHP_CodeSniffer as the port readiness gates run it: the release the PHP pack's ported sniffs name.",
-  "license": "Apache-2.0",
-  "require": {
-    "squizlabs/php_codesniffer": "4.0.4"
-  }
-}

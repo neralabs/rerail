@@ -19,6 +19,8 @@ enum TokenType {
     JSX_CLOSING_TAG_LT,
     // Never returned: valid right after `return` and `yield`, which take no operand after a line break.
     NO_LINE_TERMINATOR_HERE,
+    // Never returned: valid after a member's `static`, `get` or `set`, where a name on the next line is the member's.
+    MEMBER_NAME_HERE,
 };
 
 static void advance(TSLexer *lexer) { lexer->advance(lexer, false); }
@@ -223,6 +225,16 @@ static bool scan_automatic_semicolon(TSLexer *lexer, const bool *valid_symbols, 
     // would continue it.
     if (valid_symbols[ARROW_BODY_END]) {
         return lexer->lookahead != ',' && lexer->lookahead != ':' && lexer->lookahead != ';';
+    }
+
+    // After a member's `static`, `get` or `set`, a property name on the next line is the member's, as TypeScript reads
+    // a class or type member (`static get⏎a() {}` is a static getter `a`, `get⏎a() {}` a getter): no semicolon there.
+    // Any other token (`=`, `(`, `;`, `}`) goes on as before.
+    if (valid_symbols[MEMBER_NAME_HERE] &&
+        (is_identifier_char(lexer->lookahead) || lexer->lookahead == '\\' || lexer->lookahead == '#' ||
+         lexer->lookahead == '[' ||
+         lexer->lookahead == '"' || lexer->lookahead == '\'' || lexer->lookahead > 0x7f)) {
+        return false;
     }
 
     switch (lexer->lookahead) {
