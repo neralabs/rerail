@@ -105,19 +105,18 @@ function frameRows(frame: string, columns: number | undefined): number {
   return lines.reduce((rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / columns)), 0);
 }
 
-/** `value`'s own or inherited `key`, when `value` is an object. */
-function field(value: unknown, key: string): unknown {
-  return typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
-}
+/** Node's TTY stdin as it is at run time: `_handle` is its libuv handle, which Node's types leave out. */
+type NodeTtyStream = TerminalInputStream & { readonly _handle?: { readonly fd?: unknown } };
 
-/** The non-blocking descriptor Node reads a TTY stdin through; undefined for a stand-in, or where it has none (Windows). */
-function ttyDescriptor(input: TerminalInputStream): number | undefined {
-  const fd = field(field(input, "_handle"), "fd");
-  return typeof fd === "number" && fd >= 0 ? fd : undefined;
-}
-
-/** Reads and drops what the terminal holds for `fd` until a read finds nothing (EAGAIN), the end, or an error. */
-function drain(fd: number): void {
+/**
+ * Reads and drops what the terminal holds for `input` until a read finds nothing (EAGAIN), the end, or an error,
+ * through the non-blocking descriptor Node reads a TTY stdin with. A stream without one holds nothing it can drop
+ * here: a stand-in, or a Windows console, whose handle has no descriptor.
+ */
+function dropHeldInput(input: TerminalInputStream): void {
+  const stream: NodeTtyStream = input;
+  const fd = stream._handle?.fd;
+  if (typeof fd !== "number" || fd < 0) return;
   const chunk = Buffer.alloc(1024);
   try {
     while (readSync(fd, chunk) > 0);
@@ -141,6 +140,10 @@ export class TerminalInput {
     private readonly interrupt: () => void = () => process.kill(process.pid, "SIGINT"),
     /** The terminal's width, to count the rows a menu's wrapped lines take; undefined when unknown. */
     private readonly columns: () => number | undefined = () => undefined,
+    /** Drops what the terminal holds for stdin, with the terminal in raw mode: keys pressed while set-up was busy. */
+    private readonly dropHeld: () => void = () => {
+      dropHeldInput(input);
+    },
   ) {}
 
   /** Take `length` characters off the buffer. */
@@ -162,10 +165,8 @@ export class TerminalInput {
    */
   private dropTypedAhead(raw: boolean): void {
     this.buffer = "";
-    const fd = ttyDescriptor(this.input);
-    if (fd === undefined) return;
     if (!raw) this.input.setRawMode(true);
-    drain(fd);
+    this.dropHeld();
     if (!raw) this.input.setRawMode(false);
   }
 
