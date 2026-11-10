@@ -22,6 +22,10 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
+/// `RERAIL_SPIKE_RECURSIVE_CARRY`: levels' witness kept from run to run, by component, rows by value.
+type Carried = FxHashMap<String, Vec<(Vec<i64>, u32, u32)>>;
+static CARRY: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Carried>>> = std::sync::LazyLock::new(Default::default);
+
 use super::retain::Retained;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::front::{self, Literal, Program, Term};
@@ -915,6 +919,238 @@ impl Component<'_> {
         }
     }
 
+    // -- levels, checked ---------------------------------------------------------------------------------------------
+
+    /// Levels without counts: each row keeps only a level, and every present row has a derivation from rows below
+    /// it. A row that lost a derivation is checked in level order: it stays when a derivation from rows below it
+    /// (all decided already) still holds. New rows take levels above every level held (`base` + the wave), so no
+    /// firing need name its premises. Kept: 4 bytes a row.
+    fn levels_check(&mut self) -> Report {
+        let carry = std::env::var_os("RERAIL_SPIKE_RECURSIVE_CARRY").is_some();
+        let key = format!("check:{}", self.key());
+        let carried = if carry { CARRY.lock().unwrap().get(&key).cloned() } else { None };
+        let (mut st, mut lv) = if let Some(map) = carried {
+            let mut placed: Vec<(usize, u32, u32)> = Vec::new();
+            for &rel in &self.scc.clone() {
+                for (row, l, _) in map.get(&self.ev.names[rel]).into_iter().flatten() {
+                    placed.push((rel, self.ev.stores[rel].add(row, 0), *l));
+                }
+            }
+            let mut st = self.state();
+            let mut lv: Vec<Vec<u32>> = self.ev.stores.iter().map(|s| vec![u32::MAX; s.len() as usize]).collect();
+            for (rel, id, l) in placed {
+                st[rel][id as usize] |= P;
+                lv[rel][id as usize] = l;
+            }
+            (st, lv)
+        } else {
+            let e = self.ev.emitted();
+            let r = self.derive(OLD);
+            self.ev.emitted.set(e);
+            r
+        };
+        let (c0, e0) = (cpu(), self.ev.emitted());
+        let mut base = 0u32;
+        for &rel in &self.scc {
+            for i in 0..st[rel].len() {
+                if st[rel][i] & P != 0 {
+                    base = base.max(lv[rel][i]);
+                }
+            }
+        }
+        // Candidates: heads of old derivations that lost a premise, by level.
+        let mut heap: std::collections::BinaryHeap<std::cmp::Reverse<(u32, usize, u32)>> = Default::default();
+        let old_heads = |c: &Self, st: &[Vec<u8>], seeds: Vec<(usize, usize, u32)>| -> Vec<(usize, u32)> {
+            let mut out = Vec::new();
+            let (is_scc, stores) = (&c.is_scc, &c.ev.stores);
+            // The old rows: present before this run (deleted ones included).
+            let vis = |_: usize, r: usize, i: u32| if is_scc[r] { st[r].get(i as usize).is_some_and(|s| s & (P | D) != 0) } else { stores[r].io[i as usize] & OLD != 0 };
+            for (r, i, id) in seeds {
+                let hr = c.ev.rules[r].head_rel;
+                c.ev.fire(r, Seed::Lit(i, id), &vis, &mut |h, _| {
+                    if let Some(hid) = c.ev.stores[hr].id(h) {
+                        out.push((hr, hid));
+                    }
+                    true
+                });
+            }
+            out
+        };
+        for (rel, id) in old_heads(self, &st, self.input_seeds(true)) {
+            if st[rel].get(id as usize).is_some_and(|s| s & P != 0) {
+                heap.push(std::cmp::Reverse((lv[rel][id as usize], rel, id)));
+            }
+        }
+        let e_seed = self.ev.emitted();
+        let (mut checked, mut deleted) = (0usize, Vec::new());
+        while let Some(std::cmp::Reverse((l, rel, id))) = heap.pop() {
+            if st[rel][id as usize] & (CK | D) != 0 {
+                continue;
+            }
+            st[rel][id as usize] |= CK;
+            checked += 1;
+            let row = self.ev.stores[rel].row(id).to_vec();
+            let mut held = false;
+            {
+                let (st_ref, lv_ref, is_scc, stores) = (&st, &lv, &self.is_scc, &self.ev.stores);
+                let vis = |_: usize, r: usize, i: u32| {
+                    if is_scc[r] {
+                        st_ref[r].get(i as usize).is_some_and(|s| s & (P | D) == P) && lv_ref[r][i as usize] < l
+                    } else {
+                        stores[r].io[i as usize] & NEW != 0
+                    }
+                };
+                for r in (0..self.ev.rules.len()).filter(|r| self.ev.rules[*r].head_rel == rel) {
+                    self.ev.fire(r, Seed::Head(&row), &vis, &mut |_, _| {
+                        held = true;
+                        false
+                    });
+                    if held {
+                        break;
+                    }
+                }
+            }
+            if held {
+                continue;
+            }
+            st[rel][id as usize] |= D;
+            deleted.push((rel, id));
+            // Its consumers above it lose a derivation from below.
+            for (hr, hid) in old_heads(self, &st, self.scc_seeds(rel, id)) {
+                if lv[hr].get(hid as usize).is_some_and(|&hl| hl > l) && st[hr][hid as usize] & (P | D | CK) == P {
+                    heap.push(std::cmp::Reverse((lv[hr][hid as usize], hr, hid)));
+                }
+            }
+        }
+        let e1 = self.ev.emitted();
+        for &(rel, id) in &deleted {
+            st[rel][id as usize] &= !P;
+        }
+        // Rederive one step from the survivors, then insert semi-naively; new rows above every level held.
+        let mut queue = Vec::new();
+        for &(rel, id) in &deleted {
+            let row = self.ev.stores[rel].row(id).to_vec();
+            let mut found = false;
+            {
+                let (st_ref, is_scc, stores) = (&st, &self.is_scc, &self.ev.stores);
+                let vis = |_: usize, r: usize, i: u32| if is_scc[r] { st_ref[r].get(i as usize).is_some_and(|s| s & P != 0) } else { stores[r].io[i as usize] & NEW != 0 };
+                for r in (0..self.ev.rules.len()).filter(|r| self.ev.rules[*r].head_rel == rel) {
+                    self.ev.fire(r, Seed::Head(&row), &vis, &mut |_, _| {
+                        found = true;
+                        false
+                    });
+                    if found {
+                        break;
+                    }
+                }
+            }
+            if found {
+                queue.push((rel, id));
+            }
+        }
+        let rederived = queue.len();
+        for &(rel, id) in &queue {
+            st[rel][id as usize] |= P | N;
+            lv[rel][id as usize] = base + 1;
+        }
+        let e2 = self.ev.emitted();
+        let mut seeds = self.input_seeds(false);
+        let mut wave = 1u32;
+        loop {
+            for &(rel, id) in &queue {
+                seeds.extend(self.scc_seeds(rel, id));
+            }
+            queue.clear();
+            if seeds.is_empty() {
+                break;
+            }
+            wave += 1;
+            let mut found: Vec<(usize, Vec<i64>)> = Vec::new();
+            {
+                let (st_ref, is_scc, stores) = (&st, &self.is_scc, &self.ev.stores);
+                let vis = |_: usize, r: usize, i: u32| if is_scc[r] { st_ref[r].get(i as usize).is_some_and(|s| s & P != 0) } else { stores[r].io[i as usize] & NEW != 0 };
+                for (r, i, id) in seeds.drain(..) {
+                    let hr = self.ev.rules[r].head_rel;
+                    self.ev.fire(r, Seed::Lit(i, id), &vis, &mut |h, _| {
+                        found.push((hr, h.to_vec()));
+                        true
+                    });
+                }
+            }
+            for (rel, row) in found {
+                let id = self.ev.stores[rel].add(&row, 0);
+                Self::grow(&mut st, &self.ev, rel);
+                if lv[rel].len() < st[rel].len() {
+                    lv[rel].resize(st[rel].len(), u32::MAX);
+                }
+                if st[rel][id as usize] & P == 0 {
+                    st[rel][id as usize] |= P | N;
+                    lv[rel][id as usize] = base + wave;
+                    queue.push((rel, id));
+                }
+            }
+        }
+        let e3 = self.ev.emitted();
+        let spent = cpu() - c0;
+        // Not timed: every present row has a derivation from rows below it.
+        let mut anomalies = 0usize;
+        if std::env::var_os("RERAIL_SPIKE_RECURSIVE_VERIFY").is_some() {
+            for &rel in &self.scc {
+                for id in 0..st[rel].len() as u32 {
+                    if st[rel][id as usize] & P == 0 {
+                        continue;
+                    }
+                    let l = lv[rel][id as usize];
+                    let row = self.ev.stores[rel].row(id).to_vec();
+                    let (st_ref, lv_ref, is_scc, stores) = (&st, &lv, &self.is_scc, &self.ev.stores);
+                    let vis = |_: usize, r: usize, i: u32| if is_scc[r] { st_ref[r].get(i as usize).is_some_and(|s| s & P != 0) && lv_ref[r][i as usize] < l } else { stores[r].io[i as usize] & NEW != 0 };
+                    let mut held = false;
+                    for r in (0..self.ev.rules.len()).filter(|r| self.ev.rules[*r].head_rel == rel) {
+                        self.ev.fire(r, Seed::Head(&row), &vis, &mut |_, _| {
+                            held = true;
+                            false
+                        });
+                    }
+                    anomalies += usize::from(!held);
+                }
+            }
+            self.ev.emitted.set(e3);
+        }
+        let rows: usize = self.scc.iter().map(|&rel| st[rel].iter().filter(|s| **s & P != 0).count()).sum();
+        let mut r = Report {
+            name: "levels, checked",
+            cpu: spent,
+            phases: vec![("seed", e_seed - e0), ("check", e1 - e_seed), ("rederive", e2 - e1), ("insert", e3 - e2)],
+            deleted: deleted.len(),
+            rederived,
+            checked,
+            kept_bytes: rows * 4,
+            anomalies,
+            ..Default::default()
+        };
+        self.check(&st, &mut r);
+        if carry {
+            let mut map: FxHashMap<String, Vec<(Vec<i64>, u32, u32)>> = FxHashMap::default();
+            let (mut sum, mut max, mut n) = (0u64, 0u32, 0usize);
+            for &rel in &self.scc {
+                let rows = map.entry(self.ev.names[rel].clone()).or_default();
+                for id in 0..st[rel].len() {
+                    if st[rel][id] & P != 0 {
+                        rows.push((self.ev.stores[rel].row(id as u32).to_vec(), lv[rel][id], 0));
+                        sum += lv[rel][id] as u64;
+                        max = max.max(lv[rel][id]);
+                        n += 1;
+                    }
+                }
+            }
+            CARRY.lock().unwrap().insert(key, map);
+            if n > 0 {
+                eprintln!("recursive spike:   levels, checked: mean level {:.2}, max {max}", sum as f64 / n as f64);
+            }
+        }
+        r
+    }
+
     // -- DRed ------------------------------------------------------------------------------------------------------
 
     fn dred(&mut self) -> Report {
@@ -1016,13 +1252,43 @@ impl Component<'_> {
         n
     }
 
+    /// The component's name across runs: its relations, sorted.
+    fn key(&self) -> String {
+        let mut names: Vec<&str> = self.scc.iter().map(|&r| self.ev.names[r].as_str()).collect();
+        names.sort_unstable();
+        names.join(",")
+    }
+
     fn levels(&mut self) -> (Report, Report) {
-        // The witness, as the last run would have left it: levels from a derivation over the old inputs, counts of
+        // The witness, as the last run would have left it: under `RERAIL_SPIKE_RECURSIVE_CARRY`, what the last run's
+        // maintenance left (levels drift as runs go); else levels from a derivation over the old inputs, counts of
         // each row's supports from below.
         let (c0, e0) = (cpu(), self.ev.emitted());
-        let (mut st, mut lv) = self.derive(OLD);
-        let mut cnt: Vec<Vec<u32>> = self.ev.stores.iter().map(|s| vec![0; s.len() as usize]).collect();
-        for &rel in &self.scc {
+        let carried = if std::env::var_os("RERAIL_SPIKE_RECURSIVE_CARRY").is_some() { CARRY.lock().unwrap().get(&self.key()).cloned() } else { None };
+        let was_carried = carried.is_some();
+        let (mut st, mut lv, mut cnt) = if let Some(map) = carried {
+            let mut placed: Vec<(usize, u32, u32, u32)> = Vec::new();
+            for &rel in &self.scc.clone() {
+                for (row, l, c) in map.get(&self.ev.names[rel]).into_iter().flatten() {
+                    let id = self.ev.stores[rel].add(row, 0);
+                    placed.push((rel, id, *l, *c));
+                }
+            }
+            let mut st = self.state();
+            let mut lv: Vec<Vec<u32>> = self.ev.stores.iter().map(|s| vec![u32::MAX; s.len() as usize]).collect();
+            let mut cnt: Vec<Vec<u32>> = self.ev.stores.iter().map(|s| vec![0; s.len() as usize]).collect();
+            for (rel, id, l, c) in placed {
+                st[rel][id as usize] |= P;
+                lv[rel][id as usize] = l;
+                cnt[rel][id as usize] = c;
+            }
+            (st, lv, cnt)
+        } else {
+            let (st, lv) = self.derive(OLD);
+            let cnt: Vec<Vec<u32>> = self.ev.stores.iter().map(|s| vec![0; s.len() as usize]).collect();
+            (st, lv, cnt)
+        };
+        for &rel in self.scc.iter().filter(|_| !was_carried) {
             for id in 0..self.ev.stores[rel].len() {
                 if st[rel].get(id as usize).is_some_and(|s| s & P != 0) {
                     let (st_ref, is_scc, stores) = (&st, &self.is_scc, &self.ev.stores);
@@ -1032,7 +1298,7 @@ impl Component<'_> {
             }
         }
         let rows: usize = self.scc.iter().map(|&rel| st[rel].iter().filter(|s| **s & P != 0).count()).sum();
-        let mut init = Report { name: "levels: the witness", cpu: cpu() - c0, phases: vec![("derive and count", self.ev.emitted() - e0)], kept_bytes: rows * 8, ..Default::default() };
+        let mut init = Report { name: if was_carried { "levels: carried" } else { "levels: the witness" }, cpu: cpu() - c0, phases: vec![("derive and count", self.ev.emitted() - e0)], kept_bytes: rows * 8, ..Default::default() };
         let mut old_ok = Report::default();
         {
             // The old derivation is the kept rows.
@@ -1270,6 +1536,45 @@ impl Component<'_> {
             ..Default::default()
         };
         self.check(&st, &mut r);
+        if std::env::var_os("RERAIL_SPIKE_RECURSIVE_CARRY").is_some() {
+            // Kept for the next run, by row value.
+            let mut map: FxHashMap<String, Vec<(Vec<i64>, u32, u32)>> = FxHashMap::default();
+            for &rel in &self.scc {
+                let rows = map.entry(self.ev.names[rel].clone()).or_default();
+                for id in 0..st[rel].len() {
+                    if st[rel][id] & P != 0 {
+                        rows.push((self.ev.stores[rel].row(id as u32).to_vec(), lv[rel][id], cnt[rel][id]));
+                    }
+                }
+            }
+            CARRY.lock().unwrap().insert(self.key(), map);
+            // Drift: the levels kept against fresh ones, from a derivation over the new inputs (not timed).
+            let e = self.ev.emitted();
+            let (fst, flv) = self.derive(NEW);
+            self.ev.emitted.set(e);
+            let (mut sum, mut fsum, mut max, mut fmax, mut above, mut n, mut ones) = (0u64, 0u64, 0u32, 0u32, 0usize, 0usize, 0usize);
+            for &rel in &self.scc {
+                for id in 0..st[rel].len() {
+                    if st[rel][id] & P != 0 && fst[rel].get(id).is_some_and(|s| s & P != 0) {
+                        let (l, f) = (lv[rel][id], flv[rel][id]);
+                        sum += l as u64;
+                        fsum += f as u64;
+                        max = max.max(l);
+                        fmax = fmax.max(f);
+                        above += usize::from(l > f);
+                        ones += usize::from(cnt[rel][id] == 1);
+                        n += 1;
+                    }
+                }
+            }
+            if n > 0 {
+                eprintln!(
+                    "recursive spike:   levels drift: mean level {:.2} (fresh {:.2}), max {max} (fresh {fmax}), {above} of {n} rows above fresh, {ones} held by one support",
+                    sum as f64 / n as f64,
+                    fsum as f64 / n as f64
+                );
+            }
+        }
         (init, r)
     }
 
@@ -1625,14 +1930,29 @@ pub(in crate::code_rule_dsl) fn run(
         first.name = "recompute (vs engine)";
         eprintln!("recursive spike:   old rows derived over the old inputs, against the engine's kept rows: +{kept_extra} -{kept_missing}");
         show(&c, "recompute");
-        let mut reports = vec![first, c.dred()];
-        show(&c, "DRed");
-        let (init, levels) = c.levels();
-        show(&c, "levels");
-        reports.push(levels);
-        reports.push(c.backward_forward());
-        show(&c, "B/F");
-        reports.push(init);
+        // `RERAIL_SPIKE_RECURSIVE_ALGOS`: which to run, of dred, levels, bf, check (all by default).
+        let algos = std::env::var("RERAIL_SPIKE_RECURSIVE_ALGOS").unwrap_or_else(|_| "dred,levels,bf,check".into());
+        let mut reports = vec![first];
+        if algos.contains("dred") {
+            reports.push(c.dred());
+            show(&c, "DRed");
+        }
+        let mut init = None;
+        if algos.contains("levels") {
+            let (i, levels) = c.levels();
+            show(&c, "levels");
+            reports.push(levels);
+            init = Some(i);
+        }
+        if algos.contains("bf") {
+            reports.push(c.backward_forward());
+            show(&c, "B/F");
+        }
+        if algos.contains("check") {
+            reports.push(c.levels_check());
+            show(&c, "levels, checked");
+        }
+        reports.extend(init);
         for r in reports {
             let total: u64 = r.phases.iter().map(|(_, n)| n).sum();
             eprintln!(
