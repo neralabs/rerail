@@ -6,14 +6,21 @@
  * the code under test, so the removal fails at once and names it, on every platform, where a retry would only wait for
  * it to end by chance. Any other holder is out of the test's reach (antivirus, the search indexer, a process another
  * process started, a handle the system releases late) and lets go within a moment, so a refused removal is retried as
- * Rerail's own removals are (`FOLDER_REMOVAL_RETRIES`).
+ * Rerail's own removals are ({@link REMOVAL_RETRIES}).
  */
 import { ChildProcess } from "node:child_process";
 import { realpathSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FOLDER_REMOVAL_RETRIES } from "../../../src/engine/folder-removal.js";
+
+/**
+ * Rerail's own `FOLDER_REMOVAL_RETRIES` (`src/engine/file-replace.ts`), repeated: the setup file loads this module
+ * before every test file, and a module a setup file loads is cached before the test file's `vi.mock` calls apply, so
+ * this one loads no Rerail module (the engine's `index.ts`, the only part of it test/support may import, is the whole
+ * engine). `test/engine/file-replace.test.ts` holds the two equal.
+ */
+export const REMOVAL_RETRIES = { maxRetries: 10, retryDelay: 100 } as const;
 
 /** A process this test process started, with the folder it runs in. */
 interface Started {
@@ -144,7 +151,7 @@ export async function removeFolder(path: string, options: RemoveFolderOptions = 
   } catch (error) {
     assertRetryable(error, options.retry ?? true);
   }
-  await rm(path, { recursive: true, force: true, ...FOLDER_REMOVAL_RETRIES });
+  await rm(path, { recursive: true, force: true, ...REMOVAL_RETRIES });
 }
 
 /** {@link removeFolder} for code that cannot wait: a synchronous hook, a `finally` in a synchronous test. */
@@ -156,5 +163,5 @@ export function removeFolderSync(path: string, options: RemoveFolderOptions = {}
   } catch (error) {
     assertRetryable(error, options.retry ?? true);
   }
-  rmSync(path, { recursive: true, force: true, ...FOLDER_REMOVAL_RETRIES });
+  rmSync(path, { recursive: true, force: true, ...REMOVAL_RETRIES });
 }

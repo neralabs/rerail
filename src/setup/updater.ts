@@ -21,8 +21,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
-import { removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
-import { FOLDER_REMOVAL_RETRIES } from "../engine/folder-removal.js";
+import { FOLDER_REMOVAL_RETRIES, removeScratch, renameWithRetry, replaceFile } from "../engine/file-replace.js";
 import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";

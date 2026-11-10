@@ -3,8 +3,8 @@ import { chmod, mkdtemp, readdir, readFile, rename as fsRename, rm, stat, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { removeScratch, renameWithRetry, renameWithRetrySync, replaceFile, replaceFileSync } from "../../src/engine/file-replace.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+import { FOLDER_REMOVAL_RETRIES, removeScratch, renameWithRetry, renameWithRetrySync, replaceFile, replaceFileSync } from "../../src/engine/file-replace.js";
+import { REMOVAL_RETRIES, removeFolder } from "../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -188,5 +188,11 @@ describe("removeScratch", () => {
       throw Object.assign(new Error("EBUSY: resource busy or locked, rmdir"), { code: "EBUSY" });
     };
     await expect(removeScratch(join(tmpdir(), "rerail-missing"), rm)).resolves.toBeUndefined();
+  });
+});
+
+describe("FOLDER_REMOVAL_RETRIES", () => {
+  it("is what the tests' removeFolder retries with, which may load no Rerail module and so repeats it", () => {
+    expect(REMOVAL_RETRIES).toEqual(FOLDER_REMOVAL_RETRIES);
   });
 });
