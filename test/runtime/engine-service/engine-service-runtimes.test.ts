@@ -212,6 +212,61 @@ describe("the engine service's idle close", () => {
     expect(service.openRuntimes()).toBe(0);
     expect(ended("a")).not.toBeNull();
   });
+
+  it("keeps a session open whose event came in while the sweep waited behind the one before it", async () => {
+    const published = Promise.withResolvers<void>();
+    const publishing = Promise.withResolvers<void>();
+    const { clock, service, session, ended } = await idleService({
+      beforeSessionPublish: async () => {
+        published.resolve();
+        await publishing.promise;
+      },
+    });
+    // The start holds the session's lane, and its prompt waits behind it.
+    const starting = service.ingest({ kind: "session-start", eventId: "a:start", session: session("a") });
+    await published.promise;
+    const prompting = service.ingest({ kind: "user-prompt", eventId: "a:prompt", sessionId: "a", session: session("a"), text: "hi" });
+    clock.now += 60_000;
+    // `a` has been quiet since its start as the sweep looks, so its close waits behind the prompt in the same lane.
+    const sweeping = service.closeIdleSessions();
+    publishing.resolve();
+    await Promise.all([starting, prompting, sweeping]);
+    expect(service.openRuntimes()).toBe(1);
+    expect(ended("a")).toBeNull();
+  });
+
+  it("looks for quiet sessions every minute on its own", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const { clock, service, start, ended } = await idleService();
+      await start("a");
+      clock.now += 60_000;
+      vi.advanceTimersByTime(60_000);
+      await vi.waitFor(() => expect(service.openRuntimes()).toBe(0));
+      expect(ended("a")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves no timer behind once it has closed, or when it could not listen", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const root = await mkdtemp(join(tmpdir(), "rerail-idle-timer-"));
+      roots.push(root);
+      const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-timer-${process.pid}-${Date.now()}` : join(root, "engine.sock");
+      const options = { socketPath, storageRoot: join(root, "state"), databasePath: join(root, "rerail.sqlite"), embedder: testEmbedder };
+      const service = await startEngineService(options);
+      expect(vi.getTimerCount()).toBe(1);
+      // A second service cannot listen on the socket the first holds.
+      await expect(startEngineService(options)).rejects.toThrow();
+      expect(vi.getTimerCount()).toBe(1);
+      await service.close();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 /** When the database says `sessionId` ended, read through a connection of its own; null while it runs. */

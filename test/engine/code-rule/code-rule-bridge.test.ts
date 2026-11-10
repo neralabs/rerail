@@ -4,6 +4,8 @@ import { appendFile, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CodeRuleBridge,
@@ -112,6 +114,16 @@ async function awaitClockAfter(...paths: string[]): Promise<void> {
     const info = await lstat(join(probe, "tick"));
     if (Math.max(info.mtimeMs, info.ctimeMs) > since) return;
   }
+}
+setFlagsFromString("--expose-gc");
+const gc = runInNewContext("gc") as () => void;
+/** Heap bytes in use once full collections have run and their sweeping has finished. */
+async function heapInUse(): Promise<number> {
+  for (let pass = 0; pass < 3; pass += 1) {
+    gc();
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  return process.memoryUsage().heapUsed;
 }
 function auditor(auditGeneratedEdits: CodeRuleAuditor["auditGeneratedEdits"]): CodeRuleAuditor {
   return { openWorkspace: vi.fn(async () => undefined), acceptsPath: () => true, auditGeneratedEdits, close: vi.fn(async () => undefined) };
@@ -714,6 +726,31 @@ describe("CodeRuleBridge", () => {
     // observations a session.
     expect(observations.get(root)?.get("src/read.py")).toBe(first.get("src/read.py"));
     expect(observations.get(root)?.get("src/skipped.py")).toBe(first.get("src/skipped.py"));
+  });
+
+  it("costs each session a table of the shared observations, not copies of them or of their paths", { timeout: 60_000 }, async () => {
+    const root = await workspace();
+    const files = 2_000;
+    for (let index = 0; index < files; index += 1) await writeFile(join(root, "src", `module_${index}.py`), "stable\n");
+    await awaitClockAfter(join(root, "src", `module_${files - 1}.py`));
+    const observations: SourceObservationCache = new Map();
+    const open = async (sessionId: string): Promise<void> => {
+      const published = observations.get(root);
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { observations });
+      await bridge.openWorkspace(sessionId);
+      await vi.waitFor(() => expect(observations.get(root)).not.toBe(published), { timeout: 20_000 });
+      // The walk that follows a baseline has finished too: nothing a walk holds while it runs is counted.
+      await bridge.checkpoint("turn");
+    };
+    // The first sessions read every source and pay for the compiled code.
+    await open("session-1");
+    await open("session-2");
+    const before = await heapInUse();
+    const sessions = 5;
+    for (let index = 0; index < sessions; index += 1) await open(`session-${index + 3}`);
+    // Each session's table holds about 90 bytes a source. A path string of its own would add about 40 more, and an
+    // observation of its own about 125 more: a session in a checkout of 100,000 files would hold 4 to 13 MB of copies.
+    expect((await heapInUse() - before) / sessions / files).toBeLessThan(105);
   });
 
   it("abandons the baseline walk of an interrupted session", async () => {
