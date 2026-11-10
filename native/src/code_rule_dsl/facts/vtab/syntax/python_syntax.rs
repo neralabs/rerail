@@ -29,6 +29,15 @@ pub(super) fn error(source: &str) -> Option<(u32, String)> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn complete_native_syntax_exceptions_match_python_313() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!("python_syntax/python-exceptions.json")).unwrap();
+        for row in cases.as_array().unwrap() {
+            let actual = super::exception(row["source"].as_str().unwrap()).unwrap();
+            assert_eq!(serde_json::to_value(actual).unwrap(), row["exception"], "{:?}", row["source"]);
+        }
+    }
+
+    #[test]
     fn malformed_parameter_list_has_the_python_syntax_message() {
         assert_eq!(super::error("def broken(:\n"), Some((1, "invalid syntax".to_owned())));
     }

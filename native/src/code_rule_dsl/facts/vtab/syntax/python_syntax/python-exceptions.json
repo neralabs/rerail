@@ -1,0 +1,436 @@
+[
+  {
+    "source": "def broken(:\n",
+    "line": 1,
+    "message": "invalid syntax",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax",
+      "line": 1,
+      "offset": 12,
+      "endLine": 1,
+      "endOffset": 13,
+      "text": "def broken(:\n"
+    }
+  },
+  {
+    "source": "def grammar_execute()\n    pass\n",
+    "line": 1,
+    "message": "expected ':'",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "expected ':'",
+      "line": 1,
+      "offset": 22,
+      "endLine": 1,
+      "endOffset": 23,
+      "text": "def grammar_execute()\n"
+    }
+  },
+  {
+    "source": "def grammar_execute():\n",
+    "line": 1,
+    "message": "expected an indented block after function definition on line 1",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after function definition on line 1",
+      "line": 1,
+      "offset": 23,
+      "endLine": 1,
+      "endOffset": -1,
+      "text": "def grammar_execute():\n"
+    }
+  },
+  {
+    "source": "  SqlPrerenderedDdl = 1\n",
+    "line": 1,
+    "message": "unexpected indent",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "unexpected indent",
+      "line": 1,
+      "offset": 2,
+      "endLine": 1,
+      "endOffset": -1,
+      "text": "  SqlPrerenderedDdl = 1\n"
+    }
+  },
+  {
+    "source": "x = (SqlPrerenderedDdl\n",
+    "line": 1,
+    "message": "'(' was never closed",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "'(' was never closed",
+      "line": 1,
+      "offset": 5,
+      "endLine": 1,
+      "endOffset": 0,
+      "text": "x = (SqlPrerenderedDdl\n"
+    }
+  },
+  {
+    "source": "x = SqlPrerenderedDdl)\n",
+    "line": 1,
+    "message": "unmatched ')'",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "unmatched ')'",
+      "line": 1,
+      "offset": 22,
+      "endLine": 1,
+      "endOffset": 22,
+      "text": "x = SqlPrerenderedDdl)"
+    }
+  },
+  {
+    "source": "x = [SqlPrerenderedDdl)\n",
+    "line": 1,
+    "message": "closing parenthesis ')' does not match opening parenthesis '['",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "closing parenthesis ')' does not match opening parenthesis '['",
+      "line": 1,
+      "offset": 23,
+      "endLine": 1,
+      "endOffset": 23,
+      "text": "x = [SqlPrerenderedDdl)"
+    }
+  },
+  {
+    "source": "1 = SqlPrerenderedDdl\n",
+    "line": 1,
+    "message": "cannot assign to literal here. Maybe you meant '==' instead of '='?",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "cannot assign to literal here. Maybe you meant '==' instead of '='?",
+      "line": 1,
+      "offset": 1,
+      "endLine": 1,
+      "endOffset": 2,
+      "text": "1 = SqlPrerenderedDdl\n"
+    }
+  },
+  {
+    "source": "x = \n# grammar_execute\n",
+    "line": 1,
+    "message": "invalid syntax",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax",
+      "line": 1,
+      "offset": 5,
+      "endLine": 1,
+      "endOffset": 6,
+      "text": "x = \n"
+    }
+  },
+  {
+    "source": "x = [1 2]\n# grammar_execute\n",
+    "line": 1,
+    "message": "invalid syntax. Perhaps you forgot a comma?",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax. Perhaps you forgot a comma?",
+      "line": 1,
+      "offset": 6,
+      "endLine": 1,
+      "endOffset": 9,
+      "text": "x = [1 2]\n"
+    }
+  },
+  {
+    "source": "def grammar_execute(a=1,b):\n    pass\n",
+    "line": 1,
+    "message": "parameter without a default follows parameter with a default",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "parameter without a default follows parameter with a default",
+      "line": 1,
+      "offset": 25,
+      "endLine": 1,
+      "endOffset": 26,
+      "text": "def grammar_execute(a=1,b):\n"
+    }
+  },
+  {
+    "source": "def grammar_execute(**a,b):\n    pass\n",
+    "line": 1,
+    "message": "arguments cannot follow var-keyword argument",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "arguments cannot follow var-keyword argument",
+      "line": 1,
+      "offset": 25,
+      "endLine": 1,
+      "endOffset": 26,
+      "text": "def grammar_execute(**a,b):\n"
+    }
+  },
+  {
+    "source": "x = \"grammar_execute\n",
+    "line": 1,
+    "message": "unterminated string literal (detected at line 1)",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "unterminated string literal (detected at line 1)",
+      "line": 1,
+      "offset": 5,
+      "endLine": 1,
+      "endOffset": 5,
+      "text": "x = \"grammar_execute"
+    }
+  },
+  {
+    "source": "x = \"\"\"grammar_execute\n",
+    "line": 1,
+    "message": "unterminated triple-quoted string literal (detected at line 1)",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "unterminated triple-quoted string literal (detected at line 1)",
+      "line": 1,
+      "offset": 5,
+      "endLine": 1,
+      "endOffset": 5,
+      "text": "x = \"\"\"grammar_execute"
+    }
+  },
+  {
+    "source": "x = f\"{grammar_execute\"\n",
+    "line": 1,
+    "message": "f-string: expecting '}'",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "f-string: expecting '}'",
+      "line": 1,
+      "offset": 23,
+      "endLine": 1,
+      "endOffset": 23,
+      "text": "x = f\"{grammar_execute\""
+    }
+  },
+  {
+    "source": "x = f\"{grammar_execute!q}\"\n",
+    "line": 1,
+    "message": "f-string: invalid conversion character 'q': expected 's', 'r', or 'a'",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "f-string: invalid conversion character 'q': expected 's', 'r', or 'a'",
+      "line": 1,
+      "offset": 24,
+      "endLine": 1,
+      "endOffset": 25,
+      "text": "x = f\"{grammar_execute!q}\"\n"
+    }
+  },
+  {
+    "source": "x = 1 \\ z\n# grammar_execute\n",
+    "line": 1,
+    "message": "unexpected character after line continuation character",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "unexpected character after line continuation character",
+      "line": 1,
+      "offset": 8,
+      "endLine": 1,
+      "endOffset": 0,
+      "text": "x = 1 \\ z\n"
+    }
+  },
+  {
+    "source": "x = 1\u0000\n# grammar_execute\n",
+    "line": null,
+    "message": "source code string cannot contain null bytes",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "source code string cannot contain null bytes",
+      "line": null,
+      "offset": null,
+      "endLine": null,
+      "endOffset": null,
+      "text": null
+    }
+  },
+  {
+    "source": "x = $grammar_execute\n",
+    "line": 1,
+    "message": "invalid syntax",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid syntax",
+      "line": 1,
+      "offset": 5,
+      "endLine": 1,
+      "endOffset": 6,
+      "text": "x = $grammar_execute\n"
+    }
+  },
+  {
+    "source": "﻿SqlPrerenderedDdl\n",
+    "line": 1,
+    "message": "invalid non-printable character U+FEFF",
+    "exception": {
+      "kind": "SyntaxError",
+      "message": "invalid non-printable character U+FEFF",
+      "line": 1,
+      "offset": 1,
+      "endLine": 1,
+      "endOffset": 1,
+      "text": "﻿SqlPrerenderedDdl"
+    }
+  },
+  {
+    "source": "if True:\n    x = 1\n  SqlPrerenderedDdl\n",
+    "line": 3,
+    "message": "unindent does not match any outer indentation level",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "unindent does not match any outer indentation level",
+      "line": 3,
+      "offset": 20,
+      "endLine": 3,
+      "endOffset": -1,
+      "text": "  SqlPrerenderedDdl\n"
+    }
+  },
+  {
+    "source": "if True:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'if' statement on line 1",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after 'if' statement on line 1",
+      "line": 2,
+      "offset": 1,
+      "endLine": 2,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "if True:\n    pass\nelse:\npass\n",
+    "line": 4,
+    "message": "expected an indented block after 'else' statement on line 3",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after 'else' statement on line 3",
+      "line": 4,
+      "offset": 1,
+      "endLine": 4,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "for x in y:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'for' statement on line 1",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after 'for' statement on line 1",
+      "line": 2,
+      "offset": 1,
+      "endLine": 2,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "while True:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'while' statement on line 1",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after 'while' statement on line 1",
+      "line": 2,
+      "offset": 1,
+      "endLine": 2,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "with resource:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'with' statement on line 1",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after 'with' statement on line 1",
+      "line": 2,
+      "offset": 1,
+      "endLine": 2,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "try:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after 'try' statement on line 1",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after 'try' statement on line 1",
+      "line": 2,
+      "offset": 1,
+      "endLine": 2,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "try:\n    pass\nexcept Exception:\npass\n",
+    "line": 4,
+    "message": "expected an indented block after 'except' statement on line 3",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after 'except' statement on line 3",
+      "line": 4,
+      "offset": 1,
+      "endLine": 4,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "try:\n    pass\nfinally:\npass\n",
+    "line": 4,
+    "message": "expected an indented block after 'finally' statement on line 3",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after 'finally' statement on line 3",
+      "line": 4,
+      "offset": 1,
+      "endLine": 4,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "class A:\npass\n",
+    "line": 2,
+    "message": "expected an indented block after class definition on line 1",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after class definition on line 1",
+      "line": 2,
+      "offset": 1,
+      "endLine": 2,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  },
+  {
+    "source": "async def f():\npass\n",
+    "line": 2,
+    "message": "expected an indented block after function definition on line 1",
+    "exception": {
+      "kind": "IndentationError",
+      "message": "expected an indented block after function definition on line 1",
+      "line": 2,
+      "offset": 1,
+      "endLine": 2,
+      "endOffset": 5,
+      "text": "pass\n"
+    }
+  }
+]
