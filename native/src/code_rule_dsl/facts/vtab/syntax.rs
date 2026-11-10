@@ -43,6 +43,7 @@ pub(crate) const WITHIN: &str = "within";
 /// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
 pub(crate) const SPAN_WITHIN: &str = "span_within";
 mod core_rr;
+mod stored_spike;
 pub(crate) mod normalized;
 mod python_order;
 mod python_syntax;
@@ -911,8 +912,17 @@ impl Batch {
         // `core.rr`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
         // Node identity/ancestry and line views do not require scalar rows or text interning.
-        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","comment","spread","op","op_at","op_t","intval","next_sibling","str_part","str_part_start","str_part_word"]
+        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","spread","op","op_at","op_t","intval","next_sibling","str_part","str_part_start","str_part_word"]
             .into_iter().any(|r|projection.wants(r));
+        let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
+        c.skip = core_rr::Skip {
+            ops: !wants_any(&["op", "op_at"]),
+            next_sibling: !projection.wants("next_sibling"),
+            comment: !projection.wants("comment"),
+            spread: !projection.wants("spread"),
+            name: !projection.wants("name"),
+            literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "text"]),
+        };
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::SpanIn::Line);
@@ -1014,7 +1024,9 @@ impl Batch {
             let error = if core && (projection.wants("syntax_error") || guest.is_some()) { core_rr::verdict(&d.facts, dialect) } else { None };
             let withheld = error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::new(&d.facts.source, dialect.family == Family::Python)))));
+            let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
             let mut p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed);
+            drop(new_span);
             p.module=crate::code_rule_dsl::module_path::ModulePath::dotted(d.module.as_deref().unwrap_or(&module(&d.path)));
             if !rx_spans.is_empty() && guest.is_none() && !withheld {
                 c.matches(&mut p, dialect, &rx_spans, &span_ends[j], &mut string);
@@ -1068,6 +1080,7 @@ impl Batch {
                 errors.push(key);
             }
             let f = &*d.facts;
+            let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
             for (local, &id) in p.core.iter().take(if scalar_nodes {p.core.len()}else{0}).enumerate() {
                 let n = p.global(local as u32);
                 if !core {
@@ -1137,6 +1150,8 @@ impl Batch {
                     c.node(&p, dialect, local as u32, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                 }
             }
+            drop(nodes_span);
+            let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
             if let Some((line, msg)) = &error {
                 let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
                 c.withheld(&p, &(line, msg.clone()), &mut string);
@@ -1147,6 +1162,7 @@ impl Batch {
                     c.digests(&p, dialect, &mut string, wants_trees, wants_units);
                 }
             }
+            drop(document_span);
             docs.push(p);
         }
         // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
@@ -1171,6 +1187,7 @@ impl Batch {
             argument_rows: Default::default(),
             rows: Default::default(),
         });
+        let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
             let mut r = Relation::new(columns);
             rows.for_each(|row| r.push(&row));
@@ -1684,6 +1701,7 @@ pub(crate) fn with_nearest(
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes.last().copied().unwrap_or(0) as u64);
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+    let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
@@ -1710,10 +1728,31 @@ pub(crate) fn with_nearest(
         };
         out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members))));
     }
+    // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
+    if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {
+        let viewed: BTreeSet<&str> = views(&batch).iter().map(|(n, _)| *n).collect();
+        let read: Vec<(String, Arc<dyn Source>, stored_spike::Kind)> = out
+            .iter()
+            .filter(|(n, _)| projection.wants(n))
+            .filter_map(|(n, s)| {
+                let kind = if rows_named.contains(n) { stored_spike::Kind::Rows } else if viewed.contains(n.as_str()) { stored_spike::Kind::View } else { return None };
+                Some((n.clone(), Arc::clone(s), kind))
+            })
+            .collect();
+        let keys: Vec<u32> = batch.docs.iter().map(|p| p.key).collect();
+        drop(_nearest);
+        stored_spike::run(&db, &read, &keys);
+        return Ok(out_with_within(out, &batch));
+    }
     // Containment (decision 0050): made per looked-up node, so a program that never reads it pays nothing.
-    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree))));
-    out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Span))));
-    Ok(out)
+    Ok(out_with_within(out, &batch))
+}
+
+/// `out` with containment's two relations (decision 0050).
+fn out_with_within(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>) -> Vec<(String, Arc<dyn Source>)> {
+    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Tree))));
+    out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(batch), within::Mode::Span))));
+    out
 }
 
 /// The planner's statistics of `source` (`stat_col`'s rows, ndv, sq and sqd per column, `sqd` by

@@ -86,6 +86,8 @@
 .decl types__rvar(f: symbol, y: symbol)
 .decl types__rgen(f: symbol, k: symbol, j: number, y: symbol)
 .decl types__ropen(f: symbol)
+.decl types__pgen(f: symbol, i: number, k: symbol, j: number, y: symbol)
+.decl types__rcarg(f: symbol, k: symbol, j: number, d: symbol)
 // The import closure, components.rr's (the engine adds it to a program that reads it): rr_cx_reach(d, e), e is in
 // d's closure; rr_cx_sees(d, q), q is a module of d's closure.
 
@@ -1061,6 +1063,39 @@ pv(c, "gen", x) :- lgx(c, x), lghcls(x, _).
 lghcls(c, k) :- lgcall(c, _, f), types__rgen(f, k, _, y), lgpar(c, y, _).
 garg(c, j, x) :- lgcall(c, _, f), types__rgen(f, _, j, y), lgpar(c, y, x).
 pv(c, "gen", c) :- lgcall(c, _, f), types__rgen(f, _, _, y), lgpar(c, y, _).
+// A generic value's argument may be a library class, held as its symbol (`lgarg(g, i, d)`): a library function
+// declared to return a generic of classes (`dir() -> list[str]`), or a library class built from such a value.
+.decl lgarg(g: node, i: number, d: symbol)
+lghcls(c, k) :- lcfn(c, _, f), types__rcarg(f, k, _, _).
+lgarg(c, j, d) :- lcfn(c, _, f), types__rcarg(f, _, j, d).
+pv(c, "gen", c) :- lcfn(c, _, f), types__rcarg(f, _, _, _).
+// A library class's call binds its type parameters from its constructor's arguments: `frozenset(xs)`, where
+// `__new__(cls, iterable: Iterable[_T_co])` and xs is a `list[str]`, is a `frozenset[str]` (list's parameter 0 is
+// Iterable's `_T_co`, `types__tmap`). lccall(c, k, f): call c of library class k runs constructor f (`__new__` or
+// `__init__` as k finds it), an overload its positional arguments fit (the class counted as the first).
+.decl lctor(k: symbol, f: symbol)
+lctor(k, f) :- types__attr(k, "__new__", f, _), types__pgen(f, _, _, _, _).
+lctor(k, f) :- types__attr(k, "__init__", f, _), types__pgen(f, _, _, _, _).
+.decl lccall(c: node, k: symbol, f: symbol)
+lccall(c, k, f) :- callee(c, e), lv(e, "cls", k), lctor(k, f), !struct__flag(f, "overload").
+lccall(c, k, f) :- callee(c, e), lv(e, "cls", k), lctor(k, f), struct__flag(f, "overload"), cposk(c, m, w), pred(n, m), lfit(f, n, w).
+// lcbind(c, n, g, i): at c, k's parameter n is argument i of g, the generic value passed where the constructor
+// declares a generic of that parameter.
+.decl lcbind(c: node, n: number, g: node, i: number)
+lcbind(c, n, g, i) :- lccall(c, k, f), types__pgen(f, p, h, j, y), types__tparam(k, n, y), pred(p, q), posarg(c, q, a), pv(a, "gen", g),
+    lghcls(g, k2), types__tparam(h, j, z), types__tmap(k2, i, h, z).
+lghcls(c, k) :- lcbind(c, _, _, _), lccall(c, k, _).
+pv(c, "gen", c) :- lcbind(c, _, _, _).
+garg(c, n, x) :- lcbind(c, n, g, i), garg(g, i, x).
+lgarg(c, n, d) :- lcbind(c, n, g, i), lgarg(g, i, d).
+// lgpars(c, y, d): as `lgpar`, the receiver's generic value binds y to the library class d.
+.decl lgpars(c: node, y: symbol, d: symbol)
+lgpars(c, y, d) :- lgcall(c, o, f), lclassof(f, a), pv(o, "gen", g), lghcls(g, k), types__tmap(k, i, a, y), lgarg(g, i, d).
+lgbound(c, y) :- lgpars(c, y, _).
+lv(c, "inst", d) :- lgcall(c, _, f), types__rvar(f, y), lgpars(c, y, d).
+lghcls(c, k) :- lgcall(c, _, f), types__rgen(f, k, _, y), lgpars(c, y, _).
+lgarg(c, j, d) :- lgcall(c, _, f), types__rgen(f, _, j, y), lgpars(c, y, d).
+pv(c, "gen", c) :- lgcall(c, _, f), types__rgen(f, _, _, y), lgpars(c, y, _).
 // For counting: a call that reaches a library's callable.
 .decl call_lib(c: node)
 call_lib(c) :- callee(c, e), lv(e, "fn", _).

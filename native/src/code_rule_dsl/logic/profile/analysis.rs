@@ -64,6 +64,7 @@ pub(super) const SCALARS: &[&str] = &[
     "strprefix",
     "value",
     "value_type",
+    "static_value",
     "comment",
     "spread",
     "op",

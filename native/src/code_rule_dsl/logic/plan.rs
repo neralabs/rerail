@@ -1057,6 +1057,33 @@ impl Model {
                     rows /= self.ndv_or_1(&a.rel, c);
                 }
             }
+            // A relation of the component being solved, probed by a value an earlier step bound: a column's fanout
+            // is the rows per value it holds (`fan`), so a probe is priced as if it always hits. Most do not where
+            // the binding ranges over more values than the column holds: `fbind`'s `fcall($c, $f, $i, $a)` by `$a`,
+            // 399 rows, probed by `pv($a, "inst", $k)`'s 280,000, was priced at a row a probe and planned after
+            // `tfix` by `$k` (19 M rows of work for 220). The probes that hit are the column's share of the binding's
+            // values (containment): its distinct values over the binding's, where both are measured (live counts),
+            // the binding's by the fewest distinct values of an atom of bound variables that holds it.
+            if stats.solving.contains(&a.rel) {
+                let mut hit = 1.0f64;
+                for &c in &cols {
+                    let Term::Var(v) = &a.args[c] else { continue };
+                    let Some(&here) = self.ndv.get(&(a.rel.clone(), c)) else { continue };
+                    let from = body
+                        .iter()
+                        .filter_map(|l| match l {
+                            Literal::Atom(b) if !b.neg && !std::ptr::eq(b, a) && b.vars().iter().all(|x| bound.contains(x)) => {
+                                b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).and_then(|c2| self.ndv.get(&(b.rel.clone(), c2)).copied())
+                            }
+                            _ => None,
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    if from.is_finite() && from > here.max(1.0) {
+                        hit = hit.min(here.max(1.0) / from);
+                    }
+                }
+                rows *= hit;
+            }
             // Every column bound: a membership test, at most one row of a set.
             if cols.len() == a.args.len() && !prog.lattice.contains_key(&a.rel) {
                 rows = rows.min(1.0);
@@ -2388,6 +2415,8 @@ pub(in crate::code_rule_dsl) struct Outcome {
     pub(in crate::code_rule_dsl) kept: BTreeSet<String>,
     /// The kept relations handed to the caller during the run (`run_atoms_native_handing`), no longer held.
     pub(in crate::code_rule_dsl) handed: BTreeSet<String>,
+    /// The relations recomputed in their readers (decision 0099): no table and no engine rows hold them.
+    pub(in crate::code_rule_dsl) inlined: BTreeSet<String>,
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -2398,7 +2427,8 @@ struct Fx<'a> {
     direct: bool,
 }
 impl Fx<'_> {
-    /// The planner's spec goes to the engine as values in process; through the SQL function as its text.
+    /// The planner's spec goes to the engine as values in process. Over text symbols the SQL functions are T's
+    /// extension's own engine (`native/extension`, a copy with its own components), which reads the spec's text.
     fn open(&self, spec: &ComponentSpec) -> Result<()> {
         let _span = super::profile::span(|| "engine open (load inputs, build indexes)".into());
         if self.direct {
@@ -3581,7 +3611,7 @@ impl Run<'_, '_> {
     /// 0100 §5): what a level's batch can pair before the stratum runs. Planned as the stratum will plan them
     /// (`plan_rule_reused` keeps the plan); a spec the stratum ends up planning otherwise is not found, and that seed
     /// runs by the host's walk.
-    fn seed_specs(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Vec<std::sync::Arc<super::native::component::spec::JoinSpec>> {
+    fn seed_specs(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Vec<Arc<JoinSpec>> {
         let prog = self.prog;
         if scc.iter().any(|r| prog.lattice.contains_key(r) || prog.natives.contains_key(r) || prog.gates.iter().any(|(g, _)| g == r)) {
             return Vec::new();
@@ -3593,6 +3623,7 @@ impl Run<'_, '_> {
                 continue;
             }
             let Ok(((order, _, _), _)) = self.model.plan_rule_reused(prog, &r.head, &r.body, None) else { continue };
+            // The level batch keys its pairs by the spec's digest, as the stratum's join does.
             if let Some(spec) = self.whole_join_spec(&r.head, &order, None, &ri, scc, &self.native_rels) {
                 out.push(spec);
             }
@@ -3884,7 +3915,7 @@ impl Run<'_, '_> {
         let mut counted: Vec<Vec<(u64, u64)>> = Vec::new();
         // The relational lab (decision 0095, step 0): the stratum's sources and seeds kept to run it again alone.
         let lab = super::native::component::lab::wanted(&name, shape.work)
-            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &spec.to_text(), &path));
+            .and_then(|path| super::native::component::lab::capture_inputs(self.db, &name, &spec, &path));
         // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
         let mut timed: Vec<f64> = Vec::new();
         self.fx().open(&spec)?;
@@ -4691,9 +4722,11 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // What each derived relation keeps (decision 0099): stored, or inlined into its readers, from this plan's
     // estimates; before demand, which then sees the readers as inlining left them. Corpus runs only, as demand.
     let inlined;
+    let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
     let prog: &Program = match if corpus { keeps::choose(prog, &mut model).map_err(Error::Plan)? } else { None } {
         Some((p, done)) => {
             super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
+            inlined_rels = done.into_iter().collect();
             inlined = p;
             // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
             if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
@@ -5024,7 +5057,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             // The level's first joins (decision 0100 §5, §6): every seed join of its strata that reads only
             // relations already held, sent to the executor as one batch while the level's strata run.
             let native_ones: Vec<usize> = level.iter().copied().filter(|&j| !sccs[j].iter().all(|r| run.views.contains(r))).collect();
-            let specs: Vec<_> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
+            let specs: Vec<Arc<JoinSpec>> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
             if !specs.is_empty() {
                 let _wave = super::profile::span(|| "level wave (joins)".into());
                 let sent = super::native::component::prefetch_joins(db, &specs)?;
@@ -5142,8 +5175,10 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
-    // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins.
+    // The chunk's end: pairs no seed took, and what the lanes kept for the chunk's joins; the executor's scoreboard
+    // so far, to its trace (`RERAIL_SCOREBOARD`).
     super::native::component::level_clear();
+    super::lanes::executor().note("a chunk's end");
     if let Some(path) = level_trace() {
         use std::io::Write as _;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
@@ -5165,6 +5200,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     outcome.outputs = outputs;
     outcome.nodes = nodes;
     outcome.handed = handed;
+    outcome.inlined = inlined_rels;
     Ok(outcome)
 }
 
