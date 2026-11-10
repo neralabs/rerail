@@ -4940,6 +4940,9 @@ fn run_observed(
                         for (kind, rows, values, levels, index) in next.held() {
                             eprintln!("KEPT {kind}: {rows} rows, values {:.2} MB, levels {:.2} MB, sets and indexes {:.2} MB", values as f64 / 1e6, levels as f64 / 1e6, index as f64 / 1e6);
                         }
+                        if crate::code_rule_dsl::logic::native::component::probed::on() {
+                            eprintln!("{}", next.index_report(&crate::code_rule_dsl::logic::native::component::probed::take()));
+                        }
                     }
                     cross_strata = Some(cut.strata);
                     cross_maintained = maintained.maintained;
